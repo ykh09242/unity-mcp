@@ -65,6 +65,19 @@ namespace MCPForUnity.Editor.Services.Transport
             return output.Finish();
         }
 
+        // Keep the async JSON compatibility contract, but admit the original producer while
+        // writing. Physical UTF-8 admission also bounds every decoded scalar's storage.
+        internal static string SerializeAdmitted(object payload)
+        {
+            var budget = new Budget();
+            using var output = new AdmittedTextOutput();
+            using var writer = new AdmittedTextWriter(output, budget) { AutoCompleteOnClose = false };
+            JsonSerializer.CreateDefault().Serialize(writer, payload);
+            budget.Check();
+            writer.Flush();
+            return output.Finish();
+        }
+
         private static void CheckText(string value)
         {
             if (value != null && (value.Length > LargeResultWriter.MaxResultBytes || Encoding.UTF8.GetByteCount(value) > LargeResultWriter.MaxResultBytes))
@@ -410,6 +423,223 @@ namespace MCPForUnity.Editor.Services.Transport
             }
         }
 
+        private sealed class AdmittedTextWriter : JsonTextWriter
+        {
+            private readonly Budget budget;
+
+            // Converters can assemble one value from incomplete raw fragments. Preserve those
+            // writes; the text sink bounds their bytes and the existing response parse admits
+            // the completed raw structure. Ordinary tokens are admitted before each write.
+
+            public override void WritePropertyName(string name)
+            {
+                budget.Node();
+                base.WritePropertyName(name);
+            }
+
+            public override void WritePropertyName(string name, bool escape)
+            {
+                budget.Node();
+                base.WritePropertyName(name, escape);
+            }
+
+            public override void WriteNull()
+            {
+                budget.Node();
+                base.WriteNull();
+            }
+
+            public override void WriteUndefined()
+            {
+                budget.Node();
+                base.WriteUndefined();
+            }
+
+            public override void WriteComment(string text)
+            {
+                budget.Node();
+                base.WriteComment(text);
+            }
+
+            public override void WriteValue(object value)
+            {
+                // JsonWriter dispatches other boxed values through the typed virtual methods.
+                if (value is BigInteger)
+                    budget.Node();
+                base.WriteValue(value);
+            }
+
+            internal AdmittedTextWriter(TextWriter output, Budget budget)
+                : base(output) => this.budget = budget;
+
+            private void Enter()
+            {
+                if (Top >= MaxDepth)
+                {
+                    budget.Fail();
+                    throw new ResponseLimitException();
+                }
+                budget.Node();
+            }
+
+            public override void WriteStartObject()
+            {
+                Enter();
+                base.WriteStartObject();
+            }
+
+            public override void WriteStartArray()
+            {
+                Enter();
+                base.WriteStartArray();
+            }
+
+            public override void WriteStartConstructor(string name)
+            {
+                Enter();
+                budget.Node();
+                base.WriteStartConstructor(name);
+            }
+
+            public override void WriteValue(string value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(int value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(uint value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(long value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(ulong value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(float value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(double value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(float? value)
+            {
+                // JsonTextWriter handles non-null nullable floats without the typed virtual call.
+                if (value.HasValue)
+                    budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(double? value)
+            {
+                // JsonTextWriter handles non-null nullable floats without the typed virtual call.
+                if (value.HasValue)
+                    budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(bool value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(short value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(ushort value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(char value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(byte value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(sbyte value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(decimal value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(DateTime value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(DateTimeOffset value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(byte[] value)
+            {
+                if (value != null)
+                    budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(TimeSpan value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(Guid value)
+            {
+                budget.Node();
+                base.WriteValue(value);
+            }
+
+            public override void WriteValue(Uri value)
+            {
+                if (value != null)
+                    budget.Node();
+                base.WriteValue(value);
+            }
+        }
+
         private sealed class DepthLimitedTextWriter : JsonTextWriter
         {
             public override void WriteRawValue(string json)
@@ -446,9 +676,65 @@ namespace MCPForUnity.Editor.Services.Transport
             }
         }
 
-        private sealed class LimitedTextWriter : TextWriter
+        private sealed class AdmittedTextOutput : LimitedTextWriter
         {
-            private readonly StringBuilder text = new();
+            private bool exactCounting;
+
+            private bool CanAppendWithoutCounting(int count)
+            {
+                if (exactCounting)
+                    return false;
+                // UTF-8 uses at most three bytes per UTF-16 code unit, including an unmatched
+                // surrogate. This is only a fast-path bound, never a lower admission limit.
+                if (count <= LargeResultWriter.MaxResultBytes / 3 - text.Length)
+                    return true;
+
+                if (text.Length != 0)
+                {
+                    var buffer = new char[Math.Min(8192, text.Length)];
+                    for (int offset = 0; offset < text.Length; )
+                    {
+                        int length = Math.Min(buffer.Length, text.Length - offset);
+                        text.CopyTo(offset, buffer, 0, length);
+                        CountChunk(Encoding.UTF8.GetByteCount(buffer, 0, length), buffer[0], buffer[length - 1]);
+                        offset += length;
+                    }
+                }
+                exactCounting = true;
+                // CountChunk retains a trailing high surrogate for the next incoming fragment.
+                return false;
+            }
+
+            public override void Write(char value)
+            {
+                if (CanAppendWithoutCounting(1))
+                    text.Append(value);
+                else
+                    base.Write(value);
+            }
+
+            public override void Write(string value)
+            {
+                if (value == null)
+                    return;
+                if (CanAppendWithoutCounting(value.Length))
+                    text.Append(value);
+                else
+                    base.Write(value);
+            }
+
+            public override void Write(char[] buffer, int index, int count)
+            {
+                if (CanAppendWithoutCounting(count))
+                    text.Append(buffer, index, count);
+                else
+                    base.Write(buffer, index, count);
+            }
+        }
+
+        private class LimitedTextWriter : TextWriter
+        {
+            protected readonly StringBuilder text = new();
             private long bytes;
             private bool highSurrogate;
             public override Encoding Encoding => Encoding.UTF8;
@@ -504,7 +790,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 text.Append(buffer, index, count);
             }
 
-            private void CountChunk(int count, char first, char last)
+            protected void CountChunk(int count, char first, char last)
             {
                 // UTF8 counts isolated surrogates as three-byte replacements. Carry a
                 // trailing high surrogate across writer calls so a split pair counts four.
@@ -518,6 +804,8 @@ namespace MCPForUnity.Editor.Services.Transport
 
             internal string Finish()
             {
+                if (bytes > LargeResultWriter.MaxResultBytes)
+                    throw new ResponseLimitException();
                 if (highSurrogate)
                 {
                     highSurrogate = false;
