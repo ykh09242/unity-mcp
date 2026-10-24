@@ -43,3 +43,7 @@
 .graph-explorer .unity-base-field__label { min-width: 90px; width: 90px; }
 .graph-edge { padding: 10px; margin-bottom: 8px; border-left-width: 2px; border-left-color: var(--mcp-border); background-color: var(--mcp-surface); min-width: 0; }
 .graph-edge Button { align-self: flex-start; }
+
+.graph-wait-feedback { flex-direction: row; align-items: center; flex-wrap: wrap; margin-bottom: 6px; min-width: 0; }
+.graph-wait-feedback .graph-note { flex-shrink: 1; }
+.graph-edge #graph-explorer-details { margin-top: 6px; }

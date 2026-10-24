@@ -22,7 +22,11 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         private readonly VisualElement root,
             providers,
             configurationRows,
-            summary;
+            summary,
+            metrics,
+            sourceSummary,
+            toolbar,
+            waitFeedback;
         private readonly Label identity,
             status,
             storage,
@@ -55,6 +59,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             formMessage;
         private readonly IVisualElementScheduledItem waitClock;
         private DateTime waitStarted;
+        private string pendingAction;
         private int currentKind;
         private bool draftDirty;
         private Func<bool> confirmDiscard = () =>
@@ -88,10 +93,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             this.send = send ?? McpReferenceGraphClient.Send;
             this.connectionIdentity = connectionIdentity ?? McpReferenceGraphClient.Identity;
             root.AddToClassList("graph-section");
-            var heading = Box(root, "graph-heading");
-            Text(heading, "Reference Graph", "graph-title").AddToClassList("graph-title");
-            Text(heading, "Asset connections, collection health and source access.").AddToClassList("graph-muted");
-            var toolbar = Box(root, "graph-toolbar");
+            toolbar = Box(root, "graph-toolbar");
             AddButton(toolbar, "Refresh status", "graph-refresh", () => Run("overview", new JObject())).AddToClassList("graph-primary");
             stopWaiting = new Button(StopWaiting)
             {
@@ -99,29 +101,31 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 text = "Stop waiting",
                 tooltip = "Stop this request wait. Accepted server work may continue.",
             };
-            toolbar.Add(stopWaiting);
+            waitFeedback = Box(toolbar, "graph-wait-feedback");
+            waitFeedback.name = "graph-wait-feedback";
+            waitFeedback.Add(stopWaiting);
             toolbar.Add(new Button(() => DiagnosticsRequested?.Invoke()) { text = "Diagnostic bundle", name = "graph-diagnostics" });
-            waitStatus = Text(toolbar, "", "graph-wait-status");
+            waitStatus = Text(waitFeedback, "", "graph-wait-status");
             waitStatus.AddToClassList("graph-muted");
             waitClock = root
                 .schedule.Execute(() =>
-                    waitStatus.text =
-                        "Waiting "
-                        + Math.Max(0, (DateTime.UtcNow - waitStarted).TotalSeconds).ToString("0", CultureInfo.InvariantCulture)
-                        + "s · server work may continue after stopping"
+                    waitStatus.text = "Waiting " + Math.Max(0, (DateTime.UtcNow - waitStarted).TotalSeconds).ToString("0", CultureInfo.InvariantCulture) + "s"
                 )
                 .Every(1000);
             waitClock.Pause();
             updated = Text(toolbar, "Updates on request");
             updated.AddToClassList("graph-muted");
-            identity = Text(root, "This Editor · current connection account", "graph-identity");
+            updated.AddToClassList("hidden");
+            identity = Text(root, "Refresh status to verify this Editor and account before exploring references.", "graph-identity");
             identity.AddToClassList("graph-scope");
             summary = Box(root, "graph-summary");
             status = Text(summary, "Connect your graph", "graph-status");
             status.AddToClassList("graph-summary-title");
             summaryDetail = Text(summary, "Refresh to check collection progress and source access for this Editor.");
             AddButton(summary, "Retry collection", "graph-retry", () => Run("retry", new JObject()));
-            var metrics = Box(root, "graph-metrics");
+            summary.AddToClassList("hidden");
+            metrics = Box(root, "graph-metrics");
+            metrics.AddToClassList("hidden");
             readyCount = Metric(metrics, "Ready");
             pendingCount = Metric(metrics, "Pending");
             issueCount = Metric(metrics, "Issues");
@@ -129,11 +133,12 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             message = Text(root, "", "graph-message");
             message.AddToClassList("hidden");
             explorer = new McpReferenceExplorer(root, Run);
-            Text(root, "Collection sources").AddToClassList("graph-section-heading");
-            providers = Box(root, "graph-providers");
+            sourceSummary = Box(root, "graph-source-summary");
+            sourceSummary.AddToClassList("hidden");
+            Text(sourceSummary, "Collection sources").AddToClassList("graph-section-heading");
+            providers = Box(sourceSummary, "graph-providers");
             providers.name = "graph-providers";
-            Text(providers, "Source status will appear after the first refresh.").AddToClassList("graph-empty");
-            Text(root, "Static analysis is partial. Reference evidence alone does not prove an asset safe to delete.").AddToClassList("graph-muted");
+            Text(sourceSummary, "Static analysis is partial. Reference evidence alone does not prove an asset safe to delete.").AddToClassList("graph-muted");
             var transfer = new Foldout
             {
                 text = "Rules & source configuration",
@@ -275,11 +280,11 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             root.Q<Foldout>("graph-item-editor").value = true;
         }
 
-        private bool IsCurrentIdentity()
+        private bool IsCurrentIdentity(string expected = null)
         {
             try
             {
-                return viewIdentity != null && viewIdentity == connectionIdentity();
+                return (expected ?? viewIdentity) != null && (expected ?? viewIdentity) == connectionIdentity();
             }
             catch
             {
@@ -290,17 +295,23 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         private void StopWaiting()
         {
             var cancellation = pending;
+            string action = pendingAction;
             pending = null;
+            pendingAction = null;
             waitClock.Pause();
             waitStatus.text = "";
             cancellation?.Cancel();
-            explorer?.StopWaiting();
+
             if (!disposed)
             {
                 if (cancellation != null)
                 {
-                    message.RemoveFromClassList("hidden");
-                    message.text = "Request wait stopped; accepted server work may continue. Refresh before repeating a change.";
+                    const string stopped =
+                        "Request wait stopped; accepted server work may continue. The remote outcome is unknown. Refresh before repeating a change.";
+                    if (McpReferenceExplorer.Handles(action))
+                        explorer.StopWaiting(stopped);
+                    else
+                        Feedback(action, stopped);
                 }
                 UpdateControls();
             }
@@ -320,7 +331,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 for (var parent = root.parent; parent != null; parent = parent.parent)
                     if (parent is ScrollView scroll)
                     {
-                        scroll.ScrollTo(formMessage);
+                        scroll.ScrollTo(pendingAction == "import_config" ? waitFeedback : formMessage);
                         break;
                     }
             });
@@ -329,7 +340,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         private void Feedback(string action, string text)
         {
             if (McpReferenceExplorer.Handles(action))
-                explorer.Failed(text);
+                explorer.Failed(action, text);
             else if (action == "import_config")
                 FormFeedback(text);
             else
@@ -373,7 +384,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             bool idle = pending == null;
             explorer?.SetAvailable(idle && viewIdentity != null);
             stopWaiting.SetEnabled(!idle);
-            stopWaiting.EnableInClassList("hidden", idle);
+            waitFeedback.EnableInClassList("hidden", idle);
             foreach (var button in buttons)
                 button.SetEnabled(idle && (button.name == "graph-refresh" || viewIdentity != null));
             foreach (var button in sourceAccessButtons)
@@ -444,6 +455,10 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             identity.text = "Connection changed · refresh to verify this account";
             identity.tooltip = null;
             status.text = "Refresh required";
+            summary.AddToClassList("hidden");
+            metrics.AddToClassList("hidden");
+            sourceSummary.AddToClassList("hidden");
+            updated.AddToClassList("hidden");
             summary.EnableInClassList("graph-attention", false);
             summary.EnableInClassList("graph-current", false);
             summaryDetail.text = "The previous view was cleared to keep accounts and Editors separate.";
@@ -547,14 +562,25 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             }
             using var cancellation = new CancellationTokenSource();
             pending = cancellation;
+            pendingAction = action;
+            var feedbackParent =
+                action == "import_config" ? formMessage.parent
+                : McpReferenceExplorer.Handles(action) ? explorer.FeedbackParent(action)
+                : action == "export_config" ? configurationRows.parent
+                : action == "cleanup" ? storage.parent
+                : toolbar;
+            if (action == "import_config")
+                feedbackParent.Insert(feedbackParent.IndexOf(formMessage) + 1, waitFeedback);
+            else
+                feedbackParent.Add(waitFeedback);
             waitStarted = DateTime.UtcNow;
             waitStatus.text = "Waiting 0s";
             waitClock.Resume();
             UpdateControls();
             if (McpReferenceExplorer.Handles(action))
-                explorer.Waiting();
+                explorer.Waiting(action);
             else
-                Feedback(action, "Working… Stop waiting or leave this tab to abandon the wait; accepted server work may continue.");
+                Feedback(action, "Working… Stop waiting abandons this wait; server work may continue.");
             try
             {
                 JObject data = await send(action, options, cancellation.Token);
@@ -567,6 +593,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 }
                 viewIdentity = before;
                 Render(data);
+                updated.RemoveFromClassList("hidden");
                 updated.text = "Updated " + DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
                 if (McpReferenceExplorer.Handles(action))
                 {
@@ -624,23 +651,48 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             catch (OperationCanceledException)
             {
                 if (!disposed && visible && ReferenceEquals(pending, cancellation))
-                    Feedback(action, "Request wait stopped; accepted server work may continue. Refresh before repeating a change.");
+                {
+                    if (!IsCurrentIdentity(before))
+                        Invalidate();
+                    else
+                        Feedback(action, "Request wait stopped; accepted server work may continue. Refresh before repeating a change.");
+                }
+            }
+            catch (UnauthorizedAccessException error)
+            {
+                if (!disposed && visible && ReferenceEquals(pending, cancellation))
+                {
+                    Invalidate();
+                    message.RemoveFromClassList("hidden");
+                    message.text = error.Message;
+                }
             }
             catch (InvalidOperationException error)
             {
                 if (!disposed && visible && ReferenceEquals(pending, cancellation))
-                    Feedback(action, error.Message);
+                {
+                    if (!IsCurrentIdentity(before))
+                        Invalidate();
+                    else
+                        Feedback(action, error.Message);
+                }
             }
             catch (Exception)
             {
                 if (!disposed && visible && ReferenceEquals(pending, cancellation))
-                    Feedback(action, "Graph request failed. Check the connection and refresh; no automatic retry was issued.");
+                {
+                    if (!IsCurrentIdentity(before))
+                        Invalidate();
+                    else
+                        Feedback(action, "Graph request failed. Check the connection and refresh; no automatic retry was issued.");
+                }
             }
             finally
             {
                 if (ReferenceEquals(pending, cancellation))
                 {
                     pending = null;
+                    pendingAction = null;
                     waitClock.Pause();
                     waitStatus.text = "";
                 }
@@ -664,6 +716,11 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 identity.tooltip = "Account: " + label["principal"] + "\nEditor: " + label["instance_id"] + "\nProject: " + label["project_id"];
             }
             var graph = data["graph_status"];
+            if (graph == null)
+                return;
+            summary.RemoveFromClassList("hidden");
+            metrics.RemoveFromClassList("hidden");
+            sourceSummary.RemoveFromClassList("hidden");
             diagnosticGraph = McpDiagnosticBundle.GraphSummary(graph as JObject);
             long errors = graph?.Value<long?>("errors") ?? 0;
             string workerError = graph?.Value<string>("worker_error");
