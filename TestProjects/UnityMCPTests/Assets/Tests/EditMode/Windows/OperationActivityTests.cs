@@ -171,7 +171,7 @@ namespace MCPForUnityTests.EditMode.Windows
             Assert.That(captures, Is.Zero);
             section.SetVisible(true);
             Assert.That(captures, Is.EqualTo(1));
-            var original = root.Q<Button>("activity-evidence");
+            var original = root.Q<Button>("activity-select");
             for (int i = 0; i < 10000; i++)
                 section.Tick();
             Assert.That(captures, Is.EqualTo(1));
@@ -179,7 +179,7 @@ namespace MCPForUnityTests.EditMode.Windows
             Assert.That(root.Query<Label>().ToList().Any(label => label.text == "Elapsed time unavailable"), Is.True);
             revision++;
             section.Tick();
-            Assert.AreSame(original, root.Q<Button>("activity-evidence"));
+            Assert.AreSame(original, root.Q<Button>("activity-select"));
             section.SetVisible(false);
             revision++;
             section.Tick();
@@ -278,6 +278,344 @@ namespace MCPForUnityTests.EditMode.Windows
             }
         }
 
+        private static void Click(VisualElement root, string name)
+        {
+            var button = root.Q<Button>(name);
+            Assert.IsNotNull(button, name);
+            Assert.IsTrue(button.enabledInHierarchy, name);
+            typeof(Clickable).GetMethod("Invoke", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(button.clickable, new object[] { null });
+        }
+
+        private static void EvidenceGui(OperationEvidenceWindow window) =>
+            typeof(OperationEvidenceWindow).GetMethod("CreateGUI", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, null);
+
+        private static void DisableEvidence(OperationEvidenceWindow window) =>
+            typeof(OperationEvidenceWindow).GetMethod("OnDisable", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(window, null);
+
+        [Test]
+        public void EmptyAndSinglePageKeepSelectionAndPaginationQuietAndFinishedIncludesAllInactiveStates()
+        {
+            var window = ScriptableObject.CreateInstance<EvidenceWindow>();
+            try
+            {
+                window.ShowUtility();
+                var root = window.rootVisualElement;
+                var rows = new List<OperationActivityRow>();
+                long revision = 0;
+                using var section = new McpActivitySection(root, () => rows, () => revision);
+                section.SetVisible(true);
+                Assert.AreEqual(DisplayStyle.None, root.Q("activity-selection").style.display.value);
+                Assert.AreEqual(DisplayStyle.None, root.Q("activity-paging").style.display.value);
+                rows.AddRange(
+                    new[] { "succeeded", "failed", "cancelled", "timed_out", "interrupted" }.Select(state => new OperationActivityRow
+                    {
+                        Owner = "test",
+                        Id = state,
+                        State = state,
+                        Operation = state,
+                        EvidenceId = state,
+                    })
+                );
+                rows.Add(
+                    new OperationActivityRow
+                    {
+                        Owner = "test",
+                        Id = "still-owned",
+                        State = "failed",
+                        Active = true,
+                    }
+                );
+                revision++;
+                section.Tick();
+                var filter = root.Q<DropdownField>("activity-state-filter");
+                Assert.Contains("Finished", filter.choices);
+                Assert.IsFalse(filter.choices.Contains("Completed"));
+                filter.value = "Finished";
+                CollectionAssert.AreEquivalent(
+                    rows.Where(row => !row.Active).Select(row => "activity-" + row.Key),
+                    root.Q("activity-rows").Children().Select(row => row.name)
+                );
+                Assert.AreEqual(DisplayStyle.None, root.Q("activity-paging").style.display.value);
+                Assert.AreEqual(DisplayStyle.None, root.Q("activity-selection").style.display.value);
+                Click(root.Q("activity-test:cancelled"), "activity-select");
+                StringAssert.Contains("cancelled", root.Q<Label>("activity-selected-summary").text);
+                Assert.AreEqual(DisplayStyle.Flex, root.Q("activity-selection").style.display.value);
+            }
+            finally
+            {
+                window.Close();
+            }
+        }
+
+        [Test]
+        public void EvidenceSummaryIsLazyRawCopyIsExactAndRefreshAloneRereadsLargeEvidence()
+        {
+            var window = ScriptableObject.CreateInstance<OperationEvidenceWindow>();
+            string clipboard = EditorGUIUtility.systemCopyBuffer;
+            try
+            {
+                string raw = "  {\r\n  \"message\": \"한글\",\r\n  \"payload\": \"" + new string('x', 262144) + "\"\r\n}  ";
+                int reads = 0;
+                var row = SampleRows()[0];
+                window.SetOperation(row);
+                window.resolve = _ =>
+                {
+                    reads++;
+                    return raw;
+                };
+                EvidenceGui(window);
+                for (int i = 0; i < 20; i++)
+                    EvidenceGui(window);
+                Assert.Zero(reads, "Creating and rebuilding Summary does not load raw evidence.");
+                StringAssert.Contains(row.Id, window.rootVisualElement.Q<Label>("operation-evidence-heading").text);
+                StringAssert.Contains(row.Detail, window.rootVisualElement.Q<Label>("operation-evidence-summary").text);
+                Assert.IsEmpty(window.rootVisualElement.Q<TextField>("operation-evidence-text").value);
+                Click(window.rootVisualElement, "operation-evidence-copy");
+                Assert.AreEqual(1, reads);
+                Assert.AreEqual(raw, EditorGUIUtility.systemCopyBuffer);
+                Click(window.rootVisualElement, "operation-evidence-raw-tab");
+                Assert.AreEqual(raw, window.rootVisualElement.Q<TextField>("operation-evidence-text").value);
+                Click(window.rootVisualElement, "operation-evidence-summary-tab");
+                Click(window.rootVisualElement, "operation-evidence-raw-tab");
+                Assert.AreEqual(1, reads, "Switching views reuses the explicitly loaded raw result.");
+                Click(window.rootVisualElement, "operation-evidence-refresh");
+                Assert.AreEqual(2, reads);
+                Assert.AreEqual(raw, window.rootVisualElement.Q<TextField>("operation-evidence-text").value);
+                StringAssert.DoesNotContain(raw, EditorJsonUtility.ToJson(window), "Raw is never serialized into window state.");
+                DisableEvidence(window);
+                Assert.IsNull(window.resolve);
+                Assert.Zero(window.rootVisualElement.childCount);
+                EvidenceGui(window);
+                Assert.IsEmpty(window.rootVisualElement.Q<TextField>("operation-evidence-text").value);
+                Assert.AreEqual(2, reads, "Reload returns to a summary without retaining the raw payload.");
+            }
+            finally
+            {
+                EditorGUIUtility.systemCopyBuffer = clipboard;
+                UnityEngine.Object.DestroyImmediate(window);
+            }
+        }
+
+        private sealed class SerializedProbe
+        {
+            internal int Reads;
+            public string Detail
+            {
+                get
+                {
+                    Reads++;
+                    return "large report detail";
+                }
+            }
+        }
+
+        [Test]
+        public void EvidenceWindowsKeepDistinctOwnersAndRejectLateReplacementAndClose()
+        {
+            var first = ScriptableObject.CreateInstance<OperationEvidenceWindow>();
+            var second = ScriptableObject.CreateInstance<OperationEvidenceWindow>();
+            try
+            {
+                var rows = SampleRows();
+                first.SetOperation(rows[0]);
+                second.SetOperation(rows[1]);
+                Assert.AreNotEqual(first.titleContent.text, second.titleContent.text, "Same IDs under different owners remain distinct.");
+                EvidenceGui(first);
+                EvidenceGui(second);
+                var abandoned = new SerializedProbe();
+                first.resolve = _ =>
+                {
+                    first.SetOperation(rows[1]);
+                    return abandoned;
+                };
+                Click(first.rootVisualElement, "operation-evidence-raw-tab");
+                Assert.Zero(abandoned.Reads, "A replaced owner cannot even serialize its late result.");
+                StringAssert.Contains(rows[1].Operation, first.rootVisualElement.Q<Label>("operation-evidence-summary").text);
+                Assert.IsEmpty(first.rootVisualElement.Q<TextField>("operation-evidence-text").value);
+                Assert.IsEmpty(second.rootVisualElement.Q<TextField>("operation-evidence-text").value);
+                int reads = 0;
+                first.resolve = _ =>
+                {
+                    reads++;
+                    return abandoned;
+                };
+                EvidenceGui(first);
+                Assert.Zero(reads);
+                Click(first.rootVisualElement, "operation-evidence-raw-tab");
+                Assert.AreEqual(1, reads);
+                Assert.AreEqual(1, abandoned.Reads);
+                first.resolve = _ =>
+                {
+                    DisableEvidence(first);
+                    return abandoned;
+                };
+                Click(first.rootVisualElement, "operation-evidence-refresh");
+                Assert.AreEqual(1, abandoned.Reads, "Closed windows cannot serialize a late result.");
+                Assert.Zero(first.rootVisualElement.childCount);
+                Assert.IsNull(first.resolve);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(first);
+                UnityEngine.Object.DestroyImmediate(second);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator EvidenceSummaryAndRawKeepIdentityVisibleInShortAndNarrowWindows()
+        {
+            var first = ScriptableObject.CreateInstance<OperationEvidenceWindow>();
+            var second = ScriptableObject.CreateInstance<OperationEvidenceWindow>();
+            string directory = Path.GetFullPath(Path.Combine(Application.dataPath, "../Library/McpTestEvidence/" + Guid.NewGuid().ToString("N")));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                var row = SampleRows()[0];
+                row.Id = "synthetic-shared-prefix-job-24";
+                first.SetOperation(row);
+                row.Id = "synthetic-shared-prefix-job-25";
+                second.SetOperation(row);
+                Assert.AreNotEqual(first.titleContent.text, second.titleContent.text);
+                int reads = 0;
+                first.resolve = _ =>
+                {
+                    reads++;
+                    return new { error = "Synthetic failure detail", report = "Retained report" };
+                };
+                second.resolve = _ => throw new AssertionException("Second summary must stay lazy");
+                first.minSize = second.minSize = new Vector2(360, 180);
+                second.ShowUtility();
+                first.ShowUtility();
+                foreach (var size in new[] { new Vector2(500, 340), new Vector2(1200, 180) })
+                {
+                    first.position = new Rect(40, 40, size.x, size.y);
+                    for (int i = 0; i < 12; i++)
+                        yield return null;
+                    if (first.rootVisualElement.Q<Button>("operation-evidence-summary-tab").enabledSelf)
+                        Click(first.rootVisualElement, "operation-evidence-summary-tab");
+                    for (int i = 0; i < 3; i++)
+                        yield return null;
+                    var header = first.rootVisualElement.Q<Label>("operation-evidence-heading");
+                    StringAssert.Contains("synthetic-shared-prefix-job-24", header.text);
+                    Assert.Greater(header.worldBound.yMax, first.rootVisualElement.worldBound.yMin);
+                    Assert.Less(header.worldBound.yMin, first.rootVisualElement.worldBound.yMax);
+                    string summaryPath = Path.Combine(directory, "evidence-summary-" + size.x + "x" + size.y + ".png");
+                    Capture(first, summaryPath);
+                    TestContext.WriteLine("EVIDENCE_SUMMARY_CAPTURE " + summaryPath);
+                    Click(first.rootVisualElement, "operation-evidence-raw-tab");
+                    for (int i = 0; i < 6; i++)
+                        yield return null;
+                    Assert.AreEqual(1, reads, "Raw is loaded once across views and resize.");
+                    string rawPath = Path.Combine(directory, "evidence-raw-" + size.x + "x" + size.y + ".png");
+                    Capture(first, rawPath);
+                    TestContext.WriteLine("EVIDENCE_RAW_CAPTURE " + rawPath);
+                    StringAssert.Contains("Synthetic failure detail", first.rootVisualElement.Q<TextField>("operation-evidence-text").value);
+                    StringAssert.Contains("synthetic-shared-prefix-job-25", second.rootVisualElement.Q<Label>("operation-evidence-heading").text);
+                    Assert.IsEmpty(second.rootVisualElement.Q<TextField>("operation-evidence-text").value);
+                }
+            }
+            finally
+            {
+                first.Close();
+                second.Close();
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator LowerRowInspectRevealsCorrectDetailsWithoutBackgroundFocusOrScrollTheft()
+        {
+            var window = ScriptableObject.CreateInstance<EvidenceWindow>();
+            McpActivitySection section = null;
+            string directory = Path.GetFullPath(Path.Combine(Application.dataPath, "../Library/McpTestEvidence/" + Guid.NewGuid().ToString("N")));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                window.minSize = new Vector2(360, 180);
+                window.ShowUtility();
+                var root = window.rootVisualElement;
+                root.AddToClassList("mcp-editor");
+                AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(Template).CloneTree(root);
+                using var navigation = new MCPForUnity.Editor.Windows.McpWindowNavigation(root, _ => { });
+                navigation.Select("activity");
+                foreach (string page in new[] { "clients", "tools", "resources", "assetgen", "graph", "activity", "deps", "advanced" })
+                    root.Q<UnityEditor.UIElements.ToolbarToggle>(page + "-tab").SetValueWithoutNotify(page == "activity");
+                Assert.IsTrue(root.Q<UnityEditor.UIElements.ToolbarToggle>("activity-tab").value);
+                root.Q("clients-panel").AddToClassList("hidden");
+                root.Q("activity-panel").RemoveFromClassList("hidden");
+                var rows = Enumerable
+                    .Range(0, 1001)
+                    .Select(i => new OperationActivityRow
+                    {
+                        Owner = "test",
+                        Id = "synthetic-job-" + i,
+                        Operation = "Synthetic job " + i,
+                        State = "failed",
+                        Phase = "finished",
+                        Detail = "Job detail " + i,
+                        EvidenceId = i.ToString(),
+                    })
+                    .ToList();
+                long revision = 0;
+                int reads = 0;
+                section = new McpActivitySection(root.Q("activity-container"), () => rows, () => revision, _ => Assert.Fail("No cancellation"), _ => reads++);
+                section.SetVisible(true);
+                foreach (var size in new[] { new Vector2(1200, 800), new Vector2(500, 340), new Vector2(1200, 180) })
+                {
+                    window.position = new Rect(40, 40, size.x, size.y);
+                    window.Focus();
+                    for (int i = 0; i < 12; i++)
+                    {
+                        EditorApplication.QueuePlayerLoopUpdate();
+                        window.Repaint();
+                        yield return null;
+                    }
+                    var scroll = root.Q<ScrollView>("activity-panel");
+                    var lower = root.Q("activity-test:synthetic-job-24");
+                    scroll.ScrollTo(lower);
+                    var inspect = lower.Q<Button>("activity-select");
+                    inspect.Focus();
+                    yield return null;
+                    Assert.AreSame(inspect, root.focusController.focusedElement, "Inspect starts from its focused row action.");
+                    using (var submit = NavigationSubmitEvent.GetPooled())
+                        inspect.SendEvent(submit);
+                    for (int i = 0; i < 12; i++)
+                    {
+                        EditorApplication.QueuePlayerLoopUpdate();
+                        window.Repaint();
+                        yield return null;
+                    }
+                    var summary = root.Q<Label>("activity-selected-summary");
+                    StringAssert.Contains("synthetic-job-24", summary.text);
+                    Assert.AreSame(summary, root.focusController.focusedElement);
+                    Assert.Greater(summary.worldBound.yMax, scroll.contentViewport.worldBound.yMin);
+                    Assert.Less(summary.worldBound.yMin, scroll.contentViewport.worldBound.yMax);
+                    string path = Path.Combine(directory, "activity-inspect-" + size.x + "x" + size.y + ".png");
+                    Capture(window, path);
+                    TestContext.WriteLine(
+                        "ACTIVITY_INSPECT_CAPTURE " + path + " summary=" + summary.worldBound + " viewport=" + scroll.contentViewport.worldBound
+                    );
+                    Click(root, "activity-return");
+                    yield return null;
+                    inspect.Focus();
+                    var before = scroll.scrollOffset;
+                    rows[24].Detail = "Updated job detail " + size.x;
+                    revision++;
+                    section.Tick();
+                    for (int i = 0; i < 3; i++)
+                        yield return null;
+                    Assert.AreSame(inspect, root.focusController.focusedElement, "A background revision preserves focus.");
+                    Assert.AreEqual(before, scroll.scrollOffset, "A background revision preserves the reading position.");
+                    StringAssert.Contains(rows[24].Detail, summary.text);
+                }
+                Assert.Zero(reads, "Inspect, paging and refresh never load raw evidence.");
+            }
+            finally
+            {
+                section?.Dispose();
+                window.Close();
+            }
+        }
+
         private static List<OperationActivityRow> SampleRows() =>
             new List<OperationActivityRow>
             {
@@ -368,6 +706,7 @@ namespace MCPForUnityTests.EditMode.Windows
                         evidence = 0;
                     section = new McpActivitySection(root.Q("activity-container"), SampleRows, () => revision, _ => cancel++, _ => evidence++);
                     section.SetVisible(true);
+                    Click(root, "activity-select");
                     foreach (int width in new[] { 420, 1000 })
                     {
                         window.position = new Rect(40, 40, width, 1000);
@@ -378,13 +717,13 @@ namespace MCPForUnityTests.EditMode.Windows
                             yield return null;
                         }
                         Assert.That(root.resolvedStyle.width, Is.EqualTo(width).Within(2));
-                        foreach (var control in root.Q("activity-container").Query<Button>().ToList())
+                        foreach (var control in root.Q("activity-container").Query<Button>().ToList().Where(button => button.worldBound.height > 0))
                         {
                             Assert.That(control.worldBound.width, Is.GreaterThan(8));
                             Assert.That(control.worldBound.xMin, Is.GreaterThanOrEqualTo(root.worldBound.xMin));
                             Assert.That(control.worldBound.xMax, Is.LessThanOrEqualTo(root.worldBound.xMax));
                         }
-                        var button = root.Q<Button>("activity-evidence");
+                        var button = root.Q<Button>("activity-selected-evidence");
                         button.Focus();
                         yield return null;
                         Assert.AreSame(button, root.focusController.focusedElement);

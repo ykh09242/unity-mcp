@@ -60,20 +60,22 @@ namespace MCPForUnityTests.EditMode.Windows
             rows[0].Finished = 12000;
             revision++;
             section.Tick();
+            typeof(Clickable)
+                .GetMethod("Invoke", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                .Invoke(retained.Q<Button>("activity-select").clickable, new object[] { null });
             var labels = retained.Query<Label>().ToList().Select(label => label.text).ToArray();
-            CollectionAssert.AreEqual(
-                new[] { "Build", "State: unknown · Phase: reconciling", "ID: 1", "Later evidence", "Not supported", "Elapsed: 0:00:10" },
-                labels
-            );
-            Assert.IsTrue(retained.Q<Button>("activity-cancel").enabledSelf);
-            Assert.IsFalse(retained.Q<Button>("activity-evidence").enabledSelf);
+            CollectionAssert.AreEqual(new[] { "Build", "test · unknown · reconciling", "Elapsed: 0:00:10" }, labels);
+            StringAssert.Contains("Later evidence", root.Q<Label>("activity-selected-summary").text);
+            StringAssert.Contains("Not supported", root.Q<Label>("activity-selected-summary").text);
+            Assert.IsTrue(root.Q<Button>("activity-cancel").enabledSelf);
+            Assert.IsFalse(root.Q<Button>("activity-selected-evidence").enabledSelf);
             rows[0].CanCancel = false;
             rows[0].EvidenceId = "new-evidence";
             revision++;
             section.Tick();
-            Assert.IsFalse(retained.Q<Button>("activity-cancel").enabledSelf);
-            Assert.AreEqual("Not supported", retained.Q<Button>("activity-cancel").tooltip);
-            Assert.IsTrue(retained.Q<Button>("activity-evidence").enabledSelf);
+            Assert.IsFalse(root.Q<Button>("activity-cancel").enabledSelf);
+            Assert.AreEqual("Not supported", root.Q<Button>("activity-cancel").tooltip);
+            Assert.IsTrue(root.Q<Button>("activity-selected-evidence").enabledSelf);
             Assert.AreSame(untouched, list[1]);
         }
 
@@ -125,6 +127,9 @@ namespace MCPForUnityTests.EditMode.Windows
                     long revision = 0;
                     section = new McpActivitySection(window.rootVisualElement, () => rows, () => revision);
                     section.SetVisible(true);
+                    typeof(Clickable)
+                        .GetMethod("Invoke", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                        .Invoke(window.rootVisualElement.Q<Button>("activity-select").clickable, new object[] { null });
                     for (int frame = 0; frame < 3; frame++)
                         yield return null;
                     Action work = () =>
@@ -162,7 +167,7 @@ namespace MCPForUnityTests.EditMode.Windows
                         var list = window.rootVisualElement.Q("activity-rows");
                         CollectionAssert.AreEqual(rows.Take(25).Select(row => "activity-" + row.Key), list.Children().Select(child => child.name));
                         if (cohort.changed)
-                            Assert.IsTrue(list[0].Query<Label>().ToList().Any(label => label.text == "Odd progress"));
+                            StringAssert.Contains("Odd progress", window.rootVisualElement.Q<Label>("activity-selected-summary").text);
                         TestContext.WriteLine(
                             $"ACTIVITY_PAGE retained={cohort.count} rendered={list.childCount} changed={cohort.changed} revisions=100 repetition={repetition} ms={timer.Elapsed.TotalMilliseconds:F3} alloc_events={allocationEvents}"
                         );
