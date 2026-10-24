@@ -148,6 +148,7 @@ namespace MCPForUnity.Editor.Tools
             public int NextChild;
             public float Alpha;
             public bool Displayed;
+            public CaptureUISnapshot.SiblingIdentities Children;
         }
 
         internal static JArray Capture(GameObject go, UIComponentAdapter ui, int limit, UISnapshotIdentityMap identities = null)
@@ -193,19 +194,14 @@ namespace MCPForUnity.Editor.Tools
                     throw new ArgumentException("Snapshot overflow: visual tree exceeds max_nodes, depth or sibling bound.");
                 int childIndex = parent.NextChild++;
                 var child = parent.Element.ElementAt(childIndex);
-                string path = identities == null ? null : parent.Path + "/" + childIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                string segment = EffectiveSegment(child, path, identities);
-                int matches = 0;
-                for (int i = 0; i < parent.Element.childCount; i++)
-                    if (
-                        EffectiveSegment(
-                            parent.Element.ElementAt(i),
-                            identities == null ? null : parent.Path + "/" + i.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                            identities
-                        ) == segment
-                    )
-                        matches++;
-                if (matches != 1)
+                parent.Children ??= new CaptureUISnapshot.SiblingIdentities(
+                    parent.Element.childCount,
+                    identities == null ? null : parent.Path,
+                    (index, currentPath) => EffectiveSegment(parent.Element.ElementAt(index), currentPath, identities)
+                );
+                string path = parent.Children.Paths?[childIndex];
+                string segment = parent.Children.Segments[childIndex];
+                if (!parent.Children.IsUnique(childIndex))
                     throw new ArgumentException("UI Toolkit semantic identity is ambiguous; give same-type unnamed siblings unique names.");
                 string childIdentity = parent.Identity + "/" + segment;
                 if (childIdentity.Length > 4096)

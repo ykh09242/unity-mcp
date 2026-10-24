@@ -126,6 +126,33 @@ namespace MCPForUnity.Editor.Tools
 
         internal static string SceneIdentity(Scene scene) => string.IsNullOrEmpty(scene.path) ? "unsaved:" + scene.name : scene.path;
 
+        // Capture-local sibling identities. Resolve each escaped segment/path once, then
+        // retain duplicate counts so rejection still occurs at the affected traversal row.
+        internal sealed class SiblingIdentities
+        {
+            internal readonly string[] Segments;
+            internal readonly string[] Paths;
+            private readonly Dictionary<string, int> counts = new(StringComparer.Ordinal);
+
+            internal SiblingIdentities(int count, string parentPath, Func<int, string, string> resolve)
+            {
+                Segments = new string[count];
+                Paths = parentPath == null ? null : new string[count];
+                for (int i = 0; i < count; i++)
+                {
+                    string path = parentPath == null ? null : parentPath + "/" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    if (Paths != null)
+                        Paths[i] = path;
+                    string segment = resolve(i, path);
+                    Segments[i] = segment;
+                    counts.TryGetValue(segment, out int matches);
+                    counts[segment] = matches + 1;
+                }
+            }
+
+            internal bool IsUnique(int index) => counts[Segments[index]] == 1;
+        }
+
         internal static string Identity(GameObject go)
         {
             var names = new Stack<string>();

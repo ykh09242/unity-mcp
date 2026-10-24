@@ -156,13 +156,21 @@ namespace MCPForUnity.Editor.Tools
             return value;
         }
 
+        private sealed class NodeIdentity
+        {
+            internal string Path;
+            internal string Identity;
+            internal int Depth;
+            internal CaptureUISnapshot.SiblingIdentities Children;
+        }
+
         internal static JArray Capture(GameObject root, int limit, UISnapshotIdentityMap identities = null)
         {
             if (!(root.transform is RectTransform) || root.GetComponentInParent<Canvas>(true) == null)
                 throw new ArgumentException("uGUI snapshot requires a RectTransform beneath a Canvas.");
             var privacy = CaptureInputPrivacy();
             var nodes = new JArray();
-            var mappedNodes = identities == null ? null : new Dictionary<Transform, (string Path, string Identity, int Depth)>();
+            var capturedNodes = new Dictionary<Transform, NodeIdentity>();
             var seen = identities == null ? null : new HashSet<string>(StringComparer.Ordinal);
             Type graphicType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Graphic");
             Type selectableType = UnityTypeResolver.ResolveComponent("UnityEngine.UI.Selectable");
@@ -174,45 +182,64 @@ namespace MCPForUnity.Editor.Tools
                 string identity,
                     parentIdentity = null,
                     path = null;
-                if (identities == null)
-                {
-                    identity = CaptureUISnapshot.Identity(go);
-                    if (go != root)
-                        parentIdentity = CaptureUISnapshot.Identity(go.transform.parent.gameObject);
-                }
-                else if (go == root)
+                if (go == root)
                 {
                     identity = CaptureUISnapshot.Identity(root);
-                    path = "";
-                    mappedNodes.Add(go.transform, (path, identity, 1));
-                    seen.Add(identity);
+                    path = identities == null ? null : "";
+                    int depth = 1;
+                    if (identities == null)
+                        for (var ancestor = root.transform.parent; ancestor != null; ancestor = ancestor.parent)
+                            depth++;
+                    capturedNodes.Add(
+                        go.transform,
+                        new NodeIdentity
+                        {
+                            Path = path,
+                            Identity = identity,
+                            Depth = depth,
+                        }
+                    );
+                    seen?.Add(identity);
                 }
                 else
                 {
-                    var parent = mappedNodes[go.transform.parent];
-                    if (parent.Depth >= 128 || go.transform.parent.childCount > 1000)
+                    var parentTransform = go.transform.parent;
+                    var parent = capturedNodes[parentTransform];
+                    if (parent.Depth >= 128 || parentTransform.childCount > 1000)
+                    {
+                        if (identities == null)
+                            throw new ArgumentException(
+                                parent.Depth >= 128 ? "Hierarchy identity exceeds the depth/name bound." : "Hierarchy sibling count exceeds the identity bound."
+                            );
                         throw new ArgumentException("Snapshot overflow: hierarchy exceeds the identity depth or sibling bound.");
-                    path = parent.Path + "/" + go.transform.GetSiblingIndex().ToString(System.Globalization.CultureInfo.InvariantCulture);
-                    string segment = EffectiveSegment(go.transform, path, identities);
-                    int matches = 0;
-                    for (int i = 0; i < go.transform.parent.childCount; i++)
-                        if (
-                            EffectiveSegment(
-                                go.transform.parent.GetChild(i),
-                                parent.Path + "/" + i.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                                identities
-                            ) == segment
-                        )
-                            matches++;
-                    if (matches != 1)
-                        throw new ArgumentException("Hierarchy contains ambiguous effective sibling identities.");
+                    }
+                    parent.Children ??= new CaptureUISnapshot.SiblingIdentities(
+                        parentTransform.childCount,
+                        parent.Path,
+                        (index, currentPath) => EffectiveSegment(parentTransform.GetChild(index), currentPath, identities)
+                    );
+                    int sibling = go.transform.GetSiblingIndex();
+                    path = parent.Children.Paths?[sibling];
+                    string segment = parent.Children.Segments[sibling];
+                    if (!parent.Children.IsUnique(sibling))
+                        throw new ArgumentException(
+                            identities == null ? "Hierarchy contains ambiguous sibling names." : "Hierarchy contains ambiguous effective sibling identities."
+                        );
                     identity = parent.Identity + "/" + segment;
                     if (identity.Length > 4096)
                         throw new ArgumentException("Hierarchy identity exceeds 4096 characters.");
-                    if (!seen.Add(identity))
+                    if (seen != null && !seen.Add(identity))
                         throw new ArgumentException("identity_map produced ambiguous snapshot identities.");
                     parentIdentity = parent.Identity;
-                    mappedNodes.Add(go.transform, (path, identity, parent.Depth + 1));
+                    capturedNodes.Add(
+                        go.transform,
+                        new NodeIdentity
+                        {
+                            Path = path,
+                            Identity = identity,
+                            Depth = parent.Depth + 1,
+                        }
+                    );
                 }
                 var components = go.GetComponents<Component>().Where(item => item != null).ToArray();
                 if (components.Length > 64)
@@ -299,7 +326,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static string EffectiveSegment(Transform element, string path, UISnapshotIdentityMap identities)
         {
-            if (identities.TryGetSegment(path, out string segment))
+            if (identities != null && identities.TryGetSegment(path, out string segment))
                 return segment;
             string name = element.name;
             if (name.Length > 1024)
