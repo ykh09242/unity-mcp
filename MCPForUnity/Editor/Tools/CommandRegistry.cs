@@ -10,7 +10,6 @@ using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Tools.Capabilities;
 using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 
@@ -613,7 +612,7 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 var response = new { status = "success", result };
-                string json = JsonConvert.SerializeObject(response);
+                string json = SerializeAsyncResponse(response);
                 outcome?.Invoke(CommandOutcomeMetadata.FromResult(result));
 
                 if (!tcs.TrySetResult(json))
@@ -625,6 +624,20 @@ namespace MCPForUnity.Editor.Tools
             {
                 McpLog.Error($"Error completing async command '{commandName}': {ex.Message}\n{ex.StackTrace}");
                 ReportAsyncFailure(commandName, tcs, ex, outcome);
+            }
+        }
+
+        private static string SerializeAsyncResponse(object response)
+        {
+            try
+            {
+                return BoundedResponseJson.SerializeAdmitted(response);
+            }
+            catch (ResponseLimitException)
+            {
+                // This fixed envelope must remain useful even if custom serializers caused
+                // the refusal or attempted to expand the handler's error response itself.
+                return "{\"status\":\"error\",\"error\":\"Command result exceeds the transport size or complexity limit\"}";
             }
         }
 
@@ -650,7 +663,7 @@ namespace MCPForUnity.Editor.Tools
             string json;
             try
             {
-                json = JsonConvert.SerializeObject(errorResponse);
+                json = SerializeAsyncResponse(errorResponse);
             }
             catch (Exception serializationEx)
             {
