@@ -16,8 +16,35 @@ namespace MCPForUnity.Editor.Clients
     /// <summary>CLI-based configurator (Claude Code).</summary>
     public abstract class ClaudeCliMcpConfigurator : McpClientConfiguratorBase
     {
+        private readonly string capturedUserConfigPath;
+
         public ClaudeCliMcpConfigurator(McpClient client)
-            : base(client) { }
+            : this(client, null) { }
+
+        private ClaudeCliMcpConfigurator(McpClient client, string userConfigPath)
+            : base(client) => capturedUserConfigPath = userConfigPath;
+
+        // Window operations own their mutable status. The service instance may be shared
+        // by several windows and must not receive a background operation's intermediate state.
+        internal ClaudeCliMcpConfigurator CreateOperationClient(string userConfigPath) => new OperationClient(this, userConfigPath);
+
+        private sealed class OperationClient : ClaudeCliMcpConfigurator
+        {
+            private readonly ClaudeCliMcpConfigurator owner;
+
+            internal OperationClient(ClaudeCliMcpConfigurator owner, string userConfigPath)
+                : base(new McpClient { name = owner.client.name }, userConfigPath) => this.owner = owner;
+
+            protected override bool RunCli(
+                string executable,
+                string arguments,
+                string directory,
+                out string stdout,
+                out string stderr,
+                int timeout,
+                string pathPrepend
+            ) => owner.RunCli(executable, arguments, directory, out stdout, out stderr, timeout, pathPrepend);
+        }
 
         protected virtual bool RunCli(
             string executable,
@@ -31,10 +58,10 @@ namespace MCPForUnity.Editor.Clients
 
         public override bool SupportsAutoConfigure => true;
         private bool hasSelectedLocalRegistration;
-        internal bool ShouldUnregister =>
-            hasSelectedLocalRegistration
-            && client.status == McpStatus.Configured
-            && (HasClientProjectDirOverride || client.configuredTransport == HttpEndpointUtility.GetCurrentServerTransport());
+        internal bool ShouldUnregister => ShouldUnregisterForContext(HasClientProjectDirOverride, HttpEndpointUtility.GetCurrentServerTransport());
+
+        internal bool ShouldUnregisterForContext(bool hasProjectDirOverride, ConfiguredTransport serverTransport) =>
+            hasSelectedLocalRegistration && client.status == McpStatus.Configured && (hasProjectDirOverride || client.configuredTransport == serverTransport);
 
         public override string GetConfigureActionLabel() => ShouldUnregister ? "Unregister" : "Configure";
 
@@ -588,10 +615,10 @@ namespace MCPForUnity.Editor.Clients
             }
         }
 
-        private static Dictionary<string, JObject> ReadSelectedLocalRegistrations(string projectDir)
+        private Dictionary<string, JObject> ReadSelectedLocalRegistrations(string projectDir)
         {
             var result = new Dictionary<string, JObject>(StringComparer.Ordinal);
-            string path = GetUserConfigPath();
+            string path = capturedUserConfigPath ?? GetUserConfigPath();
             GuardedFileSystem.CheckPath(path);
             if (!File.Exists(path))
                 return result;
@@ -622,7 +649,7 @@ namespace MCPForUnity.Editor.Clients
             return result;
         }
 
-        private static string BuildHttpRegistrationArguments(string projectDir, string claudePath, string httpUrl, bool remote, string apiKey)
+        private string BuildHttpRegistrationArguments(string projectDir, string claudePath, string httpUrl, bool remote, string apiKey)
         {
             // Validate capability/configuration before the CLI removal path can change existing registrations.
             if (!remote && !ClaudeHttpAuth.SupportsHeadersHelper(claudePath))
@@ -637,7 +664,7 @@ namespace MCPForUnity.Editor.Clients
             return $"mcp add --scope local --transport http UnityMCP {httpUrl}{BuildHttpAuthArgument(httpUrl, true, apiKey)}";
         }
 
-        private static JObject GetExistingConfigForRegistration(string projectDir)
+        private JObject GetExistingConfigForRegistration(string projectDir)
         {
             JObject existing = null;
             foreach (var entry in ReadSelectedLocalRegistrations(projectDir).Values)
@@ -743,7 +770,7 @@ namespace MCPForUnity.Editor.Clients
         /// own config resolution order.
         /// This is much faster than running `claude mcp list` which does health checks on all servers.
         /// </summary>
-        private static (JObject serverConfig, string error) ReadClaudeCodeConfig(string projectDir)
+        private (JObject serverConfig, string error) ReadClaudeCodeConfig(string projectDir)
         {
             try
             {
@@ -846,11 +873,11 @@ namespace MCPForUnity.Editor.Clients
         /// <summary>
         /// Reads current local registrations from .claude.json's projects section, or its user-level entry.
         /// </summary>
-        private static (JObject serverConfig, string error) ReadUserScopeConfig(string projectDir, bool userOnly = false)
+        private (JObject serverConfig, string error) ReadUserScopeConfig(string projectDir, bool userOnly = false)
         {
             try
             {
-                string configPath = GetUserConfigPath();
+                string configPath = capturedUserConfigPath ?? GetUserConfigPath();
 
                 if (!File.Exists(configPath))
                     return (null, null);
