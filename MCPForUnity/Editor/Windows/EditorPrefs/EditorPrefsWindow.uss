@@ -96,27 +96,42 @@
     margin-right: 6px;
 }
 
+.editor-prefs-window .pref-row .value-field,
+.editor-prefs-window .pref-row .type-dropdown {
+    height: 28px;
+    min-height: 28px;
+    margin-top: 2px;
+    margin-bottom: 2px;
+}
+
+.editor-prefs-window .pref-row .value-field > .unity-base-field__label {
+    min-width: 92px;
+    width: 92px;
+}
+
 .editor-prefs-window .action-buttons,
 .editor-prefs-window .add-buttons {
     flex-direction: row;
     flex-shrink: 0;
 }
 
-.editor-prefs-window .action-buttons .save-button {
+.editor-prefs-window .action-buttons > Button {
     min-width: 72px;
     height: 28px;
+    min-height: 28px;
     padding-left: 8px;
     padding-right: 8px;
-    font-size: 16px;
-    -unity-font-style: bold;
+    margin-top: 2px;
+    margin-bottom: 2px;
+    font-size: 12px;
 }
 
-.editor-prefs-window .save-button {
+.editor-prefs-window .pref-dirty .save-button {
     background-color: var(--mcp-accent);
     color: var(--mcp-accent-text);
 }
 
-.editor-prefs-window .save-button:hover {
+.editor-prefs-window .pref-dirty .save-button:hover {
     background-color: var(--mcp-hover);
     color: var(--mcp-text);
 }
