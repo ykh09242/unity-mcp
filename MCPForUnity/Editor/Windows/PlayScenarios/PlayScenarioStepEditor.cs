@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using Newtonsoft.Json;
@@ -25,6 +26,25 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             "wait_state",
             "input",
         };
+
+        private static string ActionLabel(string action) =>
+            action == "load_scene" ? "Load a scene"
+            : action == "click_ui" ? "Click a UI element"
+            : action == "wait_scene" ? "Wait for a scene"
+            : action == "wait_object" ? "Wait for an object"
+            : action == "reset_state" ? "Reset registered state"
+            : action == "wait_state" ? "Wait for a state value"
+            : action == "input" ? "Send input"
+            : "Choose an action";
+
+        private static string ActionHelp(string action) =>
+            action == "load_scene" ? "Open the scene that the following steps will use."
+            : action == "click_ui" ? "Choose the exact UI target to click."
+            : action == "wait_scene" ? "Continue when the expected scene is active."
+            : action == "wait_object" ? "Continue when the target is present and matches any optional conditions."
+            : action == "reset_state" ? "Ask registered reset handlers to prepare the next repeat."
+            : action == "wait_state" ? "Continue when a registered state value matches the expected value."
+            : "Send a keyboard, pointer or gamepad command.";
 
         private sealed class StateValueDraft
         {
@@ -56,26 +76,26 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 var card = new VisualElement { name = "step" + suffix };
                 card.AddToClassList("scenario-step");
                 var toolbar = Row();
-                toolbar.Add(new Label("Step " + (index + 1)));
+                var number = new Label("Step " + (index + 1));
+                number.AddToClassList("scenario-step-number");
+                toolbar.Add(number);
                 var up = ActionButton("Up", "moveStepUp" + suffix, () => MoveStep(stepList, steps, prefix, position, -1, edit, setMessage, limit));
                 up.SetEnabled(index > 0);
                 var down = ActionButton("Down", "moveStepDown" + suffix, () => MoveStep(stepList, steps, prefix, position, 1, edit, setMessage, limit));
                 down.SetEnabled(index < steps.Count - 1);
                 toolbar.Add(up);
                 toolbar.Add(down);
-                var duplicate = ActionButton(
-                    "Duplicate",
-                    "duplicateStep" + suffix,
-                    () => DuplicateStep(stepList, steps, prefix, position, edit, setMessage, limit)
-                );
+                var duplicate = ActionButton("Copy", "duplicateStep" + suffix, () => DuplicateStep(stepList, steps, prefix, position, edit, setMessage, limit));
                 duplicate.SetEnabled(steps.Count < limit);
                 toolbar.Add(duplicate);
-                toolbar.Add(ActionButton("Delete Step", "deleteStep" + suffix, () => DeleteStep(stepList, steps, prefix, position, edit, setMessage, limit)));
+                toolbar.Add(ActionButton("Remove", "deleteStep" + suffix, () => DeleteStep(stepList, steps, prefix, position, edit, setMessage, limit)));
                 card.Add(toolbar);
                 var stepName = new TextField("Step name") { name = "stepName" + suffix, value = step.Name };
+                stepName.tooltip = "A short description of this step. This does not rename the saved scenario.";
                 stepName.RegisterValueChangedCallback(evt => edit(() => step.Name = evt.newValue));
                 card.Add(stepName);
-                var action = new PopupField<string>("Action", Actions, Actions.IndexOf(step.Action)) { name = "stepAction" + suffix };
+                var action = new PopupField<string>("Action", Actions, Actions.IndexOf(step.Action), ActionLabel, ActionLabel) { name = "stepAction" + suffix };
+                action.tooltip = ActionHelp(step.Action);
                 action.RegisterValueChangedCallback(evt =>
                 {
                     StateValueDrafts.Remove(step);
@@ -128,7 +148,19 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     OptionalInteger(card, "Stable duration (ms)", "stepStable" + suffix, step.StableForMs, value => edit(() => step.StableForMs = value));
                 if (step.Action == "wait_object")
                     BuildConditionFields(card, step, suffix, edit);
-                BuildObservationFields(card, step, suffix, edit);
+                bool observed = step.Performance != null || step.Screenshot != null;
+                var evidence = new Foldout
+                {
+                    text = observed ? "Evidence · Configured" : "Evidence",
+                    name = "stepEvidence" + suffix,
+                    value = false,
+                };
+                BuildObservationFields(evidence, step, suffix, edit);
+                evidence.RegisterValueChangedCallback(_ =>
+                    evidence.text = step.Performance != null || step.Screenshot != null ? "Evidence · Configured" : "Evidence"
+                );
+                card.Add(evidence);
+                CollapseHelp(card);
                 stepList.Add(card);
             }
         }
@@ -211,6 +243,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                         "Measures real complete frames while this step runs. Frame p95 uses nearest rank; GC uses GC Allocated In Frame. Missing counters, no complete frames or sample overflow fail selected frame budgets. Duration excludes screenshot capture."
                     )
                 );
+                CollapseHelp(performanceFields);
             };
             performance.RegisterValueChangedCallback(evt =>
             {
@@ -242,6 +275,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                         "Captures the composited frame after rendering. Configure Game View or Player resolution to match these dimensions. Capture is unavailable in batch/headless mode; mismatched dimensions or PNGs over 4 MiB fail the checkpoint."
                     )
                 );
+                CollapseHelp(screenshotFields);
             };
             screenshot.RegisterValueChangedCallback(evt =>
             {
@@ -401,8 +435,16 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 // Clear an old picker value when the manually entered path changes.
                 scene.SetValueWithoutNotify(null);
             });
+            scene.tooltip = path.tooltip;
             card.Add(scene);
-            card.Add(path);
+            var manual = new Foldout
+            {
+                text = "Scene path",
+                name = "stepScenePath" + index,
+                value = false,
+            };
+            manual.Add(path);
+            card.Add(manual);
         }
 
         private static void BuildTargetFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit, Action<string, bool> setMessage)
@@ -528,7 +570,19 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
 
         private static void BuildConditionFields(VisualElement card, PlayScenarioStep step, string index, Action<Action> edit)
         {
-            var conditions = new Foldout { text = "Object conditions", name = "stepConditions" + index };
+            bool configured = step.Count.HasValue || step.Active.HasValue || step.Component != null || step.Property != null;
+            var conditions = new Foldout
+            {
+                text = configured ? "Conditions · Configured" : "Conditions",
+                name = "stepConditions" + index,
+                value = false,
+            };
+            Action refreshCaption = () =>
+                conditions.text =
+                    step.Count.HasValue || step.Active.HasValue || step.Component != null || step.Property != null ? "Conditions · Configured" : "Conditions";
+            conditions.RegisterCallback<ChangeEvent<bool>>(_ => refreshCaption());
+            conditions.RegisterCallback<ChangeEvent<string>>(_ => refreshCaption());
+            conditions.RegisterCallback<ChangeEvent<int>>(_ => refreshCaption());
             OptionalInteger(conditions, "Require exact count", "stepCount" + index, step.Count, value => edit(() => step.Count = value));
             var active = new PopupField<string>(
                 "Active state",
@@ -628,6 +682,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             conditions.Add(property);
             conditions.Add(fields);
             conditions.Add(new Label("Component/property checks require one match. Count 0 forbids active/component/property checks."));
+            CollapseHelp(conditions);
             card.Add(conditions);
         }
 
@@ -690,6 +745,21 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             var row = new VisualElement();
             row.AddToClassList("scenario-row");
             return row;
+        }
+
+        private static void CollapseHelp(VisualElement parent)
+        {
+            var notes = parent.Children().OfType<Label>().Where(label => string.IsNullOrEmpty(label.name) && label.text?.Length > 80).ToList();
+            if (notes.Count == 0)
+                return;
+            var help = new Foldout { text = "Help", value = false };
+            foreach (Label note in notes)
+            {
+                note.RemoveFromHierarchy();
+                note.AddToClassList("scenario-note");
+                help.Add(note);
+            }
+            parent.Add(help);
         }
 
         private static Button ActionButton(string text, string name, Action action) => new Button(action) { text = text, name = name };

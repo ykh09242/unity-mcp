@@ -222,7 +222,7 @@ namespace MCPForUnityTests.Editor.Windows
                 window.Show();
                 yield return null;
                 window.CreateGUI();
-                typeof(PlayScenarioWindow).GetMethod("SelectScenarioPane", Instance).Invoke(window, new object[] { "run" });
+                typeof(PlayScenarioWindow).GetMethod("SelectScenarioPane", Instance).Invoke(window, new object[] { "results" });
                 MethodInfo accept = typeof(PlayScenarioWindow).GetMethod("AcceptReport", Instance);
                 JObject first = Report(19200);
                 accept.Invoke(window, new object[] { new SuccessResponse("first", first) });

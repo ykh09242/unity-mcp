@@ -20,21 +20,35 @@ Select the intended Unity instance. If needed, activate the `testing` group with
 
 ## Author in the Editor
 
-Open **Window -> MCP for Unity -> Play Scenarios**. **New** creates a four-step menu/start/game/player
-template with empty scene fields and placeholder targets. Choose real scene assets and exact object
-paths, using the scene picker and **Use Selection** where applicable.
+Open **Window -> MCP for Unity -> Play Scenarios**. A scenario is an ordered check such as
+**Load a scene -> Click a UI button -> Wait for the game scene -> Check the player**.
+Use the same four stages at any window width:
 
-Edit **Setup**, **Main** and **Cleanup** steps, with action-specific fields, ordering, duplication and
-removal. **Undo** and **Redo** keep up to 50 in-window JSON snapshots; these are draft history, not Unity
-scene undo. **Save** persists the definition. Existing names are locked; **Save As** creates a separate
-named copy and refuses to overwrite one. Delete and navigation protect unsaved changes.
+1. **Scenarios**: select a saved scenario or create one. The new-scenario template has four steps,
+   empty scene fields and placeholder targets; replace them with your project's actual values.
+2. **Edit steps**: name the scenario, then configure its ordered main steps. Each step has its own
+   descriptive name and action. Choose scene assets and exact object paths with the scene picker and
+   **Use Current Selection** where applicable. Setup, cleanup and advanced settings are optional; configured
+   groups advertise their content.
+3. **Run**: check validation, choose execution options and start the scenario in the Editor. Suites
+   and standalone Player builds are available separately from the primary Editor action.
+4. **Results**: inspect the current run, then open previous runs or other evidence when needed. A
+   successful start opens this stage. The active run and its cancellation control remain available
+   while editing another draft.
 
-**Preflight** checks scene assets and the currently inspectable target capabilities without loading a
-scene, entering Play Mode or clicking. Runtime/future-scene targets are marked `deferred`; preflight
+Switching stages preserves the draft. Step ordering, duplication and removal remain available.
+**Undo** and **Redo** keep up to 50 in-window JSON snapshots; these are draft history, not Unity scene
+undo. **Save scenario** persists the definition. Existing names are locked; saving a named copy
+refuses to overwrite one. Deletion and switching to a different scenario protect unsaved changes. Friendly
+action labels in the Editor retain the existing action identifiers in saved JSON and MCP requests.
+
+Under **Scene checks** in **Edit steps**, **Check scenes and current targets** checks
+scene assets and the currently inspectable target capabilities without loading a scene, entering Play
+Mode or clicking. Runtime/future-scene targets are marked `deferred`; preflight
 success does not establish that the complete game flow will pass. Inspect its stage/index and detail.
 
-**Run policies and diagnostics** configures unexpected error handling, a completion quiet window,
-cleanup timeout, optional per-iteration memory samples and failure screenshots. Run validates and saves
+Under **Settings**, **Policies & evidence** configures unexpected error handling, a completion quiet
+window, cleanup timeout, optional per-iteration memory samples and failure screenshots. Run validates and saves
 the draft before starting. Status refreshes every 500 ms only while the job is active. Closing the
 window leaves the backend job running; reopen it to inspect or cancel the retained job ID.
 
@@ -42,7 +56,8 @@ Recorded definitions carry `draft: true` and cannot preflight, run or enter a Pl
 their steps, clear **Recorded draft (review required)** and save before execution; ordinary editing
 history and a recorded definition's admission flag are separate.
 
-**Previous runs and comparison** reads saved reports on **Refresh history** and after completion.
+In **Results**, expand **Saved & Player results**, then **Saved runs**. This reads saved reports on
+**Refresh history** and after completion.
 Choose two different reports and **Compare reports** to compare status, duration, poll counts and
 metric warnings. Rows align by stage, iteration and step index; a warning identifies changed definitions.
 This view does not continuously scan report files or query scene objects.
@@ -272,7 +287,7 @@ Retention deletes the report's owned PNG with its JSON. This is diagnostic evide
 ## Stable targets and raycast clicks
 
 Add a **Play Scenario Target** component to an intended scene object or prefab and assign a unique
-`TargetId`. Use `target_id` instead of `target` in that step; the Editor target selector and **Use
+`TargetId`. Use `target_id` instead of `target` in that step; the Editor target selector and **Use Current
 Selection** can read an existing marker without modifying the scene. IDs use
 `[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}` and survive hierarchy renames or reparenting. Resolution is scoped to
 the active scene, includes inactive objects and rejects duplicate IDs. An ID condition accepts only

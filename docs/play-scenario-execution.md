@@ -116,7 +116,8 @@ explicit tracker, not automatic detection of every leak in the game.
 
 ## Build and run a standalone Player
 
-Save a compatible scenario, leave Play Mode, and choose **Build Player** in the Play Scenarios window.
+Save a compatible scenario and leave Play Mode. In the Play Scenarios window, open **Run**, expand
+**Standalone Player**, and choose **Build standalone Player**.
 Select an explicit empty output directory outside Assets. Compilation, import, existing builds,
 unsaved drafts and active jobs must finish first. Save loaded untitled scenes before an interactive
 build. An unmodified batch startup may be replaced by the owned empty bootstrap without saving its

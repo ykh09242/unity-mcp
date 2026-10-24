@@ -84,17 +84,26 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private VisualElement scenarioColumns;
         private VisualElement libraryPane;
         private VisualElement editorPane;
+        private VisualElement runPane;
         private VisualElement resultsPane;
         private bool? compactScenarioLayout;
 
         [SerializeField]
-        private string selectedScenarioPane = "edit";
+        private string selectedScenarioPane = "library";
 
         [SerializeField]
-        private float scenarioLibraryWidth = 180;
+        private int workflowLayoutVersion;
 
         [SerializeField]
-        private float scenarioEditorWidth = 420;
+        private string activeRunName;
+        private Label draftContext;
+        private Label runPreparation;
+        private Label activeRunLabel;
+        private VisualElement activeRunStrip;
+        private Foldout optionalStages;
+        private Foldout advancedOptions;
+        private bool optionsConfigured;
+        private JObject defaultOptionSnapshot;
         private VisualElement stepList;
         private ScrollView runResults;
         private VisualElement optionsContainer;
@@ -161,12 +170,17 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 jobId = SessionState.GetString(SessionJobKey, "");
                 suiteMode = SessionState.GetBool(SessionSuiteModeKey, false);
             }
+            if (workflowLayoutVersion == 0)
+            {
+                if (selectedScenarioPane == "run")
+                    selectedScenarioPane = "results";
+                workflowLayoutVersion = 1;
+            }
             hasUnsavedChanges = dirty || suiteDirty;
         }
 
         private void OnDisable()
         {
-            RememberPaneWidths();
             rootVisualElement.UnregisterCallback<GeometryChangedEvent>(OnScenarioGeometryChanged);
             playerSessionEditor?.Dispose();
             playerSoakEditor?.Dispose();
@@ -193,7 +207,6 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             StopPolling();
             RestoreDraft();
             rootVisualElement.UnregisterCallback<GeometryChangedEvent>(OnScenarioGeometryChanged);
-            RememberPaneWidths();
             rootVisualElement.Clear();
             compactScenarioLayout = null;
             reportView = null;
@@ -209,17 +222,21 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 if (sheet != null && !rootVisualElement.styleSheets.Contains(sheet))
                     rootVisualElement.styleSheets.Add(sheet);
             }
-            var heading = new Label("Play Scenarios");
-            heading.AddToClassList("scenario-heading");
-            rootVisualElement.Add(heading);
-            var intro = Note(
-                "Save a repeatable menu → Start → game → Player flow. Configure scene assets and exact hierarchy paths or stable test IDs before running."
-            );
-            intro.AddToClassList("scenario-intro");
-            rootVisualElement.Add(intro);
+            draftContext = new Label { name = "scenarioDraftContext" };
+            draftContext.AddToClassList("scenario-draft-context");
+            rootVisualElement.Add(draftContext);
             var tabs = Row();
+            tabs.name = "scenarioWorkflow";
             tabs.AddToClassList("scenario-tabs");
-            foreach (var entry in new[] { (Id: "library", Title: "Library"), (Id: "edit", Title: "Edit"), (Id: "run", Title: "Run & results") })
+            foreach (
+                var entry in new[]
+                {
+                    (Id: "library", Title: "Scenarios"),
+                    (Id: "edit", Title: "Edit steps"),
+                    (Id: "run", Title: "Run"),
+                    (Id: "results", Title: "Results"),
+                }
+            )
             {
                 string id = entry.Id;
                 var tab = ActionButton(entry.Title, "scenario-tab-" + id, () => SelectScenarioPane(id));
@@ -227,20 +244,33 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 tabs.Add(tab);
             }
             rootVisualElement.Add(tabs);
+            activeRunStrip = Row();
+            activeRunStrip.name = "scenarioActiveRun";
+            activeRunStrip.AddToClassList("scenario-active-run");
+            activeRunLabel = new Label { name = "scenarioActiveRunLabel" };
+            activeRunLabel.AddToClassList("scenario-active-run-label");
+            activeRunStrip.Add(activeRunLabel);
+            activeRunStrip.Add(ActionButton("View results", "showScenarioResults", ShowCurrentResults));
+            cancelButton = ActionButton("Cancel run", "cancelScenario", CancelScenario);
+            activeRunStrip.Add(cancelButton);
+            rootVisualElement.Add(activeRunStrip);
             var columns = new VisualElement();
             columns.AddToClassList("scenario-columns");
             rootVisualElement.Add(columns);
             BuildSavedList(columns);
             BuildEditor(columns);
+            BuildRun(columns);
             BuildResults(columns);
             scenarioColumns = columns;
             libraryPane = columns.Q(className: "scenario-library");
             editorPane = columns.Q(className: "scenario-editor");
+            runPane = columns.Q(className: "scenario-run");
             resultsPane = columns.Q(className: "scenario-results");
             rootVisualElement.RegisterCallback<GeometryChangedEvent>(OnScenarioGeometryChanged);
             UpdateScenarioLayout(position.width, position.height);
             message = new Label { name = "scenarioMessage" };
             message.AddToClassList("scenario-message");
+            message.AddToClassList("scenario-message-empty");
             rootVisualElement.Add(message);
             RefreshSavedList();
             RenderDraft();
@@ -252,151 +282,192 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
 
         private void OnScenarioGeometryChanged(GeometryChangedEvent evt) => UpdateScenarioLayout(evt.newRect.width, evt.newRect.height);
 
-        private void RememberPaneWidths()
-        {
-            if (compactScenarioLayout != false)
-                return;
-            if (libraryPane != null && libraryPane.resolvedStyle.width > 0)
-                scenarioLibraryWidth = libraryPane.resolvedStyle.width;
-            if (editorPane != null && editorPane.resolvedStyle.width > 0)
-                scenarioEditorWidth = editorPane.resolvedStyle.width;
-        }
-
         private void UpdateScenarioLayout(float width, float height)
         {
             if (scenarioColumns == null || float.IsNaN(width) || width <= 0)
                 return;
-            rootVisualElement.EnableInClassList("scenario-short", height > 0 && height < 480);
-            bool compact = width < 1000;
-            if (compactScenarioLayout == compact)
-                return;
-            RememberPaneWidths();
-            var focused = rootVisualElement.focusController?.focusedElement as VisualElement;
-            if (focused != null)
-            {
-                if (libraryPane.Contains(focused))
-                    selectedScenarioPane = "library";
-                if (editorPane.Contains(focused))
-                    selectedScenarioPane = "edit";
-                if (resultsPane.Contains(focused))
-                    selectedScenarioPane = "run";
-            }
-            compactScenarioLayout = compact;
-            rootVisualElement.EnableInClassList("scenario-compact", compact);
-            libraryPane.RemoveFromHierarchy();
-            editorPane.RemoveFromHierarchy();
-            resultsPane.RemoveFromHierarchy();
-            scenarioColumns.Clear();
-            if (compact)
-            {
-                // SplitView writes fixed pane geometry inline; reset it before using the whole viewport.
-                foreach (var pane in new[] { libraryPane, editorPane, resultsPane })
-                {
-                    pane.style.width = StyleKeyword.Null;
-                    pane.style.flexBasis = StyleKeyword.Null;
-                    pane.style.flexGrow = 1;
-                    scenarioColumns.Add(pane);
-                }
-                SelectScenarioPane(selectedScenarioPane);
-            }
-            else
-            {
-                foreach (var pane in new[] { libraryPane, editorPane, resultsPane })
-                {
-                    pane.style.display = DisplayStyle.Flex;
-                    pane.style.width = StyleKeyword.Null;
-                    pane.style.flexBasis = StyleKeyword.Null;
-                    pane.style.flexGrow = 0;
-                }
-                float libraryWidth = Mathf.Clamp(scenarioLibraryWidth, 150, width - 650);
-                var split = new TwoPaneSplitView(0, libraryWidth, TwoPaneSplitViewOrientation.Horizontal);
-                split.AddToClassList("scenario-split");
-                var detail = new TwoPaneSplitView(0, Mathf.Clamp(scenarioEditorWidth, 280, width - libraryWidth - 320), TwoPaneSplitViewOrientation.Horizontal);
-                detail.AddToClassList("scenario-split");
-                split.Add(libraryPane);
-                split.Add(detail);
-                detail.Add(editorPane);
-                detail.Add(resultsPane);
-                scenarioColumns.Add(split);
-            }
-            if (focused != null && focused.panel != null && focused.resolvedStyle.display != DisplayStyle.None)
-                focused.Focus();
+            rootVisualElement.EnableInClassList("scenario-short", height > 0 && height < 300);
+            compactScenarioLayout = width < 700;
+            rootVisualElement.EnableInClassList("scenario-compact", compactScenarioLayout == true);
+            SelectScenarioPane(selectedScenarioPane);
         }
 
         private void SelectScenarioPane(string id)
         {
-            selectedScenarioPane = id == "library" || id == "run" ? id : "edit";
-            if (compactScenarioLayout == true)
-            {
-                libraryPane.style.display = selectedScenarioPane == "library" ? DisplayStyle.Flex : DisplayStyle.None;
-                editorPane.style.display = selectedScenarioPane == "edit" ? DisplayStyle.Flex : DisplayStyle.None;
-                resultsPane.style.display = selectedScenarioPane == "run" ? DisplayStyle.Flex : DisplayStyle.None;
-            }
-            foreach (string pane in new[] { "library", "edit", "run" })
+            selectedScenarioPane = id == "library" || id == "edit" || id == "run" || id == "results" ? id : "library";
+            libraryPane?.EnableInClassList("scenario-pane-active", selectedScenarioPane == "library");
+            editorPane?.EnableInClassList("scenario-pane-active", selectedScenarioPane == "edit");
+            runPane?.EnableInClassList("scenario-pane-active", selectedScenarioPane == "run");
+            resultsPane?.EnableInClassList("scenario-pane-active", selectedScenarioPane == "results");
+            foreach (string pane in new[] { "library", "edit", "run", "results" })
                 rootVisualElement.Q<Button>("scenario-tab-" + pane)?.EnableInClassList("scenario-tab-selected", pane == selectedScenarioPane);
+        }
+
+        private void ShowCurrentResults()
+        {
+            var tools = rootVisualElement.Q<Foldout>("scenarioResultTools");
+            if (tools != null && tools.value)
+                tools.value = false;
+            SelectScenarioPane("results");
         }
 
         private void BuildSavedList(VisualElement columns)
         {
-            var panel = Panel("scenario-library", "Saved scenarios");
+            var panel = Panel("scenario-library");
             var toolbar = Row();
-            toolbar.Add(ActionButton("Refresh", "refreshScenarios", RefreshSavedList));
-            toolbar.Add(ActionButton("New", "newScenario", NewScenario));
+            var create = ActionButton("Create scenario", "newScenario", NewScenario);
+            create.tooltip = "Create the example flow, then choose its scene assets and targets.";
+            create.AddToClassList("scenario-primary-button");
+            toolbar.Add(create);
+            var refresh = ActionButton("Refresh list", "refreshScenarios", RefreshSavedList);
+            refresh.tooltip = "Read definitions saved in this project's ProjectSettings/MCPForUnity/PlayScenarios folder.";
+            toolbar.Add(refresh);
             panel.Add(toolbar);
             scenarioList = new ScrollView { name = "savedScenarios" };
             scenarioList.AddToClassList("scenario-scroll");
             panel.Add(scenarioList);
-            panel.Add(Note("Definitions are saved in ProjectSettings/MCPForUnity/PlayScenarios."));
             columns.Add(panel);
         }
 
         private void BuildEditor(VisualElement columns)
         {
-            var container = Panel("scenario-editor", "Definition");
+            var container = Panel("scenario-editor");
+            container.AddToClassList("scenario-edit");
             var panel = new ScrollView { name = "scenarioEditorScroll" };
             panel.AddToClassList("scenario-scroll");
             container.Add(panel);
-            nameField = new TextField("Name") { name = "scenarioName" };
+            nameField = new TextField("Scenario name") { name = "scenarioName" };
             nameField.RegisterValueChangedCallback(evt => Edit(() => draft.Name = evt.newValue));
             panel.Add(nameField);
-            pollField = new IntegerField("Poll interval (ms)") { name = "pollInterval" };
-            pollField.RegisterValueChangedCallback(evt => Edit(() => draft.PollIntervalMs = evt.newValue));
-            panel.Add(pollField);
-            panel.Add(Note("Name: lowercase slug. Poll: 100–2000 ms. First executed setup/main step must load_scene. Each wait is bounded to 1–120 seconds."));
             var toolbar = Row();
-            saveButton = ActionButton("Save", "saveScenario", () => TrySave());
+            saveButton = ActionButton("Save scenario", "saveScenario", () => TrySave());
+            saveButton.AddToClassList("scenario-primary-button");
             toolbar.Add(saveButton);
-            deleteButton = ActionButton("Delete", "deleteScenario", DeleteScenario);
-            toolbar.Add(deleteButton);
-            toolbar.Add(ActionButton("Add Step", "addStep", AddStep));
             undoButton = ActionButton("Undo", "undoDraft", () => RestoreHistory(undoDrafts, redoDrafts));
             redoButton = ActionButton("Redo", "redoDraft", () => RestoreHistory(redoDrafts, undoDrafts));
             toolbar.Add(undoButton);
             toolbar.Add(redoButton);
+            toolbar.Add(ActionButton("Next: Run", "reviewScenarioRun", () => SelectScenarioPane("run")));
             panel.Add(toolbar);
-            var copyRow = Row();
-            copyNameField = new TextField("Copy name") { name = "copyScenarioName" };
-            copyNameField.AddToClassList("scenario-copy-name");
-            copyNameField.RegisterValueChangedCallback(_ => UpdateValidation());
-            copyRow.Add(copyNameField);
-            copyButton = ActionButton("Save As Copy", "saveScenarioCopy", () => SaveCopy());
-            copyRow.Add(copyButton);
-            panel.Add(copyRow);
             validation = new Label { name = "scenarioValidation" };
             validation.AddToClassList("scenario-validation");
             panel.Add(validation);
-            var preflight = ActionButton("Validate current scene", "preflightScenario", Preflight);
-            preflight.tooltip = "Read-only scene asset and current target checks. Future scene/runtime checks are deferred.";
-            panel.Add(preflight);
+            var authoring = new VisualElement { name = "scenarioAuthoring" };
+            authoring.AddToClassList("scenario-authoring");
+            var stepsHeading = Row();
+            stepsHeading.Add(new Label("Steps"));
+            var add = ActionButton("Add step", "addStep", AddStep);
+            add.AddToClassList("scenario-primary-button");
+            stepsHeading.Add(add);
+            authoring.Add(stepsHeading);
+            stepList = new VisualElement { name = "scenarioSteps" };
+            authoring.Add(stepList);
+            optionalStages = new Foldout { name = "scenarioOptionalStages", value = false };
+            optionalStages.AddToClassList("scenario-optional-group");
+            setupList = BuildStage(optionalStages, "Setup", "setup");
+            cleanupList = BuildStage(optionalStages, "Cleanup", "cleanup");
+            authoring.Add(optionalStages);
+            advancedOptions = new Foldout { name = "scenarioAdvancedOptions", value = false };
+            advancedOptions.AddToClassList("scenario-optional-group");
+            pollField = new IntegerField("Check conditions every (ms)") { name = "pollInterval" };
+            pollField.RegisterValueChangedCallback(evt => Edit(() => draft.PollIntervalMs = evt.newValue));
+            advancedOptions.Add(pollField);
+            optionsContainer = new VisualElement();
+            advancedOptions.Add(optionsContainer);
+            authoring.Add(advancedOptions);
+            var checks = new Foldout
+            {
+                text = "Scene checks",
+                name = "scenarioSceneChecks",
+                value = false,
+            };
+            checks.AddToClassList("scenario-optional-group");
+            var preflight = ActionButton("Check scenes and current targets", "preflightScenario", Preflight);
+            preflight.tooltip = "Read-only scene asset and current target checks. Future runtime targets are checked when their step runs.";
+            checks.Add(preflight);
             preflightResult = new Label { name = "preflightResult" };
             preflightResult.AddToClassList("scenario-note");
-            panel.Add(preflightResult);
-            var authoring = new VisualElement { name = "scenarioAuthoring" };
-            authoring.style.flexShrink = 0;
-            optionsContainer = new VisualElement();
-            authoring.Add(optionsContainer);
+            checks.Add(preflightResult);
+            authoring.Add(checks);
+            var manage = new Foldout
+            {
+                text = "Copy & delete",
+                name = "scenarioManage",
+                value = false,
+            };
+            manage.AddToClassList("scenario-optional-group");
+            var copyRow = Row();
+            copyNameField = new TextField("New scenario name") { name = "copyScenarioName" };
+            copyNameField.AddToClassList("scenario-copy-name");
+            copyNameField.RegisterValueChangedCallback(_ => UpdateValidation());
+            copyRow.Add(copyNameField);
+            copyButton = ActionButton("Save a copy", "saveScenarioCopy", () => SaveCopy());
+            copyRow.Add(copyButton);
+            manage.Add(copyRow);
+            deleteButton = ActionButton("Delete saved scenario", "deleteScenario", DeleteScenario);
+            manage.Add(deleteButton);
+            authoring.Add(manage);
+            panel.Add(authoring);
+            columns.Add(container);
+        }
+
+        private void BuildRun(VisualElement columns)
+        {
+            var container = Panel("scenario-run");
+            var panel = new ScrollView { name = "scenarioRunScroll" };
+            panel.AddToClassList("scenario-scroll");
+            container.Add(panel);
+            runPreparation = Note("");
+            runPreparation.name = "scenarioRunPreparation";
+            panel.Add(runPreparation);
+            var toolbar = Row();
+            runButton = ActionButton("Save & Run in Editor", "runScenario", RunScenario);
+            runButton.AddToClassList("scenario-primary-button");
+            runButton.tooltip = "Saves this scenario and starts Play Mode. The run continues if this window closes.";
+            toolbar.Add(runButton);
+            toolbar.Add(
+                ActionButton(
+                    "Review steps",
+                    "reviewScenarioSteps",
+                    () =>
+                    {
+                        SelectScenarioPane("edit");
+                        rootVisualElement.Q<ScrollView>("scenarioEditorScroll")?.ScrollTo(validation);
+                    }
+                )
+            );
+            panel.Add(toolbar);
+            var repeats = new IntegerField("Repeats") { name = "repeatCount", value = repeatCount };
+            repeats.tooltip = "Run the flow 1–100 times, including its configured setup and cleanup steps.";
+            repeats.RegisterValueChangedCallback(evt => repeatCount = evt.newValue);
+            panel.Add(repeats);
+            var options = new Foldout
+            {
+                text = "Run settings",
+                name = "scenarioRunOptions",
+                value = false,
+            };
+            var timeout = new IntegerField("Time budget (s)") { name = "runTimeout", value = runTimeoutSeconds };
+            timeout.tooltip = "Total run budget: 1–86400 seconds.";
+            timeout.RegisterValueChangedCallback(evt => runTimeoutSeconds = evt.newValue);
+            options.Add(timeout);
+            var revision = new TextField("Source revision label")
+            {
+                name = "sourceRevision",
+                value = sourceRevision,
+                maxLength = 128,
+            };
+            revision.tooltip = "Optional caller-provided label recorded with this run or frozen in a standalone Player build.";
+            revision.RegisterValueChangedCallback(evt => sourceRevision = evt.newValue);
+            options.Add(revision);
+            var runHelp = new Foldout { text = "Help", value = false };
+            runHelp.Add(Note("Each repeat runs setup → steps → cleanup. Closing this window does not cancel a run; use Cancel run in the status strip."));
+            options.Add(runHelp);
+            panel.Add(options);
+            var suites = new VisualElement();
+            suites.AddToClassList("scenario-optional-group");
             suiteEditor = new PlayScenarioSuiteEditor(
-                authoring,
+                suites,
                 Store,
                 CallSuite,
                 SetMessage,
@@ -419,61 +490,48 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                     suiteSourceRevision = (string)options["source_revision"];
                 }
             );
-            setupList = BuildStage(authoring, "Setup", "setup");
-            stepList = new VisualElement { name = "scenarioSteps" };
-            authoring.Add(new Label("Main steps"));
-            authoring.Add(stepList);
-            cleanupList = BuildStage(authoring, "Cleanup", "cleanup");
-            panel.Add(authoring);
+            var suiteGroup = suites.Q<Foldout>("scenarioSuites");
+            suiteGroup.value = false;
+            UpdateSuiteSummary(suiteGroup);
+            MoveHelpText(suiteGroup);
+            panel.Add(suites);
+            var player = new Foldout
+            {
+                text = "Standalone Player",
+                name = "scenarioStandaloneBuild",
+                value = false,
+            };
+            player.AddToClassList("scenario-optional-group");
+            buildPlayerButton = ActionButton("Build standalone Player", "buildPlayerScenario", BuildPlayer);
+            buildPlayerButton.tooltip = "Build a Windows x64 Mono test Player. This does not start the Editor run.";
+            player.Add(buildPlayerButton);
+            panel.Add(player);
             columns.Add(container);
         }
 
         private void BuildResults(VisualElement columns)
         {
-            var container = Panel("scenario-results", "Run & results");
-            var panel = new ScrollView { name = "scenarioResultsScroll" };
-            panel.AddToClassList("scenario-results-scroll");
-            container.Add(panel);
-            var repeats = new IntegerField("Repeat count") { name = "repeatCount", value = repeatCount };
-            repeats.RegisterValueChangedCallback(evt => repeatCount = evt.newValue);
-            panel.Add(repeats);
-            var timeout = new IntegerField("Run timeout (s)") { name = "runTimeout", value = runTimeoutSeconds };
-            timeout.RegisterValueChangedCallback(evt => runTimeoutSeconds = evt.newValue);
-            panel.Add(timeout);
-            var revision = new TextField("Source revision label (optional)")
-            {
-                name = "sourceRevision",
-                value = sourceRevision,
-                maxLength = 128,
-            };
-            revision.tooltip = "Optional caller-provided label. Player builds freeze this as build_source_revision; Editor runs record it as source_revision.";
-            revision.RegisterValueChangedCallback(evt => sourceRevision = evt.newValue);
-            panel.Add(revision);
-            panel.Add(
-                Note(
-                    "Repeat: 1–100. Total timeout: 1–86400 s. Each repeat executes setup → main → cleanup. Use reset_state after the first load_scene in Setup to reset registered state before each repeat. Static state and DontDestroyOnLoad objects otherwise persist."
-                )
-            );
-            var toolbar = Row();
-            runButton = ActionButton("Save & Run", "runScenario", RunScenario);
-            runButton.tooltip = "Saves the validated definition, then starts Play Mode. The backend run continues if this window is closed.";
-            cancelButton = ActionButton("Cancel Run", "cancelScenario", CancelScenario);
-            toolbar.Add(runButton);
-            toolbar.Add(cancelButton);
-            buildPlayerButton = ActionButton("Build Player", "buildPlayerScenario", BuildPlayer);
-            buildPlayerButton.tooltip =
-                "Builds the clean saved scenario as a Windows x64 Mono test Player in an explicitly chosen empty folder. The executable is launched separately.";
-            toolbar.Add(buildPlayerButton);
-            toolbar.AddToClassList("scenario-primary-actions");
-            rootVisualElement.Insert(rootVisualElement.IndexOf(columns), toolbar);
-            panel.Add(
-                Note(
-                    "Closing this window does not cancel a run. Use Cancel Run to stop it. Cleanup runs after completion, failure, timeout or cancellation when possible. Finishing leaves Play Mode unchanged."
-                )
-            );
+            var container = Panel("scenario-results");
             runResults = new ScrollView { name = "runResults" };
             runResults.AddToClassList("scenario-scroll");
-            panel.Add(runResults);
+            runResults.AddToClassList("scenario-current-report");
+            container.Add(runResults);
+            var tools = new Foldout
+            {
+                name = "scenarioResultTools",
+                text = "Saved & Player results",
+                value = false,
+            };
+            tools.AddToClassList("scenario-results-tools");
+            var panel = new ScrollView { name = "scenarioResultsScroll" };
+            panel.AddToClassList("scenario-evidence-scroll");
+            tools.Add(panel);
+            tools.RegisterValueChangedCallback(evt =>
+            {
+                if (ReferenceEquals(evt.target, tools))
+                    container.EnableInClassList("scenario-results-evidence-open", evt.newValue);
+            });
+            container.Add(tools);
             history = new PlayScenarioHistoryEditor(panel, Store, () => draft.Name, SetMessage);
             playerSessionEditor?.Dispose();
             playerSoakEditor?.Dispose();
@@ -498,12 +556,25 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                         : EditorUtility.OpenFilePanel("Open " + side.ToLowerInvariant() + " soak evidence", "", "json"),
                 disposeOnDetach: false
             );
+            panel.Q<Foldout>("reportHistory").text = "Saved runs";
+            panel.Q<Foldout>("reportHistory").tooltip = "Previous reports for the currently selected scenario.";
+            panel.Q<Foldout>("playerSession").text = "Import a standalone Player run";
+            foreach (Foldout section in panel.Children().OfType<Foldout>())
+            {
+                section.value = false;
+                MoveHelpText(section);
+            }
             columns.Add(container);
         }
 
         private VisualElement BuildStage(VisualElement parent, string title, string stage)
         {
-            var section = new Foldout { text = title + " steps", name = stage + "Steps" };
+            var section = new Foldout
+            {
+                text = title,
+                name = stage + "Steps",
+                value = false,
+            };
             var list = new VisualElement();
             section.Add(
                 ActionButton(
@@ -558,15 +629,27 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             }
         }
 
-        private static VisualElement Panel(string className, string title)
+        private static VisualElement Panel(string className)
         {
             var panel = new VisualElement();
             panel.AddToClassList("scenario-panel");
             panel.AddToClassList(className);
-            var label = new Label(title);
-            label.AddToClassList("scenario-section-title");
-            panel.Add(label);
             return panel;
+        }
+
+        private static void MoveHelpText(Foldout section)
+        {
+            var prose = section.Children().OfType<Label>().Where(label => string.IsNullOrEmpty(label.name) && label.text?.Length > 80).ToList();
+            if (prose.Count == 0)
+                return;
+            var help = new Foldout { text = "Help", value = false };
+            foreach (Label label in prose)
+            {
+                label.RemoveFromHierarchy();
+                label.AddToClassList("scenario-note");
+                help.Add(label);
+            }
+            section.Add(help);
         }
 
         private static VisualElement Row()
@@ -699,13 +782,23 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             nameField.SetValueWithoutNotify(draft.Name);
             nameField.SetEnabled(string.IsNullOrEmpty(savedName));
             nameField.tooltip = string.IsNullOrEmpty(savedName)
-                ? "A lowercase scenario name, 1–64 characters."
-                : "Saved names are fixed. Save As Copy creates a separate scenario.";
+                ? "Use lowercase letters, numbers, dashes or underscores; for example menu-start-player. Maximum 64 characters."
+                : "This is the saved scenario identifier. Save a copy to give the flow a different name.";
             pollField.SetValueWithoutNotify(draft.PollIntervalMs);
             copyNameField.SetValueWithoutNotify("");
             deleteButton.SetEnabled(!string.IsNullOrEmpty(savedName));
             hasUnsavedChanges = dirty || suiteDirty;
+            var openOptions = optionsContainer
+                .Query<Foldout>()
+                .ToList()
+                .Where(section => !string.IsNullOrEmpty(section.name))
+                .ToDictionary(section => section.name, section => section.value);
             PlayScenarioOptionsEditor.Render(optionsContainer, draft, Edit);
+            foreach (Foldout section in optionsContainer.Query<Foldout>().ToList())
+            {
+                section.value = !string.IsNullOrEmpty(section.name) && openOptions.TryGetValue(section.name, out bool expanded) && expanded;
+                MoveHelpText(section);
+            }
             preflightResult.text = "";
             RenderSteps();
             UpdateValidation();
@@ -724,7 +817,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             {
                 validated = PlayScenarioDefinition.Parse(Json(draft));
                 draftValid = true;
-                validation.text = dirty ? "Valid definition • unsaved changes" : "Valid definition";
+                validation.text = dirty ? "Ready to save" : "Ready";
                 validation.RemoveFromClassList("scenario-error");
                 return true;
             }
@@ -732,7 +825,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             {
                 validated = null;
                 draftValid = false;
-                validation.text = exception.Message;
+                validation.text = FriendlyValidationMessage(exception.Message);
+                validation.tooltip = exception.Message;
                 validation.AddToClassList("scenario-error");
                 return false;
             }
@@ -761,6 +855,109 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 copyValid = false;
             }
             copyButton.SetEnabled(copyValid && copyNameField.value != savedName);
+            UpdateWorkflowContext(revalidate);
+        }
+
+        private string FriendlyValidationMessage(string fallback)
+        {
+            foreach (
+                var stage in new[]
+                {
+                    (Name: "setup", Steps: draft.SetupSteps),
+                    (Name: "main", Steps: draft.Steps),
+                    (Name: "cleanup", Steps: draft.CleanupSteps),
+                }
+            )
+                for (int index = 0; index < stage.Steps.Count; index++)
+                {
+                    PlayScenarioStep step = stage.Steps[index];
+                    if ((step.Action == "load_scene" || step.Action == "wait_scene") && string.IsNullOrWhiteSpace(step.Scene))
+                        return $"Choose a scene for {stage.Name} step {index + 1}: {step.Name}.";
+                }
+            return fallback;
+        }
+
+        private static JObject OptionSnapshot(PlayScenarioDefinition value) =>
+            Json(
+                new
+                {
+                    value.PollIntervalMs,
+                    RecordedDraft = value.Draft == true,
+                    value.CleanupTimeoutSeconds,
+                    value.CompletionStableMs,
+                    value.LogPolicy,
+                    value.Metrics,
+                    value.Diagnostics,
+                    value.Resources,
+                    value.QueryBudget,
+                    Tagged = value.Tags?.Count > 0,
+                    Parameters = value.Parameters != null,
+                    Bindings = value.ParameterBindings != null,
+                    Datasets = value.Datasets != null,
+                }
+            );
+
+        private static void SetLabel(Label label, string text)
+        {
+            if (label != null && label.text != text)
+                label.text = text;
+        }
+
+        private void UpdateWorkflowContext(bool inspectOptions)
+        {
+            if (draftContext == null || draft == null)
+                return;
+            string saveState =
+                dirty ? "Unsaved changes"
+                : string.IsNullOrEmpty(savedName) ? "New draft"
+                : "Saved";
+            SetLabel(
+                draftContext,
+                (string.IsNullOrEmpty(draft.Name) ? "Untitled scenario" : draft.Name) + " · " + saveState + (suiteDirty ? " · Suite changes unsaved" : "")
+            );
+            draftContext.tooltip = draftContext.text;
+            SetLabel(
+                runPreparation,
+                Running ? "Run in progress. See Results."
+                    : !draftValid ? validation.text
+                    : ""
+            );
+            runPreparation?.EnableInClassList("scenario-message-empty", string.IsNullOrEmpty(runPreparation.text));
+            runPreparation?.EnableInClassList("scenario-error", !draftValid && !Running);
+            if (inspectOptions)
+            {
+                if (defaultOptionSnapshot == null)
+                    defaultOptionSnapshot = OptionSnapshot(new PlayScenarioDefinition());
+                JObject currentOptions = OptionSnapshot(draft);
+                optionsConfigured = !JToken.DeepEquals(defaultOptionSnapshot, currentOptions);
+                bool policiesConfigured = new[]
+                {
+                    "CleanupTimeoutSeconds",
+                    "CompletionStableMs",
+                    "LogPolicy",
+                    "Metrics",
+                    "Diagnostics",
+                    "Resources",
+                    "QueryBudget",
+                }.Any(field => !JToken.DeepEquals(defaultOptionSnapshot[field], currentOptions[field]));
+                var policies = optionsContainer.Q<Foldout>("scenarioOptions");
+                if (policies != null)
+                    policies.text = policiesConfigured ? "Policies & evidence · Configured" : "Policies & evidence";
+            }
+            optionalStages.text = $"Setup {draft.SetupSteps.Count} · Cleanup {draft.CleanupSteps.Count}";
+            optionalStages.tooltip = "Setup runs before each repeat; cleanup runs afterward.";
+            advancedOptions.text = optionsConfigured ? "Settings · Configured" : "Settings";
+            bool hasRun = !string.IsNullOrEmpty(jobId);
+            activeRunStrip.EnableInClassList("scenario-active-run-visible", hasRun);
+            activeRunStrip.EnableInClassList("scenario-run-finished", !Running);
+            string outcome = report?.Status ?? (string)suiteReport?["status"] ?? "unknown";
+            string name =
+                !string.IsNullOrEmpty(activeRunName) ? activeRunName
+                : hasRun ? jobId.Substring(0, Math.Min(8, jobId.Length))
+                : "";
+            SetLabel(activeRunLabel, (suiteMode ? "Suite: " : "Run: ") + name + " · " + outcome);
+            activeRunLabel.tooltip = name + " · " + outcome + " · Job " + jobId;
+            cancelButton.SetEnabled(Running);
         }
 
         private void RefreshSavedList()
@@ -772,7 +969,9 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 scenarioList.Clear();
                 var names = Store.List();
                 if (names.Count == 0)
-                    scenarioList.Add(Note("No saved scenarios. Choose New to configure your first flow."));
+                {
+                    scenarioList.Add(Note("Create a scenario: Load scene → Click UI → Wait for scene/object."));
+                }
                 foreach (string name in names)
                 {
                     var button = ActionButton(name, "savedScenario_" + name, () => LoadScenario(name));
@@ -811,6 +1010,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             ResetHistory();
             RenderDraft();
             RefreshSavedList();
+            SelectScenarioPane("edit");
             SetMessage("Choose both scene assets and replace the template target paths.", false);
         }
 
@@ -827,6 +1027,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 ResetHistory();
                 RenderDraft();
                 RefreshSavedList();
+                SelectScenarioPane("edit");
                 SetMessage("Loaded " + name + ".", false);
             }
             catch (Exception exception)
@@ -987,8 +1188,13 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 return;
             }
             if (!TrySave())
+            {
+                SelectScenarioPane("edit");
                 return;
+            }
             string priorId = jobId;
+            string priorName = activeRunName;
+            activeRunName = savedName;
             jobId = Guid.NewGuid().ToString("N");
             SessionState.SetString(SessionJobKey, jobId);
             try
@@ -1006,12 +1212,16 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 if (!AcceptReport(result))
                 {
                     jobId = priorId;
+                    activeRunName = priorName;
                     SessionState.SetString(SessionJobKey, jobId ?? "");
                 }
+                else
+                    ShowCurrentResults();
             }
             catch (Exception exception)
             {
                 jobId = priorId;
+                activeRunName = priorName;
                 SessionState.SetString(SessionJobKey, jobId ?? "");
                 SetMessage(exception.Message, true);
             }
@@ -1086,6 +1296,24 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
                 suiteCleanJson = json;
             suiteDirty = suiteDraftJson != suiteCleanJson;
             hasUnsavedChanges = dirty || suiteDirty;
+            UpdateSuiteSummary(rootVisualElement.Q<Foldout>("scenarioSuites"));
+            UpdateWorkflowContext(false);
+        }
+
+        private void UpdateSuiteSummary(Foldout section)
+        {
+            if (section == null)
+                return;
+            bool configured = false;
+            if (!string.IsNullOrEmpty(suiteDraftJson))
+            {
+                JObject definition = JObject.Parse(suiteDraftJson);
+                configured = (definition["scenarios"] as JArray)?.Count > 0 || (definition["tags"] as JArray)?.Count > 0;
+            }
+            section.text =
+                suiteDirty ? "Suites · Unsaved changes"
+                : configured ? "Suites · Configured"
+                : "Suites";
         }
 
         private void RunSuite(JObject request)
@@ -1109,20 +1337,26 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             }
             string previousId = jobId;
             bool previousMode = suiteMode;
+            string previousName = activeRunName;
+            activeRunName = (string)request["name"];
             try
             {
                 if (!AcceptSuiteReport(CallSuite(request)))
                 {
                     jobId = previousId;
                     suiteMode = previousMode;
+                    activeRunName = previousName;
                     SessionState.SetString(SessionJobKey, jobId ?? "");
                     SessionState.SetBool(SessionSuiteModeKey, suiteMode);
                 }
+                else
+                    ShowCurrentResults();
             }
             catch (Exception exception)
             {
                 jobId = previousId;
                 suiteMode = previousMode;
+                activeRunName = previousName;
                 SessionState.SetString(SessionJobKey, jobId ?? "");
                 SessionState.SetBool(SessionSuiteModeKey, suiteMode);
                 SetMessage(exception.Message, true);
@@ -1141,6 +1375,9 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             string previousId = jobId;
             var snapshot = success.Data as PlayScenarioSuiteEditorSnapshot;
             JObject data = snapshot?.Data ?? success.Data as JObject ?? Json(success.Data);
+            string name = (string)data["suite"]?["name"];
+            if (!string.IsNullOrEmpty(name))
+                activeRunName = name;
             bool changed = snapshot != null ? !ReferenceEquals(snapshot, suiteSnapshot) : !JToken.DeepEquals(suiteReport, data);
             suiteReport = data;
             suiteSnapshot = snapshot;
@@ -1178,6 +1415,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             suiteReport = null;
             suiteSnapshot = null;
             SessionState.SetBool(SessionSuiteModeKey, false);
+            if (success.Data is JObject full && full["scenario"]?["name"]?.Type == JTokenType.String)
+                activeRunName = (string)full["scenario"]["name"];
             JObject data = success.Data is PlayScenarioEditorSnapshot snapshot
                 ? snapshot.Data
                 : PlayScenarioEditorSnapshot.FromSnapshot(success.Data as JObject ?? Json(success.Data));
@@ -1264,7 +1503,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             if (report == null && suiteReport == null)
             {
                 runResults.Clear();
-                runResults.Add(Note("No run yet. Save & Run starts a job and displays its step results here."));
+                runResults.Add(Note("No run yet. Open Run to start this scenario; its step results will appear here."));
                 return;
             }
             string key = (suiteMode ? "suite:" : "scenario:") + jobId;
@@ -1284,7 +1523,9 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             if (message == null)
                 return;
             message.text = text;
+            message.tooltip = text;
             message.EnableInClassList("scenario-error", error);
+            message.EnableInClassList("scenario-message-empty", string.IsNullOrEmpty(text));
         }
 
         internal void ConfigureForTests(PlayScenarioStore store) => injectedStore = store;

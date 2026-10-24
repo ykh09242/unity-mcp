@@ -1,58 +1,92 @@
 .play-scenarios {
-    padding: 12px;
+    padding: 8px;
 }
 .scenario-heading {
-    font-size: 20px;
+    font-size: 18px;
     -unity-font-style: bold;
-    margin-bottom: 4px;
+    min-height: 24px;
+    flex-shrink: 0;
+}
+.scenario-draft-context {
+    min-height: 20px;
+    flex-shrink: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .scenario-columns {
-    flex-direction: row;
     flex-grow: 1;
     min-height: 0;
-    margin-top: 8px;
+    min-width: 0;
+    margin-top: 4px;
 }
 .scenario-panel {
+    display: none;
+    flex-grow: 1;
+    flex-shrink: 1;
     background-color: var(--mcp-surface);
     border-width: 1px;
     border-color: var(--mcp-border);
     border-radius: 4px;
     padding: 8px;
     min-width: 0;
+    min-height: 0;
 }
-.scenario-library { min-width: 150px; }
-.scenario-editor { min-width: 280px; }
-.scenario-results { min-width: 280px; }
-.scenario-split { flex-grow: 1; min-width: 0; min-height: 0; }
-.scenario-tabs { display: none; }
-.scenario-compact .scenario-tabs { display: flex; }
-.scenario-tab { flex-grow: 1; min-height: 28px; }
+.scenario-pane-active { display: flex; }
+.scenario-row.scenario-tabs { flex-shrink: 0; flex-wrap: nowrap; }
+.scenario-tabs > .scenario-tab { flex-grow: 1; flex-basis: 0; min-width: 0; min-height: 28px; white-space: normal; }
 .scenario-tab-selected { border-bottom-width: 2px; border-bottom-color: var(--mcp-accent); -unity-font-style: bold; }
-.scenario-compact .scenario-panel { min-width: 0; flex-grow: 1; flex-shrink: 1; }
-.scenario-primary-actions { flex-shrink: 0; }
-.scenario-short .scenario-heading, .scenario-short .scenario-intro { display: none; }
-.scenario-short.play-scenarios { padding: 8px; }
-.scenario-short .scenario-message { min-height: 0; margin-top: 4px; }
+.scenario-row.scenario-active-run { display: none; flex-wrap: nowrap; }
+.scenario-row.scenario-active-run-visible { display: flex; }
+.scenario-active-run-label { flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scenario-run-finished #cancelScenario { display: none; }
+.scenario-primary-button { background-color: var(--mcp-accent); color: var(--mcp-accent-text); border-color: var(--mcp-accent); -unity-font-style: bold; }
 #scenarioEditorScroll, #scenarioAuthoring, #scenarioSteps { min-width: 0; }
-#scenarioEditorScroll .unity-base-field { min-width: 0; }
-.scenario-compact #scenarioEditorScroll .unity-base-field { flex-direction: column; }
-.scenario-compact #scenarioEditorScroll .unity-base-field__label { min-width: 0; margin-bottom: 3px; }
+.scenario-authoring { flex-shrink: 0; }
+.scenario-editor .unity-base-field, .scenario-run .unity-base-field { min-width: 0; flex-shrink: 0; }
+.scenario-compact .scenario-editor .unity-base-field,
+.scenario-compact .scenario-run .unity-base-field { flex-direction: column; }
+.scenario-compact .scenario-editor .unity-base-field__label,
+.scenario-compact .scenario-run .unity-base-field__label { min-width: 0; margin-bottom: 3px; }
+.scenario-optional-group { margin-top: 8px; padding-top: 6px; border-top-width: 1px; border-top-color: var(--mcp-border); flex-shrink: 0; min-width: 0; }
+.scenario-editor .unity-foldout { flex-shrink: 0; min-width: 0; }
+.scenario-editor .unity-foldout__toggle, .scenario-run .unity-foldout__toggle { min-height: 24px; flex-shrink: 0; }
+.scenario-results-tools { flex-shrink: 0; min-width: 0; }
+.scenario-results-tools > .unity-foldout__content { flex-grow: 1; flex-shrink: 1; min-height: 0; }
+.scenario-results-evidence-open .scenario-current-report { display: none; }
+.scenario-results-evidence-open .scenario-results-tools { flex-grow: 1; min-height: 0; }
+.scenario-evidence-scroll { flex-grow: 1; flex-shrink: 1; min-height: 0; min-width: 0; }
+.scenario-short .scenario-heading, .scenario-short .scenario-intro, .scenario-short .scenario-section-title { display: none; }
+.scenario-short.play-scenarios { padding: 4px; }
+.scenario-short .scenario-row { margin-top: 1px; margin-bottom: 1px; }
+.scenario-short .scenario-tabs > .scenario-tab { min-height: 24px; margin-top: 0; margin-bottom: 0; }
+.scenario-short .scenario-draft-context { min-height: 18px; }
+.scenario-short .scenario-panel { padding: 4px; }
+.scenario-short .scenario-scroll { margin-top: 2px; }
+.scenario-short .scenario-active-run > Button { min-height: 20px; margin-top: 0; margin-bottom: 0; }
+.scenario-short .scenario-message { display: none; }
+.scenario-short .scenario-message.scenario-error { display: flex; white-space: nowrap; text-overflow: ellipsis; min-height: 16px; max-height: 16px; margin-top: 0; }
+.scenario-short .scenario-results-tools > .unity-foldout__toggle { min-height: 20px; margin-top: 0; margin-bottom: 0; }
 .scenario-section-title {
     -unity-font-style: bold;
     font-size: 14px;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
+    flex-shrink: 0;
+    white-space: normal;
 }
 .scenario-row {
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
+    flex-shrink: 0;
     margin-top: 4px;
     margin-bottom: 4px;
 }
 .scenario-row > Button {
     margin-left: 0;
     margin-right: 4px;
-    min-height: 24px;
+    min-height: 26px;
+    white-space: normal;
 }
 .scenario-copy-name {
     flex-grow: 1;
@@ -67,7 +101,9 @@
 }
 .scenario-scroll {
     flex-grow: 1;
+    flex-shrink: 1;
     min-height: 0;
+    min-width: 0;
     margin-top: 6px;
 }
 .scenario-scroll .unity-scroll-view__content-container {
@@ -92,6 +128,7 @@
     margin-bottom: 8px;
     flex-shrink: 0;
 }
+.scenario-step-number { flex-grow: 1; -unity-font-style: bold; white-space: nowrap; }
 .scenario-step .unity-base-field__label {
     min-width: 112px;
 }
@@ -112,10 +149,13 @@
 }
 .scenario-message {
     white-space: normal;
-    min-height: 20px;
-    margin-top: 8px;
+    min-height: 18px;
+    max-height: 48px;
+    overflow: hidden;
+    margin-top: 4px;
     flex-shrink: 0;
 }
+.scenario-message-empty { display: none; }
 
 .scenario-history-comparison {
     max-height: 220px;
@@ -133,19 +173,6 @@
 .scenario-soak-comparison-scroll {
     max-height: 400px;
     min-height: 196px;
-    flex-shrink: 0;
-}
-
-.scenario-results-scroll {
-    flex-grow: 1;
-    min-height: 0;
-    min-width: 0;
-}
-
-.scenario-results-scroll #runResults {
-    min-height: 60px;
-    max-height: 220px;
-    flex-grow: 0;
     flex-shrink: 0;
 }
 
