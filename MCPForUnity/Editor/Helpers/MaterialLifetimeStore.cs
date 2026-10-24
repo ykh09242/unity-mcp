@@ -26,6 +26,10 @@ namespace MCPForUnity.Editor.Helpers
 
         [NonSerialized]
         private bool scheduled;
+
+        [NonSerialized]
+        private readonly Dictionary<Renderer, Material[]> pruneSlots = new Dictionary<Renderer, Material[]>();
+
         internal int OwnedCount => entries.Count;
 
         private void OnEnable()
@@ -78,13 +82,31 @@ namespace MCPForUnity.Editor.Helpers
 
         private void Prune()
         {
-            entries.RemoveAll(entry =>
-                entry.Owner == null
-                || entry.Material == null
-                || EditorUtility.IsPersistent(entry.Material)
-                || entry.Slot >= entry.Owner.sharedMaterials.Length
-                || entry.Owner.sharedMaterials[entry.Slot] != entry.Material
-            );
+            int retained = 0;
+            try
+            {
+                for (int index = 0; index < entries.Count; index++)
+                {
+                    Entry entry = entries[index];
+                    if (entry.Owner == null || entry.Material == null || EditorUtility.IsPersistent(entry.Material))
+                        continue;
+                    if (!pruneSlots.TryGetValue(entry.Owner, out var slots))
+                    {
+                        slots = entry.Owner.sharedMaterials;
+                        pruneSlots.Add(entry.Owner, slots);
+                    }
+                    if (entry.Slot >= slots.Length || slots[entry.Slot] != entry.Material)
+                        continue;
+                    entries[retained++] = entry;
+                }
+                if (retained < entries.Count)
+                    entries.RemoveRange(retained, entries.Count - retained);
+            }
+            finally
+            {
+                // Reuse the lookup storage without retaining renderers, slot arrays or historical materials.
+                pruneSlots.Clear();
+            }
             if (entries.Count == 0)
                 StopUpdating();
         }
