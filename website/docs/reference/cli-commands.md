@@ -1507,7 +1507,7 @@ Toggle pause/resume in play mode.
 
 ## `unity-mcp editor play`
 
-Enter play mode.
+Request play mode; default success may be pending. Observe mcpforunity://editor/state for completion, or use --wait-until for readiness.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -1586,7 +1586,7 @@ Restore MCPForUnity package from last backup. Reverts the last deployment by res
 
 ## `unity-mcp editor stop`
 
-Stop play mode.
+Request stop; success may be pending. Observe mcpforunity://editor/state for completion.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |

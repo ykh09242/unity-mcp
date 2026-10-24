@@ -32,7 +32,7 @@ namespace MCPForUnity.Editor.Services
 
         private static bool _lastIsCompiling;
         private const string PlayTransitionKey = "MCPForUnity.EditorState.PlayTransition";
-        private static bool IsPlayModeTransition =>
+        internal static bool IsPlayModeTransition =>
             SessionState.GetBool(PlayTransitionKey, false) || EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode;
 
         private static void OnPlayModeStateChanged(PlayModeStateChange state)

@@ -21,6 +21,23 @@ namespace MCPForUnity.Editor.Tools
         // Constant for total layer count
         private const int TotalLayerCount = 32;
 
+        internal static Func<bool> _isPlayingOverride;
+        internal static Func<bool> _willPlayOverride;
+        internal static Func<bool> _isChangingOverride;
+        internal static Action<bool> _requestPlayOverride;
+
+        private static bool IsPlaying => _isPlayingOverride?.Invoke() ?? EditorApplication.isPlaying;
+        private static bool WillPlay => _willPlayOverride?.Invoke() ?? EditorApplication.isPlayingOrWillChangePlaymode;
+        private static bool IsChanging => _isChangingOverride?.Invoke() ?? EditorStateCache.IsPlayModeTransition;
+
+        private static void RequestPlay(bool target)
+        {
+            if (_requestPlayOverride != null)
+                _requestPlayOverride(target);
+            else
+                EditorApplication.isPlaying = target;
+        }
+
         /// <summary>
         /// Main handler for editor management actions.
         /// </summary>
@@ -60,19 +77,7 @@ namespace MCPForUnity.Editor.Tools
                 case "play":
                     if (@params["wait_until"] != null && @params["wait_until"].Type != JTokenType.Null)
                         return PlayModeReadiness.Start(@params);
-                    try
-                    {
-                        if (!EditorApplication.isPlaying)
-                        {
-                            EditorApplication.isPlaying = true;
-                            return new SuccessResponse("Entered play mode.");
-                        }
-                        return new SuccessResponse("Already in play mode.");
-                    }
-                    catch (Exception e)
-                    {
-                        return new ErrorResponse($"Error entering play mode: {e.Message}");
-                    }
+                    return SetPlayMode(true);
                 case "pause":
                     try
                     {
@@ -88,20 +93,7 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse($"Error pausing/resuming game: {e.Message}");
                     }
                 case "stop":
-                    try
-                    {
-                        PlayModeReadiness.Cancel("Stop requested before readiness was confirmed.");
-                        if (EditorApplication.isPlayingOrWillChangePlaymode)
-                        {
-                            EditorApplication.isPlaying = false;
-                            return new SuccessResponse("Exited play mode.");
-                        }
-                        return new SuccessResponse("Already stopped (not in play mode).");
-                    }
-                    catch (Exception e)
-                    {
-                        return new ErrorResponse($"Error stopping play mode: {e.Message}");
-                    }
+                    return SetPlayMode(false);
 
                 case "get_play_mode_job":
                     return PlayModeReadiness.Get(@params, false);
@@ -174,6 +166,52 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse(
                         $"Unknown action: '{action}'. Supported actions: play, pause, stop, get_play_mode_job, cancel_play_mode_job, get_game_view_size, set_game_view_size, restore_game_view_size, set_active_tool, add_tag, remove_tag, add_layer, remove_layer, deploy_package, restore_package, undo, redo. For prefab editing (open/save/close prefab stage), use manage_prefabs. Use MCP resources for reading editor state, project info, tags, layers, selection, windows, prefab stage, and active tool."
                     );
+            }
+        }
+
+        private static object SetPlayMode(bool target)
+        {
+            try
+            {
+                if (!target)
+                    PlayModeReadiness.Cancel("Stop requested before readiness was confirmed.");
+                bool playing = IsPlaying;
+                bool changing = IsChanging;
+                bool willPlay = WillPlay;
+                // Only a stable observation made before the setter can confirm completion.
+                bool completed = playing == target && willPlay == target && !changing;
+                bool submitted = !completed && willPlay != target;
+                if (submitted)
+                {
+                    RequestPlay(target);
+                    playing = IsPlaying;
+                    changing = IsChanging;
+                    willPlay = WillPlay;
+                }
+                string message = completed
+                    ? target
+                        ? "Already in play mode."
+                        : "Already stopped (not in play mode)."
+                    : submitted
+                        ? "Play mode transition requested; completion is pending."
+                        : "Play mode transition already pending.";
+                return new SuccessResponse(
+                    message,
+                    new
+                    {
+                        status = completed ? "completed" : "pending",
+                        requested_state = target ? "play" : "stop",
+                        request_submitted = submitted,
+                        is_playing = playing,
+                        is_changing = changing,
+                        is_playing_or_will_change_playmode = willPlay,
+                        follow_up = "mcpforunity://editor/state",
+                    }
+                );
+            }
+            catch (Exception e)
+            {
+                return new ErrorResponse($"Error {(target ? "entering" : "stopping")} play mode: {e.Message}");
             }
         }
 

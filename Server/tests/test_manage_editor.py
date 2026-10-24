@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import anyio
 
 from services.tools.manage_editor import manage_editor
 import services.tools.manage_editor as manage_editor_mod
@@ -36,6 +37,40 @@ def mock_unity(monkeypatch):
 
 
 # ── Undo/Redo ────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("action", ["play", "stop"])
+@pytest.mark.parametrize("status", ["pending", "completed"])
+def test_default_play_control_preserves_observation_without_polling(action, status, monkeypatch):
+    # Given a native transition observation rather than a readiness job.
+    response = {
+        "success": True,
+        "message": "Observed transition state.",
+        "data": {
+            "status": status,
+            "requested_state": action,
+            "request_submitted": status == "pending",
+            "is_playing": action == "stop",
+            "is_changing": status == "pending",
+            "follow_up": "mcpforunity://editor/state",
+        },
+    }
+    send = AsyncMock(return_value=response)
+    monkeypatch.setattr(
+        manage_editor_mod, "get_unity_instance_from_context", AsyncMock(return_value="selected")
+    )
+    monkeypatch.setattr(manage_editor_mod, "send_with_unity_instance", send)
+
+    async def invoke():
+        return await manage_editor(SimpleNamespace(), action=action)
+
+    # When issuing a default request without wait_until.
+    result = anyio.run(invoke)
+
+    # Then no readiness polling or synthesized completion replaces the native observation.
+    assert result == response
+    send.assert_awaited_once()
+    assert send.call_args.args[1:] == ("selected", "manage_editor", {"action": action})
 
 
 def test_undo_forwards_to_unity(mock_unity):
