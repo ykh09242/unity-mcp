@@ -86,7 +86,7 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
     logger.info(f"Registered {len(tools)} MCP tools")
 
     from core.config import config as server_config
-    from services.tool_discovery import ToolDiscovery
+    from services.tool_discovery import SETUP_GUIDANCE, ToolDiscovery
 
     discovery = ToolDiscovery(
         mcp,
@@ -98,9 +98,7 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
     for group_name in sorted(set(TOOL_GROUPS) - discovery.default_groups):
         mcp.disable(tags={f"group:{group_name}"}, components={"tool"})
     mcp.add_transform(discovery)
-    logger.info(
-        "Tool discovery profile: %s. Use manage_tools for full guidance.", discovery.profile
-    )
+    logger.info("Tool discovery profile: %s. %s", discovery.profile, SETUP_GUIDANCE)
 
 
 async def sync_tool_visibility_from_unity(

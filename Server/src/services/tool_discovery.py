@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import time
+from typing import Literal, TypedDict
 
 from fastmcp.server.dependencies import get_context
 from fastmcp.server.transforms import Transform, Visibility
@@ -27,6 +28,23 @@ UNSCOPED_GUIDANCE = (
     "Alternatively start the server with UNITY_MCP_TOOL_PROFILE=full and reconnect. "
     "Editor toggles still control availability."
 )
+SETUP_GUIDANCE = (
+    "Check manage_tools(action='list_groups').discovery before selecting optional tools; "
+    "it reports this connection's mode and reason. Modern HTTP selection requires a verified "
+    "SDK principal and resolved project. The existing HTTP API-key layer does not supply that "
+    "principal. For these connections, set UNITY_MCP_TOOL_PROFILE=full before starting the "
+    "server, restart it and reconnect, or use a supported stateful legacy client. "
+    "Modern project-bound stdio also supports selection. Editor availability and permissions "
+    "still apply to every profile."
+)
+
+
+class DiscoveryCapability(TypedDict):
+    profile: str
+    mode: Literal["legacy_connection", "scoped_project", "static_profile"]
+    selection_supported: bool
+    reason: str
+    guidance: str
 
 
 class ToolDiscovery(Transform):
@@ -55,6 +73,30 @@ class ToolDiscovery(Transform):
         self.store = getattr(server, "_unity_session_state_store", None)
         self._supported = is_reviewed_sdk()
         self._lock = asyncio.Lock()
+
+    async def capability(self, ctx) -> DiscoveryCapability:
+        """Explain selection support without creating state or contacting Unity."""
+        modern = is_sessionless(ctx)
+        reason = "supported"
+        if modern:
+            if not self._supported:
+                reason = "reviewed_sdk_required"
+            elif self.store is None:
+                reason = "selection_store_unavailable"
+            elif ctx._session_scope_key() is None:
+                reason = "verified_sdk_principal_required"
+            elif await self.scope_key(ctx) is None:
+                reason = "resolved_project_required"
+        supported = reason == "supported"
+        return {
+            "profile": self.profile,
+            "mode": ("scoped_project" if modern else "legacy_connection")
+            if supported
+            else "static_profile",
+            "selection_supported": supported,
+            "reason": reason,
+            "guidance": REFRESH_GUIDANCE if supported else UNSCOPED_GUIDANCE,
+        }
 
     async def scope_key(self, ctx):
         if not self._supported or self.store is None or not is_sessionless(ctx):
@@ -129,7 +171,12 @@ class ToolDiscovery(Transform):
                     else:
                         await ctx.delete_state(self._LEGACY_STATE_KEY)
             elif updated:
-                await self.store.put(key, {"overrides": updated, "touched": time.time()}, ttl=86400)
+                # Match read/legacy renewal: unchanged preferences are touched
+                # at most hourly, without serializing the same selection each call.
+                if changed or time.time() - record["touched"] >= 3600:
+                    await self.store.put(
+                        key, {"overrides": updated, "touched": time.time()}, ttl=86400
+                    )
             elif record is not None:
                 await self.store.delete(key)
         if changed:

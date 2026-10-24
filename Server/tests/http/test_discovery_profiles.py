@@ -53,7 +53,7 @@ def discovery_server(monkeypatch):
             await context.fastmcp_context.set_state("user_id", state["owner"], serializable=False)
             return await call_next(context)
 
-    def build(profile=None):
+    def build(profile=None, *, auth=None):
         if profile is not None:
             monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", profile)
         store = SessionStateStore()
@@ -63,7 +63,7 @@ def discovery_server(monkeypatch):
             async with store.lifespan():
                 yield
 
-        server = FastMCP("profiles", session_state_store=store, lifespan=lifespan)
+        server = FastMCP("profiles", session_state_store=store, lifespan=lifespan, auth=auth)
         server._unity_session_state_store = store
         server.add_middleware(Routing())
         register_all_tools(server)
@@ -138,6 +138,54 @@ async def test_modern_selection_is_bound_to_owner_project_and_server(discovery_s
         assert reset["visible_tools"] == ["inspect_probe", "manage_tools"]
         assert store.retained_entries == 0
     assert store.retained_entries == 0
+
+
+@pytest.mark.asyncio
+async def test_modern_noop_writes_only_at_hourly_renewal_and_preserves_expiry(
+    discovery_server, monkeypatch
+):
+    import time
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    build, _ = discovery_server
+    server, store = build("core")
+    origin = time.time()
+    clock = [origin]
+    monkeypatch.setattr("services.tool_discovery.time", SimpleNamespace(time=lambda: clock[0]))
+    monkeypatch.setattr(store, "_clock", lambda: clock[0])
+    put = AsyncMock(wraps=store.put)
+    monkeypatch.setattr(store, "put", put)
+    async with Client(server, cache=False) as client:
+        first = (
+            await client.call_tool("manage_tools", {"action": "activate", "tool": "effect_probe"})
+        ).structured_content
+        assert first["changed"] is True
+        assert put.await_count == 1
+        put.reset_mock()
+        for elapsed in (0, 100, 3599, 3600):
+            clock[0] = origin + elapsed
+            duplicate = (
+                await client.call_tool(
+                    "manage_tools", {"action": "activate", "tool": "effect_probe"}
+                )
+            ).structured_content
+            assert duplicate["changed"] is False
+            if elapsed == 3600:
+                assert put.await_count == 1
+            else:
+                assert put.await_count == 0
+        put.reset_mock()
+        assert "effect_probe" in await names(client)
+        assert put.await_count == 0
+        clock[0] += 86401
+        assert "effect_probe" not in await names(client)
+        assert store.retained_entries == 0
+        default = (
+            await client.call_tool("manage_tools", {"action": "activate", "tool": "inspect_probe"})
+        ).structured_content
+        assert default["changed"] is False
+        assert put.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -224,6 +272,15 @@ def test_real_http_without_sdk_identity_uses_static_profile(discovery_server, pr
             return response.json()["result"]
 
         before = request("tools/list")["tools"]
+        groups = request(
+            "tools/call", {"name": "manage_tools", "arguments": {"action": "list_groups"}}
+        )["structuredContent"]
+        capability = groups["discovery"]
+        assert capability["profile"] == profile
+        assert capability["mode"] == "static_profile"
+        assert capability["selection_supported"] is False
+        assert capability["reason"] == "verified_sdk_principal_required"
+        assert "UNITY_MCP_TOOL_PROFILE=full" in capability["guidance"]
         refused = request(
             "tools/call",
             {"name": "manage_tools", "arguments": {"action": "activate", "group": "vfx"}},
@@ -232,6 +289,89 @@ def test_real_http_without_sdk_identity_uses_static_profile(discovery_server, pr
         assert request("tools/list")["tools"] == before
         assert ("effect_probe" in {tool["name"] for tool in before}) == (profile == "full")
         assert store.retained_entries == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [None, "legacy"])
+async def test_connection_capability_reports_supported_selection(discovery_server, mode):
+    build, _ = discovery_server
+    server, _ = build()
+    async with Client(server, **({"mode": mode} if mode else {})) as client:
+        groups = (
+            await client.call_tool("manage_tools", {"action": "list_groups"})
+        ).structured_content
+        capability = groups["discovery"]
+        assert capability["selection_supported"] is True
+        assert capability["mode"] == ("legacy_connection" if mode else "scoped_project")
+        assert capability["reason"] == "supported"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("missing", "reason"),
+    [
+        ("project", "resolved_project_required"),
+        ("sdk", "reviewed_sdk_required"),
+        ("store", "selection_store_unavailable"),
+    ],
+)
+async def test_connection_capability_explains_each_unavailable_scope(
+    discovery_server, missing, reason
+):
+    build, state = discovery_server
+    server, _ = build()
+    if missing == "project":
+        state["project"] = None
+    elif missing == "sdk":
+        server._tool_discovery._supported = False
+    else:
+        server._tool_discovery.store = None
+    async with Client(server) as client:
+        groups = (
+            await client.call_tool("manage_tools", {"action": "list_groups"})
+        ).structured_content
+        assert groups["discovery"]["selection_supported"] is False
+        assert groups["discovery"]["reason"] == reason
+
+
+def test_verified_http_principal_selection_and_capability_are_isolated(discovery_server):
+    from fastmcp.server.auth import StaticTokenVerifier
+    from starlette.testclient import TestClient
+    from tests.http.test_mcp_protocol_wire import _body, _headers
+
+    build, _ = discovery_server
+    auth = StaticTokenVerifier(
+        tokens={
+            "test-owner-one": {"client_id": "same-client", "sub": "owner-one"},
+            "test-owner-two": {"client_id": "same-client", "sub": "owner-two"},
+        }
+    )
+    server, store = build(auth=auth)
+    with TestClient(server.http_app(json_response=True)) as client:
+
+        def request(method, params=None, *, token=None):
+            params = params or {}
+            headers = dict(_headers(method, name=params.get("name")))
+            headers["accept"] = "application/json, text/event-stream"
+            headers["authorization"] = "Bearer " + (token or "test-owner-one")
+            response = client.post("/mcp", headers=headers, json=_body(method, params))
+            assert response.status_code == 200, response.text
+            return response.json()["result"]
+
+        capability = request(
+            "tools/call", {"name": "manage_tools", "arguments": {"action": "list_groups"}}
+        )["structuredContent"]["discovery"]
+        assert capability["mode"] == "scoped_project"
+        assert capability["selection_supported"] is True
+        request(
+            "tools/call",
+            {"name": "manage_tools", "arguments": {"action": "activate", "group": "vfx"}},
+        )
+        assert "effect_probe" in {tool["name"] for tool in request("tools/list")["tools"]}
+        assert "effect_probe" not in {
+            tool["name"] for tool in request("tools/list", token="test-owner-two")["tools"]
+        }
+        assert store.retained_entries == 1
 
 
 @pytest.mark.asyncio
