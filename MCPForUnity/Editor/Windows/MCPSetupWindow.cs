@@ -6,6 +6,7 @@ using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Dependencies;
 using MCPForUnity.Editor.Dependencies.Models;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Windows.Components.Branding;
 using UnityEditor;
@@ -30,6 +31,7 @@ namespace MCPForUnity.Editor.Windows
         private Label gitVersion;
         private Label gitDetails;
         private Label statusMessage;
+        private Label dependencyCheckError;
         private VisualElement installationSection;
         private Label installationInstructions;
         private Button openPythonLinkButton;
@@ -59,6 +61,7 @@ namespace MCPForUnity.Editor.Windows
         private Action finishSetup = null;
 
         private DependencyCheckResult _dependencyResult;
+        private string _dependencyCheckError;
         private Task<DependencyCheckResult> _dependencyTask;
         private static Func<bool, Task<DependencyCheckResult>> dependencyCheck = DependencyManager.CheckAllDependenciesAsync;
 
@@ -77,7 +80,8 @@ namespace MCPForUnity.Editor.Windows
         {
             _dependencyTask = null;
             EditorApplication.update -= PollDependencies;
-            _dependencyResult = dependencyResult;
+            _dependencyCheckError = DependencyFailure(dependencyResult);
+            _dependencyResult = _dependencyCheckError == null ? dependencyResult : null;
             if (statusMessage != null && installationSection != null && doneButton != null)
                 UpdateUI();
         }
@@ -121,6 +125,8 @@ namespace MCPForUnity.Editor.Windows
             gitVersion = rootVisualElement.Q<Label>("git-version");
             gitDetails = rootVisualElement.Q<Label>("git-details");
             statusMessage = rootVisualElement.Q<Label>("status-message");
+            dependencyCheckError = rootVisualElement.Q<Label>("dependency-check-error");
+            dependencyCheckError.enableRichText = false;
             installationSection = rootVisualElement.Q<VisualElement>("installation-section");
             installationInstructions = rootVisualElement.Q<Label>("installation-instructions");
             openPythonLinkButton = rootVisualElement.Q<Button>("open-python-link-button");
@@ -169,7 +175,7 @@ namespace MCPForUnity.Editor.Windows
 
         private void BeginInitialDependencyCheck()
         {
-            if (this != null && _dependencyResult == null && _dependencyTask == null)
+            if (this != null && _dependencyResult == null && _dependencyTask == null && _dependencyCheckError == null)
                 BeginDependencyCheck(false);
         }
 
@@ -177,9 +183,20 @@ namespace MCPForUnity.Editor.Windows
 
         private void BeginDependencyCheck(bool force)
         {
-            _dependencyTask = dependencyCheck(force);
+            if (_dependencyTask != null)
+                return;
+            _dependencyResult = null;
+            _dependencyCheckError = null;
             EditorApplication.update -= PollDependencies;
-            EditorApplication.update += PollDependencies;
+            try
+            {
+                _dependencyTask = dependencyCheck(force) ?? throw new InvalidOperationException("The dependency probe did not start.");
+                EditorApplication.update += PollDependencies;
+            }
+            catch (Exception ex)
+            {
+                _dependencyCheckError = SecretRedactor.Scrub(ex.GetBaseException().Message);
+            }
             UpdateUI();
         }
 
@@ -191,10 +208,34 @@ namespace MCPForUnity.Editor.Windows
             _dependencyTask = null;
             EditorApplication.update -= PollDependencies;
             if (task.Status == TaskStatus.RanToCompletion)
-                _dependencyResult = task.Result;
+            {
+                SetDependencyResult(task.Result);
+                return;
+            }
             else if (task.IsFaulted)
-                _dependencyResult = new DependencyCheckResult { Summary = "Dependency check failed: " + task.Exception.GetBaseException().Message };
+                _dependencyCheckError = SecretRedactor.Scrub(task.Exception.GetBaseException().Message);
+            else
+                _dependencyCheckError = "The dependency check was cancelled.";
             UpdateUI();
+        }
+
+        private static string DependencyFailure(DependencyCheckResult result)
+        {
+            const string failurePrefix = "Dependency check failed:";
+            if (result?.Summary?.StartsWith(failurePrefix, StringComparison.OrdinalIgnoreCase) == true)
+            {
+                string cause = result.Summary.Substring(failurePrefix.Length).Trim();
+                return string.IsNullOrEmpty(cause) ? "The dependency probe did not complete." : SecretRedactor.Scrub(cause);
+            }
+            if (
+                result?.Dependencies == null
+                || !result.Dependencies.Exists(d => d?.Name == "Python")
+                || !result.Dependencies.Exists(d => d?.Name == "uv Package Manager")
+            )
+                return "The check returned incomplete dependency results.";
+            if (!result.IsSystemReady && !result.Dependencies.Exists(d => d != null && d.IsRequired && !d.IsAvailable))
+                return "The check did not confirm system readiness.";
+            return null;
         }
 
         private void OnDoneClicked()
@@ -397,45 +438,72 @@ namespace MCPForUnity.Editor.Windows
             bool checking = _dependencyTask != null;
             refreshButton?.SetEnabled(!checking);
             doneButton.SetEnabled(!checking);
+            statusMessage.RemoveFromClassList("status-success");
+            statusMessage.RemoveFromClassList("status-warning");
+            statusMessage.RemoveFromClassList("status-error");
+            installationSection.RemoveFromClassList("visible");
+            if (installationInstructions != null)
+                installationInstructions.text = "";
+            openPythonLinkButton?.AddToClassList("hidden");
+            openUvLinkButton?.AddToClassList("hidden");
+            installUvButton?.AddToClassList("hidden");
+            dependencyCheckError?.AddToClassList("hidden");
+            if (dependencyCheckError != null)
+                dependencyCheckError.text = "";
+            ResetDependencyStatus(pythonIndicator, pythonVersion, pythonDetails);
+            ResetDependencyStatus(uvIndicator, uvVersion, uvDetails);
+            ResetDependencyStatus(gitIndicator, gitVersion, gitDetails);
+            if (refreshButton != null)
+                refreshButton.text = "Refresh";
+            doneButton.text = "Close";
             if (checking)
             {
                 statusMessage.text = "Checking dependencies...";
                 return;
             }
-            if (_dependencyResult == null)
+            if (_dependencyCheckError != null)
+            {
+                statusMessage.text = "Dependency check failed";
+                statusMessage.AddToClassList("status-error");
+                if (dependencyCheckError != null)
+                {
+                    dependencyCheckError.text = _dependencyCheckError + " Retry to check requirements again.";
+                    dependencyCheckError.RemoveFromClassList("hidden");
+                }
+                if (refreshButton != null)
+                    refreshButton.text = "Retry";
                 return;
+            }
+            if (_dependencyResult == null)
+            {
+                statusMessage.text = "Requirements have not been checked. Refresh to check them.";
+                return;
+            }
 
             // Update Python status
-            var pythonDep = _dependencyResult.Dependencies.Find(d => d.Name == "Python");
+            var pythonDep = _dependencyResult.Dependencies.Find(d => d?.Name == "Python");
             if (pythonDep != null)
             {
                 UpdateDependencyStatus(pythonIndicator, pythonVersion, pythonDetails, pythonDep);
             }
 
             // Update uv status
-            var uvDep = _dependencyResult.Dependencies.Find(d => d.Name == "uv Package Manager");
+            var uvDep = _dependencyResult.Dependencies.Find(d => d?.Name == "uv Package Manager");
             if (uvDep != null)
             {
                 UpdateDependencyStatus(uvIndicator, uvVersion, uvDetails, uvDep);
             }
 
             // Update git status (optional dependency: never blocks readiness)
-            var gitDep = _dependencyResult.Dependencies.Find(d => d.Name == "Git");
+            var gitDep = _dependencyResult.Dependencies.Find(d => d?.Name == "Git");
             if (gitDep != null)
             {
                 UpdateDependencyStatus(gitIndicator, gitVersion, gitDetails, gitDep);
             }
 
-            // Offer the one-click uv installer only when uv is actually missing
-            bool uvMissing = uvDep != null && !uvDep.IsAvailable;
-            if (installUvButton != null)
-            {
-                bool showInstall = uvMissing && UvInstaller.IsSupported && _uvInstallTask == null;
-                installUvButton.EnableInClassList("hidden", !showInstall);
-            }
-
             // Update overall status
-            if (_dependencyResult.IsSystemReady)
+            bool requiredMissing = _dependencyResult.Dependencies.Exists(d => d != null && d.IsRequired && !d.IsAvailable);
+            if (_dependencyResult.IsSystemReady && !requiredMissing)
             {
                 statusMessage.text = "System requirements met";
                 statusMessage.RemoveFromClassList("status-warning");
@@ -450,12 +518,39 @@ namespace MCPForUnity.Editor.Windows
                 statusMessage.AddToClassList("status-warning");
                 installationSection.AddToClassList("visible");
                 doneButton.text = "Close";
-                installationInstructions.text = DependencyManager.GetInstallationRecommendations();
+                bool pythonMissing = pythonDep != null && !pythonDep.IsAvailable;
+                bool uvMissing = uvDep != null && !uvDep.IsAvailable;
+                openPythonLinkButton?.EnableInClassList("hidden", !pythonMissing);
+                openUvLinkButton?.EnableInClassList("hidden", !uvMissing);
+                installUvButton?.EnableInClassList("hidden", !uvMissing || !UvInstaller.IsSupported || _uvInstallTask != null);
+                var instructions = new List<string>();
+                if (pythonMissing)
+                    instructions.Add("Install Python 3.11+ using Python Downloads.");
+                if (uvMissing)
+                    instructions.Add(UvInstaller.IsSupported ? "Install uv using Install uv or uv Downloads." : "Install uv using uv Downloads.");
+                instructions.Add("Refresh after installation to check requirements again.");
+                if (installationInstructions != null)
+                    installationInstructions.text = string.Join("\n", instructions);
+            }
+        }
+
+        private static void ResetDependencyStatus(VisualElement indicator, Label versionLabel, Label detailsLabel)
+        {
+            indicator?.RemoveFromClassList("valid");
+            indicator?.RemoveFromClassList("invalid");
+            if (versionLabel != null)
+                versionLabel.text = "Not checked";
+            if (detailsLabel != null)
+            {
+                detailsLabel.text = "";
+                detailsLabel.RemoveFromClassList("status-error");
             }
         }
 
         internal static void UpdateDependencyStatus(VisualElement indicator, Label versionLabel, Label detailsLabel, DependencyStatus dep)
         {
+            if (indicator == null || versionLabel == null || detailsLabel == null)
+                return;
             if (dep.IsAvailable)
             {
                 indicator.RemoveFromClassList("invalid");

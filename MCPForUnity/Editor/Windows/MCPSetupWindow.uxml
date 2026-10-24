@@ -46,6 +46,7 @@
                     <!-- Overall Status Message -->
                     <ui:VisualElement name="status-message-container">
                         <ui:Label name="status-message" class="help-text" />
+                        <ui:Label name="dependency-check-error" class="help-text hidden" />
                     </ui:VisualElement>
 
                     <!-- Installation Instructions (shown when dependencies missing) -->
@@ -53,9 +54,9 @@
                         <ui:Label text="Installation Instructions" class="installation-title" />
                         <ui:Label name="installation-instructions" class="help-text" />
                         <ui:VisualElement class="install-links-row">
-                            <ui:Button name="install-uv-button" text="Install uv" class="action-button install-link-button" />
-                            <ui:Button name="open-python-link-button" text="Python Downloads" class="secondary-button install-link-button" />
-                            <ui:Button name="open-uv-link-button" text="uv Downloads" class="secondary-button install-link-button" />
+                            <ui:Button name="install-uv-button" text="Install uv" class="action-button install-link-button hidden" />
+                            <ui:Button name="open-python-link-button" text="Python Downloads" class="secondary-button install-link-button hidden" />
+                            <ui:Button name="open-uv-link-button" text="uv Downloads" class="secondary-button install-link-button hidden" />
                         </ui:VisualElement>
                     </ui:VisualElement>
                 </ui:VisualElement>

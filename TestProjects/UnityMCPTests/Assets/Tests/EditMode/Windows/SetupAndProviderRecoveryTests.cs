@@ -74,6 +74,183 @@ namespace MCPForUnityTests.EditMode.Windows
             public string GetSkillInstallPath() => null;
         }
 
+        private static DependencyCheckResult ReadyDependencies() =>
+            new DependencyCheckResult
+            {
+                IsSystemReady = true,
+                Dependencies = new List<DependencyStatus>
+                {
+                    new DependencyStatus("Python")
+                    {
+                        IsAvailable = true,
+                        Version = "3.11",
+                        Details = "Python ready",
+                    },
+                    new DependencyStatus("uv Package Manager")
+                    {
+                        IsAvailable = true,
+                        Version = "0.8",
+                        Details = "uv ready",
+                    },
+                    new DependencyStatus("Git", false)
+                    {
+                        IsAvailable = true,
+                        Version = "2.50",
+                        Details = "Git ready",
+                    },
+                },
+            };
+
+        private static void WithReadySetup(Action<MCPSetupWindow, FieldInfo> assertion)
+        {
+            var probe = typeof(MCPSetupWindow).GetField("dependencyCheck", Static);
+            object previous = probe.GetValue(null);
+            MCPSetupWindow window = null;
+            try
+            {
+                probe.SetValue(null, (Func<bool, Task<DependencyCheckResult>>)(_ => throw new InvalidOperationException("Unexpected real dependency probe.")));
+                window = ScriptableObject.CreateInstance<MCPSetupWindow>();
+                Invoke(window, "SetDependencyResult", ReadyDependencies());
+                window.CreateGUI();
+                assertion(window, probe);
+            }
+            finally
+            {
+                if (window != null)
+                    UnityEngine.Object.DestroyImmediate(window);
+                probe.SetValue(null, previous);
+            }
+        }
+
+        [TestCase("fault")]
+        [TestCase("sync")]
+        [TestCase("cancelled")]
+        [TestCase("empty")]
+        [TestCase("null")]
+        [TestCase("partial")]
+        [TestCase("summary")]
+        public void PopulatedSetupRowsClearAfterUnsuccessfulCheck(string outcome)
+        {
+            WithReadySetup(
+                (window, probe) =>
+                {
+                    var root = window.rootVisualElement;
+                    Assert.AreEqual("v3.11", root.Q<Label>("python-version").text);
+                    Assert.IsTrue(root.Q("python-indicator").ClassListContains("valid"));
+                    var result = ReadyDependencies();
+                    if (outcome == "empty")
+                        result.Dependencies.Clear();
+                    if (outcome == "partial")
+                        result.Dependencies.RemoveAt(1);
+                    if (outcome == "summary")
+                        result.Summary = "Dependency check failed: Probe unavailable; Bearer synthetic-secret";
+                    probe.SetValue(
+                        null,
+                        (Func<bool, Task<DependencyCheckResult>>)(
+                            _ =>
+                            {
+                                if (outcome == "sync")
+                                    throw new InvalidOperationException("Probe unavailable; Bearer synthetic-secret");
+                                if (outcome == "fault")
+                                    return Task.FromException<DependencyCheckResult>(
+                                        new InvalidOperationException("Probe unavailable; Bearer synthetic-secret")
+                                    );
+                                if (outcome == "cancelled")
+                                    return Task.FromCanceled<DependencyCheckResult>(new System.Threading.CancellationToken(true));
+                                return Task.FromResult(outcome == "null" ? null : result);
+                            }
+                        )
+                    );
+                    Invoke(window, "BeginDependencyCheck", true);
+                    Invoke(window, "PollDependencies");
+
+                    StringAssert.Contains("Dependency check failed", root.Q<Label>("status-message").text);
+                    if (outcome == "fault" || outcome == "sync" || outcome == "summary")
+                    {
+                        StringAssert.Contains("Probe unavailable", root.Q<Label>("dependency-check-error").text);
+                        StringAssert.DoesNotContain("synthetic-secret", root.Q<Label>("dependency-check-error").text);
+                    }
+                    Assert.AreEqual("Retry", root.Q<Button>("refresh-button").text);
+                    Assert.AreEqual("Close", root.Q<Button>("done-button").text);
+                    Assert.IsTrue(root.Q<Button>("refresh-button").enabledSelf);
+                    foreach (string name in new[] { "python", "uv", "git" })
+                    {
+                        Assert.AreEqual("Not checked", root.Q<Label>(name + "-version").text);
+                        Assert.IsEmpty(root.Q<Label>(name + "-details").text);
+                        Assert.IsFalse(root.Q(name + "-indicator").ClassListContains("valid"));
+                        Assert.IsFalse(root.Q(name + "-indicator").ClassListContains("invalid"));
+                    }
+                    Assert.IsFalse(root.Q("installation-section").ClassListContains("visible"));
+                    foreach (string action in new[] { "install-uv-button", "open-python-link-button", "open-uv-link-button" })
+                        Assert.IsTrue(root.Q(action).ClassListContains("hidden"));
+                }
+            );
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void MissingSetupDependencyShowsOnlyItsRecoveryActions(bool pythonMissing)
+        {
+            WithReadySetup(
+                (window, _) =>
+                {
+                    var result = ReadyDependencies();
+                    result.Dependencies[pythonMissing ? 0 : 1].IsAvailable = false;
+                    result.GenerateSummary();
+                    Invoke(window, "SetDependencyResult", result);
+                    var root = window.rootVisualElement;
+                    Assert.AreEqual("Required dependencies missing", root.Q<Label>("status-message").text);
+                    Assert.IsTrue(root.Q("installation-section").ClassListContains("visible"));
+                    Assert.AreEqual(!pythonMissing, root.Q("open-python-link-button").ClassListContains("hidden"));
+                    Assert.AreEqual(pythonMissing, root.Q("open-uv-link-button").ClassListContains("hidden"));
+                    if (pythonMissing)
+                        Assert.IsTrue(root.Q("install-uv-button").ClassListContains("hidden"));
+                    StringAssert.DoesNotContain(pythonMissing ? "uv" : "Python", root.Q<Label>("installation-instructions").text);
+                }
+            );
+        }
+
+        [Test]
+        public void SetupRetryOwnsOneProbeAndReplacesFailureWithFreshReadyRows()
+        {
+            WithReadySetup(
+                (window, probe) =>
+                {
+                    int checks = 0;
+                    var pending = new TaskCompletionSource<DependencyCheckResult>();
+                    probe.SetValue(
+                        null,
+                        (Func<bool, Task<DependencyCheckResult>>)(
+                            force =>
+                            {
+                                Assert.IsTrue(force);
+                                checks++;
+                                return checks == 1
+                                    ? Task.FromException<DependencyCheckResult>(new InvalidOperationException("Probe unavailable"))
+                                    : pending.Task;
+                            }
+                        )
+                    );
+                    Invoke(window, "OnRefreshClicked");
+                    Invoke(window, "PollDependencies");
+                    Invoke(window, "OnRefreshClicked");
+                    Invoke(window, "OnRefreshClicked");
+                    var root = window.rootVisualElement;
+                    Assert.AreEqual(2, checks, "Retry must not replace an owned in-flight probe.");
+                    Assert.AreEqual("Checking dependencies...", root.Q<Label>("status-message").text);
+                    Assert.IsFalse(root.Q<Button>("refresh-button").enabledSelf);
+                    Assert.IsFalse(root.Q<Button>("done-button").enabledSelf);
+                    Assert.IsTrue(root.Q("dependency-check-error").ClassListContains("hidden"));
+                    pending.SetResult(ReadyDependencies());
+                    Invoke(window, "PollDependencies");
+                    Assert.AreEqual("System requirements met", root.Q<Label>("status-message").text);
+                    Assert.AreEqual("Refresh", root.Q<Button>("refresh-button").text);
+                    Assert.IsTrue(root.Q<Button>("done-button").enabledSelf);
+                    Assert.AreEqual("v3.11", root.Q<Label>("python-version").text);
+                }
+            );
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void FailedSetupRemainsOpenAndRetryDoesNotRepeatSuccess(bool allFail)

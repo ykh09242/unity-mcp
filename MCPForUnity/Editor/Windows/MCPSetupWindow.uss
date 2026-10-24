@@ -56,6 +56,11 @@
     white-space: normal;
 }
 
+#dependency-check-error {
+    white-space: normal;
+    margin-top: 4px;
+}
+
 #installation-section {
     display: none;
     margin-top: 12px;
