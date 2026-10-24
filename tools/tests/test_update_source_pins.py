@@ -1,5 +1,7 @@
 """Local synthetic history and crash recovery; no providers or publication."""
 
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -141,6 +143,232 @@ def history(tmp_path):
     new = git(repo, "rev-parse", "HEAD")
     git(repo, "checkout", "-q", "fixture-base")
     return repo, old, new, base
+
+
+@pytest.fixture
+def bundled_history(history):
+    repo, _, new, _ = history
+    git(repo, "checkout", "-q", "--detach", new)
+    for folder in pins.SKILLS:
+        put(
+            repo,
+            folder + "/SKILL.md",
+            "---\nname: unity-mcp-orchestrator\ndescription: Reviewed fixture\n---\nSkill guidance\n",
+        )
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "reviewed skill with frontmatter")
+    skill = git(repo, "rev-parse", "HEAD")
+    files = pins.skill_files(repo, skill, pins.SKILLS[0])
+    payload = {
+        "format": 1,
+        "repository": BASE,
+        "revision": skill,
+        "frontmatter": {"name": "unity-mcp-orchestrator", "description": "Reviewed fixture"},
+        "files": [
+            {
+                "path": path,
+                "size": len(data),
+                "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+                "data": base64.b64encode(data).decode("ascii"),
+            }
+            for path, data in sorted(files.items())
+        ],
+    }
+    record = {"payload": payload}
+    bundle_checksum(record)
+    put(repo, "Server/src/services/skills_bundle.json", json.dumps(record) + "\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "server with immutable skill bundle")
+    server = git(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-q", "fixture-base")
+    return repo, server, skill
+
+
+def bundle_checksum(record):
+    canonical = json.dumps(
+        record["payload"],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    record["sha256"] = hashlib.sha256(canonical).hexdigest()
+
+
+@pytest.fixture
+def crlf_bundled_history(bundled_history):
+    repo, server, _ = bundled_history
+    git(repo, "checkout", "-q", "--detach", server)
+    put(repo, ".gitattributes", "*.md -text\n")
+    for folder in pins.SKILLS:
+        for path in (repo / folder).rglob("*.md"):
+            path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "reviewed CRLF skill blobs")
+    skill = git(repo, "rev-parse", "HEAD")
+    path = "Server/src/services/skills_bundle.json"
+    record = json.loads((repo / path).read_bytes())
+    record["payload"]["revision"] = skill
+    for entry in record["payload"]["files"]:
+        data = pins.committed(repo, skill, pins.SKILLS[0] + "/" + entry["path"])
+        assert b"\r\n" in data
+        entry.update(
+            data=base64.b64encode(data).decode("ascii"),
+            size=len(data),
+            digest="sha256:" + hashlib.sha256(data).hexdigest(),
+        )
+    bundle_checksum(record)
+    put(repo, path, json.dumps(record) + "\n")
+    git(repo, "add", path)
+    git(repo, "commit", "-qm", "server preserves exact CRLF skill bytes")
+    server = git(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-q", "fixture-base")
+    return repo, server, skill
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("rewrite_lf", [False, True])
+def test_bundle_comparison_preserves_raw_committed_line_endings(
+    crlf_bundled_history, monkeypatch, capsys, dry_run, rewrite_lf
+):
+    # Given: a bundle preserving verified CRLF Git blobs, or a non-exact LF rewrite.
+    repo, server, skill = crlf_bundled_history
+    if rewrite_lf:
+        git(repo, "checkout", "-q", "--detach", server)
+        path = "Server/src/services/skills_bundle.json"
+        record = json.loads((repo / path).read_bytes())
+        for entry in record["payload"]["files"]:
+            data = base64.b64decode(entry["data"]).replace(b"\r\n", b"\n")
+            entry.update(
+                data=base64.b64encode(data).decode("ascii"),
+                size=len(data),
+                digest="sha256:" + hashlib.sha256(data).hexdigest(),
+            )
+        bundle_checksum(record)
+        put(repo, path, json.dumps(record) + "\n")
+        git(repo, "add", path)
+        git(repo, "commit", "-qm", "server with non-exact LF rewritten bytes")
+        server = git(repo, "rev-parse", "HEAD")
+        git(repo, "checkout", "-q", "fixture-base")
+    before = snapshot(repo)
+    arguments = ["update_versions.py", "--server-commit", server, "--skill-commit", skill]
+    if dry_run:
+        arguments.append("--dry-run")
+    monkeypatch.setattr(update_versions, "REPO_ROOT", repo)
+    monkeypatch.setattr(sys, "argv", arguments)
+    # When: either CLI mode compares the bundle with its selected immutable skill.
+    result = update_versions.main()
+    # Then: only the exact raw blob representation is compatible, without preflight writes.
+    assert result == int(rewrite_lf)
+    if rewrite_lf:
+        assert "skill bundle" in capsys.readouterr().err.lower()
+    if rewrite_lf or dry_run:
+        assert snapshot(repo) == before
+        assert not (repo / ".work").exists()
+    else:
+        assert (
+            json.loads((repo / "MCPForUnity/package.json").read_bytes())["mcpSkillRevision"]
+            == skill
+        )
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "revision",
+        "checksum",
+        "content",
+        "missing",
+        "extra",
+        "duplicate",
+        "digest",
+        "size",
+        "envelope",
+        "format",
+    ],
+)
+def test_incompatible_server_bundle_refuses_before_any_write(
+    bundled_history, monkeypatch, capsys, defect, dry_run
+):
+    # Given: selected server/skill commits whose mirrors can agree while their bundle does not.
+    repo, server, skill = bundled_history
+    if defect == "revision":
+        skill = server  # Identical skill files do not make the provenance revision interchangeable.
+    else:
+        git(repo, "checkout", "-q", "--detach", server)
+        path = "Server/src/services/skills_bundle.json"
+        record = json.loads((repo / path).read_bytes())
+        payload = record["payload"]
+        if defect == "content":
+            data = b"Different guidance\n"
+            payload["files"][0].update(
+                data=base64.b64encode(data).decode("ascii"),
+                size=len(data),
+                digest="sha256:" + hashlib.sha256(data).hexdigest(),
+            )
+        elif defect == "missing":
+            payload["files"].pop()
+        elif defect == "extra":
+            payload["files"].append({**payload["files"][0], "path": "extra.md"})
+        elif defect == "duplicate":
+            payload["files"].append(payload["files"][0])
+        elif defect == "digest":
+            payload["files"][0]["digest"] = "sha256:" + "f" * 64
+        elif defect == "size":
+            payload["files"][0]["size"] += 1
+        elif defect == "envelope":
+            record["unexpected"] = True
+        elif defect == "format":
+            payload["format"] = 2
+        bundle_checksum(record)
+        if defect == "checksum":
+            record["sha256"] = "f" * 64
+        put(repo, path, json.dumps(record) + "\n")
+        git(repo, "add", path)
+        git(repo, "commit", "-qm", "incompatible bundled skill input")
+        server = git(repo, "rev-parse", "HEAD")
+        git(repo, "checkout", "-q", "fixture-base")
+    before = snapshot(repo)
+    monkeypatch.setattr(update_versions, "REPO_ROOT", repo)
+    arguments = ["update_versions.py", "--server-commit", server, "--skill-commit", skill]
+    if dry_run:
+        arguments.append("--dry-run")
+    monkeypatch.setattr(sys, "argv", arguments)
+    # When: either CLI mode selects the incompatible pair.
+    result = update_versions.main()
+    # Then: refusal precedes public files, a journal, and even private staging creation.
+    assert result == 1
+    assert "skill bundle" in capsys.readouterr().err.lower()
+    assert snapshot(repo) == before
+    assert not (repo / ".work").exists()
+
+
+def test_compatible_bundled_selection_is_complete_and_idempotent(bundled_history):
+    # Given: a server bundle derived from the exact selected immutable skill revision.
+    repo, server, skill = bundled_history
+    before = snapshot(repo)
+    # When: preparation, application and an identical repeat use that compatible pair.
+    plan = pins.prepare(repo, server, skill)
+    assert snapshot(repo) == before
+    assert pins.apply(plan) > 0
+    # Then: selected provenance is truthful and an identical repeat makes no changes.
+    assert pins.apply(pins.prepare(repo, server, skill)) == 0
+    package = json.loads((repo / "MCPForUnity/package.json").read_bytes())
+    assert package["mcpSkillRevision"] == skill
+    assert server in package["mcpServerSource"]
+
+
+def test_legacy_server_without_bundle_keeps_independent_skill_selection(history):
+    # Given: independently reviewed server and skill commits preceding bundled skills.
+    repo, server, skill, _ = history
+    # When: the legacy server is selected with the newer skill revision.
+    pins.apply(pins.prepare(repo, server, skill))
+    # Then: that previously supported pair remains valid and idempotent.
+    assert pins.apply(pins.prepare(repo, server, skill)) == 0
+    package = json.loads((repo / "MCPForUnity/package.json").read_bytes())
+    assert package["mcpSkillRevision"] == skill
+    assert server in package["mcpServerSource"]
 
 
 def test_update_is_complete_idempotent_and_release_checker_agrees(history):

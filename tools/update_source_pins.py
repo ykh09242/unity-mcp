@@ -5,6 +5,7 @@ File replacement is atomic individually. A durable journal permits rollback afte
 process termination; an unfinished transaction blocks another update.
 """
 
+import base64
 from dataclasses import dataclass
 import hashlib
 import json
@@ -48,6 +49,7 @@ INPUTS = "release-source-inputs.json"
 METADATA = {"MCPForUnity/package.json", "manifest.json", INPUTS, *DOCUMENTS}
 JOURNAL = ".work/source-pin-transaction"
 FINALIZED = JOURNAL + "-finalized"
+SKILL_BUNDLE = "Server/src/services/skills_bundle.json"
 
 
 def sha(data: bytes | None) -> str | None:
@@ -131,6 +133,77 @@ class PinPlan:
         }
 
 
+def validate_server_skill_bundle(
+    repo: Path, server: str, skill: str, expected: dict[str, bytes]
+) -> None:
+    """Match packaged provenance and bytes; YAML derivation remains generator-owned."""
+    listing = git(repo, "ls-tree", "-z", "--full-tree", server, "--", SKILL_BUNDLE)
+    if not listing:
+        return  # Older servers did not publish a bundled skill.
+    metadata, path = listing.rstrip(b"\0").split(b"\t", 1)
+    mode, kind, _ = metadata.split(b" ")
+    require(
+        mode in (b"100644", b"100755") and kind == b"blob" and path.decode() == SKILL_BUNDLE,
+        "Selected server skill bundle must be a regular committed file",
+    )
+    raw = committed(repo, server, SKILL_BUNDLE)
+    require(len(raw) <= 24 * 1024 * 1024, "Selected server skill bundle exceeds 24 MiB")
+    record = load_json(raw)
+    require(set(record) == {"payload", "sha256"}, "Invalid selected server skill bundle envelope")
+    payload = record["payload"]
+    require(
+        isinstance(payload, dict)
+        and set(payload) == {"format", "repository", "revision", "frontmatter", "files"},
+        "Invalid selected server skill bundle payload",
+    )
+    canonical = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    require(
+        hashlib.sha256(canonical).hexdigest() == record["sha256"],
+        "Selected server skill bundle checksum differs from its payload",
+    )
+    require(
+        type(payload["format"]) is int
+        and payload["format"] == 1
+        and payload["repository"] == BASE
+        and payload["revision"] == skill,
+        "Selected server skill bundle provenance does not match the selected skill revision",
+    )
+    frontmatter = payload["frontmatter"]
+    require(
+        isinstance(frontmatter, dict)
+        and frontmatter.get("name") == "unity-mcp-orchestrator"
+        and isinstance(frontmatter.get("description"), str)
+        and 1 <= len(frontmatter["description"]) <= 1024,
+        "Invalid selected server skill bundle frontmatter metadata",
+    )
+    raw_files = {path: committed(repo, skill, SKILLS[0] + "/" + path) for path in expected}
+    require(
+        1 <= len(raw_files) <= 512
+        and len({path.casefold() for path in raw_files}) == len(raw_files)
+        and all(re.fullmatch(r"(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.md", path) for path in raw_files)
+        and sum(map(len, raw_files.values())) <= 16 * 1024 * 1024,
+        "Selected skill files exceed the supported skill bundle contract",
+    )
+    files = payload["files"]
+    expected_files = [
+        {
+            "path": path,
+            "size": len(data),
+            "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+            "data": base64.b64encode(data).decode("ascii"),
+        }
+        for path, data in sorted(raw_files.items())
+    ]
+    require(
+        isinstance(files, list)
+        and all(isinstance(item, dict) and type(item.get("size")) is int for item in files)
+        and files == expected_files,
+        "Selected server skill bundle paths, content, sizes or digests differ from the selected skill",
+    )
+
+
 def prepare(repo: Path, server: str, skill: str) -> PinPlan:
     repo = repo.resolve(strict=True)
     require(
@@ -177,6 +250,7 @@ def prepare(repo: Path, server: str, skill: str) -> PinPlan:
         skill_files(repo, skill, SKILLS[1]) == expected,
         "Selected skill commit contains inconsistent mirrors",
     )
+    validate_server_skill_bundle(repo, server, skill, expected)
     previous = skill_files(repo, old_skill, SKILLS[0])
     new_source = BASE + "/archive/" + server + ".zip#subdirectory=Server"
     desired: dict[str, bytes | None] = {}

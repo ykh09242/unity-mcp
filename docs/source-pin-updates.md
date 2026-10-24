@@ -11,6 +11,10 @@ Review the dry-run file list and before/after SHA-256 values. The transaction up
 
 Before writing, the helper validates the fork remote, package/distribution identity, full commit availability, canonical source URL, manifest agreement, example counts and the selected skill mirrors. It refuses unknown skill files, unreviewed local edits, noncanonical paths and links/reparse points. Keep the checkout exclusive while applying; this is an offline authoring tool, not a concurrent filesystem security boundary.
 
+When the selected server commit contains `Server/src/services/skills_bundle.json`, its bundled revision must equal the selected skill commit. Identical skill mirror bytes at a newer commit do not make the revisions interchangeable: the revision is part of the bundle payload and checksum. Select the skill revision already bundled by that server, or first prepare and validate a server commit with the refreshed bundle.
+
+Both dry-run and apply validate the committed bundle before creating a transaction journal, staging files or changing public files. This standard-library-only check verifies the supported envelope, repository/revision metadata, payload checksum and the complete ordered file set, including exact raw committed bytes, sizes and file digests. Bundle comparisons preserve committed line endings, matching the verified generator; checkout/mirror normalization remains separate. The check validates frontmatter metadata shape; YAML syntax and derivation from `SKILL.md` remain the responsibility of `tools/generate_skill_bundle.py` and its existing contract tests. Older server commits without a bundled skill remain supported.
+
 All replacement bytes and original backups are prepared first under the repository's `.work` directory. Each file replacement is atomic. Multi-file publication is **recoverable, not one operating-system atomic operation**: an interruption before finalization triggers rollback, while forced process termination can leave a partial working-tree update with a durable journal. Do not commit or publish that state. Another pin update refuses until recovery succeeds:
 
 ```sh
