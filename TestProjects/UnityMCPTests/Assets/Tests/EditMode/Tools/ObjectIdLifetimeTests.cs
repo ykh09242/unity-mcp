@@ -28,8 +28,8 @@ namespace MCPForUnityTests.Editor.Tools
             );
             try
             {
-                type.GetMethod("Remember").Invoke(cache, new object[] { 1, 1UL });
-                type.GetMethod("Remember").Invoke(cache, new object[] { 2, 2UL });
+                type.GetMethod("Remember").Invoke(cache, new object[] { 1UL });
+                type.GetMethod("Remember").Invoke(cache, new object[] { 2UL });
                 UnityEngine.Object.DestroyImmediate(dead);
                 now = 11;
                 yield return null;
