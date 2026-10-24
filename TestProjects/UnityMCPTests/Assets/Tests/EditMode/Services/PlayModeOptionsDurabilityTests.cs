@@ -104,7 +104,7 @@ namespace MCPForUnityTests.Editor.Services
             Directory.CreateDirectory(marker);
             EditorSettings.enterPlayModeOptionsEnabled = false;
             EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.None;
-            MethodInfo admission = typeof(TestRunnerService).GetMethod("EnsurePlayModeRunsWithoutDomainReload", Flags);
+            MethodInfo admission = typeof(PlayModeOptionsGuard).GetMethod("Apply", Flags);
             Assert.Catch<IOException>(() =>
             {
                 try
@@ -182,9 +182,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             try
             {
-                typeof(TestRunnerService)
-                    .GetMethod("EnsurePlayModeRunsWithoutDomainReload", Flags)
-                    .Invoke(null, new object[] { false, EnterPlayModeOptions.None });
+                typeof(PlayModeOptionsGuard).GetMethod("Apply", Flags).Invoke(null, new object[] { false, EnterPlayModeOptions.None });
             }
             catch (TargetInvocationException ex)
             {

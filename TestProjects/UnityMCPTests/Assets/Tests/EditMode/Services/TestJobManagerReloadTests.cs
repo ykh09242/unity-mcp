@@ -436,8 +436,11 @@ namespace MCPForUnityTests.Editor.Services
             var apply = TestRunnerNoThrottle.ApplyInteractionPreferences;
             var preferences = new Dictionary<string, int> { ["ApplicationIdleTime"] = 7, ["InteractionMode"] = 0 };
             int refreshes = 0;
+            string originalLeaseRoot = TestRunnerNoThrottle.LeaseRootForTests;
+            string ownedLeaseRoot = System.IO.Path.Combine(Application.temporaryCachePath, "McpPreferenceLeaseTests", Guid.NewGuid().ToString("N"));
             try
             {
+                TestRunnerNoThrottle.LeaseRootForTests = ownedLeaseRoot;
                 SessionState.SetBool(capturedKey, false);
                 TestRunnerNoThrottle.ReadPreference = (key, fallback) => preferences.TryGetValue(key, out int value) ? value : fallback;
                 TestRunnerNoThrottle.WritePreference = (key, value) => preferences[key] = value;
@@ -459,6 +462,10 @@ namespace MCPForUnityTests.Editor.Services
             }
             finally
             {
+                TestRunnerNoThrottle.RestoreThrottling();
+                TestRunnerNoThrottle.LeaseRootForTests = originalLeaseRoot;
+                if (System.IO.Directory.Exists(ownedLeaseRoot))
+                    System.IO.Directory.Delete(ownedLeaseRoot, true);
                 SessionState.SetBool(activeKey, active);
                 SessionState.SetBool(capturedKey, captured);
                 SessionState.SetInt(idleKey, previousIdle);

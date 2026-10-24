@@ -4,7 +4,9 @@
 // Note: Tests that trigger mid-run compilation may still stall due to OS-level throttling.
 
 using System;
+using System.IO;
 using System.Reflection;
+using System.Text;
 using MCPForUnity.Editor.Helpers;
 using UnityEditor;
 using UnityEditor.TestTools.TestRunner.Api;
@@ -21,8 +23,6 @@ namespace MCPForUnity.Editor.Services
     /// - OS-level throttling affects the main thread when Unity is backgrounded
     /// - No amount of internal nudging can overcome OS thread scheduling
     ///
-    /// The MCP workflow is unaffected because socket messages provide external stimulus
-    /// that wakes Unity's main thread.
     /// </summary>
     [InitializeOnLoad]
     public static class TestRunnerNoThrottle
@@ -35,6 +35,13 @@ namespace MCPForUnity.Editor.Services
         internal static Func<string, int, int> ReadPreference = EditorPrefs.GetInt;
         internal static Action<string, int> WritePreference = EditorPrefs.SetInt;
         internal static Action ApplyInteractionPreferences = ForceEditorToApplyInteractionPrefs;
+        internal static string LeaseRootForTests;
+        private static EditorPreferenceLease lease;
+        private static string leaseRoot;
+        private static string defaultLeaseRoot;
+        private static bool maintaining;
+        private static bool warned;
+        private static double nextMaintenance;
 
         // SessionState keys to persist across domain reload
         private const string SessionKey_TestRunActive = "TestRunnerNoThrottle_TestRunActive";
@@ -49,7 +56,8 @@ namespace MCPForUnity.Editor.Services
         static TestRunnerNoThrottle()
         {
             AssemblyReloadEvents.beforeAssemblyReload += ReleaseApi;
-            EditorApplication.quitting += ReleaseApi;
+            EditorApplication.quitting += OnQuit;
+            EditorApplication.delayCall += RecoverAfterStartup;
             try
             {
                 _api = ScriptableObject.CreateInstance<TestRunnerApi>();
@@ -73,6 +81,9 @@ namespace MCPForUnity.Editor.Services
 
         private static void ReleaseApi()
         {
+            EditorApplication.update -= Maintain;
+            EditorApplication.delayCall -= RecoverAfterStartup;
+            maintaining = false;
             var api = _api;
             var callbacks = _callbacks;
             _api = null;
@@ -118,8 +129,8 @@ namespace MCPForUnity.Editor.Services
 
         /// <summary>
         /// Apply no-throttling preemptively before tests start.
-        /// Call this before Execute() for PlayMode tests to ensure Unity isn't throttled
-        /// during the Play mode transition (before RunStarted fires).
+        /// Call before Execute() in either mode so background progress is available
+        /// during startup, before RunStarted fires.
         /// </summary>
         public static void ApplyNoThrottlingPreemptive()
         {
@@ -127,35 +138,167 @@ namespace MCPForUnity.Editor.Services
             ApplyNoThrottling();
         }
 
+        private static EditorPreferenceLease GetLease()
+        {
+            if (defaultLeaseRoot == null)
+            {
+                string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                if (string.IsNullOrEmpty(local))
+                    local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+                if (!Path.IsPathRooted(local))
+                    throw new IOException("No absolute per-user preference directory is available.");
+                string machine = AtomicAssetFile.Digest(Encoding.UTF8.GetBytes(Environment.MachineName));
+                defaultLeaseRoot = Path.Combine(local, "MCPForUnity", "EditorPreferences", machine);
+            }
+            string root = LeaseRootForTests ?? defaultLeaseRoot;
+            if (lease == null || leaseRoot != root)
+            {
+                using var process = System.Diagnostics.Process.GetCurrentProcess();
+                lease = new EditorPreferenceLease(
+                    root,
+                    process.Id,
+                    process.StartTime.ToUniversalTime().Ticks,
+                    OwnerIsAlive,
+                    (key, fallback) => ReadPreference(key, fallback),
+                    (key, value) => WritePreference(key, value),
+                    () => ApplyInteractionPreferences()
+                );
+                leaseRoot = root;
+            }
+            return lease;
+        }
+
+        private static bool OwnerIsAlive(int pid, long started)
+        {
+            try
+            {
+                using var process = System.Diagnostics.Process.GetProcessById(pid);
+                return !process.HasExited && process.StartTime.ToUniversalTime().Ticks == started;
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+            // An inaccessible live process is not proof that its ownership expired.
+            catch (System.ComponentModel.Win32Exception)
+            {
+                return true;
+            }
+            catch (NotSupportedException)
+            {
+                return true;
+            }
+        }
+
+        private static bool TryLease(Action<EditorPreferenceLease> operation)
+        {
+            try
+            {
+                operation(GetLease());
+                warned = false;
+                return true;
+            }
+            catch (Exception error)
+                when (error is IOException
+                    || error is UnauthorizedAccessException
+                    || error is InvalidOperationException
+                    || error is Newtonsoft.Json.JsonException
+                    || error is System.ComponentModel.Win32Exception
+                    || error is NotSupportedException
+                )
+            {
+                if (!warned)
+                    McpLog.Warn(
+                        "[TestRunnerNoThrottle] Preference ownership is unavailable; preserving current settings and retrying. " + error.GetType().Name
+                    );
+                warned = true;
+                return false;
+            }
+        }
+
+        private static void ScheduleMaintenance()
+        {
+            if (maintaining)
+                return;
+            maintaining = true;
+            nextMaintenance = EditorApplication.timeSinceStartup + 5;
+            EditorApplication.update += Maintain;
+        }
+
+        private static void RecoverAfterStartup()
+        {
+            // No directory or lock is created when no recovery record exists.
+            if (IsTestRunActive())
+                ApplyNoThrottling();
+            else if (AreSettingsCaptured())
+                RestoreThrottling();
+            else
+                TryLease(current =>
+                {
+                    if (current.Exists)
+                        current.Release();
+                });
+            ScheduleMaintenance();
+        }
+
+        private static void Maintain()
+        {
+            if (EditorApplication.timeSinceStartup < nextMaintenance)
+                return;
+            nextMaintenance = EditorApplication.timeSinceStartup + 5;
+            if (IsTestRunActive())
+                ApplyNoThrottling();
+            else if (AreSettingsCaptured())
+                RestoreThrottling();
+            else if (!TryLease(current => current.Recover()))
+                return;
+            bool pending = true;
+            if (!IsTestRunActive() && !AreSettingsCaptured() && TryLease(current => pending = current.Exists) && !pending)
+            {
+                EditorApplication.update -= Maintain;
+                maintaining = false;
+            }
+        }
+
         private static void ApplyNoThrottling()
         {
-            if (!AreSettingsCaptured())
+            ScheduleMaintenance();
+            int idle = ReadPreference(ApplicationIdleTimeKey, 4);
+            int mode = ReadPreference(InteractionModeKey, 0);
+            bool captured = AreSettingsCaptured();
+            if (!TryLease(current => current.Acquire(captured ? GetPrevIdleTime() : (int?)null, captured ? GetPrevInteractionMode() : (int?)null)))
+                return;
+            if (!captured)
             {
-                SetPrevIdleTime(ReadPreference(ApplicationIdleTimeKey, 4));
-                SetPrevInteractionMode(ReadPreference(InteractionModeKey, 0));
+                SetPrevIdleTime(idle);
+                SetPrevInteractionMode(mode);
                 SetSettingsCaptured(true);
             }
-
-            // 0ms idle + InteractionMode=1 (No Throttling)
-            WritePreference(ApplicationIdleTimeKey, 0);
-            WritePreference(InteractionModeKey, 1);
-
-            ApplyInteractionPreferences();
-            McpLog.Info("[TestRunnerNoThrottle] Applied No Throttling for test run.");
         }
 
         internal static void RestoreThrottling()
         {
-            if (!AreSettingsCaptured())
-                return;
-
-            WritePreference(ApplicationIdleTimeKey, GetPrevIdleTime());
-            WritePreference(InteractionModeKey, GetPrevInteractionMode());
-            ApplyInteractionPreferences();
-
-            SetSettingsCaptured(false);
             SetTestRunActive(false);
-            McpLog.Info("[TestRunnerNoThrottle] Restored Interaction Mode after test run.");
+            ScheduleMaintenance();
+            if (
+                TryLease(current =>
+                {
+                    if (AreSettingsCaptured() && !current.Exists)
+                        current.Acquire(GetPrevIdleTime(), GetPrevInteractionMode());
+                    current.Release();
+                })
+            )
+                SetSettingsCaptured(false);
+        }
+
+        private static void OnQuit()
+        {
+            RestoreThrottling();
+            ReleaseApi();
         }
 
         private static void ForceEditorToApplyInteractionPrefs()
