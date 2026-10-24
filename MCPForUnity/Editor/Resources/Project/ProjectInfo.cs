@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -47,7 +48,9 @@ namespace MCPForUnity.Editor.Resources.Project
                         textmeshpro = IsPackageInstalled("com.unity.textmeshpro"),
                         inputsystem = IsPackageInstalled("com.unity.inputsystem"),
                         uiToolkit = true,
-                        screenCapture = true,
+                        screenCapture = OptionalUnityModules.ScreenCapture,
+                        physics = OptionalUnityModules.Physics3D,
+                        physics2d = OptionalUnityModules.Physics2D,
                     },
                 };
 

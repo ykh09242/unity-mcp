@@ -647,11 +647,34 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
     import transport.legacy.unity_connection as legacy
 
     monkeypatch.setattr(config, "transport_mode", "stdio")
-    monkeypatch.setattr(capabilities, "_QUERY_TIMEOUT_SECONDS", 0.05)
+    # Expire the test deadline after admission, not while a loaded executor is
+    # still scheduling the worker. The watchdog bounds a hang, not performance.
+    monkeypatch.setattr(capabilities, "_QUERY_TIMEOUT_SECONDS", watchdog_timeout())
     connection = legacy.UnityConnection(port=1, instance_id="Fixture@hash")
     loop = asyncio.get_running_loop()
     entered, finished = asyncio.Event(), asyncio.Event()
     sent = []
+    deadlines = []
+    expired_clock = []
+    scopes = []
+    original_move_on_at = anyio.move_on_at
+
+    def tracked_deadline(deadline: float | None, shield: bool = False) -> anyio.CancelScope:
+        scope = original_move_on_at(deadline, shield=shield)
+        scopes.append(scope)
+        return scope
+
+    def transport_monotonic() -> float:
+        return expired_clock[0] if expired_clock else time.monotonic()
+
+    # Override only the transport module's clock; asyncio and its watchdogs keep
+    # the real clock. The connection still runs its actual deadline checks.
+    monkeypatch.setattr(anyio, "move_on_at", tracked_deadline)
+    monkeypatch.setattr(
+        legacy,
+        "time",
+        SimpleNamespace(monotonic=transport_monotonic, time=time.time, sleep=time.sleep),
+    )
 
     async def generation(_instance):
         return "stable-authenticated-generation"
@@ -660,6 +683,7 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
         return "Fixture@hash" if name == "unity_instance" else None
 
     def send(name, _params, max_attempts=None, deadline=None):
+        deadlines.append(deadline)
         loop.call_soon_threadsafe(entered.set)
         try:
             with connection._command_lock(deadline):
@@ -670,6 +694,9 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
 
     monkeypatch.setattr(capabilities, "get_authenticated_stdio_generation", generation)
     monkeypatch.setattr(legacy, "get_unity_connection", lambda _instance: connection)
+    # A separate command-policy ceiling must not mask a missing capability
+    # deadline. This test observes the exact probe ceiling passed to the worker.
+    monkeypatch.setattr(legacy, "_command_deadline", lambda _name, _params: None)
     monkeypatch.setattr(connection, "send_command", send)
     connection._io_lock.acquire()
     query = asyncio.create_task(
@@ -678,12 +705,20 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
     try:
         await await_signal(entered, "entered")
 
-        # When: the query expires before the independently held I/O lock is released.
+        # When: both observed budgets expire after admission and before the
+        # independently held I/O lock is released. No wall-time race is required.
+        assert deadlines and all(value is not None for value in deadlines)
+        assert all(value == min(scope.deadline for scope in scopes) for value in deadlines)
+        expired_clock.append(max(deadlines) + 1)
+        scopes[0].deadline = anyio.current_time()
         data = await asyncio.wait_for(query, watchdog_timeout())
     finally:
         connection._io_lock.release()
-        await await_signal(finished, "finished")
-        await query
+        if scopes:
+            scopes[0].cancel()
+        if entered.is_set():
+            await await_signal(finished, "finished")
+        await asyncio.wait_for(query, watchdog_timeout())
 
     # Then: the blocking transport shares the deadline and cannot send after return.
     assert sent == []

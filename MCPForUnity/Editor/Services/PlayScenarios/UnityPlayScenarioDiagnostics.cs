@@ -130,7 +130,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             {
                 if (Screen.width <= 0 || Screen.height <= 0 || Screen.width > 4096 || Screen.height > 4096 || (long)Screen.width * Screen.height > 8388608)
                     throw new InvalidOperationException("Game View dimensions exceed the bounded screenshot budget.");
-                frame = ScreenCapture.CaptureScreenshotAsTexture();
+                frame = OptionalUnityModules.CaptureScreenshotAsTexture();
                 if (frame == null)
                     throw new InvalidOperationException("No rendered frame was returned.");
                 scaled = frame.width > 1280 || frame.height > 1280 ? ScreenshotUtility.DownscaleTexture(frame, 1280) : frame;

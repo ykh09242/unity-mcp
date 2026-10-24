@@ -46,7 +46,7 @@ namespace MCPForUnity.Runtime.Helpers
                 if (!_physics2DProbed)
                 {
                     _physics2DProbed = true;
-                    _physics2DAutoSync = typeof(Physics2D).GetProperty("autoSyncTransforms", BindingFlags.Public | BindingFlags.Static);
+                    _physics2DAutoSync = OptionalUnityModules.Physics2DType?.GetProperty("autoSyncTransforms", BindingFlags.Public | BindingFlags.Static);
                 }
                 return _physics2DAutoSync;
             }
@@ -104,7 +104,7 @@ namespace MCPForUnity.Runtime.Helpers
                 if (!_physicsProbed)
                 {
                     _physicsProbed = true;
-                    _physicsAutoSync = typeof(Physics).GetProperty("autoSyncTransforms", BindingFlags.Public | BindingFlags.Static);
+                    _physicsAutoSync = OptionalUnityModules.Physics3DType?.GetProperty("autoSyncTransforms", BindingFlags.Public | BindingFlags.Static);
                 }
                 return _physicsAutoSync;
             }
@@ -166,7 +166,7 @@ namespace MCPForUnity.Runtime.Helpers
                 if (!_physicsSimulationModeProbed)
                 {
                     _physicsSimulationModeProbed = true;
-                    _physicsSimulationMode = typeof(Physics).GetProperty("simulationMode", BindingFlags.Public | BindingFlags.Static);
+                    _physicsSimulationMode = OptionalUnityModules.Physics3DType?.GetProperty("simulationMode", BindingFlags.Public | BindingFlags.Static);
                 }
                 return _physicsSimulationMode;
             }
@@ -179,7 +179,7 @@ namespace MCPForUnity.Runtime.Helpers
                 if (!_physicsAutoSimulationProbed)
                 {
                     _physicsAutoSimulationProbed = true;
-                    _physicsAutoSimulation = typeof(Physics).GetProperty("autoSimulation", BindingFlags.Public | BindingFlags.Static);
+                    _physicsAutoSimulation = OptionalUnityModules.Physics3DType?.GetProperty("autoSimulation", BindingFlags.Public | BindingFlags.Static);
                 }
                 return _physicsAutoSimulation;
             }

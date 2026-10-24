@@ -1,3 +1,4 @@
+#if MCP_FOR_UNITY_PHYSICS && MCP_FOR_UNITY_PHYSICS2D
 using System;
 using System.Collections.Generic;
 using System.Reflection;
@@ -553,3 +554,5 @@ namespace MCPForUnity.Editor.Tools.Physics
         }
     }
 }
+
+#endif

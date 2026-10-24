@@ -136,7 +136,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     || (long)Screen.width * Screen.height > PlayScenarioScreenshotOptions.MaximumPixels
                 )
                     throw new InvalidOperationException("Rendered dimensions exceed the bounded screenshot budget.");
-                frame = ScreenCapture.CaptureScreenshotAsTexture();
+                frame = OptionalUnityModules.CaptureScreenshotAsTexture();
                 if (frame == null)
                     throw new InvalidOperationException("No rendered composited frame was returned.");
                 result.Screenshot.Width = frame.width;

@@ -11,12 +11,14 @@ using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
+#if MCP_FOR_UNITY_PHYSICS
 #if UNITY_6000_0_OR_NEWER
 using PhysicsMaterialType = UnityEngine.PhysicsMaterial;
 using PhysicsMaterialCombine = UnityEngine.PhysicsMaterialCombine;
 #else
 using PhysicsMaterialType = UnityEngine.PhysicMaterial;
 using PhysicsMaterialCombine = UnityEngine.PhysicMaterialCombine;
+#endif
 #endif
 
 namespace MCPForUnity.Editor.Tools
@@ -383,6 +385,10 @@ namespace MCPForUnity.Editor.Tools
                 );
             }
 
+#if !MCP_FOR_UNITY_PHYSICS
+            if (lowerAssetType == "physicsmaterial")
+                return new ErrorResponse("physics_module_unavailable: PhysicsMaterial creation requires com.unity.modules.physics.");
+#endif
             Shader shader = null;
             if (lowerAssetType == "material")
             {
@@ -399,8 +405,10 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (lowerAssetType == "material")
                     MaterialOps.ValidateReferences(properties, UnityJsonSerializer.Instance);
+#if MCP_FOR_UNITY_PHYSICS
                 else
                     ValidatePhysicsMaterialProperties(properties);
+#endif
                 using var folders = new AssetFolderScope();
                 folders.EnsureParentDirectory(fullPath);
 
@@ -426,6 +434,7 @@ namespace MCPForUnity.Editor.Tools
                     AssetPathUtility.GetFullAssetPath(fullPath);
                     AssetDatabase.CreateAsset(mat, fullPath);
                 }
+#if MCP_FOR_UNITY_PHYSICS
                 else if (lowerAssetType == "physicsmaterial")
                 {
                     PhysicsMaterialType pmat = new PhysicsMaterialType();
@@ -435,6 +444,7 @@ namespace MCPForUnity.Editor.Tools
                     AssetPathUtility.GetFullAssetPath(fullPath);
                     AssetDatabase.CreateAsset(pmat, fullPath);
                 }
+#endif
 
                 if (
                     newAsset == null
@@ -1052,6 +1062,7 @@ namespace MCPForUnity.Editor.Tools
         /// <summary>
         ///  Applies properties from JObject to a PhysicsMaterial.
         /// </summary>
+#if MCP_FOR_UNITY_PHYSICS
         private static bool ApplyPhysicsMaterialProperties(PhysicsMaterialType pmat, JObject properties)
         {
             if (pmat == null || properties == null)
@@ -1129,6 +1140,7 @@ namespace MCPForUnity.Editor.Tools
                 _ => throw new ArgumentException($"Unknown physics material combine mode for '{field}': '{value.Value<string>()}'.", field),
             };
         }
+#endif
 
         /// <summary>
         /// Generic helper to set properties on any UnityEngine.Object using reflection.

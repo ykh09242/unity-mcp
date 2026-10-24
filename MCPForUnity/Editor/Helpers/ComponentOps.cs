@@ -552,11 +552,13 @@ namespace MCPForUnity.Editor.Helpers
                 value = filter.sharedMesh;
                 return true;
             }
+#if MCP_FOR_UNITY_PHYSICS
             if (owner is Collider collider && string.Equals(property.Name, "material", StringComparison.OrdinalIgnoreCase))
             {
                 value = collider.sharedMaterial;
                 return true;
             }
+#endif
             string assemblyName = property.DeclaringType.Assembly.GetName().Name;
             if (!owner.GetType().IsValueType && assemblyName != "UnityEngine" && !assemblyName.StartsWith("UnityEngine.", StringComparison.Ordinal))
                 return false;
@@ -893,6 +895,7 @@ namespace MCPForUnity.Editor.Helpers
 
         private static string CheckPhysicsConflict(GameObject target, Type componentType)
         {
+#if MCP_FOR_UNITY_PHYSICS && MCP_FOR_UNITY_PHYSICS2D
             bool isAdding2DPhysics = typeof(Rigidbody2D).IsAssignableFrom(componentType) || typeof(Collider2D).IsAssignableFrom(componentType);
 
             bool isAdding3DPhysics = typeof(Rigidbody).IsAssignableFrom(componentType) || typeof(Collider).IsAssignableFrom(componentType);
@@ -912,6 +915,7 @@ namespace MCPForUnity.Editor.Helpers
                 }
             }
 
+#endif
             return null;
         }
 

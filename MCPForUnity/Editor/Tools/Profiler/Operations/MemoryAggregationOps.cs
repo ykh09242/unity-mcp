@@ -115,8 +115,10 @@ namespace MCPForUnity.Editor.Tools.Profiler
                             Visit(filter.sharedMesh, ownerId, depth + 1);
                         if (value is SkinnedMeshRenderer skinned)
                             Visit(skinned.sharedMesh, ownerId, depth + 1);
+#if MCP_FOR_UNITY_PHYSICS
                         if (value is MeshCollider collider)
                             Visit(collider.sharedMesh, ownerId, depth + 1);
+#endif
                         if (value is AudioSource audio)
                             Visit(audio.clip, ownerId, depth + 1);
                         if (value is Animator animator)

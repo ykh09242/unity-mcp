@@ -36,6 +36,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             if (typeError != null)
                 return new ErrorResponse(typeError);
 
+#if MCP_FOR_UNITY_PHYSICS && MCP_FOR_UNITY_PHYSICS2D
             bool isAdding2DPhysics = typeof(Rigidbody2D).IsAssignableFrom(componentType) || typeof(Collider2D).IsAssignableFrom(componentType);
             bool isAdding3DPhysics = typeof(Rigidbody).IsAssignableFrom(componentType) || typeof(Collider).IsAssignableFrom(componentType);
 
@@ -58,6 +59,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 }
             }
 
+#endif
             Component existingComponent = targetGo.GetComponent(componentType);
             if (existingComponent != null && !AllowsMultiple(componentType))
             {
@@ -293,6 +295,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             if (disallowedRoot != null && presentTypes.Any(disallowedRoot.IsAssignableFrom))
                 return $"Component '{type.Name}' already exists or is already planned and this type does not allow multiple instances.";
 
+#if MCP_FOR_UNITY_PHYSICS && MCP_FOR_UNITY_PHYSICS2D
             bool is2D = typeof(Rigidbody2D).IsAssignableFrom(type) || typeof(Collider2D).IsAssignableFrom(type);
             bool is3D = typeof(Rigidbody).IsAssignableFrom(type) || typeof(Collider).IsAssignableFrom(type);
             if (
@@ -301,6 +304,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             )
                 return $"Cannot add physics component '{type.Name}' because the current or planned components mix 2D and 3D physics.";
 
+#endif
             foreach (RequireComponent requirement in type.GetCustomAttributes(typeof(RequireComponent), true))
             foreach (Type required in new[] { requirement.m_Type0, requirement.m_Type1, requirement.m_Type2 })
             {
