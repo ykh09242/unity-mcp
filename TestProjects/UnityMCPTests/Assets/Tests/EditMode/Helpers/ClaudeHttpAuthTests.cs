@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Reflection;
 using MCPForUnity.Editor.Clients;
+using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -126,8 +127,8 @@ namespace MCPForUnityTests.Editor.Helpers
                     string path = Path.Combine(directory, ".claude.json");
                     string before = config.ToString();
                     File.WriteAllText(path, before);
-                    var method = typeof(ClaudeCliMcpConfigurator).GetMethod("GetExistingConfigForRegistration", BindingFlags.Static | BindingFlags.NonPublic);
-                    var local = (JObject)method.Invoke(null, new object[] { project });
+                    var method = typeof(ClaudeCliMcpConfigurator).GetMethod("GetExistingConfigForRegistration", BindingFlags.Instance | BindingFlags.NonPublic);
+                    var local = (JObject)method.Invoke(new ClaudeCodeConfigurator(), new object[] { project });
                     Assert.AreEqual("local", (string)local["command"]);
                     Assert.AreEqual(before, File.ReadAllText(path));
                 }
@@ -142,8 +143,8 @@ namespace MCPForUnityTests.Editor.Helpers
 
         private static JObject ReadRegistration(string project)
         {
-            var method = typeof(ClaudeCliMcpConfigurator).GetMethod("ReadClaudeCodeConfig", BindingFlags.Static | BindingFlags.NonPublic);
-            var result = ((JObject serverConfig, string error))method.Invoke(null, new object[] { project });
+            var method = typeof(ClaudeCliMcpConfigurator).GetMethod("ReadClaudeCodeConfig", BindingFlags.Instance | BindingFlags.NonPublic);
+            var result = ((JObject serverConfig, string error))method.Invoke(new ClaudeCodeConfigurator(), new object[] { project });
             Assert.IsNull(result.error);
             return result.serverConfig;
         }

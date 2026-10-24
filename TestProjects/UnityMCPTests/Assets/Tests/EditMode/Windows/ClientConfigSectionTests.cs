@@ -337,7 +337,8 @@ namespace MCPForUnityTests.Editor.Windows
                 Assert.AreEqual("{\"user\":\"owned-later-edit\"}", System.IO.File.ReadAllText(path));
                 Assert.AreEqual(0, client.ConfigureCalls);
                 Assert.IsFalse(Get<Button>(section, "applyConfigurationButton").enabledSelf);
-                StringAssert.Contains("stale_file", Get<Label>(section, "configurationChangeStatusLabel").text);
+                StringAssert.Contains("configuration file changed", Get<Label>(section, "configurationChangeStatusLabel").text);
+                StringAssert.Contains("Preview again", Get<Label>(section, "configurationChangeStatusLabel").text);
             }
             finally
             {

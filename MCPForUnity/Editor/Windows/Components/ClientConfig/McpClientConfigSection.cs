@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Clients;
@@ -64,12 +66,143 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         // Data
         private readonly List<IMcpClientConfigurator> configurators;
         private readonly Dictionary<IMcpClientConfigurator, DateTime> lastStatusChecks = new();
-        private readonly HashSet<IMcpClientConfigurator> statusRefreshInFlight = new();
         private static readonly TimeSpan StatusRefreshInterval = TimeSpan.FromSeconds(45);
         private int selectedClientIndex = 0;
         private bool isSkillSyncInProgress;
         private CancellationTokenSource cliLifetime = new();
         private int cliRevision;
+        private readonly Dictionary<IMcpClientConfigurator, CliStatusState> cliStatuses = new();
+        private Func<Action, Task> runCliWork = action => Task.Run(action);
+        private bool cliActionInProgress;
+
+        private sealed class CliStatusContext : IEquatable<CliStatusContext>
+        {
+            internal string ProjectDir,
+                Executable,
+                PackageSource,
+                HttpUrl,
+                UvxPath,
+                UserConfigPath;
+            internal bool UseHttp,
+                Remote,
+                HasProjectOverride;
+            internal RuntimePlatform Platform;
+            internal ConfiguredTransport Transport;
+            internal Dictionary<string, string> Headers;
+            internal string HeaderIdentity;
+
+            public bool Equals(CliStatusContext other) =>
+                other != null
+                && ProjectDir == other.ProjectDir
+                && Executable == other.Executable
+                && PackageSource == other.PackageSource
+                && HttpUrl == other.HttpUrl
+                && UvxPath == other.UvxPath
+                && UserConfigPath == other.UserConfigPath
+                && UseHttp == other.UseHttp
+                && Remote == other.Remote
+                && HasProjectOverride == other.HasProjectOverride
+                && Platform == other.Platform
+                && Transport == other.Transport
+                && HeaderIdentity == other.HeaderIdentity;
+        }
+
+        private sealed class CliStatusState
+        {
+            internal CliStatusContext Context;
+            internal ClaudeCliMcpConfigurator Client;
+            internal int Revision;
+            internal CancellationToken Token;
+            internal bool Pending = true;
+        }
+
+        private static CliStatusContext CaptureCliContext()
+        {
+            bool http = EditorConfigurationCache.Instance.UseHttpTransport;
+            bool remote = HttpEndpointUtility.IsRemoteScope();
+            var headers = http && remote ? new Dictionary<string, string>(HttpEndpointUtility.GetAuthHeaders()) : null;
+            string headerIdentity = null;
+            if (headers != null)
+            {
+                // Cache identity never contains a credential. Keep captured headers private to
+                // this operation for validation; do not include them in diagnostics or logs.
+                var content = new StringBuilder();
+                foreach (var header in headers.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                    content.Append(header.Key.Length).Append(':').Append(header.Key).Append(header.Value.Length).Append(':').Append(header.Value);
+                using var hash = SHA256.Create();
+                headerIdentity = Convert.ToBase64String(hash.ComputeHash(Encoding.UTF8.GetBytes(content.ToString())));
+            }
+            return new CliStatusContext
+            {
+                ProjectDir = ClaudeCliMcpConfigurator.GetClientProjectDir(),
+                Executable = MCPServiceLocator.Paths.GetClaudeCliPath(),
+                UseHttp = http,
+                Remote = remote,
+                HasProjectOverride = ClaudeCliMcpConfigurator.HasClientProjectDirOverride,
+                Platform = Application.platform,
+                Transport = HttpEndpointUtility.GetCurrentServerTransport(),
+                PackageSource = http ? null : GetExpectedPackageSourceForCurrentPackage(),
+                UvxPath = http ? null : MCPServiceLocator.Paths.GetUvxPath(),
+                HttpUrl = http ? HttpEndpointUtility.GetMcpRpcUrl() : null,
+                UserConfigPath = ClaudeCliMcpConfigurator.GetUserConfigPath(),
+                Headers = headers,
+                HeaderIdentity = headerIdentity,
+            };
+        }
+
+        private CliStatusState BeginCliStatus(IMcpClientConfigurator client, CliStatusContext context)
+        {
+            var state = new CliStatusState
+            {
+                Context = context,
+                Client = ((ClaudeCliMcpConfigurator)client).CreateOperationClient(context.UserConfigPath),
+                Revision = cliRevision,
+                Token = cliLifetime.Token,
+            };
+            cliStatuses[client] = state;
+            lastStatusChecks.Remove(client);
+            return state;
+        }
+
+        private static bool TryCaptureCliContext(out CliStatusContext context)
+        {
+            try
+            {
+                context = CaptureCliContext();
+                return true;
+            }
+            catch
+            {
+                context = null;
+                return false;
+            }
+        }
+
+        private bool IsCurrentCliState(IMcpClientConfigurator client, CliStatusState state) =>
+            !state.Token.IsCancellationRequested
+            && IsCurrentCliOperation(state.Revision, client)
+            && cliStatuses.TryGetValue(client, out var current)
+            && ReferenceEquals(current, state)
+            && TryCaptureCliContext(out var context)
+            && state.Context.Equals(context);
+
+        private static void ProbeCliStatus(CliStatusState state)
+        {
+            state.Token.ThrowIfCancellationRequested();
+            var context = state.Context;
+            state.Client.CheckStatusWithProjectDir(
+                context.ProjectDir,
+                context.UseHttp,
+                context.Executable,
+                context.Platform,
+                context.Remote,
+                context.PackageSource,
+                attemptAutoRewrite: false,
+                hasProjectDirOverride: context.HasProjectOverride,
+                expectedHttpUrl: context.HttpUrl,
+                expectedHttpHeaders: context.Headers
+            );
+        }
 
         // Events
         /// <summary>
@@ -99,6 +232,9 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             {
                 cliRevision++;
                 cliLifetime.Cancel();
+                foreach (var client in cliStatuses.Keys)
+                    lastStatusChecks.Remove(client);
+                cliStatuses.Clear();
             });
             Root.RegisterCallback<AttachToPanelEvent>(_ =>
             {
@@ -106,6 +242,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 {
                     cliLifetime.Dispose();
                     cliLifetime = new CancellationTokenSource();
+                    UpdateClientStatus();
                 }
             });
         }
@@ -626,86 +763,77 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         private async void ConfigureClaudeCliAsync(IMcpClientConfigurator client)
         {
-            if (statusRefreshInFlight.Contains(client))
+            if (cliActionInProgress || cliLifetime.IsCancellationRequested)
                 return;
 
-            statusRefreshInFlight.Add(client);
-            int revision = cliRevision;
-            var token = cliLifetime.Token;
+            cliActionInProgress = true;
+            CliStatusState state = null;
             try
             {
-                bool isCurrentlyConfigured = client is ClaudeCliMcpConfigurator claudeClient && claudeClient.ShouldUnregister;
-                ApplyStatusToUi(client, showChecking: true, customMessage: isCurrentlyConfigured ? "Unregistering..." : "Configuring...");
+                state = BeginCliStatus(client, CaptureCliContext());
+                ApplyStatusToUi(client, showChecking: true);
+                // The action always reads the exact target again, even when its UI status
+                // is cached or another target's status check is still running.
+                await runCliWork(() => ProbeCliStatus(state));
+                if (!IsCurrentCliState(client, state))
+                    return;
 
-                // Capture ALL main-thread-only values before async task
-                string projectDir = ClaudeCliMcpConfigurator.GetClientProjectDir();
-                bool useHttpTransport = EditorConfigurationCache.Instance.UseHttpTransport;
-                var serverTransport = HttpEndpointUtility.GetCurrentServerTransport();
-                string claudePath = MCPServiceLocator.Paths.GetClaudeCliPath();
-                string httpUrl = !isCurrentlyConfigured && useHttpTransport ? HttpEndpointUtility.GetMcpRpcUrl() : null;
+                var context = state.Context;
+                bool unregister = state.Client.ShouldUnregisterForContext(context.HasProjectOverride, context.Transport);
+                ApplyStatusToUi(client, showChecking: true, customMessage: unregister ? "Unregistering..." : "Configuring...");
                 string uvxPath = null,
                     packageName = null,
                     fromArgs = null,
                     uvxDevFlags = null,
                     source = null;
                 bool forceRefresh = false;
-                if (!isCurrentlyConfigured && !useHttpTransport)
+                if (!unregister && !context.UseHttp)
                 {
                     (uvxPath, source, packageName) = AssetPathUtility.GetUvxCommandParts();
                     fromArgs = AssetPathUtility.GetBetaServerFromArgs(quoteFromPath: true);
                     forceRefresh = AssetPathUtility.ShouldForceUvxRefresh();
                 }
-                string apiKey = EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty);
-
-                // Compute pathPrepend on main thread
+                string apiKey = context.UseHttp && context.Remote ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty) : null;
                 string pathPrepend = null;
-                if (Application.platform == RuntimePlatform.OSXEditor)
+                if (context.Platform == RuntimePlatform.OSXEditor)
                     pathPrepend = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
-                else if (Application.platform == RuntimePlatform.LinuxEditor)
+                else if (context.Platform == RuntimePlatform.LinuxEditor)
                     pathPrepend = "/usr/local/bin:/usr/bin:/bin";
                 try
                 {
-                    string claudeDir = Path.GetDirectoryName(claudePath);
+                    string claudeDir = Path.GetDirectoryName(context.Executable);
                     if (!string.IsNullOrEmpty(claudeDir))
                         pathPrepend = string.IsNullOrEmpty(pathPrepend) ? claudeDir : $"{claudeDir}:{pathPrepend}";
                 }
                 catch { }
 
-                if (!isCurrentlyConfigured && !useHttpTransport)
-                    uvxDevFlags = await AssetPathUtility.GetUvxDevFlagsAsync(uvxPath, source, forceRefresh, token);
-                token.ThrowIfCancellationRequested();
-                if (
-                    !IsCurrentCliOperation(revision, client)
-                    || projectDir != ClaudeCliMcpConfigurator.GetClientProjectDir()
-                    || claudePath != MCPServiceLocator.Paths.GetClaudeCliPath()
-                    || serverTransport != HttpEndpointUtility.GetCurrentServerTransport()
-                    || (source != null && (source != AssetPathUtility.GetMcpServerPackageSource() || uvxPath != MCPServiceLocator.Paths.GetUvxPath()))
-                )
+                if (!unregister && !context.UseHttp)
+                    uvxDevFlags = await AssetPathUtility.GetUvxDevFlagsAsync(uvxPath, source, forceRefresh, state.Token);
+                state.Token.ThrowIfCancellationRequested();
+                if (!IsCurrentCliState(client, state) || (source != null && (source != context.PackageSource || uvxPath != context.UvxPath)))
                     return;
-                await Task.Run(
-                    () =>
-                    {
-                        token.ThrowIfCancellationRequested();
-                        if (client is ClaudeCliMcpConfigurator cliConfigurator)
-                            cliConfigurator.ConfigureWithCapturedValues(
-                                projectDir,
-                                claudePath,
-                                pathPrepend,
-                                useHttpTransport,
-                                httpUrl,
-                                uvxPath,
-                                fromArgs,
-                                packageName,
-                                uvxDevFlags,
-                                apiKey,
-                                serverTransport,
-                                unregister: isCurrentlyConfigured
-                            );
-                    },
-                    token
-                );
-                if (!IsCurrentCliOperation(revision, client))
+
+                await runCliWork(() =>
+                {
+                    state.Token.ThrowIfCancellationRequested();
+                    state.Client.ConfigureWithCapturedValues(
+                        context.ProjectDir,
+                        context.Executable,
+                        pathPrepend,
+                        context.UseHttp,
+                        context.HttpUrl,
+                        uvxPath,
+                        fromArgs,
+                        packageName,
+                        uvxDevFlags,
+                        apiKey,
+                        context.Transport,
+                        unregister
+                    );
+                });
+                if (!IsCurrentCliState(client, state))
                     return;
+                state.Pending = false;
                 lastStatusChecks[client] = DateTime.UtcNow;
                 ApplyStatusToUi(client);
                 UpdateManualConfiguration();
@@ -713,16 +841,20 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                if (IsCurrentCliOperation(revision, client))
+                if (state != null && IsCurrentCliState(client, state))
                 {
-                    HandleClientOperationError(client, ex.Message);
-                    UpdateManualConfiguration();
+                    state.Client.Client.SetStatus(McpStatus.Error, ex.Message);
+                    state.Pending = false;
+                    lastStatusChecks[client] = DateTime.UtcNow;
+                    ApplyStatusToUi(client);
                 }
             }
             finally
             {
-                statusRefreshInFlight.Remove(client);
-                if (IsCurrentCliOperation(revision, client))
+                if (state != null)
+                    state.Pending = false;
+                cliActionInProgress = false;
+                if (!cliLifetime.IsCancellationRequested && Root.panel != null)
                     ApplyStatusToUi(client);
             }
         }
@@ -924,104 +1056,57 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             ApplyStatusToUi(client);
         }
 
-        private void RefreshClaudeCliStatus(IMcpClientConfigurator client, bool forceImmediate)
+        private async void RefreshClaudeCliStatus(IMcpClientConfigurator client, bool forceImmediate)
         {
-            bool hasStatus = lastStatusChecks.ContainsKey(client);
-            bool needsRefresh = !hasStatus || ShouldRefreshClient(client);
-
-            if (!hasStatus)
-            {
-                ApplyStatusToUi(client, showChecking: true);
-            }
-            else
+            if (cliLifetime.IsCancellationRequested)
+                return;
+            if (!TryCaptureCliContext(out var context))
             {
                 ApplyStatusToUi(client);
+                return;
             }
-
-            if ((forceImmediate || needsRefresh) && !statusRefreshInFlight.Contains(client))
+            if (
+                cliStatuses.TryGetValue(client, out var previous)
+                && previous.Revision == cliRevision
+                && !previous.Token.IsCancellationRequested
+                && previous.Context.Equals(context)
+            )
             {
-                statusRefreshInFlight.Add(client);
-                try
+                if (previous.Pending || (!forceImmediate && !ShouldRefreshClient(client)))
                 {
-                    ApplyStatusToUi(client, showChecking: true);
-
-                    // Capture main-thread-only values before async task
-                    string projectDir = ClaudeCliMcpConfigurator.GetClientProjectDir();
-                    bool useHttpTransport = EditorConfigurationCache.Instance.UseHttpTransport;
-                    string claudePath = MCPServiceLocator.Paths.GetClaudeCliPath();
-                    RuntimePlatform platform = Application.platform;
-                    bool isRemoteScope = HttpEndpointUtility.IsRemoteScope();
-                    // HTTP status needs no stdio source; transport mismatch detection is independent.
-                    string expectedPackageSource = useHttpTransport ? null : GetExpectedPackageSourceForCurrentPackage();
-                    bool hasProjectDirOverride = ClaudeCliMcpConfigurator.HasClientProjectDirOverride;
-                    string expectedHttpUrl = useHttpTransport ? HttpEndpointUtility.GetMcpRpcUrl() : null;
-                    var expectedHttpHeaders = useHttpTransport && isRemoteScope ? HttpEndpointUtility.GetAuthHeaders() : null;
-
-                    Task.Run(() =>
-                        {
-                            // Defensive: RefreshClientStatus routes Claude CLI clients here, but avoid hard-cast
-                            // so accidental future call sites can't crash the UI.
-                            if (client is ClaudeCliMcpConfigurator claudeConfigurator)
-                            {
-                                // Use thread-safe version with captured main-thread values
-                                claudeConfigurator.CheckStatusWithProjectDir(
-                                    projectDir,
-                                    useHttpTransport,
-                                    claudePath,
-                                    platform,
-                                    isRemoteScope,
-                                    expectedPackageSource,
-                                    attemptAutoRewrite: false,
-                                    hasProjectDirOverride: hasProjectDirOverride,
-                                    expectedHttpUrl: expectedHttpUrl,
-                                    expectedHttpHeaders: expectedHttpHeaders
-                                );
-                            }
-                        })
-                        .ContinueWith(t =>
-                        {
-                            bool faulted = false;
-                            string errorMessage = null;
-                            if (t.IsFaulted && t.Exception != null)
-                            {
-                                var baseException = t.Exception.GetBaseException();
-                                errorMessage = baseException?.Message ?? "Status check failed";
-                                McpLog.Error($"Failed to refresh Claude CLI status: {errorMessage}");
-                                faulted = true;
-                            }
-
-                            EditorApplication.delayCall += () =>
-                            {
-                                statusRefreshInFlight.Remove(client);
-                                lastStatusChecks[client] = DateTime.UtcNow;
-                                if (faulted)
-                                {
-                                    if (client is McpClientConfiguratorBase baseConfigurator)
-                                    {
-                                        baseConfigurator.Client.SetStatus(McpStatus.Error, errorMessage ?? "Status check failed");
-                                    }
-                                }
-                                ApplyStatusToUi(client);
-                            };
-                        });
-                }
-                catch (Exception ex)
-                {
-                    HandleClientOperationError(client, ex.Message);
+                    ApplyStatusToUi(client);
+                    return;
                 }
             }
-        }
 
-        private void HandleClientOperationError(IMcpClientConfigurator client, string errorMessage)
-        {
-            statusRefreshInFlight.Remove(client);
-            lastStatusChecks[client] = DateTime.UtcNow;
-            if (client is McpClientConfiguratorBase baseConfigurator)
+            var state = BeginCliStatus(client, context);
+            ApplyStatusToUi(client, showChecking: true);
+            try
             {
-                baseConfigurator.Client.SetStatus(McpStatus.Error, errorMessage);
+                await runCliWork(() => ProbeCliStatus(state));
+                if (!IsCurrentCliState(client, state))
+                    return;
+                state.Pending = false;
+                lastStatusChecks[client] = DateTime.UtcNow;
+                ApplyStatusToUi(client);
             }
-            McpLog.Error($"Client configuration failed: {errorMessage}");
-            ApplyStatusToUi(client);
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                if (IsCurrentCliState(client, state))
+                {
+                    state.Client.Client.SetStatus(McpStatus.Error, ex.Message);
+                    state.Pending = false;
+                    lastStatusChecks[client] = DateTime.UtcNow;
+                    ApplyStatusToUi(client);
+                }
+            }
+            finally
+            {
+                // Retire real work even when its result cannot be published. Leaving an
+                // obsolete record pending would suppress a later probe of the same target.
+                state.Pending = false;
+            }
         }
 
         private Dictionary<IMcpClientConfigurator, string> lastStatusFiles = new();
@@ -1044,6 +1129,17 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         private bool ShouldRefreshClient(IMcpClientConfigurator client)
         {
+            if (
+                client is ClaudeCliMcpConfigurator
+                && (
+                    !cliStatuses.TryGetValue(client, out var state)
+                    || state.Revision != cliRevision
+                    || state.Token.IsCancellationRequested
+                    || !TryCaptureCliContext(out var context)
+                    || !state.Context.Equals(context)
+                )
+            )
+                return true;
             if (!lastStatusChecks.TryGetValue(client, out var last))
             {
                 return true;
@@ -1064,6 +1160,30 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             if (!ReferenceEquals(configurators[selectedClientIndex], client))
                 return;
 
+            if (client is ClaudeCliMcpConfigurator)
+            {
+                if (
+                    cliStatuses.TryGetValue(client, out var state)
+                    && state.Revision == cliRevision
+                    && !state.Token.IsCancellationRequested
+                    && TryCaptureCliContext(out var context)
+                    && state.Context.Equals(context)
+                )
+                {
+                    client = state.Client;
+                    showChecking |= state.Pending;
+                }
+                else
+                {
+                    showChecking = true;
+                    if (!TryCaptureCliContext(out _))
+                        customMessage = "Configuration unavailable";
+                }
+                configureButton.SetEnabled(!showChecking && !cliActionInProgress);
+            }
+            else
+                configureButton.SetEnabled(true);
+
             clientStatusIndicator.RemoveFromClassList("configured");
             clientStatusIndicator.RemoveFromClassList("not-configured");
             clientStatusIndicator.RemoveFromClassList("warning");
@@ -1073,7 +1193,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 clientStatusLabel.text = customMessage ?? "Checking...";
                 clientStatusLabel.style.color = StyleKeyword.Null;
                 clientStatusIndicator.AddToClassList("warning");
-                configureButton.text = client.GetConfigureActionLabel();
+                configureButton.text = "Configure";
                 return;
             }
 
