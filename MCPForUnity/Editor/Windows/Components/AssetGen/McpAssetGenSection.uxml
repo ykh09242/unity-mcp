@@ -1,10 +1,10 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" editor-extension-mode="True">
     <ui:Style src="../Common.uss" />
     <ui:VisualElement name="assetgen-section" class="section">
-        <ui:Label text="AI Asset Generation" class="section-title" />
+        <ui:Label text="Generation defaults" class="section-title" />
         <ui:VisualElement class="section-content">
-            <ui:Label name="assetgen-help" class="validation-description" text="Enter your own provider API keys. Generation is triggered via MCP tools / CLI, not here. Keys are stored in your OS secure store (Keychain / Credential Manager / libsecret), never in the project." />
-            <ui:Label name="generation-scope" class="help-text" text="User: provider, model and import defaults are shared across projects. Saved defaults affect future requests. Output paths are resolved within the receiving project." />
+            <ui:Label name="assetgen-help" class="help-text" text="Configure providers here; generate assets through MCP tools or CLI." />
+            <ui:Label name="generation-scope" class="help-text" text="User scope · defaults and enablement save immediately for future requests across projects. Output Root saves after validation; paths use the receiving project." />
             <ui:VisualElement name="gltfast-notice" class="warning-banner">
                 <ui:Label class="warning-banner-text" text="GLB import needs the glTFast package — install it from the Dependencies tab." />
                 <ui:Button name="assetgen-open-dependencies" text="Review glTFast dependency" class="action-button" />
@@ -50,6 +50,10 @@
                         <ui:Button name="blender-import-button" text="Import Blender Selection (GLB)" class="icon-button" />
                     </ui:VisualElement>
                     <ui:Label name="blender-action-status" class="help-text" />
+                    <ui:Button name="blender-consent-settings" text="Review Blender consent in Tools" class="icon-button catalog-hidden" />
+                    <ui:Foldout text="Operation details" value="false">
+                        <ui:Label name="blender-action-details" class="help-text" />
+                    </ui:Foldout>
                 </ui:VisualElement>
             </ui:Foldout>
             <ui:Foldout name="assetgen-import-foldout" text="Import preferences" value="false" class="settings-group">
@@ -63,6 +67,8 @@
                 <ui:VisualElement class="path-override-controls">
                     <ui:TextField name="assetgen-output-root" placeholder-text="Assets/Generated" class="override-field" />
                 </ui:VisualElement>
+                <ui:Label name="assetgen-output-validation" class="warning-banner-text" />
+                <ui:Label name="assetgen-output-effective" class="help-text" />
                 <ui:VisualElement class="setting-row">
                     <ui:Toggle name="assetgen-auto-normalize" class="field-toggle" text="Normalize imported models" />
                 </ui:VisualElement>

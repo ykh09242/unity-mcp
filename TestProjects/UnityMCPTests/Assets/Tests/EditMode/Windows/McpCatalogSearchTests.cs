@@ -642,13 +642,30 @@ namespace MCPForUnityTests.EditMode.Windows
             resources.Items.Add(new ResourceMetadata { Name = "project_info", IsBuiltIn = true });
             var root = ActualCatalogRoot(false);
             var section = new McpResourcesSection(root);
-            section.Refresh();
+            // Exercise the actual rows and callbacks without BuildCategory's persisted foldout preference.
+            var items = resources.Items.ToList();
+            var foldout = new Foldout { text = "Built-in Resources", value = true };
+            foldout.AddToClassList("catalog-category");
+            typeof(McpResourcesSection).GetField("allResources", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(section, items);
+            foreach (var item in items)
+                foldout.Add(
+                    (VisualElement)
+                        typeof(McpResourcesSection)
+                            .GetMethod("CreateResourceRow", BindingFlags.NonPublic | BindingFlags.Instance)
+                            .Invoke(section, new object[] { item })
+                );
+            (
+                (System.Collections.IList)
+                    typeof(McpResourcesSection).GetField("foldoutEntries", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(section)
+            ).Add((foldout, items));
+            root.Q("resource-category-container").Add(foldout);
+            Invoke(section, "UpdateSummary");
             var status = root.Q<Label>("resources-apply-status");
             Assert.IsNotNull(status);
-            StringAssert.Contains("not confirmed", status.text);
+            StringAssert.Contains("unconfirmed", status.text);
             Click(root.Q<Button>("enable-all-resources-button"));
             StringAssert.Contains("Saved", root.Q<Label>("resources-summary").text);
-            StringAssert.Contains("not confirmed", status.text);
+            StringAssert.Contains("unconfirmed", status.text);
             var connect = root.Q<Button>("resources-open-connection");
             Assert.IsNotNull(connect);
             int requested = 0;

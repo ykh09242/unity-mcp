@@ -243,13 +243,10 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
             if (noteLabel != null)
             {
-                noteLabel.EnableInClassList("catalog-hidden", !hasTools);
+                noteLabel.EnableInClassList("catalog-hidden", !hasTools || consentPersistenceWarnings.Count == 0);
                 if (hasTools)
                 {
-                    bool isHttp = IsHttpMode();
-                    noteLabel.text = isHttp
-                        ? "Selections are sent to the connected server. Check confirmation above; refresh your client tool list if needed."
-                        : "Stdio mode: toggles sync at startup. After changing toggles, ask the AI to run manage_tools with action 'sync' to refresh.";
+                    noteLabel.text = "";
                     if (consentPersistenceWarnings.Count > 0)
                         noteLabel.text = string.Join("\n", consentPersistenceWarnings.Values);
                 }
@@ -555,7 +552,10 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             else
                 message = "Consent change was not applied: " + result.ErrorCode;
             if (noteLabel != null)
+            {
+                noteLabel.RemoveFromClassList("catalog-hidden");
                 noteLabel.text = consentPersistenceWarnings.Count > 0 ? string.Join("\n", consentPersistenceWarnings.Values) : message;
+            }
         }
 
         private void ChangeConsentScope(ToolMetadata tool)
@@ -933,7 +933,42 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                         ? string.Empty
                         : $"Desired revision: {status.DesiredRevision}; last confirmed: {status.ConfirmedRevision?.ToString() ?? "none"}. {status.Reason} {status.Message}";
             }
-            retryToolsButton?.SetEnabled(http && status?.CanRetry == true);
+            bool canRetry = http && status?.CanRetry == true;
+            retryToolsButton?.SetEnabled(canRetry);
+            retryToolsButton?.EnableInClassList("catalog-hidden", !canRetry);
+        }
+
+        internal void RevealToolConsent(string toolName)
+        {
+            if (!toolRowMap.TryGetValue(toolName, out var row))
+                return;
+            bool outsideFilter = row.ClassListContains("catalog-hidden");
+            row.RemoveFromClassList("catalog-hidden");
+            for (var parent = row.parent; parent != null && parent != Root; parent = parent.parent)
+                if (parent is Foldout foldout)
+                {
+                    foldout.RemoveFromClassList("catalog-hidden");
+                    foldout.value = true;
+                }
+            if (outsideFilter && row.Q<Label>("consent-navigation-hint") == null)
+            {
+                var hint = new Label("Opened from Generation. Search and bulk-action matching are unchanged.") { name = "consent-navigation-hint" };
+                hint.AddToClassList("help-text");
+                row.Add(hint);
+            }
+            var action = row.Q<Button>("consent-change-" + toolName);
+            Root.schedule.Execute(() =>
+            {
+                if (action?.panel == null)
+                    return;
+                action.Focus();
+                for (var parent = row.parent; parent != null; parent = parent.parent)
+                    if (parent is ScrollView scroll)
+                    {
+                        scroll.ScrollTo(action);
+                        break;
+                    }
+            });
         }
 
         private async Task RetryToolSettingsAsync()

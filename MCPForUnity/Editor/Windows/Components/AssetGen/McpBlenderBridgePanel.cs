@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services.Blender;
 using MCPForUnity.Editor.Tools.Blender;
 using Newtonsoft.Json;
@@ -40,16 +41,24 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         private bool busy;
         private bool probing;
         private bool probeQueued;
+        private Button consentSettingsButton;
+        private Label actionDetailsLabel;
 
         public VisualElement Root { get; }
+        public event Action OnConsentSettingsRequested;
 
         public McpBlenderBridgePanel(VisualElement root)
+            : this(root, true) { }
+
+        internal McpBlenderBridgePanel(VisualElement root, bool initializeSettings)
         {
             Root = root;
             CacheUIElements();
-            InitializeUI();
+            if (initializeSettings)
+                InitializeUI();
             RegisterCallbacks();
-            ProbeConnection();
+            if (initializeSettings)
+                ProbeConnection();
         }
 
         /// <summary>Looks up the UXML elements by name.</summary>
@@ -71,6 +80,8 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             syncButton = Root.Q<Button>("blender-sync-button");
             updatesButton = Root.Q<Button>("blender-updates-button");
             importButton = Root.Q<Button>("blender-import-button");
+            consentSettingsButton = Root.Q<Button>("blender-consent-settings");
+            actionDetailsLabel = Root.Q<Label>("blender-action-details");
         }
 
         /// <summary>Sets tooltips and populates the fields from prefs.</summary>
@@ -102,6 +113,8 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         /// <summary>Wires field persistence and the action buttons.</summary>
         private void RegisterCallbacks()
         {
+            if (consentSettingsButton != null)
+                consentSettingsButton.clicked += RequestConsentSettings;
             hostField?.RegisterCallback<FocusOutEvent>(_ =>
             {
                 string before = BlenderBridgePrefs.Host;
@@ -361,8 +374,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             }
 
             bool ok = json.Value<bool?>("success") ?? false;
-            string message = ok ? json["message"]?.ToString() : json["error"]?.ToString();
-            SetActionStatus(message ?? (ok ? "done" : "failed"), !ok);
+            string message = PresentActionResult(json);
 
             string details = json.ToString(Formatting.Indented);
             if (ok)
@@ -370,6 +382,30 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             else
                 McpLog.Warn($"[Blender Bridge] {parameters["action"]} failed: {message}\n{details}");
             return json;
+        }
+
+        internal void RequestConsentSettings() => OnConsentSettingsRequested?.Invoke();
+
+        internal string PresentActionResult(JObject json)
+        {
+            bool ok = json.Value<bool?>("success") ?? false;
+            string code = json.Value<string>("code") ?? json.Value<string>("error");
+            bool needsConsent = !ok && code == "blender_consent_required";
+            string explanation = json["data"]?.Type == JTokenType.String ? json.Value<string>("data") : (json["data"] as JObject)?.Value<string>("message");
+            string message =
+                ok ? json.Value<string>("message")
+                : !string.IsNullOrWhiteSpace(explanation) ? explanation
+                : json.Value<string>("error");
+            if (needsConsent)
+                message =
+                    (message == code || string.IsNullOrWhiteSpace(message) ? "Enable blender_bridge explicitly before using Blender operations." : message)
+                    + " Open Tools to review Blender consent and enablement.";
+            message = SecretRedactor.Scrub(message ?? (ok ? "Done." : "Blender operation failed."));
+            SetActionStatus(message, !ok);
+            consentSettingsButton?.EnableInClassList("catalog-hidden", !needsConsent);
+            if (actionDetailsLabel != null)
+                actionDetailsLabel.text = ok ? "" : SecretRedactor.Scrub(code ?? "");
+            return message;
         }
 
         /// <summary>Disables the action buttons while a bridge call is in flight.</summary>
@@ -394,7 +430,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         {
             if (actionStatusLabel == null)
                 return;
-            actionStatusLabel.text = Truncate(text, 240);
+            actionStatusLabel.text = text;
             if (isError)
                 actionStatusLabel.style.color = new StyleColor(new Color(0.85f, 0.2f, 0.2f));
             else

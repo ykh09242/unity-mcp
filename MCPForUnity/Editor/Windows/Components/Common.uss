@@ -599,6 +599,11 @@
     margin-bottom: 8px;
 }
 
+.catalog-status-row { margin-bottom: 4px; }
+.catalog-status { flex-grow: 1; flex-basis: 220px; margin-right: 8px; }
+.catalog-help { margin-top: 8px; }
+#tools-section .catalog-status-row .catalog-retry { margin-bottom: 0; }
+
 .catalog-search > .unity-base-field__label,
 .catalog-state-filter > .unity-base-field__label {
     min-width: 0;

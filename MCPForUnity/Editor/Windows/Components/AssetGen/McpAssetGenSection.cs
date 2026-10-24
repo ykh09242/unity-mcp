@@ -26,6 +26,46 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
     /// </summary>
     public class McpAssetGenSection
     {
+        internal interface ISettings
+        {
+            string DefaultFormat { get; set; }
+            string OutputRoot { get; set; }
+            bool AutoNormalize { get; set; }
+            bool IsProviderEnabled(string id);
+            void SetProviderEnabled(string id, bool value);
+            string GetSelectedModel(string kind, string provider);
+            void SetSelectedModel(string kind, string provider, string value);
+        }
+
+        private sealed class Preferences : ISettings
+        {
+            public string DefaultFormat
+            {
+                get => AssetGenPrefs.DefaultFormat;
+                set => AssetGenPrefs.DefaultFormat = value;
+            }
+            public string OutputRoot
+            {
+                get => AssetGenPrefs.OutputRoot;
+                set => AssetGenPrefs.OutputRoot = value;
+            }
+            public bool AutoNormalize
+            {
+                get => AssetGenPrefs.AutoNormalize;
+                set => AssetGenPrefs.AutoNormalize = value;
+            }
+
+            public bool IsProviderEnabled(string id) => AssetGenPrefs.IsProviderEnabled(id);
+
+            public void SetProviderEnabled(string id, bool value) => AssetGenPrefs.SetProviderEnabled(id, value);
+
+            public string GetSelectedModel(string kind, string provider) => AssetGenPrefs.GetSelectedModel(kind, provider);
+
+            public void SetSelectedModel(string kind, string provider, string value) => AssetGenPrefs.SetSelectedModel(kind, provider, value);
+        }
+
+        private readonly ISettings settings;
+
         // Fixed provider lists. Each Id is both the SecureKeyStore key and the
         // AssetGenPrefs enable-flag id. All model/marketplace providers below emit GLB.
         // Each provider has one credential/enablement row, shared across media categories.
@@ -48,6 +88,9 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         private VisualElement gltfastNotice;
         private DropdownField formatDropdown;
         private TextField outputRootField;
+        private Label outputValidationLabel;
+        private Label outputEffectiveLabel;
+        private bool outputDraftDirty;
         private Toggle autoNormalizeToggle;
         private Button refreshButton;
         private Label refreshStatusLabel;
@@ -67,28 +110,46 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         private readonly Dictionary<string, List<Label>> sharedStatuses = new();
         private Foldout credentials;
 
-        // Last failed compatibility check per kind/provider, kept so a catalog rebuild cannot hide it.
-        private readonly Dictionary<string, (string Id, string Error)> verifyErrors = new();
+        private sealed class Verification
+        {
+            public bool Checking = true;
+            public ModelEntry Model;
+            public string Error;
+        }
+
+        private readonly Dictionary<string, Verification> verifications = new();
+        private int verificationLifetime;
 
         public VisualElement Root { get; private set; }
         public event Action OnDependenciesRequested;
+        public event Action OnConsentSettingsRequested;
 
         public McpAssetGenSection(VisualElement root)
+            : this(root, new Preferences()) { }
+
+        internal McpAssetGenSection(VisualElement root, ISettings settings)
         {
+            this.settings = settings;
             Root = root;
             CacheUIElements();
             InitializeUI();
             RegisterCallbacks();
-            Root.RegisterCallback<AttachToPanelEvent>(_ =>
+            Root.RegisterCallback<AttachToPanelEvent>(evt =>
             {
+                if (!ReferenceEquals(evt.target, Root))
+                    return;
                 refreshButton?.SetEnabled(true);
                 SubscribeCatalogs();
                 // Catch up on catalog changes that fired while the tab was detached.
                 RebuildModelControls(null, null);
             });
-            Root.RegisterCallback<DetachFromPanelEvent>(_ =>
+            Root.RegisterCallback<DetachFromPanelEvent>(evt =>
             {
+                if (!ReferenceEquals(evt.target, Root))
+                    return;
                 refreshRevision++;
+                verificationLifetime++;
+                verifications.Clear();
                 FalModelCatalog.Changed -= OnFalChanged;
                 OpenRouterModelCatalog.Changed -= OnRouterChanged;
             });
@@ -146,13 +207,18 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                 dependencies.clicked += () => OnDependenciesRequested?.Invoke();
             formatDropdown = Root.Q<DropdownField>("assetgen-format-dropdown");
             outputRootField = Root.Q<TextField>("assetgen-output-root");
+            outputValidationLabel = Root.Q<Label>("assetgen-output-validation");
+            outputEffectiveLabel = Root.Q<Label>("assetgen-output-effective");
             autoNormalizeToggle = Root.Q<Toggle>("assetgen-auto-normalize");
             refreshButton = Root.Q<Button>("assetgen-refresh");
             refreshStatusLabel = Root.Q<Label>("assetgen-refresh-status");
 
             var blenderRoot = Root.Q<VisualElement>("blender-bridge-panel");
             if (blenderRoot != null)
+            {
                 blenderPanel = new McpBlenderBridgePanel(blenderRoot);
+                blenderPanel.OnConsentSettingsRequested += () => OnConsentSettingsRequested?.Invoke();
+            }
         }
 
         private void InitializeUI()
@@ -183,17 +249,18 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             {
                 formatDropdown.RegisterValueChangedCallback(evt =>
                 {
-                    AssetGenPrefs.DefaultFormat = evt.newValue;
+                    settings.DefaultFormat = evt.newValue;
                 });
             }
 
             if (outputRootField != null)
             {
-                outputRootField.RegisterCallback<FocusOutEvent>(_ =>
+                outputRootField.RegisterValueChangedCallback(_ => outputDraftDirty = true);
+                outputRootField.RegisterCallback<FocusOutEvent>(_ => CommitOutputRoot());
+                outputRootField.RegisterCallback<KeyDownEvent>(evt =>
                 {
-                    AssetGenPrefs.OutputRoot = outputRootField.text?.Trim();
-                    // Reflect the normalized/default value (empty -> default) without re-triggering.
-                    outputRootField.SetValueWithoutNotify(AssetGenPrefs.OutputRoot);
+                    if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
+                        CommitOutputRoot();
                 });
             }
 
@@ -201,7 +268,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             {
                 autoNormalizeToggle.RegisterValueChangedCallback(evt =>
                 {
-                    AssetGenPrefs.AutoNormalize = evt.newValue;
+                    settings.AutoNormalize = evt.newValue;
                 });
             }
 
@@ -211,6 +278,38 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                 refreshButton.text = "Refresh All";
                 refreshButton.clicked += OnRefreshClicked;
             }
+        }
+
+        private void CommitOutputRoot()
+        {
+            string draft = outputRootField.text?.Trim();
+            string candidate = string.IsNullOrWhiteSpace(draft) ? AssetGenPrefs.DefaultOutputRoot : draft;
+            if (!AssetGenPaths.NormalizeOutputFolder(candidate, out string normalized, out _))
+            {
+                if (outputValidationLabel != null)
+                    outputValidationLabel.text = "Enter a folder under Assets, without a file at the destination or an ancestor. Draft not saved.";
+                UpdateEffectiveOutput();
+                return;
+            }
+            settings.OutputRoot = normalized;
+            outputRootField.SetValueWithoutNotify(normalized);
+            outputDraftDirty = false;
+            if (outputValidationLabel != null)
+                outputValidationLabel.text = "";
+            UpdateEffectiveOutput();
+        }
+
+        private void UpdateEffectiveOutput()
+        {
+            if (outputEffectiveLabel == null)
+                return;
+            string root = settings.OutputRoot;
+            if (!AssetGenPaths.TryGetAssetsRelativePath(root + "/Images", out _))
+                root = AssetGenPrefs.DefaultOutputRoot;
+            if (AssetGenPaths.NormalizeOutputFolder(root, out string normalized, out _))
+                outputEffectiveLabel.text = "Saved destination: " + normalized + " (media subfolders).";
+            else
+                outputEffectiveLabel.text = "Saved destination is unavailable. Choose a valid Output Root before generating.";
         }
 
         /// <summary>
@@ -294,7 +393,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         /// <summary>Refreshes model selection without replacing credential fields; null filters match all providers.</summary>
         private void RebuildModelControls(string kind, string provider)
         {
-            foreach (var control in modelControls.ToArray())
+            foreach (var control in modelControls)
             {
                 if (kind != null && control.Kind != kind || provider != null && control.Provider != provider)
                     continue;
@@ -307,9 +406,11 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         private void SyncFromPrefs()
         {
             BuildProviderRows();
-            formatDropdown?.SetValueWithoutNotify(NormalizeFormat(AssetGenPrefs.DefaultFormat));
-            outputRootField?.SetValueWithoutNotify(AssetGenPrefs.OutputRoot);
-            autoNormalizeToggle?.SetValueWithoutNotify(AssetGenPrefs.AutoNormalize);
+            formatDropdown?.SetValueWithoutNotify(NormalizeFormat(settings.DefaultFormat));
+            if (!outputDraftDirty)
+                outputRootField?.SetValueWithoutNotify(settings.OutputRoot);
+            UpdateEffectiveOutput();
+            autoNormalizeToggle?.SetValueWithoutNotify(settings.AutoNormalize);
             UpdateGltfastNotice();
         }
 
@@ -321,7 +422,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             {
                 // Keep unsaved masked input attached while refreshing non-secret state.
                 foreach (var entry in providerToggles)
-                    entry.Value.SetValueWithoutNotify(AssetGenPrefs.IsProviderEnabled(entry.Key));
+                    entry.Value.SetValueWithoutNotify(settings.IsProviderEnabled(entry.Key));
                 foreach (var entry in providerStatuses)
                     UpdateKeyStatus(entry.Value, entry.Key);
                 foreach (string id in sharedStatuses.Keys)
@@ -330,11 +431,10 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                 return;
             }
 
-            credentials = (Foldout)AddCategoryPanel("Provider credentials");
+            bool anyEnabled = ModelProviders.Any(provider => settings.IsProviderEnabled(provider.Id)) || settings.IsProviderEnabled("openrouter");
+            credentials = (Foldout)AddCategoryPanel("Provider credentials", !anyEnabled);
             credentials.name = "provider-credentials";
-            var hint = new Label(
-                "User scope · shared across projects. Type a key and select Save. Focus changes do not save. Presence does not verify authentication."
-            );
+            var hint = new Label("Keys: select Save to store in the OS secure store. Presence does not verify authentication.");
             hint.AddToClassList("help-text");
             credentials.Add(hint);
             foreach (var provider in ModelProviders)
@@ -345,22 +445,22 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             }
             AddProviderRow(credentials, "openrouter", "OpenRouter", "2D");
 
-            var modelPanel = AddCategoryPanel("3D Models");
+            var modelPanel = AddCategoryPanel("3D Models", ModelProviders.Any(provider => settings.IsProviderEnabled(provider.Id)));
             foreach (var provider in ModelProviders)
                 AddModelSelectionRow(modelPanel, "model", provider.Id, provider.Label);
-            var imagePanel = AddCategoryPanel("2D Images");
+            var imagePanel = AddCategoryPanel("2D Images", ImageProviders.Any(provider => settings.IsProviderEnabled(provider.Id)));
             foreach (var provider in ImageProviders)
                 AddModelSelectionRow(imagePanel, "image", provider.Id, provider.Label);
-            var audioPanel = AddCategoryPanel("Sound (fal.ai)");
+            var audioPanel = AddCategoryPanel("Sound (fal.ai)", settings.IsProviderEnabled("fal"));
             AddSharedFalRow(audioPanel, "audio", "fal (audio)");
         }
 
         /// <summary>
         /// Groups provider controls by output type using the current Editor theme.
         /// </summary>
-        private VisualElement AddCategoryPanel(string title)
+        private VisualElement AddCategoryPanel(string title, bool initiallyExpanded)
         {
-            var panel = new Foldout { text = title, value = !providerCategoryStates.TryGetValue(title, out var expanded) || expanded };
+            var panel = new Foldout { text = title, value = providerCategoryStates.TryGetValue(title, out var expanded) ? expanded : initiallyExpanded };
             panel.RegisterValueChangedCallback(evt =>
             {
                 if (evt.target == panel)
@@ -394,12 +494,12 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
 
             var enableToggle = new Toggle { text = "Enabled" };
             enableToggle.AddToClassList("field-toggle");
-            enableToggle.SetValueWithoutNotify(AssetGenPrefs.IsProviderEnabled(id));
+            enableToggle.SetValueWithoutNotify(settings.IsProviderEnabled(id));
             enableToggle.tooltip = $"Enable the {displayName} provider for asset generation.";
             header.Add(enableToggle);
 
             row.Add(header);
-            var usage = new Label("Used by: " + media + ". Enabled changes are saved immediately for future generation.");
+            var usage = new Label("Used by: " + media);
             usage.AddToClassList("help-text");
             row.Add(usage);
             providerToggles[id] = enableToggle;
@@ -497,7 +597,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
 
             enableToggle.RegisterValueChangedCallback(evt =>
             {
-                AssetGenPrefs.SetProviderEnabled(id, evt.newValue);
+                settings.SetProviderEnabled(id, evt.newValue);
                 UpdateGltfastNotice();
             });
 
@@ -552,101 +652,111 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
         {
             var all = AssetGenModelCatalog.ForProvider(providerId, kind);
             string key = kind + "/" + providerId;
-            string selectedId = AssetGenPrefs.GetSelectedModel(kind, providerId);
+            string selectedId = settings.GetSelectedModel(kind, providerId);
             if (string.IsNullOrEmpty(selectedId))
-                selectedId = AssetGenModelCatalog.DefaultModelId(providerId, kind);
+                selectedId = all.FirstOrDefault(model => model.Modes == null || model.Modes.Contains("text"))?.Id;
             string term = searches.TryGetValue(key, out var query) ? query : "";
-            var matches = all.Where(m => (m.Id + " " + m.Label + " " + m.UseCase).IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
-            // Catalog order puts bundled and eagerly verified models first, so the cap keeps those.
-            var models = matches.Take(MenuLimit).ToList();
-            ModelEntry selected = all.FirstOrDefault(model => model.Id == selectedId);
-            if (selected != null && !models.Contains(selected))
-                models.Insert(0, selected);
+            var models = new List<ModelEntry>();
+            int matchCount = 0;
+            ModelEntry selected = null;
+            foreach (var model in all)
+            {
+                if (model.Id == selectedId)
+                    selected = model;
+                if ((model.Id + " " + model.Label + " " + model.UseCase).IndexOf(term, StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                matchCount++;
+                if (models.Count < MenuLimit)
+                    models.Add(model);
+            }
+
+            var current = new Label { name = "model-current-" + kind + "-" + providerId };
+            current.AddToClassList("help-text");
+            current.text =
+                selected != null ? "Current: " + selected.Label + " (" + selected.Id + ")"
+                : string.IsNullOrEmpty(selectedId) ? "No current model selected."
+                : "Saved model unavailable: " + selectedId;
+            parent.Add(current);
+
             if (models.Count == 0)
             {
-                parent.Add(new Label("No models found. Clear the search or refresh the catalog."));
-                return;
+                var empty = new Label("No models found. Clear the search or refresh the catalog.") { name = "model-empty-" + kind + "-" + providerId };
+                empty.AddToClassList("help-text");
+                parent.Add(empty);
             }
-
-            var choices = new List<string>();
-            foreach (ModelEntry m in models)
-                choices.Add(m.Label + " (" + m.Id + ")");
-
-            int selectedIndex = selected == null ? choices.Count : models.IndexOf(selected);
-            if (selected == null)
-                choices.Add(string.IsNullOrEmpty(selectedId) ? "Choose a model" : "Saved model unavailable — choose another (" + selectedId + ")");
-
-            // Lay the dropdown out like the Format row: a horizontal .setting-row (align-items:center,
-            // min-height:24px) with a .setting-label + a label-less DropdownField. Adding the dropdown
-            // straight into the column row instead makes flex-grow expand it vertically into a huge box.
-            var dropdownRow = new VisualElement();
-            dropdownRow.AddToClassList("setting-row");
-
-            var modelLabel = new Label("Model");
-            modelLabel.AddToClassList("setting-label");
-            dropdownRow.Add(modelLabel);
-
-            // The list-item callback goes through the ctor: the property is not public before Unity 6.
-            var dropdown = new DropdownField(choices, 0, null, MenuItemText);
-            dropdown.AddToClassList("setting-dropdown-inline");
-            dropdown.tooltip = "The model generate_* uses for this provider when no explicit model is passed.";
-            dropdown.RegisterCallback<FocusInEvent>(evt => _ = SelectCatalogAsync(kind, providerId));
-            dropdown.SetValueWithoutNotify(choices[selectedIndex]);
-            dropdownRow.Add(dropdown);
-
-            parent.Add(dropdownRow);
-
-            if (matches.Count > MenuLimit)
+            else
             {
-                var more = new Label($"The menu shows {MenuLimit} of {matches.Count} models. Use Search to find the others.");
+                var choices = models.Select(model => model.Label + " (" + model.Id + ")").ToList();
+                int selectedIndex = selected == null ? -1 : models.IndexOf(selected);
+                if (selectedIndex < 0)
+                {
+                    selectedIndex = choices.Count;
+                    choices.Add("Choose a matching model");
+                }
+                var dropdownRow = new VisualElement();
+                dropdownRow.AddToClassList("setting-row");
+                var modelLabel = new Label("Model");
+                modelLabel.AddToClassList("setting-label");
+                dropdownRow.Add(modelLabel);
+                var dropdown = new DropdownField(choices, 0, null, MenuItemText);
+                dropdown.AddToClassList("setting-dropdown-inline");
+                dropdown.tooltip = "The model generate_* uses for this provider when no explicit model is passed.";
+                dropdown.RegisterCallback<FocusInEvent>(evt => _ = SelectCatalogAsync(kind, providerId));
+                dropdown.SetValueWithoutNotify(choices[selectedIndex]);
+                dropdownRow.Add(dropdown);
+                parent.Add(dropdownRow);
+                dropdown.RegisterValueChangedCallback(evt =>
+                {
+                    int index = choices.IndexOf(evt.newValue);
+                    if (index < 0 || index >= models.Count)
+                        return;
+                    ModelEntry picked = models[index];
+                    settings.SetSelectedModel(kind, providerId, picked.Id);
+                    RebuildModelControls(kind, providerId);
+                    if (providerId == "fal" || providerId == "openrouter")
+                        _ = VerifySelection(picked);
+                });
+            }
+            if (matchCount > MenuLimit)
+            {
+                var more = new Label($"The menu shows {MenuLimit} of {matchCount} models. Use Search to find the others.");
                 more.AddToClassList("help-text");
-                more.style.whiteSpace = WhiteSpace.Normal;
                 parent.Add(more);
             }
-
-            var meta = new Label();
+            var meta = new Label { name = "model-meta-" + kind + "-" + providerId };
             meta.AddToClassList("help-text");
-            meta.style.whiteSpace = WhiteSpace.Normal;
             parent.Add(meta);
-
             var caveat = new Label();
             caveat.AddToClassList("validation-description");
-            caveat.style.whiteSpace = WhiteSpace.Normal;
             parent.Add(caveat);
-
-            // A null selection hides the caveat box instead of leaving it empty.
             UpdateModelCaveat(caveat, selected);
             if (selected != null)
             {
                 UpdateModelMeta(meta, selected);
-                if (verifyErrors.TryGetValue(key, out var failure) && failure.Id == selected.Id)
-                    ShowVerifyError(meta, failure.Error);
+                if (verifications.TryGetValue(key + "/" + selected.Id, out var state))
+                {
+                    if (state.Checking)
+                        meta.text = "Checking compatibility…";
+                    else if (state.Error != null)
+                        ShowVerifyError(meta, state.Error);
+                    else
+                        UpdateModelMeta(meta, state.Model);
+                }
             }
-            else if (string.IsNullOrEmpty(selectedId))
-                meta.text = "Choose a model before generating.";
             else
-                meta.text = "Your saved selection is preserved. Choose an available model before generating.";
-
-            dropdown.RegisterValueChangedCallback(evt =>
-            {
-                int index = choices.IndexOf(evt.newValue);
-                if (index < 0 || index >= models.Count)
-                    return;
-                ModelEntry picked = models[index];
-                AssetGenPrefs.SetSelectedModel(kind, providerId, picked.Id);
-                verifyErrors.Remove(key);
-                UpdateModelMeta(meta, picked);
-                UpdateModelCaveat(caveat, picked);
-                if (providerId == "fal" || providerId == "openrouter")
-                    _ = VerifySelection(picked, meta);
-            });
+                meta.text = string.IsNullOrEmpty(selectedId)
+                    ? "Choose a model before generating."
+                    : "Your saved selection is preserved. Choose an available model before generating.";
         }
 
-        private async Task VerifySelection(ModelEntry picked, Label meta)
+        private async Task VerifySelection(ModelEntry picked)
         {
-            string key = picked.Kind + "/" + picked.Provider;
-            int revision = refreshRevision;
-            meta.text = "Checking compatibility…";
+            string key = picked.Kind + "/" + picked.Provider + "/" + picked.Id;
+            int lifetime = verificationLifetime;
+            var state = new Verification();
+            verifications[key] = state;
+            RebuildModelControls(picked.Kind, picked.Provider);
+            bool IsCurrentRequest() => lifetime == verificationLifetime && verifications.TryGetValue(key, out var current) && ReferenceEquals(current, state);
             try
             {
                 string apiKey = null;
@@ -661,17 +771,21 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
                     picked.Provider == "fal"
                         ? await FalModelCatalog.VerifyForGeneration(picked.Id, picked.Kind, mode, CancellationToken.None, apiKey)
                         : await OpenRouterModelCatalog.VerifyForGeneration(picked.Id, mode, CancellationToken.None);
-                if (revision == refreshRevision && AssetGenPrefs.GetSelectedModel(picked.Kind, picked.Provider) == picked.Id)
-                    UpdateModelMeta(meta, verified);
+                if (!IsCurrentRequest())
+                    return;
+                state.Model = verified;
             }
             catch (Exception error)
             {
-                if (revision != refreshRevision || AssetGenPrefs.GetSelectedModel(picked.Kind, picked.Provider) != picked.Id)
+                if (!IsCurrentRequest())
                     return;
-                string message = "Compatibility check failed: " + SecretRedactor.Scrub(error.Message);
-                verifyErrors[key] = (picked.Id, message);
-                ShowVerifyError(meta, message);
+                state.Error = "Compatibility check failed: " + SecretRedactor.Scrub(error.Message);
             }
+            if (!IsCurrentRequest())
+                return;
+            state.Checking = false;
+            // Resolve attached controls now; search and catalog refreshes may have replaced the original labels.
+            RebuildModelControls(picked.Kind, picked.Provider);
         }
 
         /// <summary>
@@ -835,7 +949,7 @@ namespace MCPForUnity.Editor.Windows.Components.AssetGen
             bool anyGlbProviderEnabled = false;
             foreach (var entry in modelEnableToggles)
             {
-                bool enabled = entry.Toggle != null ? entry.Toggle.value : AssetGenPrefs.IsProviderEnabled(entry.Id);
+                bool enabled = entry.Toggle != null ? entry.Toggle.value : settings.IsProviderEnabled(entry.Id);
                 if (enabled)
                 {
                     anyGlbProviderEnabled = true;

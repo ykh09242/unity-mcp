@@ -2,28 +2,30 @@
     <ui:VisualElement name="tools-section" class="section">
         <ui:Label text="Tools available to your AI" class="section-title" />
         <ui:VisualElement class="section-content">
-            <ui:Label text="Start with essentials, then enable the groups you need. A smaller selection reduces tool definitions sent to your client." class="help-text" />
             <ui:Label name="tools-summary" class="catalog-summary" text="Discovering tools..." />
             <ui:VisualElement class="catalog-toolbar">
                 <ui:TextField name="tools-search" label="Search" class="catalog-search" tooltip="Search display names, tool IDs, descriptions and groups." />
                 <ui:DropdownField name="tools-state-filter" label="Show" class="catalog-state-filter" tooltip="Filter the list without changing tool selection." />
                 <ui:Label name="tools-visible-count" class="catalog-count" />
             </ui:VisualElement>
-            <ui:VisualElement class="catalog-toolbar">
+            <ui:VisualElement name="tools-actions" class="catalog-toolbar">
                 <ui:Button name="enable-matching-tools" text="Enable matching (0)" class="tool-action-button" enabled="false" />
                 <ui:Button name="disable-matching-tools" text="Disable matching (0)" class="tool-action-button" enabled="false" />
+                <ui:Button name="recommended-tools-button" text="Use Recommended" class="tool-action-button primary-button" tooltip="Select essential built-in tools and turn off optional groups, including hidden tools. Custom tools and explicit consent settings are kept." />
+                <ui:Button name="enable-all-button" text="Enable All" class="tool-action-button" tooltip="Enable every discovered tool, including hidden tools. Does not grant explicit consent." />
+                <ui:Button name="disable-all-button" text="Disable All" class="tool-action-button" tooltip="Disable every discovered tool, including hidden tools." />
             </ui:VisualElement>
-            <ui:Label name="tools-bulk-scope" class="help-text" text="All and Recommended actions include tools hidden by search or state filters. Group checkboxes include every tool in that group." />
-            <ui:VisualElement name="tools-actions" class="tool-actions">
-                <ui:Button name="recommended-tools-button" text="Use Recommended" class="tool-action-button primary-button" tooltip="Select essential built-in tools and turn off optional groups. Custom tools and explicit consent settings are kept. Applies to tools hidden by search too." />
-                <ui:Button name="enable-all-button" text="Enable All" class="tool-action-button" tooltip="Enable every discovered tool, including tools hidden by search. Does not grant explicit consent." />
-                <ui:Button name="disable-all-button" text="Disable All" class="tool-action-button" tooltip="Disable every discovered tool, including tools hidden by search." />
+            <ui:Label name="tools-bulk-scope" class="help-text" text="Matching uses filters. All, Recommended and group toggles include hidden tools." />
+            <ui:VisualElement class="catalog-toolbar catalog-status-row">
+                <ui:Label name="tools-apply-status" class="help-text catalog-status" text="Not confirmed. Server catalog status is unavailable." />
+                <ui:Button name="retry-tools-button" text="Retry sending" class="tool-action-button catalog-retry catalog-hidden" enabled="false" />
             </ui:VisualElement>
-            <ui:Label name="tools-apply-status" class="help-text" text="Not confirmed. Server catalog status is unavailable." />
-            <ui:Button name="retry-tools-button" text="Retry Sending Settings" class="tool-action-button catalog-retry" enabled="false" />
-            <ui:Label name="tools-note" class="help-text" />
+            <ui:Label name="tools-note" class="help-text catalog-hidden" />
             <ui:Label name="tools-empty-state" class="catalog-empty help-text catalog-hidden" />
             <ui:VisualElement name="tool-category-container" class="tool-category-container" />
+            <ui:Foldout text="Selection and connection help" value="false" class="catalog-help">
+                <ui:Label text="Use Recommended starts with essentials. A smaller selection reduces tool definitions sent to your client. Refresh the client tool list after changing selections if needed." class="help-text" />
+            </ui:Foldout>
             <ui:Foldout text="Advanced connection options" value="false" class="catalog-advanced">
                 <ui:Toggle name="project-scoped-tools-toggle" text="Register project-defined tools" />
                 <ui:Label text="For custom tools declared by this Unity project. Reconfigure your client after changing this option." class="help-text" />

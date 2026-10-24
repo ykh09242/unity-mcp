@@ -391,6 +391,11 @@ namespace MCPForUnity.Editor.Windows
                 assetGenContainer.Add(assetGenRoot);
                 assetGenSection = new McpAssetGenSection(assetGenRoot);
                 assetGenSection.OnDependenciesRequested += () => navigation?.OpenSetting("com.unity.cloud.gltfast-version");
+                assetGenSection.OnConsentSettingsRequested += () =>
+                {
+                    SwitchPanel(ActivePanel.Tools);
+                    toolsSection?.RevealToolConsent("blender_bridge");
+                };
             }
             else
             {

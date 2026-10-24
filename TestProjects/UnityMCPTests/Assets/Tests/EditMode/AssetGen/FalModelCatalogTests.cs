@@ -530,8 +530,13 @@ namespace MCPForUnityTests.Editor.AssetGen
             DropdownField AudioMenu() => root.Query<DropdownField>().ToList().Single(d => d.choices.Any(c => c.Contains("test/music-")));
 
             var menu = AudioMenu();
-            Assert.AreEqual(McpAssetGenSection.MenuLimit + 1, menu.choices.Count, "The saved selection beyond the cap stays selectable.");
-            StringAssert.Contains("test/music-39", menu.value);
+            Assert.AreEqual(
+                McpAssetGenSection.MenuLimit + 1,
+                menu.choices.Count,
+                "The menu retains a prompt when the current selection is outside its matches."
+            );
+            Assert.AreEqual("Choose a matching model", menu.value);
+            StringAssert.Contains("test/music-39", root.Q<Label>("model-current-audio-fal").text);
             Assert.IsTrue(menu.choices.All(c => !McpAssetGenSection.MenuItemText(c).Contains("/")), "GenericMenu turns every '/' into a submenu.");
             Assert.IsTrue(root.Query<Label>().ToList().Any(l => l.text.StartsWith($"The menu shows {McpAssetGenSection.MenuLimit} of 40 models")));
 

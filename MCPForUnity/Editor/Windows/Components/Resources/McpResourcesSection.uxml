@@ -7,23 +7,23 @@
                 <ui:TextField name="resources-search" label="Search" class="catalog-search" tooltip="Search resource names, descriptions, and categories." />
                 <ui:Label name="resources-visible-count" class="catalog-count" />
             </ui:VisualElement>
-            <ui:VisualElement class="catalog-toolbar">
+            <ui:VisualElement name="resources-actions" class="catalog-toolbar">
                 <ui:Button name="enable-matching-resources" text="Enable matching (0)" class="tool-action-button" enabled="false" />
                 <ui:Button name="disable-matching-resources" text="Disable matching (0)" class="tool-action-button" enabled="false" />
+                <ui:Button name="enable-all-resources-button" text="Enable All" class="tool-action-button" tooltip="Enable every discovered resource, including resources hidden by search." />
+                <ui:Button name="disable-all-resources-button" text="Disable All" class="tool-action-button" tooltip="Disable every discovered resource, including resources hidden by search." />
+                <ui:Button name="rescan-resources-button" text="Rescan" class="tool-action-button" />
             </ui:VisualElement>
-            <ui:Label name="resources-bulk-scope" class="help-text" text="All actions below include resources hidden by search." />
-            <ui:VisualElement name="resources-actions" class="tool-actions">
-                <ui:VisualElement class="catalog-toolbar">
-                    <ui:Button name="enable-all-resources-button" text="Enable All Resources" class="tool-action-button" tooltip="Enable every discovered resource, including resources hidden by search." />
-                    <ui:Button name="disable-all-resources-button" text="Disable All Resources" class="tool-action-button" tooltip="Disable every discovered resource, including resources hidden by search." />
-                    <ui:Button name="rescan-resources-button" text="Rescan" class="tool-action-button" />
-                </ui:VisualElement>
+            <ui:Label name="resources-bulk-scope" class="help-text" text="Matching uses search. All includes hidden resources." />
+            <ui:VisualElement class="catalog-toolbar catalog-status-row">
+                <ui:Label name="resources-apply-status" class="help-text catalog-status" text="Editor access saved locally · client listing unconfirmed." />
+                <ui:Button name="resources-open-connection" text="Open Connect" class="tool-action-button" tooltip="Open connection settings. This does not reconnect or interrupt running work." />
             </ui:VisualElement>
-            <ui:Label name="resources-note" class="help-text" text="Saved selections control access in this Editor immediately. They do not confirm the resource list shown in your client." />
-            <ui:Label name="resources-apply-status" class="help-text" text="Server listing not confirmed. This connection does not report resource acknowledgements." />
-            <ui:Button name="resources-open-connection" text="Open Connect" class="tool-action-button" tooltip="Open connection settings. This does not reconnect or interrupt running work." />
             <ui:Label name="resources-empty-state" class="catalog-empty help-text catalog-hidden" />
             <ui:VisualElement name="resource-category-container" class="tool-category-container" />
+            <ui:Foldout text="Resource access help" value="false" class="catalog-help">
+                <ui:Label name="resources-note" class="help-text" text="Selections control access in this Editor immediately. This connection does not acknowledge the resource list shown in your client; refresh the client resource list if needed." />
+            </ui:Foldout>
         </ui:VisualElement>
     </ui:VisualElement>
 </ui:UXML>
