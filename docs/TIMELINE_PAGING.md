@@ -31,8 +31,12 @@ bindings outside the returned page.
 Revisions cover saved asset and metadata bytes, dependency state, all owned
 serialized subassets, and live serialized clip sources. File bytes are hashed
 in 64 KiB chunks; native serialized-property hashes avoid graph-sized JSON.
-Editors without property hashes use leaf traversal. Every page revalidates the
-whole revision, so total validation work scales with asset size, while response
+Editors without property hashes use leaf traversal. Leaf object-reference digests
+retain the native 32-bit instance ID below Unity 6000.4 and the full 64-bit
+EntityId from Unity 6000.4, formatted
+with invariant culture. Read again after an Editor upgrade.
+Every page revalidates the whole revision, so total validation work scales with
+asset size, while response
 materialization stays bounded. Changing saved or unsaved state invalidates
 continuations and stale writes. Restart from the first page after drift.
 

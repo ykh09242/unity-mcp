@@ -484,7 +484,11 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                     case SerializedPropertyType.String:
                         return property.stringValue;
                     case SerializedPropertyType.ObjectReference:
+#if UNITY_6000_4_OR_NEWER
+                        return EntityId.ToULong(property.objectReferenceEntityIdValue).ToString(CultureInfo.InvariantCulture);
+#else
                         return property.objectReferenceInstanceIDValue.ToString(CultureInfo.InvariantCulture);
+#endif
                     case SerializedPropertyType.ExposedReference:
                         return property.exposedReferenceValue == null
                             ? "null"
