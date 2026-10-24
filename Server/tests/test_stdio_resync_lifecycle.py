@@ -300,3 +300,64 @@ async def test_initial_connection_cannot_publish_after_retirement(monkeypatch):
         await closing
     assert len(disposed) == 1
     assert pool._connections == {}
+
+
+@pytest.mark.asyncio
+async def test_late_published_connection_is_sealed_before_final_disposal(monkeypatch):
+    import inspect
+    import sys
+
+    pool = uc.UnityConnectionPool()
+    target = SimpleNamespace(id="Main@deadbeef", port=6400)
+    loop = asyncio.get_running_loop()
+    before_publication = asyncio.Event()
+    release = threading.Event()
+    real_connect = uc.UnityConnection.connect
+    monkeypatch.setattr(pool, "resolve_instance", lambda _: target)
+    monkeypatch.setattr(uc.UnityConnection, "connect", lambda _: True)
+    source, first_line = inspect.getsourcelines(uc.UnityConnectionPool.get_connection)
+    publication_line = first_line + next(
+        index for index, line in enumerate(source) if "self._connections[target.id] = conn" in line
+    )
+
+    def select():
+        previous_trace = sys.gettrace()
+
+        def pause_at_publication(frame, event, _):
+            if (
+                frame.f_code is uc.UnityConnectionPool.get_connection.__code__
+                and event == "line"
+                and frame.f_lineno == publication_line
+            ):
+                loop.call_soon_threadsafe(before_publication.set)
+                assert release.wait(watchdog_timeout())
+            return pause_at_publication
+
+        sys.settrace(pause_at_publication)
+        try:
+            return pool.get_connection(target.id)
+        finally:
+            sys.settrace(previous_trace)
+
+    selecting = loop.run_in_executor(None, select)
+    await await_signal(before_publication, "selection passed its last retirement check")
+    closing = asyncio.create_task(pool.aclose())
+    try:
+        # The selector holds _pool_lock. Retirement must let the loop run while
+        # final disposal waits off-loop; its initial snapshot misses this owner.
+        await asyncio.sleep(0)
+        assert pool._retired and not pool._connections
+        assert not closing.done()
+    finally:
+        release.set()
+        connection = await selecting
+        await closing
+    assert not pool._connections
+    monkeypatch.setattr(uc.UnityConnection, "connect", real_connect)
+    attempted_connections = Mock(
+        side_effect=AssertionError("Stale owner attempted socket creation")
+    )
+    monkeypatch.setattr(uc.socket, "create_connection", attempted_connections)
+    assert connection.connect() is False
+    attempted_connections.assert_not_called()
+    assert connection._retired

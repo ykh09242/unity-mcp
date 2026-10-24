@@ -1481,6 +1481,10 @@ class UnityConnectionPool:
             for instance_id, conn in self._connections.items():
                 try:
                     logger.info(f"Disconnecting from Unity instance: {instance_id}")
+                    if self._retired:
+                        # A selector can publish after aclose's initial snapshot.
+                        # Seal under the publication lock before final disposal.
+                        conn._retired = True
                     conn.disconnect()
                 except Exception:
                     logger.exception(f"Error disconnecting from {instance_id}")
