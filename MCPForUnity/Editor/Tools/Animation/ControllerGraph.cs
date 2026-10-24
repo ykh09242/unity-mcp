@@ -213,12 +213,8 @@ namespace MCPForUnity.Editor.Tools.Animation
         internal static object Page(JObject request)
         {
             Snapshot graph = Read(request);
-            return AnimationAssetAccess.Page(
-                new JArray(graph.Nodes.OrderBy(node => node.Id, StringComparer.Ordinal).Select(node => node.Describe())),
-                request,
-                graph.Revision,
-                "entries"
-            );
+            var ordered = graph.Nodes.OrderBy(node => node.Id, StringComparer.Ordinal).ToArray();
+            return AnimationAssetAccess.Page(ordered.Length, index => ordered[index].Describe(), request, graph.Revision, "entries");
         }
     }
 }
