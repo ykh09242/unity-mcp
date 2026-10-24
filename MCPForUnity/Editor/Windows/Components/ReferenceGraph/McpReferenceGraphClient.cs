@@ -33,6 +33,13 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             return Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(material)));
         }
 
+        internal static UnauthorizedAccessException AuthorizationFailure(int statusCode) =>
+            new UnauthorizedAccessException(
+                statusCode == 401
+                    ? "Authentication is required. Check the account or local server connection in Connect."
+                    : "This account cannot perform the action or read that source. Check account permissions and the server's external-folder grant."
+            );
+
         internal static async Task<JObject> Send(string action, JObject options, CancellationToken cancellation)
         {
             if (!EditorConfigurationCache.Instance.UseHttpTransport)
@@ -69,12 +76,11 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             cancellation.ThrowIfCancellationRequested();
             if (Identity() != identity)
                 throw new OperationCanceledException("Connection identity changed.");
+            if ((int)response.StatusCode == 401 || (int)response.StatusCode == 403)
+                throw AuthorizationFailure((int)response.StatusCode);
             if (!response.IsSuccessStatusCode)
                 throw new InvalidOperationException(
                     (int)response.StatusCode == 409 ? "The Editor or destination version changed. Refresh and reload the item before applying it."
-                    : (int)response.StatusCode == 403
-                        ? "This account cannot perform the action or read that source. Check account permissions and the server's external-folder grant."
-                    : (int)response.StatusCode == 401 ? "Authentication is required. Check the account or local server connection in Connect."
                     : (int)response.StatusCode == 400
                         ? "Check the configuration JSON and destination version. External sources require explicit read-access approval."
                     : "The graph service is unavailable (HTTP " + (int)response.StatusCode + "). Check the server and Editor connection, then refresh."

@@ -14,7 +14,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         private const int PageSize = 25;
         private readonly VisualElement root,
             rows,
-            fields;
+            fields,
+            actionFeedback;
         private readonly ObjectField asset,
             target;
         private readonly DropdownField view,
@@ -28,6 +29,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         private readonly List<Button> rowButtons = new();
         private string cursor,
             queryId,
+            waitingAction,
             pageAction,
             pageStatus;
         private JObject pageOptions;
@@ -45,7 +47,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             root.AddToClassList("graph-explorer");
             parent.Add(root);
             Note(root, "Explore an asset").AddToClassList("graph-section-heading");
-            Note(root, "Choose an asset, then request a page. Selection changes never scan the project or load the whole graph.");
+
             fields = new VisualElement();
             root.Add(fields);
             asset = AssetField(fields, "Asset", "graph-explorer-asset");
@@ -72,12 +74,22 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             actions.Add(next);
             release = new Button(async () => await Release()) { text = "Release query", name = "graph-explorer-release" };
             actions.Add(release);
-            status = Note(root, "Refresh graph status to verify the current account, then choose an asset.", "graph-explorer-status");
+            status = Note(root, "", "graph-explorer-status");
+            status.AddToClassList("hidden");
+            actionFeedback = new VisualElement();
+            root.Add(actionFeedback);
             rows = new VisualElement { name = "graph-explorer-rows" };
             root.Add(rows);
-            details = new Foldout { text = "Reference explanation", value = false };
+            details = new Foldout
+            {
+                text = "Reference explanation",
+                value = false,
+                name = "graph-explorer-details",
+            };
+            details.AddToClassList("hidden");
             root.Add(details);
             explanation = Note(details, "Select Explain on a reference to read its recorded evidence.", "graph-explorer-explanation");
+            explanation.focusable = true;
             SetAvailable(false);
         }
 
@@ -122,6 +134,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 destination = Node(target.value);
             if (node == null || (view.value == "Path" && destination == null))
             {
+                status.RemoveFromClassList("hidden");
                 status.text = "Choose a saved project asset" + (view.value == "Path" ? " and a path target." : ".");
                 return;
             }
@@ -157,10 +170,14 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             cursor = pageAction = null;
             pageOptions = null;
             pageNumber = 0;
+            root.Add(details);
+            details.AddToClassList("hidden");
             rows.Clear();
             rowButtons.Clear();
+            pageStatus = null;
             explanation.text = "Select Explain on a reference to read its recorded evidence.";
             details.value = false;
+            status.RemoveFromClassList("hidden");
             status.text = "Ready to explore. No references have been queried for this selection.";
             SetAvailable(available);
         }
@@ -172,6 +189,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             asset.SetValueWithoutNotify(null);
             target.SetValueWithoutNotify(null);
             ResetPage();
+            status.text = "";
+            status.AddToClassList("hidden");
         }
 
         internal void SetAvailable(bool value)
@@ -184,27 +203,54 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 button.SetEnabled(value);
         }
 
-        internal void Waiting()
+        internal VisualElement FeedbackParent(string action) => action == "explain" ? details : actionFeedback;
+
+        internal void Waiting(string action)
         {
             waiting = true;
-            status.text = "Waiting for reference evidence. Stop waiting remains available above; server work may continue.";
+            waitingAction = action;
+            if (action == "explain")
+            {
+                details.RemoveFromClassList("hidden");
+                details.value = true;
+                explanation.text = "Loading recorded evidence…";
+            }
+            else
+            {
+                status.RemoveFromClassList("hidden");
+                status.text = "Waiting for reference evidence; accepted server work may continue after stopping.";
+            }
         }
 
-        internal void StopWaiting()
+        internal void StopWaiting(string message)
         {
             if (!waiting)
                 return;
             waiting = false;
-            status.text = "Request wait stopped. Refresh before repeating a query; accepted server work may continue.";
+            if (waitingAction == "explain")
+                Failed(waitingAction, message);
+            else
+                status.text = (pageStatus == null ? "" : pageStatus + "\n") + message;
         }
 
-        internal void Failed(string message)
+        internal void Failed(string action, string message)
         {
             waiting = false;
+            if (action == "explain")
+            {
+                explanation.text = message + " Use Explain reference again to retry.";
+                details.RemoveFromClassList("hidden");
+                details.value = true;
+                status.text = pageStatus ?? status.text;
+                return;
+            }
             cursor = null;
+            root.Add(details);
+            details.AddToClassList("hidden");
             rows.Clear();
             rowButtons.Clear();
             explanation.text = "";
+            status.RemoveFromClassList("hidden");
             status.text = message;
             SetAvailable(available);
         }
@@ -226,6 +272,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                     edges.Count == 0
                         ? "No retained evidence is available for this reference. Refresh the query."
                         : string.Join("\n\n", edges.OfType<JObject>().Select(edge => Describe(edge, true)));
+                details.RemoveFromClassList("hidden");
                 details.value = true;
                 status.text = (pageStatus ?? "") + "\nExplanation loaded from recorded evidence.";
                 return;
@@ -233,6 +280,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             cursor = data.Value<string>("next_cursor");
             queryId = data.Value<string>("query_id") ?? queryId;
             pageNumber++;
+            root.Add(details);
+            details.AddToClassList("hidden");
             rows.Clear();
             rowButtons.Clear();
             foreach (JObject edge in edges)
@@ -247,7 +296,25 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                     var button = new Button(async () =>
                     {
                         if (available)
+                        {
+                            row.Add(details);
+                            details.RemoveFromClassList("hidden");
+                            details.value = true;
+                            explanation.text = "Loading recorded evidence…";
+                            explanation.Focus();
+                            root.schedule.Execute(() =>
+                            {
+                                if (details.parent != row || details.ClassListContains("hidden"))
+                                    return;
+                                for (var parent = root.parent; parent != null; parent = parent.parent)
+                                    if (parent is ScrollView scroll)
+                                    {
+                                        scroll.ScrollTo(explanation);
+                                        break;
+                                    }
+                            });
                             await request("explain", new JObject { ["id"] = id });
+                        }
                     })
                     {
                         text = "Explain reference",
@@ -265,6 +332,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                         : " No path was recorded."
                     )
                     : "";
+            status.RemoveFromClassList("hidden");
             status.text =
                 $"Page {pageNumber} · {edges.Count} references · revision {data["revision"] ?? data["graph_status"]?["revision"]}. "
                 + (cursor != null ? "More work is available on the next page." : "End of this query.")

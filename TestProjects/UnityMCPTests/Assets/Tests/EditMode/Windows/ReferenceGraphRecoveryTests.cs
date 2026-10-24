@@ -149,6 +149,103 @@ namespace MCPForUnityTests.EditMode.Windows
             }
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task StoppedApplyKeepsDraftAndLateCompletionCannotReleaseNewApply(bool leaveTab)
+        {
+            var root = NewRoot();
+            var firstCompletion = new TaskCompletionSource<JObject>();
+            var secondCompletion = new TaskCompletionSource<JObject>();
+            int applies = 0;
+            CancellationToken firstToken = default;
+            using var section = new McpReferenceGraphSection(
+                root,
+                (action, _, token) =>
+                {
+                    if (action != "import_config")
+                        return Task.FromResult(Sample());
+                    if (++applies == 1)
+                    {
+                        firstToken = token;
+                        return firstCompletion.Task;
+                    }
+                    return secondCompletion.Task;
+                },
+                () => "one"
+            );
+            section.SetVisible(true);
+            await section.Run("overview", new JObject());
+            var payload = root.Q<TextField>("graph-config");
+            var item = root.Q<TextField>("graph-item-id");
+            item.value = "draft-rule";
+            payload.value = "{\"call\":\"Draft.Load\"}";
+            var import = typeof(McpReferenceGraphSection).GetMethod("Import", Instance);
+            Task first = (Task)import.Invoke(section, null);
+            Task second = null;
+            try
+            {
+                Assert.That(root.Q<Label>("graph-form-message").text, Does.Contain("Working"));
+                Assert.AreSame(root.Q<Foldout>("graph-item-editor"), root.Q<Button>("graph-stop").GetFirstAncestorOfType<Foldout>());
+                if (leaveTab)
+                {
+                    section.SetVisible(false);
+                    section.SetVisible(true);
+                }
+                else
+                    typeof(Clickable).GetMethod("Invoke", Instance).Invoke(root.Q<Button>("graph-stop").clickable, new object[] { null });
+                Assert.IsTrue(firstToken.IsCancellationRequested);
+                Assert.That(root.Q<Label>("graph-form-message").text, Does.Not.Contain("Working"));
+                Assert.That(root.Q<Label>("graph-form-message").text, Does.Contain("remote outcome is unknown"));
+                Assert.AreEqual("draft-rule", item.value);
+                Assert.AreEqual("{\"call\":\"Draft.Load\"}", payload.value);
+                Assert.IsTrue(root.Q<Button>("graph-import").enabledSelf);
+                payload.value = "{\"call\":\"Newer.Load\"}";
+                second = (Task)import.Invoke(section, null);
+                var late = Sample();
+                late["version"] = 99;
+                firstCompletion.SetResult(late);
+                await first;
+                Assert.That(payload.value, Does.Contain("Newer.Load"));
+                Assert.That(root.Q<Label>("graph-form-message").text, Does.Contain("Working"));
+                Assert.IsTrue(root.Q<Button>("graph-stop").enabledSelf, "The old completion must not release the newer wait.");
+                Assert.IsFalse(root.Q<Button>("graph-import").enabledSelf);
+                var current = Sample();
+                current["version"] = 2;
+                secondCompletion.SetResult(current);
+                await second;
+                Assert.That(root.Q<Label>("graph-form-message").text, Does.Contain("Item updated"));
+                Assert.IsTrue(root.Q<Button>("graph-import").enabledSelf);
+            }
+            finally
+            {
+                firstCompletion.TrySetResult(Sample());
+                secondCompletion.TrySetResult(Sample());
+                await first;
+                if (second != null)
+                    await second;
+            }
+        }
+
+        [Test]
+        public async Task DisposeDuringApplyIgnoresLateSuccess()
+        {
+            var root = NewRoot();
+            var completion = new TaskCompletionSource<JObject>();
+            var section = new McpReferenceGraphSection(
+                root,
+                (action, _, __) => action == "import_config" ? completion.Task : Task.FromResult(Sample()),
+                () => "one"
+            );
+            section.SetVisible(true);
+            await section.Run("overview", new JObject());
+            root.Q<TextField>("graph-item-id").value = "draft-rule";
+            Task apply = (Task)typeof(McpReferenceGraphSection).GetMethod("Import", Instance).Invoke(section, null);
+            section.Dispose();
+            completion.SetResult(new JObject { ["version"] = 99 });
+            await apply;
+            Assert.Zero(root.childCount);
+        }
+
         [Test]
         public async Task DirtyItemReplacementRequiresDiscardAndRefreshKeepsDraft()
         {
