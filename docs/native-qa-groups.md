@@ -1,5 +1,8 @@
 # Reusable native QA groups
 
+For actual multi-Editor preference ownership, owned forced termination and gated
+Unity 6.5/6.6 cases, see [native preference assurance](native-preference-assurance.md).
+
 `tools/unity-native-groups.json` declares exact required test methods, disruptive
 cohorts and explicit platform exclusions. The transport QA runner derives its
 Unity filter from the complete selected inventory. It validates the NUnit result

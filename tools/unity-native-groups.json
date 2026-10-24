@@ -179,6 +179,21 @@
       "disruptive": false,
       "platform_exclusions": {}
     },
+    "native-entity-id-66": {
+      "methods": [
+        "MCPForUnityTests.Editor.Services.NativeVersionAssuranceTests.Unity66EntityId_ReadWritePreservesNativeObjectIdentity"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
+    },
+    "native-panel-renderer-65": {
+      "methods": [
+        "MCPForUnityTests.Editor.Services.NativeVersionAssuranceTests.Unity65PanelRenderer_ConfiguresAndReadsActualNativeRoot"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {},
+      "requires_graphics": true
+    },
     "large-workloads": {
       "methods": [
         "MCPForUnityTests.Editor.Tools.ManageSceneHierarchyPagingTests.LargeHierarchyCohortPreservesEveryChildInOrder",

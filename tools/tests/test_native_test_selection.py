@@ -218,6 +218,20 @@ def test_repository_manifest_method_inventory_is_valid():
         assert qa.load_selection(path, [name], "win32")["required"]
 
 
+@pytest.mark.parametrize(
+    "group,graphics",
+    [("native-entity-id-66", False), ("native-panel-renderer-65", True)],
+)
+def test_version_native_cohorts_have_explicit_required_methods(group, graphics):
+    path = Path(__file__).parents[1] / "unity-native-groups.json"
+    selection = qa.load_selection(path, [group], "win32")
+    assert len(selection["required"]) == 1
+    assert selection["required"][0].startswith(
+        "MCPForUnityTests.Editor.Services.NativeVersionAssuranceTests."
+    )
+    assert selection["requiresGraphics"] is graphics
+
+
 def test_generated_editor_user_settings_do_not_change_source_identity(tmp_path):
     output, prep, editor, _, _ = owned_inputs(tmp_path)
     receipt = qa.capture_inputs(output, prep, editor)
