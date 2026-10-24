@@ -26,4 +26,8 @@ async def get_doctor(ctx: Context) -> DoctorResourceResponse:
 )
 async def get_runtime_doctor(ctx: Context) -> dict:
     """Keep the existing strict connection-doctor receipt unchanged."""
-    return runtime_sdk_report(ctx.fastmcp)
+    report = runtime_sdk_report(ctx.fastmcp)
+    discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
+    if discovery is not None:
+        report["discovery"] = await discovery.capability(ctx)
+    return report

@@ -445,6 +445,8 @@ async def _shutdown_server_resources(
 
 
 def _build_instructions(project_scoped_tools: bool) -> str:
+    from services.tool_discovery import SETUP_GUIDANCE
+
     if project_scoped_tools:
         custom_tools_note = (
             "I have a dynamic tool system. Always check the mcpforunity://custom-tools resource first "
@@ -460,6 +462,9 @@ def _build_instructions(project_scoped_tools: bool) -> str:
 This server provides tools to interact with the Unity Game Engine Editor.
 
 {custom_tools_note}
+
+Tool discovery setup:
+{SETUP_GUIDANCE}
 
 Targeting Unity instances:
 - Use the resource mcpforunity://instances to list active Unity sessions (Name@hash).

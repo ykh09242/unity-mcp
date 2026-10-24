@@ -241,6 +241,7 @@ async def _list_groups(ctx: Context) -> dict[str, Any]:
     return {
         "groups": groups,
         "profile": discovery.profile if discovery else "core",
+        **({"discovery": await discovery.capability(ctx)} if discovery else {}),
         "note": (
             "A group is enabled when at least one of its registered tools is currently visible. "
             "Use activate/deactivate with a stateful handshake or trusted project-bound client scope. "
