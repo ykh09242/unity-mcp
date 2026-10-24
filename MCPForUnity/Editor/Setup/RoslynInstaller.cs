@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Runtime.Helpers;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -35,43 +37,34 @@ namespace MCPForUnity.Editor.Setup
         public static bool IsInstalled()
         {
             string folder = Path.Combine(Application.dataPath, PluginsRelPath);
-            foreach (var entry in NuGetEntries)
+            try
             {
-                string path = Path.Combine(folder, entry.dllName);
-                if (!File.Exists(path))
-                    return false;
-
-                // Defense-in-depth: a stale DLL whose assembly version is older than what
-                // Roslyn references (e.g. a v4.x System.Runtime.CompilerServices.Unsafe
-                // shadowing the v6 we actually need) would still satisfy file-existence but
-                // leave Roslyn unable to load. Compare the on-disk assembly version against
-                // each entry's declared NuGet version, treating "older or unreadable" as not
-                // installed so InstallAsync() can rewrite it.
-                if (Version.TryParse(entry.version, out var requiredVersion))
+                var provided = RoslynAssemblyCompatibility.GetProvided(folder, LoadedAssemblies());
+                foreach (var entry in NuGetEntries)
                 {
-                    try
-                    {
-                        var actual = AssemblyName.GetAssemblyName(path).Version;
-                        if (actual == null || actual < requiredVersion)
-                            return false;
-                    }
-                    catch
-                    {
-                        return false;
-                    }
+                    if (!provided.Contains(entry.dllName))
+                        ValidateAssembly(Path.Combine(folder, entry.dllName), entry.dllName, entry.version);
                 }
+                return true;
             }
-            return true;
+            catch
+            {
+                return false;
+            }
         }
 
-        public static async Task InstallAsync(bool interactive = true, CancellationToken cancellationToken = default)
+        /// <summary>Install missing dependencies; an optional total deadline applies to each dependency including its retries.</summary>
+        public static Task InstallAsync(bool interactive = true, CancellationToken cancellationToken = default) =>
+            InstallAsync(interactive, cancellationToken, null);
+
+        public static async Task InstallAsync(bool interactive, CancellationToken cancellationToken, TimeSpan? totalDownloadTimeout)
         {
             if (
                 IsInstalled()
                 && interactive
                 && !EditorUtility.DisplayDialog(
                     "Roslyn Already Installed",
-                    $"Roslyn DLLs are already present in Assets/{PluginsRelPath}.\nReinstall?",
+                    "Compatible Roslyn DLLs are already available from this project.\nReinstall MCP-owned dependencies?",
                     "Reinstall",
                     "Cancel"
                 )
@@ -79,35 +72,35 @@ namespace MCPForUnity.Editor.Setup
                 return;
             string folder = Path.Combine(Application.dataPath, PluginsRelPath);
             int count = 0;
+            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             try
             {
                 await InstallFromPackagesAsync(
                     folder,
                     async url =>
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        if (interactive)
-                            EditorUtility.DisplayProgressBar(
-                                "Installing Roslyn",
-                                "Downloading and validating dependencies...",
-                                (float)count++ / NuGetEntries.Length
-                            );
-                        using var request = UnityWebRequest.Get(url);
-                        request.timeout = 30;
-                        var operation = request.SendWebRequest();
-                        var completion = new TaskCompletionSource<bool>();
-                        if (operation.isDone)
-                            completion.TrySetResult(true);
-                        else
-                            operation.completed += _ => completion.TrySetResult(true);
-                        await completion.Task;
-                        cancellationToken.ThrowIfCancellationRequested();
-                        if (request.result != UnityWebRequest.Result.Success)
-                            throw new IOException($"Failed to download a Roslyn dependency: {request.error}");
-                        return request.downloadHandler.data;
+                        byte[] package = await RoslynDownload.FetchAsync(
+                            () => new UnityTransfer(url),
+                            cancellation.Token,
+                            (bytes, progress, attempt) =>
+                            {
+                                if (
+                                    interactive
+                                    && EditorUtility.DisplayCancelableProgressBar(
+                                        "Installing Roslyn",
+                                        $"{Path.GetFileName(new Uri(url).AbsolutePath)}: {bytes / 1024} KiB (attempt {attempt}/3)",
+                                        (count + Math.Max(0, progress)) / NuGetEntries.Length
+                                    )
+                                )
+                                    cancellation.Cancel();
+                            },
+                            new RoslynDownload.Policy { TotalTimeout = totalDownloadTimeout }
+                        );
+                        count++;
+                        return package;
                     },
                     ValidateAssembly,
-                    cancellationToken,
+                    cancellation.Token,
                     publish =>
                     {
                         EditorApplication.LockReloadAssemblies();
@@ -127,8 +120,17 @@ namespace MCPForUnity.Editor.Setup
                 if (!IsInstalled())
                     throw new IOException("The published Roslyn assembly set could not be validated.");
                 if (interactive)
-                    EditorUtility.DisplayDialog("Roslyn Installed", $"Validated Roslyn DLLs and dependencies installed to Assets/{PluginsRelPath}/.", "OK");
-                Debug.Log($"[MCP] Roslyn installation complete ({NuGetEntries.Length} validated DLLs).");
+                    EditorUtility.DisplayDialog(
+                        "Roslyn Installed",
+                        $"Compatible Roslyn dependencies are available. Missing DLLs were validated and installed to Assets/{PluginsRelPath}/; existing packages were reused.",
+                        "OK"
+                    );
+                Debug.Log($"[MCP] Roslyn installation complete ({NuGetEntries.Length} compatible dependencies available).");
+            }
+            catch (OperationCanceledException)
+            {
+                Debug.Log("[MCP] Roslyn installation cancelled before publication.");
+                throw;
             }
             catch (Exception ex)
             {
@@ -150,13 +152,19 @@ namespace MCPForUnity.Editor.Setup
             Action<string, string, string> validate = null,
             CancellationToken cancellationToken = default,
             Action<Action> publication = null,
-            Action refresh = null
+            Action refresh = null,
+            Func<IEnumerable<(AssemblyName identity, string location)>> assemblyInventory = null
         )
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string[] names = NuGetEntries.Select(entry => entry.dllName).ToArray();
+            assemblyInventory ??= LoadedAssemblies;
+            var provided = RoslynAssemblyCompatibility.GetProvided(folder, assemblyInventory());
+            var missing = NuGetEntries.Where(entry => !provided.Contains(entry.dllName)).ToArray();
+            if (missing.Length == 0)
+                return;
+            string[] names = missing.Select(entry => entry.dllName).ToArray();
             using var files = new RoslynFileSet(folder, names);
-            foreach (var entry in NuGetEntries)
+            foreach (var entry in missing)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 byte[] package = await download(
@@ -170,10 +178,18 @@ namespace MCPForUnity.Editor.Setup
             }
             cancellationToken.ThrowIfCancellationRequested();
             var missingMetadata = names.Where(name => !File.Exists(files.PathFor(name + ".meta"))).ToArray();
-            if (publication == null)
+            void Publish()
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var current = RoslynAssemblyCompatibility.GetProvided(folder, assemblyInventory());
+                if (!provided.SetEquals(current))
+                    throw new IOException("Loaded Roslyn dependencies changed while downloading. Retry installation using the current package set.");
                 files.Install(names);
+            }
+            if (publication == null)
+                Publish();
             else
-                publication(() => files.Install(names));
+                publication(Publish);
             if (refresh != null)
             {
                 refresh();
@@ -193,8 +209,58 @@ namespace MCPForUnity.Editor.Setup
         private static void ValidateAssembly(string path, string name, string version)
         {
             var assembly = AssemblyName.GetAssemblyName(path);
-            if (assembly.Name != Path.GetFileNameWithoutExtension(name) || assembly.Version == null || assembly.Version < Version.Parse(version))
+            if (assembly.Name != Path.GetFileNameWithoutExtension(name) || !RoslynAssemblyCompatibility.IsCompatible(assembly))
                 throw new IOException($"Unexpected assembly identity or version: {name}");
+        }
+
+        private static IEnumerable<(AssemblyName identity, string location)> LoadedAssemblies()
+        {
+            foreach (var assembly in UnityAssembliesCompat.GetLoadedAssemblies())
+            {
+                string location;
+                try
+                {
+                    location = UnityAssembliesCompat.GetAssemblyPath(assembly);
+                }
+                catch (NotSupportedException)
+                {
+                    location = null;
+                }
+                yield return (assembly.GetName(), location);
+            }
+        }
+
+        internal sealed class UnityTransfer : RoslynDownload.ITransfer
+        {
+            private readonly UnityWebRequest request;
+
+            internal UnityTransfer(string url)
+            {
+                request = UnityWebRequest.Get(url);
+                // The watchdog uses progress, rather than timing out a healthy slow body.
+                request.timeout = 0;
+            }
+
+            public void Start() => request.SendWebRequest();
+
+            public bool IsDone => request.isDone;
+            public ulong DownloadedBytes => request.downloadedBytes;
+            public float Progress => request.downloadProgress;
+            public bool Succeeded => request.result == UnityWebRequest.Result.Success;
+            public bool Retryable =>
+                request.result == UnityWebRequest.Result.ConnectionError
+                || request.responseCode == 408
+                || request.responseCode == 429
+                || request.responseCode == 500
+                || request.responseCode == 502
+                || request.responseCode == 503
+                || request.responseCode == 504;
+            public string Error => request.error;
+            public byte[] Data => request.downloadHandler.data;
+
+            public void Abort() => request.Abort();
+
+            public void Dispose() => request.Dispose();
         }
 
         private static byte[] ExtractFileFromZip(byte[] zipBytes, string entryPath)

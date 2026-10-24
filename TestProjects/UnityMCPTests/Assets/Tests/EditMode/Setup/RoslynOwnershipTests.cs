@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,6 +15,9 @@ namespace MCPForUnityTests.Editor.Setup
     public class RoslynOwnershipTests
     {
         private string root;
+
+        private static IEnumerable<(AssemblyName identity, string location)> EmptyInventory() => Array.Empty<(AssemblyName, string)>();
+
         private static readonly string[] Names =
         {
             "Microsoft.CodeAnalysis.dll",
@@ -49,7 +54,10 @@ namespace MCPForUnityTests.Editor.Setup
         }
 
         private void Install(string marker) =>
-            RoslynInstaller.InstallFromPackagesAsync(root, _ => Task.FromResult(Package(marker)), (_, _, _) => { }).GetAwaiter().GetResult();
+            RoslynInstaller
+                .InstallFromPackagesAsync(root, _ => Task.FromResult(Package(marker)), (_, _, _) => { }, assemblyInventory: EmptyInventory)
+                .GetAwaiter()
+                .GetResult();
 
         [Test]
         public void UninstallPreservesUnownedAndModifiedFiles()
@@ -99,7 +107,12 @@ namespace MCPForUnityTests.Editor.Setup
         public void RealAssemblyValidationRejectsInvalidPayloadBeforePublication()
         {
             Install("old");
-            Assert.Catch(() => RoslynInstaller.InstallFromPackagesAsync(root, _ => Task.FromResult(Package("invalid"))).GetAwaiter().GetResult());
+            Assert.Catch(() =>
+                RoslynInstaller
+                    .InstallFromPackagesAsync(root, _ => Task.FromResult(Package("invalid")), assemblyInventory: EmptyInventory)
+                    .GetAwaiter()
+                    .GetResult()
+            );
             foreach (string name in Names)
                 Assert.That(File.ReadAllText(Path.Combine(root, name)), Is.EqualTo("old" + name));
         }
@@ -113,7 +126,8 @@ namespace MCPForUnityTests.Editor.Setup
                     root,
                     _ => Task.FromResult(Package("old")),
                     (_, _, _) => { },
-                    refresh: () => File.WriteAllText(Path.Combine(root, Names[0] + ".meta"), "generated metadata")
+                    refresh: () => File.WriteAllText(Path.Combine(root, Names[0] + ".meta"), "generated metadata"),
+                    assemblyInventory: EmptyInventory
                 )
                 .GetAwaiter()
                 .GetResult();
@@ -151,7 +165,10 @@ namespace MCPForUnityTests.Editor.Setup
                 string folder = directoryLink ? link : root;
                 Assert.Catch(() => RoslynInstaller.UninstallOwned(folder));
                 Assert.Catch(() =>
-                    RoslynInstaller.InstallFromPackagesAsync(folder, _ => Task.FromResult(Package("new")), (_, _, _) => { }).GetAwaiter().GetResult()
+                    RoslynInstaller
+                        .InstallFromPackagesAsync(folder, _ => Task.FromResult(Package("new")), (_, _, _) => { }, assemblyInventory: EmptyInventory)
+                        .GetAwaiter()
+                        .GetResult()
                 );
                 Assert.That(File.ReadAllText(Path.Combine(root, Names[1])), Is.EqualTo("old" + Names[1]));
                 if (!directoryLink)
@@ -193,7 +210,8 @@ namespace MCPForUnityTests.Editor.Setup
                             if (failure == "validation" && name == Names[1])
                                 throw new IOException("synthetic invalid assembly");
                         },
-                        cancel.Token
+                        cancel.Token,
+                        assemblyInventory: EmptyInventory
                     )
                     .GetAwaiter()
                     .GetResult()
