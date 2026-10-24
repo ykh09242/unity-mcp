@@ -1,5 +1,6 @@
 using System;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Tools.Physics
@@ -9,6 +10,9 @@ namespace MCPForUnity.Editor.Tools.Physics
     {
         public static object HandleCommand(JObject @params)
         {
+#if !MCP_FOR_UNITY_PHYSICS || !MCP_FOR_UNITY_PHYSICS2D
+            return new ErrorResponse(OptionalUnityModules.PhysicsUnavailableReason, new { code = "module_unavailable" });
+#else
             if (@params == null)
                 return new ErrorResponse("Parameters cannot be null.");
 
@@ -103,6 +107,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 McpLog.Error($"[ManagePhysics] Action '{action}' failed: {ex}");
                 return new ErrorResponse($"Error in action '{action}': {ex.Message}", new { stackTrace = ex.StackTrace });
             }
+#endif
         }
     }
 }

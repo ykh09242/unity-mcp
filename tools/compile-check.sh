@@ -32,6 +32,7 @@
 #   COMPILE_INPUT_UGUI  compile optional uGUI assemblies  (default 0; set 1 to enable)
 #   COMPILE_INPUT_SYSTEM compile optional Input System adapters (default 0)
 #   INPUT_SYSTEM_REFS directory with verified Unity.InputSystem DLLs (required when selected)
+#   DISABLED_UNITY_MODULES space-separated physics/physics2d/screencapture (default empty; removes metadata and symbols)
 #   PLATFORMS      editor platforms to compile           (default "win osx linux")
 #   OUT            scratch dir                           (default /tmp/mcp-compile-check)
 #
@@ -109,6 +110,25 @@ if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
     [ -f "$INPUT_SYSTEM_REFS/Unity.InputSystem.TestFramework.dll" ] || die "Input System reference not found: Unity.InputSystem.TestFramework.dll"
   fi
 fi
+DISABLED_UNITY_MODULES=${DISABLED_UNITY_MODULES:-}
+for module in $DISABLED_UNITY_MODULES; do
+  case "$module" in physics|physics2d|screencapture) ;; *) die "unknown optional Unity module: $module" ;; esac
+done
+module_enabled() {
+  local disabled
+  for disabled in $DISABLED_UNITY_MODULES; do
+    [ "$disabled" != "$1" ] || return 1
+  done
+  return 0
+}
+module_reference_enabled() {
+  case "$1" in
+    */UnityEngine.PhysicsModule.dll) module_enabled physics ;;
+    */UnityEngine.Physics2DModule.dll) module_enabled physics2d ;;
+    */UnityEngine.ScreenCaptureModule.dll) module_enabled screencapture ;;
+    *) return 0 ;;
+  esac
+}
 PLATFORMS=${PLATFORMS:-"win osx linux"}
 OUT=${OUT:-/tmp/mcp-compile-check}
 mkdir -p "$OUT" && OUT=$(winpath "$OUT")
@@ -334,7 +354,9 @@ compile() {
     case "$name" in
       UnityEngine.UI|UnityEditor.UI)
         # Module versionDefines from the verified bundled uGUI 7.0.0 asmdefs.
-        printf '%s\n' -define:PACKAGE_PHYSICS -define:PACKAGE_PHYSICS2D -define:PACKAGE_ANIMATION ;;
+        module_enabled physics && echo "-define:PACKAGE_PHYSICS"
+        module_enabled physics2d && echo "-define:PACKAGE_PHYSICS2D"
+        echo "-define:PACKAGE_ANIMATION" ;;
     esac
     if [ "$name" = UnityEngine.UI ]; then
       printf '%s\n' -define:PACKAGE_TILEMAP -define:PACKAGE_UITOOLKIT
@@ -352,6 +374,9 @@ compile() {
     if [ "$ver_major.$ver_minor" = 7000.0 ]; then
       printf '%s\n' -define:ENABLE_CORECLR -define:NET_STANDARD_2_1 -define:NET_STANDARD -define:NETSTANDARD2_1 -define:NETSTANDARD
     fi
+    module_enabled physics && echo "-define:MCP_FOR_UNITY_PHYSICS"
+    module_enabled physics2d && echo "-define:MCP_FOR_UNITY_PHYSICS2D"
+    module_enabled screencapture && echo "-define:MCP_FOR_UNITY_SCREEN_CAPTURE"
     version_defines
     platform_defines "$platform"
     for reference_manifest in "$bcl" "$manifest"; do
@@ -362,6 +387,7 @@ compile() {
         case "$name:$entry" in
           UnityEngine.TestRunner:LIBCACHE/*TestRunner.dll|UnityEditor.TestRunner:LIBCACHE/*TestRunner.dll|Unity.EditorCoroutines.Editor:LIBCACHE/*TestRunner.dll|UnityEngine.UI:LIBCACHE/*TestRunner.dll|UnityEditor.UI:LIBCACHE/*TestRunner.dll|UnityEngine.UI:COMPILED/*|UnityEditor.UI:COMPILED/*) continue ;;
         esac
+        module_reference_enabled "$entry" || continue
         resolve_ref "$entry"
         local p="$resolved_ref"
         if [ -n "$p" ] && [ -f "$p" ]; then echo "-r:\"$p\""; nrefs=$((nrefs+1))

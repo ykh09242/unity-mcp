@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -15,15 +16,15 @@ namespace MCPForUnity.Editor.Tools.SimulationProfiles
             new SimulationSetting("time.timeScale", typeof(Time), "timeScale", 0, 100),
             new SimulationSetting("time.fixedDeltaTime", typeof(Time), "fixedDeltaTime", 0.000001, 1),
             new SimulationSetting("time.maximumDeltaTime", typeof(Time), "maximumDeltaTime", 0.000001, 10),
-            new SimulationSetting("physics3d.gravity", typeof(UnityEngine.Physics), "gravity", -100000, 100000),
-            new SimulationSetting("physics3d.defaultSolverIterations", typeof(UnityEngine.Physics), "defaultSolverIterations", 1, 255),
-            new SimulationSetting("physics3d.queriesHitTriggers", typeof(UnityEngine.Physics), "queriesHitTriggers", 0, 1),
-            new SimulationSetting("physics3d.queriesHitBackfaces", typeof(UnityEngine.Physics), "queriesHitBackfaces", 0, 1),
-            new SimulationSetting("physics2d.gravity", typeof(Physics2D), "gravity", -100000, 100000),
-            new SimulationSetting("physics2d.velocityIterations", typeof(Physics2D), "velocityIterations", 1, 255),
-            new SimulationSetting("physics2d.positionIterations", typeof(Physics2D), "positionIterations", 1, 255),
-            new SimulationSetting("physics2d.queriesHitTriggers", typeof(Physics2D), "queriesHitTriggers", 0, 1),
-            new SimulationSetting("physics2d.queriesStartInColliders", typeof(Physics2D), "queriesStartInColliders", 0, 1),
+            new SimulationSetting("physics3d.gravity", OptionalUnityModules.Physics3DType, "gravity", -100000, 100000),
+            new SimulationSetting("physics3d.defaultSolverIterations", OptionalUnityModules.Physics3DType, "defaultSolverIterations", 1, 255),
+            new SimulationSetting("physics3d.queriesHitTriggers", OptionalUnityModules.Physics3DType, "queriesHitTriggers", 0, 1),
+            new SimulationSetting("physics3d.queriesHitBackfaces", OptionalUnityModules.Physics3DType, "queriesHitBackfaces", 0, 1),
+            new SimulationSetting("physics2d.gravity", OptionalUnityModules.Physics2DType, "gravity", -100000, 100000),
+            new SimulationSetting("physics2d.velocityIterations", OptionalUnityModules.Physics2DType, "velocityIterations", 1, 255),
+            new SimulationSetting("physics2d.positionIterations", OptionalUnityModules.Physics2DType, "positionIterations", 1, 255),
+            new SimulationSetting("physics2d.queriesHitTriggers", OptionalUnityModules.Physics2DType, "queriesHitTriggers", 0, 1),
+            new SimulationSetting("physics2d.queriesStartInColliders", OptionalUnityModules.Physics2DType, "queriesStartInColliders", 0, 1),
             new SimulationSetting("audio.volume", typeof(AudioListener), "volume", 0, 1),
             new SimulationSetting("audio.pause", typeof(AudioListener), "pause", 0, 1),
         };

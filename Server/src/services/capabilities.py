@@ -44,7 +44,15 @@ _SOURCES: Final = (
     "manage_recording",
     "manage_play_scenario",
 )
-_PACKAGES: Final = ("ugui", "textmeshpro", "inputsystem", "uiToolkit", "screenCapture")
+_PACKAGES: Final = (
+    "ugui",
+    "textmeshpro",
+    "inputsystem",
+    "uiToolkit",
+    "screenCapture",
+    "physics",
+    "physics2d",
+)
 _JSON: Final = TypeAdapter(JsonValue)
 
 
@@ -189,7 +197,15 @@ async def _read_source(
         observations[name] = _Observation(evidence=CapabilityEvidence(reason="source_unavailable"))
 
 
-_OPTIONAL_FEATURES: Final = ("build", "render_pipeline", "cinemachine", "probuilder", "netcode")
+_OPTIONAL_FEATURES: Final = (
+    "build",
+    "render_pipeline",
+    "cinemachine",
+    "probuilder",
+    "netcode",
+    "physics",
+    "screen_capture",
+)
 _FEATURE_SOURCES: Final = {
     "input": "manage_input",
     "ui_click": "manage_input",
@@ -230,10 +246,15 @@ _FEATURE_REASONS: Final = {
     "preflight_required",
     "pipeline_support_unknown",
     "missing_platform_module",
+    "missing_engine_module",
     "tool_disabled",
     "editor_busy",
 }
 _FEATURE_ACTIONS: Final = {
+    "inspect_module_requirements",
+    "inspect_physics_settings",
+    "inspect_capture_source",
+    "use_camera_or_scene_view_capture",
     "inspect_package_requirement",
     "inspect_package_compatibility",
     "inspect_camera_targets",
@@ -307,6 +328,9 @@ def _optional_features(
                     "backend_toolchain_ready",
                     "subtarget",
                     "pipeline",
+                    "physics3d_module",
+                    "physics2d_module",
+                    "screen_capture_module",
                 }
                 and (value is None or type(value) is bool or _feature_text(value, 64) is not None)
             },

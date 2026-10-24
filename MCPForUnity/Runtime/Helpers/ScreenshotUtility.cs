@@ -54,7 +54,7 @@ namespace MCPForUnity.Runtime.Helpers
 
         public string FullPath { get; }
 
-        /// <summary>Path relative to the Unity project root (e.g. "Captures/foo.png"). Suitable for ScreenCapture.CaptureScreenshot.</summary>
+        /// <summary>Path relative to the Unity project root (e.g. "Captures/foo.png"). Suitable for OptionalUnityModules.CaptureScreenshot.</summary>
         public string ProjectRelativePath { get; }
         public int SuperSize { get; }
         public bool IsAsync { get; }
@@ -217,12 +217,12 @@ namespace MCPForUnity.Runtime.Helpers
         {
             ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), superSize, out _, out _);
             ScreenshotCaptureResult result = PrepareCaptureResult(fileName, superSize, ensureUniqueFileName, folderOverride, isAsync: true);
-            // ScreenCapture.CaptureScreenshot accepts paths relative to the project root.
+            // OptionalUnityModules.CaptureScreenshot accepts paths relative to the project root.
             using (var folders = new OutputFolderScope(GetProjectRootPath()))
             {
                 folders.EnsureParentDirectory(result.FullPath);
                 SafePathUtility.ResolveWithinRoot(GetProjectRootPath(), result.FullPath);
-                ScreenCapture.CaptureScreenshot(result.ProjectRelativePath, result.SuperSize);
+                OptionalUnityModules.CaptureScreenshot(result.ProjectRelativePath, result.SuperSize);
                 folders.Complete();
             }
             return result;
@@ -329,6 +329,19 @@ namespace MCPForUnity.Runtime.Helpers
         {
             ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), superSize, out _, out _);
             ValidateMaxResolution(maxResolution);
+
+            if (!OptionalUnityModules.ScreenCapture)
+            {
+                return CaptureWithCameraInstead(
+                    fileName,
+                    superSize,
+                    ensureUniqueFileName,
+                    includeImage,
+                    maxResolution,
+                    folderOverride,
+                    OptionalUnityModules.ScreenCaptureUnavailableReason
+                );
+            }
 
             // Batch mode renders no frames, so WaitForEndOfFrame never resumes there and every
             // capture would sit out the timeout before falling back.
@@ -1049,7 +1062,7 @@ namespace MCPForUnity.Runtime.Helpers
 
     /// <summary>
     /// Transient MonoBehaviour that yields WaitForEndOfFrame, calls
-    /// ScreenCapture.CaptureScreenshotAsTexture, invokes the callback, and self-destructs.
+    /// OptionalUnityModules.CaptureScreenshotAsTexture, invokes the callback, and self-destructs.
     /// Times out via the editor update loop so a paused or unfocused PlayerLoop cannot leak
     /// hidden capturer objects for the rest of the session.
     /// </summary>
@@ -1073,6 +1086,8 @@ namespace MCPForUnity.Runtime.Helpers
         /// <summary>Spawns a hidden GameObject, attaches a capturer, returns immediately.</summary>
         public static ScreenshotCapturer Begin(int superSize, Action<Texture2D, bool> onComplete, float timeoutSeconds = DefaultTimeoutSeconds)
         {
+            if (!OptionalUnityModules.ScreenCapture)
+                throw new NotSupportedException(OptionalUnityModules.ScreenCaptureUnavailableReason);
             if (float.IsNaN(timeoutSeconds) || float.IsInfinity(timeoutSeconds) || timeoutSeconds <= 0 || timeoutSeconds > 86400)
                 throw new ArgumentOutOfRangeException(nameof(timeoutSeconds), "Expected finite positive seconds up to 86400.");
             ScreenshotUtility.ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), superSize, out _, out _);
@@ -1138,7 +1153,7 @@ namespace MCPForUnity.Runtime.Helpers
             try
             {
                 ScreenshotUtility.ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), _superSize, out _, out _);
-                tex = ScreenCapture.CaptureScreenshotAsTexture(_superSize);
+                tex = OptionalUnityModules.CaptureScreenshotAsTexture(_superSize);
                 if (tex != null)
                     ScreenshotUtility.ValidateFrameDimensions(tex.width, tex.height);
             }

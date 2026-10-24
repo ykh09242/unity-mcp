@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using MCPForUnity.Editor.Resources.Project;
 using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
@@ -56,6 +57,34 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual("missing_platform_module", result["reason"].Value<string>());
         }
 
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        public void SharedPhysicsModuleEvidenceKeepsEachToolsEnablementIndependent(bool settingsEnabled, bool queryEnabled)
+        {
+            Assert.AreEqual(FeatureReadiness.FeatureForTool("manage_physics_settings"), FeatureReadiness.FeatureForTool("query_physics"));
+            var aggregate = (JObject)FeatureReadiness.Capture()["physics"];
+            var original = aggregate.DeepClone();
+            Assert.AreEqual(JTokenType.Null, aggregate["tool_enabled"].Type);
+            CollectionAssert.DoesNotContain(aggregate["blocking_reasons"].ToObject<string[]>(), "tool_disabled");
+            foreach (var entry in new[] { (Name: "manage_physics_settings", Enabled: settingsEnabled), (Name: "query_physics", Enabled: queryEnabled) })
+            {
+                JObject selected = FeatureReadiness.ForTool(aggregate, entry.Enabled);
+                Assert.AreEqual(entry.Enabled, selected["tool_enabled"].Value<bool>(), entry.Name);
+                CollectionAssert.AreEquivalent(
+                    entry.Enabled ? Array.Empty<string>() : new[] { "tool_disabled" },
+                    selected["blocking_reasons"].ToObject<string[]>().Where(reason => reason == "tool_disabled"),
+                    entry.Name
+                );
+                if (!entry.Enabled)
+                {
+                    Assert.AreEqual(false, selected["ready"].Value<bool?>(), entry.Name);
+                    Assert.AreEqual("review_tool_enablement", selected["next_action"].Value<string>(), entry.Name);
+                }
+                Assert.IsTrue(JToken.DeepEquals(aggregate["observed"], selected["observed"]), entry.Name);
+            }
+            Assert.IsTrue(JToken.DeepEquals(original, aggregate), "Per-tool rendering must not change aggregate module evidence.");
+        }
+
         [Test]
         public void PackageCacheInvalidatesAndDoesNotCacheFailedObservation()
         {
@@ -100,7 +129,7 @@ namespace MCPForUnityTests.Editor.Services
             JObject detailed = JObject.FromObject(ProjectInfo.HandleCommand(new JObject { ["include_readiness"] = true }));
             Assert.IsTrue(detailed["success"].Value<bool>(), detailed.ToString());
             var features = (JObject)detailed["data"]["featureReadiness"];
-            Assert.AreEqual(5, features.Count);
+            Assert.AreEqual(7, features.Count);
             foreach (JProperty feature in features.Properties())
                 Assert.AreNotEqual(true, feature.Value["ready"].Value<bool?>());
             Assert.AreEqual("Player", features["build"]["observed"]["subtarget"].Value<string>());

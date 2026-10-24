@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Build;
 using MCPForUnity.Editor.Tools.Cameras;
 using MCPForUnity.Editor.Tools.Netcode;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.PackageManager;
@@ -57,6 +59,15 @@ namespace MCPForUnity.Editor.Services
             tool switch
             {
                 "manage_build" => "build",
+                "manage_physics"
+                or "manage_physics_settings"
+                or "manage_physics_materials"
+                or "manage_physics_joints"
+                or "query_physics"
+                or "apply_physics_force"
+                or "manage_rigidbody"
+                or "diagnose_physics"
+                or "simulate_physics" => "physics",
                 "manage_render_pipeline" => "render_pipeline",
                 "manage_cinemachine" => "cinemachine",
                 "manage_probuilder" => "probuilder",
@@ -69,6 +80,31 @@ namespace MCPForUnity.Editor.Services
             bool busy = EditorApplication.isCompiling || EditorApplication.isUpdating || BuildPipeline.isBuildingPlayer;
             var result = new JObject();
             result["build"] = Build(busy);
+            result["physics"] = Describe(
+                OptionalUnityModules.PhysicsTools,
+                OptionalUnityModules.PhysicsTools ? "preflight_required" : "missing_engine_module",
+                true,
+                busy,
+                OptionalUnityModules.PhysicsTools ? "inspect_physics_settings" : "inspect_module_requirements"
+            );
+            result["screen_capture"] = Describe(
+                OptionalUnityModules.ScreenCapture,
+                OptionalUnityModules.ScreenCapture ? "preflight_required" : "missing_engine_module",
+                true,
+                busy,
+                OptionalUnityModules.ScreenCapture ? "inspect_capture_source" : "use_camera_or_scene_view_capture"
+            );
+            result["physics"]["observed"] = new JObject
+            {
+                ["physics3d_module"] = OptionalUnityModules.Physics3D,
+                ["physics2d_module"] = OptionalUnityModules.Physics2D,
+            };
+            result["screen_capture"]["observed"] = new JObject { ["screen_capture_module"] = OptionalUnityModules.ScreenCapture };
+            result["physics"]["required_version"] = "com.unity.modules.physics and com.unity.modules.physics2d";
+            result["screen_capture"]["required_version"] = "com.unity.modules.screencapture";
+            // Shared module evidence has no single tool toggle as its admission authority.
+            result["physics"]["tool_enabled"] = JValue.CreateNull();
+            result["screen_capture"]["tool_enabled"] = JValue.CreateNull();
             var pipeline = RenderPipelineUtility.GetActivePipeline();
             var render = Describe(
                 pipeline == RenderPipelineUtility.PipelineKind.Custom ? (bool?)null : true,
@@ -108,6 +144,22 @@ namespace MCPForUnity.Editor.Services
         }
 
         private static bool Enabled(string tool) => MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool);
+
+        internal static JObject ForTool(JObject feature, bool enabled)
+        {
+            var result = (JObject)feature.DeepClone();
+            bool busy = feature["blocking_reasons"].Values<string>().Contains("editor_busy");
+            var readiness = Describe(
+                feature["supported"].Value<bool?>(),
+                feature["reason"].Value<string>(),
+                enabled,
+                busy,
+                feature["next_action"].Value<string>()
+            );
+            foreach (JProperty property in readiness.Properties())
+                result[property.Name] = property.Value.DeepClone();
+            return result;
+        }
 
         private static JObject Package(string name, string tool, bool api, string required, string next, bool busy, bool cm = false)
         {

@@ -17,10 +17,15 @@ checks and response limits remain unchanged. Older peers yield unknown evidence.
 | Cinemachine | Registered package version and the existing CinemachineCamera/Brain API detector | Inspect camera targets; CM2 lacks the required CM3 camera API |
 | ProBuilder | Registered version and loaded ProBuilderMesh type | Inspect mesh topology and requested operation compatibility |
 | Netcode for GameObjects | Registered version and NetworkManager type | Explicit scene preflight; transport/peers/hosting remain unverified |
+| Physics | Compiled Physics and Physics2D module boundaries | Both modules are required by the shared physics tools; inspect requested settings or targets |
+| Screen Capture | Compiled Screen Capture module boundary | Inspect the capture source; camera and Scene View rendering remain available without Game View capture |
 
 Missing package, unsupported package version, missing platform module, disabled
 tool, busy Editor and unavailable evidence have distinct reasons. Known package
 or module support never produces `ready: true` for an unspecified operation.
+`missing_engine_module` is distinct from an unobserved package or platform SDK.
+See [optional Unity modules](optional-unity-modules.md) for required dependencies,
+per-tool behavior and compilation coverage.
 Multiple blockers remain visible. API absence with an installed package remains
 unknown, since assembly loading/compilation may be incomplete. Versions outside
 an explicitly known incompatibility are not automatically rejected.
@@ -45,7 +50,7 @@ options retain full discovery. Empty or unknown names fail before native dispatc
 
 Features: `input`, `ui_click`, `recording`, `play_scenario_editor`,
 `play_scenario_player`, `build`, `render_pipeline`, `cinemachine`, `probuilder`,
-`netcode`. Sources: `get_editor_state`, `get_project_info`, `manage_input`,
+`netcode`, `physics`, `screen_capture`. Sources: `get_editor_state`, `get_project_info`, `manage_input`,
 `manage_recording`, `manage_play_scenario`. Source selection includes the features
 that source describes. Current Editor evidence is always read, even for a narrow
 selection. Player support still requires the existing bundle preflight.

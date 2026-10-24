@@ -31,6 +31,8 @@ on:
       - CustomTools/RoslynRuntimeCompilation/**/*.cs
       - TestProjects/UnityMCPTests/**
       - tools/compile-check.sh
+      - tools/compile-optional-modules.sh
+      - tools/optional-module-paths.txt
       - tools/compile_matrix.py
       - tools/compile-defines.txt
       - tools/compile-refs/**
@@ -66,6 +68,7 @@ jobs:
     runs-on: ubuntu-26.04
     outputs:
       versions: ${{ steps.set.outputs.versions }}
+      optional_modules: ${{ steps.optional.outputs.enabled }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,7 +76,9 @@ jobs:
             tools/unity-versions.json
             tools/unity_ci.py
             tools/compile_matrix.py
+            tools/optional-module-paths.txt
           sparse-checkout-cone-mode: false
+          fetch-depth: 2
           persist-credentials: false
       - name: Select all supported Unity channels
         id: set
@@ -82,6 +87,24 @@ jobs:
           # Newer Editors were the longest tail in measured warm runs.
           versions=$(python3 tools/compile_matrix.py)
           echo "versions=$versions" >> "$GITHUB_OUTPUT"
+
+      - name: Select optional module boundary checks
+        id: optional
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          enabled=true
+          if [ "$EVENT_NAME" = pull_request ]; then
+            enabled=false
+            changed=$(git diff --name-only HEAD^ HEAD)
+            while IFS= read -r boundary; do
+              while IFS= read -r path; do
+                if [[ "$path" == $boundary ]]; then enabled=true; fi
+              done <<< "$changed"
+            done < tools/optional-module-paths.txt
+          fi
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
 
   compile:
     name: Compile ${{ matrix.unity.channel }} Unity ${{ matrix.unity.version }} (win/osx/linux)
@@ -176,6 +199,27 @@ jobs:
             -e TEST_PROJECT="/repo/$TEST_PROJECT" \
             "$UNITY_IMAGE" /repo/tools/compile-check.sh
 
+      - name: Compile optional module boundaries
+        if: needs.matrix.outputs.optional_modules == 'true' && (startsWith(matrix.unity.version, '2021.3.') || startsWith(matrix.unity.version, '6000.6.'))
+        env:
+          UNITY_VERSION: ${{ matrix.unity.version }}
+          UNITY_IMAGE: ${{ steps.sdk.outputs.runtime_image }}
+          UNITY_DATA: ${{ steps.sdk.outputs.unity_data }}
+          EXTRA_REFS: ${{ steps.packages.outputs.refs }}
+          TEST_FRAMEWORK_SOURCE: ${{ steps.packages.outputs.test_framework_source }}
+          EDITOR_COROUTINES_SOURCE: ${{ steps.packages.outputs.editor_coroutines_source }}
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /bin/bash \
+            -v "$PWD:/repo" -w /repo \
+            -e UNITY_VERSION="$UNITY_VERSION" \
+            -e UNITY_DATA="/repo/$UNITY_DATA" \
+            -e REPO=/repo -e PLATFORMS=linux \
+            -e EXTRA_REFS="/repo/$EXTRA_REFS" \
+            -e TEST_FRAMEWORK_SOURCE="/repo/$TEST_FRAMEWORK_SOURCE" \
+            -e EDITOR_COROUTINES_SOURCE="/repo/$EDITOR_COROUTINES_SOURCE" \
+            "$UNITY_IMAGE" /repo/tools/compile-optional-modules.sh
+
       - name: Upload package resolution
         if: always() && steps.packages.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -198,6 +242,9 @@ jobs:
               echo "\`${{ matrix.unity.version }}\` (${{ matrix.unity.channel }}) reference assemblies for **win, osx and linux**."
               echo "CustomTools Roslyn examples also compiled with USE_ROSLYN **off and on**, with warnings treated as errors."
               echo "Optional uGUI Runtime, Editor and test assemblies compiled separately with MCP_INPUT_UGUI enabled."
+              if [ "${{ needs.matrix.outputs.optional_modules }}" = true ] && [[ "${{ matrix.unity.version }}" == 2021.3.* || "${{ matrix.unity.version }}" == 6000.6.* ]]; then
+                echo "Key Physics/Physics2D/Screen Capture absent combinations also compiled product assemblies for Linux symbols, with metadata and symbols removed."
+              fi
               echo "The pinned Editor Coroutines package's actual Editor assembly was compiled and referenced."
               echo
               echo "No Unity license was used, so this runs on fork PRs too."

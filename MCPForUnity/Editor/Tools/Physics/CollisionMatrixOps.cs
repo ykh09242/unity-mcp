@@ -1,3 +1,4 @@
+#if MCP_FOR_UNITY_PHYSICS && MCP_FOR_UNITY_PHYSICS2D
 using System.Collections.Generic;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
@@ -144,3 +145,5 @@ namespace MCPForUnity.Editor.Tools.Physics
         }
     }
 }
+
+#endif

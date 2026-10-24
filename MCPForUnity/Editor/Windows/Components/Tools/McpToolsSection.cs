@@ -436,7 +436,10 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 evidence.AddToClassList("tool-item-description");
                 var check = new Button(() =>
                 {
-                    var state = FeatureReadiness.Capture()[feature];
+                    var state = FeatureReadiness.ForTool(
+                        (JObject)FeatureReadiness.Capture()[feature],
+                        MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool.Name)
+                    );
                     string package = state["package_name"]?.Value<string>();
                     evidence.text =
                         $"Snapshot: {state["status"]}. Reason: {state["reason"]}. "

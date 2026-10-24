@@ -85,7 +85,9 @@ namespace MCPForUnity.Editor.Tools
                 ["format"] = "mp4",
                 ["encoder"] = "UnityEditor.Media.MediaEncoder",
                 ["codec_support"] = "Encoder creation is checked at start; native codec availability depends on the Editor and operating system.",
-                ["capture_sources"] = new JArray("game_view", "scene_view"),
+                ["capture_sources"] = OptionalUnityModules.ScreenCapture ? new JArray("game_view", "scene_view") : new JArray("scene_view"),
+                ["game_view_supported"] = OptionalUnityModules.ScreenCapture,
+                ["game_view_unavailable_reason"] = OptionalUnityModules.ScreenCapture ? null : OptionalUnityModules.ScreenCaptureUnavailableReason,
                 ["game_view_requires_play_mode"] = true,
                 ["game_view_requires_visible_focused_view"] = true,
                 ["scene_view_requires_visible_view"] = true,
@@ -122,6 +124,8 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse(capabilities.Value<string>("reason"), capabilities);
             if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlayingOrWillChangePlaymode != EditorApplication.isPlaying)
                 return new ErrorResponse("Wait until the Editor finishes compiling, importing or changing Play Mode before recording.");
+            if (options.Source == "game_view" && !OptionalUnityModules.ScreenCapture)
+                return new ErrorResponse(OptionalUnityModules.ScreenCaptureUnavailableReason, capabilities);
             if (options.Source == "game_view" && (!EditorApplication.isPlaying || EditorApplication.isPaused))
                 return new ErrorResponse("Game View recording requires running, unpaused Play Mode and a visible, focused Game View.");
             var sceneView = options.Source == "scene_view" ? SceneView.lastActiveSceneView : null;
@@ -253,7 +257,7 @@ namespace MCPForUnity.Editor.Tools
                 else
                 {
                     job.ValidateSourceBudget(Screen.width, Screen.height);
-                    frame = ScreenCapture.CaptureScreenshotAsTexture();
+                    frame = OptionalUnityModules.CaptureScreenshotAsTexture();
                 }
                 if (frame == null)
                     throw new InvalidOperationException("Capture returned no rendered frame.");

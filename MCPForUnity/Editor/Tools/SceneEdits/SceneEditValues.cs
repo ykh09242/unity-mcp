@@ -13,10 +13,12 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
         internal static readonly Dictionary<string, Type> Types = new Dictionary<string, Type>(StringComparer.Ordinal)
         {
             ["Transform"] = typeof(Transform),
+#if MCP_FOR_UNITY_PHYSICS
             ["BoxCollider"] = typeof(BoxCollider),
             ["SphereCollider"] = typeof(SphereCollider),
             ["CapsuleCollider"] = typeof(CapsuleCollider),
             ["Rigidbody"] = typeof(Rigidbody),
+#endif
         };
 
         internal static string ResolvePath(Type type, string property)
@@ -29,6 +31,7 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
                     "localScale" or "m_LocalScale" => "m_LocalScale",
                     _ => throw new ArgumentException("Transform supports localPosition, localRotation (quaternion), and localScale only."),
                 };
+#if MCP_FOR_UNITY_PHYSICS
             if (type == typeof(BoxCollider) && (property == "m_Center" || property == "m_Size" || property == "m_IsTrigger" || property == "m_Enabled"))
                 return property;
             if (type == typeof(SphereCollider) && (property == "m_Center" || property == "m_Radius" || property == "m_IsTrigger" || property == "m_Enabled"))
@@ -40,6 +43,7 @@ namespace MCPForUnity.Editor.Tools.SceneEdits
                 return property;
             if (type == typeof(Rigidbody) && (property == "m_Mass" || property == "m_UseGravity" || property == "m_IsKinematic"))
                 return property;
+#endif
             throw new ArgumentException($"Property '{property}' is outside the scene-edit allowlist for {type.Name}.");
         }
 

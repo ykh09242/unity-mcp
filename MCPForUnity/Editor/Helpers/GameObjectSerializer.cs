@@ -655,10 +655,12 @@ namespace MCPForUnity.Editor.Helpers
                 }
 
                 // --- Skip Collider properties that cause native crashes via PhysX ---
+#if MCP_FOR_UNITY_PHYSICS
                 if (typeof(Collider).IsAssignableFrom(componentType) && propName == "GeometryHolder")
                 {
                     skipProperty = true;
                 }
+#endif
                 // --- End Skip Collider Properties ---
 
                 // Skip if flagged

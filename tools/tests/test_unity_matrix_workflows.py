@@ -58,6 +58,7 @@ def test_compile_order_helper_keeps_bounded_concurrency_and_complete_targets():
         "tools/unity-versions.json",
         "tools/unity_ci.py",
         "tools/compile_matrix.py",
+        "tools/optional-module-paths.txt",
     }
     triggers = config.get("on", config.get(True))
     parallel = triggers["workflow_dispatch"]["inputs"]["max_parallel"]
@@ -69,6 +70,51 @@ def test_compile_order_helper_keeps_bounded_concurrency_and_complete_targets():
         ("3", "${{ inputs.max_parallel == '2' && 2 || 3 }}"),
     }
     assert "win/osx/linux" in jobs["compile"]["name"]
+
+
+@pytest.mark.parametrize(
+    "event,path,expected",
+    [
+        ("pull_request", "MCPForUnity/Runtime/Helpers/OptionalUnityModules.cs", True),
+        ("pull_request", "MCPForUnity/Editor/Tools/Physics/NewPhysicsAdapter.cs", True),
+        ("pull_request", "MCPForUnity/Editor/MCPForUnity.Editor.asmdef", True),
+        ("pull_request", "tools/compile-optional-modules.sh", True),
+        ("pull_request", "MCPForUnity/Editor/Tools/ManageScript.cs", False),
+        ("pull_request", "docs/feature-readiness.md", False),
+        ("push", "docs/feature-readiness.md", True),
+    ],
+)
+def test_optional_module_ci_selection_follows_boundary_paths(tmp_path, event, path, expected):
+    bash = "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else shutil.which("bash")
+    if not bash or not Path(bash).is_file():
+        pytest.skip("bash unavailable")
+    jobs = workflow("compile-check.yml")["jobs"]
+    selection = next(step for step in jobs["matrix"]["steps"] if step.get("id") == "optional")
+    script = selection["run"].replace("$(git diff --name-only HEAD^ HEAD)", "$CHANGED_PATHS")
+    output = tmp_path / "selected.txt"
+    result = subprocess.run(
+        [bash, "-c", script],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "EVENT_NAME": event,
+            "CHANGED_PATHS": path,
+            "GITHUB_OUTPUT": output.as_posix(),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert output.read_text(encoding="utf-8").strip() == "enabled=" + str(expected).lower()
+    optional = next(
+        step
+        for step in jobs["compile"]["steps"]
+        if step.get("name") == "Compile optional module boundaries"
+    )
+    assert "needs.matrix.outputs.optional_modules == 'true'" in optional["if"]
+    assert "'2021.3.'" in optional["if"] and "'6000.6.'" in optional["if"]
+    assert "-e PLATFORMS=linux" in optional["run"]
 
 
 def test_licensed_tests_prepare_the_selected_immutable_editor_image():

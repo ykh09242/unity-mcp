@@ -364,6 +364,21 @@ def test_staged_assembly_contract_matches_owned_asmdefs() -> None:
         {"name": "com.unity.visualeffectgraph", "expression": "0.0.0", "define": "UNITY_VFX_GRAPH"},
         ai_module,
         terrain_module,
+        {
+            "name": "com.unity.modules.physics",
+            "expression": "1.0.0",
+            "define": "MCP_FOR_UNITY_PHYSICS",
+        },
+        {
+            "name": "com.unity.modules.physics2d",
+            "expression": "1.0.0",
+            "define": "MCP_FOR_UNITY_PHYSICS2D",
+        },
+        {
+            "name": "com.unity.modules.screencapture",
+            "expression": "1.0.0",
+            "define": "MCP_FOR_UNITY_SCREEN_CAPTURE",
+        },
     ]
     assert tests["includePlatforms"] == ["Editor"]
     assert tests["overrideReferences"]
@@ -386,7 +401,13 @@ def test_owned_module_version_defines_reach_staged_editor_and_test_compilation(
         ),
     }
     expected_module_defines = {
-        "MCPForUnity.Editor": {"MCP_FOR_UNITY_AI_MODULE", "MCP_FOR_UNITY_TERRAIN"},
+        "MCPForUnity.Editor": {
+            "MCP_FOR_UNITY_AI_MODULE",
+            "MCP_FOR_UNITY_TERRAIN",
+            "MCP_FOR_UNITY_PHYSICS",
+            "MCP_FOR_UNITY_PHYSICS2D",
+            "MCP_FOR_UNITY_SCREEN_CAPTURE",
+        },
         "MCPForUnityTests.EditMode": {"MCP_FOR_UNITY_AI_MODULE"},
     }
     for name, relative in definitions.items():
