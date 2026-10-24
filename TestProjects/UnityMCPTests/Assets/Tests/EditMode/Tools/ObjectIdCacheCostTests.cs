@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -8,6 +9,7 @@ using MCPForUnity.Runtime.Helpers;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.TestTools;
 using Object = UnityEngine.Object;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -98,6 +100,8 @@ namespace MCPForUnityTests.Editor.Tools
 
             private static long MeasureArray(Array array)
             {
+                if (array.Length == 0)
+                    return 0;
                 Assert.Greater(array.Length, 1, "Backing stride measurement needs at least two elements.");
                 return (long)
                     typeof(ObjectIdCacheCostTests)
@@ -107,6 +111,17 @@ namespace MCPForUnityTests.Editor.Tools
             }
 
             public void Dispose() => ((IDisposable)cache).Dispose();
+
+            // Experimental zero-live idle release only. Production policy stays unchanged.
+            internal void ReleaseEmptyBacking()
+            {
+                Assert.AreEqual(0, Count);
+                foreach (string name in new[] { "entries", "buckets" })
+                {
+                    FieldInfo field = type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+                    field.SetValue(cache, Array.CreateInstance(field.FieldType.GetElementType(), 0));
+                }
+            }
         }
 
         private static Object NativeResolve(ulong id)
@@ -142,6 +157,223 @@ namespace MCPForUnityTests.Editor.Tools
 #else
             return unchecked((ulong)value.GetInstanceID());
 #endif
+        }
+
+        [TestCase(32768, 1)]
+        [TestCase(32768, 301)]
+        [TestCase(131072, 1)]
+        [TestCase(131072, 301)]
+        [Explicit("Compare retained indexed storage with a simulated five-minute empty-idle release; no production policy change.")]
+        public void BenchmarkEmptyIdleRefill(int size, int idleSeconds)
+        {
+            var calibration = new byte[32][];
+            int calibrationEvents = ManagedAllocation.Count(() =>
+            {
+                for (int i = 0; i < calibration.Length; i++)
+                    calibration[i] = new byte[4096];
+            });
+            GC.KeepAlive(calibration);
+            bool eventsAvailable = calibrationEvents == calibration.Length;
+            var ticks = new double[(size + 127) / 128];
+            // Sequential full-width keys isolate growth cost from native object creation.
+            // Both variants use the exact production indexed storage and identical IDs.
+            for (int sample = -1; sample < 7; sample++)
+            for (int order = 0; order < 2; order++)
+            {
+                bool trim = (sample + order) % 2 == 0;
+                using (var probe = new Probe(false))
+                {
+                    for (int i = 0; i < size; i++)
+                        probe.Remember(0x1234567800000000UL | (uint)i);
+                    long peak = probe.BackingPayload();
+                    // Clear and final-dead removal share the same empty storage state.
+                    probe.Clear();
+                    probe.Now += idleSeconds;
+                    if (trim && idleSeconds >= 300)
+                        probe.ReleaseEmptyBacking();
+                    long idlePayload = probe.BackingPayload();
+                    bool cyclesAvailable = TryThreadCycles(out ulong before);
+                    for (int batch = 0; batch < ticks.Length; batch++)
+                    {
+                        long started = Stopwatch.GetTimestamp();
+                        for (int i = batch * 128; i < Math.Min(size, (batch + 1) * 128); i++)
+                            probe.Remember(0x1234567800000000UL | (uint)i);
+                        ticks[batch] = Elapsed(started);
+                    }
+                    cyclesAvailable = TryThreadCycles(out ulong after) && cyclesAvailable && after > before;
+                    Assert.AreEqual(size, probe.Count);
+                    Assert.AreEqual(0, probe.Calls);
+                    Assert.AreEqual(peak, probe.BackingPayload());
+                    double total = 0;
+                    foreach (double tick in ticks)
+                        total += tick;
+                    Array.Sort(ticks);
+                    probe.Clear();
+                    if (trim && idleSeconds >= 300)
+                        probe.ReleaseEmptyBacking();
+                    int events = ManagedAllocation.Count(() =>
+                    {
+                        for (int i = 0; i < size; i++)
+                            probe.Remember(0x1234567800000000UL | (uint)i);
+                    });
+                    UnityEngine.Debug.Log(
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "CACHE_IDLE size={0} idle_seconds={1} sample={2} strategy={3} idle_payload={4} peak_payload={5} refill_ms={6:F6} p99_ms={7:F6} max_ms={8:F6} cpu_cycles={9} events={10}",
+                            size,
+                            idleSeconds,
+                            sample,
+                            trim ? "idle_release" : "retain",
+                            idlePayload,
+                            peak,
+                            total,
+                            ticks[(int)((ticks.Length - 1) * .99)],
+                            ticks[ticks.Length - 1],
+                            cyclesAvailable ? (after - before).ToString(CultureInfo.InvariantCulture) : "unavailable",
+                            eventsAvailable ? events.ToString(CultureInfo.InvariantCulture) : "unavailable"
+                        )
+                    );
+                }
+            }
+        }
+
+        private static Object[] warmAssetRoots;
+
+        [UnityTest]
+        [Explicit("Native persistent/transient warm/cold identity and loading experiment with real UnloadUnusedAssets.")]
+        public IEnumerator BenchmarkNativeColdAssetMaintenance()
+        {
+            string folder = "Assets/__ObjectIdColdCache_" + Guid.NewGuid().ToString("N");
+            AssetDatabase.CreateFolder("Assets", folder.Substring("Assets/".Length));
+            var coldIds = new ulong[16];
+            var paths = new string[coldIds.Length];
+            var guids = new string[coldIds.Length];
+            var localIds = new long[coldIds.Length];
+            var transient = ScriptableObject.CreateInstance<TransientObject>();
+            transient.hideFlags = HideFlags.HideAndDontSave;
+            ulong transientId = FullId(transient);
+            var dead = ScriptableObject.CreateInstance<TransientObject>();
+            ulong deadId = FullId(dead);
+            Object.DestroyImmediate(dead);
+            try
+            {
+                string warmPath = folder + "/warm.asset";
+                warmAssetRoots = new Object[] { CreatePersistentTexture(warmPath) };
+                ulong warmId = FullId(warmAssetRoots[0]);
+                Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(warmAssetRoots[0], out string warmGuid, out long warmLocalId));
+                for (int i = 0; i < coldIds.Length; i++)
+                {
+                    paths[i] = folder + "/cold" + i + ".asset";
+                    coldIds[i] = CreatePersistentTextureId(paths[i], out guids[i], out localIds[i]);
+                }
+                AssetDatabase.SaveAssets();
+                yield return UnityEngine.Resources.UnloadUnusedAssets();
+                UnityEngine.Debug.Log($"CACHE_COLD_INITIAL loaded={CountLoaded(coldIds)} total={coldIds.Length}");
+                for (int sample = 0; sample < 7; sample++)
+                {
+                    // Force a known cold start independently of Editor bookkeeping roots.
+                    UnloadPersistentTextures(paths);
+                    yield return UnityEngine.Resources.UnloadUnusedAssets();
+                    Assert.AreEqual(0, CountLoaded(coldIds), "Cold rows require verified unloaded native objects.");
+                    // Re-establish the warm control explicitly; a managed wrapper alone
+                    // does not establish loaded native state across unused-asset collection.
+                    warmAssetRoots[0] = AssetDatabase.LoadAssetAtPath<Texture2D>(warmPath);
+                    Assert.AreEqual(1, CountLoaded(new[] { warmId }));
+                    using (var probe = new Probe(false))
+                    {
+                        foreach (ulong id in coldIds)
+                            probe.Remember(id);
+                        probe.Remember(warmId);
+                        probe.Remember(transientId);
+                        probe.Remember(deadId);
+                        probe.Now = 11;
+                        bool available = TryThreadCycles(out ulong before);
+                        long started = Stopwatch.GetTimestamp();
+                        probe.Update();
+                        double coldMs = Elapsed(started);
+                        available = TryThreadCycles(out ulong after) && available && after > before;
+                        Assert.AreEqual(coldIds.Length + 2, probe.Count, "Only the destroyed transient ID may expire.");
+                        int loaded = CountLoaded(coldIds);
+                        long nativeBytes = 0;
+                        for (int i = 0; i < coldIds.Length; i++)
+                        {
+                            Object value = probe.Resolve(unchecked((int)coldIds[i]));
+                            AssertPersistentIdentity(value, coldIds[i], paths[i], guids[i], localIds[i]);
+                            nativeBytes += UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(value);
+                        }
+                        AssertPersistentIdentity(probe.Resolve(unchecked((int)warmId)), warmId, warmPath, warmGuid, warmLocalId);
+                        Object resolvedTransient = probe.Resolve(unchecked((int)transientId));
+                        Assert.IsTrue(resolvedTransient == transient);
+                        Assert.AreEqual(transientId, FullId(resolvedTransient));
+                        Assert.IsNull(probe.Resolve(unchecked((int)deadId)));
+                        probe.Now += 11;
+                        started = Stopwatch.GetTimestamp();
+                        probe.Update();
+                        double warmMs = Elapsed(started);
+                        UnityEngine.Debug.Log(
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "CACHE_COLD sample={0} count={1} loaded_by_maintenance={2} cold_ms={3:F6} warm_ms={4:F6} cpu_cycles={5} loaded_native_bytes={6}",
+                                sample,
+                                coldIds.Length,
+                                loaded,
+                                coldMs,
+                                warmMs,
+                                available ? (after - before).ToString(CultureInfo.InvariantCulture) : "unavailable",
+                                nativeBytes
+                            )
+                        );
+                    }
+                }
+            }
+            finally
+            {
+                warmAssetRoots = null;
+                if (transient != null)
+                    Object.DestroyImmediate(transient);
+                AssetDatabase.DeleteAsset(folder);
+            }
+        }
+
+        private static Texture2D CreatePersistentTexture(string path)
+        {
+            var texture = new Texture2D(256, 256, TextureFormat.RGBA32, false);
+            texture.name = path;
+            AssetDatabase.CreateAsset(texture, path);
+            return texture;
+        }
+
+        private static ulong CreatePersistentTextureId(string path, out string guid, out long localId)
+        {
+            Texture2D value = CreatePersistentTexture(path);
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(value, out guid, out localId));
+            return FullId(value);
+        }
+
+        private static void AssertPersistentIdentity(Object value, ulong id, string path, string guid, long localId)
+        {
+            Assert.IsNotNull(value);
+            Assert.AreEqual(id, FullId(value));
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(value));
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(value, out string actualGuid, out long actualLocalId));
+            Assert.AreEqual(guid, actualGuid);
+            Assert.AreEqual(localId, actualLocalId);
+        }
+
+        private static void UnloadPersistentTextures(string[] paths)
+        {
+            foreach (string path in paths)
+                UnityEngine.Resources.UnloadAsset(AssetDatabase.LoadAssetAtPath<Texture2D>(path));
+        }
+
+        private static int CountLoaded(ulong[] ids)
+        {
+            var wanted = new HashSet<ulong>(ids);
+            int loaded = 0;
+            foreach (Texture2D value in UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>())
+                if (wanted.Contains(FullId(value)))
+                    loaded++;
+            return loaded;
         }
 
         [TestCase(32768, false)]
