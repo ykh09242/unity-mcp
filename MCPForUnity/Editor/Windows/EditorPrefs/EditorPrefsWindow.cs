@@ -245,7 +245,7 @@ namespace MCPForUnity.Editor.Windows
                             row.Q<TextField>("value-field").SetValueWithoutNotify(draft.value);
                             if (!knownPrefTypes.ContainsKey(key))
                                 row.Q<DropdownField>("type-dropdown").index = (int)draft.type;
-                            row.Q<Label>("pref-state").text = "Unsaved draft retained";
+                            UpdateDraftState(item, row);
                         }
                         prefRows.Add(item.Key, row);
                         prefsContainer.Add(row);
@@ -362,17 +362,39 @@ namespace MCPForUnity.Editor.Windows
             // Buttons
             var saveButton = itemElement.Q<Button>("save-button");
 
-            saveButton.text = item.IsUnset ? "Initialize" : "Save";
-            var state = itemElement.Q<Label>("pref-state");
-            state.text = item.IsUnset ? "Unset: application default is in use" : "Stored value";
-            valueField.RegisterValueChangedCallback(_ => state.text = "Unsaved draft");
-            typeDropdown.RegisterValueChangedCallback(_ => state.text = "Unsaved draft");
+            valueField.RegisterValueChangedCallback(_ => UpdateDraftState(item, itemElement));
+            typeDropdown.RegisterValueChangedCallback(_ => UpdateDraftState(item, itemElement));
             saveButton.clicked += () => SavePref(item, valueField.value, (EditorPrefType)typeDropdown.index);
             var reset = itemElement.Q<Button>("reset-button");
             reset.SetEnabled(!item.IsUnset);
             reset.clicked += () => ResetPref(item);
+            UpdateDraftState(item, itemElement);
 
             return itemElement;
+        }
+
+        private static void UpdateDraftState(EditorPrefItem item, VisualElement row)
+        {
+            var value = row.Q<TextField>("value-field");
+            var type = (EditorPrefType)row.Q<DropdownField>("type-dropdown").index;
+            bool dirty = !string.Equals(value.value, InitialValue(item), StringComparison.Ordinal) || type != item.Type;
+            row.EnableInClassList("pref-dirty", dirty);
+            value.label = item.IsUnset ? "New override" : string.Empty;
+            value.tooltip = item.IsUnset ? "Draft for a new stored override. The current application default is not shown." : "Stored preference value";
+            row.Q<Label>("pref-state").text = dirty
+                ? item.IsUnset
+                    ? "Unsaved override"
+                    : "Unsaved draft"
+                : item.IsUnset
+                    ? "No stored override"
+                    : "Stored value";
+            var save = row.Q<Button>("save-button");
+            save.text = item.IsUnset ? "Initialize" : "Save";
+            save.tooltip =
+                item.IsUnset ? "Create this stored override"
+                : dirty ? "Save changes"
+                : "No changes to save";
+            save.SetEnabled(item.IsUnset || dirty);
         }
 
         private void SavePref(EditorPrefItem item, string newValue, EditorPrefType newType)
@@ -395,9 +417,8 @@ namespace MCPForUnity.Editor.Windows
             var row = prefRows[item.Key];
             row.Q<TextField>("value-field").SetValueWithoutNotify(newValue);
             row.Q<DropdownField>("type-dropdown").index = (int)newType;
-            row.Q<Button>("save-button").text = "Save";
             row.Q<Button>("reset-button").SetEnabled(true);
-            row.Q<Label>("pref-state").text = "Stored value";
+            UpdateDraftState(item, row);
 
             if (cachedPrefNames.TryGetValue(item.Key, out var cacheName))
             {
@@ -415,9 +436,8 @@ namespace MCPForUnity.Editor.Windows
             var row = prefRows[item.Key];
             row.Q<TextField>("value-field").SetValueWithoutNotify(InitialValue(item));
             row.Q<DropdownField>("type-dropdown").SetValueWithoutNotify(item.Type.ToString());
-            row.Q<Button>("save-button").text = "Initialize";
             row.Q<Button>("reset-button").SetEnabled(false);
-            row.Q<Label>("pref-state").text = "Unset: application default is in use";
+            UpdateDraftState(item, row);
             if (cachedPrefNames.TryGetValue(item.Key, out var cacheName))
                 EditorConfigurationCache.Instance.InvalidateKey(cacheName);
         }

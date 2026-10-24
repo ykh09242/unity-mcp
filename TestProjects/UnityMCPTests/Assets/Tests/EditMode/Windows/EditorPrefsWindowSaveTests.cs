@@ -20,6 +20,10 @@ namespace MCPForUnityTests.Editor.Windows
         private const BindingFlags InstanceFlags = BindingFlags.NonPublic | BindingFlags.Instance;
         private const BindingFlags StaticFlags = BindingFlags.NonPublic | BindingFlags.Static;
         private EditorPrefsWindow window;
+
+        private sealed class DraftHost : EditorWindow { }
+
+        private DraftHost draftHost;
         private readonly List<string> keys = new List<string>();
         private readonly List<string> errors = new List<string>();
         private object previousCache;
@@ -49,6 +53,9 @@ namespace MCPForUnityTests.Editor.Windows
         [TearDown]
         public void TearDown()
         {
+            if (draftHost != null)
+                draftHost.Close();
+            draftHost = null;
             foreach (string key in keys)
                 EditorPrefs.DeleteKey(key);
             if (window != null)
@@ -285,6 +292,76 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.AreEqual(type, item.Type);
             Assert.AreEqual("Unset", item.Value);
             Assert.IsFalse(EditorPrefs.HasKey(key));
+        }
+
+        [TestCase(EditorPrefType.String, "saved value")]
+        [TestCase(EditorPrefType.Int, "42")]
+        [TestCase(EditorPrefType.Float, "1.25")]
+        [TestCase(EditorPrefType.Bool, "True")]
+        public void ExactValueAndTypeRevertClearsDraftState(EditorPrefType type, string initial)
+        {
+            var item = AddItem(initial, type);
+            var row = Rows[item.Key];
+            AttachDraftRow(row);
+            var value = row.Q<TextField>("value-field");
+            var dropdown = row.Q<DropdownField>("type-dropdown");
+            var save = row.Q<Button>("save-button");
+            Assert.IsFalse(save.enabledSelf, "An unchanged stored value needs no save.");
+
+            value.value = "pending edit";
+            Assert.IsTrue(save.enabledSelf);
+            Assert.IsTrue(row.ClassListContains("pref-dirty"));
+            dropdown.index = ((int)type + 1) % 4;
+            value.value = initial;
+            Assert.IsTrue(save.enabledSelf, "A different type is still a draft.");
+
+            dropdown.index = (int)type;
+            Assert.IsFalse(save.enabledSelf);
+            Assert.IsFalse(row.ClassListContains("pref-dirty"));
+            Assert.AreEqual("Stored value", row.Q<Label>("pref-state").text);
+            Assert.AreEqual(initial, item.Value);
+            Assert.AreEqual(type, item.Type);
+        }
+
+        [TestCase(EditorPrefType.String)]
+        [TestCase(EditorPrefType.Int)]
+        [TestCase(EditorPrefType.Float)]
+        [TestCase(EditorPrefType.Bool)]
+        public void UnsetRowDistinguishesNewOverrideFromEffectiveDefault(EditorPrefType type)
+        {
+            var item = new EditorPrefItem
+            {
+                Key = NewKey(),
+                Type = type,
+                IsUnset = true,
+                Value = "Unset",
+            };
+            var row = (VisualElement)Invoke("CreateItemUI", item);
+            AttachDraftRow(row);
+            var value = row.Q<TextField>("value-field");
+            string initial = value.value;
+            Assert.AreEqual("New override", value.label);
+            Assert.AreEqual("No stored override", row.Q<Label>("pref-state").text);
+            Assert.AreEqual("Initialize", row.Q<Button>("save-button").text);
+            Assert.IsTrue(row.Q<Button>("save-button").enabledSelf);
+            Assert.IsFalse(row.Q<Button>("reset-button").enabledSelf);
+            Assert.IsFalse(row.ClassListContains("pref-dirty"));
+
+            value.value = "pending override";
+            Assert.IsTrue(row.ClassListContains("pref-dirty"));
+            value.value = initial;
+            Assert.IsFalse(row.ClassListContains("pref-dirty"));
+            Assert.AreEqual("No stored override", row.Q<Label>("pref-state").text);
+            Assert.IsTrue(row.Q<Button>("save-button").enabledSelf);
+            Assert.IsFalse(EditorPrefs.HasKey(item.Key), "Editing a draft must not initialize storage.");
+        }
+
+        private void AttachDraftRow(VisualElement row)
+        {
+            draftHost = ScriptableObject.CreateInstance<DraftHost>();
+            draftHost.ShowUtility();
+            draftHost.rootVisualElement.Add(row);
+            Assert.IsNotNull(row.panel, "Value-change callbacks require an attached panel.");
         }
 
         private Dictionary<string, VisualElement> Rows => (Dictionary<string, VisualElement>)GetField("prefRows");
