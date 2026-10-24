@@ -36,9 +36,12 @@ namespace MCPForUnity.Editor.Tools.Input
             private readonly Action<JObject, long> observed;
             private readonly Action<string> diagnose;
             private readonly Dictionary<InputControl, float> buttons = new Dictionary<InputControl, float>();
+            private readonly HashSet<InputControl> observedMouseButtons = new HashSet<InputControl>();
             private readonly Dictionary<int, int> touchSlots = new Dictionary<int, int>();
             private readonly Dictionary<int, Vector2> touchPositions = new Dictionary<int, Vector2>();
             private readonly HashSet<int> described = new HashSet<int>();
+            private readonly HashSet<int> visitedTouches = new HashSet<int>();
+            private bool processingTouches;
             private readonly HashSet<string> deviceLimitNotices = new HashSet<string>();
             private Keyboard keyboard;
             private Mouse mouse;
@@ -170,32 +173,60 @@ namespace MCPForUnity.Editor.Tools.Input
 
             private void MouseEvent(Mouse pointer, InputEventPtr packet)
             {
+                if (disposed)
+                    return;
                 Vector2 position = pointer.position.ReadValueFromEvent(packet, out Vector2 supplied)
                     ? supplied
                     : (mousePosition ?? pointer.position.ReadValue());
-                if (!ValidPosition(position))
+                bool valid = ValidPosition(position);
+                Vector2? previousPosition = mousePosition;
+                if (valid)
+                    mousePosition = position;
+                else
                 {
                     diagnose("An observed mouse position is outside the executable screen-pixel range and was omitted.");
-                    return;
                 }
                 bool transition = false;
-                ButtonControl[] controls = { pointer.leftButton, pointer.rightButton, pointer.middleButton };
-                string[] names = { "left", "right", "middle" };
-                for (int i = 0; i < controls.Length && !disposed; i++)
-                    if (Changed(controls[i], packet, out bool pressed))
+
+                for (int i = 0; i < 3 && !disposed; i++)
+                {
+                    ButtonControl control =
+                        i == 0 ? pointer.leftButton
+                        : i == 1 ? pointer.rightButton
+                        : pointer.middleButton;
+                    if (Changed(control, packet, out bool pressed))
                     {
                         transition = true;
+                        if (pressed)
+                        {
+                            if (!valid)
+                                continue;
+                            observedMouseButtons.Add(control);
+                        }
+                        else if (!observedMouseButtons.Remove(control))
+                            continue;
+                        if (!valid)
+                        {
+                            if (!previousPosition.HasValue)
+                                continue;
+                            position = previousPosition.Value;
+                            diagnose("An observed mouse release used the last valid position because its supplied position was invalid.");
+                        }
                         Emit(
                             new JObject
                             {
                                 ["action"] = "mouse",
-                                ["button"] = names[i],
+                                ["button"] =
+                                    i == 0 ? "left"
+                                    : i == 1 ? "right"
+                                    : "middle",
                                 ["state"] = pressed ? "press" : "release",
                                 ["position"] = Position(position),
                             }
                         );
                     }
-                if (!transition && (!mousePosition.HasValue ? position != pointer.position.ReadValue() : position != mousePosition.Value))
+                }
+                if (valid && !transition && (!previousPosition.HasValue ? position != pointer.position.ReadValue() : position != previousPosition.Value))
                     Emit(
                         new JObject
                         {
@@ -205,7 +236,8 @@ namespace MCPForUnity.Editor.Tools.Input
                             ["position"] = Position(position),
                         }
                     );
-                mousePosition = position;
+                if (disposed)
+                    return;
                 if (pointer.scroll.ReadValueFromEvent(packet, out Vector2 scroll) && scroll != Vector2.zero)
                 {
                     if (
@@ -226,59 +258,92 @@ namespace MCPForUnity.Editor.Tools.Input
             {
                 // TouchState packets map public event reads only through primaryTouch (package callback contract).
                 // Full TouchscreenState packets may include both primaryTouch and its slot; deduplicate the actual contact ID.
-                var visited = new HashSet<int>();
-                for (int index = -1; index < device.touches.Count; index++)
+                if (disposed)
+                    return;
+                // Observers may synchronously re-enter with a packet. Only the
+                // outer handler borrows the session scratch set.
+                bool ownsScratch = !processingTouches;
+                var visited = ownsScratch ? visitedTouches : new HashSet<int>();
+                if (ownsScratch)
+                    processingTouches = true;
+                visited.Clear();
+                try
                 {
-                    TouchControl touch = index < 0 ? device.primaryTouch : device.touches[index];
-                    if (disposed)
-                        return;
-                    if (!touch.touchId.ReadValueFromEvent(packet, out int id) || id <= 0 || !touch.phase.ReadValueFromEvent(packet, out InputTouchPhase phase))
-                        continue;
-                    if (phase == InputTouchPhase.None || phase == InputTouchPhase.Stationary || !visited.Add(id))
-                        continue;
-                    if (phase == InputTouchPhase.Began && !touchSlots.ContainsKey(id))
+                    for (int index = -1; index < device.touches.Count; index++)
                     {
-                        int slot = 1;
-                        while (slot <= 10 && touchSlots.ContainsValue(slot))
-                            slot++;
-                        if (slot > 10)
+                        TouchControl touch = index < 0 ? device.primaryTouch : device.touches[index];
+                        if (disposed)
+                            return;
+                        if (
+                            !touch.touchId.ReadValueFromEvent(packet, out int id)
+                            || id <= 0
+                            || !touch.phase.ReadValueFromEvent(packet, out InputTouchPhase phase)
+                        )
+                            continue;
+                        if (phase == InputTouchPhase.None || phase == InputTouchPhase.Stationary || !visited.Add(id))
+                            continue;
+                        bool end = phase == InputTouchPhase.Ended || phase == InputTouchPhase.Canceled;
+                        Vector2 position = touch.position.ReadValueFromEvent(packet, out Vector2 supplied) ? supplied : touch.position.ReadValue();
+                        if (!ValidPosition(position))
                         {
-                            diagnose("Observed touches exceeded ten executable contacts; additional contacts were omitted.");
+                            diagnose("An observed touch position is outside the executable screen-pixel range and was omitted.");
+                            if (!end)
+                                continue;
+                            // Terminal identity cleanup must not depend on coordinates.
+                            if (!touchPositions.TryGetValue(id, out position))
+                            {
+                                touchSlots.Remove(id);
+                                continue;
+                            }
+                            diagnose("An observed touch release used the last valid position because its supplied position was invalid.");
+                        }
+                        if (phase == InputTouchPhase.Began && !touchSlots.ContainsKey(id))
+                        {
+                            int slot = 1;
+                            while (slot <= 10 && touchSlots.ContainsValue(slot))
+                                slot++;
+                            if (slot > 10)
+                            {
+                                diagnose("Observed touches exceeded ten executable contacts; additional contacts were omitted.");
+                                continue;
+                            }
+                            touchSlots.Add(id, slot);
+                        }
+                        if (!touchSlots.TryGetValue(id, out int selected))
+                        {
+                            diagnose("A touch already active before observation was omitted; no initial press was invented.");
                             continue;
                         }
-                        touchSlots.Add(id, slot);
+                        bool changed = !touchPositions.TryGetValue(id, out Vector2 previous) || position != previous;
+                        // Update ownership before notifying a consumer, which may dispose
+                        // the session synchronously. Never repopulate state after disposal.
+                        if (end)
+                        {
+                            touchSlots.Remove(id);
+                            touchPositions.Remove(id);
+                        }
+                        else
+                            touchPositions[id] = position;
+                        if (end || changed)
+                            Emit(
+                                new JObject
+                                {
+                                    ["action"] = "touch",
+                                    ["touch_id"] = selected,
+                                    ["state"] =
+                                        end ? "release"
+                                        : phase == InputTouchPhase.Began ? "press"
+                                        : "move",
+                                    ["position"] = Position(position),
+                                }
+                            );
                     }
-                    if (!touchSlots.TryGetValue(id, out int selected))
-                    {
-                        diagnose("A touch already active before observation was omitted; no initial press was invented.");
-                        continue;
-                    }
-                    Vector2 position = touch.position.ReadValueFromEvent(packet, out Vector2 supplied) ? supplied : touch.position.ReadValue();
-                    if (!ValidPosition(position))
-                    {
-                        diagnose("An observed touch position is outside the executable screen-pixel range and was omitted.");
-                        continue;
-                    }
-                    bool end = phase == InputTouchPhase.Ended || phase == InputTouchPhase.Canceled;
-                    if (end || !touchPositions.TryGetValue(id, out Vector2 previous) || position != previous)
-                        Emit(
-                            new JObject
-                            {
-                                ["action"] = "touch",
-                                ["touch_id"] = selected,
-                                ["state"] =
-                                    end ? "release"
-                                    : phase == InputTouchPhase.Began ? "press"
-                                    : "move",
-                                ["position"] = Position(position),
-                            }
-                        );
-                    touchPositions[id] = position;
-                    if (end)
-                    {
-                        touchSlots.Remove(id);
-                        touchPositions.Remove(id);
-                    }
+                }
+                finally
+                {
+                    visited.Clear();
+                    if (ownsScratch)
+                        processingTouches = false;
                 }
             }
 
@@ -290,9 +355,12 @@ namespace MCPForUnity.Editor.Tools.Input
                 InputApi.onBeforeUpdate -= BeforeUpdate;
                 InputApi.onEvent -= Event;
                 buttons.Clear();
+                observedMouseButtons.Clear();
+                mousePosition = null;
                 touchSlots.Clear();
                 touchPositions.Clear();
                 described.Clear();
+                visitedTouches.Clear();
                 deviceLimitNotices.Clear();
             }
         }

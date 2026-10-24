@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers; // For Response class
 using Newtonsoft.Json.Linq;
@@ -842,23 +843,28 @@ namespace MCPForUnity.Editor.Tools
                 // Performance: TrimStart creates a new string. Consider using IsWhiteSpace check if performance critical.
                 string trimmedLine = lines[i].TrimStart();
 
-                // Check for common stack trace patterns.
-                if (
-                    trimmedLine.StartsWith("at ")
-                    || IsNativeStackFrame(trimmedLine)
-                    || trimmedLine.StartsWith("UnityEngine.")
-                    || trimmedLine.StartsWith("UnityEditor.")
-                    || trimmedLine.Contains("(at ")
-                    || // Covers "(at Assets/..." pattern
-                    // Heuristic: Check if line starts with likely namespace/class pattern (Uppercase.Something)
-                    (trimmedLine.Length > 0 && char.IsUpper(trimmedLine[0]) && trimmedLine.Contains('.'))
-                )
+                if (IsManagedStackFrame(trimmedLine) || IsNativeStackFrame(trimmedLine))
                 {
                     return i; // Found the likely start of the stack trace
                 }
             }
 
             return -1;
+        }
+
+        // A qualified method and argument list, optionally followed by a source
+        // location. Neither a namespace prefix nor a period in prose is a frame.
+        private static readonly Regex ManagedStackFrame = new Regex(
+            @"^(?:at )?(?:(?<qualifier>[\p{L}_$<][\w.$`+<>\[\],/:]*[.:]))?(?<method>[\p{L}_$<][\w$`<>\[\],/]*) ?\([^()\r\n]*\)(?<location> \(at .+:\d+\)| in .+:line \d+| \[0x[0-9a-fA-F]+\](?: in .+)?)?$",
+            RegexOptions.CultureInvariant
+        );
+
+        private static bool IsManagedStackFrame(string line)
+        {
+            Match frame = ManagedStackFrame.Match(line);
+            if (!frame.Success)
+                return false;
+            return frame.Groups["qualifier"].Success || frame.Groups["location"].Success;
         }
 
         // Native frames Unity appends when Stack Trace Logging is set to Full, e.g.

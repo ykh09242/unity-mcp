@@ -1,0 +1,287 @@
+{
+  "schema_version": 1,
+  "measured_on": "2026-10-24",
+  "platform": "Windows",
+  "unity_version": "6000.0.69f1",
+  "input_system_version": "1.20.1",
+  "baseline_commit": "f717c5d822d150cdffdc1c19d03b9f790bfd17dd",
+  "baseline_backend_sha256": "579898d7282bf053907e572dfa5b59c9f7e9c889dfc3d18b0274c904ff861814",
+  "candidate_backend_sha256": "b6ad99b72182164d15e90bbcaa4ec29360f6d85ab06a7ade895636d47cce218f",
+  "fixture_sha256": "cb02862ad66830233574809e6d2eb7760f06867824954802d77250f4bd19a995",
+  "baseline": {
+    "calibration": {
+      "byte_counter_available": false,
+      "known_allocation_events": 32,
+      "recorded_allocation_events": 32
+    },
+    "workloads": [
+      {
+        "workload": "mouse-idle",
+        "rate_hz": 125,
+        "contacts": 0,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 2.0,
+        "mean_us_per_packet": 2.417109677419355,
+        "p95_us_per_packet": 3.0816,
+        "emitted": 1,
+        "position_checksum": 10.0
+      },
+      {
+        "workload": "mouse-motion",
+        "rate_hz": 125,
+        "contacts": 0,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 32.008,
+        "mean_us_per_packet": 15.323122580645158,
+        "p95_us_per_packet": 35.9176,
+        "emitted": 4114,
+        "position_checksum": 43197.0
+      },
+      {
+        "workload": "touch-idle",
+        "rate_hz": 125,
+        "contacts": 5,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 5.0,
+        "mean_us_per_packet": 11.337238709677418,
+        "p95_us_per_packet": 15.925600000000001,
+        "emitted": 5,
+        "position_checksum": 50.0
+      },
+      {
+        "workload": "touch-motion",
+        "rate_hz": 125,
+        "contacts": 5,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 155.04,
+        "mean_us_per_packet": 75.44547096774194,
+        "p95_us_per_packet": 136.148,
+        "emitted": 20570,
+        "position_checksum": 215985.0
+      },
+      {
+        "workload": "mouse-idle",
+        "rate_hz": 1000,
+        "contacts": 0,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 2.0,
+        "mean_us_per_packet": 2.964032258064516,
+        "p95_us_per_packet": 5.3518,
+        "emitted": 1,
+        "position_checksum": 10.0
+      },
+      {
+        "workload": "mouse-motion",
+        "rate_hz": 1000,
+        "contacts": 0,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 31.76,
+        "mean_us_per_packet": 14.497580645161289,
+        "p95_us_per_packet": 23.860799999999998,
+        "emitted": 32641,
+        "position_checksum": 342730.0
+      },
+      {
+        "workload": "touch-idle",
+        "rate_hz": 1000,
+        "contacts": 5,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 5.0,
+        "mean_us_per_packet": 10.471083870967743,
+        "p95_us_per_packet": 13.7759,
+        "emitted": 5,
+        "position_checksum": 50.0
+      },
+      {
+        "workload": "touch-motion",
+        "rate_hz": 1000,
+        "contacts": 5,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 153.8,
+        "mean_us_per_packet": 70.8214064516129,
+        "p95_us_per_packet": 94.0831,
+        "emitted": 163205,
+        "position_checksum": 1713650.0
+      }
+    ]
+  },
+  "candidate": {
+    "calibration": {
+      "byte_counter_available": false,
+      "known_allocation_events": 32,
+      "recorded_allocation_events": 32
+    },
+    "workloads": [
+      {
+        "workload": "mouse-idle",
+        "rate_hz": 125,
+        "contacts": 0,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 0.0,
+        "mean_us_per_packet": 2.1045161290322576,
+        "p95_us_per_packet": 2.3984,
+        "emitted": 1,
+        "position_checksum": 10.0
+      },
+      {
+        "workload": "mouse-motion",
+        "rate_hz": 125,
+        "contacts": 0,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 30.008,
+        "mean_us_per_packet": 12.495225806451613,
+        "p95_us_per_packet": 34.6776,
+        "emitted": 4114,
+        "position_checksum": 43197.0
+      },
+      {
+        "workload": "touch-idle",
+        "rate_hz": 125,
+        "contacts": 5,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 0.0,
+        "mean_us_per_packet": 7.380516129032259,
+        "p95_us_per_packet": 8.300799999999999,
+        "emitted": 5,
+        "position_checksum": 50.0
+      },
+      {
+        "workload": "touch-motion",
+        "rate_hz": 125,
+        "contacts": 5,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 150.04,
+        "mean_us_per_packet": 57.05917419354839,
+        "p95_us_per_packet": 91.38239999999999,
+        "emitted": 20570,
+        "position_checksum": 215985.0
+      },
+      {
+        "workload": "mouse-idle",
+        "rate_hz": 1000,
+        "contacts": 0,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 0.0,
+        "mean_us_per_packet": 2.1130741935483877,
+        "p95_us_per_packet": 2.5604,
+        "emitted": 1,
+        "position_checksum": 10.0
+      },
+      {
+        "workload": "mouse-motion",
+        "rate_hz": 1000,
+        "contacts": 0,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 29.76,
+        "mean_us_per_packet": 13.838903225806451,
+        "p95_us_per_packet": 21.5021,
+        "emitted": 32641,
+        "position_checksum": 342730.0
+      },
+      {
+        "workload": "touch-idle",
+        "rate_hz": 1000,
+        "contacts": 5,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 0.0,
+        "mean_us_per_packet": 7.36302258064516,
+        "p95_us_per_packet": 8.411700000000002,
+        "emitted": 5,
+        "position_checksum": 50.0
+      },
+      {
+        "workload": "touch-motion",
+        "rate_hz": 1000,
+        "contacts": 5,
+        "samples": 31,
+        "bytes_per_packet": null,
+        "allocation_events_per_packet": 148.8,
+        "mean_us_per_packet": 58.039332258064526,
+        "p95_us_per_packet": 67.76289999999999,
+        "emitted": 163205,
+        "position_checksum": 1713650.0
+      }
+    ]
+  },
+  "comparisons": [
+    {
+      "workload": "mouse-idle",
+      "rate_hz": 125,
+      "allocation_events_saved_per_packet": 2.0,
+      "mean_latency_reduction_percent": 12.9325,
+      "batch_p95_latency_reduction_percent": 22.1703,
+      "output_parity": true
+    },
+    {
+      "workload": "mouse-motion",
+      "rate_hz": 125,
+      "allocation_events_saved_per_packet": 2.0,
+      "mean_latency_reduction_percent": 18.4551,
+      "batch_p95_latency_reduction_percent": 3.4523,
+      "output_parity": true
+    },
+    {
+      "workload": "touch-idle",
+      "rate_hz": 125,
+      "allocation_events_saved_per_packet": 5.0,
+      "mean_latency_reduction_percent": 34.9002,
+      "batch_p95_latency_reduction_percent": 47.8776,
+      "output_parity": true
+    },
+    {
+      "workload": "touch-motion",
+      "rate_hz": 125,
+      "allocation_events_saved_per_packet": 5.0,
+      "mean_latency_reduction_percent": 24.3703,
+      "batch_p95_latency_reduction_percent": 32.8801,
+      "output_parity": true
+    },
+    {
+      "workload": "mouse-idle",
+      "rate_hz": 1000,
+      "allocation_events_saved_per_packet": 2.0,
+      "mean_latency_reduction_percent": 28.7095,
+      "batch_p95_latency_reduction_percent": 52.1582,
+      "output_parity": true
+    },
+    {
+      "workload": "mouse-motion",
+      "rate_hz": 1000,
+      "allocation_events_saved_per_packet": 2.0,
+      "mean_latency_reduction_percent": 4.5434,
+      "batch_p95_latency_reduction_percent": 9.8853,
+      "output_parity": true
+    },
+    {
+      "workload": "touch-idle",
+      "rate_hz": 1000,
+      "allocation_events_saved_per_packet": 5.0,
+      "mean_latency_reduction_percent": 29.6823,
+      "batch_p95_latency_reduction_percent": 38.939,
+      "output_parity": true
+    },
+    {
+      "workload": "touch-motion",
+      "rate_hz": 1000,
+      "allocation_events_saved_per_packet": 5.0,
+      "mean_latency_reduction_percent": 18.0483,
+      "batch_p95_latency_reduction_percent": 27.9755,
+      "output_parity": true
+    }
+  ]
+}

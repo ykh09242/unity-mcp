@@ -88,6 +88,37 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual("Fixture.Method () (at Fixture.cs:7)", result.stackTrace);
         }
 
+        [TestCase("Header\nPlayer moved.\nBody continues")]
+        [TestCase("Header\nNote. (continued below)\nBody continues")]
+        [TestCase("Header\nat noon (bring lunch)\nBody continues")]
+        [TestCase("Header\nat noon we meet\nBody continues")]
+        [TestCase("Header\nUnityEngine.Debug example\nBody continues")]
+        [TestCase("Header\nCall Foo.Bar() to continue.\nBody continues")]
+        [TestCase("Header\nDebug.Log(\"example\");\nBody continues")]
+        [TestCase("Header\n0x12345678 is a value\nBody continues")]
+        [TestCase("Header\nSource (at Assets/Example.cs:7) is quoted\nBody continues")]
+        public void FallbackPreservesMultilineProseAndSourceExcerpts(string text)
+        {
+            foreach (int? offset in new int?[] { null, -1, text.Length + 1 })
+            {
+                var result = Split(text, offset);
+                Assert.AreEqual(text, result.body);
+                Assert.IsNull(result.stackTrace);
+            }
+        }
+
+        [TestCase("0x00007ffd387f224e (Unity) StackWalker::ShowCallstack")]
+        [TestCase("0x12345678 (Module) Symbol")]
+        [TestCase("Fixture`1[T]:Method (T) (at Assets/Fixture.cs:7)")]
+        [TestCase("Namespace.Fixture.Method()")]
+        [TestCase("at Namespace.Fixture.Method() in Fixture.cs:line 7")]
+        public void FallbackRecognizesRealManagedAndNativeFrames(string frame)
+        {
+            var result = Split("Header\nPlayer moved.\n" + frame, null);
+            Assert.AreEqual("Header\nPlayer moved.", result.body);
+            Assert.AreEqual(frame, result.stackTrace);
+        }
+
         [TestCase("UnityEngine.Debug:Log (object)")]
         [TestCase("Method () (at Fixture.cs:7)")]
         [TestCase("   at Fixture.Method() in Fixture.cs:line 7")]
