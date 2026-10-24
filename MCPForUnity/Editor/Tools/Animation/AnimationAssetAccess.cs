@@ -147,9 +147,12 @@ namespace MCPForUnity.Editor.Tools.Animation
                 throw new ArgumentException("Unsupported round-trip change field.");
         }
 
-        internal static object Page(JArray rows, JObject request, string revision, string field)
+        internal static object Page(JArray rows, JObject request, string revision, string field) =>
+            Page(rows.Count, index => rows[index], request, revision, field);
+
+        internal static object Page(int total, Func<int, JToken> describe, JObject request, string revision, string field)
         {
-            int offset = Integer(request, "offset", 0, 0, rows.Count);
+            int offset = Integer(request, "offset", 0, 0, total);
             int size = Integer(request, "pageSize", 50, 1, 100);
             if (offset > 0 && request["expectedRevision"] == null)
                 throw new ArgumentException("Continuation pages require expected_revision from the first page.");
@@ -158,10 +161,10 @@ namespace MCPForUnity.Editor.Tools.Animation
             var data = new JObject
             {
                 ["revision"] = revision,
-                ["total"] = rows.Count,
+                ["total"] = total,
                 ["offset"] = offset,
-                ["next_offset"] = offset + size < rows.Count ? new JValue(offset + size) : JValue.CreateNull(),
-                [field] = new JArray(rows.Skip(offset).Take(size)),
+                ["next_offset"] = offset + size < total ? new JValue(offset + size) : JValue.CreateNull(),
+                [field] = new JArray(Enumerable.Range(offset, Math.Min(size, total - offset)).Select(describe)),
             };
             if (data.ToString(Formatting.None).Length > 262144)
                 throw new ArgumentException("Page exceeds output limit; use a smaller page_size.");

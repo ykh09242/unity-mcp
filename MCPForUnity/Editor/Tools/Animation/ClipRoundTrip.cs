@@ -42,25 +42,32 @@ namespace MCPForUnity.Editor.Tools.Animation
             string revision = AnimationAssetAccess.Revision(path, new UnityEngine.Object[] { clip });
             if (action == "get_curves")
             {
-                var rows = new JArray(
-                    bindings.Select(binding => new JObject
+                return AnimationAssetAccess.Page(
+                    bindings.Length,
+                    index =>
                     {
-                        ["binding_id"] = binding.Id,
-                        ["kind"] = binding.Objects ? "object" : "float",
-                        ["path"] = binding.Value.path,
-                        ["property"] = binding.Value.propertyName,
-                        ["type"] = binding.Value.type.AssemblyQualifiedName,
-                        ["clip_file_id"] = AnimationAssetAccess.Id(clip),
-                    })
+                        var binding = bindings[index];
+                        return new JObject
+                        {
+                            ["binding_id"] = binding.Id,
+                            ["kind"] = binding.Objects ? "object" : "float",
+                            ["path"] = binding.Value.path,
+                            ["property"] = binding.Value.propertyName,
+                            ["type"] = binding.Value.type.AssemblyQualifiedName,
+                            ["clip_file_id"] = AnimationAssetAccess.Id(clip),
+                        };
+                    },
+                    request,
+                    revision,
+                    "curves"
                 );
-                return AnimationAssetAccess.Page(rows, request, revision, "curves");
             }
             string id = AnimationAssetAccess.Text(request, "bindingId");
             Binding selected = bindings.SingleOrDefault(binding => binding.Id == id);
             if (selected == null)
                 throw new ArgumentException("binding_id is stale or does not belong to this clip.");
             if (action == "get_curve")
-                return AnimationAssetAccess.Page(Read(clip, selected), request, revision, "keys");
+                return Read(clip, selected, request, revision);
             AnimationAssetAccess.Expected(request, revision);
             if (
                 AssetImporter.GetAtPath(path) is ModelImporter
@@ -136,35 +143,46 @@ namespace MCPForUnity.Editor.Tools.Animation
             return clips[0];
         }
 
-        private static JArray Read(AnimationClip clip, Binding binding)
+        private static object Read(AnimationClip clip, Binding binding, JObject request, string revision)
         {
             if (binding.Objects)
             {
                 var keys = AnimationUtility.GetObjectReferenceCurve(clip, binding.Value);
                 if (keys.Length > 16384)
                     throw new ArgumentException("Curve exceeds 16384 keys.");
-                return new JArray(keys.Select(key => new JObject { ["time"] = key.time, ["value"] = AnimationAssetAccess.Reference(key.value) }));
+                return AnimationAssetAccess.Page(
+                    keys.Length,
+                    index => new JObject { ["time"] = keys[index].time, ["value"] = AnimationAssetAccess.Reference(keys[index].value) },
+                    request,
+                    revision,
+                    "keys"
+                );
             }
             AnimationCurve curve = AnimationUtility.GetEditorCurve(clip, binding.Value);
             if (curve.length > 16384)
                 throw new ArgumentException("Curve exceeds 16384 keys.");
-            return new JArray(
-                curve.keys.Select(
-                    (key, index) =>
-                        new JObject
-                        {
-                            ["time"] = key.time,
-                            ["value"] = key.value,
-                            ["in_tangent"] = Tangent(key.inTangent),
-                            ["out_tangent"] = Tangent(key.outTangent),
-                            ["in_weight"] = key.inWeight,
-                            ["out_weight"] = key.outWeight,
-                            ["weighted_mode"] = (int)key.weightedMode,
-                            ["broken"] = AnimationUtility.GetKeyBroken(curve, index),
-                            ["left_tangent_mode"] = (int)AnimationUtility.GetKeyLeftTangentMode(curve, index),
-                            ["right_tangent_mode"] = (int)AnimationUtility.GetKeyRightTangentMode(curve, index),
-                        }
-                )
+            return AnimationAssetAccess.Page(
+                curve.length,
+                index =>
+                {
+                    var key = curve[index];
+                    return new JObject
+                    {
+                        ["time"] = key.time,
+                        ["value"] = key.value,
+                        ["in_tangent"] = Tangent(key.inTangent),
+                        ["out_tangent"] = Tangent(key.outTangent),
+                        ["in_weight"] = key.inWeight,
+                        ["out_weight"] = key.outWeight,
+                        ["weighted_mode"] = (int)key.weightedMode,
+                        ["broken"] = AnimationUtility.GetKeyBroken(curve, index),
+                        ["left_tangent_mode"] = (int)AnimationUtility.GetKeyLeftTangentMode(curve, index),
+                        ["right_tangent_mode"] = (int)AnimationUtility.GetKeyRightTangentMode(curve, index),
+                    };
+                },
+                request,
+                revision,
+                "keys"
             );
         }
 

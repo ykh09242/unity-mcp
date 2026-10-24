@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Reflection;
 using MCPForUnity.Editor.Tools.Animation;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -95,6 +96,303 @@ namespace MCPForUnityTests.Editor.Tools
         {
             Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out string guid, out long id));
             return id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        [Test]
+        public void PageCreatesOnlySelectedDetailsAndValidatesBeforeCreation()
+        {
+            var type = typeof(ManageAnimation).Assembly.GetType("MCPForUnity.Editor.Tools.Animation.AnimationAssetAccess");
+            var lazy = type.GetMethod(
+                "Page",
+                BindingFlags.Static | BindingFlags.NonPublic,
+                null,
+                new[] { typeof(int), typeof(Func<int, JToken>), typeof(JObject), typeof(string), typeof(string) },
+                null
+            );
+            int created = 0;
+            Func<int, JToken> detail = index =>
+            {
+                created++;
+                return new JObject { ["index"] = index };
+            };
+            Func<JObject, JObject> page = request =>
+            {
+                object response;
+                if (lazy != null)
+                    response = lazy.Invoke(null, new object[] { 16384, detail, request, "revision", "keys" });
+                else
+                {
+                    var eager = type.GetMethod("Page", BindingFlags.Static | BindingFlags.NonPublic);
+                    response = eager.Invoke(null, new object[] { new JArray(Enumerable.Range(0, 16384).Select(detail)), request, "revision", "keys" });
+                }
+                return Data(JObject.FromObject(response));
+            };
+            var first = page(new JObject { ["pageSize"] = 1 });
+            Assert.AreEqual(16384, first.Value<int>("total"));
+            Assert.AreEqual(1, created, "A one-row page must construct one detail, not all 16,384 rows.");
+            Assert.AreEqual(0, first["keys"][0].Value<int>("index"));
+            created = 0;
+            Assert.Throws<TargetInvocationException>(() =>
+                page(
+                    new JObject
+                    {
+                        ["offset"] = 1,
+                        ["pageSize"] = 1,
+                        ["expectedRevision"] = "stale",
+                    }
+                )
+            );
+            Assert.AreEqual(0, created, "Revision validation precedes detail creation.");
+            Assert.Throws<TargetInvocationException>(() => page(new JObject { ["offset"] = 1 }));
+            Assert.AreEqual(0, created, "Continuation validation precedes detail creation.");
+            Assert.Throws<TargetInvocationException>(() => page(new JObject { ["offset"] = 16385 }));
+            Assert.AreEqual(0, created, "Out-of-range validation precedes detail creation.");
+            var end = page(new JObject { ["offset"] = 16384, ["expectedRevision"] = "revision" });
+            Assert.AreEqual(0, end["keys"].Count());
+            Assert.AreEqual(JTokenType.Null, end["next_offset"].Type);
+            Assert.AreEqual(0, created);
+        }
+
+        private void MeasurePage(string shape, Func<JObject> read)
+        {
+            var expected = read();
+            var method = typeof(GC).GetMethod("GetAllocatedBytesForCurrentThread", BindingFlags.Public | BindingFlags.Static);
+            var allocated = method == null ? null : (Func<long>)Delegate.CreateDelegate(typeof(Func<long>), method);
+            if (allocated != null)
+            {
+                long before = allocated();
+                var probe = new byte[4096];
+                long after = allocated();
+                GC.KeepAlive(probe);
+                if (after <= before)
+                    allocated = null;
+            }
+            var process = System.Diagnostics.Process.GetCurrentProcess();
+            for (int sample = 0; sample < 5; sample++)
+            {
+                long bytes = allocated?.Invoke() ?? 0;
+                long heapBefore = GC.GetTotalMemory(false);
+                int gc0 = GC.CollectionCount(0),
+                    gc1 = GC.CollectionCount(1),
+                    gc2 = GC.CollectionCount(2);
+                var cpu = process.TotalProcessorTime;
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                var actual = read();
+                watch.Stop();
+                double cpuMs = (process.TotalProcessorTime - cpu).TotalMilliseconds;
+                long? allocation = allocated == null ? (long?)null : allocated() - bytes;
+                long heapAfter = GC.GetTotalMemory(false);
+                int gc0Delta = GC.CollectionCount(0) - gc0,
+                    gc1Delta = GC.CollectionCount(1) - gc1,
+                    gc2Delta = GC.CollectionCount(2) - gc2;
+                Assert.IsTrue(JToken.DeepEquals(expected, actual));
+                TestContext.WriteLine(
+                    "BPA12_MEASURE "
+                        + new JObject
+                        {
+                            ["shape"] = shape,
+                            ["sample"] = sample,
+                            ["elapsed_ms"] = watch.Elapsed.TotalMilliseconds,
+                            ["cpu_ms"] = cpuMs,
+                            ["allocated_bytes"] = allocation,
+                            ["managed_heap_after_bytes"] = heapAfter,
+                            ["managed_heap_delta_bytes"] = heapAfter - heapBefore,
+                            ["gc0"] = gc0Delta,
+                            ["gc1"] = gc1Delta,
+                            ["gc2"] = gc2Delta,
+                        }.ToString(Newtonsoft.Json.Formatting.None)
+                );
+            }
+        }
+
+        [Test]
+        public void LargeCurveOneKeyPageRetainsFullRevisionAndNativeTangents()
+        {
+            int count = 4096;
+            JObject curves;
+            while (true)
+            {
+                var keys = Enumerable
+                    .Range(0, count)
+                    .Select(i => new Keyframe(i / 60f, i % 11, .25f, -.5f)
+                    {
+                        inWeight = .2f,
+                        outWeight = .4f,
+                        weightedMode = WeightedMode.Both,
+                    })
+                    .ToArray();
+                AnimationUtility.SetEditorCurve(clip, x, new AnimationCurve(keys));
+                AssetDatabase.SaveAssets();
+                // Revision contains GUID:base64(SHA256(file)), then newline + ID:JSON.
+                int stateCharacters = AssetDatabase.AssetPathToGUID(clipPath).Length + 1 + 44 + 1 + Id(clip).Length + 1 + EditorJsonUtility.ToJson(clip).Length;
+                var response = Send("clip_get_curves", new JObject { ["page_size"] = 100 }, clipPath);
+                bool admitted = response.Value<bool>("success");
+                TestContext.WriteLine(
+                    "BPA12_ADMISSION "
+                        + new JObject
+                        {
+                            ["keys"] = count,
+                            ["serialized_state_characters"] = stateCharacters,
+                            ["existing_revision_cap_characters"] = 2097152,
+                            ["admitted"] = admitted,
+                        }.ToString(Newtonsoft.Json.Formatting.None)
+                );
+                if (admitted)
+                {
+                    Assert.LessOrEqual(stateCharacters, 2097152);
+                    curves = Data(response);
+                    break;
+                }
+                StringAssert.Contains("Round-trip serialized state exceeds 2 MiB", response.ToString());
+                Assert.Greater(stateCharacters, 2097152);
+                count /= 2;
+                Assert.GreaterOrEqual(count, 512, "The public revision fixture must still cover a representative admitted curve.");
+            }
+            string id = curves["curves"].Single(row => row.Value<string>("property") == x.propertyName).Value<string>("binding_id");
+            var first = Read(id, 0, 1);
+            Assert.AreEqual(count, first.Value<int>("total"));
+            Assert.AreEqual(1, first["keys"].Count());
+            AnimationUtility.SetEditorCurve(clip, y, new AnimationCurve(new Keyframe(0, 100)));
+            var stale = Send(
+                "clip_get_curve",
+                new JObject
+                {
+                    ["binding_id"] = id,
+                    ["offset"] = 1,
+                    ["page_size"] = 1,
+                    ["expected_revision"] = first["revision"],
+                },
+                clipPath
+            );
+            Assert.IsFalse(stale.Value<bool>("success"), "An off-page curve mutation still invalidates the complete revision.");
+            StringAssert.Contains("revision drifted", stale.ToString());
+        }
+
+        [Test]
+        public void MaximumNativeCurveDetailsArePagedSeparatelyFromPublicRevisionAdmission()
+        {
+            // The original dense public fixture exceeded its existing 2 MiB revision limit.
+            // Exercise the native detail reader separately; keep an admitted end-to-end
+            // fixture above, and retain the existing public revision bound unchanged.
+            var keys = Enumerable.Range(0, 16384).Select(i => new Keyframe(i, i % 11)).ToArray();
+            AnimationUtility.SetEditorCurve(clip, x, new AnimationCurve(keys));
+            var assembly = typeof(ManageAnimation).Assembly;
+            var type = assembly.GetType("MCPForUnity.Editor.Tools.Animation.ClipRoundTrip");
+            var bindingType = type.GetNestedType("Binding", BindingFlags.NonPublic);
+            var binding = Activator.CreateInstance(bindingType, true);
+            bindingType.GetField("Value", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(binding, x);
+            var reader = type.GetMethod("Read", BindingFlags.Static | BindingFlags.NonPublic);
+            Func<JObject> read = () =>
+            {
+                var request = new JObject { ["pageSize"] = 1 };
+                object response;
+                if (reader.GetParameters().Length == 4)
+                    response = reader.Invoke(null, new object[] { clip, binding, request, "detail-fixture" });
+                else
+                {
+                    var rows = (JArray)reader.Invoke(null, new object[] { clip, binding });
+                    var page = assembly
+                        .GetType("MCPForUnity.Editor.Tools.Animation.AnimationAssetAccess")
+                        .GetMethod("Page", BindingFlags.Static | BindingFlags.NonPublic);
+                    response = page.Invoke(null, new object[] { rows, request, "detail-fixture", "keys" });
+                }
+                return Data(JObject.FromObject(response));
+            };
+            var first = read();
+            Assert.AreEqual(16384, first.Value<int>("total"));
+            Assert.AreEqual(1, first["keys"].Count());
+            MeasurePage("float_keys_16384_page_1_native_details_only", read);
+        }
+
+        [Test]
+        public void ConcatenatedCurvePagesMatchEveryNativeKeyAndTangent()
+        {
+            var keys = Enumerable
+                .Range(0, 257)
+                .Select(i => new Keyframe(i, i % 7, .25f, -.5f)
+                {
+                    inWeight = .2f,
+                    outWeight = .4f,
+                    weightedMode = WeightedMode.Both,
+                })
+                .ToArray();
+            var curve = new AnimationCurve(keys);
+            for (int i = 0; i < curve.length; i++)
+            {
+                AnimationUtility.SetKeyBroken(curve, i, true);
+                AnimationUtility.SetKeyLeftTangentMode(curve, i, AnimationUtility.TangentMode.Free);
+                AnimationUtility.SetKeyRightTangentMode(curve, i, AnimationUtility.TangentMode.Free);
+            }
+            AnimationUtility.SetEditorCurve(clip, x, curve);
+            AssetDatabase.SaveAssets();
+            string id = Binding(x.propertyName).Value<string>("binding_id");
+            var all = new JArray();
+            string revision = null;
+            for (int offset = 0; offset < curve.length; offset += 19)
+            {
+                var properties = new JObject
+                {
+                    ["binding_id"] = id,
+                    ["offset"] = offset,
+                    ["page_size"] = 19,
+                };
+                if (revision != null)
+                    properties["expected_revision"] = revision;
+                var page = Data(Send("clip_get_curve", properties, clipPath));
+                revision = page.Value<string>("revision");
+                foreach (var row in page["keys"])
+                    all.Add(row.DeepClone());
+            }
+            var native = AnimationUtility.GetEditorCurve(clip, x);
+            Assert.AreEqual(native.length, all.Count);
+            for (int i = 0; i < native.length; i++)
+            {
+                var key = native[i];
+                Assert.AreEqual(key.time, all[i].Value<float>("time"));
+                Assert.AreEqual(key.value, all[i].Value<float>("value"));
+                Assert.AreEqual(key.inTangent, all[i].Value<float>("in_tangent"));
+                Assert.AreEqual(key.outTangent, all[i].Value<float>("out_tangent"));
+                Assert.AreEqual(key.inWeight, all[i].Value<float>("in_weight"));
+                Assert.AreEqual(key.outWeight, all[i].Value<float>("out_weight"));
+                Assert.AreEqual((int)key.weightedMode, all[i].Value<int>("weighted_mode"));
+                Assert.AreEqual(AnimationUtility.GetKeyBroken(native, i), all[i].Value<bool>("broken"));
+                Assert.AreEqual((int)AnimationUtility.GetKeyLeftTangentMode(native, i), all[i].Value<int>("left_tangent_mode"));
+                Assert.AreEqual((int)AnimationUtility.GetKeyRightTangentMode(native, i), all[i].Value<int>("right_tangent_mode"));
+            }
+        }
+
+        [Test]
+        public void LargeControllerOneEntryPagePreservesCompleteGraphRevision()
+        {
+            var controller = AnimatorController.CreateAnimatorControllerAtPath(folder + "/Large.controller");
+            var machine = controller.layers[0].stateMachine;
+            AnimatorState previous = null;
+            for (int i = 0; i < 768; i++)
+            {
+                var state = machine.AddState("State" + i);
+                if (previous != null)
+                    previous.AddTransition(state);
+                previous = state;
+            }
+            AssetDatabase.SaveAssets();
+            string path = AssetDatabase.GetAssetPath(controller);
+            Func<JObject> read = () => Data(Send("controller_get_graph", new JObject { ["page_size"] = 1 }, controllerPath: path));
+            var first = read();
+            Assert.AreEqual(1536, first.Value<int>("total"));
+            Assert.AreEqual(1, first["entries"].Count());
+            MeasurePage("controller_entries_1536_page_1", read);
+            previous.speed = 2;
+            var stale = Send(
+                "controller_get_graph",
+                new JObject
+                {
+                    ["offset"] = 1,
+                    ["page_size"] = 1,
+                    ["expected_revision"] = first["revision"],
+                },
+                controllerPath: path
+            );
+            Assert.IsFalse(stale.Value<bool>("success"));
         }
 
         [Test]
@@ -235,6 +533,41 @@ namespace MCPForUnityTests.Editor.Tools
 
         private JObject Graph(AnimatorController controller) =>
             Data(Send("controller_get_graph", new JObject { ["page_size"] = 100 }, controllerPath: AssetDatabase.GetAssetPath(controller)));
+
+        [Test]
+        public void ControllerConcatenatedPagesMatchCompleteNestedGraph()
+        {
+            var controller = Controller(out _, out _, out _, out _, out _);
+            var complete = Graph(controller);
+            var joined = new JArray();
+            string path = AssetDatabase.GetAssetPath(controller);
+            for (int offset = 0; offset < complete.Value<int>("total"); offset += 2)
+            {
+                var page = Data(
+                    Send(
+                        "controller_get_graph",
+                        new JObject
+                        {
+                            ["offset"] = offset,
+                            ["page_size"] = 2,
+                            ["expected_revision"] = complete["revision"],
+                        },
+                        controllerPath: path
+                    )
+                );
+                foreach (var row in page["entries"])
+                    joined.Add(row.DeepClone());
+            }
+            Assert.IsTrue(JToken.DeepEquals(complete["entries"], joined), "Every nested state, transition detail and ordering survives concatenation.");
+            Assert.IsFalse(
+                Send(
+                        "controller_get_graph",
+                        new JObject { ["offset"] = complete.Value<int>("total") + 1, ["expected_revision"] = complete["revision"] },
+                        controllerPath: path
+                    )
+                    .Value<bool>("success")
+            );
+        }
 
         [Test]
         public void ExactNestedTransitionModifyDeleteAndUndo_PreservesSimilarlyNamedGraph()
