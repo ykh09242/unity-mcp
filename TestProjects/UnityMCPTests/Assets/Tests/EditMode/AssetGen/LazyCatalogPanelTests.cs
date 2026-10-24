@@ -6,11 +6,13 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Windows.Components.AssetGen;
+using MCPForUnity.Editor.Windows.Components.Tools;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -42,6 +44,297 @@ namespace MCPForUnityTests.Editor.AssetGen
             router;
         private string directory;
         private object priorStore;
+
+        private sealed class MemorySettings : McpAssetGenSection.ISettings
+        {
+            public string DefaultFormat { get; set; } = "glb";
+            public string OutputRoot { get; set; } = "Assets/Generated";
+            public bool AutoNormalize { get; set; } = true;
+            private readonly Dictionary<string, string> models = new();
+            private readonly Dictionary<string, bool> enabled = new();
+
+            public bool IsProviderEnabled(string id) => enabled.TryGetValue(id, out bool value) && value;
+
+            public void SetProviderEnabled(string id, bool value) => enabled[id] = value;
+
+            public string GetSelectedModel(string kind, string provider) => models.TryGetValue(kind + "/" + provider, out string value) ? value : "";
+
+            public void SetSelectedModel(string kind, string provider, string value) => models[kind + "/" + provider] = value;
+        }
+
+        private static VisualElement ProviderRoot()
+        {
+            var root = new VisualElement();
+            root.Add(new VisualElement { name = "assetgen-providers-container" });
+            root.Add(new TextField { name = "assetgen-output-root" });
+            root.Add(new Label { name = "assetgen-output-validation" });
+            root.Add(new Label { name = "assetgen-output-effective" });
+            return root;
+        }
+
+        private sealed class AttachedProviderRoot : IDisposable
+        {
+            private readonly CategoryWindow window;
+
+            internal AttachedProviderRoot(VisualElement root)
+            {
+                window = ScriptableObject.CreateInstance<CategoryWindow>();
+                window.ShowUtility();
+                window.rootVisualElement.Add(root);
+                Assert.IsNotNull(root.panel, "Field edits must dispatch through a real attached UI Toolkit panel.");
+            }
+
+            public void Dispose()
+            {
+                window.rootVisualElement.Clear();
+                window.Close();
+            }
+        }
+
+        [TestCase("Generated")]
+        [TestCase("../outside")]
+        [TestCase("Assets/../outside")]
+        public void InvalidOutputDraftIsRetainedWithoutChangingSavedDestination(string draft)
+        {
+            var settings = new MemorySettings { OutputRoot = "Assets/SyntheticOutput" };
+            var root = ProviderRoot();
+            using var attached = new AttachedProviderRoot(root);
+            var section = new McpAssetGenSection(root, settings);
+            var field = root.Q<TextField>("assetgen-output-root");
+            field.value = draft;
+            // Invoke the exact commit method used by blur/Enter; a manually pooled FocusOutEvent has no focus-controller state.
+            typeof(McpAssetGenSection).GetMethod("CommitOutputRoot", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(section, null);
+            section.Refresh();
+            Assert.AreEqual(draft, field.value);
+            Assert.AreEqual("Assets/SyntheticOutput", settings.OutputRoot);
+            StringAssert.Contains("under Assets", root.Q<Label>("assetgen-output-validation").text);
+            StringAssert.Contains(settings.OutputRoot, root.Q<Label>("assetgen-output-effective").text);
+        }
+
+        [Test]
+        public void ValidOutputDraftNormalizesAtCommitAndShowsEffectiveDestination()
+        {
+            var settings = new MemorySettings();
+            var root = ProviderRoot();
+            using var attached = new AttachedProviderRoot(root);
+            var section = new McpAssetGenSection(root, settings);
+            var field = root.Q<TextField>("assetgen-output-root");
+            field.value = " Assets\\SyntheticOutput/Models/.. ";
+            Assert.AreEqual("Assets/Generated", settings.OutputRoot, "Typing is only a draft.");
+            // Invoke the exact commit method used by blur/Enter; a manually pooled FocusOutEvent has no focus-controller state.
+            typeof(McpAssetGenSection).GetMethod("CommitOutputRoot", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(section, null);
+            Assert.AreEqual("Assets/SyntheticOutput", settings.OutputRoot);
+            Assert.AreEqual(settings.OutputRoot, field.value);
+            StringAssert.Contains(settings.OutputRoot, root.Q<Label>("assetgen-output-effective").text);
+            Assert.IsEmpty(root.Q<Label>("assetgen-output-validation").text);
+        }
+
+        [Test]
+        public void ZeroMatchesKeepsCurrentSelectionSeparateFromSearchResults()
+        {
+            var settings = new MemorySettings();
+            string id = AssetGenModelCatalog.DefaultModelId("fal", "image");
+            settings.SetSelectedModel("image", "fal", id);
+            var root = ProviderRoot();
+            using var attached = new AttachedProviderRoot(root);
+            new McpAssetGenSection(root, settings);
+            root.Q<TextField>("model-search-image-fal").value = "no synthetic model matches this query";
+            var row = root.Q("provider-model-image-fal");
+            StringAssert.Contains(id, row.Q<Label>("model-current-image-fal").text);
+            StringAssert.Contains("No models found", row.Q<Label>("model-empty-image-fal").text);
+            Assert.IsNull(row.Q<DropdownField>());
+            Assert.AreEqual(id, settings.GetSelectedModel("image", "fal"));
+            Assert.IsEmpty(fal.RecordedRequests);
+            Assert.IsEmpty(router.RecordedRequests);
+        }
+
+        [Test]
+        public void LargeCatalogSearchReachesLastModelWithoutExtraLoadsOrUnboundedControls()
+        {
+            var models = new JArray(
+                Enumerable
+                    .Range(0, 8192)
+                    .Select(index => new JObject
+                    {
+                        ["id"] = "synthetic/image-" + index.ToString("D4"),
+                        ["name"] = "Synthetic image " + index,
+                        ["architecture"] = new JObject { ["input_modalities"] = new JArray("text"), ["output_modalities"] = new JArray("image") },
+                        ["supported_parameters"] = new JObject
+                        {
+                            ["output_format"] = new JObject { ["type"] = "enum", ["values"] = new JArray("png") },
+                        },
+                    })
+            );
+            router.Handler = _ => new HttpResult { Status = 200, Text = new JObject { ["data"] = models }.ToString() };
+            Assert.IsTrue(OpenRouterModelCatalog.RefreshAsync().GetAwaiter().GetResult());
+            var settings = new MemorySettings();
+            settings.SetSelectedModel("image", "openrouter", "synthetic/image-8191");
+            var root = ProviderRoot();
+            using var attached = new AttachedProviderRoot(root);
+            var section = new McpAssetGenSection(root, settings);
+            var row = root.Q("provider-model-image-openrouter");
+            Assert.AreEqual(McpAssetGenSection.MenuLimit + 1, row.Q<DropdownField>().choices.Count);
+            root.Q<TextField>("model-search-image-openrouter").value = "image-8191";
+            Assert.AreEqual(1, row.Q<DropdownField>().choices.Count);
+            StringAssert.Contains("image-8191", row.Q<DropdownField>().value);
+            int controls = row.Query<VisualElement>().ToList().Count;
+            section.Refresh();
+            Assert.AreEqual(controls, row.Query<VisualElement>().ToList().Count);
+            Assert.AreEqual(1, router.RecordedRequests.Count, "Rendering, search and refresh use the cached catalog.");
+            Assert.IsEmpty(fal.RecordedRequests);
+        }
+
+        [UnityTest]
+        public IEnumerator DelayedVerificationSurvivesOtherProviderFocusAndSameSearchRebuild()
+        {
+            var delayed = new DelayedCatalog();
+            OpenRouterModelCatalog.TransportOverrideForTests = delayed;
+            var settings = new MemorySettings();
+            var picked = AssetGenModelCatalog.ForProvider("openrouter", "image").First();
+            settings.SetSelectedModel(picked.Kind, picked.Provider, picked.Id);
+            var root = ProviderRoot();
+            var section = new McpAssetGenSection(root, settings);
+            var oldLabel = root.Q<Label>("model-meta-image-openrouter");
+            var verify = (Task)
+                typeof(McpAssetGenSection)
+                    .GetMethod("VerifySelection", BindingFlags.NonPublic | BindingFlags.Instance)
+                    .Invoke(section, new object[] { picked });
+            (
+                (Task)
+                    typeof(McpAssetGenSection)
+                        .GetMethod("SelectCatalogAsync", BindingFlags.NonPublic | BindingFlags.Instance)
+                        .Invoke(section, new object[] { "model", "tripo" })
+            )
+                .GetAwaiter()
+                .GetResult();
+            root.Q<TextField>("model-search-image-openrouter").value = "Gemini";
+            var currentLabel = root.Q<Label>("model-meta-image-openrouter");
+            Assert.AreNotSame(oldLabel, currentLabel);
+            StringAssert.Contains("Checking compatibility", currentLabel.text);
+            delayed.Response.SetResult(new HttpResult { Status = 500, Text = "synthetic failure" });
+            while (!verify.IsCompleted)
+                yield return null;
+            verify.GetAwaiter().GetResult();
+            StringAssert.Contains("Compatibility check failed", root.Q<Label>("model-meta-image-openrouter").text);
+            section.Refresh();
+            StringAssert.Contains("Compatibility check failed", root.Q<Label>("model-meta-image-openrouter").text);
+        }
+
+        [UnityTest]
+        public IEnumerator LateVerificationCannotOverwriteNewModelSelection()
+        {
+            var delayed = new DelayedCatalog();
+            FalModelCatalog.TransportOverrideForTests = delayed;
+            var settings = new MemorySettings();
+            var models = AssetGenModelCatalog.ForProvider("fal", "image");
+            var picked = models[0];
+            settings.SetSelectedModel("image", "fal", picked.Id);
+            var root = ProviderRoot();
+            var section = new McpAssetGenSection(root, settings);
+            var verify = (Task)
+                typeof(McpAssetGenSection)
+                    .GetMethod("VerifySelection", BindingFlags.NonPublic | BindingFlags.Instance)
+                    .Invoke(section, new object[] { picked });
+            settings.SetSelectedModel("image", "fal", models[1].Id);
+            section.Refresh();
+            string current = root.Q<Label>("model-meta-image-fal").text;
+            delayed.Response.SetResult(new HttpResult { Status = 500, Text = "synthetic failure" });
+            while (!verify.IsCompleted)
+                yield return null;
+            verify.GetAwaiter().GetResult();
+            Assert.AreEqual(current, root.Q<Label>("model-meta-image-fal").text);
+        }
+
+        [UnityTest]
+        public IEnumerator DetachedVerificationCannotRestoreFailureAfterReattach()
+        {
+            var window = ScriptableObject.CreateInstance<CategoryWindow>();
+            try
+            {
+                window.ShowUtility();
+                var delayed = new DelayedCatalog();
+                OpenRouterModelCatalog.TransportOverrideForTests = delayed;
+                var settings = new MemorySettings();
+                var picked = AssetGenModelCatalog.ForProvider("openrouter", "image").First();
+                settings.SetSelectedModel(picked.Kind, picked.Provider, picked.Id);
+                var root = ProviderRoot();
+                window.rootVisualElement.Add(root);
+                var section = new McpAssetGenSection(root, settings);
+                var verify = (Task)
+                    typeof(McpAssetGenSection)
+                        .GetMethod("VerifySelection", BindingFlags.NonPublic | BindingFlags.Instance)
+                        .Invoke(section, new object[] { picked });
+                Assert.IsNotNull(root.panel);
+                root.RemoveFromHierarchy();
+                Assert.IsNull(root.panel);
+                delayed.Response.SetResult(new HttpResult { Status = 500, Text = "synthetic failure" });
+                while (!verify.IsCompleted)
+                    yield return null;
+                verify.GetAwaiter().GetResult();
+                window.rootVisualElement.Add(root);
+                string current = root.Q<Label>("model-meta-image-openrouter").text;
+                StringAssert.DoesNotContain("Compatibility check failed", current);
+                StringAssert.DoesNotContain("Checking compatibility", current);
+            }
+            finally
+            {
+                window.Close();
+            }
+        }
+
+        [Test]
+        public void BlenderConsentFailureShowsHumanRecoveryAndOnlyRequestsSettingsNavigation()
+        {
+            var root = new VisualElement();
+            root.Add(new Label { name = "blender-action-status" });
+            root.Add(new Label { name = "blender-action-details" });
+            root.Add(new Button { name = "blender-consent-settings" });
+            var panel = new McpBlenderBridgePanel(root, false);
+            int requests = 0;
+            panel.OnConsentSettingsRequested += () => requests++;
+            string explanation = "Enable blender_bridge explicitly before importing or synchronizing addons.";
+            var response = JObject.FromObject(new ErrorResponse("blender_consent_required", explanation));
+            panel.PresentActionResult(response);
+            StringAssert.Contains(explanation, root.Q<Label>("blender-action-status").text);
+            StringAssert.Contains("Open Tools", root.Q<Label>("blender-action-status").text);
+            Assert.IsFalse(root.Q<Button>("blender-consent-settings").ClassListContains("catalog-hidden"));
+            typeof(Clickable)
+                .GetMethod("Invoke", BindingFlags.Instance | BindingFlags.NonPublic)
+                .Invoke(root.Q<Button>("blender-consent-settings").clickable, new object[] { null });
+            Assert.AreEqual(1, requests);
+            Assert.AreEqual("blender_consent_required", response.Value<string>("code"));
+            panel.PresentActionResult(JObject.FromObject(new SuccessResponse("Synthetic success.")));
+            Assert.IsTrue(root.Q<Button>("blender-consent-settings").ClassListContains("catalog-hidden"));
+            Assert.IsEmpty(root.Q<Label>("blender-action-details").text);
+        }
+
+        [Test]
+        public void BlenderConsentNavigationRevealsRowWithoutChangingFiltersOrGrantingConsent()
+        {
+            var root = new VisualElement();
+            var search = new TextField { name = "tools-search", value = "unrelated query" };
+            root.Add(search);
+            var category = new Foldout { text = "Asset Generation", value = false };
+            category.AddToClassList("catalog-hidden");
+            root.Add(category);
+            var row = new VisualElement();
+            row.AddToClassList("catalog-hidden");
+            category.Add(row);
+            int grants = 0;
+            row.Add(new Button(() => grants++) { name = "consent-change-blender_bridge" });
+            var section = new McpToolsSection(root, null, false);
+            var rows =
+                (Dictionary<string, VisualElement>)
+                    typeof(McpToolsSection).GetField("toolRowMap", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(section);
+            rows.Add("blender_bridge", row);
+            section.RevealToolConsent("blender_bridge");
+            Assert.AreEqual("unrelated query", search.value);
+            Assert.IsFalse(row.ClassListContains("catalog-hidden"));
+            Assert.IsFalse(category.ClassListContains("catalog-hidden"));
+            Assert.IsTrue(category.value);
+            Assert.AreEqual(0, grants);
+            Assert.IsNotNull(row.Q<Label>("consent-navigation-hint"));
+        }
 
         [SetUp]
         public void SetUp()
@@ -82,7 +375,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                     .CloneTree();
                 root.Q("blender-bridge-panel").RemoveFromHierarchy();
                 window.rootVisualElement.Add(root);
-                var section = new McpAssetGenSection(root);
+                var section = new McpAssetGenSection(root, new MemorySettings());
                 var category = root.Q<Foldout>(className: "provider-category");
                 category.value = false;
                 section.Refresh();
@@ -109,7 +402,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var root = new VisualElement();
             root.Add(new Button { name = "assetgen-refresh" });
             root.Add(new Label { name = "assetgen-refresh-status" });
-            return new McpAssetGenSection(root);
+            return new McpAssetGenSection(root, new MemorySettings());
         }
 
         [Test]
@@ -200,7 +493,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 scroll.style.height = 720;
                 scroll.Add(content);
                 root.Add(scroll);
-                new McpAssetGenSection(content);
+                new McpAssetGenSection(content, new MemorySettings());
                 var request = new JObject
                 {
                     ["action"] = "render_ui",

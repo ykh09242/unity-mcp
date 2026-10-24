@@ -221,7 +221,7 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
         {
             MCPServiceLocator.ResourceDiscovery.SetResourceEnabled(resource.Name, enabled);
             if (applyStatusLabel != null)
-                applyStatusLabel.text = "Saved locally; server listing not confirmed. Refresh your client resource list if needed.";
+                applyStatusLabel.text = "Editor access saved locally · client listing unconfirmed.";
 
             if (updateSummary)
             {
