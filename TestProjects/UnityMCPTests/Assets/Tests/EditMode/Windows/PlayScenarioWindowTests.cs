@@ -163,6 +163,197 @@ namespace MCPForUnityTests.Editor.Windows
         }
 
         [Test]
+        public void FourWorkflowStagesPreserveDraftAndRetainedResultsAcrossNavigationAndWidths()
+        {
+            ConfigureTemplate("workflow-draft");
+            string expected = JObject.FromObject(window.Draft).ToString(Formatting.None);
+            var originalResults = Field<ScrollView>("runResults");
+            string[] stages = { "library", "edit", "run", "results" };
+            string[] titles = { "Scenarios", "Edit steps", "Run", "Results" };
+            for (int index = 0; index < stages.Length; index++)
+            {
+                var button = Field<Button>("scenario-tab-" + stages[index]);
+                Assert.IsNotNull(button, "Every viewport needs the same four-stage workflow.");
+                Assert.AreEqual(titles[index], button.text);
+            }
+            foreach (float width in new[] { 1200f, 800f, 500f })
+            {
+                typeof(PlayScenarioWindow).GetMethod("UpdateScenarioLayout", PrivateInstance).Invoke(window, new object[] { width, 340f });
+                foreach (string stage in stages)
+                {
+                    Click("scenario-tab-" + stage);
+                    var active = window.rootVisualElement.Query<VisualElement>(className: "scenario-pane-active").ToList();
+                    Assert.AreEqual(1, active.Count, "Show one task-focused workspace at every width.");
+                    Assert.IsTrue(active[0].ClassListContains("scenario-" + stage));
+                    Assert.AreSame(originalResults, Field<ScrollView>("runResults"), "Navigation must retain report controls.");
+                    Assert.AreEqual(expected, JObject.FromObject(window.Draft).ToString(Formatting.None));
+                    Assert.IsTrue(window.hasUnsavedChanges);
+                }
+            }
+            window.CreateGUI();
+            Assert.IsTrue(Field<Button>("scenario-tab-results").ClassListContains("scenario-tab-selected"));
+            Assert.AreEqual(expected, JObject.FromObject(window.Draft).ToString(Formatting.None));
+        }
+
+        [Test]
+        public void StepActionLabelsAreReadableWhileTheStoredProtocolValuesStayUnchanged()
+        {
+            var action = Field<PopupField<string>>("stepAction0");
+            Assert.AreEqual("load_scene", action.value);
+            Assert.AreEqual("Load a scene", action.formatSelectedValueCallback?.Invoke(action.value));
+            Assert.AreEqual("Load a scene", action.formatListItemCallback?.Invoke(action.value));
+            CollectionAssert.AreEqual(new[] { "load_scene", "click_ui", "wait_scene", "wait_object", "reset_state", "wait_state", "input" }, action.choices);
+            action.value = "wait_state";
+            Assert.AreEqual("wait_state", window.Draft.Steps[0].Action);
+            Assert.AreEqual("wait_state", (string)JObject.FromObject(window.Draft)["steps"][0]["action"]);
+            action = Field<PopupField<string>>("stepAction0");
+            Assert.AreEqual("Wait for a state value", action.formatSelectedValueCallback?.Invoke(action.value));
+            var evidence = Field<Foldout>("stepEvidence0");
+            Field<Toggle>("stepPerformanceEnabled0").value = true;
+            StringAssert.Contains("Configured", evidence.text);
+            Field<Toggle>("stepPerformanceEnabled0").value = false;
+            StringAssert.DoesNotContain("Configured", evidence.text);
+            action.value = "wait_object";
+            var conditions = Field<Foldout>("stepConditions0");
+            Field<Toggle>("stepCount0Enabled").value = true;
+            StringAssert.Contains("Configured", conditions.text);
+            Field<Toggle>("stepCount0Enabled").value = false;
+            StringAssert.DoesNotContain("Configured", conditions.text);
+        }
+
+        [Test]
+        public void SuccessfulRunOpensResultsAndKeepsItsIdentityWhenAnotherDraftIsEdited()
+        {
+            ConfigureTemplate("running-flow");
+            window.StartRun = (_, __, ___, id) =>
+            {
+                var response = (SuccessResponse)Response(id);
+                ((JObject)response.Data)["scenario"]["name"] = "running-flow";
+                return response;
+            };
+            window.CancelRun = id => Response(id, "cancelled");
+            var tools = Field<Foldout>("scenarioResultTools");
+            Assert.IsNotNull(tools);
+            tools.value = true;
+            var retained = Field<ScrollView>("runResults");
+            Click("runScenario");
+            Assert.IsFalse(tools.value, "A new run must reveal its current report rather than a previous optional evidence view.");
+            Assert.IsNotNull(Field<Button>("scenario-tab-results"));
+            Assert.IsTrue(Field<Button>("scenario-tab-results").ClassListContains("scenario-tab-selected"));
+            string runningJob = window.CurrentJobId;
+            var identity = Field<Label>("scenarioActiveRunLabel");
+            Assert.IsNotNull(identity);
+            StringAssert.Contains("running-flow", identity.text);
+            StringAssert.Contains(runningJob, identity.tooltip);
+            tools.value = true;
+            Click("scenario-tab-edit");
+            Click("scenario-tab-results");
+            Assert.IsTrue(tools.value, "Ordinary stage navigation preserves the user's optional view.");
+            Click("showScenarioResults");
+            Assert.IsFalse(tools.value);
+            Assert.AreSame(retained, Field<ScrollView>("runResults"));
+            Click("newScenario");
+            Field<TextField>("scenarioName").value = "another-draft";
+            Assert.AreEqual(runningJob, window.CurrentJobId);
+            StringAssert.Contains("running-flow", identity.text);
+            StringAssert.DoesNotContain("another-draft", identity.text);
+            Assert.IsTrue(Field<Button>("cancelScenario").enabledInHierarchy);
+            var strip = window.rootVisualElement.Q("scenarioActiveRun");
+            Assert.IsNotNull(strip);
+            Assert.IsTrue(strip.Contains(Field<Button>("cancelScenario")));
+            Assert.AreSame(window.rootVisualElement, strip.parent, "Cancellation must remain reachable outside the selected workspace.");
+            Click("cancelScenario");
+            Assert.IsFalse(window.IsPolling);
+        }
+
+        [Test]
+        public void ConfiguredOptionalStagesAndSettingsAdvertiseTheirContentOnReload()
+        {
+            ConfigureTemplate();
+            Click("addSetupStep");
+            Click("addCleanupStep");
+            Field<IntegerField>("pollInterval").value = 500;
+            window.CreateGUI();
+            var stages = Field<Foldout>("scenarioOptionalStages");
+            Assert.IsNotNull(stages);
+            StringAssert.Contains("Setup 1", stages.text);
+            StringAssert.Contains("Cleanup 1", stages.text);
+            Assert.IsFalse(stages.value, "Configured groups advertise their contents without expanding prose on a fresh screen.");
+            var options = Field<Foldout>("scenarioAdvancedOptions");
+            Assert.IsNotNull(options);
+            StringAssert.Contains("Configured", options.text);
+            Assert.IsFalse(options.value);
+            Assert.AreEqual(500, Field<IntegerField>("pollInterval").value);
+            var policies = Field<Foldout>("scenarioOptions");
+            Field<IntegerField>("completionStableMs").value = 500;
+            StringAssert.Contains("Configured", policies.text);
+            Field<IntegerField>("completionStableMs").value = 250;
+            StringAssert.DoesNotContain("Configured", policies.text);
+        }
+
+        [UnityTest]
+        public IEnumerator WorkflowChromeLeavesScrollableContentAtNarrowAndVeryShortDockedSizes()
+        {
+            // A floating test window needs an explicit override to emulate a docked viewport,
+            // because docked EditorWindows ignore the normal minSize setting.
+            window.minSize = new Vector2(100, 100);
+            foreach (
+                Vector2 size in new[] { new Vector2(1200, 800), new Vector2(800, 600), new Vector2(500, 340), new Vector2(1200, 180), new Vector2(1200, 139) }
+            )
+            {
+                window.position = new Rect(30, 50, size.x, size.y);
+                window.Repaint();
+                yield return WaitForWorkflowLayout(size);
+                Rect root = window.rootVisualElement.worldBound;
+                foreach (string stage in new[] { "library", "edit", "run", "results" })
+                {
+                    Button navigation = Field<Button>("scenario-tab-" + stage);
+                    Assert.IsNotNull(navigation);
+                    Assert.Greater(navigation.worldBound.height, 16, "The complete workflow must remain clickable.");
+                    Assert.LessOrEqual(navigation.worldBound.yMax, root.yMax + 1);
+                    Click("scenario-tab-" + stage);
+                    yield return WaitForWorkflowLayout(size);
+                    var active = window.rootVisualElement.Query<VisualElement>(className: "scenario-pane-active").ToList();
+                    Assert.AreEqual(1, active.Count);
+                    ScrollView scroll =
+                        stage == "library" ? Field<ScrollView>("savedScenarios")
+                        : stage == "edit" ? Field<ScrollView>("scenarioEditorScroll")
+                        : stage == "run" ? Field<ScrollView>("scenarioRunScroll")
+                        : Field<ScrollView>("runResults");
+                    Assert.IsNotNull(scroll);
+                    Assert.Greater(scroll.contentViewport.worldBound.height, 8, "Short viewports still need a real, usable scrolling body.");
+                    Assert.GreaterOrEqual(scroll.worldBound.yMin, navigation.worldBound.yMax - 1);
+                    Assert.LessOrEqual(scroll.worldBound.yMax, root.yMax + 1);
+                }
+            }
+        }
+
+        private IEnumerator WaitForWorkflowLayout(Vector2 requestedSize)
+        {
+            Rect previous = default;
+            Rect previousViewport = default;
+            int stable = 0;
+            while (stable < 2)
+            {
+                yield return null;
+                Rect current = window.rootVisualElement.layout;
+                var active = window.rootVisualElement.Query<VisualElement>(className: "scenario-pane-active").First();
+                ScrollView scroll = active?.Q<ScrollView>();
+                Rect viewport = scroll?.contentViewport.layout ?? default;
+                bool ready =
+                    current.width > 0
+                    && current.height > 0
+                    && Mathf.Abs(current.width - requestedSize.x) < 2
+                    && Mathf.Abs(current.height - requestedSize.y) < 2
+                    && viewport.width > 0
+                    && viewport.height > 0;
+                stable = ready && current == previous && viewport == previousViewport ? stable + 1 : 0;
+                previous = current;
+                previousViewport = viewport;
+            }
+        }
+
+        [Test]
         public void TemplateRequiresScenePathsAndGuiRecreationDoesNotDuplicateControls()
         {
             Assert.AreEqual(4, window.Draft.Steps.Count);
