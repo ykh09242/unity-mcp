@@ -79,11 +79,36 @@ def local_server_process(
         ) as process:
             try:
                 with httpx.Client(timeout=0.5, trust_env=False) as client:
-                    deadline = time.monotonic() + 20
+                    deadline = time.monotonic() + watchdog_timeout(20)
                     while time.monotonic() < deadline:
                         assert process.poll() is None, "Local server exited before readiness"
                         try:
-                            if client.get(f"{url}/health").status_code == 200:
+                            token = ""
+                            if validation_url is None:
+                                try:
+                                    token = token_path.read_text(encoding="utf-8").strip()
+                                except FileNotFoundError:
+                                    pass  # The owned launch has not published its credential yet.
+                            # The free-port handoff can race another listener. Public
+                            # health alone cannot prove that this is our local child.
+                            if (
+                                (validation_url is not None or token)
+                                and client.get(f"{url}/health").status_code == 200
+                                and (
+                                    validation_url is not None
+                                    or (
+                                        client.get(f"{url}/api/instances").status_code == 401
+                                        and client.get(
+                                            f"{url}/api/instances",
+                                            headers={LOCAL_AUTH_HEADER: token},
+                                        ).status_code
+                                        == 200
+                                    )
+                                )
+                            ):
+                                assert process.poll() is None, (
+                                    "Local server exited before readiness"
+                                )
                                 break
                         except httpx.TransportError:
                             pass
@@ -91,9 +116,6 @@ def local_server_process(
                         time.sleep(0.05)
                     else:
                         pytest.fail("Local server did not become ready")
-                token = (
-                    token_path.read_text(encoding="utf-8").strip() if validation_url is None else ""
-                )
                 yield url, port, token
             finally:
                 process.terminate()
@@ -185,3 +207,105 @@ async def test_native_clients_work_and_browser_requests_fail_on_real_server(
                     "success": True,
                     "data": "wire-response",
                 }
+
+
+@pytest.fixture
+def controlled_startup(tmp_path, monkeypatch):
+    """Expose readiness authority transitions without sockets or child processes."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    state = SimpleNamespace(
+        owned=False, exit_code=None, requests=[], token="owned-test-launch-token"
+    )
+    process = MagicMock()
+    process.__enter__.return_value = process
+    process.__exit__.return_value = False
+    process.poll.side_effect = lambda: state.exit_code
+    monkeypatch.setattr(subprocess, "Popen", lambda *_, **__: process)
+    actual_client = httpx.Client
+
+    def respond(request):
+        state.requests.append(request)
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "healthy"})
+        if request.url.path == "/api/instances":
+            accepted = state.owned and request.headers.get(LOCAL_AUTH_HEADER) == state.token
+            return httpx.Response(200 if accepted else 401, json={"success": accepted})
+        raise AssertionError(f"Unexpected readiness endpoint: {request.url.path}")
+
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda **kwargs: actual_client(transport=httpx.MockTransport(respond), **kwargs),
+    )
+
+    def publish_owner(_):
+        (tmp_path / "launch-token").write_text(state.token, encoding="utf-8")
+        state.owned = True
+
+    monkeypatch.setattr(time, "sleep", publish_owner)
+    return state, process
+
+
+def test_local_readiness_waits_for_launch_credential_before_trusting_health(
+    tmp_path, controlled_startup
+):
+    state, process = controlled_startup
+    with local_server_process(tmp_path) as (_, _, token):
+        assert state.owned, "Public health from an unowned listener certified readiness"
+        assert token == state.token
+        assert any(request.url.path == "/api/instances" for request in state.requests)
+    process.terminate.assert_called_once()
+    process.wait.assert_called_once()
+
+
+def test_local_readiness_rejects_foreign_listener_until_owned_token_is_accepted(
+    tmp_path, controlled_startup
+):
+    state, process = controlled_startup
+    (tmp_path / "launch-token").write_text(state.token, encoding="utf-8")
+    with local_server_process(tmp_path):
+        assert state.owned, "Foreign public health bypassed the launch-token ownership probe"
+        authenticated = [
+            request
+            for request in state.requests
+            if request.url.path == "/api/instances" and LOCAL_AUTH_HEADER in request.headers
+        ]
+        assert len(authenticated) == 2
+        assert all(
+            request.headers.get(LOCAL_AUTH_HEADER) == state.token for request in authenticated
+        )
+    process.terminate.assert_called_once()
+    process.wait.assert_called_once()
+
+
+def test_local_readiness_does_not_yield_after_child_exits(tmp_path, controlled_startup):
+    state, process = controlled_startup
+    state.owned = True
+    (tmp_path / "launch-token").write_text(state.token, encoding="utf-8")
+
+    def exit_after_health():
+        if state.requests:
+            state.exit_code = 1
+        return state.exit_code
+
+    process.poll.side_effect = exit_after_health
+    with pytest.raises(AssertionError, match="exited before readiness"):
+        with local_server_process(tmp_path):
+            pytest.fail("Readiness yielded an exited child")
+    process.wait.assert_called_once()
+
+
+def test_remote_readiness_does_not_require_a_local_launch_token(tmp_path, controlled_startup):
+    state, process = controlled_startup
+    with local_server_process(tmp_path, validation_url="https://owned.invalid/validate") as (
+        _,
+        _,
+        token,
+    ):
+        assert token == ""
+        assert not (tmp_path / "launch-token").exists()
+        assert [request.url.path for request in state.requests] == ["/health"]
+    process.terminate.assert_called_once()
+    process.wait.assert_called_once()
