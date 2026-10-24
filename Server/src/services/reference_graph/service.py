@@ -778,6 +778,28 @@ class ReferenceGraphService:
     async def _execute(
         self, entry: Entry, editor: dict, action: str, options: dict, fields: set
     ) -> dict:
+        created_queries = []
+        try:
+            return await self._execute_owned(
+                entry, editor, action, options, fields, created_queries
+            )
+        except BaseException:
+            # A failed first delivery leaves no ID with which the client can
+            # release its scratch. Continuations remain replayable. drained_thread
+            # joins the actual producer before this marker, including cancellation.
+            for queries, identity in created_queries:
+                await drained_thread(queries.abandon, identity)
+            raise
+
+    async def _execute_owned(
+        self,
+        entry: Entry,
+        editor: dict,
+        action: str,
+        options: dict,
+        fields: set,
+        created_queries: list,
+    ) -> dict:
         workspace, store = entry.workspace, entry.workspace.store
         if action == "import_config":
             from services.reference_graph.operations import import_action
@@ -905,7 +927,14 @@ class ReferenceGraphService:
             elif action == "delete_snapshot":
                 data = {"deleted": await drained_thread(queries.delete_snapshot, options["id"])}
             else:
-                data = await drained_thread(getattr(queries, action), **arguments)
+
+                def produce_page():
+                    result = getattr(queries, action)(**arguments)
+                    if action in {"impact", "path", "snapshot"} and not options.get("cursor"):
+                        created_queries.append((queries, result["query_id"]))
+                    return result
+
+                data = await drained_thread(produce_page)
             if action in {"explain", "impact", "path", "snapshot", "diff"}:
                 external_changed = await drained_thread(self._validate_exploration, workspace, data)
         elif action == "declarations":
