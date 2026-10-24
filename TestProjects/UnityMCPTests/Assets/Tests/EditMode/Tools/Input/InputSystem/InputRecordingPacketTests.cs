@@ -2,12 +2,14 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Editor.Tools.Input;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using Unity.Profiling;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
@@ -297,6 +299,156 @@ namespace MCPForUnityTests.EditMode.Tools.Input
                 CollectionAssert.AreEqual(new[] { "press", "press", "press", "release", "release", "release" }, events.Select(x => (string)x["state"]));
                 Assert.That(events.All(x => x["position"][0].Value<float>() == 10), Is.True);
             }
+        }
+
+        [Test, Explicit("Run unchanged against baseline and candidate in the same warm native Editor; compare allocation, latency and output checksum.")]
+        public void ProfilePacketsAt125And1000Hz()
+        {
+            MethodInfo allocated = typeof(GC).GetMethod("GetAllocatedBytesForCurrentThread", Type.EmptyTypes);
+            var allocatedBytes = allocated == null ? (Func<long>)(() => 0L) : (Func<long>)allocated.CreateDelegate(typeof(Func<long>));
+            long beforeCalibration = allocatedBytes();
+            GC.KeepAlive(new byte[4096]);
+            bool bytesAvailable = allocatedBytes() - beforeCalibration >= 4096;
+            int calibrationEvents = CountAllocationEvents(() =>
+            {
+                for (int i = 0; i < 32; i++)
+                    GC.KeepAlive(new byte[1024]);
+            });
+            Assert.That(calibrationEvents, Is.GreaterThanOrEqualTo(32), "Native GC.Alloc recorder must observe the known allocations.");
+            TestContext.WriteLine(
+                "allocation_calibration "
+                    + new JObject
+                    {
+                        ["byte_counter_available"] = bytesAvailable,
+                        ["known_allocation_events"] = 32,
+                        ["recorded_allocation_events"] = calibrationEvents,
+                    }.ToString(Newtonsoft.Json.Formatting.None)
+            );
+            foreach (int rate in new[] { 125, 1000 })
+            foreach (string workload in new[] { "mouse-idle", "mouse-motion", "touch-idle", "touch-motion" })
+            {
+                session.Dispose();
+                long emitted = 0;
+                double checksum = 0;
+                session = new InputSystemScenarioRecordingBackend().Begin(
+                    (value, _) =>
+                    {
+                        emitted++;
+                        checksum += value["position"][0].Value<double>();
+                    },
+                    _ => { }
+                );
+                mousePacket = Handler<Mouse>("MouseEvent");
+                touchPacket = Handler<Touchscreen>("TouchEvent");
+                FieldInfo budget = session.GetType().GetField("eventsInUpdate", BindingFlags.Instance | BindingFlags.NonPublic);
+                bool touch = workload.StartsWith("touch", StringComparison.Ordinal);
+                bool motion = workload.EndsWith("motion", StringComparison.Ordinal);
+                InputDevice device = touch ? (InputDevice)screen : mouse;
+                using (StateEvent.From(device, out var packet))
+                {
+                    if (touch)
+                    {
+                        for (int contact = 0; contact < 5; contact++)
+                            screen
+                                .touches[contact]
+                                .WriteValueIntoEvent(
+                                    new TouchState
+                                    {
+                                        touchId = contact + 1,
+                                        phase = TouchPhase.Began,
+                                        position = new Vector2(10, 20),
+                                    },
+                                    packet
+                                );
+                        touchPacket(screen, packet);
+                        for (int contact = 0; contact < 5; contact++)
+                            screen.touches[contact].phase.WriteValueIntoEvent(TouchPhase.Moved, packet);
+                    }
+                    else
+                        mouse.position.WriteValueIntoEvent(new Vector2(10, 20), packet);
+                    void ObservePacket(int sequence)
+                    {
+                        Vector2 position = new Vector2(motion ? 10 + sequence % 2 : 10, 20);
+                        if (touch)
+                        {
+                            for (int contact = 0; contact < 5; contact++)
+                                screen.touches[contact].position.WriteValueIntoEvent(position, packet);
+                            touchPacket(screen, packet);
+                        }
+                        else
+                        {
+                            mouse.position.WriteValueIntoEvent(position, packet);
+                            mousePacket(mouse, packet);
+                        }
+                    }
+                    var samples = new List<double>();
+                    long bytes = 0;
+                    // Each sample models one second of 60 game updates. Resetting
+                    // the transition budget and measurement bookkeeping are untimed.
+                    for (int sample = -2; sample < 31; sample++)
+                    {
+                        long ticks = 0;
+                        long sampleBytes = 0;
+                        for (int update = 0; update < 60; update++)
+                        {
+                            budget.SetValue(session, 0);
+                            int count = (update + 1) * rate / 60 - update * rate / 60;
+                            long beforeBytes = allocatedBytes();
+                            long start = Stopwatch.GetTimestamp();
+                            for (int index = 0; index < count; index++)
+                                ObservePacket((sample + 2) * rate + update * 20 + index);
+                            ticks += Stopwatch.GetTimestamp() - start;
+                            sampleBytes += allocatedBytes() - beforeBytes;
+                        }
+                        if (sample >= 0)
+                        {
+                            samples.Add(ticks * 1000000d / Stopwatch.Frequency / rate);
+                            bytes += sampleBytes;
+                        }
+                    }
+                    // Profile allocation event counts separately so profiler
+                    // instrumentation cannot skew the latency comparison.
+                    long allocationEvents = 0;
+                    for (int update = 0; update < 60; update++)
+                    {
+                        budget.SetValue(session, 0);
+                        int count = (update + 1) * rate / 60 - update * rate / 60;
+                        int sequenceStart = 33 * rate + update * 20;
+                        allocationEvents += CountAllocationEvents(() =>
+                        {
+                            for (int index = 0; index < count; index++)
+                                ObservePacket(sequenceStart + index);
+                        });
+                    }
+                    samples.Sort();
+                    TestContext.WriteLine(
+                        new JObject
+                        {
+                            ["workload"] = workload,
+                            ["rate_hz"] = rate,
+                            ["contacts"] = touch ? 5 : 0,
+                            ["samples"] = samples.Count,
+                            ["bytes_per_packet"] = bytesAvailable ? new JValue(bytes / (31d * rate)) : JValue.CreateNull(),
+                            ["allocation_events_per_packet"] = allocationEvents / (double)rate,
+                            ["mean_us_per_packet"] = samples.Average(),
+                            ["p95_us_per_packet"] = samples[(int)Math.Ceiling(samples.Count * 0.95) - 1],
+                            ["emitted"] = emitted,
+                            ["position_checksum"] = checksum,
+                        }.ToString(Newtonsoft.Json.Formatting.None)
+                    );
+                }
+            }
+        }
+
+        private static int CountAllocationEvents(Action action)
+        {
+            using var recorder = new ProfilerRecorder(ProfilerCategory.Memory, "GC.Alloc", 32768, ProfilerRecorderOptions.CollectOnlyOnCurrentThread);
+            Assert.That(recorder.Valid, Is.True, "Native GC.Alloc instrumentation is unavailable.");
+            recorder.Start();
+            action();
+            recorder.Stop();
+            Assert.That(recorder.Count, Is.LessThan(recorder.Capacity), "Native allocation capture overflowed; never treat truncated samples as complete.");
+            return recorder.Count;
         }
     }
 }
