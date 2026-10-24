@@ -2,13 +2,14 @@
 
 import asyncio
 import importlib
-import time
 from collections import OrderedDict
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+
+from tests.timing import await_completion, await_signal, watchdog_timeout
 
 jobs = importlib.import_module("services.tools.run_tests")
 RUNNING = {
@@ -24,6 +25,8 @@ RUNNING = {
 
 @pytest.fixture
 def job_transport(monkeypatch):
+    monkeypatch.setattr(jobs.config, "transport_mode", "http")
+    monkeypatch.setattr(jobs.config, "http_remote_hosted", False)
     sender = AsyncMock(return_value=deepcopy(RUNNING))
     monkeypatch.setattr(jobs, "_nudge_states", OrderedDict())
     monkeypatch.setattr(jobs, "_terminal_nudge_jobs", OrderedDict())
@@ -36,6 +39,20 @@ def job_transport(monkeypatch):
     monkeypatch.setattr(jobs.unity_transport, "send_with_unity_instance", sender)
     monkeypatch.setattr(jobs, "should_nudge", lambda **kwargs: False)
     return sender
+
+
+@pytest.fixture
+def wait_budgets(monkeypatch):
+    """Observe budget propagation while retaining real asyncio cancellation semantics."""
+    budgets = []
+    wait_for = asyncio.wait_for
+
+    async def observe(operation, timeout):
+        budgets.append(timeout)
+        return await wait_for(operation, timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", observe)
+    return budgets
 
 
 @pytest.mark.asyncio
@@ -54,35 +71,74 @@ async def test_wait_does_not_start_another_fetch_at_deadline(job_transport):
 
 
 @pytest.mark.asyncio
-async def test_slow_first_fetch_is_bounded_by_wait_timeout(job_transport):
+async def test_slow_first_fetch_is_bounded_by_wait_timeout(job_transport, wait_budgets):
     # Given: a fetch whose normal transport timeout exceeds the caller's budget.
+    entered, cancelled, release_cleanup, cleaned = (asyncio.Event() for _ in range(4))
+    fetch_tasks = []
+
     async def fetch(*args, **kwargs):
-        await asyncio.sleep(1.4)
-        return deepcopy(RUNNING)
+        fetch_tasks.append(asyncio.current_task())
+        entered.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        finally:
+            await release_cleanup.wait()
+            cleaned.set()
 
     job_transport.side_effect = fetch
-    started = time.monotonic()
     # When: the tool waits for at most one second.
-    response = await jobs.get_test_job(AsyncMock(), "job", wait_timeout=1)
-    # Then: unknown status is reported as a timeout rather than fabricated running data.
-    assert time.monotonic() - started < 1.2
+    task = asyncio.create_task(jobs.get_test_job(AsyncMock(), "job", wait_timeout=1))
+    try:
+        await await_signal(entered, "first status fetch", timeout=watchdog_timeout(10))
+        await await_signal(cancelled, "fetch budget cancellation", timeout=watchdog_timeout(10))
+        # Then: expiration cancels the fetch, but delivery still waits for owned cleanup.
+        assert not task.done() and not cleaned.is_set()
+        release_cleanup.set()
+        response = await await_completion(task, "expired status wait", timeout=watchdog_timeout(10))
+    finally:
+        release_cleanup.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert len(wait_budgets) == 1 and 0 < wait_budgets[0] <= 1
     assert response.success is False
     assert "wait_timeout" in response.error
+    assert job_transport.await_count == 1
+    assert cleaned.is_set() and fetch_tasks[0].done() and fetch_tasks[0].cancelled()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("slow_stage", ["project", "nudge"])
-async def test_focus_nudge_shares_the_wait_budget(job_transport, monkeypatch, slow_stage):
+async def test_focus_nudge_shares_the_wait_budget(
+    job_transport, wait_budgets, monkeypatch, slow_stage
+):
     # Given: a running status whose focus recovery would take longer than the wait.
     monkeypatch.setattr(jobs, "should_nudge", lambda **kwargs: True)
     entered, cancelled = asyncio.Event(), asyncio.Event()
+    stage_tasks = []
+    now = [100.0]
+    monkeypatch.setattr(
+        jobs.asyncio, "get_event_loop", lambda: SimpleNamespace(time=lambda: now[0])
+    )
+
+    async def fetch(*args, **kwargs):
+        # Spend a known part of the deadline without relying on runner scheduling.
+        now[0] += 0.75
+        return deepcopy(RUNNING)
+
+    job_transport.side_effect = fetch
 
     async def slow_nudge(**kwargs):
+        stage_tasks.append(asyncio.current_task())
         entered.set()
         try:
             await asyncio.Future()
-        finally:
+        except asyncio.CancelledError:
             cancelled.set()
+            raise
 
     if slow_stage == "project":
 
@@ -93,14 +149,21 @@ async def test_focus_nudge_shares_the_wait_budget(job_transport, monkeypatch, sl
         monkeypatch.setattr(jobs, "nudge_unity_focus", AsyncMock(return_value=True))
     else:
         monkeypatch.setattr(jobs, "nudge_unity_focus", slow_nudge)
-    started = time.monotonic()
     # When: the tool polls with a one-second budget.
-    response = await jobs.get_test_job(AsyncMock(), "job", wait_timeout=1)
+    task = asyncio.create_task(jobs.get_test_job(AsyncMock(), "job", wait_timeout=1))
+    try:
+        response = await await_completion(task, "nudge budget", timeout=watchdog_timeout(10))
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
     # Then: it returns its known running status even though recovery timed out.
-    assert time.monotonic() - started < 1.2
+    assert wait_budgets == [1.0, 0.25]
     assert response.success and response.data.status == "running"
     assert entered.is_set() and cancelled.is_set()
+    assert stage_tasks[0].done()
     assert not jobs._background_tasks
+    assert jobs._active_nudge_task is None
 
 
 @pytest.mark.asyncio
@@ -121,27 +184,45 @@ async def test_expired_budget_before_first_fetch_returns_explicit_timeout(
 
 
 @pytest.mark.asyncio
-async def test_wait_preserves_external_cancellation(job_transport):
-    # Given: an outstanding status request.
+@pytest.mark.parametrize("stage", ["fetch", "project", "nudge"])
+async def test_wait_preserves_external_cancellation(job_transport, monkeypatch, stage):
+    # Given: an outstanding status fetch or focus recovery stage.
     entered = asyncio.Event()
     cancelled = asyncio.Event()
+    stage_tasks = []
 
-    async def fetch(*args, **kwargs):
+    async def block(*args, **kwargs):
+        stage_tasks.append(asyncio.current_task())
         entered.set()
         try:
             await asyncio.Future()
         finally:
             cancelled.set()
 
-    job_transport.side_effect = fetch
+    if stage == "fetch":
+        job_transport.side_effect = block
+    else:
+        monkeypatch.setattr(jobs, "should_nudge", lambda **kwargs: True)
+        if stage == "project":
+            monkeypatch.setattr(jobs, "_get_unity_project_path", block)
+        else:
+            monkeypatch.setattr(jobs, "nudge_unity_focus", block)
     task = asyncio.create_task(jobs.get_test_job(AsyncMock(), "job", wait_timeout=10))
-    await entered.wait()
-    # When: the caller cancels the tool.
-    task.cancel()
-    # Then: cancellation propagates and its child fetch is cleaned up.
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    try:
+        await await_signal(entered, f"blocked {stage}", timeout=watchdog_timeout(10))
+        # When: the caller cancels the tool.
+        task.cancel()
+        # Then: cancellation propagates and its owned child is drained.
+        with pytest.raises(asyncio.CancelledError):
+            await await_completion(task, "cancelled status wait", timeout=watchdog_timeout(10))
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
     assert cancelled.is_set()
+    assert stage_tasks[0].done() and stage_tasks[0].cancelled()
+    assert not jobs._background_tasks
+    assert jobs._active_nudge_task is None
 
 
 @pytest.mark.asyncio
