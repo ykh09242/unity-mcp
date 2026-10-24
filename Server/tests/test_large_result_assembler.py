@@ -5,6 +5,8 @@ import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 import json
+import math
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -94,12 +96,26 @@ def csharp_phase(properties: list[tuple[str, str]], name: str) -> Iterator[None]
 @pytest.fixture(scope="module")
 def compiled_csharp_harness(tmp_path_factory, csharp_setup_properties):
     root = Path(__file__).resolve().parents[2]
+    # Cold compiler startup competes with xdist workers on constrained runners.
+    # Setup is not a request-latency assertion and returns as soon as the child exits.
+    budget_name = "UNITY_MCP_TEST_CSHARP_SETUP_TIMEOUT_SECONDS"
+    try:
+        setup_timeout = float(os.environ.get(budget_name, "300"))
+    except ValueError:
+        pytest.fail(f"{budget_name} must be a positive finite number", pytrace=False)
+    if not math.isfinite(setup_timeout) or setup_timeout <= 0:
+        pytest.fail(f"{budget_name} must be a positive finite number", pytrace=False)
+    csharp_setup_properties.append(("csharp_setup_timeout_seconds", str(setup_timeout)))
     with csharp_phase(csharp_setup_properties, "csharp_sdk_discovery_seconds"):
         dotnet = shutil.which("dotnet")
         if dotnet is None:
             pytest.skip("dotnet required for actual C# writer framing roundtrip")
         sdk_listing = subprocess.run(
-            [dotnet, "--list-sdks"], check=True, capture_output=True, text=True, timeout=30
+            [dotnet, "--list-sdks"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=setup_timeout,
         ).stdout.splitlines()
         if not sdk_listing:
             pytest.skip("dotnet SDK required to compile actual C# writer")
@@ -135,7 +151,7 @@ def compiled_csharp_harness(tmp_path_factory, csharp_setup_properties):
         ]
     )
     with csharp_phase(csharp_setup_properties, "csharp_compile_seconds"):
-        built = subprocess.run(arguments, capture_output=True, text=True, timeout=30)
+        built = subprocess.run(arguments, capture_output=True, text=True, timeout=setup_timeout)
         assert built.returncode == 0, built.stdout + built.stderr
     dll.with_suffix(".runtimeconfig.json").write_text(
         json.dumps(
@@ -240,20 +256,22 @@ def test_csharp_phase_preserves_prior_properties_after_success(monkeypatch):
 
 
 def test_csharp_sdk_discovery_timeout_is_bounded_and_reported(monkeypatch, tmp_path_factory):
+    monkeypatch.setenv("UNITY_MCP_TEST_CSHARP_SETUP_TIMEOUT_SECONDS", "61")
     monkeypatch.setattr(shutil, "which", lambda _name: "owned-dotnet")
 
     def stalled_listing(command, *, timeout, **_options):
         assert command == ["owned-dotnet", "--list-sdks"]
-        assert timeout == 30
+        assert timeout == 61
         raise subprocess.TimeoutExpired(command, timeout)
 
     monkeypatch.setattr(subprocess, "run", stalled_listing)
     properties = []
     with pytest.raises(subprocess.TimeoutExpired):
         compiled_csharp_harness.__wrapped__(tmp_path_factory, properties)
-    assert len(properties) == 1
-    assert properties[0][0] == "csharp_sdk_discovery_seconds"
-    assert float(properties[0][1]) >= 0
+    assert len(properties) == 2
+    assert properties[0] == ("csharp_setup_timeout_seconds", "61.0")
+    assert properties[1][0] == "csharp_sdk_discovery_seconds"
+    assert float(properties[1][1]) >= 0
 
 
 def test_csharp_failed_preparation_attaches_timings_only_to_first_consumer():
