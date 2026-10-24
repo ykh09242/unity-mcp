@@ -13,7 +13,9 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
     internal sealed class McpActivitySection : IDisposable
     {
         private readonly VisualElement root,
-            list;
+            list,
+            selection,
+            paging;
         private readonly Label empty;
         private readonly Dictionary<(string owner, string id), RowView> views = new();
         private readonly HashSet<(string owner, string id)> retained = new();
@@ -26,7 +28,9 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             selectedSummary;
         private readonly Button previous,
             next,
-            selectedEvidence;
+            selectedEvidence,
+            selectedCancel;
+        private IVisualElementScheduledItem reveal;
         private List<OperationActivityRow> snapshot = new();
         private readonly List<OperationActivityRow> matching = new();
         private int page;
@@ -68,7 +72,7 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             var filters = new VisualElement();
             filters.AddToClassList("activity-filters");
             root.Add(filters);
-            stateFilter = new DropdownField("State", new List<string> { "All states", "Active", "Failed", "Completed" }, 0) { name = "activity-state-filter" };
+            stateFilter = new DropdownField("State", new List<string> { "All states", "Active", "Failed", "Finished" }, 0) { name = "activity-state-filter" };
             ownerFilter = new DropdownField("Owner", new List<string> { "All owners" }, 0) { name = "activity-owner-filter" };
             filters.Add(stateFilter);
             filters.Add(ownerFilter);
@@ -82,11 +86,21 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
                 page = 0;
                 RenderRows();
             });
-            selectedSummary = AddText("Select a job to inspect its current state. Raw evidence is loaded only on request.", "activity-selected-summary");
+            root.Add(new Button(() => DiagnosticsRequested?.Invoke()) { text = "Diagnostic bundle", name = "activity-diagnostics" });
+            selection = new VisualElement { name = "activity-selection" };
+            selection.style.display = DisplayStyle.None;
+            root.Add(selection);
+            selectedSummary = new Label
+            {
+                name = "activity-selected-summary",
+                enableRichText = false,
+                focusable = true,
+            };
+            selectedSummary.AddToClassList("activity-note");
+            selection.Add(selectedSummary);
             var selectionActions = new VisualElement();
             selectionActions.AddToClassList("activity-actions");
-            root.Add(selectionActions);
-            selectionActions.Add(new Button(() => DiagnosticsRequested?.Invoke()) { text = "Diagnostic bundle", name = "activity-diagnostics" });
+            selection.Add(selectionActions);
             selectedEvidence = new Button(() =>
             {
                 var row = Selected();
@@ -94,16 +108,29 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
                     this.evidence(row);
             })
             {
-                text = "Open raw evidence",
+                text = "Open evidence",
                 name = "activity-selected-evidence",
             };
             selectedEvidence.SetEnabled(false);
             selectionActions.Add(selectedEvidence);
+            selectedCancel = new Button(() =>
+            {
+                var row = Selected();
+                if (row?.CanCancel == true)
+                    this.cancel(row);
+            })
+            {
+                text = "Request cancellation",
+                name = "activity-cancel",
+            };
+            selectionActions.Add(selectedCancel);
             selectionActions.Add(
                 new Button(() => EditorGUIUtility.systemCopyBuffer = selectedSummary.text) { text = "Copy summary", name = "activity-copy-summary" }
             );
-            var paging = new VisualElement();
+            selectionActions.Add(new Button(ReturnToRow) { text = "Back to job", name = "activity-return" });
+            paging = new VisualElement { name = "activity-paging" };
             paging.AddToClassList("activity-actions");
+            paging.style.display = DisplayStyle.None;
             root.Add(paging);
             previous = new Button(() =>
             {
@@ -158,7 +185,10 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
                 tick.Resume();
             }
             else
+            {
                 tick.Pause();
+                reveal?.Pause();
+            }
         }
 
         internal void Tick()
@@ -198,7 +228,7 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             {
                 case "Active":
                     return row.Active;
-                case "Completed":
+                case "Finished":
                     return !row.Active;
                 case "Failed":
                     return row.State == "failed" || row.State == "error" || row.State == "interrupted" || row.State == "timed_out";
@@ -214,27 +244,44 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             selectedOwner = row.Owner;
             selectedId = row.Id;
             RenderSelection();
+            reveal?.Pause();
+            string owner = selectedOwner,
+                id = selectedId;
+            reveal = root.schedule.Execute(() =>
+            {
+                if (disposed || !visible || selectedOwner != owner || selectedId != id)
+                    return;
+                selectedSummary.Focus();
+                root.GetFirstAncestorOfType<ScrollView>()?.ScrollTo(selectedSummary);
+            });
+        }
+
+        private void ReturnToRow()
+        {
+            if (Selected() is not { } selected)
+                return;
+            int index = matching.FindIndex(row => row.Owner == selectedOwner && row.Id == selectedId);
+            if (index < 0)
+                return;
+            page = index / PageSize;
+            RenderRows();
+            if (views.TryGetValue((selected.Owner, selected.Id), out var view))
+            {
+                root.GetFirstAncestorOfType<ScrollView>()?.ScrollTo(view.Root);
+                view.Root.Q<Button>("activity-select").Focus();
+            }
         }
 
         private void RenderSelection()
         {
             var selected = Selected();
+            selection.style.display = selectedId == null ? DisplayStyle.None : DisplayStyle.Flex;
             selectedEvidence.SetEnabled(selected?.EvidenceId != null);
+            selectedCancel.style.display = selected?.CanCancel == true ? DisplayStyle.Flex : DisplayStyle.None;
+            selectedCancel.SetEnabled(selected?.CanCancel == true);
+            selectedCancel.tooltip = selected?.Cancellation;
             if (selected != null)
-                selectedSummary.text =
-                    selected.Operation
-                    + " · "
-                    + selected.Owner
-                    + " · "
-                    + selected.Id
-                    + "\nState: "
-                    + selected.State
-                    + " · Phase: "
-                    + selected.Phase
-                    + "\n"
-                    + selected.Detail
-                    + "\n"
-                    + selected.Cancellation;
+                selectedSummary.text = OperationEvidenceWindow.Summary(selected);
             else if (selectedId != null)
                 selectedSummary.text = "Selected operation is no longer retained. Inspect its existing owner or saved reports; no work was restarted.";
             foreach (var pair in views)
@@ -255,6 +302,7 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             pageLabel.text = (matching.Count == 0 ? "0" : (first + 1) + "–" + last) + " of " + matching.Count + " matching · " + snapshot.Count + " retained";
             previous.SetEnabled(page > 0);
             next.SetEnabled(last < matching.Count);
+            paging.style.display = matching.Count > PageSize ? DisplayStyle.Flex : DisplayStyle.None;
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             try
             {
@@ -266,7 +314,7 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
                         continue;
                     if (!views.TryGetValue(key, out var view))
                     {
-                        view = new RowView(row.Key, cancel, evidence, Select);
+                        view = new RowView(row.Key, Select);
                         views.Add(key, view);
                         list.Add(view.Root);
                     }
@@ -314,7 +362,7 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
                     "Keep running"
                 )
             )
-                OperationEvidenceWindow.ShowResult("Cancellation request", OperationActivity.Cancel(row));
+                OperationEvidenceWindow.ShowResult("Cancellation request", OperationActivity.Cancel(row), row);
         }
 
         public void Dispose()
@@ -324,6 +372,7 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
             disposed = true;
             visible = false;
             tick.Pause();
+            reveal?.Pause();
             DiagnosticsRequested = null;
             snapshot = new List<OperationActivityRow>();
             matching.Clear();
@@ -338,23 +387,18 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
         {
             internal readonly VisualElement Root = new();
             private readonly Label title = new(),
-                identifier = new(),
                 state = new(),
-                detail = new(),
-                cancellation = new(),
                 elapsed = new();
-            private readonly Button cancel,
-                evidence;
             private readonly OperationActivityRow row = new();
             private bool initialized;
             internal bool Active => row.Active;
             private long lastSecond = long.MinValue;
 
-            internal RowView(string key, Action<OperationActivityRow> onCancel, Action<OperationActivityRow> onEvidence, Action<OperationActivityRow> onSelect)
+            internal RowView(string key, Action<OperationActivityRow> onSelect)
             {
                 Root.name = "activity-" + key;
                 Root.AddToClassList("activity-card");
-                foreach (var label in new[] { title, state, identifier, detail, cancellation, elapsed })
+                foreach (var label in new[] { title, state, elapsed })
                 {
                     label.enableRichText = false;
                     label.AddToClassList("activity-note");
@@ -362,37 +406,22 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
                 }
                 title.AddToClassList("activity-title");
                 state.AddToClassList("activity-state");
-                identifier.AddToClassList("activity-id");
                 var actions = new VisualElement();
                 actions.AddToClassList("activity-actions");
                 Root.Add(actions);
-                cancel = new Button(() => onCancel(row)) { text = "Request cancellation", name = "activity-cancel" };
-                evidence = new Button(() => onEvidence(row)) { text = "View evidence / status", name = "activity-evidence" };
                 actions.Add(new Button(() => onSelect(row)) { text = "Inspect", name = "activity-select" });
-                actions.Add(evidence);
-                actions.Add(cancel);
             }
 
             internal void Update(OperationActivityRow value, long now)
             {
                 if (!initialized || row.Operation != value.Operation)
                     title.text = value.Operation;
-                if (!initialized || row.Id != value.Id)
-                    identifier.text = "ID: " + value.Id;
+                if (!initialized || row.Owner != value.Owner || row.Id != value.Id)
+                    Root.tooltip = value.Owner + " · " + value.Id;
                 if (!initialized || row.Active != value.Active)
                     Root.EnableInClassList("activity-active", value.Active);
                 if (!initialized || row.State != value.State || row.Phase != value.Phase)
-                    state.text = "State: " + value.State + " · Phase: " + value.Phase;
-                if (!initialized || row.Detail != value.Detail)
-                    detail.text = value.Detail;
-                if (!initialized || row.Cancellation != value.Cancellation)
-                    cancellation.text = value.Cancellation;
-                if (!initialized || row.CanCancel != value.CanCancel)
-                    cancel.SetEnabled(value.CanCancel);
-                if (!initialized || row.CanCancel != value.CanCancel || row.Cancellation != value.Cancellation)
-                    cancel.tooltip = value.CanCancel ? "Ask the existing operation owner to cancel this job" : value.Cancellation;
-                if (!initialized || (row.EvidenceId != null) != (value.EvidenceId != null))
-                    evidence.SetEnabled(value.EvidenceId != null);
+                    state.text = value.Owner + " · " + value.State + " · " + value.Phase;
                 bool elapsedChanged = !initialized || row.Started != value.Started || row.Finished != value.Finished || row.Active != value.Active;
                 row.Owner = value.Owner;
                 row.Id = value.Id;
@@ -428,34 +457,74 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
         private string owner,
             operationId,
             evidenceId,
-            projectScope;
+            projectScope,
+            summary,
+            heading;
         private string text;
+        private object temporaryResult;
+        private bool hasTemporaryResult,
+            disabled,
+            rawVisible;
+        private int identity;
         internal Func<OperationActivityRow, object> resolve = null;
+
+        internal static string Summary(OperationActivityRow row) =>
+            row.Operation
+            + " · "
+            + row.Owner
+            + " · "
+            + row.Id
+            + "\nState: "
+            + row.State
+            + " · Phase: "
+            + row.Phase
+            + "\n"
+            + row.Detail
+            + "\n"
+            + row.Cancellation;
 
         internal void SetOperation(OperationActivityRow row)
         {
+            identity++;
+            disabled = false;
             owner = row.Owner;
             operationId = row.Id;
             evidenceId = row.EvidenceId;
             projectScope = Application.dataPath;
+            summary = Summary(row);
+            heading = row.Operation + " · " + owner + " · " + operationId;
+            string shortId = operationId?.Length > 12 ? operationId.Substring(operationId.Length - 12) : operationId;
+            titleContent = new GUIContent(owner + " · " + shortId, heading);
             text = null;
+            temporaryResult = null;
+            hasTemporaryResult = rawVisible = false;
+            if (rootVisualElement.childCount > 0)
+                CreateGUI();
         }
 
         internal static void Show(OperationActivityRow row)
         {
             var window = CreateInstance<OperationEvidenceWindow>();
-            window.titleContent = new GUIContent("Operation evidence");
             window.SetOperation(row);
-            window.minSize = new Vector2(360, 260);
+            window.minSize = new Vector2(360, 180);
             window.Show();
         }
 
-        internal static void ShowResult(string title, object result)
+        internal static void ShowResult(string title, object result, OperationActivityRow row = null)
         {
             var window = CreateInstance<OperationEvidenceWindow>();
-            window.titleContent = new GUIContent(title);
-            window.text = JsonConvert.SerializeObject(result ?? new { observation = "Job no longer retained." }, Formatting.Indented);
-            window.minSize = new Vector2(360, 260);
+            if (row != null)
+                window.SetOperation(row);
+            else
+            {
+                window.heading = title;
+                window.summary = title + ". Open Raw to inspect the result.";
+                window.titleContent = new GUIContent(title);
+                window.projectScope = Application.dataPath;
+            }
+            window.temporaryResult = result;
+            window.hasTemporaryResult = true;
+            window.minSize = new Vector2(360, 180);
             window.Show();
         }
 
@@ -463,61 +532,134 @@ namespace MCPForUnity.Editor.Windows.Components.Activity
         {
             if (projectScope != Application.dataPath)
                 return "Evidence belongs to a different project. Open the operation from this project's Activity page.";
+            int request = identity;
+            var row = new OperationActivityRow
+            {
+                Owner = owner,
+                Id = operationId,
+                EvidenceId = evidenceId,
+            };
+            object result =
+                hasTemporaryResult ? temporaryResult
+                : !string.IsNullOrEmpty(owner) ? (resolve ?? OperationActivity.Evidence)(row)
+                : null;
+            if (disabled || request != identity)
+                return null;
+            return result is string raw
+                ? raw
+                : JsonConvert.SerializeObject(result ?? new { observation = "Job no longer retained; evidence is unavailable." }, Formatting.Indented);
+        }
+
+        private bool LoadRaw(bool refresh = false)
+        {
+            if (disabled)
+                return false;
+            if (text != null && !refresh)
+                return true;
+            int request = identity;
+            string loaded;
             try
             {
-                var row = new OperationActivityRow
-                {
-                    Owner = owner,
-                    Id = operationId,
-                    EvidenceId = evidenceId,
-                };
-                object result = (resolve ?? OperationActivity.Evidence)(row);
-                return JsonConvert.SerializeObject(result ?? new { observation = "Job no longer retained; evidence is unavailable." }, Formatting.Indented);
+                loaded = ReadEvidence();
             }
             catch
             {
-                return "Evidence is unavailable. Inspect the existing operation owner or saved reports; no work was restarted.";
+                loaded = "Evidence is unavailable. Inspect the existing operation owner or saved reports; no work was restarted.";
             }
+            if (disabled || request != identity)
+                return false;
+            text = loaded;
+            rootVisualElement.Q<TextField>("operation-evidence-text")?.SetValueWithoutNotify(text);
+            return true;
+        }
+
+        private void ShowRaw(bool refresh = false)
+        {
+            if (!LoadRaw(refresh))
+                return;
+            rawVisible = true;
+            UpdateView();
+        }
+
+        private void UpdateView()
+        {
+            rootVisualElement.Q("operation-evidence-summary").style.display = rawVisible ? DisplayStyle.None : DisplayStyle.Flex;
+            rootVisualElement.Q("operation-evidence-raw").style.display = rawVisible ? DisplayStyle.Flex : DisplayStyle.None;
+            rootVisualElement.Q<Button>("operation-evidence-summary-tab").SetEnabled(rawVisible);
         }
 
         private void CreateGUI()
         {
+            disabled = false;
             rootVisualElement.Clear();
-            if (!string.IsNullOrEmpty(owner))
-                text = ReadEvidence();
-            text ??= "This temporary result is unavailable after script reload. Inspect the existing operation from Activity.";
+            var sheet = AssetDatabase.LoadAssetAtPath<StyleSheet>("Packages/com.ykh09242.unity-mcp/Editor/Windows/MCPForUnityEditorWindow.uss");
+            if (sheet != null && !rootVisualElement.styleSheets.Contains(sheet))
+                rootVisualElement.styleSheets.Add(sheet);
+            rootVisualElement.AddToClassList("activity-evidence-window");
+            var header = new Label(heading ?? "Operation evidence") { name = "operation-evidence-heading", enableRichText = false };
+            header.AddToClassList("activity-note");
+            header.AddToClassList("activity-title");
+            rootVisualElement.Add(header);
             var actions = new VisualElement();
-            actions.style.flexDirection = FlexDirection.Row;
-            actions.style.flexWrap = Wrap.Wrap;
+            actions.AddToClassList("activity-actions");
             rootVisualElement.Add(actions);
-            var refresh = new Button(() =>
-            {
-                text = ReadEvidence();
-                rootVisualElement.Q<TextField>("operation-evidence-text").SetValueWithoutNotify(text);
-            })
-            {
-                text = "Refresh evidence",
-            };
-            refresh.SetEnabled(!string.IsNullOrEmpty(owner));
+            actions.Add(
+                new Button(() =>
+                {
+                    rawVisible = false;
+                    UpdateView();
+                })
+                {
+                    text = "Summary",
+                    name = "operation-evidence-summary-tab",
+                }
+            );
+            actions.Add(new Button(() => ShowRaw()) { text = "Raw", name = "operation-evidence-raw-tab" });
+            var refresh = new Button(() => ShowRaw(true)) { text = "Refresh raw", name = "operation-evidence-refresh" };
+            refresh.SetEnabled(!string.IsNullOrEmpty(owner) && !hasTemporaryResult);
             actions.Add(refresh);
-            actions.Add(new Button(() => EditorGUIUtility.systemCopyBuffer = text) { text = "Copy raw evidence" });
+            actions.Add(
+                new Button(() =>
+                {
+                    if (LoadRaw())
+                        EditorGUIUtility.systemCopyBuffer = text;
+                })
+                {
+                    text = "Copy raw evidence",
+                    name = "operation-evidence-copy",
+                }
+            );
             var scroll = new ScrollView();
-            scroll.style.flexGrow = 1;
+            scroll.AddToClassList("activity-evidence-scroll");
             rootVisualElement.Add(scroll);
-            scroll.Add(
+            var details = new Label(summary ?? "This temporary result is unavailable after script reload. Inspect the existing operation from Activity.")
+            {
+                name = "operation-evidence-summary",
+                enableRichText = false,
+            };
+            details.AddToClassList("activity-note");
+            scroll.Add(details);
+            var raw = new VisualElement { name = "operation-evidence-raw" };
+            scroll.Add(raw);
+            raw.Add(
                 new TextField
                 {
                     name = "operation-evidence-text",
-                    value = text,
+                    value = text ?? "",
                     multiline = true,
                     isReadOnly = true,
                 }
             );
+            UpdateView();
         }
 
         private void OnDisable()
         {
+            identity++;
+            disabled = true;
             text = null;
+            temporaryResult = null;
+            hasTemporaryResult = rawVisible = false;
             resolve = null;
             rootVisualElement.Clear();
         }

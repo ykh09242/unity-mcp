@@ -180,6 +180,8 @@ namespace MCPForUnityTests.EditMode.Windows
                     }
                 );
                 typeof(OperationEvidenceWindow).GetMethod("CreateGUI", flags).Invoke(window, null);
+                Assert.AreEqual(0, reads, "Summary must not resolve or serialize evidence.");
+                Click(window.rootVisualElement, "operation-evidence-raw-tab");
                 Assert.AreEqual(1, reads);
                 StringAssert.Contains("synthetic-raw-evidence", window.rootVisualElement.Q<TextField>("operation-evidence-text").value);
                 string serialized = EditorJsonUtility.ToJson(window);
@@ -190,6 +192,7 @@ namespace MCPForUnityTests.EditMode.Windows
                     .GetField("resolve", flags)
                     .SetValue(window, new Func<OperationActivityRow, object>(_ => throw new Exception("sensitive-error")));
                 typeof(OperationEvidenceWindow).GetMethod("CreateGUI", flags).Invoke(window, null);
+                Click(window.rootVisualElement, "operation-evidence-raw-tab");
                 string unavailable = window.rootVisualElement.Q<TextField>("operation-evidence-text").value;
                 StringAssert.Contains("unavailable", unavailable);
                 StringAssert.DoesNotContain("sensitive-error", unavailable);
@@ -198,6 +201,7 @@ namespace MCPForUnityTests.EditMode.Windows
                     .GetField("resolve", flags)
                     .SetValue(window, new Func<OperationActivityRow, object>(_ => throw new AssertionException("Cross-project evidence lookup")));
                 typeof(OperationEvidenceWindow).GetMethod("CreateGUI", flags).Invoke(window, null);
+                Click(window.rootVisualElement, "operation-evidence-refresh");
                 StringAssert.Contains("different project", window.rootVisualElement.Q<TextField>("operation-evidence-text").value);
             }
             finally
