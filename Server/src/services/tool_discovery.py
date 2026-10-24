@@ -34,8 +34,10 @@ class ToolDiscovery(Transform):
 
     The server-owned SessionStateStore supplies admission accounting, idle expiry
     and shutdown cleanup. This preference lifetime never interrupts native work.
-    Legacy clients continue using the SDK's connection-specific visibility rules.
+    Legacy preferences use one finite map in SDK connection state.
     """
+
+    _LEGACY_STATE_KEY = "mcpforunity.tool_selection"
 
     def __init__(self, server, definitions, groups, *, hosted):
         self.profile = os.environ.get("UNITY_MCP_TOOL_PROFILE", "full" if hosted else "core")
@@ -75,26 +77,38 @@ class ToolDiscovery(Transform):
             ctx = get_context()
         except RuntimeError:
             return {}
-        key = await self.scope_key(ctx)
-        if key is None:
+        # SDK introspection creates a Context without a client connection.
+        if ctx.request_context is None and not ctx.is_background_task:
+            return {}
+        modern = is_sessionless(ctx)
+        key = await self.scope_key(ctx) if modern else None
+        if modern and key is None:
             return {}
         async with self._lock:
-            record = await self.store.get(key)
+            record = (
+                await self.store.get(key) if modern else await ctx.get_state(self._LEGACY_STATE_KEY)
+            )
             if record is None:
                 return {}
             # Renew only active preferences, at most hourly. Idle selections
             # expire after the SDK's 24-hour retention period.
             if time.time() - record["touched"] >= 3600:
                 record["touched"] = time.time()
-                await self.store.put(key, record, ttl=86400)
+                if modern:
+                    await self.store.put(key, record, ttl=86400)
+                else:
+                    await ctx.set_state(self._LEGACY_STATE_KEY, record)
             return record["overrides"]
 
     async def update(self, ctx, names=(), *, enabled=None, reset=False):
-        key = await self.scope_key(ctx)
-        if key is None:
+        modern = is_sessionless(ctx)
+        key = await self.scope_key(ctx) if modern else None
+        if modern and key is None:
             raise ValueError(UNSCOPED_GUIDANCE)
         async with self._lock:
-            record = await self.store.get(key)
+            record = (
+                await self.store.get(key) if modern else await ctx.get_state(self._LEGACY_STATE_KEY)
+            )
             previous = record["overrides"] if record else {}
             updated = {} if reset else dict(previous)
             if not reset:
@@ -106,7 +120,15 @@ class ToolDiscovery(Transform):
                     else:
                         updated[name] = enabled
             changed = updated != previous
-            if updated:
+            if not modern:
+                if changed or (record and time.time() - record["touched"] >= 3600):
+                    if updated:
+                        await ctx.set_state(
+                            self._LEGACY_STATE_KEY, {"overrides": updated, "touched": time.time()}
+                        )
+                    else:
+                        await ctx.delete_state(self._LEGACY_STATE_KEY)
+            elif updated:
                 await self.store.put(key, {"overrides": updated, "touched": time.time()}, ttl=86400)
             elif record is not None:
                 await self.store.delete(key)

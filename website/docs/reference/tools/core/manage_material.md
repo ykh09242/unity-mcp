@@ -30,6 +30,7 @@ Manages Unity materials (properties, colors, shaders, render state). Read-only a
 | `slot` | `int \| None` | — | Material slot index (0-based) |
 | `mode` | `Literal['shared', 'instance', 'property_block', 'create_unique'] \| None` | — | Assignment/modification mode; behavior when omitted is action-specific on the Unity side. |
 | `render_state` | `dict[str, Any] \| str \| None` | — | Render-state patch object or JSON object string: render_queue (-1 or 0..5000), keywords ({declared_name: bool}), shader_passes ({LightMode: bool}), texture_transforms ({exact_texture_property: {scale: [x,y], offset: [x,y]}}). render_mode is opaque/cutout/fade/transparent for Built-in Standard shaders only; it resets the queue and cannot coexist with render_queue or owned alpha keywords. Maps are limited to 128 entries. No automatic blending changes for raw edits. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

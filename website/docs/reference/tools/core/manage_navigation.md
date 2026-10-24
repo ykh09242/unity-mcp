@@ -32,6 +32,7 @@ Read and explicitly author navigation surfaces, agents, obstacles and links. Use
 | `max_distance` | `float \| None` | — | Sample radius, greater than zero and at most 100. |
 | `offset` | `int \| None` | — | List offset, nonnegative. |
 | `limit` | `int \| None` | — | List page size 1..100 (default 50). |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

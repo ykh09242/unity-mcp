@@ -304,3 +304,16 @@ def test_cli_import_failure_prevents_any_reference_writes(tmp_path, monkeypatch)
     before = docs.CLI_OUT.read_bytes()
     assert docs.main([]) == 1
     assert docs.CLI_OUT.read_bytes() == before
+
+
+@pytest.mark.parametrize("name,routed", [("read_console", True), ("get_execution_receipt", False)])
+def test_generated_tool_page_includes_optional_common_routing(name, routed):
+    def handler(action: str):
+        return action
+
+    page = docs.render_tool_page({"name": name, "func": handler}, docs.EXAMPLES_PLACEHOLDER)
+    assert ("| `unity_instance` |" in page) is routed
+    assert "| `action` | `str` | yes |" in page
+    if routed:
+        assert r"| `unity_instance` | `str \| int \| None` | — |" in page
+        assert "mcpforunity://instances" in page

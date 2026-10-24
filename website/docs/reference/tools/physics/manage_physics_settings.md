@@ -24,6 +24,7 @@ Inspect or change 2D/3D physics settings and layer collision rules.
 | `layer_a` | `str \| None` | — | Layer name or index for collision matrix. |
 | `layer_b` | `str \| None` | — | Layer name or index for collision matrix. |
 | `collide` | `bool \| None` | — | Whether layers should collide (set_collision_matrix). |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

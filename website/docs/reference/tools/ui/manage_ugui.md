@@ -35,6 +35,7 @@ Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and
 | `minimum_touch_target_mm` | `float \| None` | — | For diagnose_device_profiles only: explicit caller threshold in millimetres; no universal threshold is assumed. |
 | `screen_position` | `list[float] \| None` | — | For diagnose_raycast: required [x,y] in current-screen pixels from the bottom-left; no camera/resolution edit. |
 | `allow_custom_filters` | `bool` | — | For diagnose_raycast only: explicitly permit native ICanvasRaycastFilter user code. Default false refuses before applicable custom callbacks; opt-in is not transactional or interruptible. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

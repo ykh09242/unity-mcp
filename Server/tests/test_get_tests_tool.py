@@ -49,7 +49,7 @@ def test_get_tests_pages_filters_errors_and_validation(tmp_path):
                     assert listed.annotations.read_only_hint is True
                     assert listed.annotations.destructive_hint is False
                     schema = listed.input_schema["properties"]
-                    assert set(schema) == {"mode", "name_pattern", "page_size", "cursor", "timeout_seconds"}
+                    assert set(schema) == {"mode", "name_pattern", "page_size", "cursor", "timeout_seconds", "unity_instance"}
                     collected = []
                     for cursor, count, next_cursor in ((0, 50, 50), (50, 50, 100), (100, 25, None), (125, 0, None)):
                         page = {"items": rows[cursor:cursor+50], "cursor": cursor,

@@ -24,6 +24,7 @@ Advance physics by a bounded number of explicit simulation steps.
 | `search_method` | `str \| None` | — | Search method for target resolution. |
 | `steps` | `int \| None` | — | Number of simulation steps (max 100). |
 | `step_size` | `float \| None` | — | Step size in seconds. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

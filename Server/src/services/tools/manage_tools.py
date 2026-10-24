@@ -95,7 +95,7 @@ async def manage_tools(
                 "error": "Unknown or always-visible tool. Use list_groups to discover selectable tools."
             }
         operation = ctx.enable_components if action == "activate" else ctx.disable_components
-        if modern:
+        if discovery is not None:
             changed = await discovery.update(ctx, [tool], enabled=action == "activate")
         else:
             await operation(names={tool}, components={"tool"})
@@ -116,7 +116,7 @@ async def manage_tools(
     if action == "activate":
         tag = f"group:{group}"
         logger.info("Activating tool group: %s", group)
-        if modern:
+        if discovery is not None:
             changed = await discovery.update(
                 ctx, get_group_tool_names().get(group, []), enabled=True
             )
@@ -133,7 +133,7 @@ async def manage_tools(
     if action == "deactivate":
         tag = f"group:{group}"
         logger.info("Deactivating tool group: %s", group)
-        if modern:
+        if discovery is not None:
             changed = await discovery.update(
                 ctx, get_group_tool_names().get(group, []), enabled=False
             )
@@ -187,7 +187,7 @@ async def manage_tools(
 
     if action == "reset":
         logger.info("Resetting tool visibility to defaults")
-        if modern:
+        if discovery is not None:
             await discovery.update(ctx, reset=True)
         else:
             await ctx.reset_visibility()

@@ -29,6 +29,7 @@ Search assets or inspect their metadata and components.
 | `page_number` | `int \| str \| None` | — | Page number for pagination (1-based). |
 | `metadata_only` | `bool` | — | Search only: return metadata with instanceID=0 and a bounded 60-second Editor-session snapshot; no explicit object/preview loads. Default false preserves legacy behavior. |
 | `search_snapshot` | `str \| None` | — | Search only: opaque token from metadata_only=true; repeat the effective query and page_size. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

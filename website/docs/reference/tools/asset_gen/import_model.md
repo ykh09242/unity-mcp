@@ -38,6 +38,7 @@ ACTIONS:
 | `output_folder` | `str \| None` | — | Destination folder under Assets/ for the import. |
 | `job_id` | `str \| None` | — | Job id for status/cancel. |
 | `archive_model_path` | `str \| None` | — | Import only: exact case-sensitive relative ZIP model entry. Omit for deterministic FBX/OBJ-first selection; no basename search or fallback. At most 512 UTF-8 bytes and 32 segments. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

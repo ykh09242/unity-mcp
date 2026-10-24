@@ -21,6 +21,7 @@ Manage visible groups or individual feature tools in this session. Actions: list
 | `action` | `Literal['list_groups', 'activate', 'deactivate', 'sync', 'reset', 'describe']` | yes | Action to perform. |
 | `group` | `str \| None` | — | Group name for activate/deactivate; select a group or a single tool. Valid groups: animation, asset_gen, assets, camera, core, docs, graphics, legacy, physics, prefabs, probuilder, profiling, scene, scripting_ext, testing, ui, vfx |
 | `tool` | `str \| None` | — | Single tool name for activate/deactivate/describe. Discover names with list_groups. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

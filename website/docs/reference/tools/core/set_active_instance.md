@@ -19,6 +19,7 @@ Set the active Unity instance for this client/session. Accepts Name@hash, hash p
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `instance` | `str` | yes | Target instance (Name@hash, hash prefix, or port number in stdio mode) |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

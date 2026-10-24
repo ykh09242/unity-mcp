@@ -24,6 +24,7 @@ Manage Unity animation: Animator control and AnimationClip creation. Action pref
 | `clip_path` | `str \| None` | — | Asset path for AnimationClip (e.g. 'Assets/Animations/Walk.anim'). |
 | `controller_path` | `str \| None` | — | Asset path for AnimatorController (e.g. 'Assets/Animators/Player.controller'). |
 | `properties` | `dict[str, Any] \| str \| None` | — | Action-specific parameters (dict or JSON object string). |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

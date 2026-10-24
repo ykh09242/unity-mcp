@@ -22,6 +22,7 @@ Inspect menu existence/availability evidence or invoke a menu by exact path. Def
 | `action` | `Literal['execute', 'inspect', 'exists'] \| None` | — | Default execute; inspect (or exists alias) does not invoke the command. |
 | `wait_for` | `Literal['none', 'console_window_open'] \| None` | — | Optional allowlisted window-presence observation, not general menu completion. |
 | `timeout_ms` | `int \| None` | — | Observation ceiling, default 300000ms; permitted only with a supported wait_for. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

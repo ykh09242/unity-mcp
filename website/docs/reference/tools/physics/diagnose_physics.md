@@ -32,6 +32,7 @@ Validate physics setup or inspect a pair of colliders and passive contacts. May 
 | `other_search_method` | `Literal['by_id', 'by_name', 'by_path'] \| None` | — | How to resolve other_target; inferred independently when omitted. |
 | `contact_limit` | `int \| None` | — | diagnose_pair: 2D contact-point sample size, 1–128 (default16); 3D reports event counts. |
 | `observe_contacts` | `bool \| str \| None` | — | diagnose_pair: opt in to a60-second passive3D pair watch; false stops, omitted only reads. Never simulates or enables contact generation. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

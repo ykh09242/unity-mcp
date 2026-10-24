@@ -23,6 +23,7 @@ Searches a C# script with a regex pattern and returns line numbers and excerpts.
 | `project_root` | `str \| None` | — | Optional project root path |
 | `max_results` | `int` | — | Cap results to avoid huge payloads |
 | `ignore_case` | `bool \| str \| None` | — | Case insensitive search |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

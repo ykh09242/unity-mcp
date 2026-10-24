@@ -15,6 +15,7 @@ def test_bounded_ref_discovery_preserves_rich_contract_and_legacy_policy(mode):
         from fastmcp.server.middleware.dereference import DereferenceRefsMiddleware
         from pydantic import BaseModel
         from models.models import ToolDefinitionModel
+        from tests.tool_schema import native_input_schema
         import services.custom_tool_service as module
         class Leaf(BaseModel):
             count: int
@@ -63,7 +64,7 @@ def test_bounded_ref_discovery_preserves_rich_contract_and_legacy_policy(mode):
             async with Client(app, mode=__MODE__) as client:
                 listed = await client.list_tools()
                 assert [tool.name for tool in listed] == ["a_legacy", "z_rich"]
-                assert listed[1].input_schema == schema
+                assert native_input_schema(listed[1].input_schema) == schema
                 assert listed[1].output_schema["$defs"] == definitions
                 assert listed[1].output_schema["allOf"][0]["then"]["properties"]["data"] == {"$ref": "#/$defs/Bounded0"}
                 assert "$defs" not in listed[0].input_schema and visited
@@ -93,6 +94,7 @@ def test_native_compatible_null_default_projection_keeps_authoritative_null(mode
         from unittest.mock import AsyncMock
         from fastmcp import FastMCP, Client
         from models.models import ToolDefinitionModel
+        from tests.tool_schema import native_input_schema
         import services.custom_tool_service as module
         async def scenario():
             app = FastMCP("nullable-default-projection")
@@ -113,7 +115,7 @@ def test_native_compatible_null_default_projection_keeps_authoritative_null(mode
             service.register_global_tools([ToolDefinitionModel.model_validate(descriptor)])
             async with Client(app, mode=__MODE__) as client:
                 listed = (await client.list_tools())[0].input_schema
-                assert listed == descriptor["input_schema"], (listed, descriptor["input_schema"])
+                assert native_input_schema(listed) == descriptor["input_schema"], (listed, descriptor["input_schema"])
                 assert (await client.call_tool("nullable", {})).structured_content["success"]
                 assert module.send_with_unity_instance.call_args.args[3] == {"value": None, "node": None, "flexible": 7, "values": [1, 2]}
                 rejected = await client.call_tool("nullable", {"node": {"count": "bad"}}, raise_on_error=False)
@@ -130,6 +132,7 @@ def test_untyped_rich_content_only_preserves_text_envelope(mode):
         from unittest.mock import AsyncMock
         from fastmcp import FastMCP, Client
         from models.models import ToolDefinitionModel
+        from tests.tool_schema import native_input_schema
         import services.custom_tool_service as module
         async def scenario():
             app = FastMCP("rich-content-only")
@@ -246,6 +249,7 @@ def test_refresh_captures_output_policy_and_revalidates_new_nested_contract(mode
         from unittest.mock import AsyncMock
         from fastmcp import FastMCP, Client
         from models.models import ToolDefinitionModel
+        from tests.tool_schema import native_input_schema
         import services.custom_tool_service as module
 
         async def scenario():
@@ -290,7 +294,7 @@ def test_refresh_captures_output_policy_and_revalidates_new_nested_contract(mode
                     result = await pending
                     assert result.structured_content["data"] == 7
                 listed = (await client.list_tools())[0]
-                assert listed.input_schema == new_schema
+                assert native_input_schema(listed.input_schema) == new_schema
                 rejected = await client.call_tool("refresh", {"node": {"label": 1}}, raise_on_error=False)
                 assert rejected.is_error and len(calls) == 1
                 accepted = await client.call_tool("refresh", {"node": {"label": "new"}})
@@ -320,6 +324,7 @@ def test_project_and_tenant_fallback_uses_selected_rich_contract(mode, hosted):
         from tests.remote_credentials import remote_credentials
         from core.config import config
         from models.models import ToolDefinitionModel
+        from tests.tool_schema import native_input_schema
         import services.custom_tool_service as module
         execute = importlib.import_module("services.tools.execute_custom_tool")
         from transport.plugin_hub import PluginHub
@@ -378,7 +383,7 @@ def test_project_and_tenant_fallback_uses_selected_rich_contract(mode, hosted):
                 if __HOSTED__:
                     assert [tool.name for tool in await client.list_tools()] == ["execute_custom_tool"]
                 else:
-                    assert next(t for t in await client.list_tools() if t.name == "same").input_schema == first.input_schema
+                    assert native_input_schema(next(t for t in await client.list_tools() if t.name == "same").input_schema) == first.input_schema
                 selected[:] = ["A@a" if __HOSTED__ else "B@b", "tenant-b"]
                 if not __HOSTED__:
                     denied = (await client.call_tool("same", {"node": {"value": 3}})).structured_content
@@ -412,6 +417,7 @@ def test_polling_validates_only_terminal_data_and_retains_job_without_replay(mod
         from unittest.mock import AsyncMock
         from fastmcp import FastMCP, Client
         from models.models import ToolDefinitionModel
+        from tests.tool_schema import native_input_schema
         import services.custom_tool_service as module
 
         async def scenario():
@@ -537,6 +543,7 @@ def test_rich_schema_is_exact_and_invalid_nested_input_never_dispatches(mode):
         from unittest.mock import AsyncMock
         from fastmcp import FastMCP, Client
         from models.models import ToolDefinitionModel
+        from tests.tool_schema import native_input_schema
         import services.custom_tool_service as module
 
         async def scenario():
@@ -570,7 +577,7 @@ def test_rich_schema_is_exact_and_invalid_nested_input_never_dispatches(mode):
                 # When the client discovers and calls the real registered component.
                 tools = await client.list_tools()
                 listed = next(tool for tool in tools if tool.name == "rich")
-                assert listed.input_schema == schema
+                assert native_input_schema(listed.input_schema) == schema
                 good = {"nodes": [{"count": 1, "child": {"count": 2}}],
                     "weights": {"a": 3}, "mode": 2, "optional": None}
                 bad = [{**good, "nodes": [{"count": "1"}]},
@@ -600,6 +607,7 @@ def test_rich_output_schema_matches_typed_data_and_nullable_envelopes(mode):
         from jsonschema import Draft202012Validator
         from fastmcp import FastMCP, Client
         from models.models import ToolDefinitionModel
+        from tests.tool_schema import native_input_schema
         import services.custom_tool_service as module
 
         async def scenario():
@@ -655,6 +663,7 @@ def test_invalid_input_root_keeps_previous_sdk_generation(mode, replace):
         from unittest.mock import AsyncMock
         from fastmcp import FastMCP, Client
         from models.models import ToolDefinitionModel
+        from tests.tool_schema import native_input_schema
         import services.custom_tool_service as module
 
         async def scenario():
@@ -692,6 +701,7 @@ def test_profile_rejects_unsupported_constraints_and_invalid_utf8_before_use():
     run_sdk_regression("""
         from models.custom_tool_schema import prepare_schema, SchemaContractError
         from models.models import ToolDefinitionModel
+        from tests.tool_schema import native_input_schema
         from unittest.mock import patch
         invalid = [
             {"type": "object", "properties": {"x": {"type": "integer", "minimum": 3, "maximum": 1}}},
@@ -739,6 +749,7 @@ def test_invalid_nested_item_is_blocked_before_transport(mode):
         from unittest.mock import AsyncMock
         from fastmcp import FastMCP, Client
         from models.models import ToolDefinitionModel
+        from tests.tool_schema import native_input_schema
         import services.custom_tool_service as module
 
         async def scenario():

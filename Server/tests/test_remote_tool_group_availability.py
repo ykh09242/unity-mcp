@@ -89,13 +89,14 @@ def test_local_http_optional_groups_keep_legacy_session_activation_isolated():
         import services.tools as tools
         from services.tools.manage_tools import manage_tools
 
+        from services.registry import mcp_for_unity_tool, get_registered_tools
+
+        @mcp_for_unity_tool(name="effect_probe", description="effect", group="vfx")
         def effect() -> str:
             return "effect"
 
-        metadata = [
-            {"name": "effect_probe", "func": effect, "description": "effect", "kwargs": {"tags": {"group:vfx"}}},
-            {"name": "manage_tools", "func": manage_tools, "description": "groups", "kwargs": {}},
-        ]
+        metadata = [entry for entry in get_registered_tools()
+                    if entry["name"] in {"effect_probe", "manage_tools"}]
         tools.discover_modules = lambda *args: []
         tools.get_registered_tools = lambda: metadata
         config.transport_mode = "http"

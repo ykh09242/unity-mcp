@@ -29,6 +29,7 @@ Gets messages from or clears the Unity Editor console. Defaults to 10 most recen
 | `fields` | `list[Literal['type', 'message', 'file', 'line', 'stackTrace']] \| str \| None` | — | Optional fields for get with json/detailed format; accepts a list or JSON list string. Must include type and message. stackTrace requires include_stacktrace=true. Omit to preserve the full existing entry schema. |
 | `include_mcp_logs` | `bool \| str` | — | Include MCP internal logger messages (default false). Filtering occurs before count and pagination. |
 | `tail_cursor` | `str \| None` | — | Opt-in incremental tail: begin starts at the current end; otherwise pass the returned opaque token. Loss cannot be ruled out. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -28,6 +28,7 @@ Inspect scene references within explicit work and result budgets. Inspection may
 | `reference_revision` | `str \| None` | — | validate_references: refuse if the repeated observation has drifted. |
 | `reference_snapshot` | `bool \| None` | — | validate_references: capture stable paged evidence without rescanning later pages. |
 | `reference_cursor` | `str \| None` | — | validate_references: returned snapshot cursor; captured evidence, not a live revision recheck. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

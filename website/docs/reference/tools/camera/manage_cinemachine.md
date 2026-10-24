@@ -22,6 +22,7 @@ Configure Cinemachine brains, tracking, extensions and camera blends.
 | `target` | `str \| None` | — | Target camera (name, path, or instance ID). |
 | `search_method` | `Literal['by_id', 'by_name', 'by_path'] \| None` | — | How to find target. |
 | `properties` | `dict[str, Any] \| str \| None` | — | Action-specific parameters (dict or JSON string). |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

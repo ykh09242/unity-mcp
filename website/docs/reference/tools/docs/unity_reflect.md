@@ -32,6 +32,7 @@ Actions:
 | `cursor` | `str \| None` | — | Opaque next_cursor from the same Editor/catalog and identical search inputs. Maximum 1024 ASCII characters; expires five minutes after the first page. |
 | `assembly` | `str \| None` | — | Search filter: exact simple or full assembly identity, case insensitive; intersects scope. Maximum 256 characters. With cursor, repeat the original spelling exactly, including case. |
 | `type_kind` | `str \| None` | — | Search filter: class, interface, struct, enum, or delegate. Delegates are excluded from the class filter. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

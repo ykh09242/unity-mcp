@@ -19,6 +19,7 @@ Read a compilation request outcome and bounded diagnostics by compile_id. Readin
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `compile_id` | `str` | yes | Opaque compile_id returned by refresh_unity with compile=request |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

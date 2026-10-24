@@ -27,6 +27,7 @@ Capture named Time/Physics3D/Physics2D/Audio/Input configuration profiles, inspe
 | `receipt_id` | `str \| None` | — | Retained apply receipt for receipt/restore. |
 | `offset` | `int \| None` | — | Nonnegative list offset. |
 | `limit` | `int \| None` | — | List page size 1..32, default 20. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

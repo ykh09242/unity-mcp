@@ -20,6 +20,7 @@ Validate the scene, with optional explicit repair.
 |------|------|----------|-------------|
 | `action` | `Literal['validate']` | yes | Feature action to perform. |
 | `auto_repair` | `bool \| str \| None` | — | For validate: true to auto-fix missing scripts (undoable). |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

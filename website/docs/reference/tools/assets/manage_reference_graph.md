@@ -20,6 +20,7 @@ Maintain an automatic asset/code/external-config reference graph for the selecte
 |------|------|----------|-------------|
 | `action` | `Literal['overview', 'retry', 'export_config', 'import_config', 'cleanup', 'status', 'sync', 'query', 'diagnostics', 'explain', 'impact', 'path', 'snapshot', 'diff', 'release_query', 'delete_snapshot', 'begin_mutation', 'add_mutation_targets', 'finish_mutation', 'await_mutation', 'mutation_diff', 'release_mutation', 'runtime_sessions', 'runtime_start', 'runtime_poll', 'runtime_status', 'runtime_stop', 'runtime_events', 'runtime_handles', 'runtime_release', 'declarations', 'declare', 'remove_declaration', 'sources', 'set_source', 'rules', 'set_rule', 'policy', 'set_policy', 'rebuild', 'watch']` | yes |  |
 | `options` | `dict[str, Any] \| None` | — | Only the selected action's documented fields; identity and database paths cannot be supplied. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -30,6 +30,7 @@ Create, import, modify, duplicate, move or delete assets and folders. Action inp
 | `max_assets` | `int \| str \| None` | — | Reference actions: 1-250000; default 1024. Reverse scans count distinct eligible files, excluding folders/duplicates; forward scans count visited assets including the source. |
 | `max_work` | `int \| str \| None` | — | Reference actions: at most 1-4000000 node/edge work units; default 10000. |
 | `reference_revision` | `str \| None` | — | Recheck the same bounded read/preview or guard move/delete immediately before mutation. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

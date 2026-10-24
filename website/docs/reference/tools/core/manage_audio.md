@@ -28,6 +28,7 @@ Diagnose observed scene audio state without proving output-device audibility; in
 | `platform` | `str \| None` | — | Importer platform: Default (omitted) or exact BuildTargetGroup name, e.g. Standalone, Android, iOS. Read values without override are Unity-translated defaults. |
 | `settings` | `AudioImportPolicy \| None` | — |  |
 | `clear_override` | `bool` | — | apply_import_settings removes the selected platform override; excludes settings and Default platform. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

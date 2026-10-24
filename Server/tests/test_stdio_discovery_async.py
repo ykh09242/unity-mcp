@@ -16,10 +16,11 @@ from transport.unity_instance_middleware import PluginHub, UnityInstanceMiddlewa
 
 class SessionContext:
     def __init__(self):
+        self.request_context = SimpleNamespace(protocol_version="2025-11-25")
         self.state = {}
         self.thread_ids = []
 
-    async def set_state(self, key, value):
+    async def set_state(self, key, value, *, serializable=True):
         self.thread_ids.append(threading.get_ident())
         self.state[key] = value
 

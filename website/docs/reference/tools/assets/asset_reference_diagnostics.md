@@ -30,6 +30,7 @@ Inspect dependencies and reverse references, or preview asset moves and deletion
 | `reference_snapshot` | `bool \| None` | — | Reference reads/previews only: retain captured scalar pages for ten minutes idle. |
 | `reference_cursor` | `str \| None` | — | Reference reads/previews only: continue a captured observation with identical scan options. Imported changes invalidate it. |
 | `reference_revision` | `str \| None` | — | Recheck the same bounded read/preview or guard move/delete immediately before mutation. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

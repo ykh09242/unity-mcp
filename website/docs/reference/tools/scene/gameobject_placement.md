@@ -25,6 +25,7 @@ Preview or apply alignment and distribution of selected GameObjects.
 | `axis` | `Literal['x', 'y', 'z'] \| None` | — | Placement axis; x default. |
 | `preview` | `bool \| str \| None` | — | Placement preview defaults true; false applies a validated preview token. |
 | `preview_token` | `str \| None` | — | Placement apply: single-use native preview token, expires after five minutes. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

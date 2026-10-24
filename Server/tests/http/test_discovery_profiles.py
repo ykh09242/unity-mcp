@@ -170,8 +170,10 @@ async def test_no_project_does_not_create_global_modern_selection(discovery_serv
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [None, "legacy"])
 async def test_refresh_notifications_are_idempotent_and_fixed_inventory_stays_explicit(
     discovery_server,
+    mode,
 ):
     build, _ = discovery_server
     server, _ = build()
@@ -183,7 +185,7 @@ async def test_refresh_notifications_are_idempotent_and_fixed_inventory_stays_ex
             notifications.append(message)
             changed.set()
 
-    async with Client(server, message_handler=handle) as client:
+    async with Client(server, message_handler=handle, **({"mode": mode} if mode else {})) as client:
         fixed_inventory = await names(client)
         result = (
             await client.call_tool("manage_tools", {"action": "activate", "tool": "effect_probe"})

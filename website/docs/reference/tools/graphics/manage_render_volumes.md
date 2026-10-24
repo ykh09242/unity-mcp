@@ -30,6 +30,7 @@ Create volumes and profiles, then inspect or configure post-processing effects.
 | `profile_path` | `str \| None` | — | Asset path for VolumeProfile. |
 | `effects` | `list[dict[str, Any]] \| None` | — | Effect definitions for volume_create. |
 | `path` | `str \| None` | — | Asset path for volume_create_profile. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

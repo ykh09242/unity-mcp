@@ -44,6 +44,7 @@ Background removal is unsupported. Legacy direct remove_background requests retu
 | `search` | `str \| None` | — | Filter list_models by name, id or use case. |
 | `limit` | `int \| None` | — | Model page size (1..200; default 50). |
 | `offset` | `int \| None` | — | Model page offset (default 0). |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

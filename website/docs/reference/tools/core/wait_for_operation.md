@@ -21,6 +21,7 @@ Observe an existing build, package mutation/resolve, or single scenario job. Nev
 | `kind` | `Literal['build', 'package', 'scenario']` | yes |  |
 | `job_id` | `str` | yes |  |
 | `wait_timeout` | `int` | — |  |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

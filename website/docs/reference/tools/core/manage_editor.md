@@ -30,6 +30,7 @@ Controls Unity editor state and settings. play optionally waits for scene_loaded
 | `aspect_ratio` | `str \| None` | — | Game View aspect ratio W:H, components at most 8192 |
 | `preset` | `str \| None` | — | Unique preset label returned by get_game_view_size |
 | `restore_token` | `str \| None` | — | Token returned by set_game_view_size; retained for the latest 16 changes in this editor session |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

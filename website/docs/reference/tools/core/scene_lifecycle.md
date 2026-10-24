@@ -28,6 +28,7 @@ Create, load, save or close scenes and organize loaded scene objects.
 | `remove_scene` | `bool \| str \| None` | — | For close_scene: true to fully remove, false to just unload. |
 | `additive` | `bool \| str \| None` | — | For load: true to open scene additively (keeps current scene). |
 | `template` | `str \| None` | — | For create: scene template ('empty', 'default', '3d_basic', '2d_basic'). Omit for empty scene. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -310,6 +310,14 @@ def render_tool_page(tool: dict[str, Any], existing_examples: str) -> str:
     func = tool["func"]
     module = getattr(func, "__module__", "")
     params = introspect_params(func)
+    if name != "get_execution_receipt":
+        _ensure_server_on_path()
+        from services.registry.routing_schema import with_unity_instance
+
+        selector = with_unity_instance({})["properties"]["unity_instance"]
+        params.append(
+            ParamDoc("unity_instance", "str | int | None", False, selector["description"], None)
+        )
 
     # Sidebar/title metadata
     desc_for_meta = _first_sentence(description) or name

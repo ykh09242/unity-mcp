@@ -30,6 +30,7 @@ Add, configure or remove 2D/3D joints.
 | `drive` | `dict[str, Any] \| None` | — | Drive config for ConfigurableJoint. |
 | `properties` | `dict[str, Any] \| None` | — | Direct property dict for joints or materials. |
 | `component_index` | `int \| None` | — | Zero-based index to select which component when multiple of the same type exist (e.g., multiple HingeJoints or BoxColliders). If omitted, targets the first instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

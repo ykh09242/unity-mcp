@@ -45,6 +45,7 @@ Manages Unity Prefab assets. get_hierarchy returns bounded sibling-index depth-f
 | `cursor` | `str \| None` | — | get_hierarchy opaque cursor; keep identical page_size/max_depth. |
 | `preview_id` | `str \| None` | — | One-attempt token from preview_modify_contents, valid 10 minutes. |
 | `max_depth` | `int` | — | get_hierarchy inclusive depth scope, root=0; default 64, maximum 128. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

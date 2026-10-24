@@ -26,6 +26,7 @@ Duplicate a GameObject with optional name, parent and position changes.
 | `position` | `list[float] \| dict[str, float] \| str \| None` | — | Position as [x, y, z] array, {x, y, z} object, or JSON string |
 | `new_name` | `str \| None` | — | New name for the duplicated object (default: SourceName_Copy) |
 | `offset` | `list[float] \| str \| None` | — | Offset from original/reference position as [x, y, z] array (list or JSON string) |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

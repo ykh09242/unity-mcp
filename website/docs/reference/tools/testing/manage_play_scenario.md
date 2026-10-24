@@ -28,6 +28,7 @@ Save/get/list/delete scenarios and suites; reports history and run/status/cancel
 | `job_id` | `str \| None` | — | Required for status/cancel; optional run request key |
 | `repeat_count` | `int \| None` | — | run repetitions, default 1 |
 | `timeout_seconds` | `int \| None` | — | run total timeout in seconds, default 300 |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -31,6 +31,7 @@ Inspect the environment or configure skybox, ambient light and sun.
 | `ambient_mode` | `str \| None` | — | Ambient mode: Skybox, Trilight, Flat, Custom. |
 | `equator_color` | `list[float] \| None` | — | Equator color [r,g,b,a] (Trilight mode). |
 | `ground_color` | `list[float] \| None` | — | Ground color [r,g,b,a] (Trilight mode). |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 
