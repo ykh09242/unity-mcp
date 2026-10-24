@@ -105,6 +105,186 @@ namespace MCPForUnityTests.EditMode.Tools
                 yield return new ExitPlayMode();
         }
 
+        [Test]
+        public void RenderTargetCollisionPreservesSentinelAcrossAllCleanupPaths()
+        {
+            fixture = new Fixture(Color.clear);
+            int panelId = fixture.Panel.GetInstanceIDCompat();
+            string sentinelPath = $"Assets/UI/RT_MCP_UI_Render_{panelId}.renderTexture";
+            bool createdFolder = !AssetDatabase.IsValidFolder("Assets/UI");
+            if (createdFolder)
+                Assert.IsNotEmpty(AssetDatabase.CreateFolder("Assets", "UI"));
+            Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(sentinelPath), "The fixture must never replace a pre-existing asset.");
+            var sentinel = new RenderTexture(7, 9, 0) { name = "UserRenderTargetSentinel" };
+            AssetDatabase.CreateAsset(sentinel, sentinelPath);
+            AssetDatabase.SaveAssetIfDirty(sentinel);
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(sentinel, out string guid, out long localId));
+            byte[] originalBytes = File.ReadAllBytes(sentinelPath);
+            var clock = typeof(ManageUI).GetField("s_renderCacheClock", StaticPrivate);
+            object previousClock = clock.GetValue(null);
+            double now = 1000;
+            try
+            {
+                clock.SetValue(null, (Func<double>)(() => now));
+                var cold = Send(fixture.Request("collision-cold.png", 0));
+                Assert.IsTrue(cold.Value<bool>("success"), cold.ToString());
+                AssertSentinel();
+                var cache = (Dictionary<int, RenderTexture>)typeof(ManageUI).GetField("s_panelRTs", StaticPrivate).GetValue(null);
+                var first = cache[panelId];
+                string firstPath = AssetDatabase.GetAssetPath(first);
+                Assert.That(firstPath, Does.StartWith("Assets/UI/"));
+                Assert.AreNotEqual(sentinelPath, firstPath);
+
+                var resize = fixture.Request("collision-resize.png", 0);
+                resize["width"] = 32;
+                var resized = Send(resize);
+                Assert.IsTrue(resized.Value<bool>("success"), resized.ToString());
+                Assert.IsTrue(first == null, "Resizing releases the previous owned target.");
+                Assert.AreNotSame(first, cache[panelId]);
+                Assert.AreEqual(32, cache[panelId].width);
+                AssertSentinel();
+
+                var warmup = fixture.Request("collision-cancel.png");
+                warmup["width"] = 32;
+                var started = Send(warmup);
+                Assert.IsTrue(started.Value<bool>("success"), started.ToString());
+                warmup["capture_id"] = started["data"]["capture_id"];
+                warmup["cancel_capture"] = true;
+                Assert.IsTrue(Send(warmup).Value<bool>("success"));
+                AssertSentinel();
+                var idleTarget = cache[panelId];
+                string idlePath = AssetDatabase.GetAssetPath(idleTarget);
+                now += 61;
+                Invoke("CleanupIdlePanelTargets");
+                Assert.IsFalse(cache.ContainsKey(panelId));
+                Assert.IsTrue(idleTarget == null);
+                Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(idlePath));
+                AssertSentinel();
+
+                Assert.IsTrue(Send(fixture.Request("collision-global.png", 0)).Value<bool>("success"));
+                var globalTarget = cache[panelId];
+                string globalPath = AssetDatabase.GetAssetPath(globalTarget);
+                Invoke("CleanupRenderTextures");
+                Assert.IsTrue(globalTarget == null);
+                Assert.IsFalse(cache.ContainsKey(panelId));
+                Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(globalPath));
+                AssertSentinel();
+            }
+            finally
+            {
+                clock.SetValue(null, previousClock);
+                CleanupOwnedState();
+                AssetDatabase.DeleteAsset(sentinelPath);
+                if (createdFolder && Directory.GetFileSystemEntries("Assets/UI").Length == 0)
+                    AssetDatabase.DeleteAsset("Assets/UI");
+            }
+
+            void AssertSentinel()
+            {
+                var current = AssetDatabase.LoadAssetAtPath<RenderTexture>(sentinelPath);
+                Assert.IsTrue(current == sentinel, "An existing asset must retain its object identity.");
+                Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(current, out string actualGuid, out long actualId));
+                Assert.AreEqual(guid, actualGuid);
+                Assert.AreEqual(localId, actualId);
+                CollectionAssert.AreEqual(originalBytes, File.ReadAllBytes(sentinelPath));
+                Assert.AreEqual(7, current.width);
+                Assert.AreEqual(9, current.height);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ReplacingOwnedRenderAssetPreservesReplacementDuringCleanup(bool idle)
+        {
+            fixture = new Fixture(Color.clear);
+            var clock = typeof(ManageUI).GetField("s_renderCacheClock", StaticPrivate);
+            object previousClock = clock.GetValue(null);
+            double now = 1000;
+            string path = null;
+            try
+            {
+                clock.SetValue(null, (Func<double>)(() => now));
+                var response = Send(fixture.Request("replace-owned.png", 0));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                int panelId = fixture.Panel.GetInstanceIDCompat();
+                var cache = (Dictionary<int, RenderTexture>)typeof(ManageUI).GetField("s_panelRTs", StaticPrivate).GetValue(null);
+                var previous = cache[panelId];
+                path = AssetDatabase.GetAssetPath(previous);
+                var replacement = new RenderTexture(7, 9, 0) { name = "ExternalReplacement" };
+                AssetDatabase.CreateAsset(replacement, path);
+                AssetDatabase.SaveAssetIfDirty(replacement);
+                byte[] bytes = File.ReadAllBytes(path);
+                Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(replacement, out string guid, out long localId));
+                Assert.IsTrue(previous == null, "The previous cached native object is destroyed by replacement.");
+                now += 61;
+                Invoke(idle ? "CleanupIdlePanelTargets" : "CleanupRenderTextures");
+                Assert.IsFalse(cache.ContainsKey(panelId));
+                Assert.IsTrue(AssetDatabase.LoadAssetAtPath<RenderTexture>(path) == replacement);
+                Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(replacement, out string actualGuid, out long actualId));
+                Assert.AreEqual(guid, actualGuid);
+                Assert.AreEqual(localId, actualId);
+                CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+            }
+            finally
+            {
+                clock.SetValue(null, previousClock);
+                CleanupOwnedState();
+                if (path != null)
+                    AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void UnidentifiedRenderTargetRollbackReleasesOnlyExactOwnedAsset(bool replaced)
+        {
+            fixture = new Fixture(Color.clear);
+            int panelId = fixture.Panel.GetInstanceIDCompat();
+            string path = $"Assets/UI/RT_Rollback_{Guid.NewGuid():N}.renderTexture";
+            bool createdFolder = !AssetDatabase.IsValidFolder("Assets/UI");
+            if (createdFolder)
+                Assert.IsNotEmpty(AssetDatabase.CreateFolder("Assets", "UI"));
+            var pendingAssets =
+                (Dictionary<int, (RenderTexture target, string path, string guid, long localId)>)
+                    typeof(ManageUI).GetField("s_panelRTAssets", StaticPrivate).GetValue(null);
+            try
+            {
+                var target = new RenderTexture(16, 16, 0);
+                target.Create();
+                AssetDatabase.CreateAsset(target, path);
+                pendingAssets[panelId] = (target, path, null, 0);
+                RenderTexture replacement = null;
+                byte[] bytes = null;
+                if (replaced)
+                {
+                    replacement = new RenderTexture(7, 9, 0) { name = "ReplacementDuringCreation" };
+                    AssetDatabase.CreateAsset(replacement, path);
+                    AssetDatabase.SaveAssetIfDirty(replacement);
+                    bytes = File.ReadAllBytes(path);
+                }
+                Invoke("ReleasePanelTarget", panelId, target);
+                Assert.IsFalse(pendingAssets.ContainsKey(panelId));
+                if (replaced)
+                {
+                    Assert.IsTrue(AssetDatabase.LoadAssetAtPath<RenderTexture>(path) == replacement);
+                    CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+                }
+                else
+                {
+                    Assert.IsTrue(target == null, "A failed creation must release its native target even before GUID identification completes.");
+                    Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(path));
+                }
+            }
+            finally
+            {
+                pendingAssets.Remove(panelId);
+                CleanupOwnedState();
+                AssetDatabase.DeleteAsset(path);
+                if (createdFolder && Directory.GetFileSystemEntries("Assets/UI").Length == 0)
+                    AssetDatabase.DeleteAsset("Assets/UI");
+            }
+        }
+
         [UnityTest]
         public IEnumerator Transparent64CaptureIsSuccessfulAndMatchesEveryDecodedPixel()
         {
