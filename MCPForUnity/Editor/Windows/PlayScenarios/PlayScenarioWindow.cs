@@ -56,6 +56,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         [SerializeField]
         private string suiteSourceRevision = "";
         private JObject suiteReport;
+        private PlayScenarioSuiteEditorSnapshot suiteSnapshot;
         private PlayScenarioSuiteEditor suiteEditor;
         internal Func<JObject, object> HandleSuite;
         private bool Running => report?.Status == "running" || (string)suiteReport?["status"] == "running";
@@ -116,7 +117,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
         private Button cancelButton;
         private Button buildPlayerButton;
         private bool buildingPlayer;
-        private string renderedReportJson;
+        private PlayScenarioReportView reportView;
+        private string reportViewKey;
         internal Func<string> ChoosePlayerBuildFolder;
         internal Func<string> ChoosePlayerSessionFile;
         internal Func<string> ChoosePlayerSoakFile;
@@ -194,7 +196,8 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             RememberPaneWidths();
             rootVisualElement.Clear();
             compactScenarioLayout = null;
-            renderedReportJson = null;
+            reportView = null;
+            reportViewKey = null;
             rootVisualElement.AddToClassList("mcp-editor");
             rootVisualElement.AddToClassList("play-scenarios");
             rootVisualElement.EnableInClassList("unity-theme-light", !EditorGUIUtility.isProSkin);
@@ -1136,13 +1139,19 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             }
             bool wasRunning = Running;
             string previousId = jobId;
-            suiteReport = success.Data as JObject ?? Json(success.Data);
+            var snapshot = success.Data as PlayScenarioSuiteEditorSnapshot;
+            JObject data = snapshot?.Data ?? success.Data as JObject ?? Json(success.Data);
+            bool changed = snapshot != null ? !ReferenceEquals(snapshot, suiteSnapshot) : !JToken.DeepEquals(suiteReport, data);
+            suiteReport = data;
+            suiteSnapshot = snapshot;
             jobId = (string)suiteReport["suite_id"];
             suiteMode = true;
             report = null;
+            reportSnapshot = null;
             SessionState.SetString(SessionJobKey, jobId ?? "");
             SessionState.SetBool(SessionSuiteModeKey, true);
-            RenderReport();
+            if (changed || reportView == null)
+                RenderReport();
             if (Running)
                 StartPolling();
             else
@@ -1167,6 +1176,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             bool wasRunning = report?.Status == "running";
             suiteMode = false;
             suiteReport = null;
+            suiteSnapshot = null;
             SessionState.SetBool(SessionSuiteModeKey, false);
             JObject data = success.Data is PlayScenarioEditorSnapshot snapshot
                 ? snapshot.Data
@@ -1174,7 +1184,14 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             bool changed = report == null || !JToken.DeepEquals(reportSnapshot, data);
             if (changed)
             {
-                report = data.ToObject<PlayScenarioRun>(JsonSerializer.Create());
+                // The view reads the detached projection directly. Only the small run identity
+                // and lifecycle fields need a typed value; historical rows retain scalar values.
+                report = new PlayScenarioRun
+                {
+                    JobId = (string)data["job_id"],
+                    Status = (string)data["status"],
+                    Phase = (string)data["phase"],
+                };
                 reportSnapshot = data;
             }
             if (report == null)
@@ -1224,7 +1241,11 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             try
             {
                 if (suiteMode)
-                    AcceptSuiteReport(CallSuite(new JObject { ["action"] = "suite_status", ["suite_id"] = jobId }));
+                    AcceptSuiteReport(
+                        HandleSuite == null
+                            ? PlayScenarioSuiteService.EditorStatus(jobId)
+                            : CallSuite(new JObject { ["action"] = "suite_status", ["suite_id"] = jobId })
+                    );
                 else
                     AcceptReport(ReadStatus != null ? ReadStatus(jobId) : PlayScenarioService.EditorStatus(jobId));
             }
@@ -1240,89 +1261,22 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             if (runResults == null)
                 return;
             cancelButton.SetEnabled(Running);
-            string currentReportJson =
-                suiteMode && suiteReport != null ? suiteReport.ToString(Formatting.None)
-                : report != null ? (reportSnapshot ?? PlayScenarioEditorSnapshot.FromState(report)).ToString(Formatting.None)
-                : "";
-            if (currentReportJson == renderedReportJson)
-                return;
-            renderedReportJson = currentReportJson;
-            runResults.Clear();
-            if (suiteMode && suiteReport != null)
+            if (report == null && suiteReport == null)
             {
-                runResults.Add(new Label((string)suiteReport["status"] + " • suite") { name = "runStatus" });
-                PlayScenarioSuiteEditor.AppendReport(suiteReport, text => runResults.Add(Note(text)));
-                return;
-            }
-            if (report == null)
-            {
+                runResults.Clear();
                 runResults.Add(Note("No run yet. Save & Run starts a job and displays its step results here."));
                 return;
             }
-            runResults.Add(new Label(report.Status + " • " + report.Phase) { name = "runStatus" });
-            runResults.Add(Note("Job: " + report.JobId));
-            PlayScenarioHistoryEditor.AppendStructuredDetails(
-                reportSnapshot ?? PlayScenarioEditorSnapshot.FromState(report),
-                text => runResults.Add(Note(text))
-            );
-            if (!string.IsNullOrEmpty(report.Error))
+            string key = (suiteMode ? "suite:" : "scenario:") + jobId;
+            if (reportView == null || reportViewKey != key)
             {
-                var error = Note(report.Error);
-                error.AddToClassList("scenario-error");
-                runResults.Add(error);
+                reportView = new PlayScenarioReportView(runResults, suiteMode);
+                reportViewKey = key;
             }
-            if (!string.IsNullOrEmpty(report.ReportPath))
-                runResults.Add(Note("Report: " + report.ReportPath));
-            if (!string.IsNullOrEmpty(report.ReportError))
-                runResults.Add(Note("Report save error: " + report.ReportError));
-            foreach (var step in report.Steps)
-            {
-                var text = Note($"{step.Stage ?? "main"}.{step.Iteration}.{step.StepIndex + 1} {step.Name} — {step.Status}\n{step.Detail}");
-                text.text += "\nQueries: " + PlayScenarioHistoryEditor.QuerySummary(Json(step.QueryCounts));
-                text.AddToClassList("scenario-result-row");
-                runResults.Add(text);
-            }
-            if (!string.IsNullOrEmpty(report.MetricsSummary))
-                runResults.Add(Note(report.MetricsSummary));
-            foreach (string warning in report.MetricWarnings)
-                runResults.Add(Note("Diagnostic warning: " + warning));
-            foreach (var sample in report.Metrics)
-                runResults.Add(
-                    Note(
-                        $"Iteration {sample.Iteration} metrics: managed {sample.ManagedBytes?.ToString() ?? "unavailable"}, allocated {sample.AllocatedBytes?.ToString() ?? "unavailable"}, objects {sample.ObjectCount?.ToString() ?? "unavailable"}; subscriptions {sample.RunnerSubscriptionCount?.ToString() ?? "unavailable"}, handles {sample.RunnerHandleCount?.ToString() ?? "unavailable"}"
-                            + (sample.IgnoredForTrend ? " (warmup)" : "")
-                            + (string.IsNullOrEmpty(sample.Error) ? "" : " — " + sample.Error)
-                    )
-                );
-            if (report.FailureDiagnostics != null)
-                runResults.Add(
-                    Note(
-                        "Failure observation: "
-                            + report.FailureDiagnostics.Observation
-                            + "\n"
-                            + report.FailureDiagnostics.TargetDetail
-                            + "\nScreenshot: "
-                            + (
-                                report.FailureDiagnostics.ScreenshotPath
-                                ?? report.FailureDiagnostics.ScreenshotError
-                                ?? (
-                                    report.Status == "running" && report.Scenario?.Diagnostics?.ScreenshotOnFailure == true
-                                        ? "Pending capture."
-                                        : "Not requested"
-                                )
-                            )
-                    )
-                );
-            var logs = new Foldout { text = "Captured logs (" + report.Logs.Count + ")", value = true };
-            foreach (var log in report.Logs)
-            {
-                var text = Note(log.Type + ": " + log.Message + (string.IsNullOrEmpty(log.StackTrace) ? "" : "\n" + log.StackTrace));
-                text.AddToClassList("scenario-result-row");
-                logs.Add(text);
-            }
-            if (report.DroppedLogCount > 0)
-                logs.Add(Note("Older captured logs dropped: " + report.DroppedLogCount));
-            runResults.Add(logs);
+            if (suiteMode)
+                reportView.RenderSuite(suiteReport, suiteSnapshot?.ChildReports);
+            else
+                reportView.RenderScenario(reportSnapshot);
         }
 
         private void SetMessage(string text, bool error)

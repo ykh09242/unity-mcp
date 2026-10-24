@@ -1180,7 +1180,7 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.AreSame(previous, Field<Label>("runStatus"));
             window.ReadStatus = job => Response(job, "succeeded");
             ForceStatusTick();
-            Assert.AreNotSame(previous, Field<Label>("runStatus"));
+            Assert.AreSame(previous, Field<Label>("runStatus"), "Lifecycle changes update the retained status control.");
             StringAssert.Contains("succeeded", Field<Label>("runStatus").text);
         }
 
