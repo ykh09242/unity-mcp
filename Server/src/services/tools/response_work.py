@@ -44,7 +44,15 @@ def needs_response_worker(value: object) -> bool:
             pending.append(iter(item))
         elif item is None or item_type is int or item_type is float or item_type is bool:
             continue
-        elif isinstance(item, BaseModel):
+        else:
+            # Instance checks can read an unknown object's custom __class__.
+            # Use the native type descriptor, bypassing metaclass attribute and
+            # descriptor hooks too; identity comparisons never call class __eq__.
+            ancestry = type.__dict__["__mro__"].__get__(item_type)
+            if len(ancestry) > 256 or not any(base is BaseModel for base in ancestry):
+                # Unknown/subclass containers may hide arbitrary stored work.
+                # Deep type hierarchies also select a worker with bounded probing.
+                return True
             # Stored values include SDK content, raw results, extras and excluded
             # fields. Inspect them conservatively without dumping a model or
             # calling extension serialization hooks. Iterators keep this probe
@@ -53,10 +61,6 @@ def needs_response_worker(value: object) -> bool:
             extra = BaseModel.__dict__["__pydantic_extra__"].__get__(item)
             private = BaseModel.__dict__["__pydantic_private__"].__get__(item)
             pending.append(iter((storage, extra, private)))
-        else:
-            # Unknown/subclass containers may hide arbitrary stored work. Do not
-            # invoke their length/iteration hooks in the scheduling probe.
-            return True
     return bool(pending)
 
 

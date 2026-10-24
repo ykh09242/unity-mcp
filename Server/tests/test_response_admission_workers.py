@@ -99,6 +99,29 @@ def test_scheduling_probe_does_not_call_model_or_container_extension_hooks():
     assert needs_response_worker(HookList([1]))
 
 
+def test_scheduling_probe_uses_actual_type_without_attribute_or_equality_hooks():
+    class HookMeta(type):
+        @property
+        def __mro__(cls):
+            raise AssertionError("probe must bypass metaclass descriptors")
+
+        def __getattribute__(cls, name):
+            if name == "__mro__":
+                raise AssertionError("probe must bypass metaclass attribute hooks")
+            return super().__getattribute__(name)
+
+        def __eq__(cls, other):
+            raise AssertionError("probe must compare type ancestry by identity")
+
+    class HookList(list, metaclass=HookMeta):
+        def __getattribute__(self, name):
+            if name == "__class__":
+                raise AssertionError("probe must not read instance class attributes")
+            return super().__getattribute__(name)
+
+    assert needs_response_worker(HookList([1]))
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["asyncio", "anyio"])
 async def test_cancelled_admission_holds_response_reservations_until_worker_exit(monkeypatch, mode):
