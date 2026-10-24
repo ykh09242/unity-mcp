@@ -31,7 +31,7 @@ namespace MCPForUnityTests.Editor.Services
                 serialized.ApplyModifiedPropertiesWithoutUndo();
                 serialized.Update();
                 Assert.AreEqual(first.GetEntityId(), property.objectReferenceEntityIdValue);
-                Assert.AreSame(first, Resources.EntityIdToObject(property.objectReferenceEntityIdValue));
+                Assert.AreSame(first, UnityEngine.Resources.EntityIdToObject(property.objectReferenceEntityIdValue));
                 property.objectReferenceEntityIdValue = second.GetEntityId();
                 serialized.ApplyModifiedPropertiesWithoutUndo();
                 serialized.Update();
