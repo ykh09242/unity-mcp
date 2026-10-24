@@ -221,6 +221,256 @@ internal static class CacheHarness
             }
         }
         Require(EditorApplication.Subscribers == 0 && AssemblyReloadEvents.Subscribers == 0, "dispose leaked Editor callbacks");
+        CheckSmallRings(live);
+        CheckReentrantMutations(live);
         Console.WriteLine("PASS: bounded sweep; complete expiry; mutation/overwrite; live preservation; clear/reload/quit/dispose");
+    }
+
+    private static void CheckSmallRings(Object live)
+    {
+        foreach (int dead in new[] { 0, 1, 127, 128, 129 })
+        {
+            int calls = 0;
+            double now = 0;
+            using (
+                var cache = new EditorObjectIdCache(
+                    id =>
+                    {
+                        calls++;
+                        return id == (ulong)dead ? null : live;
+                    },
+                    () => now
+                )
+            )
+            {
+                for (ulong id = 0; id < 260; id++)
+                    cache.Remember(id);
+                now = 11;
+                for (int tick = 0; tick < 4; tick++)
+                {
+                    int before = calls;
+                    EditorApplication.Tick();
+                    Require(calls - before <= 128, "live/dead paths exceeded their shared update budget");
+                }
+                Require(calls == 260 && cache.Count == 259, "live/dead paths lost sweep coverage");
+            }
+        }
+        for (int survivor = 129; survivor <= 130; survivor++)
+        {
+            double now = 0;
+            bool allAlive = true;
+            bool pairAlive = true;
+            using (
+                var cache = new EditorObjectIdCache(id => allAlive || id == (ulong)survivor || (pairAlive && (id == 129 || id == 130)) ? live : null, () => now)
+            )
+            {
+                for (ulong id = 0; id < 260; id++)
+                    cache.Remember(id);
+                now += 11;
+                EditorApplication.Tick();
+                allAlive = false;
+                for (int id = 0; id < 260; id++)
+                    if (id != 129 && id != 130)
+                        Require(cache.Resolve(id) == null, "pending pair setup retained a dead handle");
+                pairAlive = false;
+                EditorApplication.Tick();
+                EditorApplication.Tick();
+                Require(cache.Count == 1 && cache.Resolve(survivor) == live, "pending pair lost its survivor");
+            }
+        }
+        // Exhaust the small-ring deletion patterns, including an aliased predecessor
+        // and successor, then append and empty the ring to exercise both link directions.
+        for (int size = 2; size <= 8; size++)
+        {
+            for (int mask = 0; mask < (1 << size); mask++)
+            {
+                double now = 0;
+                bool empty = false;
+                int expected = 1;
+                using (var cache = new EditorObjectIdCache(id => !empty && (id == 100 || (mask & (1 << (int)id)) != 0) ? live : null, () => now))
+                {
+                    for (int id = 0; id < size; id++)
+                    {
+                        cache.Remember((ulong)id);
+                        if ((mask & (1 << id)) != 0)
+                            expected++;
+                    }
+                    now += 11;
+                    EditorApplication.Tick();
+                    Require(cache.Count == expected - 1, "small-ring sweep count changed");
+                    // Revisit surviving links before an append can repair a bad tail.
+                    now += 11;
+                    EditorApplication.Tick();
+                    EditorApplication.Transition();
+                    EditorApplication.Tick();
+                    Require(cache.Count == expected - 1, "small-ring repeat lost a survivor");
+                    cache.Remember(100);
+                    now += 11;
+                    EditorApplication.Tick();
+                    Require(cache.Count == expected && cache.Resolve(100) == live, "small-ring append corrupted links");
+                    for (int id = 0; id < size; id++)
+                        Require((cache.Resolve(id) != null) == ((mask & (1 << id)) != 0), "small-ring survivor lost");
+                    empty = true;
+                    now += 11;
+                    EditorApplication.Tick();
+                    Require(cache.Count == 0 && !cache.IsScheduled, "small-ring refill did not drain");
+                }
+            }
+        }
+        Require(EditorApplication.Subscribers == 0 && AssemblyReloadEvents.Subscribers == 0, "small-ring checks leaked callbacks");
+    }
+
+    private static void CheckReentrantMutations(Object live)
+    {
+        int loaded = 0;
+        int calls = 0;
+        double loadingNow = 0;
+        EditorObjectIdCache loading = null;
+        using (
+            loading = new EditorObjectIdCache(
+                id =>
+                {
+                    calls++;
+                    if (id == (ulong)loaded && loaded < 1024)
+                    {
+                        loading.Remember((ulong)(10000 + loaded));
+                        loaded++;
+                    }
+                    return live;
+                },
+                () => loadingNow
+            )
+        )
+        {
+            for (ulong id = 0; id < 1024; id++)
+                loading.Remember(id);
+            loadingNow = 11;
+            for (int tick = 0; tick < 1100; tick++)
+                EditorApplication.Tick();
+            Require(loaded == 1024 && loading.Count == 2048, "reentrant loading did not reach every original entry");
+            Require(calls <= 4096, "reentrant loading repeatedly rescanned the prefix");
+        }
+        EditorObjectIdCache inserting = null;
+        using (
+            inserting = new EditorObjectIdCache(
+                id =>
+                {
+                    if (id == 0)
+                    {
+                        inserting.Remember(1);
+                        return null;
+                    }
+                    return live;
+                },
+                () => 0
+            )
+        )
+        {
+            inserting.Remember(0);
+            Require(inserting.Resolve(0) == null, "inserting lookup changed its native result");
+            Require(inserting.Count == 1 && inserting.Resolve(1) == live, "unrelated insertion delayed dead lookup removal");
+        }
+        for (int clear = 0; clear < 2; clear++)
+        {
+            EditorObjectIdCache cache = null;
+            bool alive = true;
+            using (
+                cache = new EditorObjectIdCache(
+                    id =>
+                    {
+                        if (id == 0)
+                        {
+                            if (clear != 0)
+                                cache.Clear();
+                            cache.Remember(0xFFFFFFFF00000000UL);
+                            return null;
+                        }
+                        return alive ? live : null;
+                    },
+                    () => 0
+                )
+            )
+            {
+                cache.Remember(0);
+                Require(cache.Resolve(0) == null, "lookup changed its native result");
+                Require(cache.Count == 1 && cache.Resolve(0) == live, "lookup removed a reentrant replacement");
+                alive = false;
+                Require(cache.Resolve(0) == null && cache.Count == 0, "ordinary lookup stopped removing dead entries immediately");
+            }
+        }
+        for (int kind = 0; kind < 5; kind++)
+        {
+            for (int fail = 0; fail < 2; fail++)
+            {
+                double now = 0;
+                bool injected = false;
+                var alive = new HashSet<ulong> { 0, 2 };
+                EditorObjectIdCache cache = null;
+                using (
+                    cache = new EditorObjectIdCache(
+                        id =>
+                        {
+                            if (id == (kind == 4 ? 0UL : 2UL) && !injected)
+                            {
+                                injected = true;
+                                if (kind == 0)
+                                {
+                                    alive.Add(3);
+                                    cache.Remember(3);
+                                }
+                                else if (kind == 1)
+                                {
+                                    alive.Remove(0);
+                                    alive.Add(0xFFFFFFFF00000000UL);
+                                    cache.Remember(0xFFFFFFFF00000000UL);
+                                }
+                                else if (kind == 2 || kind == 4)
+                                {
+                                    cache.Clear();
+                                    alive.Clear();
+                                    alive.Add(3);
+                                    cache.Remember(3);
+                                }
+                                else
+                                {
+                                    alive.Remove(0);
+                                    cache.Resolve(0);
+                                }
+                                if (fail != 0)
+                                    throw new InvalidOperationException("owned reentrant failure");
+                            }
+                            return alive.Contains(id) ? live : null;
+                        },
+                        () => now
+                    )
+                )
+                {
+                    cache.Remember(0);
+                    cache.Remember(1);
+                    cache.Remember(2);
+                    now += 11;
+                    try
+                    {
+                        EditorApplication.Tick();
+                        Require(fail == 0, "expected reentrant failure");
+                    }
+                    catch (InvalidOperationException error)
+                    {
+                        Require(fail != 0 && error.Message == "owned reentrant failure", "unexpected reentrant failure");
+                    }
+                    EditorApplication.Tick();
+                    now += 11;
+                    EditorApplication.Tick();
+                    Require(cache.Count == alive.Count, "reentrant mutation lost cache membership");
+                    foreach (ulong id in alive)
+                        Require(cache.Resolve(unchecked((int)id)) == live, "reentrant mutation lost full identity");
+                    alive.Clear();
+                    now += 11;
+                    EditorApplication.Tick();
+                    Require(cache.Count == 0 && !cache.IsScheduled, "reentrant mutation left unreachable entries");
+                }
+            }
+        }
+        Require(EditorApplication.Subscribers == 0 && AssemblyReloadEvents.Subscribers == 0, "reentrant checks leaked callbacks");
     }
 }

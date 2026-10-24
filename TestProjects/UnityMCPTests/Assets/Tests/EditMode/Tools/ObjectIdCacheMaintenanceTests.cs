@@ -90,6 +90,45 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(127)]
+        [TestCase(128)]
+        [TestCase(129)]
+        public void LiveAndDeadTraversalShareOneUpdateBudget(int dead)
+        {
+            var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();
+            live.hideFlags = HideFlags.HideAndDontSave;
+            int calls = 0;
+            try
+            {
+                using (
+                    var probe = new Probe(id =>
+                    {
+                        calls++;
+                        return id == (ulong)dead ? null : live;
+                    })
+                )
+                {
+                    for (ulong id = 0; id < 260; id++)
+                        probe.Remember(id);
+                    probe.Now = 11;
+                    for (int tick = 0; tick < 4; tick++)
+                    {
+                        int before = calls;
+                        probe.Update();
+                        Assert.That(calls - before, Is.LessThanOrEqualTo(128));
+                    }
+                    Assert.AreEqual(260, calls);
+                    Assert.AreEqual(259, probe.Count);
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(live);
+            }
+        }
+
         [Test]
         public void UpdateBoundsNativeLookupsAndEventuallySweepsEveryDeadHandle()
         {
@@ -237,6 +276,337 @@ namespace MCPForUnityTests.Editor.Tools
                         probe.Update();
                     Assert.AreEqual(258, probe.Count);
                     Assert.AreSame(live, probe.Resolve(2));
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(live);
+            }
+        }
+
+        [Test]
+        public void ReentrantLoadingAdvancesWithoutRepeatedPrefixSweeps()
+        {
+            var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();
+            live.hideFlags = HideFlags.HideAndDontSave;
+            int loaded = 0;
+            int calls = 0;
+            Probe probe = null;
+            try
+            {
+                using (
+                    probe = new Probe(id =>
+                    {
+                        calls++;
+                        if (id == (ulong)loaded && loaded < 1024)
+                        {
+                            probe.Remember((ulong)(10000 + loaded));
+                            loaded++;
+                        }
+                        return live;
+                    })
+                )
+                {
+                    for (ulong id = 0; id < 1024; id++)
+                        probe.Remember(id);
+                    probe.Now = 11;
+                    for (int tick = 0; tick < 1100; tick++)
+                    {
+                        int before = calls;
+                        probe.Update();
+                        Assert.That(calls - before, Is.LessThanOrEqualTo(128));
+                    }
+                    Assert.AreEqual(1024, loaded);
+                    Assert.AreEqual(2048, probe.Count);
+                    Assert.That(calls, Is.LessThanOrEqualTo(4096), "Each loading callback must not restart the previously visited prefix.");
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(live);
+            }
+        }
+
+        [Test]
+        public void PublicLookupStillRemovesDeadIdentityAfterUnrelatedReentrantInsertion()
+        {
+            var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();
+            live.hideFlags = HideFlags.HideAndDontSave;
+            Probe probe = null;
+            try
+            {
+                using (
+                    probe = new Probe(id =>
+                    {
+                        if (id == 0)
+                        {
+                            probe.Remember(1);
+                            return null;
+                        }
+                        return live;
+                    })
+                )
+                {
+                    probe.Remember(0);
+                    Assert.IsNull(probe.Resolve(0));
+                    Assert.AreEqual(1, probe.Count, "An unrelated insertion must not postpone removing the dead identity.");
+                    Assert.AreSame(live, probe.Resolve(1));
+                    probe.Now = 11;
+                    probe.Update();
+                    Assert.AreEqual(1, probe.Count);
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(live);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void PublicLookupDoesNotRemoveAReentrantReplacement(bool clearBeforeReplacing)
+        {
+            var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();
+            live.hideFlags = HideFlags.HideAndDontSave;
+            bool alive = true;
+            Probe probe = null;
+            try
+            {
+                using (
+                    probe = new Probe(id =>
+                    {
+                        if (id == 0)
+                        {
+                            if (clearBeforeReplacing)
+                                probe.Clear();
+                            probe.Remember(0xFFFFFFFF00000000UL);
+                            return null;
+                        }
+                        return alive ? live : null;
+                    })
+                )
+                {
+                    probe.Remember(0);
+                    Assert.IsNull(probe.Resolve(0));
+                    Assert.AreEqual(1, probe.Count);
+                    Assert.AreSame(live, probe.Resolve(0));
+                    alive = false;
+                    Assert.IsNull(probe.Resolve(0));
+                    Assert.AreEqual(0, probe.Count);
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(live);
+            }
+        }
+
+        [TestCase(0, false)]
+        [TestCase(0, true)]
+        [TestCase(1, false)]
+        [TestCase(1, true)]
+        [TestCase(2, false)]
+        [TestCase(2, true)]
+        [TestCase(3, false)]
+        [TestCase(3, true)]
+        [TestCase(4, false)]
+        [TestCase(4, true)]
+        public void ReentrantNativeLookupMutationPreservesMembershipAndIdentity(int mutation, bool throwAfterMutation)
+        {
+            var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();
+            live.hideFlags = HideFlags.HideAndDontSave;
+            var alive = new HashSet<ulong> { 0, 2 };
+            bool injected = false;
+            Probe probe = null;
+            try
+            {
+                using (
+                    probe = new Probe(id =>
+                    {
+                        if (id == (mutation == 4 ? 0UL : 2UL) && !injected)
+                        {
+                            injected = true;
+                            // Native lookup can load an asset whose OnEnable changes the cache.
+                            if (mutation == 0)
+                            {
+                                alive.Add(3);
+                                probe.Remember(3);
+                            }
+                            else if (mutation == 1)
+                            {
+                                alive.Remove(0);
+                                alive.Add(0xFFFFFFFF00000000UL);
+                                probe.Remember(0xFFFFFFFF00000000UL);
+                            }
+                            else if (mutation == 2 || mutation == 4)
+                            {
+                                probe.Clear();
+                                alive.Clear();
+                                alive.Add(3);
+                                probe.Remember(3);
+                            }
+                            else
+                            {
+                                alive.Remove(0);
+                                probe.Resolve(0);
+                            }
+                            if (throwAfterMutation)
+                                throw new InvalidOperationException("Owned reentrant lookup failure");
+                        }
+                        return alive.Contains(id) ? live : null;
+                    })
+                )
+                {
+                    probe.Remember(0);
+                    probe.Remember(1);
+                    probe.Remember(2);
+                    probe.Now = 11;
+                    if (throwAfterMutation)
+                        Assert.Throws<InvalidOperationException>(() => probe.Update());
+                    else
+                        probe.Update();
+                    probe.Update();
+                    probe.Now += 11;
+                    probe.Update();
+                    Assert.AreEqual(alive.Count, probe.Count);
+                    foreach (ulong id in alive)
+                        Assert.AreSame(live, probe.Resolve(unchecked((int)id)));
+                    alive.Clear();
+                    probe.Now += 11;
+                    probe.Update();
+                    Assert.AreEqual(0, probe.Count, "Reentrant insertion must not leave an unreachable dictionary entry.");
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(live);
+            }
+        }
+
+        [TestCase(2, 0)]
+        [TestCase(2, 1)]
+        [TestCase(129, 0)]
+        [TestCase(129, 64)]
+        [TestCase(129, 128)]
+        public void OneSurvivorCanBeAppendedToAndRemovedAcrossSweepBoundaries(int size, int survivor)
+        {
+            var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();
+            live.hideFlags = HideFlags.HideAndDontSave;
+            bool empty = false;
+            try
+            {
+                using (var probe = new Probe(id => !empty && (id == (ulong)survivor || id == 1000) ? live : null))
+                {
+                    for (int id = 0; id < size; id++)
+                        probe.Remember((ulong)id);
+                    probe.Now = 11;
+                    probe.Update();
+                    probe.Update();
+                    Assert.AreEqual(1, probe.Count);
+                    Assert.AreSame(live, probe.Resolve(survivor));
+                    probe.Now += 11;
+                    probe.Update();
+                    Assert.AreEqual(1, probe.Count);
+                    probe.Remember(1000);
+                    probe.Now += 11;
+                    probe.Update();
+                    Assert.AreEqual(2, probe.Count);
+                    Assert.AreSame(live, probe.Resolve(1000));
+                    empty = true;
+                    Assert.IsNull(probe.Resolve(survivor));
+                    probe.Now += 11;
+                    probe.Update();
+                    Assert.AreEqual(0, probe.Count);
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(live);
+            }
+        }
+
+        [TestCase(129)]
+        [TestCase(130)]
+        public void PendingSweepCanShrinkToTwoEntriesBeforeOneDies(int survivor)
+        {
+            var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();
+            live.hideFlags = HideFlags.HideAndDontSave;
+            bool allAlive = true;
+            bool pairAlive = true;
+            try
+            {
+                using (var probe = new Probe(id => allAlive || id == (ulong)survivor || (pairAlive && (id == 129 || id == 130)) ? live : null))
+                {
+                    for (ulong id = 0; id < 260; id++)
+                        probe.Remember(id);
+                    probe.Now = 11;
+                    probe.Update();
+                    allAlive = false;
+                    for (int id = 0; id < 260; id++)
+                        if (id != 129 && id != 130)
+                            Assert.IsNull(probe.Resolve(id));
+                    Assert.AreEqual(2, probe.Count);
+                    pairAlive = false;
+                    probe.Update();
+                    probe.Update();
+                    Assert.AreEqual(1, probe.Count);
+                    Assert.AreSame(live, probe.Resolve(survivor));
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(live);
+            }
+        }
+
+        [Test]
+        public void AlternatingSweepSurvivesBoundaryRemovalAndLookupFailure()
+        {
+            var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();
+            live.hideFlags = HideFlags.HideAndDontSave;
+            var alive = new HashSet<ulong>();
+            bool throwOnce = true;
+            try
+            {
+                using (
+                    var probe = new Probe(id =>
+                    {
+                        if (id == 131 && throwOnce)
+                        {
+                            throwOnce = false;
+                            throw new InvalidOperationException("Owned alternating lookup failure");
+                        }
+                        return alive.Contains(id) ? live : null;
+                    })
+                )
+                {
+                    for (ulong id = 0; id < 260; id++)
+                    {
+                        probe.Remember(id);
+                        if ((id & 1) != 0)
+                            alive.Add(id);
+                    }
+                    probe.Now = 11;
+                    probe.Update();
+                    alive.Remove(127);
+                    alive.Remove(129);
+                    Assert.IsNull(probe.Resolve(127));
+                    Assert.IsNull(probe.Resolve(129));
+                    Assert.Throws<InvalidOperationException>(() => probe.Update());
+                    for (int tick = 0; tick < 4; tick++)
+                        probe.Update();
+                    probe.Now += 11;
+                    for (int tick = 0; tick < 4; tick++)
+                        probe.Update();
+                    Assert.AreEqual(alive.Count, probe.Count);
+                    foreach (ulong id in alive)
+                        Assert.AreSame(live, probe.Resolve((int)id));
+                    probe.Remember(1000);
+                    alive.Clear();
+                    probe.Now += 11;
+                    for (int tick = 0; tick < 4; tick++)
+                        probe.Update();
+                    Assert.AreEqual(0, probe.Count);
                 }
             }
             finally
