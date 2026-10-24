@@ -201,6 +201,8 @@ namespace MCPForUnityTests.Editor.Tools
         {
 #if UNITY_6000_5_OR_NEWER
             return EditorUtility.EntityIdToObject(EntityId.FromULong(id));
+#elif UNITY_6000_3_OR_NEWER
+            return EditorUtility.EntityIdToObject(unchecked((int)id));
 #else
             return EditorUtility.InstanceIDToObject(unchecked((int)id));
 #endif
