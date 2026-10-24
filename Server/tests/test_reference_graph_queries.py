@@ -231,3 +231,17 @@ def test_stale_source_move_preserves_published_path_or_reports_unknown(graph, wi
     assert explained["source_path"] == ("Assets/Old.cs" if with_provenance else "")
     assert explained["current_source_path"] == "Assets/New.cs"
     assert explained["source_path_origin"] == ("published" if with_provenance else "unavailable")
+
+
+def test_query_schema_upgrade_preserves_existing_resumable_job(graph):
+    store, queries = graph
+    publish(store, "a", ["b", "c", "d"])
+    page = queries.impact("a", direction="outgoing", limit=1)
+    with store._connect(write=True) as db:
+        db.execute("ALTER TABLE graph_queries DROP COLUMN abandoned")
+        db.execute("UPDATE graph_queries_schema SET version=1")
+    upgraded = GraphQueries(store)
+    assert upgraded.impact("a", direction="outgoing", limit=1, cursor=page["next_cursor"])
+    with store._connect() as db:
+        assert db.execute("SELECT version FROM graph_queries_schema").fetchone()[0] == 2
+        assert db.execute("SELECT abandoned FROM graph_queries").fetchone()[0] == 0

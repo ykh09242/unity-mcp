@@ -153,7 +153,7 @@ def overview(entry):
             "watching": entry.watching,
             "active_requests": entry.active_requests,
         },
-        "retention": "No automatic history deletion. Explicit cleanup removes only completed query scratch and abandoned staging; snapshots, receipts, captures and authored configuration remain.",
+        "retention": "No automatic history deletion. Explicit cleanup removes completed, obsolete and undelivered query scratch and abandoned staging; ready snapshots, receipts, captures and authored configuration remain.",
     }
 
 
@@ -162,40 +162,50 @@ def cleanup(workspace, *, before, limit=100):
         raise ValueError("before must be a nonnegative Unix timestamp")
     if type(limit) is not int or not 1 <= limit <= 1000:
         raise ValueError("Use 1-1000 records per cleanup batch; repeat while more is true")
+    # Initialize/migrate before taking the cleanup writer transaction. All selection
+    # and deletion below share its revision and exclude concurrent continuations.
+    workspace.queries()
     with workspace.store._connect(write=True) as db:
-        exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='graph_queries'").fetchone()
-        rows = (
-            list(
-                db.execute(
-                    "SELECT id FROM graph_queries WHERE finished=1 AND used<? ORDER BY used,id LIMIT ?",
-                    (before, limit + 1),
-                )
+        revision = db.execute("SELECT revision FROM graph_meta").fetchone()[0]
+        eligible = "used<? AND (finished=1 OR abandoned=1 OR revision<>?)"
+        rows = list(
+            db.execute(
+                f"SELECT id,finished FROM graph_queries WHERE {eligible} ORDER BY used,id LIMIT ?",
+                (before, revision, limit),
             )
-            if exists
-            else []
         )
-        removed, scratch, budget = 0, 0, limit
-        for (identity,) in rows[:limit]:
-            for table in ("graph_query_nodes", "graph_query_queue"):
+        removed, obsolete, scratch, budget = 0, 0, 0, limit
+        for identity, finished in rows:
+            tables = [("graph_query_nodes", "job"), ("graph_query_queue", "job")]
+            partial_snapshot = db.execute(
+                "SELECT 1 FROM graph_snapshots WHERE id=? AND state<>'ready'", (identity,)
+            ).fetchone()
+            if partial_snapshot:
+                tables.append(("graph_snapshot_edges", "snapshot"))
+            for table, column in tables:
                 changed = db.execute(
-                    f"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE job=? LIMIT ?)",
+                    f"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {column}=? LIMIT ?)",
                     (identity, budget),
                 ).rowcount
                 scratch += changed
                 budget -= changed
             if any(
-                db.execute(f"SELECT 1 FROM {table} WHERE job=? LIMIT 1", (identity,)).fetchone()
-                for table in ("graph_query_nodes", "graph_query_queue")
+                db.execute(
+                    f"SELECT 1 FROM {table} WHERE {column}=? LIMIT 1", (identity,)
+                ).fetchone()
+                for table, column in tables
             ):
                 break
             db.execute("DELETE FROM graph_queries WHERE id=?", (identity,))
-            removed += 1
+            if partial_snapshot:
+                db.execute("DELETE FROM graph_snapshots WHERE id=?", (identity,))
+            removed += int(bool(finished))
+            obsolete += int(not finished)
             if not budget:
                 break
         queries_remain = bool(
-            exists
-            and db.execute(
-                "SELECT 1 FROM graph_queries WHERE finished=1 AND used<? LIMIT 1", (before,)
+            db.execute(
+                f"SELECT 1 FROM graph_queries WHERE {eligible} LIMIT 1", (before, revision)
             ).fetchone()
         )
         abandoned = list(
@@ -207,6 +217,7 @@ def cleanup(workspace, *, before, limit=100):
         db.executemany("DELETE FROM graph_staging WHERE rowid=?", abandoned[:limit])
     return {
         "completed_queries_removed": removed,
+        "obsolete_queries_removed": obsolete,
         "query_scratch_rows_removed": scratch,
         "abandoned_staging_removed": min(limit, len(abandoned)),
         "more": queries_remain or len(abandoned) > limit,

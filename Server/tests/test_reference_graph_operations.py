@@ -19,6 +19,108 @@ from starlette.routing import Route
 import httpx
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["impact", "snapshot"])
+async def test_cleanup_reclaims_obsolete_scratch_but_preserves_resumable_work(setup, kind):
+    from services.reference_graph.operations import cleanup
+    from services.reference_graph.store import GraphStore
+
+    service, ctx = setup
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        workspace = entry.workspace
+        store = workspace.store
+        for index in range(10):
+            store.put_declaration(str(index), "a", Edge(str(index), "manual"), expected_version=0)
+        queries = workspace.queries()
+        ready = queries.snapshot(name="ready", limit=100)["snapshot"]["id"]
+        arguments = (
+            {"node": "a", "direction": "outgoing"} if kind == "impact" else {"name": "partial"}
+        )
+        obsolete = getattr(queries, kind)(**arguments, limit=2)
+        other = GraphStore.open(service.root, store.scope)
+        other.put_declaration("change", "a", Edge("extra", "manual"), expected_version=0)
+        with pytest.raises(RevisionConflict):
+            getattr(queries, kind)(**arguments, limit=2, cursor=obsolete["next_cursor"])
+        active = getattr(queries, kind)(**arguments, limit=2)
+        totals = 0
+        for _ in range(30):
+            result = cleanup(workspace, before=time.time() + 1, limit=1)
+            assert result["query_scratch_rows_removed"] <= 1
+            totals += result["query_scratch_rows_removed"]
+            if not result["more"]:
+                break
+        assert totals > 0
+        assert not result["more"]
+        with store._connect() as db:
+            assert not db.execute(
+                "SELECT 1 FROM graph_queries WHERE id=?", (obsolete["query_id"],)
+            ).fetchone()
+            assert not db.execute(
+                "SELECT 1 FROM graph_snapshots WHERE id=?", (obsolete["query_id"],)
+            ).fetchone()
+            assert not db.execute(
+                "SELECT 1 FROM graph_snapshot_edges WHERE snapshot=?", (obsolete["query_id"],)
+            ).fetchone()
+            assert db.execute(
+                "SELECT 1 FROM graph_snapshots WHERE id=? AND state='ready'", (ready,)
+            ).fetchone()
+        assert getattr(queries, kind)(**arguments, limit=2, cursor=active["next_cursor"])
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["impact", "snapshot"])
+@pytest.mark.parametrize("failure_call", [1, 2])
+async def test_cleanup_reclaims_undelivered_first_page_after_validation_failure(
+    setup, monkeypatch, kind, failure_call
+):
+    from services.reference_graph.operations import cleanup
+
+    service, ctx = setup
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        workspace = entry.workspace
+        for index in range(4):
+            workspace.store.put_declaration(
+                str(index), "a", Edge(str(index), "manual"), expected_version=0
+            )
+        entry.watching = True
+        calls = 0
+        validate = service._validate_exploration
+
+        def reject(workspace, result):
+            nonlocal calls
+            calls += 1
+            if calls == failure_call:
+                raise PermissionError("source access revoked")
+            return validate(workspace, result)
+
+        monkeypatch.setattr(service, "_validate_exploration", reject)
+        arguments = (
+            {"node": "a", "direction": "outgoing"} if kind == "impact" else {"name": "partial"}
+        )
+        with pytest.raises(PermissionError, match="source access revoked"):
+            await service.execute(ctx, kind, {**arguments, "limit": 1})
+        for _ in range(20):
+            result = cleanup(workspace, before=time.time() + 1, limit=1)
+            assert result["query_scratch_rows_removed"] <= 1
+            if not result["more"]:
+                break
+        with workspace.store._connect() as db:
+            for table in (
+                "graph_queries",
+                "graph_query_nodes",
+                "graph_query_queue",
+                "graph_snapshots",
+                "graph_snapshot_edges",
+            ):
+                assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+    finally:
+        await service.aclose()
+
+
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", False)
@@ -403,5 +505,132 @@ async def test_editor_explorer_routes_preserve_paging_and_scope(setup):
         assert (await handle(request, service)).status_code == 409
         body.update(action="declare", editor_id="one")
         assert (await handle(request, service)).status_code == 400
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_failed_continuation_remains_replayable_and_ready_snapshot_survives(
+    setup, monkeypatch
+):
+    from services.reference_graph.operations import cleanup
+
+    service, ctx = setup
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        entry.watching = True
+        workspace = entry.workspace
+        for index in range(5):
+            workspace.store.put_declaration(
+                str(index), "a", Edge(str(index), "manual"), expected_version=0
+            )
+        queries = workspace.queries()
+        first = queries.impact("a", direction="outgoing", limit=1)
+        ready = queries.snapshot(name="ready", limit=100)["snapshot"]["id"]
+
+        def reject(*_):
+            raise PermissionError("revoked")
+
+        monkeypatch.setattr(service, "_validate_exploration", reject)
+        with pytest.raises(PermissionError):
+            await service.execute(
+                ctx,
+                "impact",
+                {"node": "a", "direction": "outgoing", "limit": 1, "cursor": first["next_cursor"]},
+            )
+        cleanup(workspace, before=time.time() + 1, limit=100)
+        assert queries.impact("a", direction="outgoing", limit=1, cursor=first["next_cursor"])
+        assert queries.diff(ready, ready)["changes"] == []
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_first_page_waits_for_producer_then_retires_scratch(setup, monkeypatch):
+    import asyncio
+    import threading
+    from services.reference_graph.operations import cleanup
+
+    service, ctx = setup
+    unblock = threading.Event()
+    task = None
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        entry.watching = True
+        workspace = entry.workspace
+        for index in range(3):
+            workspace.store.put_declaration(
+                str(index), "a", Edge(str(index), "manual"), expected_version=0
+            )
+        queries = workspace.queries()
+        impact = queries.impact
+        entered = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def stalled(**arguments):
+            page = impact(**arguments)
+            loop.call_soon_threadsafe(entered.set)
+            assert unblock.wait(10)
+            return page
+
+        monkeypatch.setattr(queries, "impact", stalled)
+        task = asyncio.create_task(
+            service.execute(ctx, "impact", {"node": "a", "direction": "outgoing", "limit": 1})
+        )
+        await asyncio.wait_for(entered.wait(), 5)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        unblock.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        result = cleanup(workspace, before=time.time() + 1, limit=100)
+        assert result["obsolete_queries_removed"] == 1
+        with workspace.store._connect() as db:
+            assert db.execute("SELECT count(*) FROM graph_query_nodes").fetchone()[0] == 0
+    finally:
+        unblock.set()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_rolls_back_partial_reclamation(setup, monkeypatch):
+    from contextlib import contextmanager
+    from services.reference_graph.operations import cleanup
+
+    service, ctx = setup
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        workspace = entry.workspace
+        store = workspace.store
+        for index in range(3):
+            store.put_declaration(str(index), "a", Edge(str(index), "manual"), expected_version=0)
+        queries = workspace.queries()
+        page = queries.snapshot(limit=1)
+        store.put_declaration("change", "a", Edge("extra", "manual"), expected_version=0)
+        connect = store._connect
+
+        @contextmanager
+        def interrupted(*, write=False):
+            with connect(write=write) as db:
+                yield db
+                if write:
+                    raise RuntimeError("rollback cleanup")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(store, "_connect", interrupted)
+            with pytest.raises(RuntimeError, match="rollback cleanup"):
+                cleanup(workspace, before=time.time() + 1, limit=1)
+        with store._connect() as db:
+            assert (
+                db.execute(
+                    "SELECT count(*) FROM graph_snapshot_edges WHERE snapshot=?",
+                    (page["query_id"],),
+                ).fetchone()[0]
+                == 1
+            )
+        assert cleanup(workspace, before=time.time() + 1, limit=1)["obsolete_queries_removed"] == 1
     finally:
         await service.aclose()

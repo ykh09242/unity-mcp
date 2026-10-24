@@ -30,7 +30,7 @@ class GraphQueries:
                 "CREATE TABLE IF NOT EXISTS graph_queries_schema(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_queries_schema").fetchone()
-            if version and version[0] != 1:
+            if version and version[0] not in (1, 2):
                 raise ValueError("Unsupported graph query schema")
             if version is None:
                 for statement in (
@@ -43,6 +43,11 @@ class GraphQueries:
                 ):
                     connection.execute(statement)
                 connection.execute("INSERT INTO graph_queries_schema VALUES (1)")
+            if version is None or version[0] < 2:
+                connection.execute(
+                    "ALTER TABLE graph_queries ADD COLUMN abandoned INTEGER NOT NULL DEFAULT 0"
+                )
+                connection.execute("UPDATE graph_queries_schema SET version=2")
 
     @staticmethod
     def _page_size(limit: int) -> None:
@@ -123,7 +128,7 @@ class GraphQueries:
         if not isinstance(identity, str) or type(sequence) is not int or sequence < 0:
             raise ValueError("Invalid job cursor")
         row = connection.execute("SELECT * FROM graph_queries WHERE id=?", (identity,)).fetchone()
-        if row is None or row["kind"] != kind or row["signature"] != signature:
+        if row is None or row["abandoned"] or row["kind"] != kind or row["signature"] != signature:
             raise ValueError("Cursor belongs to another or released query")
         if row["revision"] != revision:
             raise RevisionConflict("Graph changed during exploration; start a new query")
@@ -487,6 +492,11 @@ class GraphQueries:
                 connection.execute("DELETE FROM graph_snapshot_edges WHERE snapshot=?", (identity,))
                 connection.execute("DELETE FROM graph_snapshots WHERE id=?", (identity,))
             return self._release(connection, identity)
+
+    def abandon(self, identity: str) -> None:
+        """Retire an undelivered first page; explicit cleanup reclaims it in batches."""
+        with self.store._connect(write=True) as connection:
+            connection.execute("UPDATE graph_queries SET abandoned=1 WHERE id=?", (identity,))
 
     def delete_snapshot(self, identity: str) -> bool:
         with self.store._connect(write=True) as connection:
