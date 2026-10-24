@@ -186,6 +186,45 @@ namespace MCPForUnityTests.Editor.Setup
             Assert.That(RoslynInstaller.UninstallOwned(root), Is.EqualTo(1));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task FullOwnedManifestSupportsMovingOneDependencyToAnExternalPackage(bool withMetadata)
+        {
+            const string name = "System.Runtime.CompilerServices.Unsafe.dll";
+            string original = Path.Combine(root, name);
+            await RoslynInstaller.InstallFromPackagesAsync(
+                root,
+                _ => Task.FromResult(Package()),
+                (_, _, _) => { },
+                refresh: withMetadata ? () => File.WriteAllText(original + ".meta", "owned metadata") : (Action)null,
+                assemblyInventory: () => Array.Empty<(AssemblyName, string)>()
+            );
+            string external = Path.Combine(root, "external-package", name);
+            Directory.CreateDirectory(Path.GetDirectoryName(external));
+            File.Move(original, external);
+            if (withMetadata)
+                File.Move(original + ".meta", external + ".meta");
+            int downloads = 0;
+            await RoslynInstaller.InstallFromPackagesAsync(
+                root,
+                url =>
+                {
+                    downloads++;
+                    Assert.That(url, Does.Not.Contain("system.runtime.compilerservices.unsafe"));
+                    return Task.FromResult(Package());
+                },
+                (_, _, _) => { },
+                assemblyInventory: () => new[] { (Identity("System.Runtime.CompilerServices.Unsafe", "6.0.0.0"), external) }
+            );
+            Assert.That(downloads, Is.EqualTo(4));
+            Assert.That(File.Exists(original), Is.False);
+            Assert.That(File.ReadAllText(external), Is.EqualTo("fixture"));
+            Assert.That(RoslynInstaller.UninstallOwned(root), Is.EqualTo(4));
+            Assert.That(File.ReadAllText(external), Is.EqualTo("fixture"));
+            if (withMetadata)
+                Assert.That(File.ReadAllText(external + ".meta"), Is.EqualTo("owned metadata"));
+        }
+
         [Test]
         public void CompatibilityIsRecheckedInsideThePublicationGate()
         {

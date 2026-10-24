@@ -163,7 +163,8 @@ namespace MCPForUnity.Editor.Setup
             if (missing.Length == 0)
                 return;
             string[] names = missing.Select(entry => entry.dllName).ToArray();
-            using var files = new RoslynFileSet(folder, names);
+            // A previous full install can still own entries now supplied by another package.
+            using var files = new RoslynFileSet(folder, NuGetEntries.Select(entry => entry.dllName));
             foreach (var entry in missing)
             {
                 cancellationToken.ThrowIfCancellationRequested();
