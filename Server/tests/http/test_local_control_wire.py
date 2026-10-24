@@ -24,7 +24,9 @@ from core.local_auth import LOCAL_AUTH_HEADER
 
 
 @contextmanager
-def local_server_process(tmp_path: Path) -> Iterator[tuple[str, int, str]]:
+def local_server_process(
+    tmp_path: Path, *, module: str = "main", validation_url: str | None = None
+) -> Iterator[tuple[str, int, str]]:
     """Start an isolated production server using the selected worktree's source."""
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -44,12 +46,22 @@ def local_server_process(tmp_path: Path) -> Iterator[tuple[str, int, str]]:
         "UNITY_MCP_LOG_DIR": str(tmp_path / "logs"),
     }
     url = f"http://127.0.0.1:{port}"
+    remote_args = (
+        [
+            "--http-remote-hosted",
+            "--http-behind-tls-proxy",
+            "--api-key-validation-url",
+            validation_url,
+        ]
+        if validation_url is not None
+        else []
+    )
     with (tmp_path / "server.log").open("w", encoding="utf-8") as log:
         with subprocess.Popen(
             [
                 sys.executable,
                 "-m",
-                "main",
+                module,
                 "--transport",
                 "http",
                 "--http-host",
@@ -57,6 +69,7 @@ def local_server_process(tmp_path: Path) -> Iterator[tuple[str, int, str]]:
                 "--http-port",
                 str(port),
                 "--project-scoped-tools",
+                *remote_args,
             ],
             cwd=Path(__file__).resolve().parents[2],
             env=env,
@@ -78,7 +91,10 @@ def local_server_process(tmp_path: Path) -> Iterator[tuple[str, int, str]]:
                         time.sleep(0.05)
                     else:
                         pytest.fail("Local server did not become ready")
-                yield url, port, token_path.read_text(encoding="utf-8").strip()
+                token = (
+                    token_path.read_text(encoding="utf-8").strip() if validation_url is None else ""
+                )
+                yield url, port, token
             finally:
                 process.terminate()
                 process.wait(timeout=watchdog_timeout())
