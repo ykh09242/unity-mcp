@@ -258,21 +258,18 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 }
             }
 
-            // Remove the sub-asset
-            if (feature != null)
+            // Keep borrowed or still-referenced subassets attached to their original owner.
+            // Destroy through Undo while still persistent so Undo restores the subasset identity too.
+            if (
+                feature != null
+                && ownsFeature
+                && featuresProp.GetValue(rendererData) is System.Collections.IList remainingFeatures
+                && !remainingFeatures.Cast<object>().Any(remaining => ReferenceEquals(remaining, feature))
+            )
             {
-                AssetDatabase.RemoveObjectFromAsset(feature);
-                if (
-                    ownsFeature
-                    && !EditorUtility.IsPersistent(feature)
-                    && featuresProp.GetValue(rendererData) is System.Collections.IList remainingFeatures
-                    && !remainingFeatures.Cast<object>().Any(remaining => ReferenceEquals(remaining, feature))
-                )
-                {
-                    var disposableFeature = feature as IDisposable;
-                    Undo.DestroyObjectImmediate(feature);
-                    disposableFeature?.Dispose();
-                }
+                var disposableFeature = feature as IDisposable;
+                Undo.DestroyObjectImmediate(feature);
+                disposableFeature?.Dispose();
             }
 
             EditorUtility.SetDirty(rendererData as UnityEngine.Object);

@@ -832,7 +832,7 @@ namespace MCPForUnityTests.Editor.Tools
             var result = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "pipeline_set_quality", ["level"] = "NonExistentLevel" }));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["error"].ToString(), Does.Contain("level"));
-            Assert.That(result["error"].ToString(), Does.Contain("Int32"));
+            Assert.That(result["error"].ToString(), Does.Contain("Invalid quality level"));
             Assert.AreEqual(originalLevel, QualitySettings.GetQualityLevel());
             Assert.IsTrue(QualitySettings.renderPipeline == originalPipeline);
             Assert.IsTrue(GraphicsSettings.currentRenderPipeline == originalActivePipeline);
@@ -865,6 +865,112 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.That(result["error"].ToString(), Does.Contain("Available:"));
         }
 
+        [TestCase("unique")]
+        [TestCase("duplicate")]
+        [TestCase("foreign")]
+        public void FeatureRemovePreservesPersistentOwnershipAndUndo(string ownership)
+        {
+            using var pipeline = OwnedUrpPipeline.Create();
+            var featureType = Type.GetType("UnityEngine.Rendering.Universal.RenderObjects, Unity.RenderPipelines.Universal.Runtime");
+            Assert.IsNotNull(featureType, "The URP persistence fixture requires its built-in RenderObjects feature.");
+            var feature = ScriptableObject.CreateInstance(featureType);
+            feature.name = "PersistentOwnershipFeature";
+            ScriptableObject owner = pipeline.Renderer;
+            string ownerPath = AssetDatabase.GetAssetPath(owner);
+            if (ownership == "foreign")
+            {
+                owner = ScriptableObject.CreateInstance(pipeline.Renderer.GetType());
+                ownerPath = pipeline.Root + "/ForeignRenderer.asset";
+                AssetDatabase.CreateAsset(owner, ownerPath);
+            }
+            AssetDatabase.AddObjectToAsset(feature, owner);
+            using (var serialized = new SerializedObject(pipeline.Renderer))
+            {
+                var slots = serialized.FindProperty("m_RendererFeatures");
+                var map = serialized.FindProperty("m_RendererFeatureMap");
+                int count = ownership == "duplicate" ? 2 : 1;
+                slots.arraySize = count;
+                map.arraySize = count;
+                Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(feature, out string _, out long localId));
+                for (int i = 0; i < count; i++)
+                {
+                    slots.GetArrayElementAtIndex(i).objectReferenceValue = feature;
+                    map.GetArrayElementAtIndex(i).longValue = localId;
+                }
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+            }
+            EditorUtility.SetDirty(owner);
+            EditorUtility.SetDirty(pipeline.Renderer);
+            AssetDatabase.SaveAssets();
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(feature, out string guid, out long id));
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            try
+            {
+                var response = ToJObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "feature_remove", ["index"] = 0 }));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Undo.FlushUndoRecordObjects();
+                Undo.CollapseUndoOperations(group);
+                AssertFeatureSlots(pipeline.Renderer, ownership == "duplicate" ? 1 : 0, guid, id);
+                if (ownership != "unique")
+                    AssertPersistentFeature(ownerPath, guid, id);
+                else
+                    Assert.IsFalse(AssetDatabase.LoadAllAssetsAtPath(ownerPath).Any(value => value != null && value.name == "PersistentOwnershipFeature"));
+
+                Undo.PerformUndo();
+                AssertFeatureSlots(pipeline.Renderer, ownership == "duplicate" ? 2 : 1, guid, id);
+                AssetDatabase.SaveAssets();
+                AssetDatabase.ImportAsset(ownerPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                AssertFeatureSlots(pipeline.Renderer, ownership == "duplicate" ? 2 : 1, guid, id);
+                AssertPersistentFeature(ownerPath, guid, id);
+                Undo.PerformRedo();
+                AssertFeatureSlots(pipeline.Renderer, ownership == "duplicate" ? 1 : 0, guid, id);
+                AssetDatabase.SaveAssets();
+                AssetDatabase.ImportAsset(ownerPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                string rendererPath = AssetDatabase.GetAssetPath(pipeline.Renderer);
+                AssetDatabase.ImportAsset(rendererPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+                AssertFeatureSlots(AssetDatabase.LoadAssetAtPath<ScriptableObject>(rendererPath), ownership == "duplicate" ? 1 : 0, guid, id);
+                if (ownership != "unique")
+                    AssertPersistentFeature(ownerPath, guid, id);
+            }
+            finally
+            {
+                Undo.ClearUndo(pipeline.Renderer);
+                if (feature != null)
+                {
+                    Undo.ClearUndo(feature);
+                    if (!EditorUtility.IsPersistent(feature))
+                        UnityEngine.Object.DestroyImmediate(feature);
+                }
+            }
+        }
+
+        private static void AssertFeatureSlots(ScriptableObject renderer, int count, string guid, long id)
+        {
+            using var serialized = new SerializedObject(renderer);
+            var slots = serialized.FindProperty("m_RendererFeatures");
+            Assert.AreEqual(count, slots.arraySize);
+            Assert.AreEqual(count, serialized.FindProperty("m_RendererFeatureMap").arraySize);
+            for (int i = 0; i < count; i++)
+                AssertAssetIdentity(slots.GetArrayElementAtIndex(i).objectReferenceValue, guid, id);
+        }
+
+        private static void AssertPersistentFeature(string path, string guid, long id)
+        {
+            var feature = AssetDatabase.LoadAllAssetsAtPath(path).SingleOrDefault(value => value != null && value.name == "PersistentOwnershipFeature");
+            Assert.IsNotNull(feature, "The feature must remain a subasset of its original owner.");
+            Assert.IsTrue(AssetDatabase.IsSubAsset(feature));
+            AssertAssetIdentity(feature, guid, id);
+        }
+
+        private static void AssertAssetIdentity(UnityEngine.Object value, string guid, long id)
+        {
+            Assert.IsNotNull(value);
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(value, out string actualGuid, out long actualId));
+            Assert.AreEqual(guid, actualGuid);
+            Assert.AreEqual(id, actualId);
+        }
+
         // =====================================================================
         // Helpers
         // =====================================================================
@@ -884,6 +990,8 @@ namespace MCPForUnityTests.Editor.Tools
 
             public string AssetPath => _root + "/Pipeline.asset";
             public string RendererName => _renderer.name;
+            public ScriptableObject Renderer => _renderer;
+            public string Root => _root;
 
             private OwnedUrpPipeline()
             {
