@@ -32,20 +32,13 @@ namespace MCPForUnity.Editor.Tools
         private static void CleanupRenderTextures()
         {
             CleanupPendingCapture();
-            foreach (var kvp in s_panelRTs)
+            foreach (int panelId in new List<int>(s_panelRTs.Keys))
             {
-                if (kvp.Value == null)
-                    continue;
-                if (s_panelBindings.TryGetValue(kvp.Key, out var binding) && binding.panel != null && binding.panel.targetTexture == kvp.Value)
-                    binding.panel.targetTexture = binding.previousTarget;
-                string assetPath = AssetDatabase.GetAssetPath(kvp.Value);
-                kvp.Value.Release();
-                if (!string.IsNullOrEmpty(assetPath))
-                    AssetDatabase.DeleteAsset(assetPath);
-                else
-                    UnityEngine.Object.DestroyImmediate(kvp.Value);
+                s_panelBindings.TryGetValue(panelId, out var binding);
+                FinishPanelRender(panelId, binding.panel, s_panelRTs[panelId], false, true);
             }
             s_panelRTs.Clear();
+            s_panelRTAssets.Clear();
             s_panelBindings.Clear();
             s_panelLastUsed.Clear();
             StopRenderCleanupIfEmpty();
@@ -1076,6 +1069,7 @@ namespace MCPForUnity.Editor.Tools
         // Persistent RenderTextures keyed by PanelSettings instance ID so the panel
         // renders into them automatically every frame.
         private static readonly Dictionary<int, RenderTexture> s_panelRTs = new();
+        private static readonly Dictionary<int, (RenderTexture target, string path, string guid, long localId)> s_panelRTAssets = new();
         private static readonly Dictionary<int, (PanelSettings panel, RenderTexture previousTarget)> s_panelBindings = new();
         private static readonly Dictionary<int, double> s_panelLastUsed = new();
         private static Func<double> s_renderCacheClock = () => EditorApplication.timeSinceStartup;
@@ -1206,18 +1200,44 @@ namespace MCPForUnity.Editor.Tools
                     s_panelBindings.Remove(panelId);
                     s_panelLastUsed.Remove(panelId);
                     StopRenderCleanupIfEmpty();
-                    if (ownedTarget != null)
-                    {
-                        string assetPath = AssetDatabase.GetAssetPath(ownedTarget);
-                        ownedTarget.Release();
-                        if (!string.IsNullOrEmpty(assetPath))
-                            AssetDatabase.DeleteAsset(assetPath);
-                        else
-                            UnityEngine.Object.DestroyImmediate(ownedTarget);
-                    }
+                    ReleasePanelTarget(panelId, ownedTarget);
                 }
                 else
                     TouchPanelCache(panelId);
+            }
+        }
+
+        private static void ReleasePanelTarget(int panelId, RenderTexture target)
+        {
+            bool ownsAsset = s_panelRTAssets.TryGetValue(panelId, out var asset) && ReferenceEquals(asset.target, target);
+            if (ownsAsset)
+                s_panelRTAssets.Remove(panelId);
+            if (target == null)
+                return;
+            if (!EditorUtility.IsPersistent(target))
+            {
+                target.Release();
+                UnityEngine.Object.DestroyImmediate(target);
+                return;
+            }
+            // A cached wrapper or reused path alone is not permission to delete a project asset.
+            if (
+                ownsAsset
+                && string.Equals(AssetDatabase.GetAssetPath(target), asset.path, StringComparison.Ordinal)
+                && AssetPathUtility.GetContainedAssetPath(asset.path) == asset.path
+                && AssetDatabase.LoadMainAssetAtPath(asset.path) == target
+                && (
+                    asset.guid == null
+                    || (
+                        AssetDatabase.TryGetGUIDAndLocalFileIdentifier(target, out string guid, out long localId)
+                        && guid == asset.guid
+                        && localId == asset.localId
+                    )
+                )
+            )
+            {
+                target.Release();
+                AssetDatabase.DeleteAsset(asset.path);
             }
         }
 
@@ -1841,15 +1861,8 @@ namespace MCPForUnity.Editor.Tools
                     }
                     else
                     {
-                        // Size changed — release the old RT
-                        panelSettings.targetTexture = previousTarget;
-                        string oldPath = AssetDatabase.GetAssetPath(cachedRt);
-                        cachedRt.Release();
-                        if (!string.IsNullOrEmpty(oldPath))
-                            AssetDatabase.DeleteAsset(oldPath);
-                        else
-                            UnityEngine.Object.DestroyImmediate(cachedRt);
-                        s_panelRTs.Remove(psId);
+                        // Size changed — release only the exact target asset created for this cache entry.
+                        FinishPanelRender(psId, panelSettings, cachedRt, false, true);
                     }
                 }
 
@@ -1865,8 +1878,18 @@ namespace MCPForUnity.Editor.Tools
 
                         string rtFolder = "Assets/UI";
                         renderAssetFolders.EnsureFolder(rtFolder);
-                        string rtAssetPath = $"{rtFolder}/RT_MCP_UI_Render_{psId}.renderTexture";
+                        string rtAssetPath = AssetPathUtility.GetContainedAssetPath(
+                            AssetDatabase.GenerateUniqueAssetPath($"{rtFolder}/RT_MCP_UI_Render_{psId}.renderTexture")
+                        );
+                        if (rtAssetPath == null)
+                            throw new InvalidOperationException("Could not create a contained UI render target path.");
+                        // Record the exact creation intent before native persistence can succeed or throw.
+                        // Rollback before GUID identification still requires this same main-asset object and path.
+                        s_panelRTAssets[psId] = (rt, rtAssetPath, null, 0);
                         AssetDatabase.CreateAsset(rt, rtAssetPath);
+                        if (!AssetDatabase.TryGetGUIDAndLocalFileIdentifier(rt, out string rtGuid, out long rtLocalId))
+                            throw new InvalidOperationException("Could not identify the owned UI render target asset.");
+                        s_panelRTAssets[psId] = (rt, rtAssetPath, rtGuid, rtLocalId);
                         AssetDatabase.SaveAssetIfDirty(rt);
 
                         s_panelRTs[psId] = rt;
@@ -1883,15 +1906,7 @@ namespace MCPForUnity.Editor.Tools
                             s_panelBindings.Remove(psId);
                             if (s_panelRTs.TryGetValue(psId, out var failedCachedRt) && failedCachedRt == null)
                                 s_panelRTs.Remove(psId);
-                            if (rt != null)
-                            {
-                                rt.Release();
-                                string failedPath = AssetDatabase.GetAssetPath(rt);
-                                if (!string.IsNullOrEmpty(failedPath))
-                                    AssetDatabase.DeleteAsset(failedPath);
-                                else
-                                    UnityEngine.Object.DestroyImmediate(rt);
-                            }
+                            ReleasePanelTarget(psId, rt);
                         }
                     }
                     rtJustAssigned = true;
