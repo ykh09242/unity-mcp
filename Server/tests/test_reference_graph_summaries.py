@@ -208,3 +208,33 @@ def test_repeated_clean_keeps_summary_generation_and_cached_counts(graph):
     assert workspace.state("summary_generation") == generation
     assert workspace.counts() == counts
     assert store.status()["ready"] == 1
+
+
+def test_replacement_between_identity_check_and_open_rejects_cached_counts(
+    graph, tmp_path, monkeypatch
+):
+    import os
+    import sqlite3
+    from services.reference_graph.store import RevisionConflict
+
+    store, _, _ = graph
+    before = store.status()
+    replacement = GraphStore(tmp_path / "replacement-race.sqlite", store.scope)
+    GraphWorkspace(replacement)
+    with replacement._connect(write=True) as db:
+        db.execute("UPDATE graph_meta SET revision=?", (before["revision"],))
+    connect = sqlite3.connect
+    replaced = False
+
+    def replace_before_open(path, *args, **kwargs):
+        nonlocal replaced
+        if path == store.path and not replaced:
+            replaced = True
+            os.replace(replacement.path, store.path)
+        return connect(path, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", replace_before_open)
+    with pytest.raises(RevisionConflict, match="database changed"):
+        store.status()
+    assert replaced
+    assert store.status()["ready"] == 0

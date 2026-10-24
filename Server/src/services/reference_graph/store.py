@@ -154,8 +154,8 @@ class GraphStore:
             if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
                 raise ValueError("Reference graph files must be owned regular files")
             if not suffix and _identity is not None:
-                # Summaries reuse this already-checked file identity instead of
-                # adding another filesystem call to every status read.
+                # Summary reads validate this ownership-check identity again
+                # after establishing their SQL snapshot.
                 _identity.append((info.st_dev, info.st_ino))
         connection = sqlite3.connect(self.path, timeout=30)
         connection.row_factory = sqlite3.Row
@@ -445,6 +445,12 @@ class GraphStore:
 
     def _summary(self, name, revision, identity, build, *, generation=0):
         """Keep one aggregate per name; callers read its fence in their SQL snapshot."""
+        # The revision read has established the SQLite snapshot. A path swap
+        # between the pre-open ownership check and that read must not pair a
+        # new database's revision with an old database's cached aggregates.
+        current = self.path.lstat()
+        if identity != [(current.st_dev, current.st_ino)]:
+            raise RevisionConflict("Reference database changed during summary read; retry")
         key = (tuple(identity), revision, generation)
         with self._summary_lock:
             cached = self._summaries.get(name)
