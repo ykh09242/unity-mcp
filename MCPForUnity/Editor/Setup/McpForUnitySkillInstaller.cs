@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using MCPForUnity.Editor.Constants;
 using UnityEditor;
 using UnityEngine;
@@ -28,8 +27,12 @@ namespace MCPForUnity.Editor.Setup
         private SkillSyncSource _packageSource;
         private string _packageError;
         private Vector2 _scroll;
-        private volatile bool _isRunning;
-        private CancellationTokenSource _operation;
+        private Vector2 _formScroll;
+        private bool _followOutput = true;
+        private bool _sourceDetails;
+        private string _status;
+        private readonly SkillInstallerOperation _operation = new();
+        private readonly SkillInstallerReview _review = new();
         private SkillSyncService.SyncPreview _preview;
         private readonly BoundedEditorLog _log = new();
         private long _displayedLogRevision;
@@ -64,10 +67,7 @@ namespace MCPForUnity.Editor.Setup
         private void OnDisable()
         {
             EditorApplication.update -= OnEditorUpdate;
-            _operation?.Cancel();
-            _operation?.Dispose();
-            _operation = null;
-            _isRunning = false;
+            _operation.Dispose();
             EditorPrefs.SetString(RepoUrlKey, _repoUrl);
             EditorPrefs.SetString(BranchKey, _targetBranch);
             EditorPrefs.SetString(CliKey, _cliType);
@@ -77,21 +77,16 @@ namespace MCPForUnity.Editor.Setup
         private void OnGUI()
         {
             FlushPendingLogs();
-            EditorGUILayout.HelpBox("Preview upstream changes, then apply safe changes while preserving local edits and additions.", MessageType.Info);
-            EditorGUILayout.Space(4f);
-
-            EditorGUILayout.LabelField("Config", EditorStyles.boldLabel);
+            _formScroll = EditorGUILayout.BeginScrollView(_formScroll);
+            EditorGUILayout.LabelField("Preview changes, then apply. Local edits and additions are preserved.", EditorStyles.wordWrappedLabel);
             EditorGUI.BeginChangeCheck();
-            using (new EditorGUI.DisabledScope(_isRunning))
+            using (new EditorGUI.DisabledScope(_operation.IsRunning))
             {
                 _latest = EditorGUILayout.Popup("Skill source", _latest ? 1 : 0, SourceOptions) == 1;
                 if (!_latest)
                 {
-                    EditorGUILayout.HelpBox(_packageSource?.Description ?? _packageError, _packageSource == null ? MessageType.Error : MessageType.Info);
-                    EditorGUILayout.LabelField(
-                        "Local changes are preserved; installed files may differ from the selected source.",
-                        EditorStyles.wordWrappedLabel
-                    );
+                    if (_packageSource == null)
+                        EditorGUILayout.HelpBox(_packageError ?? "Installed package source unavailable.", MessageType.Error);
                 }
                 if (_latest)
                 {
@@ -105,13 +100,6 @@ namespace MCPForUnity.Editor.Setup
                     var selectedBranchIndex = EditorGUILayout.Popup("Branch", branchIndex, BranchOptions);
                     _targetBranch = BranchOptions[selectedBranchIndex];
                 }
-                else
-                    EditorGUILayout.LabelField("Repository", SkillSyncSource.ForkRepository);
-                if (_latest)
-                    EditorGUILayout.HelpBox(
-                        "Latest resolves the selected branch at preview time. Compatibility with this package is not verified.",
-                        MessageType.Info
-                    );
 
                 var cliIndex = Array.IndexOf(CliOptions, _cliType);
                 if (cliIndex < 0)
@@ -127,29 +115,54 @@ namespace MCPForUnity.Editor.Setup
                     TryApplyCliDefaultInstallPath(previousCli, _cliType);
                 }
 
-                _installDir = EditorGUILayout.TextField("Install Dir", _installDir);
+                _installDir = EditorGUILayout.TextField("Destination", _installDir);
             }
             if (EditorGUI.EndChangeCheck())
-                _preview = null;
+            {
+                SetPreview(null);
+                _status = null;
+            }
 
-            EditorGUILayout.Space(8f);
+            _sourceDetails = EditorGUILayout.Foldout(_sourceDetails, "Source details", true);
+            if (_sourceDetails)
+                EditorGUILayout.LabelField(
+                    _latest
+                        ? "Resolves the branch at preview time. Compatibility with this package is not verified."
+                        : (_packageSource?.Description ?? _packageError) + "\nInstalled files may differ from this source.",
+                    EditorStyles.wordWrappedLabel
+                );
+
+            EditorGUILayout.Space(4f);
             EditorGUILayout.BeginHorizontal();
-            using (new EditorGUI.DisabledScope(_isRunning))
+            using (new EditorGUI.DisabledScope(_operation.IsRunning))
             {
                 if (GUILayout.Button(_latest ? $"Preview latest ({_targetBranch})" : "Preview package skills", GUILayout.Height(32f)))
                     RunPreview();
             }
 
-            using (new EditorGUI.DisabledScope(_isRunning || _preview == null))
+            using (new EditorGUI.DisabledScope(_operation.IsRunning || _preview == null))
                 if (GUILayout.Button("Apply safe changes", GUILayout.Height(32f)))
                     RunApply();
 
-            if (GUILayout.Button("Clear Log", GUILayout.Width(100f), GUILayout.Height(32f)))
-            {
-                _log.Clear();
-            }
             EditorGUILayout.EndHorizontal();
+            if (_operation.IsRunning)
+            {
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(_operation.Phase + "…", EditorStyles.boldLabel);
+                using (new EditorGUI.DisabledScope(_operation.CancellationRequested))
+                    if (GUILayout.Button(_operation.CancellationRequested ? "Cancellation requested" : "Request cancellation", GUILayout.Width(165f)))
+                        _operation.RequestCancellation();
+                EditorGUILayout.EndHorizontal();
+                if (_operation.CancellationRequested)
+                    EditorGUILayout.HelpBox(
+                        "Cancellation requested. Waiting for the current attempt to finish; changes may already have been applied.",
+                        MessageType.Info
+                    );
+            }
+            else if (!string.IsNullOrEmpty(_status))
+                EditorGUILayout.LabelField(_status, EditorStyles.wordWrappedLabel);
             if (_preview != null)
+            {
                 EditorGUILayout.HelpBox(
                     $"Preview: +{_preview.Added.Count} ~{_preview.Updated.Count} -{_preview.Deleted.Count}. "
                         + $"Local preserved: {_preview.Preserved.Count}. Conflicts retained: {_preview.Conflicts.Count}.\n"
@@ -158,18 +171,60 @@ namespace MCPForUnity.Editor.Setup
                         + _preview.CommitSha,
                     _preview.Conflicts.Count > 0 ? MessageType.Warning : MessageType.Info
                 );
+                DrawReview();
+            }
 
             EditorGUILayout.Space(8f);
+            EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField("Output", EditorStyles.boldLabel);
-            _scroll = EditorGUILayout.BeginScrollView(_scroll);
-            EditorGUILayout.TextArea(_log.Snapshot(), GUILayout.ExpandHeight(true));
+            bool follow = GUILayout.Toggle(_followOutput, "Follow output", GUILayout.Width(105f));
+            if (follow && !_followOutput)
+                _scroll.y = float.MaxValue;
+            _followOutput = follow;
+            if (GUILayout.Button("Clear", GUILayout.Width(55f)))
+                _log.Clear();
+            EditorGUILayout.EndHorizontal();
+            _scroll = EditorGUILayout.BeginScrollView(_scroll, GUILayout.Height(150f));
+            EditorGUILayout.TextArea(_log.Snapshot(), EditorStyles.textArea);
             EditorGUILayout.EndScrollView();
+            EditorGUILayout.EndScrollView();
+        }
+
+        private void DrawReview()
+        {
+            EditorGUILayout.LabelField("Review paths", EditorStyles.boldLabel);
+            var group = (SkillInstallerReview.Group)EditorGUILayout.Popup("Change group", (int)_review.SelectedGroup, _review.GroupLabels);
+            string query = EditorGUILayout.TextField("Filter paths", _review.Query);
+            _review.SetFilter(group, query);
+            EditorGUILayout.LabelField($"{_review.MatchCount} matching paths", EditorStyles.miniLabel);
+            if (_review.PageCount > 1)
+            {
+                EditorGUILayout.BeginHorizontal();
+                using (new EditorGUI.DisabledScope(_review.Page == 0))
+                    if (GUILayout.Button("Previous"))
+                        _review.SetPage(_review.Page - 1);
+                GUILayout.Label($"Page {_review.Page + 1} of {_review.PageCount}");
+                using (new EditorGUI.DisabledScope(_review.Page == _review.PageCount - 1))
+                    if (GUILayout.Button("Next"))
+                        _review.SetPage(_review.Page + 1);
+                EditorGUILayout.EndHorizontal();
+            }
+            for (int index = 0; index < _review.VisibleCount; index++)
+                EditorGUILayout.SelectableLabel(_review.GetVisiblePath(index), GUILayout.Height(EditorGUIUtility.singleLineHeight));
+            if (_review.MatchCount == 0)
+                EditorGUILayout.LabelField("No paths match this group and filter.", EditorStyles.wordWrappedLabel);
+        }
+
+        private void SetPreview(SkillSyncService.SyncPreview preview)
+        {
+            _preview = preview;
+            _review.SetPreview(preview);
         }
 
         private void OnEditorUpdate()
         {
             var changed = FlushPendingLogs();
-            if (changed || (_isRunning && EditorApplication.timeSinceStartup >= _nextRepaintAt))
+            if (changed || (_operation.IsRunning && EditorApplication.timeSinceStartup >= _nextRepaintAt))
             {
                 _nextRepaintAt = EditorApplication.timeSinceStartup + 0.25;
                 Repaint();
@@ -178,7 +233,7 @@ namespace MCPForUnity.Editor.Setup
 
         private void RunPreview()
         {
-            if (_isRunning)
+            if (_operation.IsRunning)
                 return;
             SkillSyncSource source;
             try
@@ -189,26 +244,29 @@ namespace MCPForUnity.Editor.Setup
             }
             catch (Exception error)
             {
-                _preview = null;
+                SetPreview(null);
                 _packageError = error.Message;
+                _status = "Preview failed: " + error.Message;
                 AppendLineImmediate("[ERROR] " + error.Message);
                 return;
             }
-            _isRunning = true;
-            _preview = null;
-            var operation = _operation = new CancellationTokenSource();
+            SetPreview(null);
+            _status = null;
+            var operation = _operation.Begin("Previewing changes");
             SkillSyncService.PreviewSourceAsync(
                 source,
                 _installDir,
-                _log.Append,
+                line =>
+                {
+                    if (_operation.Owns(operation))
+                        _log.Append(line);
+                },
                 preview =>
                 {
-                    if (this == null || !ReferenceEquals(_operation, operation))
+                    if (this == null || !_operation.Complete(operation))
                         return;
-                    operation.Dispose();
-                    _operation = null;
-                    _isRunning = false;
-                    _preview = preview.Success ? preview : null;
+                    SetPreview(preview.Success ? preview : null);
+                    _status = preview.Success ? "Preview ready. Review paths before applying." : "Preview failed: " + preview.Error;
                     if (!preview.Success)
                         AppendLineImmediate("[ERROR] " + preview.Error);
                     Repaint();
@@ -233,23 +291,25 @@ namespace MCPForUnity.Editor.Setup
 
         private void RunApply()
         {
-            if (_isRunning || _preview == null)
+            if (_operation.IsRunning || _preview == null)
                 return;
             var preview = _preview;
-            _preview = null;
-            _isRunning = true;
-            var operation = _operation = new CancellationTokenSource();
+            SetPreview(null);
+            _status = null;
+            var operation = _operation.Begin("Applying safe changes");
             SkillSyncService.ApplyAsync(
                 preview,
-                _log.Append,
+                line =>
+                {
+                    if (_operation.Owns(operation))
+                        _log.Append(line);
+                },
                 result =>
                 {
-                    if (this == null || !ReferenceEquals(_operation, operation))
+                    if (this == null || !_operation.Complete(operation))
                         return;
-                    operation.Dispose();
-                    _operation = null;
-                    _isRunning = false;
-                    AppendLineImmediate(SkillSyncService.DescribeResult(result));
+                    _status = SkillSyncService.DescribeResult(result);
+                    AppendLineImmediate(_status);
                     Repaint();
                 },
                 operation.Token
@@ -299,7 +359,7 @@ namespace MCPForUnity.Editor.Setup
         private void AppendLineImmediate(string line)
         {
             _log.Append(line);
-            _scroll.y = float.MaxValue;
+            FlushPendingLogs();
             Repaint();
         }
 
@@ -309,7 +369,8 @@ namespace MCPForUnity.Editor.Setup
             if (revision == _displayedLogRevision)
                 return false;
             _displayedLogRevision = revision;
-            _scroll.y = float.MaxValue;
+            if (_followOutput)
+                _scroll.y = float.MaxValue;
             return true;
         }
     }
