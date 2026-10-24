@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -118,7 +119,7 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
             Capture(session, audio, "clip", () => audio.clip, value => audio.clip = (AudioClip)value);
         }
 
-        private static string Bindings(Component director) => TimelineAccess.DirectorRead(director)["bindings"].ToString(Newtonsoft.Json.Formatting.None);
+        private static string Bindings(Component director, CancellationToken token = default) => TimelineAccess.BindingsRevision(director, token);
 
         private static void Validate(Session session)
         {
@@ -127,6 +128,7 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                 throw new ArgumentException("Preview refuses Timeline markers/notifications.");
             foreach (var track in session.Timeline.Tracks)
             {
+                session.Timeline.Token.ThrowIfCancellationRequested();
                 if ((int)TimelineAccess.Call(track, "GetMarkerCount") != 0)
                     throw new ArgumentException("Preview refuses track markers/notifications.");
                 string kind = TimelineAccess.Kind(track);
@@ -145,8 +147,13 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                         throw new ArgumentException("Animation preview requires explicit Timeline clips, without an active infinite clip.");
                     foreach (Transform transform in animator.GetComponentsInChildren<Transform>(true))
                         Transform(session, transform);
-                    Capture(session, animator, "applyRootMotion", () => animator.applyRootMotion, value => animator.applyRootMotion = (bool)value);
-                    Capture(session, animator, "fireEvents", () => animator.fireEvents, value => animator.fireEvents = (bool)value);
+                    if (session.Captured.Add(animator))
+                    {
+                        if (session.Captured.Count > 128)
+                            throw new ArgumentException("Preview exceeds 128 distinct bound transforms/components.");
+                        Capture(session, animator, "applyRootMotion", () => animator.applyRootMotion, value => animator.applyRootMotion = (bool)value);
+                        Capture(session, animator, "fireEvents", () => animator.fireEvents, value => animator.fireEvents = (bool)value);
+                    }
                 }
                 else
                 {
@@ -154,7 +161,7 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                         throw new ArgumentException("Audio preview binding must be an AudioSource.");
                     Audio(session, source);
                 }
-                foreach (object clip in TimelineAccess.Clips(track))
+                foreach (object clip in TimelineAccess.Clips(track, session.Timeline.Token))
                 {
                     Object source = TimelineAccess.Source(clip);
                     if (kind == "animation")
@@ -203,7 +210,7 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                 );
             if (TimelineAccess.Get(director, "playableAsset") as Object != graph.Asset)
                 throw new ArgumentException("Assign the exact Timeline to this director before preview.");
-            double duration = Convert.ToDouble(TimelineAccess.Get(graph.Asset, "duration"));
+            double duration = graph.Duration();
             if (duration <= 0 || duration > 86400 || double.IsNaN(duration) || double.IsInfinity(duration))
                 throw new ArgumentException("Preview duration must be finite, positive and at most 86400 seconds.");
             var session = new Session
@@ -212,25 +219,31 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                 Director = director,
                 Timeline = graph,
                 Revision = graph.Revision(),
-                Bindings = Bindings(director),
+                Bindings = Bindings(director, graph.Token),
                 LastUse = EditorApplication.timeSinceStartup,
             };
             Capture(session, director, "time", () => TimelineAccess.Get(director, "time"), value => TimelineAccess.Set(director, "time", value));
             Validate(session);
             graph.Guard(request);
-            TimelineAccess.DirectorGuard(request, director);
+            TimelineAccess.DirectorGuard(request, director, graph.Token);
+            // A preview outlives its starting transport request. Later seeks use their own token.
+            session.Timeline = graph.DetachRequestToken();
             active = session;
             try
             {
+                graph.Token.ThrowIfCancellationRequested();
                 foreach (AudioSource audio in session.Captured.OfType<AudioSource>())
                     audio.mute = true;
                 // Record our explicit mute write before a native call can fail.
                 Remember(session);
+                graph.ValidateStructure();
+                graph.Token.ThrowIfCancellationRequested();
                 TimelineAccess.Call(director, "RebuildGraph");
                 session.Graph = TimelineAccess.Get(director, "playableGraph");
                 if (!(bool)TimelineAccess.Call(session.Graph, "IsValid"))
                     throw new InvalidOperationException("The native director did not create a valid preview graph.");
                 Remember(session);
+                graph.Token.ThrowIfCancellationRequested();
                 return new SuccessResponse(
                     "Owned manual Timeline preview prepared; seek explicitly.",
                     new
@@ -269,17 +282,17 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
             return active;
         }
 
-        internal static object Seek(JObject request)
+        internal static object Seek(JObject request, CancellationToken token = default)
         {
             Session session = Select(request);
             double time;
             try
             {
-                time = TimelineAccess.Number(request["time"], "time", 0, Convert.ToDouble(TimelineAccess.Get(session.Timeline.Asset, "duration")));
+                var current = new TimelineAccess.Graph(session.Timeline.Path, token);
                 bool drift =
                     session.Director == null
-                    || session.Revision != session.Timeline.Revision()
-                    || session.Bindings != Bindings(session.Director)
+                    || session.Revision != current.Revision()
+                    || session.Bindings != Bindings(session.Director, token)
                     || (TimelineAccess.Get(session.Director, "playableAsset") as Object) != session.Timeline.Asset
                     || !TimelineAccess.Get(session.Director, "playableGraph").Equals(session.Graph)
                     || session.Values.Any(value => value.Owner == null || !Equals(value.Read(), value.Last));
@@ -289,6 +302,7 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                     active = null;
                     return new ErrorResponse("Preview target/source/binding/state drifted; stopped owned preview before evaluation.", stopped);
                 }
+                time = TimelineAccess.Number(request["time"], "time", 0, current.Duration());
             }
             catch
             {
@@ -298,10 +312,13 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
             }
             try
             {
+                token.ThrowIfCancellationRequested();
                 TimelineAccess.Set(session.Director, "time", time);
                 Remember(session);
+                token.ThrowIfCancellationRequested();
                 TimelineAccess.Call(session.Director, "Evaluate");
                 Remember(session);
+                token.ThrowIfCancellationRequested();
                 return new SuccessResponse(
                     "Native Timeline graph evaluated once; no realtime playback/audibility claim.",
                     new

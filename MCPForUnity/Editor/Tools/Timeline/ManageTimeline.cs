@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -13,10 +15,16 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
     [McpForUnityTool("manage_timeline", AutoRegister = false, Group = "animation")]
     public static class ManageTimeline
     {
-        public static object HandleCommand(JObject request)
+        public static object HandleCommand(JObject request) => HandleCommandCore(request, CancellationToken.None);
+
+        public static Task<object> HandleCommand(JObject request, CancellationToken cancellationToken) =>
+            Task.FromResult(HandleCommandCore(request, cancellationToken));
+
+        private static object HandleCommandCore(JObject request, CancellationToken cancellationToken)
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (request == null || System.Text.Encoding.UTF8.GetByteCount(request.ToString(Newtonsoft.Json.Formatting.None)) > 65536)
                     throw new ArgumentException("Timeline request is required and must fit 64 KiB.");
                 string action = TimelineAccess.Text(request, "action");
@@ -25,22 +33,25 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                 TimelineAccess.Available();
                 TimelineAccess.Stable();
                 if (action == "seek")
-                    return TimelinePreview.Seek(request);
+                    return TimelinePreview.Seek(request, cancellationToken);
                 if (action == "preview_stop")
                     return TimelinePreview.Stop(request);
                 if (action == "read_director")
-                    return new SuccessResponse("Exact director/binding state.", TimelineAccess.DirectorRead(TimelineAccess.Director(request)));
+                    return new SuccessResponse(
+                        "Exact director/binding state.",
+                        TimelineAccess.DirectorRead(TimelineAccess.Director(request), request, cancellationToken)
+                    );
                 string path = TimelineAccess.Path(request);
                 if (action == "create")
-                    return Create(request, path);
-                var graph = new TimelineAccess.Graph(path);
+                    return Create(request, path, cancellationToken);
+                var graph = new TimelineAccess.Graph(path, cancellationToken);
                 if (action == "read")
                     return new SuccessResponse("Bounded Timeline graph.", graph.Read(request));
                 graph.Guard(request);
                 if (action == "preview_start")
                 {
                     Component director = TimelineAccess.Director(request);
-                    TimelineAccess.DirectorGuard(request, director);
+                    TimelineAccess.DirectorGuard(request, director, cancellationToken);
                     return TimelinePreview.Start(request, graph, director);
                 }
                 if (TimelinePreview.Active)
@@ -74,7 +85,7 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                 throw new ArgumentException("Unknown supplied Timeline property; unsupported values are not silently ignored.");
         }
 
-        private static object Create(JObject request, string path)
+        private static object Create(JObject request, string path, CancellationToken token)
         {
             if (TimelinePreview.Active)
                 throw new ArgumentException("Stop the owned preview before asset creation.");
@@ -95,6 +106,7 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
             asset.name = name;
             try
             {
+                token.ThrowIfCancellationRequested();
                 AssetDatabase.CreateAsset(asset, path);
             }
             catch
@@ -125,12 +137,13 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                 name = TimelineAccess.Text(values, "name");
             if (kind != "animation" && kind != "audio")
                 throw new ArgumentException("Track kind must be animation or audio; arbitrary/custom tracks are unsupported.");
-            if (graph.Tracks.Count >= 64 || graph.Tracks.Any(track => track.name == name))
-                throw new ArgumentException("Track limit64 or duplicate exact track name; no native automatic renaming.");
+            if (graph.Tracks.Any(track => track.name == name))
+                throw new ArgumentException("Duplicate exact track name; no native automatic renaming.");
             graph.Guard(request);
             int group = Begin("Add Timeline track", graph.Asset);
             try
             {
+                graph.Token.ThrowIfCancellationRequested();
                 var track = TimelineAccess.Call(graph.Asset, "CreateTrack", TimelineAccess.KindType(kind), null, name) as ScriptableObject;
                 if (track == null || track.GetType() != TimelineAccess.KindType(kind))
                     throw new InvalidOperationException("Native Timeline did not create the requested track kind.");
@@ -159,15 +172,13 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
             Keys(values, "track_id", "source", "start", "duration", "clip_in", "time_scale", "display_name");
             ScriptableObject track = graph.Select(TimelineAccess.Text(values, "track_id"));
             string kind = TimelineAccess.Kind(track);
-            Object source = TimelineAccess.Resolve(values["source"]);
+            Object source = TimelineAccess.Resolve(values["source"], graph.Token);
             if (
                 (kind != "animation" && kind != "audio")
                 || (kind == "animation" && (!(source is AnimationClip animation) || animation.legacy))
                 || (kind == "audio" && !(source is AudioClip))
             )
                 throw new ArgumentException("Exact source type must match a built-in animation/audio track; legacy/custom playable clips are unsupported.");
-            if (graph.ClipCount >= 256 || TimelineAccess.Clips(track).Length >= 64)
-                throw new ArgumentException("Timeline/track clip limits are256/64.");
             double start = TimelineAccess.Number(values["start"], "start", 0, 86400),
                 duration = TimelineAccess.Number(values["duration"], "duration", .001, 86400);
             double clipIn = values["clip_in"] == null ? 0 : TimelineAccess.Number(values["clip_in"], "clip_in", 0, 86400);
@@ -180,6 +191,7 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
             int group = Begin("Add Timeline clip", graph.Asset, track);
             try
             {
+                graph.Token.ThrowIfCancellationRequested();
                 object clip = TimelineAccess.Call(track, "CreateDefaultClip");
                 Object playable = TimelineAccess.Get(clip, "asset") as Object;
                 string expected = "UnityEngine.Timeline." + (kind == "animation" ? "AnimationPlayableAsset" : "AudioPlayableAsset");
@@ -215,7 +227,7 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
         private static object DirectorEdit(JObject request, TimelineAccess.Graph graph, string action)
         {
             Component director = TimelineAccess.Director(request);
-            TimelineAccess.DirectorGuard(request, director);
+            TimelineAccess.DirectorGuard(request, director, graph.Token);
             if (TimelineAccess.GraphValid(director) || TimelineAccess.Get(director, "state").ToString() == "Playing")
                 throw new ArgumentException("Director authoring requires an idle director without an existing graph.");
             ScriptableObject track = null;
@@ -242,10 +254,12 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                     throw new ArgumentException("Binding must be the exact matching Animator/AudioSource component in the selected director scene.");
             }
             graph.Guard(request);
-            TimelineAccess.DirectorGuard(request, director);
+            TimelineAccess.DirectorGuard(request, director, graph.Token);
+            graph.Token.ThrowIfCancellationRequested();
             int group = Begin("Author Timeline director binding", director);
             try
             {
+                graph.Token.ThrowIfCancellationRequested();
                 if (action == "assign")
                     TimelineAccess.Set(director, "playableAsset", graph.Asset);
                 else
@@ -288,8 +302,10 @@ namespace MCPForUnity.Editor.Tools.TimelineTools
                 preview_available = type != null,
                 native_undo_scope = "track/clip/director binding authoring; asset creation excluded",
                 custom_tracks_supported = false,
-                max_tracks = 64,
-                max_clips = 256,
+                read_page_tracks = 32,
+                read_page_clips_per_track = 32,
+                read_page_bytes = 262144,
+                large_graph_paging = true,
                 preview_transform_component_limit = 128,
             };
         }

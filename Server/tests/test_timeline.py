@@ -62,6 +62,54 @@ def test_timeline_exact_identity_and_zero_timing_survive_transport(wire):
 
 
 @pytest.mark.parametrize(
+    "paging",
+    [
+        {"offset": 2**31},
+        {"offset": -1},
+        {"offset": True},
+        {"clip_offset": 2**31, "track_id": "1"},
+        {"clip_offset": 1},
+        {"clip_offset": 1, "track_id": "0"},
+        {"clip_page_size": 33},
+        {"offset": 1, "track_id": "1"},
+    ],
+)
+def test_invalid_large_timeline_page_does_not_reach_unity(wire, paging):
+    module, sender = wire()
+    result = asyncio.run(
+        module.manage_timeline(
+            SimpleNamespace(),
+            action="read",
+            path="Assets/Cutscene.playable",
+            expected_revision="revision",
+            **paging,
+        )
+    )
+    assert result["success"] is False
+    sender.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "paging",
+    [
+        {"offset": 64000, "page_size": 32},
+        {"track_id": "11400001", "clip_offset": 512, "clip_page_size": 32},
+    ],
+)
+def test_large_timeline_continuation_preserves_exact_page_selectors(wire, paging):
+    module, sender = wire()
+    values = {
+        "action": "read",
+        "path": "Assets/Cutscene.playable",
+        "expected_revision": "revision",
+        **paging,
+    }
+    result = asyncio.run(module.manage_timeline(SimpleNamespace(), **values))
+    assert result["success"] is True
+    assert sender.call_args.args[3] == values
+
+
+@pytest.mark.parametrize(
     "values",
     [
         edit(expected_revision=None),
@@ -102,6 +150,14 @@ def test_timeline_exact_identity_and_zero_timing_survive_transport(wire):
         {"action": "seek", "preview_id": "session", "time": -1},
         {"action": "preview_stop"},
         {"action": "read_director", "target": True, "scene_handle": 1},
+        {"action": "read", "path": "Assets/Cutscene.playable", "offset": 80},
+        {
+            "action": "read",
+            "path": "Assets/Cutscene.playable",
+            "track_id": "11400001",
+            "clip_offset": 600,
+        },
+        {"action": "read_director", "target": 17, "scene_handle": 22, "offset": 80},
     ],
 )
 def test_invalid_timeline_request_never_reaches_native_mutation(wire, values):
@@ -132,6 +188,27 @@ async def test_registered_timeline_sdk_rejects_identity_coercion_and_preserves_p
             {"action": "read_director", "target": 17, "scene_handle": 22},
             {"action": "create", "path": "Assets/New.playable", "properties": {"name": "New"}},
             {"action": "read", "path": "Assets/New.playable", "page_size": 1},
+            {
+                "action": "read",
+                "path": "Assets/New.playable",
+                "offset": 64000,
+                "expected_revision": "fresh",
+            },
+            {
+                "action": "read",
+                "path": "Assets/New.playable",
+                "track_id": "11400001",
+                "clip_offset": 600,
+                "clip_page_size": 32,
+                "expected_revision": "fresh",
+            },
+            {
+                "action": "read_director",
+                "target": 17,
+                "scene_handle": 22,
+                "offset": 80,
+                "expected_director_revision": "director",
+            },
             edit(action="add_track", properties={"kind": "animation", "name": "Motion"}),
             edit(
                 action="assign",
@@ -165,6 +242,8 @@ async def test_registered_timeline_sdk_rejects_identity_coercion_and_preserves_p
         for values in (
             edit(file_id=11400000),
             {"action": "read_director", "target": True, "scene_handle": 1},
+            {"action": "read", "path": "Assets/New.playable", "track_id": 11400001},
+            {"action": "read", "path": "Assets/New.playable", "clip_offset": True},
         ):
             with pytest.raises(ToolError):
                 await client.call_tool("manage_timeline", values)
