@@ -535,11 +535,16 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         private void OnApplyConfigurationPreviewClicked()
         {
             var result = configurationChanges.Apply(configurationPreview, PreviewClient);
-            OnCancelConfigurationPreviewClicked();
+            if (result.Code == "applied" || result.Code == "unchanged")
+                OnCancelConfigurationPreviewClicked();
+            else
+                applyConfigurationButton?.SetEnabled(false);
             if (result.Code == "applied")
             {
                 configurationReceipt = result.Receipt;
                 DiscardRetryAttempt();
+                RefreshClientStatus(PreviewClient, forceImmediate: true);
+                UpdateManualConfiguration();
             }
             restoreConfigurationButton?.SetEnabled(configurationReceipt != null);
             if (configurationChangeStatusLabel != null)
@@ -549,11 +554,13 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         private void OnRestoreConfigurationClicked()
         {
             var result = configurationChanges.Restore(configurationReceipt, PreviewClient);
-            OnCancelConfigurationPreviewClicked();
             if (result.Code == "restored")
             {
+                OnCancelConfigurationPreviewClicked();
                 configurationReceipt = null;
                 DiscardRetryAttempt();
+                RefreshClientStatus(PreviewClient, forceImmediate: true);
+                UpdateManualConfiguration();
             }
             restoreConfigurationButton?.SetEnabled(configurationReceipt != null);
             if (configurationChangeStatusLabel != null)

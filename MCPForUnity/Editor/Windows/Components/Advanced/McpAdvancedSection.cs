@@ -23,6 +23,15 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
         private Button clearUvxButton;
         private VisualElement uvxPathStatus;
         private TextField gitUrlOverride;
+        private bool serverSourceDraftDirty;
+        private Func<string> readServerSource = () => EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, "");
+        private Action<string> writeServerSource = value =>
+        {
+            if (string.IsNullOrEmpty(value))
+                EditorPrefs.DeleteKey(EditorPrefKeys.GitUrlOverride);
+            else
+                EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, value);
+        };
         private Button browseGitUrlButton;
         private Button clearGitUrlButton;
         private Toggle autoStartOnLoadToggle;
@@ -193,7 +202,7 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
                 autoStartOnLoadToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false));
             }
 
-            gitUrlOverride.value = EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, "");
+            RefreshServerSource();
 
             bool debugEnabled = EditorPrefs.GetBool(EditorPrefKeys.DebugLogs, false);
             debugLogsToggle.value = debugEnabled;
@@ -223,34 +232,7 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             clearUvxButton.clicked += OnClearUvxClicked;
             browseGitUrlButton.clicked += OnBrowseGitUrlClicked;
 
-            gitUrlOverride.RegisterValueChangedCallback(evt =>
-            {
-                string url = evt.newValue?.Trim();
-                if (string.IsNullOrEmpty(url))
-                {
-                    EditorPrefs.DeleteKey(EditorPrefKeys.GitUrlOverride);
-                }
-                else
-                {
-                    url = ResolveServerPath(url);
-                    // Update the text field if the path was auto-corrected, without re-triggering the callback
-                    if (url != evt.newValue?.Trim())
-                    {
-                        gitUrlOverride.SetValueWithoutNotify(url);
-                    }
-                    EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, url);
-                }
-                OnGitUrlChanged?.Invoke();
-                OnHttpServerCommandUpdateRequested?.Invoke();
-            });
-
-            clearGitUrlButton.clicked += () =>
-            {
-                gitUrlOverride.SetValueWithoutNotify(string.Empty);
-                EditorPrefs.DeleteKey(EditorPrefKeys.GitUrlOverride);
-                OnGitUrlChanged?.Invoke();
-                OnHttpServerCommandUpdateRequested?.Invoke();
-            };
+            RegisterServerSourceCallbacks();
 
             debugLogsToggle.RegisterValueChangedCallback(evt =>
             {
@@ -331,6 +313,83 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             testConnectionButton.clicked += () => OnTestConnectionRequested?.Invoke();
             if (diagnosticsButton != null)
                 diagnosticsButton.clicked += () => OnDiagnosticsRequested?.Invoke();
+        }
+
+        private void RegisterServerSourceCallbacks()
+        {
+            gitUrlOverride.RegisterValueChangedCallback(_ =>
+            {
+                serverSourceDraftDirty = true;
+                SetServerSourceStatus("Unsaved source. Apply, press Enter or leave the field to save.");
+            });
+            gitUrlOverride.RegisterCallback<FocusOutEvent>(evt =>
+            {
+                if (!(evt.relatedTarget is VisualElement next) || !gitUrlOverride.Contains(next))
+                    CommitServerSource();
+            });
+            gitUrlOverride.RegisterCallback<KeyDownEvent>(evt =>
+            {
+                if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
+                {
+                    CommitServerSource();
+                    evt.StopPropagation();
+                }
+            });
+            Root.Q<Button>("apply-server-source-button").clicked += () => CommitServerSource();
+            clearGitUrlButton.clicked += () =>
+            {
+                gitUrlOverride.value = "";
+                serverSourceDraftDirty = true;
+                CommitServerSource();
+            };
+        }
+
+        private void RefreshServerSource()
+        {
+            if (!serverSourceDraftDirty)
+                gitUrlOverride.SetValueWithoutNotify(readServerSource());
+        }
+
+        private bool CommitServerSource()
+        {
+            if (!serverSourceDraftDirty)
+                return true;
+            try
+            {
+                string source = ResolveServerPath(gitUrlOverride.value?.Trim() ?? "");
+                writeServerSource(source);
+                serverSourceDraftDirty = false;
+                gitUrlOverride.SetValueWithoutNotify(source);
+                SetServerSourceStatus("");
+                OnGitUrlChanged?.Invoke();
+                OnHttpServerCommandUpdateRequested?.Invoke();
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                SetServerSourceStatus("Choose a server folder containing pyproject.toml, its parent folder, or a package source URL.", true);
+            }
+            catch (Exception)
+            {
+                SetServerSourceStatus("Could not save the source. Check folder access and try again.", true);
+            }
+            return false;
+        }
+
+        private void SetServerSourceStatus(string message, bool error = false)
+        {
+            var status = Root.Q<Label>("server-source-status");
+            if (status == null)
+                return;
+            status.text = message;
+            status.EnableInClassList("hidden", string.IsNullOrEmpty(message));
+            status.EnableInClassList("status-error", error);
+            if (error)
+            {
+                var group = Root.Q<Foldout>("settings-paths");
+                if (group != null)
+                    group.value = true;
+            }
         }
 
         public void UpdatePathOverrides()
@@ -430,11 +489,17 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
                             : "invalid"
                         );
                         uvxPathStatus.tooltip = valid ? $"uv {validation.Result}" : "uv executable validation failed";
+                        if (!valid)
+                        {
+                            var paths = Root.Q<Foldout>("settings-paths");
+                            if (paths != null)
+                                paths.value = true;
+                        }
                     })
                     .Every(50);
             }
 
-            gitUrlOverride.SetValueWithoutNotify(EditorPrefs.GetString(EditorPrefKeys.GitUrlOverride, ""));
+            RefreshServerSource();
             if (autoStartOnLoadToggle != null)
                 autoStartOnLoadToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false));
             debugLogsToggle.SetValueWithoutNotify(EditorPrefs.GetBool(EditorPrefKeys.DebugLogs, false));
@@ -488,12 +553,9 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
             string picked = EditorUtility.OpenFolderPanel("Select Server folder (containing pyproject.toml)", string.Empty, string.Empty);
             if (!string.IsNullOrEmpty(picked))
             {
-                picked = ResolveServerPath(picked);
-                gitUrlOverride.SetValueWithoutNotify(picked);
-                EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, picked);
-                OnGitUrlChanged?.Invoke();
-                OnHttpServerCommandUpdateRequested?.Invoke();
-                McpLog.Info($"Server source override set to: {picked}");
+                gitUrlOverride.value = picked;
+                serverSourceDraftDirty = true;
+                CommitServerSource();
             }
         }
 
@@ -507,44 +569,10 @@ namespace MCPForUnity.Editor.Windows.Components.Advanced
         {
             if (string.IsNullOrEmpty(path))
                 return path;
-
-            // If path is not a local filesystem path, return as-is (git URLs, PyPI refs, etc.)
-            if (
-                path.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-                || path.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
-                || path.StartsWith("git+", StringComparison.OrdinalIgnoreCase)
-                || path.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase)
-            )
-            {
-                return path;
-            }
-
-            // Strip file:// prefix for filesystem checks, but preserve it for the return value
-            string checkPath = path;
-            string prefix = string.Empty;
-            if (checkPath.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
-            {
-                prefix = "file://";
-                checkPath = checkPath.Substring(7);
-            }
-
-            // Already points to a directory with pyproject.toml — correct path
-            if (File.Exists(Path.Combine(checkPath, "pyproject.toml")))
-            {
-                return path;
-            }
-
-            // Check if "Server" subdirectory contains pyproject.toml (common repo structure)
-            string serverSubDir = Path.Combine(checkPath, "Server");
-            if (File.Exists(Path.Combine(serverSubDir, "pyproject.toml")))
-            {
-                string corrected = prefix + serverSubDir;
-                McpLog.Info($"Auto-corrected server path to 'Server' subdirectory: {corrected}");
-                return corrected;
-            }
-
-            // Return as-is; uvx will report the error if the path is invalid
-            return path;
+            string resolved = AssetPathUtility.ResolveLocalServerPath(path);
+            if (Path.IsPathFullyQualified(resolved) && !File.Exists(Path.Combine(resolved, "pyproject.toml")))
+                throw new ArgumentException("The server folder must contain pyproject.toml.");
+            return resolved;
         }
 
         private void UpdateDeploymentSection()

@@ -256,6 +256,92 @@ namespace MCPForUnityTests.Editor.Windows
 
         [TestCase("json")]
         [TestCase("toml")]
+        public void ReviewedApplyAndRestoreRefreshSelectedClientWithoutRewrite(string format)
+        {
+            var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
+            object previous = slot.GetValue(null);
+            string directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "unity-mcp-reviewed-status-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(directory);
+            try
+            {
+                var service = new MemoryClientService();
+                slot.SetValue(null, service);
+                var client = new ManualClient();
+                string path = System.IO.Path.Combine(directory, "synthetic-config");
+                client.ConfigPath = path;
+                System.IO.File.WriteAllText(path, MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Document(format, false));
+                var harness = new MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Harness(path, format);
+                harness.Target.Value = MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Target(client, path, format);
+                service.OnStatusCheck = _ =>
+                    client.CurrentStatus = System.IO.File.ReadAllText(path).Contains("unityMCP") ? McpStatus.Configured : McpStatus.NotConfigured;
+                var section = CreateSection(client);
+                InitializeRetryUi(section);
+                InitializePreviewUi(section, harness.Service);
+                section.RefreshSelectedClient();
+                Assert.AreEqual("Not Configured", Get<Label>(section, "clientStatusLabel").text);
+                Invoke(section, "OnPreviewConfigurationClicked");
+                Invoke(section, "OnApplyConfigurationPreviewClicked");
+                Assert.AreEqual(2, service.StatusChecks, "Apply must refresh even within the status TTL.");
+                Assert.AreEqual("Configured", Get<Label>(section, "clientStatusLabel").text);
+                Assert.AreEqual("Unregister", Get<Button>(section, "configureButton").text);
+                Assert.IsTrue(Get<VisualElement>(section, "clientStatusIndicator").ClassListContains("configured"));
+                Invoke(section, "OnRestoreConfigurationClicked");
+                Assert.AreEqual(3, service.StatusChecks);
+                Assert.AreEqual("Not Configured", Get<Label>(section, "clientStatusLabel").text);
+                Assert.AreEqual("Configure", Get<Button>(section, "configureButton").text);
+                Assert.IsFalse(service.RequestedRewrite);
+                Assert.Zero(client.ConfigureCalls);
+            }
+            finally
+            {
+                slot.SetValue(null, previous);
+                System.IO.Directory.Delete(directory, true);
+            }
+        }
+
+        [Test]
+        public void RejectedRestoreKeepsReviewReceiptAndCurrentStatus()
+        {
+            var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
+            object previous = slot.GetValue(null);
+            string directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "unity-mcp-reviewed-status-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(directory);
+            try
+            {
+                var service = new MemoryClientService();
+                slot.SetValue(null, service);
+                string path = System.IO.Path.Combine(directory, "synthetic-config");
+                var client = new ManualClient { ConfigPath = path };
+                var harness = new MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Harness(path, "json");
+                harness.Target.Value = MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Target(client, path, "json");
+                var section = CreateSection(client);
+                InitializeRetryUi(section);
+                InitializePreviewUi(section, harness.Service);
+                Invoke(section, "OnPreviewConfigurationClicked");
+                Invoke(section, "OnApplyConfigurationPreviewClicked");
+                object receipt = Get<object>(section, "configurationReceipt");
+                System.IO.File.WriteAllText(path, MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Document("json"));
+                Invoke(section, "OnPreviewConfigurationClicked");
+                object preview = Get<object>(section, "configurationPreview");
+                string review = Get<TextField>(section, "configurationPreviewText").value;
+                int checks = service.StatusChecks;
+                Invoke(section, "OnRestoreConfigurationClicked");
+                Assert.AreSame(receipt, Get<object>(section, "configurationReceipt"));
+                Assert.AreSame(preview, Get<object>(section, "configurationPreview"));
+                Assert.AreEqual(review, Get<TextField>(section, "configurationPreviewText").value);
+                Assert.AreEqual(checks, service.StatusChecks, "Rejected Restore must not refresh or rewrite a client.");
+                Assert.IsTrue(Get<Button>(section, "restoreConfigurationButton").enabledSelf);
+                StringAssert.Contains("changed after saving", Get<Label>(section, "configurationChangeStatusLabel").text);
+            }
+            finally
+            {
+                slot.SetValue(null, previous);
+                System.IO.Directory.Delete(directory, true);
+            }
+        }
+
+        [TestCase("json")]
+        [TestCase("toml")]
         public void PreviewFlow_CancelPreservesRetryWhileApplyAndRestoreInvalidateIt(string format)
         {
             var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
@@ -333,10 +419,14 @@ namespace MCPForUnityTests.Editor.Windows
                 Invoke(section, "OnPreviewConfigurationClicked");
                 System.IO.File.WriteAllText(path, "{\"user\":\"owned-later-edit\"}");
                 section.RefreshSelectedClient();
+                string reviewed = Get<TextField>(section, "configurationPreviewText").value;
+                object preview = Get<object>(section, "configurationPreview");
                 Invoke(section, "OnApplyConfigurationPreviewClicked");
                 Assert.AreEqual("{\"user\":\"owned-later-edit\"}", System.IO.File.ReadAllText(path));
                 Assert.AreEqual(0, client.ConfigureCalls);
                 Assert.IsFalse(Get<Button>(section, "applyConfigurationButton").enabledSelf);
+                Assert.AreEqual(reviewed, Get<TextField>(section, "configurationPreviewText").value, "A rejected change must keep its review visible.");
+                Assert.AreSame(preview, Get<object>(section, "configurationPreview"));
                 StringAssert.Contains("configuration file changed", Get<Label>(section, "configurationChangeStatusLabel").text);
                 StringAssert.Contains("Preview again", Get<Label>(section, "configurationChangeStatusLabel").text);
             }
@@ -466,6 +556,7 @@ namespace MCPForUnityTests.Editor.Windows
             public bool AllowBulk;
             public int StatusChecks;
             public bool RequestedRewrite;
+            public Action<IMcpClientConfigurator> OnStatusCheck;
 
             public void ConfigureClient(IMcpClientConfigurator configurator) => configurator.Configure();
 
@@ -473,6 +564,7 @@ namespace MCPForUnityTests.Editor.Windows
             {
                 StatusChecks++;
                 RequestedRewrite |= attemptAutoRewrite;
+                OnStatusCheck?.Invoke(configurator);
                 return false;
             }
 
@@ -491,17 +583,18 @@ namespace MCPForUnityTests.Editor.Windows
             public bool ConfigureFails;
             public int ConfigureCalls;
             public int StatusCalls;
+            public McpStatus CurrentStatus = McpStatus.NotConfigured;
             public IList<string> Steps = new[] { "Install", "Configure" };
             public string Id => ClientId;
             public string DisplayName => "Memory Client";
-            public McpStatus Status => McpStatus.NotConfigured;
+            public McpStatus Status => CurrentStatus;
             public ConfiguredTransport ConfiguredTransport => ConfiguredTransport.Unknown;
             public bool IsInstalled => true;
             public bool SupportsAutoConfigure => true;
             public bool SupportsSkills => false;
             public IReadOnlyList<ConfiguredTransport> SupportedTransports => new[] { ConfiguredTransport.Http };
 
-            public string GetConfigureActionLabel() => "Configure";
+            public string GetConfigureActionLabel() => Status == McpStatus.Configured ? "Unregister" : "Configure";
 
             public string GetSkillInstallPath() => null;
 
