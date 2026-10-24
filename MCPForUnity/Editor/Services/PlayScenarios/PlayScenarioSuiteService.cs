@@ -18,6 +18,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static bool _attached;
         private static bool _finalized;
         private static long _nextPoll;
+        private static PlayScenarioSuiteEditorProjection _editorProjection = new PlayScenarioSuiteEditorProjection();
         internal static int ActiveSubscriptionCount => _attached ? 3 : 0;
         private static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         private static PlayScenarioSuiteStore Store => new PlayScenarioSuiteStore(Path.GetDirectoryName(Application.dataPath));
@@ -123,7 +124,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Now,
                 suiteId
             );
-            _runner = CreateRunner(state);
+            ReplaceRunner(CreateRunner(state));
             _finalized = false;
             _nextPoll = 0;
             try
@@ -133,7 +134,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
             catch
             {
-                _runner = null;
+                ReplaceRunner(null);
                 _finalized = true;
                 Detach();
                 throw;
@@ -168,6 +169,12 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 () => PlayScenarioService.IsBusy
             );
 
+        private static void ReplaceRunner(PlayScenarioSuiteRunner runner)
+        {
+            _runner = runner;
+            _editorProjection = new PlayScenarioSuiteEditorProjection();
+        }
+
         private static bool EditorReady =>
             !EditorApplication.isCompiling && !EditorApplication.isUpdating && EditorApplication.isPlaying == EditorApplication.isPlayingOrWillChangePlaymode;
 
@@ -196,6 +203,19 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             {
                 return new ErrorResponse("play_scenario_suite_not_found");
             }
+        }
+
+        internal static object EditorStatus(string id)
+        {
+            bool current = _runner?.State.Report.SuiteId == id;
+            PlayScenarioSuiteReport report = current ? _runner.State.Report : FindReport(id);
+            if (report == null)
+                return new ErrorResponse("play_scenario_suite_not_found");
+            string status = ReferenceEquals(report, _runner?.State.Report) && !_finalized && !_runner.Running ? "running" : report.Status;
+            // Only the current runner owns a reusable cache. A historical terminal read is
+            // on demand and must not keep another full suite alive after its window closes.
+            PlayScenarioSuiteEditorProjection projection = current ? _editorProjection : new PlayScenarioSuiteEditorProjection();
+            return new SuccessResponse("Suite status.", projection.Read(report, status));
         }
 
         private static JObject Snapshot(PlayScenarioSuiteReport report)
@@ -345,7 +365,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     )
                 )
                     throw new InvalidDataException("Invalid restored suite stop status.");
-                _runner = CreateRunner(state);
+                ReplaceRunner(CreateRunner(state));
                 _finalized = !_runner.Running && state.Report.ReportPath != null;
                 if (!_finalized)
                     Attach();
@@ -353,7 +373,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             catch (Exception exception)
             {
                 Detach();
-                _runner = null;
+                ReplaceRunner(null);
                 SessionState.EraseString(SessionKey);
                 Debug.LogWarning("MCP play scenario suite restore failed: " + exception.Message);
             }
