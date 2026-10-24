@@ -18,6 +18,8 @@ from pathlib import Path
 import sqlite3
 import stat
 import time
+import threading
+from copy import deepcopy
 
 
 class RevisionConflict(ValueError):
@@ -124,6 +126,8 @@ class GraphStore:
         if not isinstance(scope, GraphScope):
             raise ValueError("A resolved graph identity is required")
         self.scope = scope
+        self._summaries = {}
+        self._summary_lock = threading.Lock()
         self.path = check_owned_path(Path(path))
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         check_owned_path(self.path)
@@ -137,7 +141,9 @@ class GraphStore:
         self._initialize()
 
     @contextmanager
-    def _connect(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
+    def _connect(
+        self, *, write: bool = False, _identity: list[tuple[int, int]] | None = None
+    ) -> Iterator[sqlite3.Connection]:
         for suffix in ("", "-wal", "-shm", "-journal"):
             candidate = check_owned_path(Path(str(self.path) + suffix))
             try:
@@ -147,6 +153,10 @@ class GraphStore:
                 continue
             if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
                 raise ValueError("Reference graph files must be owned regular files")
+            if not suffix and _identity is not None:
+                # Summaries reuse this already-checked file identity instead of
+                # adding another filesystem call to every status read.
+                _identity.append((info.st_dev, info.st_ino))
         connection = sqlite3.connect(self.path, timeout=30)
         connection.row_factory = sqlite3.Row
         try:
@@ -424,13 +434,40 @@ class GraphStore:
                 )
             ]
 
-    def status(self) -> dict:
+    def revision(self) -> int:
+        """Read a freshness fence without aggregating the observation table."""
         with self._connect() as connection:
+            return connection.execute("SELECT revision FROM graph_meta").fetchone()[0]
+
+    def clear_summaries(self) -> None:
+        with self._summary_lock:
+            self._summaries.clear()
+
+    def _summary(self, name, revision, identity, build, *, generation=0):
+        """Keep one aggregate per name; callers read its fence in their SQL snapshot."""
+        key = (tuple(identity), revision, generation)
+        with self._summary_lock:
+            cached = self._summaries.get(name)
+        if cached is not None and cached[0] == key:
+            return deepcopy(cached[1])
+        value = build()
+        with self._summary_lock:
+            self._summaries[name] = (key, value)
+        return deepcopy(value)
+
+    def status(self) -> dict:
+        identity = []
+        with self._connect(_identity=identity) as connection:
             revision = connection.execute("SELECT revision FROM graph_meta").fetchone()[0]
-            counts = dict(
-                connection.execute(
-                    "SELECT o.state,count(*) FROM observations o JOIN sources s USING(provider) WHERE s.enabled=1 GROUP BY o.state"
-                )
+            counts = self._summary(
+                "observations",
+                revision,
+                identity,
+                lambda: dict(
+                    connection.execute(
+                        "SELECT o.state,count(*) FROM observations o JOIN sources s USING(provider) WHERE s.enabled=1 GROUP BY o.state"
+                    )
+                ),
             )
             return {
                 "revision": revision,

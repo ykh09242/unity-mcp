@@ -90,6 +90,7 @@ class Reconciler:
         """Call only while this reconciler is idle; durable facts remain intact."""
         self._catalog_cache = None
         self._analysis_cache = None
+        self.store.clear_summaries()
 
     async def _phase(self, phase: str, **values) -> None:
         self.progress.update(phase=phase, **values)

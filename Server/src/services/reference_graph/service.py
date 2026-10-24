@@ -642,7 +642,7 @@ class ReferenceGraphService:
         for item in result.get("coverage", []):
             if (item["provider"], owner) in stale:
                 item["state"] = "pending"
-        if workspace.store.status()["revision"] != result["revision"]:
+        if workspace.store.revision() != result["revision"]:
             raise RevisionConflict("Graph changed before delivery; restart the page")
         return bool(stale)
 
@@ -670,7 +670,7 @@ class ReferenceGraphService:
                 raise RevisionConflict("Repository identity changed before checked delivery")
         for source in sources:
             self._operator_grant(workspace.store.scope, source["config"])
-        if workspace.store.status()["revision"] != revision:
+        if workspace.store.revision() != revision:
             raise RevisionConflict("Graph changed before checked delivery; restart the page")
 
     def _validate_exploration(self, workspace: GraphWorkspace, result: dict) -> bool:
@@ -700,7 +700,7 @@ class ReferenceGraphService:
             changed = self._validate_external(workspace, result)
         for provider in adapters:
             self._operator_grant(workspace.store.scope, sources[provider]["config"])
-        if workspace.store.status()["revision"] != result["revision"]:
+        if workspace.store.revision() != result["revision"]:
             raise RevisionConflict("Graph changed before exploration delivery; restart the page")
         return changed
 
@@ -871,7 +871,7 @@ class ReferenceGraphService:
             # grants. Recheck before capture and again before delivery.
             sources = await drained_thread(store.sources)
             source_fence = {
-                "revision": (await drained_thread(store.status))["revision"],
+                "revision": await drained_thread(store.revision),
                 "sources": {
                     source["provider"]: source["version"]
                     for source in sources
@@ -880,7 +880,7 @@ class ReferenceGraphService:
             }
             await drained_thread(self._validate_exploration, workspace, source_fence)
             data = await execute_mutation(self, entry, editor, action, options)
-            source_fence["revision"] = (await drained_thread(store.status))["revision"]
+            source_fence["revision"] = await drained_thread(store.revision)
             await drained_thread(self._validate_exploration, workspace, source_fence)
             editor = await entry.collect("status")
             if action == "mutation_diff":

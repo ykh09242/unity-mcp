@@ -496,16 +496,26 @@ class GraphWorkspace:
                     "INSERT OR REPLACE INTO graph_collected_versions VALUES (?,?)",
                     (guid, _json(version)),
                 )
-            connection.execute("UPDATE graph_assets SET dirty=0 WHERE guid=?", (guid,))
-            if connection.execute(
+            cleaned = connection.execute(
+                "UPDATE graph_assets SET dirty=0 WHERE guid=? AND dirty<>0", (guid,)
+            ).rowcount
+            recovered = connection.execute(
                 "DELETE FROM graph_asset_failures WHERE guid=?", (guid,)
-            ).rowcount:
+            ).rowcount
+            if recovered:
                 # Callers created while this input was unavailable have no old
                 # dependency edge. Resolve them against the recovered symbols.
                 connection.execute(
                     "INSERT OR IGNORE INTO graph_changed_inputs VALUES (?)", ("asset:" + guid,)
                 )
                 self._set(connection, "analysis_dirty", True)
+            # Cleaning changes counts without changing reference evidence or
+            # invalidating graph cursors. Other counted mutations bump the graph
+            # revision; this independent fence commits/rolls back with cleanup.
+            if cleaned or recovered:
+                connection.execute(
+                    "INSERT INTO graph_state VALUES ('summary_generation','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1"
+                )
 
     @staticmethod
     def _failure(connection, owner: str, provider: str, error: Exception, reason: str) -> None:
@@ -863,19 +873,28 @@ class GraphWorkspace:
             }
 
     def counts(self) -> dict:
-        with self.store._connect() as connection:
-            return {
-                "assets": connection.execute("SELECT count(*) FROM graph_assets").fetchone()[0],
-                "dirty_assets": connection.execute(
-                    "SELECT count(*) FROM graph_assets WHERE dirty=1"
-                ).fetchone()[0],
-                "failed_assets": connection.execute(
-                    "SELECT count(*) FROM graph_asset_failures"
-                ).fetchone()[0],
-                "unresolved": connection.execute(
-                    "SELECT count(*) FROM graph_issues i JOIN sources s USING(provider) WHERE s.enabled=1"
-                ).fetchone()[0],
-            }
+        identity = []
+        with self.store._connect(_identity=identity) as connection:
+            revision = connection.execute("SELECT revision FROM graph_meta").fetchone()[0]
+            generation = self._state(connection, "summary_generation", 0)
+            return self.store._summary(
+                "workspace",
+                revision,
+                identity,
+                lambda: {
+                    "assets": connection.execute("SELECT count(*) FROM graph_assets").fetchone()[0],
+                    "dirty_assets": connection.execute(
+                        "SELECT count(*) FROM graph_assets WHERE dirty=1"
+                    ).fetchone()[0],
+                    "failed_assets": connection.execute(
+                        "SELECT count(*) FROM graph_asset_failures"
+                    ).fetchone()[0],
+                    "unresolved": connection.execute(
+                        "SELECT count(*) FROM graph_issues i JOIN sources s USING(provider) WHERE s.enabled=1"
+                    ).fetchone()[0],
+                },
+                generation=generation,
+            )
 
     def external_inputs(self, provider: str) -> dict[str, dict]:
         with self.store._connect() as connection:
@@ -955,21 +974,27 @@ class GraphWorkspace:
             return revision, rows
 
     def provider_status(self) -> dict:
-        with self.store._connect() as connection:
-            states, versions = {}, set()
-            for state, version, count in connection.execute(
-                "SELECT state,version,count(*) FROM graph_addressables GROUP BY state,version"
-            ):
-                states[state] = states.get(state, 0) + count
-                if version is not None:
-                    versions.add(version)
-            result = {
-                "addressables": {
+        identity = []
+        with self.store._connect(_identity=identity) as connection:
+            revision = connection.execute("SELECT revision FROM graph_meta").fetchone()[0]
+
+            def aggregate():
+                states, versions = {}, set()
+                for state, version, count in connection.execute(
+                    "SELECT state,version,count(*) FROM graph_addressables GROUP BY state,version"
+                ):
+                    states[state] = states.get(state, 0) + count
+                    if version is not None:
+                        versions.add(version)
+                return {
                     "states": states,
                     "versions": sorted(versions),
                     "version_kind": "assembly",
                     "errors": states.get("failed", 0) + states.get("unsupported", 0),
                 }
+
+            result = {
+                "addressables": self.store._summary("addressables", revision, identity, aggregate)
             }
             for provider, version in connection.execute(
                 "SELECT provider,version FROM sources WHERE enabled=1 AND provider LIKE 'external:%'"
