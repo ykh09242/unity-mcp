@@ -11,6 +11,96 @@ Play mode transitions request a sweep through the same bounded path. An individu
 lookup removes a dead handle immediately. Assembly reload, Editor exit and
 disposal clear owned state and callbacks.
 
+## Empty-idle capacity experiment
+
+The indexed implementation at `5bdd0516` remains the production policy. A
+five-minute empty-idle release was evaluated with the exact production storage
+and test-only removal of its empty backing arrays. It was not adopted: reduced
+idle payload came with higher CPU, allocation count and latency on the next
+burst. The comparison does not evict any live entry or change the lookup limit.
+
+Run the four opt-in EditMode cases with this exact filter:
+
+```text
+MCPForUnityTests.Editor.Tools.ObjectIdCacheCostTests.BenchmarkEmptyIdleRefill
+```
+
+Each case fills and clears 32,768 or 131,072 full-width synthetic IDs, advances an
+injected clock by one or 301 seconds, then refills the same identities. Both
+strategies use the production indexed cache. Only the experimental strategy
+releases empty arrays after the simulated 300-second threshold. One warm-up pair
+precedes seven alternating-order measured pairs. A separate pass records
+calibrated allocation events. The clock jump does not sleep or measure a real
+idle callback; array-release reflection, native object creation and identity
+resolution are outside the timed refill. This favors release by excluding any
+idle scheduler overhead. It is a refill experiment, not a native lookup or
+whole-Editor frame benchmark.
+
+All four cases passed on Windows with Unity 6000.0.69f1. The following medians
+compare retained capacity with release after the longer idle. The latency
+distribution covers batches of 128 registrations, rather than maintenance
+updates. All 56 measured rows, including short-idle controls, are in the
+[idle CSV](benchmarks/object-id-cache-idle-20261024.csv).
+
+| Entries | Retained idle payload / release | Refill CPU cycles, millions: retain / release | Refill ms: retain / release | Batch p99 ms: retain / release | Allocation events: retain / release |
+| --- | --- | --- | --- | --- | --- |
+| 32,768 | 872,472 / 0 bytes | 3.614 / 4.603 | 0.9718 / 1.2364 | 0.0039 / 0.0190 | 3 / 29 |
+| 131,072 | 3,754,488 / 0 bytes | 14.466 / 29.487 | 3.8816 / 8.2170 | 0.0040 / 0.0093 | 3 / 33 |
+
+One-second controls retain the same arrays and have closely matched refill
+medians. A longer idle avoids shrinking during short bursts, but does not remove
+the next-burst growth cost: measured CPU increased 27.4% and 103.8%. Backing
+payload excludes array headers and native allocations; zero payload does not
+mean immediate collection or returned process memory. No change to normal
+churn, clearing or terminal lifecycle is adopted. The static cache belongs to
+the Editor domain; domain teardown releases that owner. The existing callback
+cleanup remains in place.
+
+## Cold-asset loading experiment
+
+The following opt-in EditMode test exercises actual unused-asset collection and
+native resolution on Windows with Unity 6000.0.69f1:
+
+```text
+MCPForUnityTests.Editor.Tools.ObjectIdCacheCostTests.BenchmarkNativeColdAssetMaintenance
+```
+
+It creates sixteen persistent 256-by-256 RGBA32 textures, one warm persistent
+control, one live transient ScriptableObject and one destroyed transient ID.
+Initial `Resources.UnloadUnusedAssets` left all sixteen textures unloaded.
+For each of seven rounds, explicit unloading followed by unused-asset collection
+establishes a known cold state, verified by loaded-object enumeration. The warm
+control is loaded separately before timing. A maintenance update then loads all
+sixteen cold textures. Every round retains their full native IDs, paths, GUIDs
+and local file IDs, preserves both live controls, and removes only the destroyed
+transient ID. Explicit lookup returns the same native identities. Managed wrapper
+reference equality is not required across asset collection and loading.
+
+All seven rounds passed. The sum of `Profiler.GetRuntimeMemorySizeLong` for the
+sixteen reloaded textures was 8,402,944 bytes each round. This is a per-object
+native size estimate after loading, not a process-memory delta, peak-memory or
+leak measurement. The [cold-asset CSV](benchmarks/object-id-cache-cold-20261024.csv)
+retains the observed loading counts, size estimates and diagnostic timings.
+This was a correctness cohort without established timing exclusivity; its
+elapsed/CPU readings are exploratory, not an isolated performance comparison.
+Allocation-event and allocation-byte counters were not collected for this case.
+
+The experiment confirms maintenance can undo unloading. It does not establish a
+safe replacement validity check. Unity 6.6's official
+[`LazyLoadReference<T>.isBroken` source](https://github.com/Unity-Technologies/UnityCsReference/blob/6000.6/Runtime/Export/Scripting/LazyLoadReference.cs)
+also permits loading. Its nonloading `isSet` and `entityId` accessors establish
+that an ID is present, not that the referenced native object is alive. The loaded
+set and managed wrapper lifetime cannot distinguish a dead object from a valid
+cold asset. No verified nonloading validity API suitable for this cache was
+established, so maintenance still preserves valid mappings through native
+resolution. No loading-policy or elapsed-time-slicing change is adopted without
+an equivalent validity contract and paired warm/churn cost evidence.
+
+The test injects the supported InstanceID native resolver into the actual
+version-independent cache. It does not execute Unity 6.6's static EntityId
+facade or establish performance on other Editor versions or operating systems.
+All created assets and native transient objects are cleaned up by the fixture.
+
 ## Storage and retirement
 
 An entry array stores the lower and upper 32-bit ID halves, circular previous/next
