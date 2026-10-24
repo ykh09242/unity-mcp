@@ -39,10 +39,10 @@ async def test_lifespan_closes_captured_validator_after_other_cleanup(
     assert (await service.validate("original-owned", source_id="fixture-peer")).valid
     assert service._cache and service._sources
     shutdown = AsyncMock(side_effect=RuntimeError("hub cleanup") if failure == "hub" else None)
-    disconnect = Mock(side_effect=RuntimeError("pool cleanup") if failure == "pool" else None)
+    close_pool = AsyncMock(side_effect=RuntimeError("pool cleanup") if failure == "pool" else None)
     monkeypatch.setattr(main.PluginHub, "shutdown", shutdown)
     monkeypatch.setattr(main, "_plugin_registry", object())
-    monkeypatch.setattr(main, "_unity_connection_pool", SimpleNamespace(disconnect_all=disconnect))
+    monkeypatch.setattr(main, "_unity_connection_pool", SimpleNamespace(aclose=close_pool))
     monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "1")
     timer = Mock()
     monkeypatch.setattr(main.threading, "Timer", Mock(return_value=timer))
@@ -63,7 +63,7 @@ async def test_lifespan_closes_captured_validator_after_other_cleanup(
             assert not ApiKeyService.is_initialized()
         assert not (await service.validate("after-shutdown")).valid
         shutdown.assert_awaited_once()
-        disconnect.assert_called_once()
+        close_pool.assert_awaited_once()
         timer.cancel.assert_called_once()
         if replacement:
             assert ApiKeyService.get_instance() is other

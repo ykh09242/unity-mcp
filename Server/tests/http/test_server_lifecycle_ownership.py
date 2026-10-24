@@ -114,6 +114,7 @@ async def test_cancelled_startup_releases_configured_hub_and_pool(
     monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "0")
     monkeypatch.setattr(config, "transport_mode", "stdio")
     pool = Mock()
+    pool.aclose = AsyncMock()
     pool.discover_all_instances.return_value = [SimpleNamespace(id="Fixture@hash")]
     monkeypatch.setattr(main, "get_unity_connection_pool", Mock(return_value=pool))
     entered = asyncio.Event()
@@ -134,7 +135,7 @@ async def test_cancelled_startup_releases_configured_hub_and_pool(
     with pytest.raises(asyncio.CancelledError):
         await startup
     assert not PluginHub.is_configured()
-    pool.disconnect_all.assert_called_once()
+    pool.aclose.assert_awaited_once()
     assert main._unity_connection_pool is None
     lifecycle_state.return_value.cancel.assert_called()
 
@@ -321,7 +322,7 @@ async def test_cleanup_failure_still_releases_every_independent_owner(
     receipts = SimpleNamespace(start=AsyncMock(), close=Mock(side_effect=fail("receipts")))
     scene = SimpleNamespace(close=Mock(side_effect=fail("scene")))
     validator = SimpleNamespace(aclose=AsyncMock())
-    pool = SimpleNamespace(disconnect_all=Mock())
+    pool = SimpleNamespace(aclose=AsyncMock())
     server._reference_graph_service = graph
     server._unity_session_state_store = state
     server._execution_receipts = receipts
@@ -339,7 +340,7 @@ async def test_cleanup_failure_still_releases_every_independent_owner(
     receipts.close.assert_called_once()
     scene.close.assert_called_once()
     shutdown.assert_awaited_once()
-    pool.disconnect_all.assert_called_once()
+    pool.aclose.assert_awaited_once()
     validator.aclose.assert_awaited_once()
     lifecycle_state.return_value.cancel.assert_called_once()
     assert main._plugin_registry is None and main._unity_connection_pool is None
@@ -428,3 +429,32 @@ async def test_unsettled_graph_diagnostic_does_not_skip_server_cleanup(
     shutdown.assert_awaited_once()
     lifecycle_state.return_value.cancel.assert_called_once()
     assert main._plugin_registry is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_owns_pool_created_after_skipped_startup(lifecycle_state, monkeypatch):
+    from transport.legacy import unity_connection as connections
+
+    monkeypatch.setattr(connections, "_unity_connection_pool", None)
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def resync(_):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            assert PluginHub.is_configured(), "Resync outlived the catalog hub"
+            stopped.set()
+
+    monkeypatch.setattr(connections, "_resync_tools_after_reconnect", resync)
+    async with main.server_lifespan(FastMCP("late-pool")):
+        pool = connections.get_unity_connection_pool()
+        conn = connections.UnityConnection(port=6400, instance_id="Main@deadbeef")
+        pool._connections[conn.instance_id] = conn
+        pool.schedule_tool_resync(conn)
+        await await_signal(started, "resync started")
+    assert stopped.is_set(), "Server shutdown left late-created resync running"
+    assert connections._unity_connection_pool is None
+    async with main.server_lifespan(FastMCP("next-generation")):
+        assert connections.get_unity_connection_pool() is not pool

@@ -201,14 +201,16 @@ async def test_cold_stdio_direct_read_does_not_authenticate_or_dispatch(monkeypa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
+@pytest.mark.parametrize("greeting", ["v1", "v2"])
 async def test_real_cold_stdio_discovery_ping_does_not_create_command_generation(
-    monkeypatch, tmp_path, mode
+    monkeypatch, tmp_path, mode, greeting
 ):
     import asyncio  # noqa: ANYIO_OK -- run the real framed discovery listener.
     import struct
     from core.config import config
     from transport.plugin_hub import PluginHub
     import transport.legacy.unity_connection as legacy
+    from tests.timing import await_completion
 
     monkeypatch.setattr(config, "transport_mode", "stdio")
     monkeypatch.setattr(config, "http_remote_hosted", False)
@@ -220,6 +222,7 @@ async def test_real_cold_stdio_discovery_ping_does_not_create_command_generation
     commands = []
     authentications = []
     probes = []
+    probe_handlers = []
 
     def connect(*args, **kwargs):
         authentications.append(True)
@@ -233,9 +236,24 @@ async def test_real_cold_stdio_discovery_ping_does_not_create_command_generation
     monkeypatch.setattr(legacy.UnityConnection, "send_command", command)
 
     async def listener(reader, writer):
+        probe_handlers.append(asyncio.current_task())
         try:
-            writer.write(b"UNITY-MCP FRAMING=1\n")
+            banner = (
+                b"WELCOME UNITY-MCP 1 FRAMING=1\n"
+                if greeting == "v1"
+                else b"WELCOME UNITY-MCP 2 FRAMING=1 AUTH=HMAC-SHA256 SERVER="
+                + b"a" * 32
+                + b" CHALLENGE="
+                + b"b" * 64
+                + b"\n"
+            )
+            writer.write(banner)
             await writer.drain()
+            if greeting == "v2":
+                # Discovery closes the unauthenticated socket after its greeting.
+                # Any authentication or business frame would replace/command a peer.
+                probes.append(await reader.read())
+                return
             length = struct.unpack(">Q", await reader.readexactly(8))[0]
             payload = await reader.readexactly(length)
             probes.append(payload)
@@ -260,7 +278,8 @@ async def test_real_cold_stdio_discovery_ping_does_not_create_command_generation
                 "mcpforunity://doctor", meta={"unity_instance": "Fixture@aaaa1111"}
             )
             data = json.loads(blocks[0].text)["data"]
-    assert probes and all(probe == b"ping" for probe in probes)
+        await await_completion(asyncio.gather(*probe_handlers), "doctor discovery peers")
+    assert probes and all(probe == (b"ping" if greeting == "v1" else b"") for probe in probes)
     assert authentications == commands == []
     assert pool._connections == {}
     assert data["connection_verified"] is False
