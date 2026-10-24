@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using MCPForUnity.Runtime.Helpers;
 using UnityEditor;
 using Object = UnityEngine.Object;
@@ -201,7 +202,10 @@ internal static class CacheHarness
                         break;
                 }
                 if (operation % 100 == 0)
+                {
+                    CheckStorage(cache);
                     EditorApplication.Transition();
+                }
                 if (operation % 1000 == 0)
                 {
                     // Finish an in-flight sweep, then include entries added after its start.
@@ -223,7 +227,95 @@ internal static class CacheHarness
         Require(EditorApplication.Subscribers == 0 && AssemblyReloadEvents.Subscribers == 0, "dispose leaked Editor callbacks");
         CheckSmallRings(live);
         CheckReentrantMutations(live);
+        CheckStorageGrowth(live);
         Console.WriteLine("PASS: bounded sweep; complete expiry; mutation/overwrite; live preservation; clear/reload/quit/dispose");
+    }
+
+    private static void CheckStorage(EditorObjectIdCache cache)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        Type type = cache.GetType();
+        var entries = (Array)type.GetField("entries", flags).GetValue(cache);
+        var buckets = (int[])type.GetField("buckets", flags).GetValue(cache);
+        int used = (int)type.GetField("used", flags).GetValue(cache);
+        int free = (int)type.GetField("free", flags).GetValue(cache);
+        int first = (int)type.GetField("first", flags).GetValue(cache);
+        Func<int, string, int> read = (slot, field) => (int)entries.GetValue(slot).GetType().GetField(field).GetValue(entries.GetValue(slot));
+        var ring = new HashSet<int>();
+        int current = first;
+        for (int i = 0; i < cache.Count; i++)
+        {
+            Require(current >= 0 && current < used && ring.Add(current), "live ring slot invalid/repeated");
+            int next = read(current, "Next");
+            Require(read(next, "Previous") == current, "ring links are not reciprocal");
+            current = next;
+        }
+        Require(current == first, "ring does not close");
+        var hashed = new HashSet<int>();
+        for (int bucket = 0; bucket < buckets.Length; bucket++)
+        for (int slot = buckets[bucket] - 1; slot >= 0; slot = read(slot, "HashNext") - 1)
+        {
+            Require(ring.Contains(slot) && hashed.Add(slot), "bucket slot is dead or duplicated");
+            Require((read(slot, "Handle") & int.MaxValue) % buckets.Length == bucket, "incorrect hash bucket");
+        }
+        Require(hashed.SetEquals(ring), "bucket/ring membership differs");
+        var available = new HashSet<int>();
+        for (int slot = free - 1; slot >= 0; slot = read(slot, "HashNext") - 1)
+            Require(slot < used && !ring.Contains(slot) && available.Add(slot), "free slot is live/invalid/repeated");
+        Require(available.Count + cache.Count == used, "slot ownership is incomplete");
+    }
+
+    private static void CheckStorageGrowth(Object live)
+    {
+        double now = 0;
+        var alive = new HashSet<ulong>();
+        using (var cache = new EditorObjectIdCache(id => alive.Contains(id) ? live : null, () => now))
+        {
+            var dictionary = new Dictionary<int, ulong>();
+            FieldInfo dictionaryEntries = null;
+            foreach (FieldInfo field in dictionary.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic))
+                if (field.FieldType.IsArray && field.FieldType.GetElementType() != typeof(int))
+                    dictionaryEntries = field;
+            Require(dictionaryEntries != null, "dictionary capacity probe unavailable");
+            FieldInfo cacheEntries = cache.GetType().GetField("entries", BindingFlags.Instance | BindingFlags.NonPublic);
+            int lastCapacity = 0;
+            for (int handle = 0; handle <= 156437; handle++)
+            {
+                cache.Remember((ulong)handle);
+                dictionary.Add(handle, (ulong)handle);
+                int capacity = ((Array)cacheEntries.GetValue(cache)).Length;
+                int dictionaryCapacity = ((Array)dictionaryEntries.GetValue(dictionary)).Length;
+                Require(capacity == dictionaryCapacity, "growth diverged from measured Mono baseline");
+                if (capacity != lastCapacity)
+                {
+                    CheckStorage(cache);
+                    lastCapacity = capacity;
+                }
+            }
+            cache.Clear();
+            CheckStorage(cache);
+            // Collide at the retained capacity, including the sign-bit collision.
+            ulong[] ids = { 0, (ulong)lastCapacity, (ulong)(lastCapacity * 2), 0x80000000UL };
+            foreach (ulong id in ids)
+            {
+                alive.Add(id);
+                cache.Remember(id);
+            }
+            foreach (ulong id in new[] { ids[1], ids[3], ids[0], ids[2] })
+            {
+                alive.Remove(id);
+                Require(cache.Resolve(unchecked((int)id)) == null, "colliding dead identity survived");
+                CheckStorage(cache);
+                foreach (ulong survivor in alive)
+                    Require(cache.Resolve(unchecked((int)survivor)) == live, "collision unlink lost survivor");
+            }
+            cache.Remember(42);
+            CheckStorage(cache);
+            now += 11;
+            EditorApplication.Tick();
+            Require(cache.Count == 0, "empty refill retained a stale bucket");
+            CheckStorage(cache);
+        }
     }
 
     private static void CheckSmallRings(Object live)

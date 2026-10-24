@@ -1,7 +1,6 @@
 using UnityEngine;
 #if UNITY_EDITOR
 using UnityEditor;
-using System.Collections.Generic;
 #endif
 
 namespace MCPForUnity.Runtime.Helpers
@@ -86,16 +85,47 @@ namespace MCPForUnity.Runtime.Helpers
     {
         private struct Entry
         {
-            // The dictionary key already contains the low 32 bits of the full ID.
+            public int Handle;
             public uint Upper;
             public int Previous;
             public int Next;
+            public int HashNext;
         }
 
-        // Intrusive circular links keep the cursor valid across additions/removals without
-        // allocating a key snapshot or one managed linked-list node per live handle.
-        private readonly Dictionary<int, Entry> entries = new Dictionary<int, Entry>();
+        // Slot indices stay stable across growth, so traversal and ring repair do
+        // not hash handles. HashNext belongs to a bucket OR the free list, never both.
+        private Entry[] entries = System.Array.Empty<Entry>();
+        private int[] buckets = System.Array.Empty<int>();
+        private int used;
+        private int free;
+        private int count;
         private const int LookupsPerUpdate = 128;
+
+        // Follow Dictionary's doubling/prime growth trajectory on supported Mono
+        // without depending on private runtime APIs or allocating a probe dictionary.
+        private static readonly int[] Capacities =
+        {
+            3,
+            7,
+            17,
+            37,
+            89,
+            197,
+            431,
+            919,
+            1931,
+            4049,
+            8419,
+            17519,
+            36353,
+            75431,
+            156437,
+            324449,
+            672827,
+            1395263,
+            2893249,
+            5999471,
+        };
         private readonly System.Func<ulong, Object> resolve;
         private readonly System.Func<double> clock;
         private double nextPrune;
@@ -103,7 +133,7 @@ namespace MCPForUnity.Runtime.Helpers
         private int cursor;
         private int remaining;
         private uint mutationVersion;
-        public int Count => entries.Count;
+        public int Count => count;
         public bool IsScheduled { get; private set; }
 
         public EditorObjectIdCache(System.Func<ulong, Object> resolve, System.Func<double> clock)
@@ -115,53 +145,60 @@ namespace MCPForUnity.Runtime.Helpers
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
         }
 
+        private int Find(int handle)
+        {
+            if (count == 0)
+                return -1;
+            for (int slot = buckets[(handle & int.MaxValue) % buckets.Length] - 1; slot >= 0; slot = entries[slot].HashNext - 1)
+                if (entries[slot].Handle == handle)
+                    return slot;
+            return -1;
+        }
+
         public void Remember(ulong full)
         {
             int handle = unchecked((int)full);
             uint upper = (uint)(full >> 32);
-            if (entries.TryGetValue(handle, out Entry existing))
+            int slot = Find(handle);
+            if (slot >= 0)
             {
-                if (existing.Upper != upper)
+                if (entries[slot].Upper != upper)
                 {
                     mutationVersion++;
-                    existing.Upper = upper;
-                    entries[handle] = existing;
+                    entries[slot].Upper = upper;
                 }
-            }
-            else if (entries.Count == 0)
-            {
-                mutationVersion++;
-                entries.Add(
-                    handle,
-                    new Entry
-                    {
-                        Upper = upper,
-                        Previous = handle,
-                        Next = handle,
-                    }
-                );
-                first = handle;
-                cursor = handle;
             }
             else
             {
+                if (free == 0 && used == entries.Length)
+                    Grow();
+                if (free != 0)
+                {
+                    slot = free - 1;
+                    free = entries[slot].HashNext;
+                }
+                else
+                    slot = used++;
+                int bucket = (handle & int.MaxValue) % buckets.Length;
+                int last = count == 0 ? slot : entries[first].Previous;
+                entries[slot] = new Entry
+                {
+                    Handle = handle,
+                    Upper = upper,
+                    Previous = last,
+                    Next = count == 0 ? slot : first,
+                    HashNext = buckets[bucket],
+                };
+                buckets[bucket] = slot + 1;
+                if (count == 0)
+                    first = cursor = slot;
+                else
+                {
+                    entries[last].Next = slot;
+                    entries[first].Previous = slot;
+                }
+                count++;
                 mutationVersion++;
-                int last = entries[first].Previous;
-                Entry tail = entries[last];
-                tail.Next = handle;
-                entries[last] = tail;
-                Entry head = entries[first];
-                head.Previous = handle;
-                entries[first] = head;
-                entries.Add(
-                    handle,
-                    new Entry
-                    {
-                        Upper = upper,
-                        Previous = last,
-                        Next = first,
-                    }
-                );
             }
             if (IsScheduled)
                 return;
@@ -170,24 +207,74 @@ namespace MCPForUnity.Runtime.Helpers
             EditorApplication.update += Update;
         }
 
+        private void Grow()
+        {
+            int capacity = NextCapacity(entries.Length);
+            var newEntries = new Entry[capacity];
+            var newBuckets = new int[capacity];
+            System.Array.Copy(entries, newEntries, used);
+            // Free slots reuse HashNext. Only live ring members can be rehashed.
+            int slot = first;
+            for (int copied = 0; copied < count; copied++)
+            {
+                int bucket = (newEntries[slot].Handle & int.MaxValue) % capacity;
+                newEntries[slot].HashNext = newBuckets[bucket];
+                newBuckets[bucket] = slot + 1;
+                slot = newEntries[slot].Next;
+            }
+            // Publish only after both allocations and the rebuild succeed.
+            entries = newEntries;
+            buckets = newBuckets;
+        }
+
+        private static int NextCapacity(int current)
+        {
+            foreach (int capacity in Capacities)
+                if (capacity > current)
+                    return capacity;
+            const int maxArrayLength = 0x7FEFFFFD;
+            if (current >= maxArrayLength)
+                throw new System.OutOfMemoryException();
+            long desired = (long)current * 2;
+            if (desired >= maxArrayLength)
+                return maxArrayLength;
+            // Continue growing beyond the table; no project-size limit is imposed.
+            for (int candidate = (int)desired | 1; candidate < maxArrayLength; candidate += 2)
+            {
+                if ((candidate - 1) % 101 == 0)
+                    continue;
+                bool prime = true;
+                for (int divisor = 3; (long)divisor * divisor <= candidate; divisor += 2)
+                    if (candidate % divisor == 0)
+                    {
+                        prime = false;
+                        break;
+                    }
+                if (prime)
+                    return candidate;
+            }
+            return maxArrayLength;
+        }
+
         public Object Resolve(int handle)
         {
-            if (!entries.TryGetValue(handle, out Entry entry))
+            int slot = Find(handle);
+            if (slot < 0)
                 return null;
+            uint upper = entries[slot].Upper;
             uint version = mutationVersion;
-            Object value = resolve(((ulong)entry.Upper << 32) | unchecked((uint)handle));
+            Object value = resolve(((ulong)upper << 32) | unchecked((uint)handle));
             if (value == null)
             {
                 if (version != mutationVersion)
                 {
-                    // Preserve a replacement identity, but still remove this dead
-                    // identity immediately using links updated by the callback.
-                    if (!entries.TryGetValue(handle, out Entry current) || current.Upper != entry.Upper)
+                    // A callback may have cleared, grown or reused this slot.
+                    slot = Find(handle);
+                    if (slot < 0 || entries[slot].Upper != upper)
                         return value;
-                    entry = current;
                 }
                 mutationVersion++;
-                Remove(handle, entry);
+                Remove(slot);
             }
             return value;
         }
@@ -203,208 +290,84 @@ namespace MCPForUnity.Runtime.Helpers
             uint version = mutationVersion;
             try
             {
-                // Keep ordinary live traversal small. Only enter the retirement path
-                // after finding a dead handle; both paths share one native-call budget.
                 for (int inspected = 0; inspected < LookupsPerUpdate && remaining > 0; inspected++)
                 {
-                    int handle = cursor;
-                    Entry entry = entries[handle];
+                    int slot = cursor;
+                    Entry entry = entries[slot];
                     cursor = entry.Next;
                     remaining--;
-                    if (resolve(((ulong)entry.Upper << 32) | unchecked((uint)handle)) == null)
+                    // Never keep an array/ref across the native callback: it can grow
+                    // or replace storage. Reacquire the current field each iteration.
+                    if (resolve(((ulong)entry.Upper << 32) | unchecked((uint)entry.Handle)) == null)
                     {
-                        if (version == mutationVersion)
-                            ContinueSweep(LookupsPerUpdate - inspected - 1, handle, entry, version);
-                        break;
+                        if (version != mutationVersion)
+                            break;
+                        Remove(slot);
                     }
                 }
             }
             finally
             {
-                // Loading can invoke user callbacks. Public mutations preserve cursor;
-                // cover a full current ring from it, without rescanning a loaded prefix.
+                // Resume from the public-mutation-maintained cursor, not a loaded prefix.
                 if (version != mutationVersion)
-                    remaining = entries.Count;
+                    remaining = count;
             }
             if (remaining == 0)
                 nextPrune = clock() + 10;
-        }
-
-        private void ContinueSweep(int lookupsLeft, int deadStart, Entry deadFirst, uint version)
-        {
-            int deadCount = 1;
-            Entry deadLast = deadFirst;
-            bool havePrevious = false;
-            int previousHandle = 0;
-            Entry previous = default;
-            try
-            {
-                if (deadCount == entries.Count)
-                {
-                    RemoveRun(deadStart, deadFirst, deadLast, deadCount);
-                    deadCount = 0;
-                    return;
-                }
-                for (int inspected = 0; inspected < lookupsLeft && remaining > 0; inspected++)
-                {
-                    int handle = cursor;
-                    Entry entry = entries[handle];
-                    cursor = entry.Next;
-                    remaining--;
-                    if (resolve(((ulong)entry.Upper << 32) | unchecked((uint)handle)) == null)
-                    {
-                        if (deadCount == 0)
-                        {
-                            deadStart = handle;
-                            deadFirst = entry;
-                        }
-                        deadLast = entry;
-                        deadCount++;
-                        // Public lookups may have removed most of the original sweep
-                        // between updates. Do not circle a wholly dead remaining ring.
-                        if (deadCount == entries.Count)
-                        {
-                            if (version != mutationVersion)
-                                break;
-                            RemoveRun(deadStart, deadFirst, deadLast, deadCount);
-                            deadCount = 0;
-                        }
-                    }
-                    else
-                    {
-                        if (deadCount > 0)
-                        {
-                            // Validate cached writes without checking every read-only lookup.
-                            if (version != mutationVersion)
-                                break;
-                            if (deadCount == 1)
-                            {
-                                // Reuse neighbors only after encountering an isolated dead
-                                // entry; all-live traversal needs no predecessor copies.
-                                if (deadFirst.Previous == handle)
-                                {
-                                    // Both neighbors are the same surviving entry.
-                                    entry.Previous = handle;
-                                    entry.Next = handle;
-                                }
-                                else
-                                {
-                                    if (!havePrevious || previousHandle != deadFirst.Previous)
-                                        previous = entries[deadFirst.Previous];
-                                    previous.Next = handle;
-                                    entries[deadFirst.Previous] = previous;
-                                    entry.Previous = deadFirst.Previous;
-                                }
-                                entries[handle] = entry;
-                                if (first == deadStart)
-                                    first = handle;
-                                if (cursor == deadStart)
-                                    cursor = handle;
-                                entries.Remove(deadStart);
-                                havePrevious = true;
-                            }
-                            else
-                            {
-                                RemoveRun(deadStart, deadFirst, deadLast, deadCount);
-                                havePrevious = false;
-                            }
-                            deadCount = 0;
-                        }
-                        if (havePrevious)
-                        {
-                            previousHandle = handle;
-                            previous = entry;
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                // An unchanged epoch permits cleanup even when native lookup throws.
-                // The outer update handles invalidated runs and resumes from its cursor.
-                if (version == mutationVersion && deadCount > 0)
-                    RemoveRun(deadStart, deadFirst, deadLast, deadCount);
-            }
         }
 
         private void OnPlayModeStateChanged(PlayModeStateChange _) => BeginSweep();
 
         private void BeginSweep()
         {
-            // Do not restart a sweep during repeated transitions. New handles join the
-            // circular list and at the latest participate in the next complete sweep.
-            if (remaining > 0 || entries.Count == 0)
+            if (remaining > 0 || count == 0)
                 return;
             cursor = first;
-            remaining = entries.Count;
+            remaining = count;
         }
 
-        private void Remove(int handle, Entry entry)
+        private void Remove(int slot)
         {
-            if (entries.Count == 1)
+            Entry entry = entries[slot];
+            int bucket = (entry.Handle & int.MaxValue) % buckets.Length;
+            int previous = -1;
+            for (int current = buckets[bucket] - 1; current != slot; current = entries[current].HashNext - 1)
+                previous = current;
+            if (previous < 0)
+                buckets[bucket] = entry.HashNext;
+            else
+                entries[previous].HashNext = entry.HashNext;
+            count--;
+            if (count == 0)
             {
-                entries.Remove(handle);
+                // Every bucket was unlinked individually. No capacity-wide clear is
+                // needed on the final bounded update; these entries contain no refs.
+                used = free = 0;
                 StopMaintenance();
                 return;
             }
-            Entry previous = entries[entry.Previous];
-            previous.Next = entry.Next;
-            entries[entry.Previous] = previous;
-            Entry next = entries[entry.Next];
-            next.Previous = entry.Previous;
-            entries[entry.Next] = next;
-            if (first == handle)
+            entries[entry.Previous].Next = entry.Next;
+            entries[entry.Next].Previous = entry.Previous;
+            if (first == slot)
                 first = entry.Next;
-            if (cursor == handle)
+            if (cursor == slot)
                 cursor = entry.Next;
-            entries.Remove(handle);
-        }
-
-        private void RemoveRun(int start, Entry head, Entry tail, int count)
-        {
-            if (count == 1)
-            {
-                Remove(start, head);
-                return;
-            }
-            int handle = start;
-            for (int removed = 0; removed < count; removed++)
-            {
-                int next = entries[handle].Next;
-                entries.Remove(handle);
-                if (first == handle)
-                    first = tail.Next;
-                if (cursor == handle)
-                    cursor = tail.Next;
-                handle = next;
-            }
-            if (entries.Count == 0)
-            {
-                // Remove already cleared the occupied slots. Avoid clearing the entire
-                // retained capacity on the final bounded update of a large sweep.
-                StopMaintenance();
-                return;
-            }
-            Entry previous = entries[head.Previous];
-            previous.Next = tail.Next;
-            entries[head.Previous] = previous;
-            Entry nextEntry = entries[tail.Next];
-            nextEntry.Previous = head.Previous;
-            entries[tail.Next] = nextEntry;
+            entries[slot].HashNext = free;
+            free = slot + 1;
         }
 
         public void Clear()
         {
             mutationVersion++;
-            entries.Clear();
+            if (count != 0)
+                System.Array.Clear(buckets, 0, buckets.Length);
+            count = used = free = 0;
             StopMaintenance();
         }
 
         private void StopMaintenance()
         {
-            first = 0;
-            cursor = 0;
-            remaining = 0;
+            first = cursor = remaining = 0;
             EditorApplication.update -= Update;
             IsScheduled = false;
         }
@@ -417,5 +380,6 @@ namespace MCPForUnity.Runtime.Helpers
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
         }
     }
+
 #endif
 }
