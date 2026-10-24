@@ -155,6 +155,171 @@ namespace MCPForUnityTests.EditMode.Tools
             return result;
         }
 
+        private JArray CaptureNodes(JArray entries)
+        {
+            var assembly = typeof(CaptureUISnapshot).Assembly;
+            var mapType = assembly.GetType("MCPForUnity.Editor.Tools.UISnapshotIdentityMap");
+            object map =
+                entries == null ? null : mapType.GetMethod("Parse", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { entries, 1000 });
+            var type = assembly.GetType("MCPForUnity.Editor.Tools." + (framework == "ugui" ? "UguiSnapshotCapture" : "UitoolkitSnapshotCapture"));
+            object[] args =
+                framework == "ugui"
+                    ? new object[] { target, 1000, map }
+                    : new object[]
+                    {
+                        target,
+                        assembly
+                            .GetType("MCPForUnity.Editor.Helpers.UIComponentAdapter")
+                            .GetMethod("Resolve", BindingFlags.Static | BindingFlags.NonPublic)
+                            .Invoke(null, new object[] { target, "ui_document" }),
+                        1000,
+                        map,
+                    };
+            var nodes = (JArray)type.GetMethod("Capture", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, args);
+            if (map != null)
+                mapType.GetMethod("EnsureAllVisited", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(map, null);
+            return nodes;
+        }
+
+        private IEnumerator WideSiblings(string engine)
+        {
+            foreach (int count in new[] { 100, 500, 999 })
+            {
+                yield return Build(engine);
+                var names = new string[count];
+                var entries = new JArray();
+                for (int i = 0; i < count; i++)
+                {
+                    names[i] = "row/%:" + i;
+                    Row(names[i]);
+                    entries.Add(new JObject { ["element_path"] = "/" + i, ["id"] = "row-" + i });
+                }
+                yield return Settle();
+                foreach (bool mapped in new[] { false, true })
+                {
+                    var map = mapped ? entries : null;
+                    var nodes = CaptureNodes(map);
+                    Assert.AreEqual(count + 1, nodes.Count);
+                    string rootId = nodes[0].Value<string>("id");
+                    for (int i = 0; i < count; i++)
+                    {
+                        string segment = mapped ? "@id:row-" + i : Uri.EscapeDataString((engine == "uitoolkit" ? "name:" : "") + names[i]);
+                        Assert.AreEqual(rootId + "/" + segment, nodes[i + 1].Value<string>("id"));
+                        Assert.AreEqual(rootId, nodes[i + 1].Value<string>("parent"));
+                    }
+                    var allocationMethod = typeof(GC).GetMethod("GetAllocatedBytesForCurrentThread", BindingFlags.Public | BindingFlags.Static);
+                    var allocated = allocationMethod == null ? null : (Func<long>)Delegate.CreateDelegate(typeof(Func<long>), allocationMethod);
+                    if (allocated != null)
+                    {
+                        long before = allocated();
+                        var probe = new byte[4096];
+                        long after = allocated();
+                        GC.KeepAlive(probe);
+                        if (after <= before)
+                            allocated = null;
+                    }
+                    var process = System.Diagnostics.Process.GetCurrentProcess();
+                    CaptureNodes(map);
+                    for (int sample = 0; sample < 5; sample++)
+                    {
+                        long bytes = allocated?.Invoke() ?? 0;
+                        long heapBefore = GC.GetTotalMemory(false);
+                        int gc0 = GC.CollectionCount(0),
+                            gc1 = GC.CollectionCount(1),
+                            gc2 = GC.CollectionCount(2);
+                        var cpu = process.TotalProcessorTime;
+                        var watch = System.Diagnostics.Stopwatch.StartNew();
+                        var actual = CaptureNodes(map);
+                        watch.Stop();
+                        double cpuMs = (process.TotalProcessorTime - cpu).TotalMilliseconds;
+                        long? allocation = allocated == null ? (long?)null : allocated() - bytes;
+                        long heapAfter = GC.GetTotalMemory(false);
+                        int gc0Delta = GC.CollectionCount(0) - gc0,
+                            gc1Delta = GC.CollectionCount(1) - gc1,
+                            gc2Delta = GC.CollectionCount(2) - gc2;
+                        Assert.IsTrue(JToken.DeepEquals(nodes, actual), "Complete native capture parity across repeated requests.");
+                        TestContext.WriteLine(
+                            "BPA11_MEASURE "
+                                + new JObject
+                                {
+                                    ["framework"] = engine,
+                                    ["siblings"] = count,
+                                    ["mapped"] = mapped,
+                                    ["sample"] = sample,
+                                    ["elapsed_ms"] = watch.Elapsed.TotalMilliseconds,
+                                    ["cpu_ms"] = cpuMs,
+                                    ["allocated_bytes"] = allocation,
+                                    ["managed_heap_after_bytes"] = heapAfter,
+                                    ["managed_heap_delta_bytes"] = heapAfter - heapBefore,
+                                    ["gc0"] = gc0Delta,
+                                    ["gc1"] = gc1Delta,
+                                    ["gc2"] = gc2Delta,
+                                }.ToString(Newtonsoft.Json.Formatting.None)
+                        );
+                    }
+                }
+                TearDown();
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator UguiWideEscapedSiblingParityAndCost() => WideSiblings("ugui");
+
+        [UnityTest]
+        public IEnumerator ToolkitWideEscapedSiblingParityAndCost() => WideSiblings("uitoolkit");
+
+        [Test]
+        public void UguiUnmappedDepthIncludesAncestorsAboveCaptureRoot()
+        {
+            var build = Build("ugui");
+            while (build.MoveNext()) { }
+            var owner = target;
+            try
+            {
+                for (int i = 0; i < 126; i++)
+                {
+                    var child = new GameObject("a", typeof(RectTransform));
+                    child.transform.SetParent(target.transform, false);
+                    target = child;
+                }
+                var last = new GameObject("b", typeof(RectTransform));
+                last.transform.SetParent(target.transform, false);
+                Assert.AreEqual(2, CaptureNodes(null).Count);
+                var overflow = new GameObject("c", typeof(RectTransform));
+                overflow.transform.SetParent(last.transform, false);
+                var unmapped = Assert.Throws<TargetInvocationException>(() => CaptureNodes(null));
+                StringAssert.Contains("depth/name bound", unmapped.InnerException.Message);
+                var mapped = Assert.Throws<TargetInvocationException>(() => CaptureNodes(Map("/0", "b", "/0/0", "c")));
+                StringAssert.Contains(
+                    "Input privacy ancestry",
+                    mapped.InnerException.Message,
+                    "Mapped identity depth remains relative; the separate privacy bound still applies."
+                );
+            }
+            finally
+            {
+                target = owner;
+            }
+        }
+
+        [Test]
+        public void UguiDuplicateSceneRootStillRefusesMappedAndUnmappedCapture()
+        {
+            var build = Build("ugui");
+            while (build.MoveNext()) { }
+            Row("Row");
+            var duplicate = new GameObject(target.name, typeof(RectTransform), typeof(Canvas));
+            try
+            {
+                Assert.Throws<TargetInvocationException>(() => CaptureNodes(null));
+                Assert.Throws<TargetInvocationException>(() => CaptureNodes(Map("/0", "Row")));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(duplicate);
+            }
+        }
+
         private JObject Capture(JToken map = null, int maxNodes = 200)
         {
             var request = new JObject
