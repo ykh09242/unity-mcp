@@ -47,6 +47,99 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void CollidingHandlesReuseSlotsAcrossGrowthAndEmptyRefill()
+        {
+            var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();
+            live.hideFlags = HideFlags.HideAndDontSave;
+            var alive = new HashSet<ulong>();
+            try
+            {
+                using (var probe = new Probe(id => alive.Contains(id) ? live : null))
+                {
+                    for (ulong id = 0; id < 49; id += 7)
+                    {
+                        alive.Add(id);
+                        probe.Remember(id);
+                    }
+                    foreach (ulong id in new ulong[] { 21, 42, 0 })
+                    {
+                        alive.Remove(id);
+                        Assert.IsNull(probe.Resolve((int)id));
+                        foreach (ulong survivor in alive)
+                            Assert.AreSame(live, probe.Resolve((int)survivor));
+                    }
+                    for (ulong id = 0; id < 1000; id++)
+                    {
+                        ulong full = id | 0xABCDEF1200000000UL;
+                        alive.Remove(id);
+                        alive.Add(full);
+                        probe.Remember(full);
+                    }
+                    Assert.AreEqual(alive.Count, probe.Count);
+                    foreach (ulong survivor in alive)
+                        Assert.AreSame(live, probe.Resolve(unchecked((int)survivor)));
+                    alive.Clear();
+                    probe.Now += 11;
+                    for (int tick = 0; tick < 8; tick++)
+                        probe.Update();
+                    Assert.AreEqual(0, probe.Count);
+                    probe.Remember(0xFFFFFFFF80000000UL);
+                    Assert.IsNull(probe.Resolve(int.MinValue));
+                    Assert.AreEqual(0, probe.Count);
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(live);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void GrowthInsideResolverPreservesActiveSweep(bool firstDead)
+        {
+            var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();
+            live.hideFlags = HideFlags.HideAndDontSave;
+            Probe probe = null;
+            bool expanded = false;
+            int calls = 0;
+            try
+            {
+                using (
+                    probe = new Probe(id =>
+                    {
+                        calls++;
+                        if (!expanded)
+                        {
+                            expanded = true;
+                            for (ulong added = 7; added < 1007; added++)
+                                probe.Remember(added);
+                        }
+                        return firstDead && id == 0 ? null : live;
+                    })
+                )
+                {
+                    for (ulong id = 0; id < 7; id++)
+                        probe.Remember(id);
+                    probe.Now = 11;
+                    for (int tick = 0; tick < 16; tick++)
+                    {
+                        int before = calls;
+                        probe.Update();
+                        Assert.LessOrEqual(calls - before, 128);
+                    }
+                    Assert.That(calls, Is.InRange(1007, 1150));
+                    Assert.AreEqual(firstDead ? 1006 : 1007, probe.Count);
+                    Assert.AreSame(live, probe.Resolve(1006));
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(live);
+            }
+        }
+
+        [Test]
         public void LookupAndMaintenancePreserveFullWidthIdentityIncludingSignedAndZeroHandles()
         {
             var live = ScriptableObject.CreateInstance<CacheBenchmarkObject>();

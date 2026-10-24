@@ -13,46 +13,41 @@ disposal clear owned state and callbacks.
 
 ## Storage and retirement
 
-The dictionary key is the lower 32 bits of the full ID. Its value stores the upper
-32 bits and circular previous/next handle links. Reconstruction converts the
-signed handle to an unsigned 32-bit value before combining the halves. The
-internal insertion API takes the full ID and derives its key, enforcing this
-invariant. Repeated registration of the same full ID skips the dictionary write.
+An entry array stores the lower and upper 32-bit ID halves, circular previous/next
+slot indices and one hash-chain link. A bucket array indexes handles for public
+registration and lookup. Maintenance follows slots directly, avoiding hash lookups
+for traversal and neighbor repair. Reconstruction converts the signed lower half
+to an unsigned 32-bit value. Re-registering the same full ID skips the write.
 
-Maintenance reads each entry once for resolution. Consecutive dead entries are
-unlinked as a run within the current bounded update, reducing repeated neighbor
-writes. Links remain intact during native lookups; a `finally` block retires an
-earlier dead run if a later lookup throws. A whole remaining ring is retired as
-soon as it is known dead, including when individual lookups removed most of the
-original sweep between updates. No pending run survives an update.
+Deletion unlinks a slot from its bucket and ring immediately. The now-unused
+hash-chain link joins a free list, so subsequent registration reuses storage.
+There are no tombstones or per-entry managed objects. The ring stays valid across
+every native lookup, including when a later lookup throws. Collision-chain unlink
+is linear in that chain's length; the 128-native-lookup budget is not a hard
+total-CPU or wall-clock bound.
 
-For an isolated dead entry between live entries, maintenance reuses the neighbors
-already read by that update. This avoids two repeated dictionary reads in the
-common alternating pattern. A leading dead entry can still need its predecessor
-read from the dictionary. If both neighbors are the same sole survivor, both
-links are repaired in one value before writing it back. Cached neighbors are
-local values, discarded at each update. Longer runs and trailing/exception cleanup
-retain the existing path.
-
-All-live traversal uses a small scan loop. On the first dead entry it hands the
-unused part of the same 128-lookup budget to run retirement, once per update.
-Predecessor caching activates only after an isolated deletion and is invalidated
-after a longer run. An all-live update needs no predecessor entry copies.
+Growth copies slots without renumbering them and rebuilds bucket chains from
+live ring members. New arrays are published only after allocation and rebuilding
+succeed. The capacity trajectory follows the doubling/prime policy in
+[Microsoft's reference implementation](https://github.com/microsoft/referencesource/blob/main/mscorlib/system/collections/hashtable.cs),
+without calling private runtime APIs. The capacity table continues with prime
+search for larger caches. It imposes no new project-size cap. Capacity equivalence
+was exercised through 324,449 slots; larger capacities are source-reviewed.
 
 Native resolution can [load an asset from disk](https://docs.unity3d.com/6000.6/Documentation/ScriptReference/EditorUtility.EntityIdToObject.html),
 which can invoke user [OnEnable code](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/ScriptableObject.OnEnable.html).
 One fixed 32-bit mutation counter detects reentrant registration, replacement,
-removal or clearing. Before any cached-entry write and during exception cleanup,
-maintenance checks that counter. On a change it discards the stale pending run
-and schedules a full current ring from the preserved cursor. It does not restart
-the visited prefix on every load. Individual lookup refetches current links after
-a mutation, removing the same dead identity immediately while preserving a
-replacement identity. No per-entry storage, scratch array or native retry is added.
+removal or clearing. Maintenance checks it before deleting a resolved entry.
+After a change, including a throwing callback, it schedules a full current ring
+from the preserved cursor instead of restarting the visited prefix. No array
+reference survives across a native callback, which may grow or replace storage.
+Individual lookup refinds the handle after mutation and removes only the same
+dead identity, preserving replacements. No scratch array or native retry is added.
 
-Removing the final entries clears their occupied dictionary slots and stops
-maintenance. It does not scan and zero the whole retained capacity on that last
-update. Explicit `Clear` still clears the dictionary. Capacity is reused, so
-removal does not promise to return all managed backing storage to the OS.
+Removing the final entry empties its bucket and stops maintenance. Every bucket
+is then empty without a capacity-wide clear on that last update. Explicit `Clear`
+zeros buckets; entry slots contain only value fields and need no reference cleanup.
+Capacity is reused, so removal does not promise to return backing storage to the OS.
 
 Additions, overwrites and removals preserve the cursor. New entries participate
 by the next sweep at the latest. Large caches take more updates to maintain;
@@ -92,7 +87,7 @@ MCPForUnityTests.Editor.Tools.ObjectIdCacheCostTests.BenchmarkPairedMaintenanceC
 Four cases use 32,768 or 131,072 temporary hidden ScriptableObjects, with alternating
 or clustered destruction. Each case warms both strategies, then takes seven
 alternating-order paired samples for all-live, half-dead and all-dead states.
-`ObjectIdCacheBenchmarkBaseline` freezes the bounded beta algorithm at `e0808a32`;
+`ObjectIdCacheBenchmarkBaseline` freezes the bounded beta algorithm at `996daf65`;
 the candidate is the actual production class. Both use the same real native IDs
 and handle keys. Every sample checks exact live counts and the 128-call budget.
 Eight additional cycles add/destroy/remove 4,096 objects against retained live
@@ -310,3 +305,98 @@ the evidence for the new implementation's CPU gain; comparisons between runs
 alone are not used to establish it. Current alternating update p99 is 0.0625 ms
 in the snapshot-comparison fixture, while the snapshot does all work in one
 9.541 ms update.
+
+## Third follow-up: indexed storage
+
+This comparison freezes beta `996daf65` and replaces dictionary-backed ring
+traversal with stable entry slots and separate bucket chains. It reuses the
+isolated Windows Unity 6000.0.69f1 project, Library and package caches.
+The final run passed all 41 requested native cases with no skips.
+The [paired CSV](benchmarks/object-id-cache-indexed-20261024.csv) preserves all
+168 samples: seven alternating-order pairs per size/pattern/phase. CPU cycles
+come from the current Editor thread around the full instrumented sweep;
+elapsed times sum individual updates. These are different metrics.
+
+| Initial entries | State / destruction trial | CPU cycles, millions: beta / candidate | CPU change | Sweep elapsed ms: beta / candidate | Update p99 ms: beta / candidate |
+| --- | --- | --- | --- | --- | --- |
+| 32,768 | All live / alternating | 30.48 / 22.91 | -24.8% | 8.245 / 6.192 | 0.047 / 0.038 |
+| 32,768 | Half dead / alternating | 44.73 / 24.46 | -45.3% | 12.104 / 6.610 | 0.067 / 0.037 |
+| 32,768 | All dead / alternating | 35.67 / 20.76 | -41.8% | 9.650 / 5.610 | 0.051 / 0.034 |
+| 32,768 | All live / clustered | 37.71 / 26.73 | -29.1% | 10.323 / 7.243 | 0.070 / 0.055 |
+| 32,768 | Half dead / clustered | 33.82 / 24.05 | -28.9% | 9.162 / 6.646 | 0.056 / 0.040 |
+| 32,768 | All dead / clustered | 35.78 / 20.11 | -43.8% | 9.899 / 5.434 | 0.064 / 0.034 |
+| 131,072 | All live / alternating | 126.75 / 97.77 | -22.9% | 34.856 / 26.910 | 0.055 / 0.045 |
+| 131,072 | Half dead / alternating | 183.25 / 106.79 | -41.7% | 50.038 / 29.140 | 0.075 / 0.053 |
+| 131,072 | All dead / alternating | 126.92 / 78.79 | -37.9% | 34.586 / 21.453 | 0.054 / 0.040 |
+| 131,072 | All live / clustered | 120.84 / 94.05 | -22.2% | 32.679 / 25.506 | 0.047 / 0.036 |
+| 131,072 | Half dead / clustered | 131.95 / 94.10 | -28.7% | 36.081 / 25.867 | 0.059 / 0.046 |
+| 131,072 | All dead / clustered | 128.53 / 76.25 | -40.7% | 35.220 / 20.944 | 0.056 / 0.035 |
+
+The worst observed update was 0.5276 ms for beta
+and 0.3081 ms for the candidate.
+Individual maxima can still increase in some cohorts; these are observations,
+not latency guarantees. The 128-native-lookup budget and idle interval are
+unchanged. No live-entry limit or shorter timeout was added.
+
+| Initial entries | Beta array payload, bytes | Candidate array payload, bytes | Reduction |
+| --- | --- | --- | --- |
+| 32,768 | 1,017,884 | 872,472 | 14.3% |
+| 131,072 | 4,380,236 | 3,754,488 | 14.3% |
+
+Actual measured entry stride is 20 bytes versus the baseline dictionary entry
+stride of 24 bytes; both have four-byte buckets and equal capacities. This is
+an additional 14.3% payload reduction after the earlier 22.2% reduction, or
+33.3% below the original payload. The metric excludes array/object headers and
+the new shared 80-byte capacity-table payload; it is not total managed heap.
+Growth temporarily owns old and new arrays. Empty-cache retention reuses the
+same capacity. Calibration again found allocation bytes unavailable, while
+the independent event recorder detected all 32 calibration allocations.
+Maintenance events remain zero for live/half-dead and three at final cleanup.
+
+### Registration, lookup and churn
+
+| Initial entries | Cold fill ms: beta / candidate | Same-ID registration ms | Replacement registration ms | Live lookup ms | Missing lookup ms |
+| --- | --- | --- | --- | --- | --- |
+| 32,768 | 8.910 / 1.469 | 1.557 / 0.634 | 2.984 / 0.726 | 9.087 / 7.819 | 0.918 / 0.515 |
+| 131,072 | 38.463 / 9.083 | 6.306 / 2.532 | 11.787 / 2.858 | 36.476 / 29.728 | 3.567 / 2.029 |
+
+Each cell reports beta / candidate medians across 14 all-live samples.
+Replacement changes upper ID bits, then restores actual native IDs before
+resolution. Missing handles are precomputed to be absent and invoke no native
+resolver. Cold fill includes growth and can contain allocation/GC outliers.
+
+The [churn CSV](benchmarks/object-id-cache-indexed-churn-20261024.csv) times
+both insertion and dead lookup/removal for eight cycles of 4,096 transient
+objects. Native object creation/destruction is outside both timed regions.
+Cycles sum the two CPU intervals. The first 32K insertion crosses a capacity
+boundary in both strategies; later cycles reuse it. Final live counts remain
+exact and retained capacity does not accumulate.
+
+| Retained live | Cycle group | Total ms: beta / candidate | CPU cycles, millions: beta / candidate | Retained array bytes: beta / candidate |
+| --- | --- | --- | --- | --- |
+| 32,768 | First | 4.242 / 1.739 | 15.77 / 6.43 | 2,112,068 / 1,810,344 |
+| 32,768 | Reuse, median cycles 1-7 | 3.196 / 1.183 | 11.81 / 4.38 | 2,112,068 / 1,810,344 |
+| 131,072 | First | 3.617 / 1.635 | 13.36 / 6.02 | 4,380,236 / 3,754,488 |
+| 131,072 | Reuse, median cycles 1-7 | 3.619 / 1.598 | 13.29 / 5.64 | 4,380,236 / 3,754,488 |
+
+### Unchanged original snapshot comparator
+
+The [snapshot CSV](benchmarks/object-id-cache-indexed-snapshot-20261024.csv)
+contains five paired samples per phase with the same actual native handles.
+The historical comparator is unchanged; it still performs one whole sweep
+in a single update and allocates two objects.
+
+| Live entries | Snapshot ms | Current bounded sweep ms | Elapsed change | Current update p99 ms |
+| --- | --- | --- | --- | --- |
+| 32,768 | 8.737 | 7.071 | -19.1% | 0.045 |
+| 16,384 | 10.155 | 7.657 | -24.6% | 0.048 |
+| 0 | 8.648 | 6.247 | -27.8% | 0.045 |
+
+The earlier 29.4% overhead was a different run and is retained above as history.
+Only paired measurements within the same run establish the current difference.
+Native Unity 6.6 and other-OS timing remain unmeasured. Portable and Windows
+reference compilation passed; this does not substitute for native execution.
+Regression coverage includes collision-chain unlink, free-slot ownership,
+capacity boundaries, reentrant growth/clear/replacement, exceptions, all small
+ring patterns and 50,000 deterministic random operations. Ten deliberate
+faults were rejected by the managed harness.

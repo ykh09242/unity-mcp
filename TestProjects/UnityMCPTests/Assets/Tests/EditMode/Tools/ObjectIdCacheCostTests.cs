@@ -78,22 +78,32 @@ namespace MCPForUnityTests.Editor.Tools
             internal long BackingPayload()
             {
                 object entries = type.GetField("entries", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(cache);
+                if (entries is Array slots)
+                {
+                    var buckets = (int[])type.GetField("buckets", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(cache);
+                    return MeasureArray(slots) + MeasureArray(buckets);
+                }
                 long bytes = 0;
                 int arrays = 0;
                 foreach (FieldInfo field in entries.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic))
                 {
                     if (!(field.GetValue(entries) is Array array))
                         continue;
-                    Assert.Greater(array.Length, 1, "Backing stride measurement needs at least two elements.");
-                    bytes += (long)
-                        typeof(ObjectIdCacheCostTests)
-                            .GetMethod(nameof(ArrayPayload), BindingFlags.Static | BindingFlags.NonPublic)
-                            .MakeGenericMethod(array.GetType().GetElementType())
-                            .Invoke(null, new object[] { array });
+                    bytes += MeasureArray(array);
                     arrays++;
                 }
                 Assert.AreEqual(2, arrays, "Report bucket and entry payload only; do not silently omit a backing array.");
                 return bytes;
+            }
+
+            private static long MeasureArray(Array array)
+            {
+                Assert.Greater(array.Length, 1, "Backing stride measurement needs at least two elements.");
+                return (long)
+                    typeof(ObjectIdCacheCostTests)
+                        .GetMethod(nameof(ArrayPayload), BindingFlags.Static | BindingFlags.NonPublic)
+                        .MakeGenericMethod(array.GetType().GetElementType())
+                        .Invoke(null, new object[] { array });
             }
 
             public void Dispose() => ((IDisposable)cache).Dispose();
@@ -168,9 +178,20 @@ namespace MCPForUnityTests.Editor.Tools
                     objects[i].hideFlags = HideFlags.HideAndDontSave;
                     ids[i] = FullId(objects[i]);
                 }
+                var registered = new HashSet<int>();
+                foreach (ulong id in ids)
+                    registered.Add(unchecked((int)id));
+                var missing = new int[size];
+                int missingHandle = int.MinValue;
+                for (int i = 0; i < missing.Length; i++)
+                {
+                    while (registered.Contains(missingHandle))
+                        missingHandle++;
+                    missing[i] = missingHandle++;
+                }
                 // Warm both implementations, including the native call and JIT, before paired samples.
-                Measure(ids, 0, clustered, -1, true, bytesAvailable, eventsAvailable);
-                Measure(ids, 0, clustered, -1, false, bytesAvailable, eventsAvailable);
+                Measure(ids, missing, 0, clustered, -1, true, bytesAvailable, eventsAvailable);
+                Measure(ids, missing, 0, clustered, -1, false, bytesAvailable, eventsAvailable);
                 if (!clustered)
                     MeasureChurn(ids);
                 for (int phase = 0; phase < 3; phase++)
@@ -181,8 +202,8 @@ namespace MCPForUnityTests.Editor.Tools
                                 Object.DestroyImmediate(objects[i]);
                     for (int sample = 0; sample < 7; sample++)
                     {
-                        Measure(ids, phase, clustered, sample, sample % 2 == 0, bytesAvailable, eventsAvailable);
-                        Measure(ids, phase, clustered, sample, sample % 2 != 0, bytesAvailable, eventsAvailable);
+                        Measure(ids, missing, phase, clustered, sample, sample % 2 == 0, bytesAvailable, eventsAvailable);
+                        Measure(ids, missing, phase, clustered, sample, sample % 2 != 0, bytesAvailable, eventsAvailable);
                     }
                 }
             }
@@ -194,7 +215,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
-        private static void Measure(ulong[] ids, int phase, bool clustered, int sample, bool baseline, bool bytesAvailable, bool eventsAvailable)
+        private static void Measure(ulong[] ids, int[] missing, int phase, bool clustered, int sample, bool baseline, bool bytesAvailable, bool eventsAvailable)
         {
             var ticks = new double[(ids.Length + 127) / 128];
             using (var probe = new Probe(baseline))
@@ -207,6 +228,19 @@ namespace MCPForUnityTests.Editor.Tools
                 foreach (ulong id in ids)
                     probe.Remember(id);
                 double overwrite = Elapsed(started);
+                started = Stopwatch.GetTimestamp();
+                foreach (ulong id in ids)
+                    probe.Remember(id ^ (1UL << 63));
+                double replace = Elapsed(started);
+                // Restore actual native identities before any native lookup.
+                foreach (ulong id in ids)
+                    probe.Remember(id);
+                int callsBeforeMiss = probe.Calls;
+                started = Stopwatch.GetTimestamp();
+                foreach (int handle in missing)
+                    probe.Resolve(handle);
+                double miss = Elapsed(started);
+                Assert.AreEqual(callsBeforeMiss, probe.Calls, "An unregistered handle must not call the native resolver.");
                 // Full-width native IDs, not unrelated sequential surrogate keys.
                 if (phase == 0)
                 {
@@ -265,7 +299,7 @@ namespace MCPForUnityTests.Editor.Tools
                 UnityEngine.Debug.Log(
                     string.Format(
                         CultureInfo.InvariantCulture,
-                        "CACHE_COST strategy={0} size={1} clustered={2} phase={3} sample={4} total_ms={5:F6} p95_ms={6:F6} p99_ms={7:F6} max_ms={8:F6} ticks={9} events={10} allocated_bytes={11} backing_payload={12} after_payload={13} insert_ms={14:F6} overwrite_ms={15:F6} lookup_ms={16:F6} cpu_cycles={17}",
+                        "CACHE_COST strategy={0} size={1} clustered={2} phase={3} sample={4} total_ms={5:F6} p95_ms={6:F6} p99_ms={7:F6} max_ms={8:F6} ticks={9} events={10} allocated_bytes={11} backing_payload={12} after_payload={13} insert_ms={14:F6} overwrite_ms={15:F6} lookup_ms={16:F6} cpu_cycles={17} replace_ms={18:F6} miss_ms={19:F6}",
                         baseline ? "beta" : "candidate",
                         ids.Length,
                         clustered,
@@ -283,7 +317,9 @@ namespace MCPForUnityTests.Editor.Tools
                         insert,
                         overwrite,
                         lookup,
-                        cyclesAvailable ? cycles.ToString(CultureInfo.InvariantCulture) : "unavailable"
+                        cyclesAvailable ? cycles.ToString(CultureInfo.InvariantCulture) : "unavailable",
+                        replace,
+                        miss
                     )
                 );
             }
@@ -301,6 +337,9 @@ namespace MCPForUnityTests.Editor.Tools
                 }
                 var transient = new TransientObject[4096];
                 var ids = new ulong[transient.Length];
+                var insertion = new double[2];
+                var insertionCycles = new ulong[2];
+                var cyclesSupported = new bool[2];
                 try
                 {
                     for (int cycle = 0; cycle < 8; cycle++)
@@ -311,32 +350,46 @@ namespace MCPForUnityTests.Editor.Tools
                             transient[i].hideFlags = HideFlags.HideAndDontSave;
                             ids[i] = FullId(transient[i]);
                         }
-                        foreach (ulong id in ids)
+                        for (int order = 0; order < 2; order++)
                         {
-                            baseline.Remember(id);
-                            candidate.Remember(id);
+                            int index = (cycle + order) % 2;
+                            Probe probe = index == 0 ? baseline : candidate;
+                            bool available = TryThreadCycles(out ulong beforeCycles);
+                            long started = Stopwatch.GetTimestamp();
+                            foreach (ulong id in ids)
+                                probe.Remember(id);
+                            insertion[index] = Elapsed(started);
+                            cyclesSupported[index] = TryThreadCycles(out ulong afterCycles) && available && afterCycles > beforeCycles;
+                            insertionCycles[index] = afterCycles - beforeCycles;
                         }
                         foreach (TransientObject value in transient)
                             Object.DestroyImmediate(value);
                         for (int order = 0; order < 2; order++)
                         {
                             bool isBaseline = (cycle + order) % 2 == 0;
+                            int index = isBaseline ? 0 : 1;
                             Probe probe = isBaseline ? baseline : candidate;
+                            bool available = TryThreadCycles(out ulong beforeCycles);
                             long started = Stopwatch.GetTimestamp();
                             foreach (ulong id in ids)
                                 probe.Resolve(unchecked((int)id));
                             double elapsed = Elapsed(started);
+                            available = TryThreadCycles(out ulong afterCycles) && available && cyclesSupported[index] && afterCycles > beforeCycles;
+                            ulong cycles = insertionCycles[index] + afterCycles - beforeCycles;
                             Assert.AreEqual(liveIds.Length, probe.Count);
                             UnityEngine.Debug.Log(
                                 string.Format(
                                     CultureInfo.InvariantCulture,
-                                    "CACHE_CHURN strategy={0} size={1} cycle={2} removal_ms={3:F6} backing_payload={4} retained_live={5}",
+                                    "CACHE_CHURN strategy={0} size={1} cycle={2} removal_ms={3:F6} backing_payload={4} retained_live={5} insert_ms={6:F6} total_ms={7:F6} cpu_cycles={8}",
                                     isBaseline ? "beta" : "candidate",
                                     liveIds.Length,
                                     cycle,
                                     elapsed,
                                     probe.BackingPayload(),
-                                    probe.Count
+                                    probe.Count,
+                                    insertion[index],
+                                    insertion[index] + elapsed,
+                                    available ? cycles.ToString(CultureInfo.InvariantCulture) : "unavailable"
                                 )
                             );
                         }
