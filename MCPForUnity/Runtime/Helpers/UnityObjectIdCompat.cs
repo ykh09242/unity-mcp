@@ -84,10 +84,23 @@ namespace MCPForUnity.Runtime.Helpers
     // Resolve native identities when pruning: a collected managed wrapper is not proof its native object died.
     internal sealed class EditorObjectIdCache : System.IDisposable
     {
-        private readonly Dictionary<int, ulong> entries = new Dictionary<int, ulong>();
+        private struct Entry
+        {
+            public ulong Full;
+            public int Previous;
+            public int Next;
+        }
+
+        // Intrusive circular links keep the cursor valid across additions/removals without
+        // allocating a key snapshot or one managed linked-list node per live handle.
+        private readonly Dictionary<int, Entry> entries = new Dictionary<int, Entry>();
+        private const int LookupsPerUpdate = 128;
         private readonly System.Func<ulong, Object> resolve;
         private readonly System.Func<double> clock;
         private double nextPrune;
+        private int first;
+        private int cursor;
+        private int remaining;
         public int Count => entries.Count;
         public bool IsScheduled { get; private set; }
 
@@ -102,7 +115,44 @@ namespace MCPForUnity.Runtime.Helpers
 
         public void Remember(int handle, ulong full)
         {
-            entries[handle] = full;
+            if (entries.TryGetValue(handle, out Entry existing))
+            {
+                existing.Full = full;
+                entries[handle] = existing;
+            }
+            else if (entries.Count == 0)
+            {
+                entries.Add(
+                    handle,
+                    new Entry
+                    {
+                        Full = full,
+                        Previous = handle,
+                        Next = handle,
+                    }
+                );
+                first = handle;
+                cursor = handle;
+            }
+            else
+            {
+                int last = entries[first].Previous;
+                Entry tail = entries[last];
+                tail.Next = handle;
+                entries[last] = tail;
+                Entry head = entries[first];
+                head.Previous = handle;
+                entries[first] = head;
+                entries.Add(
+                    handle,
+                    new Entry
+                    {
+                        Full = full,
+                        Previous = last,
+                        Next = first,
+                    }
+                );
+            }
             if (IsScheduled)
                 return;
             nextPrune = clock() + 10;
@@ -112,37 +162,71 @@ namespace MCPForUnity.Runtime.Helpers
 
         public Object Resolve(int handle)
         {
-            if (!entries.TryGetValue(handle, out ulong full))
+            if (!entries.TryGetValue(handle, out Entry entry))
                 return null;
-            Object value = resolve(full);
+            Object value = resolve(entry.Full);
             if (value == null)
-            {
-                entries.Remove(handle);
-                if (entries.Count == 0)
-                    Clear();
-            }
+                Remove(handle, entry);
             return value;
         }
 
         private void Update()
         {
-            if (clock() < nextPrune)
-                return;
-            Prune();
-            nextPrune = clock() + 10;
+            if (remaining == 0)
+            {
+                if (clock() < nextPrune)
+                    return;
+                BeginSweep();
+            }
+            for (int inspected = 0; inspected < LookupsPerUpdate && remaining > 0; inspected++)
+            {
+                int handle = cursor;
+                cursor = entries[handle].Next;
+                remaining--;
+                Resolve(handle);
+            }
+            if (remaining == 0)
+                nextPrune = clock() + 10;
         }
 
-        private void OnPlayModeStateChanged(PlayModeStateChange _) => Prune();
+        private void OnPlayModeStateChanged(PlayModeStateChange _) => BeginSweep();
 
-        private void Prune()
+        private void BeginSweep()
         {
-            foreach (int handle in new List<int>(entries.Keys))
-                Resolve(handle);
+            // Do not restart a sweep during repeated transitions. New handles join the
+            // circular list and at the latest participate in the next complete sweep.
+            if (remaining > 0 || entries.Count == 0)
+                return;
+            cursor = first;
+            remaining = entries.Count;
+        }
+
+        private void Remove(int handle, Entry entry)
+        {
+            if (entries.Count == 1)
+            {
+                Clear();
+                return;
+            }
+            Entry previous = entries[entry.Previous];
+            previous.Next = entry.Next;
+            entries[entry.Previous] = previous;
+            Entry next = entries[entry.Next];
+            next.Previous = entry.Previous;
+            entries[entry.Next] = next;
+            if (first == handle)
+                first = entry.Next;
+            if (cursor == handle)
+                cursor = entry.Next;
+            entries.Remove(handle);
         }
 
         public void Clear()
         {
             entries.Clear();
+            first = 0;
+            cursor = 0;
+            remaining = 0;
             EditorApplication.update -= Update;
             IsScheduled = false;
         }
