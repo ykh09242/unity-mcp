@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using MCPForUnity.Editor.Tools.Sprite2D;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
@@ -155,7 +156,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(tool, "Public manage_timeline domain is missing.");
             var request = values == null ? new JObject() : (JObject)values.DeepClone();
             request["action"] = action;
-            return JObject.FromObject(tool.GetMethod("HandleCommand", BindingFlags.Public | BindingFlags.Static).Invoke(null, new object[] { request }));
+            return JObject.FromObject(tool.GetMethod("HandleCommand", new[] { typeof(JObject) }).Invoke(null, new object[] { request }));
         }
 
         private static JObject Data(JObject result)
@@ -379,6 +380,34 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void PreviewSeek_ParentCycleStopsOwnedGraphBeforeNativeDuration()
+        {
+            PrepareTracks();
+            StartPreview();
+            Type trackType = TimelineType.Assembly.GetType("UnityEngine.Timeline.TrackAsset");
+            var roots = (IEnumerable)TimelineType.GetMethod("GetRootTracks").Invoke(timeline, null);
+            ScriptableObject track = roots.Cast<ScriptableObject>().First(value => value.GetType().Name == "AnimationTrack");
+            FieldInfo parent = trackType.GetField("m_Parent", BindingFlags.Instance | BindingFlags.NonPublic);
+            parent.SetValue(track, track);
+            try
+            {
+                JObject result = Send("seek", new JObject { ["preview_id"] = preview, ["time"] = .5 });
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                StringAssert.Contains("parent", result.Value<string>("error"));
+            }
+            finally
+            {
+                parent.SetValue(track, timeline);
+            }
+            object graph = Get(director, "playableGraph");
+            Assert.IsFalse((bool)graph.GetType().GetMethod("IsValid").Invoke(graph, null));
+            Assert.IsFalse(speaker.mute);
+            Assert.AreEqual(3, child.localPosition.x, .0001f);
+            Assert.IsFalse(Send("preview_stop", new JObject { ["preview_id"] = preview }).Value<bool>("success"));
+            preview = null;
+        }
+
+        [Test]
         public void BindingAndTrackUndo_RestoreNativePriorStateAndKeepTimelineGuid()
         {
             // Given one saved native track and no director binding.
@@ -434,6 +463,445 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(Send("add_track", request).Value<bool>("success"));
             CollectionAssert.AreEqual(bytes, File.ReadAllBytes(Full(path)));
             Assert.AreEqual(0, Read().Value<int>("track_count"));
+        }
+
+        private ScriptableObject NativeTrack(string name, ScriptableObject parent = null)
+        {
+            Type kind = TimelineType.Assembly.GetType("UnityEngine.Timeline." + (parent == null ? "AnimationTrack" : "GroupTrack"));
+            return (ScriptableObject)
+                TimelineType
+                    .GetMethod("CreateTrack", new[] { typeof(Type), kind.BaseType, typeof(string) })
+                    .Invoke(timeline, new object[] { kind, parent, name });
+        }
+
+        private void SaveTimeline()
+        {
+            EditorUtility.SetDirty(timeline);
+            foreach (Object value in AssetDatabase.LoadAllAssetsAtPath(path))
+                EditorUtility.SetDirty(value);
+            AssetDatabase.SaveAssets();
+        }
+
+        [Test]
+        public void LargeGraph_ReadAndAuthorBeyondFormerTrackLimitWithRevisionBoundPages()
+        {
+            for (int index = 0; index < 80; index++)
+                NativeTrack("Track " + index);
+            SaveTimeline();
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            long before = GC.GetTotalMemory(false);
+            JObject first = Read();
+            Assert.AreEqual(80, first.Value<int>("track_count"));
+            Assert.AreEqual(16, ((JArray)first["tracks"]).Count);
+            JObject page = Data(
+                Send(
+                    "read",
+                    new JObject
+                    {
+                        ["path"] = path,
+                        ["offset"] = 64,
+                        ["page_size"] = 32,
+                        ["expected_revision"] = first["revision"],
+                    }
+                )
+            );
+            Assert.AreEqual(16, ((JArray)page["tracks"]).Count);
+            Assert.IsNull(page["next_offset"].Value<int?>());
+            CollectionAssert.AreEqual(
+                Enumerable.Range(64, 16).Select(index => "Track " + index).ToArray(),
+                ((JArray)page["tracks"]).Select(row => row.Value<string>("name")).ToArray()
+            );
+            JObject added = AddTrack("audio", "Track 81");
+            Assert.IsNotNull(added["track_id"]);
+            Assert.AreEqual(81, Read().Value<int>("track_count"));
+            Assert.IsFalse(
+                Send(
+                        "read",
+                        new JObject
+                        {
+                            ["path"] = path,
+                            ["offset"] = 64,
+                            ["expected_revision"] = first["revision"],
+                        }
+                    )
+                    .Value<bool>("success")
+            );
+            Undo.PerformUndo();
+            Assert.AreEqual(80, Read().Value<int>("track_count"));
+            string benchmark =
+                "TimelineLargeGraphBenchmark tracks=80 page_tracks=16 elapsed_ms="
+                + elapsed.ElapsedMilliseconds
+                + " retained_delta="
+                + (GC.GetTotalMemory(false) - before);
+            LogAssert.Expect(LogType.Log, benchmark);
+            Debug.Log(benchmark);
+        }
+
+        [Test]
+        public void LargeGraph_ClipPagesRemainBoundedAndReachEveryOwnedClip()
+        {
+            ScriptableObject track = NativeTrack("Many clips");
+            MethodInfo create = track.GetType().GetMethod("CreateDefaultClip");
+            for (int index = 0; index < 600; index++)
+            {
+                object clip = create.Invoke(track, null);
+                Set(clip, "start", (double)index);
+                Set(clip, "duration", 1d);
+                Set(Get(clip, "asset"), "clip", animation);
+            }
+            SaveTimeline();
+            JObject state = Read();
+            Assert.AreEqual(600, state.Value<int>("clip_count"));
+            Assert.LessOrEqual(((JArray)state["tracks"][0]["clips"]).Count, 32);
+            string id = Ref(track).Value<string>("file_id");
+            int offset = 0,
+                seen = 0;
+            do
+            {
+                JObject page = Data(
+                    Send(
+                        "read",
+                        new JObject
+                        {
+                            ["path"] = path,
+                            ["track_id"] = id,
+                            ["clip_offset"] = offset,
+                            ["clip_page_size"] = 32,
+                            ["expected_revision"] = state["revision"],
+                        }
+                    )
+                );
+                JObject row = (JObject)page["tracks"][0];
+                int count = ((JArray)row["clips"]).Count;
+                Assert.Greater(count, 0);
+                Assert.LessOrEqual(count, 32);
+                Assert.LessOrEqual(Encoding.UTF8.GetByteCount(page.ToString(Newtonsoft.Json.Formatting.None)), 262144);
+                seen += count;
+                offset = row["next_clip_offset"].Value<int?>() ?? -1;
+            } while (offset >= 0);
+            Assert.AreEqual(600, seen);
+            Assert.IsNotNull(AddClip(new JObject { ["track_id"] = id }, animation)["clip_id"]);
+            Undo.PerformUndo();
+            Assert.AreEqual(600, Read().Value<int>("clip_count"));
+        }
+
+        [Test]
+        public void LargeGraph_DeepGroupsAndLargeSerializedAssetRemainReadableAndStaleWritesFail()
+        {
+            Type group = TimelineType.Assembly.GetType("UnityEngine.Timeline.GroupTrack");
+            MethodInfo create = TimelineType.GetMethod("CreateTrack", new[] { typeof(Type), group.BaseType, typeof(string) });
+            ScriptableObject parent = null;
+            for (int index = 0; index < 16; index++)
+                parent = (ScriptableObject)create.Invoke(timeline, new object[] { group, parent, "Group " + index });
+            timeline.name = new string('x', 9 * 1024 * 1024);
+            SaveTimeline();
+            Assert.Greater(new FileInfo(Full(path)).Length, 8388608);
+            JObject state = Read();
+            Assert.AreEqual(16, state.Value<int>("track_count"));
+            JObject stale = Guard(new JObject { ["kind"] = "audio", ["name"] = "Must not write" });
+            parent.name = "External unsaved edit";
+            EditorUtility.SetDirty(parent);
+            Assert.IsFalse(Send("add_track", stale).Value<bool>("success"));
+            Assert.AreEqual(16, Read().Value<int>("track_count"));
+            Assert.IsFalse(
+                Send(
+                        "read",
+                        new JObject
+                        {
+                            ["path"] = path,
+                            ["offset"] = int.MaxValue,
+                            ["expected_revision"] = state["revision"],
+                        }
+                    )
+                    .Value<bool>("success")
+            );
+        }
+
+        [Test]
+        public void LargeGraph_CyclesAndForeignOwnedTracksFailWithoutWriting()
+        {
+            ScriptableObject track = NativeTrack("Owned");
+            SaveTimeline();
+            Type trackType = TimelineType.Assembly.GetType("UnityEngine.Timeline.TrackAsset");
+            var children = (IList)trackType.GetField("m_Children", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(track);
+            FieldInfo cache = trackType.GetField("m_ChildTrackCache", BindingFlags.NonPublic | BindingFlags.Instance);
+            // Prime the public native cache with a valid empty child list. The tool must validate
+            // the later serialized cycle even if GetChildTracks still returns that old empty list.
+            trackType.GetMethod("GetChildTracks").Invoke(track, null);
+            byte[] before = File.ReadAllBytes(Full(path));
+            children.Add(track);
+            try
+            {
+                JObject result = Send("read", new JObject { ["path"] = path });
+                Assert.IsFalse(result.Value<bool>("success"));
+                StringAssert.Contains("cyclic", result.Value<string>("error"));
+            }
+            finally
+            {
+                children.Clear();
+                cache.SetValue(track, null);
+            }
+            // Reproduce the inverse stale-cache shape: valid repaired serialized edges but a
+            // cached self-cycle left by an earlier reader. Native duration must not see it.
+            children.Add(track);
+            trackType.GetMethod("GetChildTracks").Invoke(track, null);
+            children.Clear();
+            try
+            {
+                JObject result = Send("read", new JObject { ["path"] = path });
+                Assert.IsFalse(result.Value<bool>("success"));
+                StringAssert.Contains("cyclic", result.Value<string>("error"));
+            }
+            finally
+            {
+                cache.SetValue(track, null);
+            }
+            FieldInfo parent = trackType.GetField("m_Parent", BindingFlags.NonPublic | BindingFlags.Instance);
+            parent.SetValue(track, track);
+            try
+            {
+                JObject result = Send("read", new JObject { ["path"] = path });
+                Assert.IsFalse(result.Value<bool>("success"));
+                StringAssert.Contains("parent", result.Value<string>("error"));
+            }
+            finally
+            {
+                parent.SetValue(track, timeline);
+            }
+            ScriptableObject foreign = ScriptableObject.CreateInstance(TimelineType);
+            AssetDatabase.CreateAsset(foreign, folder + "/Foreign.playable");
+            MethodInfo create = TimelineType.GetMethod("CreateTrack", new[] { typeof(Type), trackType, typeof(string) });
+            var foreignTrack = (ScriptableObject)create.Invoke(foreign, new object[] { track.GetType(), null, "Foreign" });
+            children.Add(foreignTrack);
+            cache.SetValue(track, null);
+            try
+            {
+                JObject result = Send("read", new JObject { ["path"] = path });
+                Assert.IsFalse(result.Value<bool>("success"));
+                StringAssert.Contains("owned by another asset", result.Value<string>("error"));
+            }
+            finally
+            {
+                children.Clear();
+                cache.SetValue(track, null);
+            }
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(Full(path)));
+
+            // Native flattened tracks are an independent cache. A detached cached track can
+            // otherwise reach mutedInHierarchy's parent loop even when both root walks are empty.
+            Get(timeline, "duration");
+            var rootTracks = (IList)TimelineType.GetField("m_Tracks", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(timeline);
+            FieldInfo rootCache = TimelineType.GetField("m_CacheRootTracks", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo flatCache = TimelineType.GetField("m_CacheFlattenedTracks", BindingFlags.Instance | BindingFlags.NonPublic);
+            rootTracks.Clear();
+            rootCache.SetValue(timeline, null);
+            parent.SetValue(track, track);
+            try
+            {
+                JObject result = Send("read", new JObject { ["path"] = path });
+                Assert.IsFalse(result.Value<bool>("success"));
+                StringAssert.Contains("flattened", result.Value<string>("error"));
+            }
+            finally
+            {
+                parent.SetValue(track, timeline);
+                rootTracks.Add(track);
+                rootCache.SetValue(timeline, null);
+                flatCache.SetValue(timeline, null);
+            }
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(Full(path)));
+        }
+
+        [TestCase("assign")]
+        [TestCase("bind")]
+        [TestCase("preview_start")]
+        public void CancellationAfterFinalDirectorGuard_PreventsNativeMutation(string action)
+        {
+            PrepareTracks();
+            var roots = (IEnumerable)TimelineType.GetMethod("GetRootTracks").Invoke(timeline, null);
+            ScriptableObject track = roots.Cast<ScriptableObject>().First(value => value.GetType().Name == "AnimationTrack");
+            var replacement = new GameObject("Replacement binding").AddComponent<Animator>();
+            if (action == "assign")
+                Set(director, "playableAsset", null);
+            JObject request = DirectorGuard(
+                action == "bind" ? new JObject { ["track_id"] = Ref(track)["file_id"], ["binding_target"] = replacement.GetInstanceIDCompat() } : null
+            );
+            request["action"] = action;
+            Type tool = AppDomain
+                .CurrentDomain.GetAssemblies()
+                .Select(assembly => assembly.GetType("MCPForUnity.Editor.Tools.TimelineTools.ManageTimeline"))
+                .First(type => type != null);
+            FieldInfo hook = tool
+                .Assembly.GetType("MCPForUnity.Editor.Tools.TimelineTools.TimelineAccess")
+                .GetField("DirectorGuardCompletedForTests", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(hook);
+            MethodInfo handle = tool.GetMethod("HandleCommand", new[] { typeof(JObject), typeof(CancellationToken) });
+            int calls = 0;
+            using (var cancellation = new CancellationTokenSource())
+            {
+                hook.SetValue(
+                    null,
+                    new Action(() =>
+                    {
+                        if (++calls == 2)
+                            cancellation.Cancel();
+                    })
+                );
+                try
+                {
+                    var error = Assert.Throws<TargetInvocationException>(() => handle.Invoke(null, new object[] { request, cancellation.Token }));
+                    Assert.IsInstanceOf<OperationCanceledException>(error.GetBaseException());
+                    Assert.AreEqual(2, calls);
+                }
+                finally
+                {
+                    hook.SetValue(null, null);
+                }
+            }
+            Assert.AreSame(action == "assign" ? null : timeline, Get(director, "playableAsset"));
+            if (action == "bind")
+                Assert.AreSame(animator, director.GetType().GetMethod("GetGenericBinding").Invoke(director, new object[] { track }));
+            object graph = Get(director, "playableGraph");
+            Assert.IsFalse((bool)graph.GetType().GetMethod("IsValid").Invoke(graph, null));
+            Assert.IsFalse(speaker.mute);
+        }
+
+        [Test]
+        public void CancellationDuringSeekDuration_StopsOwnedPreviewBeforeEvaluation()
+        {
+            PrepareTracks();
+            StartPreview();
+            Type tool = AppDomain
+                .CurrentDomain.GetAssemblies()
+                .Select(assembly => assembly.GetType("MCPForUnity.Editor.Tools.TimelineTools.ManageTimeline"))
+                .First(type => type != null);
+            FieldInfo hook = tool
+                .Assembly.GetType("MCPForUnity.Editor.Tools.TimelineTools.TimelineAccess")
+                .GetField("DurationForTests", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(hook);
+            MethodInfo handle = tool.GetMethod("HandleCommand", new[] { typeof(JObject), typeof(CancellationToken) });
+            using (var cancellation = new CancellationTokenSource())
+            {
+                hook.SetValue(null, new Action(cancellation.Cancel));
+                try
+                {
+                    JObject request = new JObject
+                    {
+                        ["action"] = "seek",
+                        ["preview_id"] = preview,
+                        ["time"] = .5,
+                    };
+                    var error = Assert.Throws<TargetInvocationException>(() => handle.Invoke(null, new object[] { request, cancellation.Token }));
+                    Assert.IsInstanceOf<OperationCanceledException>(error.GetBaseException());
+                }
+                finally
+                {
+                    hook.SetValue(null, null);
+                }
+            }
+            object graph = Get(director, "playableGraph");
+            Assert.IsFalse((bool)graph.GetType().GetMethod("IsValid").Invoke(graph, null));
+            Assert.IsFalse(speaker.mute);
+            Assert.AreEqual(3, child.localPosition.x, .0001f);
+            preview = null;
+        }
+
+        [Test]
+        public void LargeGraph_CancelledReadAndWriteLeaveOwnedAssetUnchanged()
+        {
+            JObject request = Guard(new JObject { ["kind"] = "audio", ["name"] = "Cancelled" });
+            byte[] before = File.ReadAllBytes(Full(path));
+            Type tool = AppDomain
+                .CurrentDomain.GetAssemblies()
+                .Select(assembly => assembly.GetType("MCPForUnity.Editor.Tools.TimelineTools.ManageTimeline"))
+                .First(type => type != null);
+            MethodInfo handle = tool.GetMethod("HandleCommand", new[] { typeof(JObject), typeof(CancellationToken) });
+            Assert.IsNotNull(handle, "The transport must be able to cancel long Timeline validation.");
+            using (var cancellation = new CancellationTokenSource())
+            {
+                cancellation.Cancel();
+                foreach (string action in new[] { "read", "add_track" })
+                {
+                    request["action"] = action;
+                    var error = Assert.Throws<TargetInvocationException>(() => handle.Invoke(null, new object[] { request, cancellation.Token }));
+                    Assert.IsInstanceOf<OperationCanceledException>(error.GetBaseException());
+                }
+            }
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(Full(path)));
+            Assert.AreEqual(0, Read().Value<int>("track_count"));
+        }
+
+        [Test]
+        public void LargeGraph_CancellationDuringStreamingHashPreventsAuthoring()
+        {
+            JObject request = Guard(new JObject { ["kind"] = "audio", ["name"] = "Cancelled during revision" });
+            request["action"] = "add_track";
+            byte[] before = File.ReadAllBytes(Full(path));
+            Type tool = AppDomain
+                .CurrentDomain.GetAssemblies()
+                .Select(assembly => assembly.GetType("MCPForUnity.Editor.Tools.TimelineTools.ManageTimeline"))
+                .First(type => type != null);
+            FieldInfo hook = tool
+                .Assembly.GetType("MCPForUnity.Editor.Tools.TimelineTools.TimelineAccess")
+                .GetField("RevisionChunkForTests", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(hook);
+            MethodInfo handle = tool.GetMethod("HandleCommand", new[] { typeof(JObject), typeof(CancellationToken) });
+            using (var cancellation = new CancellationTokenSource())
+            {
+                hook.SetValue(null, new Action(cancellation.Cancel));
+                try
+                {
+                    var error = Assert.Throws<TargetInvocationException>(() => handle.Invoke(null, new object[] { request, cancellation.Token }));
+                    Assert.IsInstanceOf<OperationCanceledException>(error.GetBaseException());
+                }
+                finally
+                {
+                    hook.SetValue(null, null);
+                }
+            }
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(Full(path)));
+            Assert.AreEqual(0, Read().Value<int>("track_count"));
+        }
+
+        [Test]
+        public void LargeGraph_DirectorPagesAndLongLabelsStayBoundedAndRevisionBound()
+        {
+            for (int index = 0; index < 80; index++)
+                NativeTrack(new string('\uD55C', 4096) + index);
+            SaveTimeline();
+            JObject state = Read();
+            Assert.IsTrue(state["tracks"].All(row => row.Value<string>("name").Length <= 1024));
+            Assert.LessOrEqual(Encoding.UTF8.GetByteCount(state.ToString(Newtonsoft.Json.Formatting.None)), 262144);
+            JObject first = DirectorRead();
+            Assert.AreEqual(80, first.Value<int>("binding_count"));
+            Assert.AreEqual(16, ((JArray)first["bindings"]).Count);
+            JObject page = Data(
+                Send(
+                    "read_director",
+                    new JObject
+                    {
+                        ["target"] = director.GetInstanceIDCompat(),
+                        ["scene_handle"] = SceneId(),
+                        ["offset"] = 64,
+                        ["expected_director_revision"] = first["director_revision"],
+                    }
+                )
+            );
+            Assert.AreEqual(16, ((JArray)page["bindings"]).Count);
+            Set(director, "time", .75d);
+            Assert.IsFalse(
+                Send(
+                        "read_director",
+                        new JObject
+                        {
+                            ["target"] = director.GetInstanceIDCompat(),
+                            ["scene_handle"] = SceneId(),
+                            ["offset"] = 64,
+                            ["expected_director_revision"] = first["director_revision"],
+                        }
+                    )
+                    .Value<bool>("success")
+            );
         }
     }
 }

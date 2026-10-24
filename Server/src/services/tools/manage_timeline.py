@@ -74,7 +74,21 @@ def _error(action: str, values: dict[str, Any]) -> str | None:
             type(revision) is not str or not 1 <= len(revision) <= 1024
         ):
             return "Director edits/preview require expected_director_revision from read_director."
+    for field, minimum, maximum in (
+        ("offset", 0, 2**31 - 1),
+        ("page_size", 1, 32),
+        ("clip_offset", 0, 2**31 - 1),
+        ("clip_page_size", 1, 32),
+    ):
+        value = values.get(field)
+        if value is not None and (type(value) is not int or not minimum <= value <= maximum):
+            return f"{field} must be an integer between {minimum} and {maximum}."
     if action == "read_director":
+        revision = values.get("expected_director_revision")
+        if values.get("offset", 0) and (
+            type(revision) is not str or not 1 <= len(revision) <= 1024
+        ):
+            return "Director binding continuation requires expected_director_revision."
         return None
     path = values.get("path")
     if (
@@ -90,14 +104,17 @@ def _error(action: str, values: dict[str, Any]) -> str | None:
         {"guid": values.get("guid"), "file_id": values.get("file_id")}
     ):
         return "Existing Timeline edits/preview require exact guid/file_id from read."
-    if action in _WRITES or values.get("offset", 0):
+    if action in _WRITES or values.get("offset", 0) or values.get("clip_offset", 0):
         revision = values.get("expected_revision")
         if type(revision) is not str or not 1 <= len(revision) <= 1024:
             return "Existing edits/preview and continuation require expected_revision from read."
-    for field, minimum, maximum in (("offset", 0, 64), ("page_size", 1, 32)):
-        value = values.get(field)
-        if value is not None and (type(value) is not int or not minimum <= value <= maximum):
-            return f"{field} must be an integer between {minimum} and {maximum}."
+    track_id = values.get("track_id")
+    if track_id is not None and not _id(track_id):
+        return "track_id requires the exact persistent fileID string from read."
+    if values.get("clip_offset", 0) and track_id is None:
+        return "Clip continuation requires track_id."
+    if track_id is not None and values.get("offset", 0):
+        return "A track_id clip page does not accept a track offset."
     props = values.get("properties")
     if action in {"create", "add_track", "add_clip", "bind"}:
         if props is None and action == "create":
@@ -164,7 +181,10 @@ def _error(action: str, values: dict[str, Any]) -> str | None:
         "Manual preview supports bounded Transform-only nonhumanoid animation without events/object-reference curves and muted AudioSources. "
         "It refuses existing director graphs, external AnimationMode, custom/control tracks and markers; seek evaluates once, never starts realtime playback. "
         "preview_stop or 120-second idle expiry stops the owned graph and conditionally restores captured state, preserving/reporting external writers. "
-        "No universal callback rollback, global Undo or audible playback guarantee. Read pages are limited to32 tracks, graph to64 tracks/256 clips."
+        "No universal callback rollback, global Undo or audible playback guarantee. "
+        "Read pages contain at most 32 tracks and 32 clips per track, within 256 KiB; continue next_offset using expected_revision. "
+        "Continue a track's next_clip_offset using track_id,clip_offset and the same expected_revision. Display names are bounded to 1024 characters. "
+        "read_director pages use offset,page_size and expected_director_revision; graph size is not an admission limit."
     ),
     annotations=ToolAnnotations(title="Manage Timeline", destructiveHint=True),
 )
@@ -184,7 +204,8 @@ async def manage_timeline(
     target: Annotated[StrictInt | None, "Exact PlayableDirector component instance ID."] = None,
     scene_handle: Annotated[StrictInt | None, "Exact loaded director scene handle."] = None,
     expected_director_revision: Annotated[
-        StrictStr | None, "Revision from read_director before assign/bind/preview_start."
+        StrictStr | None,
+        "Revision from read_director before assign/bind/preview_start or binding continuation.",
     ] = None,
     preview_id: Annotated[
         StrictStr | None, "Owned session token from preview_start; required by seek/preview_stop."
@@ -193,8 +214,18 @@ async def manage_timeline(
         StrictInt | StrictFloat | None,
         "seek: finite absolute time in the supported Timeline range.",
     ] = None,
-    offset: Annotated[StrictInt | None, "read: track offset0-64, default0."] = None,
-    page_size: Annotated[StrictInt | None, "read: page size1-32, default16."] = None,
+    offset: Annotated[
+        StrictInt | None, "read/read_director: nonnegative track/binding offset, default0."
+    ] = None,
+    page_size: Annotated[StrictInt | None, "read/read_director: page size1-32, default16."] = None,
+    track_id: Annotated[
+        StrictStr | None, "read: exact saved track fileID for a clip page; omit offset."
+    ] = None,
+    clip_offset: Annotated[
+        StrictInt | None,
+        "read: nonnegative clip offset in track_id; continuation requires expected_revision.",
+    ] = None,
+    clip_page_size: Annotated[StrictInt | None, "read: clips per track1-32, default16."] = None,
 ) -> dict[str, Any]:
     """Validate the public boundary and preserve explicit identity/session values."""
     if action not in {
@@ -224,6 +255,9 @@ async def manage_timeline(
         "time": time,
         "offset": offset,
         "page_size": page_size,
+        "track_id": track_id,
+        "clip_offset": clip_offset,
+        "clip_page_size": clip_page_size,
     }
     error = _error(action, values)
     if error:
