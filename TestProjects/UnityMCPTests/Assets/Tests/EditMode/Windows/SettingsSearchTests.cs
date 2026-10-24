@@ -1,10 +1,12 @@
 using System;
 using System.Collections;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Windows;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.TestTools;
 using UnityEngine.UIElements;
@@ -16,11 +18,106 @@ namespace MCPForUnityTests.EditMode.Windows
     {
         private sealed class Host : EditorWindow { }
 
+        private enum SyntheticValidation
+        {
+            Basic,
+            Full,
+        }
+
         private static Type SearchType()
         {
             var type = typeof(McpWindowNavigation).Assembly.GetType("MCPForUnity.Editor.Windows.McpSettingsSearch");
             Assert.IsNotNull(type, "Metadata-only settings search must be available.");
             return type;
+        }
+
+        [TestCase("Script Validation", "validation-level")]
+        [TestCase("Keep local server running", "keep-local-server-alive")]
+        public void SearchIncludesVisibleValidationAndServerLifetimeSettings(string query, string target)
+        {
+            var entries = (Array)SearchType().GetMethod("Find", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { query });
+            Assert.Greater(entries.Length, 0);
+            Assert.IsTrue(
+                entries
+                    .Cast<object>()
+                    .Any(entry => (string)entry.GetType().GetField("Target", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(entry) == target)
+            );
+        }
+
+        [Test]
+        public void SearchCoversAuthoredConnectionAndAdvancedSettingControls()
+        {
+            var entries = ((Array)SearchType().GetField("Entries", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null)).Cast<object>();
+            var targets = entries
+                .Select(entry => (string)entry.GetType().GetField("Target", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(entry))
+                .ToArray();
+            const string path = "Packages/com.ykh09242.unity-mcp/Editor/Windows/Components/";
+            foreach (string name in new[] { "Advanced/McpAdvancedSection", "Connection/McpConnectionSection", "Validation/McpValidationSection" })
+            {
+                var root = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(path + name + ".uxml").CloneTree();
+                var controls = root.Query<Toggle>()
+                    .ToList()
+                    .Cast<VisualElement>()
+                    .Concat(root.Query<TextField>().ToList())
+                    .Concat(root.Query<EnumField>().ToList());
+                foreach (var control in controls)
+                {
+                    if (
+                        control is Toggle
+                        && string.IsNullOrEmpty(control.name)
+                        && control.ClassListContains(Foldout.toggleUssClassName)
+                        && control.parent is Foldout foldout
+                    )
+                    {
+                        TestContext.Out.WriteLine("SETTINGS_GENERATED_CONTROL " + name + "/Foldout#" + foldout.name + "/Toggle#" + control.name);
+                        continue;
+                    }
+                    Assert.IsNotEmpty(control.name, "Authored setting controls must have a searchable name: " + name + "/" + control.GetType().Name);
+                    CollectionAssert.Contains(targets, control.name == "uv-path-override" ? "browse-uv-button" : control.name, name + ": " + control.name);
+                }
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ValidationAndServerLifetimeRoutesRevealAndFocusTheirOwnPage()
+        {
+            var host = ScriptableObject.CreateInstance<Host>();
+            try
+            {
+                host.ShowUtility();
+                host.position = new Rect(30, 30, 500, 340);
+                var root = host.rootVisualElement;
+                const string path = "Packages/com.ykh09242.unity-mcp/Editor/Windows/";
+                AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(path + "MCPForUnityEditorWindow.uxml").CloneTree(root);
+                foreach (string section in new[] { "Advanced/McpAdvancedSection", "Validation/McpValidationSection" })
+                    AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(path + "Components/" + section + ".uxml").CloneTree(root.Q("advanced-container"));
+                AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(path + "Components/Connection/McpConnectionSection.uxml").CloneTree(root.Q("clients-container"));
+                root.Q<EnumField>("validation-level").Init(SyntheticValidation.Basic);
+                string selected = null;
+                using var navigation = new McpWindowNavigation(
+                    root,
+                    page =>
+                    {
+                        selected = page;
+                        root.Query<ScrollView>(className: "panel-scroll").ForEach(panel => panel.EnableInClassList("hidden", panel.name != page + "-panel"));
+                    }
+                );
+                var open = typeof(McpWindowNavigation).GetMethod("OpenSetting", BindingFlags.Instance | BindingFlags.NonPublic);
+                foreach (string target in new[] { "validation-level", "keep-local-server-alive" })
+                {
+                    Assert.IsTrue((bool)open.Invoke(navigation, new object[] { target }));
+                    for (int i = 0; i < 15; i++)
+                        yield return null;
+                    Assert.AreEqual(target == "validation-level" ? "advanced" : "clients", selected);
+                    var field = root.Q(target);
+                    var focused = root.focusController.focusedElement as VisualElement;
+                    Assert.IsTrue(field == focused || focused != null && field.Contains(focused));
+                }
+            }
+            finally
+            {
+                host.Close();
+            }
         }
 
         [Test]
