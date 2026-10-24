@@ -141,6 +141,54 @@ async def test_modern_selection_is_bound_to_owner_project_and_server(discovery_s
 
 
 @pytest.mark.asyncio
+async def test_modern_noop_writes_only_at_hourly_renewal_and_preserves_expiry(
+    discovery_server, monkeypatch
+):
+    import time
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    build, _ = discovery_server
+    server, store = build("core")
+    origin = time.time()
+    clock = [origin]
+    monkeypatch.setattr("services.tool_discovery.time", SimpleNamespace(time=lambda: clock[0]))
+    monkeypatch.setattr(store, "_clock", lambda: clock[0])
+    put = AsyncMock(wraps=store.put)
+    monkeypatch.setattr(store, "put", put)
+    async with Client(server, cache=False) as client:
+        first = (
+            await client.call_tool("manage_tools", {"action": "activate", "tool": "effect_probe"})
+        ).structured_content
+        assert first["changed"] is True
+        assert put.await_count == 1
+        put.reset_mock()
+        for elapsed in (0, 100, 3599, 3600):
+            clock[0] = origin + elapsed
+            duplicate = (
+                await client.call_tool(
+                    "manage_tools", {"action": "activate", "tool": "effect_probe"}
+                )
+            ).structured_content
+            assert duplicate["changed"] is False
+            if elapsed == 3600:
+                assert put.await_count == 1
+            else:
+                assert put.await_count == 0
+        put.reset_mock()
+        assert "effect_probe" in await names(client)
+        assert put.await_count == 0
+        clock[0] += 86401
+        assert "effect_probe" not in await names(client)
+        assert store.retained_entries == 0
+        default = (
+            await client.call_tool("manage_tools", {"action": "activate", "tool": "inspect_probe"})
+        ).structured_content
+        assert default["changed"] is False
+        assert put.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_unidentified_modern_scope_refuses_and_explains_static_fallback(
     discovery_server, monkeypatch
 ):

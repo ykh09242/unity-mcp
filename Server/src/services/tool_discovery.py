@@ -171,7 +171,12 @@ class ToolDiscovery(Transform):
                     else:
                         await ctx.delete_state(self._LEGACY_STATE_KEY)
             elif updated:
-                await self.store.put(key, {"overrides": updated, "touched": time.time()}, ttl=86400)
+                # Match read/legacy renewal: unchanged preferences are touched
+                # at most hourly, without serializing the same selection each call.
+                if changed or time.time() - record["touched"] >= 3600:
+                    await self.store.put(
+                        key, {"overrides": updated, "touched": time.time()}, ttl=86400
+                    )
             elif record is not None:
                 await self.store.delete(key)
         if changed:
