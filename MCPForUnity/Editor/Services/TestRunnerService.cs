@@ -31,7 +31,6 @@ namespace MCPForUnity.Editor.Services
         private string _trackedJobId;
         private bool _disposed;
         private bool _apiReleased;
-        private bool _runRetired;
         private static TestRunnerService _activeRunOwner;
         private static readonly HashSet<PendingRunAdmission> PendingRunAdmissions = new();
 
@@ -78,7 +77,6 @@ namespace MCPForUnity.Editor.Services
             // Fault the caller without transferring ownership of Unity's untagged callbacks.
             // SessionState preserves this quarantine if the managed domain reloads.
             SessionState.SetString(RetiredRunSessionKey, jobId);
-            owner._runRetired = true;
             var completion = owner._runCompletionSource;
             owner._runCompletionSource = null;
             owner._leafResults.Clear();
@@ -115,7 +113,6 @@ namespace MCPForUnity.Editor.Services
             if (!string.IsNullOrEmpty(retiredJobId))
             {
                 _trackedJobId = retiredJobId;
-                _runRetired = true;
                 _activeRunOwner = this;
             }
             AssemblyReloadEvents.beforeAssemblyReload += ReleaseApi;
@@ -265,7 +262,6 @@ namespace MCPForUnity.Editor.Services
                 _leafResults.Clear();
                 completionSource = new TaskCompletionSource<TestRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
                 _trackedJobId = jobId;
-                _runRetired = false;
                 _activeRunOwner = this;
                 _runCompletionSource = completionSource;
                 runTask = completionSource.Task;
