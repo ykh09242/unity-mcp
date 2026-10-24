@@ -10,6 +10,7 @@ from typing import TypeVar
 from weakref import WeakKeyDictionary, ref
 
 import anyio
+from pydantic import BaseModel
 
 from services.execution_receipt_context import submit_owned_executor
 
@@ -33,12 +34,29 @@ def needs_response_worker(value: object) -> bool:
             pending.pop()
             continue
         nodes += 1
-        if type(item) is str and len(item) >= 64 * 1024:
-            return True
-        if type(item) is dict:
+        item_type = type(item)
+        if item_type is str:
+            if len(item) >= 64 * 1024:
+                return True
+        elif item_type is dict:
             pending.append(iter(chain.from_iterable(item.items())))
-        elif type(item) is list:
+        elif item_type is list or item_type is tuple:
             pending.append(iter(item))
+        elif item is None or item_type is int or item_type is float or item_type is bool:
+            continue
+        elif isinstance(item, BaseModel):
+            # Stored values include SDK content, raw results, extras and excluded
+            # fields. Inspect them conservatively without dumping a model or
+            # calling extension serialization hooks. Iterators keep this probe
+            # bounded even for large containers and cyclic model storage.
+            storage = BaseModel.__dict__["__dict__"].__get__(item)
+            extra = BaseModel.__dict__["__pydantic_extra__"].__get__(item)
+            private = BaseModel.__dict__["__pydantic_private__"].__get__(item)
+            pending.append(iter((storage, extra, private)))
+        else:
+            # Unknown/subclass containers may hide arbitrary stored work. Do not
+            # invoke their length/iteration hooks in the scheduling probe.
+            return True
     return bool(pending)
 
 
