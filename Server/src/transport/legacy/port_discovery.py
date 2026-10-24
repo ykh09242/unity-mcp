@@ -15,10 +15,12 @@ import glob
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 import socket
 import struct
+import time
 
 from models.models import UnityInstanceInfo
 
@@ -68,19 +70,48 @@ class PortDiscovery:
     @staticmethod
     def _try_probe_unity_mcp(port: int) -> bool:
         """Quickly check if a MCP for Unity listener is on this port.
-        Uses Unity's framed protocol: receives handshake, sends framed ping, expects framed pong.
+        Current greetings prove liveness without authenticating a disposable peer.
+        Only recognized legacy peers receive a ping.
         """
         try:
             with socket.create_connection(("127.0.0.1", port), PortDiscovery.CONNECT_TIMEOUT) as s:
-                s.settimeout(PortDiscovery.CONNECT_TIMEOUT)
+                deadline = time.monotonic() + PortDiscovery.CONNECT_TIMEOUT
+
+                def receive(count: int) -> bytes:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("Discovery probe deadline expired")
+                    s.settimeout(remaining)
+                    chunk = s.recv(count)
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Discovery probe deadline expired")
+                    return chunk
+
                 try:
-                    # 1. Receive handshake from Unity
-                    handshake = s.recv(512)
-                    if not handshake or b"FRAMING=1" not in handshake:
-                        # Try legacy mode as fallback
+                    # Read one bounded complete line, including fragmented TCP greetings.
+                    handshake = bytearray()
+                    while len(handshake) < 512:
+                        chunk = receive(1)
+                        if not chunk:
+                            return False
+                        handshake.extend(chunk)
+                        if chunk == b"\n":
+                            break
+                    if not handshake.endswith(b"\n"):
+                        return False
+                    banner = bytes(handshake).decode("ascii").rstrip("\r\n")
+                    if re.fullmatch(
+                        r"WELCOME UNITY-MCP 2 FRAMING=1 AUTH=HMAC-SHA256 "
+                        r"SERVER=[0-9a-f]{32} CHALLENGE=[0-9a-f]{64}",
+                        banner,
+                    ):
+                        # Authentication would replace the active authenticated client.
+                        return True
+                    if banner in ("WELCOME UNITY-MCP 1", "MCP/0.1"):
                         s.sendall(b"ping")
-                        data = s.recv(512)
-                        return data and b'"message":"pong"' in data
+                        return b'"message":"pong"' in receive(512)
+                    if banner not in ("WELCOME UNITY-MCP 1 FRAMING=1", "MCP/0.1 FRAMING=1"):
+                        return False
 
                     # 2. Send framed ping command
                     # Frame format: 8-byte length header (big-endian uint64) + payload
@@ -93,7 +124,7 @@ class PortDiscovery:
                     def _recv_exact(expected: int) -> bytes | None:
                         chunks = bytearray()
                         while len(chunks) < expected:
-                            chunk = s.recv(expected - len(chunks))
+                            chunk = receive(expected - len(chunks))
                             if not chunk:
                                 return None
                             chunks.extend(chunk)
