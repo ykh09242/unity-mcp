@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Dependencies.Models;
@@ -219,7 +220,21 @@ namespace MCPForUnityTests.Editor.Windows
 
                 typeof(MCPSetupWindow)
                     .GetMethod("SetDependencyResult", InstanceFlags)
-                    .Invoke(window, new object[] { new DependencyCheckResult { IsSystemReady = true } });
+                    .Invoke(
+                        window,
+                        new object[]
+                        {
+                            new DependencyCheckResult
+                            {
+                                IsSystemReady = true,
+                                Dependencies = new List<DependencyStatus>
+                                {
+                                    new DependencyStatus("Python") { IsAvailable = true },
+                                    new DependencyStatus("uv Package Manager") { IsAvailable = true },
+                                },
+                            },
+                        }
+                    );
 
                 Assert.AreEqual("System requirements met", status.text);
                 Assert.AreEqual("Next", done.text);
