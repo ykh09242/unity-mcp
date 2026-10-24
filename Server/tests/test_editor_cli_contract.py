@@ -66,6 +66,40 @@ def test_pause_help_describes_toggle():
     assert "resume" in result.output.lower()
 
 
+@pytest.mark.parametrize("action", ["play", "stop"])
+def test_play_control_help_describes_pending_observation(action):
+    # Given default commands that acknowledge a requested transition.
+    # When inspecting their public help.
+    result = CliRunner().invoke(editor, [action, "--help"])
+    # Then help does not imply the setter confirms completion.
+    assert "pending" in result.output.lower()
+    assert "editor/state" in result.output
+
+
+@pytest.mark.parametrize("action", ["play", "stop"])
+def test_play_control_json_preserves_pending_state(action):
+    # Given a native response that has accepted a still-pending transition.
+    response = {
+        "success": True,
+        "message": "Play mode transition requested; completion is pending.",
+        "data": {
+            "status": "pending",
+            "request_submitted": True,
+            "is_playing": action == "stop",
+            "is_changing": True,
+            "follow_up": "mcpforunity://editor/state",
+        },
+    }
+    with patch("cli.commands.editor.get_config", return_value=CLIConfig(format="json")):
+        with patch("cli.commands.editor.run_command", return_value=response) as send:
+            # When issuing the default nonblocking command.
+            result = CliRunner().invoke(editor, [action])
+    # Then JSON retains the observation contract without polling or rewriting it.
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == response
+    send.assert_called_once()
+
+
 @pytest.mark.parametrize(
     "args", [["tests", "--async"], ["poll-test", "fixture-job", "--wait", "0"]]
 )

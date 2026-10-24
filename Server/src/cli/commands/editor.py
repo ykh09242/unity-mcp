@@ -40,7 +40,10 @@ def editor():
 @click.option("--timeout-seconds", type=click.IntRange(1, 86400), default=300, show_default=True)
 @handle_unity_errors
 def play(wait_until: str | None, timeout_seconds: int):
-    """Enter play mode."""
+    """Request play mode; default success may be pending.
+
+    Observe mcpforunity://editor/state for completion, or use --wait-until for readiness.
+    """
     config = get_config()
     params = {"action": "play"}
     if wait_until is None:
@@ -217,7 +220,7 @@ def pause():
 @editor.command("stop")
 @handle_unity_errors
 def stop():
-    """Stop play mode."""
+    """Request stop; success may be pending. Observe mcpforunity://editor/state for completion."""
     config = get_config()
     result = run_command("manage_editor", {"action": "stop"}, config)
     click.echo(format_output(result, config.format))

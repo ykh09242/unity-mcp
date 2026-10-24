@@ -26,7 +26,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_audio`](./manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
 - **[`manage_build`](./manage_build.md)** — Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms.
 - **[`manage_components`](./manage_components.md)** — Add, remove, or set properties on components attached to GameObjects.
-- **[`manage_editor`](./manage_editor.md)** — Controls Unity editor state and settings. play optionally waits for scene_loaded or first_frame with a bounded persisted job. first_frame confirms simulation frame progress, not rendered pixels or application async initialization. get_pl…
+- **[`manage_editor`](./manage_editor.md)** — Controls Unity editor state and settings.
 - **[`manage_input_actions`](./manage_input_actions.md)** — Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. create_asset requires an unoccupied Assets path and exis…
 - **[`manage_localization`](./manage_localization.md)** — Inspect optional Unity Localization locale/table identities, shared keys, missing translations, static Smart String selectors and asset GUID references.
 - **[`manage_material`](./manage_material.md)** — Manages Unity materials (properties, colors, shaders, render state).

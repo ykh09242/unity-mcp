@@ -26,6 +26,19 @@ Only explicit pre-dispatch reload refusals are eligible for automatic replay.
 
 ## Play Mode, Console and client startup
 
+Default `manage_editor(action="play")` and `action="stop"` are nonblocking requests.
+Their successful responses report `data.status="pending"`, `request_submitted`,
+the observed `is_playing`/`is_changing` flags, and a `follow_up` resource URI.
+They report `completed` only when the stable target state was already observed
+before the call. A setter returning successfully does not confirm entry or exit;
+entry may still be cancelled or rejected later. Repeated requests during the
+same pending transition do not submit the setter again, including across domain
+reload. Observe `mcpforunity://editor/state` until `editor.play_mode.is_changing`
+is false and `is_playing` matches the requested state. A return to Edit Mode
+after requested entry is not successful entry. Default requests do not create a
+readiness job; use the explicit wait below when startup readiness is required.
+CLI `editor play` and `editor stop` expose the same response contract.
+
 `manage_editor(action="play", wait_until="first_frame", timeout_seconds=1800)`
 uses a 30-minute readiness observation budget. The default is 300 seconds; native,
 MCP and CLI callers accept integers from 1 to 86,400. CLI callers can use
