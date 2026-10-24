@@ -7,7 +7,7 @@ from uuid import uuid4
 from core.config import config
 from core.server_build import RUNNING_SERVER
 import contextlib
-from contextvars import Context
+from contextvars import Context, ContextVar
 from dataclasses import dataclass, field
 import errno
 import json
@@ -30,6 +30,10 @@ from transport.json_decoder import decode_json
 
 if TYPE_CHECKING:
     import asyncio
+
+_resync_pool: ContextVar["UnityConnectionPool | None"] = ContextVar(
+    "stdio_resync_pool", default=None
+)
 
 from models.models import MCPResponse, UnityInstanceInfo
 from services.command_progress import (
@@ -164,6 +168,7 @@ class UnityConnection:
         self._io_lock = threading.RLock()
         self._active_commands = 0
         self._retired = False
+        self._pool_owner: weakref.ReferenceType[UnityConnectionPool] | None = None
         # Connection publication, liveness checks, close, and commands share one
         # lock. Lifecycle helpers are also called from a command transaction.
         self._conn_lock = self._io_lock
@@ -1078,6 +1083,10 @@ class UnityConnectionPool:
         self._default_instance_id: str | None = None
         self._last_used: dict[str, float] = {}
         self._missing_since: dict[str, float] = {}
+        self._retired = False
+        self._resync_tasks: set[asyncio.Task] = set()
+        self._resync_workers: set[asyncio.Future] = set()
+        self._close_task: asyncio.Task | None = None
 
         # Check for default instance from environment
         env_default = os.environ.get("UNITY_MCP_DEFAULT_INSTANCE", "").strip()
@@ -1351,6 +1360,8 @@ class UnityConnectionPool:
         Raises:
             ConnectionError: If instance cannot be found or connected
         """
+        if self._retired:
+            raise ConnectionError("Unity connection pool is retired")
         target = self.resolve_instance(instance_identifier)
 
         # An exact-ID lookup may have refreshed only one target for a long time.
@@ -1365,6 +1376,8 @@ class UnityConnectionPool:
 
         # Return existing connection or create new one
         with self._pool_lock:
+            if self._retired:
+                raise ConnectionError("Unity connection pool is retired")
             now = time.monotonic()
             self._missing_since.pop(target.id, None)
             self._retire_missing_locked(now)
@@ -1383,6 +1396,11 @@ class UnityConnectionPool:
                         f"Failed to connect to Unity instance '{target.id}' on port {target.port}. "
                         f"Ensure the Unity Editor is running."
                     )
+                if self._retired:
+                    # Retirement may race the blocking initial connection.
+                    conn._retired = True
+                    conn.disconnect()
+                    raise ConnectionError("Unity connection pool is retired")
                 self._connections[target.id] = conn
             else:
                 # Update existing connection with instance_id and port if changed
@@ -1398,7 +1416,62 @@ class UnityConnectionPool:
                 logger.debug(f"Reusing existing connection to: {target.id}")
 
             self._last_used[target.id] = now
+            self._connections[target.id]._pool_owner = weakref.ref(self)
             return self._connections[target.id]
+
+    def schedule_tool_resync(self, connection: UnityConnection) -> bool:
+        """Own reconnect metadata in the selected pool's event-loop lifetime."""
+        import asyncio  # noqa: ANYIO_OK -- transport task ownership uses the existing loop.
+
+        if self._retired or self._connections.get(connection.instance_id) is not connection:
+            return False
+        context = Context()
+        context.run(_resync_pool.set, self)
+        task = asyncio.create_task(
+            _resync_tools_after_reconnect(connection.instance_id), context=context
+        )
+        self._resync_tasks.add(task)
+
+        def completed(future):
+            self._resync_tasks.discard(future)
+            _consume_async_exception(future)
+
+        task.add_done_callback(completed)
+        return True
+
+    async def aclose(self) -> None:
+        """Retire resync admission and drain actual work before disposing sockets."""
+        import asyncio  # noqa: ANYIO_OK -- retire the existing asyncio transport generation.
+        from services.reference_graph.reconcile import drained_task
+
+        self._retired = True
+        for connection in tuple(self._connections.values()):
+            # Seal reconnect/retry without taking the I/O lock or disposing a
+            # running command's socket. Actual disposal follows the drain.
+            connection._retired = True
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close_generation(), context=Context())
+        await drained_task(self._close_task)
+
+    async def _close_generation(self) -> None:
+        """Keep one cleanup owner even when close waiters cancel or overlap."""
+        import asyncio  # noqa: ANYIO_OK -- drain existing transport tasks and executor futures.
+
+        global _unity_connection_pool
+        tasks = tuple(self._resync_tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        # A cancelled task may have left shielded executor I/O running. The
+        # future remains owned until actual completion, including queued work.
+        await asyncio.gather(
+            *(asyncio.shield(worker) for worker in tuple(self._resync_workers)),
+            return_exceptions=True,
+        )
+        await asyncio.to_thread(self.disconnect_all)
+        with _pool_init_lock:
+            if _unity_connection_pool is self:
+                _unity_connection_pool = None
 
     def disconnect_all(self):
         """Disconnect all active connections and release this pool's discovery generation."""
@@ -1470,7 +1543,7 @@ def _commit_stdio_catalog(connection, generation, publish):
     if pool is None or not pool._pool_lock.acquire(blocking=False):
         raise ValueError("Unity catalog connection ownership unavailable")
     try:
-        if pool._connections.get(connection.instance_id) is not connection:
+        if pool._retired or pool._connections.get(connection.instance_id) is not connection:
             raise ValueError("Unity catalog connection ownership changed")
         if not connection._io_lock.acquire(blocking=False):
             raise ValueError("Unity catalog connection is busy")
@@ -1943,7 +2016,21 @@ async def _async_send_command_response(
             if _deadline is not None
             else policy_deadline
         )
-        selection = submit_owned_executor(loop, None, get_unity_connection, instance_id)
+        resync_pool = _resync_pool.get()
+        if resync_pool is not None and resync_pool._retired:
+            raise asyncio.CancelledError
+
+        def submit(function, *args):
+            future = submit_owned_executor(loop, None, function, *args)
+            if resync_pool is not None:
+                resync_pool._resync_workers.add(future)
+                future.add_done_callback(resync_pool._resync_workers.discard)
+            return future
+
+        selection = submit(
+            resync_pool.get_connection if resync_pool is not None else get_unity_connection,
+            instance_id,
+        )
         selection.add_done_callback(_consume_async_exception)
         if deadline is None:
             conn = await asyncio.shield(selection)
@@ -2008,7 +2095,7 @@ async def _async_send_command_response(
                 return result
 
         try:
-            completion = submit_owned_executor(loop, None, dispatch)
+            completion = submit(dispatch)
         except Exception:
             gate.release()
             raise
@@ -2047,13 +2134,9 @@ async def _async_send_command_response(
             if conn.claim_tool_resync():
                 if command_type != "get_tool_states":
                     logger.info("Detected reconnection to Unity; scheduling tool re-sync")
-                    receipt_token = execution_owner.set(None)
-                    try:
-                        asyncio.create_task(
-                            _resync_tools_after_reconnect(conn.instance_id), context=Context()
-                        )
-                    finally:
-                        execution_owner.reset(receipt_token)
+                    owner = conn._pool_owner() if conn._pool_owner is not None else None
+                    if owner is not None:
+                        owner.schedule_tool_resync(conn)
         except Exception as exc:
             logger.debug(
                 "Failed to schedule post-reconnection tool re-sync: %s",
