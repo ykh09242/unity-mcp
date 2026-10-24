@@ -31,7 +31,6 @@ namespace MCPForUnity.Editor.Services
         private string _trackedJobId;
         private bool _disposed;
         private bool _apiReleased;
-        private bool _runRetired;
         private static TestRunnerService _activeRunOwner;
         private static readonly HashSet<PendingRunAdmission> PendingRunAdmissions = new();
 
@@ -78,7 +77,6 @@ namespace MCPForUnity.Editor.Services
             // Fault the caller without transferring ownership of Unity's untagged callbacks.
             // SessionState preserves this quarantine if the managed domain reloads.
             SessionState.SetString(RetiredRunSessionKey, jobId);
-            owner._runRetired = true;
             var completion = owner._runCompletionSource;
             owner._runCompletionSource = null;
             owner._leafResults.Clear();
@@ -115,7 +113,6 @@ namespace MCPForUnity.Editor.Services
             if (!string.IsNullOrEmpty(retiredJobId))
             {
                 _trackedJobId = retiredJobId;
-                _runRetired = true;
                 _activeRunOwner = this;
             }
             AssemblyReloadEvents.beforeAssemblyReload += ReleaseApi;
@@ -242,10 +239,7 @@ namespace MCPForUnity.Editor.Services
             TaskCompletionSource<TestRunResult> completionSource = null;
             bool nativeInvoked = false;
             var nativeControl = TestJobManager.ControlFor(jobId);
-            bool adjustedPlayModeOptions = false;
             bool appliedNoThrottling = false;
-            bool originalEnterPlayModeOptionsEnabled = false;
-            EnterPlayModeOptions originalEnterPlayModeOptions = EnterPlayModeOptions.None;
             try
             {
                 ThrowIfDisposed();
@@ -263,22 +257,11 @@ namespace MCPForUnity.Editor.Services
                     throw new InvalidOperationException("Cannot start a test run while the Editor is in or entering Play Mode. Stop Play Mode and try again.");
                 }
 
-                if (mode == TestMode.PlayMode)
-                {
-                    // PlayMode runs transition the editor into play across multiple update ticks. Unity's
-                    // built-in pipeline schedules SaveModifiedSceneTask early, but that task uses
-                    // EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo which throws once play mode is
-                    // active. To minimize that window we pre-save dirty scenes and disable domain reload (so the
-                    // MCP bridge stays alive). We do NOT force runSynchronously here because that can freeze the
-                    // editor in some projects. If the TestRunner still hits the save task after entering play, the
-                    // run can fail; in that case, rerun from a clean Edit Mode state.
-                    adjustedPlayModeOptions = EnsurePlayModeRunsWithoutDomainReload(out originalEnterPlayModeOptionsEnabled, out originalEnterPlayModeOptions);
-                }
-
+                // Persisted jobs and reload callbacks retain ownership across the project's
+                // normal Play Mode transition. Do not alter its domain/scene reload semantics.
                 _leafResults.Clear();
                 completionSource = new TaskCompletionSource<TestRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
                 _trackedJobId = jobId;
-                _runRetired = false;
                 _activeRunOwner = this;
                 _runCompletionSource = completionSource;
                 runTask = completionSource.Task;
@@ -299,15 +282,9 @@ namespace MCPForUnity.Editor.Services
                 // (Issue #525: EditMode tests were blocked by save dialog)
                 SaveDirtyScenesIfNeeded();
 
-                // Apply no-throttling preemptively for PlayMode tests. This ensures Unity
-                // isn't throttled during the Play mode transition (which requires multiple
-                // editor frames). Without this, unfocused Unity may never reach RunStarted
-                // where throttling would normally be disabled.
-                if (mode == TestMode.PlayMode)
-                {
-                    appliedNoThrottling = true;
-                    TestRunnerNoThrottle.ApplyNoThrottlingPreemptive();
-                }
+                // EditMode also needs background Editor ticks before RunStarted is delivered.
+                appliedNoThrottling = true;
+                TestRunnerNoThrottle.ApplyNoThrottlingPreemptive();
 
                 nativeControl?.CheckAdmission();
                 nativeControl?.MarkExecuting();
@@ -335,10 +312,6 @@ namespace MCPForUnity.Editor.Services
                 }
                 // Ensure the status is cleared if we failed to start the run.
                 TestRunStatus.MarkFinished();
-                if (adjustedPlayModeOptions)
-                {
-                    RestoreEnterPlayModeOptions(originalEnterPlayModeOptionsEnabled, originalEnterPlayModeOptions);
-                }
 
                 if (!_disposed)
                     _operationLock.Release();
@@ -351,13 +324,6 @@ namespace MCPForUnity.Editor.Services
             }
             finally
             {
-                // Retirement restores synchronously; a delayed caller must not restore again
-                // after a replacement service or the user has changed the editor settings.
-                if (adjustedPlayModeOptions && !_runRetired)
-                {
-                    RestoreEnterPlayModeOptions(originalEnterPlayModeOptionsEnabled, originalEnterPlayModeOptions);
-                }
-
                 if (!_disposed)
                     _operationLock.Release();
             }
@@ -486,15 +452,14 @@ namespace MCPForUnity.Editor.Services
                 }
             }
 
-            // If a domain reload destroyed the original RunTestsAsync caller, the finally block
-            // that would normally restore EditorSettings never ran. Restore from SessionState.
+            // Complete recovery for a run admitted by an older package before the domain reload.
+            // New runs retain the project's configured Enter Play Mode settings.
             if (canCleanUp && _trackedJobId != null && _runCompletionSource == null && PlayModeOptionsGuard.IsPending)
             {
                 PlayModeOptionsGuard.Restore();
             }
 
             // Report result to awaiting caller if we have a completion source.
-            // The caller's finally block handles restoration in this case.
             var completion = _runCompletionSource;
             _runCompletionSource = null;
             if (SessionState.GetString(RetiredRunSessionKey, string.Empty) == _trackedJobId)
@@ -616,35 +581,6 @@ namespace MCPForUnity.Editor.Services
             }
 
             return total;
-        }
-
-        private static bool EnsurePlayModeRunsWithoutDomainReload(
-            out bool originalEnterPlayModeOptionsEnabled,
-            out EnterPlayModeOptions originalEnterPlayModeOptions
-        )
-        {
-            originalEnterPlayModeOptionsEnabled = EditorSettings.enterPlayModeOptionsEnabled;
-            originalEnterPlayModeOptions = EditorSettings.enterPlayModeOptions;
-
-            // When Play Mode triggers a domain reload, the MCP connection is torn down and the pending
-            // test run response never makes it back to the caller. To keep the bridge alive for this
-            // invocation, temporarily enable Enter Play Mode Options with domain reload disabled.
-            bool domainReloadDisabled = (originalEnterPlayModeOptions & EnterPlayModeOptions.DisableDomainReload) != 0;
-            bool needsChange = !originalEnterPlayModeOptionsEnabled || !domainReloadDisabled;
-            if (!needsChange)
-            {
-                return false;
-            }
-
-            // Journal each setting transition before changing it, including restoration phases.
-            PlayModeOptionsGuard.Apply(originalEnterPlayModeOptionsEnabled, originalEnterPlayModeOptions);
-            return true;
-        }
-
-        private static void RestoreEnterPlayModeOptions(bool originalEnabled, EnterPlayModeOptions originalOptions)
-        {
-            // The guard compares current values with the recorded temporary values before restoring.
-            PlayModeOptionsGuard.Restore();
         }
 
         private static void SaveDirtyScenesIfNeeded()

@@ -1,15 +1,57 @@
-# Test Play Mode settings recovery
+# Test settings and recovery
 
-Before a test run temporarily disables domain reload, Unity MCP saves and verifies a complete recovery record. If persistence fails, admission stops before either Editor setting changes. The record is bound to the project, machine, user and run; it contains original and intended temporary values, a schema version, recovery status and the current setting transition.
+Unity MCP respects the project's **Enter Play Mode Settings**, including Domain Reload
+and Scene Reload. New test runs do not temporarily disable either reload. Test jobs
+persist their identity and completion state across a domain reload; poll `get_test_job`
+after a connection is re-established instead of starting a duplicate run.
 
-Records live under `Library/MCPForUnity/TestSettings/`, with a hashed owner filename. Publication uses the same adjacent, flushed OS-atomic primitives as asset updates. Unknown schemas, missing fields, malformed records and foreign owners cannot authorize restoration or replacement of an active recovery record. No additional package or driver is required.
+## Background test progress
 
-Each individual apply and restore setter has its intent persisted first. Recovery accepts only that phase's original, before-setter or after-setter values, including Editors where nonzero options automatically enable the setting. Options are applied before the enable flag to avoid Unity replacing empty options with defaults. An unjournaled mixed pair does not gain recovery authority. Restoration changes values only when they still match the recorded transition. If another action changed them, the values are preserved and the recovery record becomes inactive with a conflict status. Successful recovery records completion before best-effort deletion, so an undeleted completed marker is harmless. If completion cannot be persisted, a warning identifies the retained recovery record and a new run cannot overwrite pending ownership.
+Both EditMode and PlayMode runs request No Throttling before native execution starts.
+The temporary `ApplicationIdleTime` and `InteractionMode` preferences are global to the
+OS user, so Editors coordinate through a per-user, per-machine recovery journal under
+the local application-data directory, in `MCPForUnity/EditorPreferences/`. It contains
+only original values, transition state and process IDs with verified process start times.
+No project content, API keys or extra driver is required.
 
-## Legacy compatibility
+The first owner captures the original values; the last live owner restores them.
+Domain reload reuses the process ownership, while dead processes and reused process IDs
+are distinguished. Each write follows a durable intent, allowing another Editor or the
+next startup to finish recovery after a forced termination. Recovery requires an Editor
+to run again; there is no background service after all Editors exit.
 
-The previous version's SessionState originals remain usable in that same Editor process. The old unbound two-line `Library/MCPPlayModeOptionsBackup.txt` file alone does not identify a user or run, so a new process does not automatically apply it. Preserve that file for manual inspection; verify the intended values in **Project Settings > Editor > Enter Play Mode Settings** before clearing it. Existing public test APIs are unchanged.
+Manual preference changes are preserved. A mismatching value suppresses further
+overrides for the active ownership period. Short lock contention or unavailable storage
+does not refuse a test run: settings remain unchanged and maintenance retries. Malformed
+recovery metadata is retained for inspection rather than used to overwrite preferences.
+Maintenance stops when no run or recovery record remains. No test-duration limit or
+scene-size limit is added.
+
+## Compatibility with earlier Play Mode overrides
+
+Older versions temporarily disabled domain reload and recorded the original settings in
+`Library/MCPForUnity/TestSettings/`. Those records remain recoverable. They are bound to
+the project, machine, user and run, with original and intended temporary values, a schema
+version, recovery status and the current setting transition. Publication uses adjacent,
+flushed OS-atomic primitives. Unknown schemas, malformed records and foreign owners
+cannot authorize restoration or replacement of an active recovery record.
+
+Recovery accepts only the recorded transition's original, before-setter or after-setter
+values. If another action changed the settings, recovery preserves them and records a
+conflict. Completed records are harmless if best-effort deletion fails. The previous
+version's SessionState originals remain usable in that same Editor process.
+
+The old unbound two-line `Library/MCPPlayModeOptionsBackup.txt` file alone does not
+identify a user or run. A new process does not automatically apply it. Preserve it for
+manual inspection and verify **Project Settings > Editor > Enter Play Mode Settings**
+before clearing it. Existing public test APIs remain available.
 
 ## Verification scope
 
-The isolated native suite covers publication denial, injected flush and deletion failures, interruption before and after each setter, later settings changes, pending ownership, disk-only restoration, foreign and incomplete records, and existing test-run lifecycle behavior. A separate owned-process probe compiles the production guard with filesystem-backed Unity API stubs and kills only its newly started writer before restarting recovery. This demonstrates process persistence at recorded/applied/external-change boundaries, before and after all four setters, and after a completed marker could not be deleted; it is not a forced crash of a user's Editor or a power-loss transaction.
+Isolated native regressions cover both-mode startup, concurrent ownership and completion
+orders, process identity reuse, manual changes, busy storage, interrupted apply/restore
+setters, malformed metadata, reload recovery and legacy settings records. Preference
+tests use owned journals and an in-memory backend rather than the user's global values.
+Actual Windows Editor probes exercise test jobs with Domain Reload both enabled and
+disabled, including observed PlayMode transitions and released native admission. These
+probes do not establish execution on other operating systems or Unity versions.

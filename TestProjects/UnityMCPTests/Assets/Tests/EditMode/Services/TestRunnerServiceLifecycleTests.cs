@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,6 +9,7 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.TestTools.TestRunner.Api;
+using UnityEngine;
 using TNode = NUnit.Framework.Interfaces.TNode;
 
 namespace MCPForUnityTests.Editor.Services
@@ -20,6 +22,8 @@ namespace MCPForUnityTests.Editor.Services
         private Func<string, int, int> _preferenceRead;
         private Action<string, int> _preferenceWrite;
         private Action _preferenceApply;
+        private string _originalLeaseRoot;
+        private string _ownedLeaseRoot;
         private readonly Dictionary<string, int> _preferences = new Dictionary<string, int>();
         private int _idleTime;
         private int _interactionMode;
@@ -57,6 +61,9 @@ namespace MCPForUnityTests.Editor.Services
             _preferenceRead = TestRunnerNoThrottle.ReadPreference;
             _preferenceWrite = TestRunnerNoThrottle.WritePreference;
             _preferenceApply = TestRunnerNoThrottle.ApplyInteractionPreferences;
+            _originalLeaseRoot = TestRunnerNoThrottle.LeaseRootForTests;
+            _ownedLeaseRoot = Path.Combine(Application.temporaryCachePath, "McpPreferenceLeaseTests", Guid.NewGuid().ToString("N"));
+            TestRunnerNoThrottle.LeaseRootForTests = _ownedLeaseRoot;
             _preferences.Clear();
             TestRunnerNoThrottle.ReadPreference = (key, fallback) => _preferences.TryGetValue(key, out int value) ? value : fallback;
             TestRunnerNoThrottle.WritePreference = (key, value) => _preferences[key] = value;
@@ -96,6 +103,7 @@ namespace MCPForUnityTests.Editor.Services
             try
             {
                 _service?.Dispose();
+                TestRunnerNoThrottle.RestoreThrottling();
                 SessionState.SetString(RetiredRunSessionKey, string.Empty);
                 typeof(TestRunnerService).GetField("_activeRunOwner", StaticPrivate).SetValue(null, _originalOwner);
                 typeof(MCPServiceLocator).GetField("_testRunnerService", StaticPrivate).SetValue(null, _originalService);
@@ -120,6 +128,9 @@ namespace MCPForUnityTests.Editor.Services
             }
             finally
             {
+                TestRunnerNoThrottle.LeaseRootForTests = _originalLeaseRoot;
+                if (Directory.Exists(_ownedLeaseRoot))
+                    Directory.Delete(_ownedLeaseRoot, true);
                 TestRunnerNoThrottle.ReadPreference = _preferenceRead;
                 TestRunnerNoThrottle.WritePreference = _preferenceWrite;
                 TestRunnerNoThrottle.ApplyInteractionPreferences = _preferenceApply;
@@ -193,6 +204,50 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
+        [TestCase(TestMode.EditMode, false, EnterPlayModeOptions.None)]
+        [TestCase(TestMode.PlayMode, false, EnterPlayModeOptions.None)]
+        [TestCase(TestMode.PlayMode, true, EnterPlayModeOptions.DisableDomainReload)]
+        [TestCase(TestMode.PlayMode, true, EnterPlayModeOptions.DisableSceneReload)]
+        public void Execute_PreservesProjectReloadSemanticsAndAppliesStartupThrottling(TestMode mode, bool enabled, EnterPlayModeOptions options)
+        {
+            EditorSettings.enterPlayModeOptions = options;
+            EditorSettings.enterPlayModeOptionsEnabled = enabled;
+            bool expectedEnabled = EditorSettings.enterPlayModeOptionsEnabled;
+            var expectedOptions = EditorSettings.enterPlayModeOptions;
+            bool? observedEnabled = null;
+            EnterPlayModeOptions? observedOptions = null;
+            int observedIdle = -1;
+            int observedMode = -1;
+            SetSchedule(_ =>
+            {
+                observedEnabled = EditorSettings.enterPlayModeOptionsEnabled;
+                observedOptions = EditorSettings.enterPlayModeOptions;
+                observedIdle = TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4);
+                observedMode = TestRunnerNoThrottle.ReadPreference("InteractionMode", 0);
+                throw new InvalidOperationException("startup-observed");
+            });
+            Assert.AreEqual("startup-observed", ObserveFailure(_service.RunTestsAsync(mode)).Message);
+            Assert.AreEqual(expectedEnabled, observedEnabled, "Admission must retain project reload semantics.");
+            Assert.AreEqual(expectedOptions, observedOptions, "The native scheduler must see the original project options.");
+            Assert.AreEqual(0, observedIdle, "Both modes need background progress before RunStarted.");
+            Assert.AreEqual(1, observedMode);
+            Assert.AreEqual(expectedEnabled, EditorSettings.enterPlayModeOptionsEnabled);
+            Assert.AreEqual(expectedOptions, EditorSettings.enterPlayModeOptions);
+            Assert.AreEqual(_idleTime, TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4));
+            Assert.AreEqual(_interactionMode, TestRunnerNoThrottle.ReadPreference("InteractionMode", 0));
+        }
+
+        [Test]
+        public void ThrottlingRestore_PreservesManualPreferenceChanges()
+        {
+            TestRunnerNoThrottle.ApplyNoThrottlingPreemptive();
+            TestRunnerNoThrottle.WritePreference("ApplicationIdleTime", 12);
+            TestRunnerNoThrottle.WritePreference("InteractionMode", 2);
+            TestRunnerNoThrottle.RestoreThrottling();
+            Assert.AreEqual(12, TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4));
+            Assert.AreEqual(2, TestRunnerNoThrottle.ReadPreference("InteractionMode", 0));
+        }
+
         [Test]
         public void ApiRelease_DestroysOwnedApiAndIsIdempotentBeforeDispose()
         {
@@ -213,7 +268,7 @@ namespace MCPForUnityTests.Editor.Services
             SetSchedule(_ => "active-play-mode");
             var run = _service.RunTestsAsync(TestMode.PlayMode);
             Assert.IsFalse(run.IsCompleted);
-            Assert.IsTrue(PlayModeOptionsGuard.IsPending);
+            Assert.IsFalse(PlayModeOptionsGuard.IsPending, "Default admission does not change project settings.");
             bool optionsEnabled = EditorSettings.enterPlayModeOptionsEnabled;
             var options = EditorSettings.enterPlayModeOptions;
             int idle = TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4);
@@ -228,7 +283,7 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsFalse(lifetime.IsCancellationRequested);
             Assert.IsFalse(TestRunnerService.HasRetiredRun);
             Assert.IsTrue(TestRunStatus.IsRunning);
-            Assert.IsTrue(PlayModeOptionsGuard.IsPending);
+            Assert.IsFalse(PlayModeOptionsGuard.IsPending);
             Assert.AreEqual(optionsEnabled, EditorSettings.enterPlayModeOptionsEnabled);
             Assert.AreEqual(options, EditorSettings.enterPlayModeOptions);
             Assert.AreEqual(idle, TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4));
