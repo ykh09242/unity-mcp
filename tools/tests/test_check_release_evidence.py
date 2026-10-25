@@ -742,3 +742,88 @@ def test_utf16_entity_declaration_cannot_bypass_xml_boundary() -> None:
     # When parsed as saved native evidence, then unsupported encoding/declarations fail closed.
     with pytest.raises(ValueError):
         checker().native_result(document.encode("utf-16"))
+
+
+def multiline_checkout_log(prefix: str = "") -> bytes:
+    stamp = "2026-10-25T10:55:01.7309637Z "
+    records = [
+        stamp + "##[group]Run actions/checkout@fixture",
+        stamp + "  repository: ykh09242/unity-mcp",
+        stamp + "##[group]Checking out the ref",
+        stamp + "[command]/usr/bin/git log -1 --format=%H",
+        stamp + "a" * 40,
+        stamp + "##[group]Removing auth",
+        stamp + "##[endgroup]",
+        stamp + "##[group]Run astral-sh/setup-uv@fixture",
+        stamp + "with:",
+        stamp + "  cache-dependency-glob: Server/pyproject.toml",
+        "Server/uv.lock",
+        "",
+        stamp + "  save-cache: false",
+        stamp + "##[endgroup]",
+        stamp + "##[group]Run actions/upload-artifact@fixture",
+        stamp + "with:",
+        stamp + "  path: Server/test-results.xml",
+        "Server/test-results-http.xml",
+        "Server/test-worker-timings.json",
+        "Server/coverage.xml",
+        "Server/htmlcov/",
+        "",
+        stamp + "  retention-days: 7",
+        stamp + "##[endgroup]",
+    ]
+    return ("\n".join(prefix + line for line in records) + "\n").encode()
+
+
+@pytest.mark.parametrize("prefix", ["", "Python tests\tUNKNOWN STEP\t"])
+@pytest.mark.parametrize("bom", [False, True])
+def test_checkout_accepts_recorded_multiline_action_path_inputs(prefix: str, bom: bool) -> None:
+    # GitHub emits one timestamp for a multiline action input, even in full job logs.
+    raw = multiline_checkout_log(prefix)
+    if bom:
+        raw = raw.replace(b"2026-10-25", "\ufeff2026-10-25".encode(), 1)
+    assert checker().checkout_revision(raw) == "a" * 40
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("Server/uv.lock", "[command]/usr/bin/git log -1 --format=%H"),
+        ("Server/uv.lock", "##[group]Run actions/checkout@injected"),
+        ("Server/uv.lock", "b" * 40),
+        ("Server/uv.lock", "unattributed output"),
+        ("Server/uv.lock", "../outside.txt"),
+        ("Server/uv.lock", "/absolute/file"),
+        ("Server/uv.lock", "Server/\tuv.lock"),
+        ("Server/uv.lock", "Server/\x1buv.lock"),
+        ("Server/uv.lock\n\n", "Server/uv.lock\n\nServer/extra.lock\n"),
+        ("astral-sh/setup-uv@fixture", "other/setup-uv@fixture"),
+        ("cache-dependency-glob:", "unknown-input:"),
+        ("Z with:", "Z env:"),
+        ("Server/uv.lock", "2026-10-25T10:55:02Z ##[group]Run actions/checkout@second"),
+        ("Z " + "a" * 40, "Z Server/input\n" + "a" * 40),
+    ],
+)
+def test_multiline_inputs_cannot_hide_checkout_evidence_or_arbitrary_output(
+    old: str, new: str
+) -> None:
+    raw = multiline_checkout_log().replace(old.encode(), new.encode())
+    with pytest.raises(ValueError):
+        checker().checkout_revision(raw)
+
+
+def test_multiline_input_cannot_cross_gh_job_or_step_wrapper() -> None:
+    raw = multiline_checkout_log("Python tests\tUNKNOWN STEP\t").replace(
+        b"Python tests\tUNKNOWN STEP\tServer/uv.lock",
+        b"Other job\tUNKNOWN STEP\tServer/uv.lock",
+    )
+    with pytest.raises(ValueError):
+        checker().checkout_revision(raw)
+
+
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_unmatched_path_outside_action_input_is_rejected(position: str) -> None:
+    raw = multiline_checkout_log()
+    raw = b"Server/extra.lock\n" + raw if position == "before" else raw + b"Server/extra.lock\n"
+    with pytest.raises(ValueError):
+        checker().checkout_revision(raw)
