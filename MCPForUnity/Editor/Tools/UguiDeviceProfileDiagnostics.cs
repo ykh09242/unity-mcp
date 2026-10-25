@@ -72,6 +72,7 @@ namespace MCPForUnity.Editor.Tools
                 ["projection"] = 0,
                 ["output"] = 0,
             };
+            internal JObject UnsupportedComponent;
             internal readonly HashSet<string> Reasons = new HashSet<string>(StringComparer.Ordinal);
 
             internal Budget(Options options) => Options = options;
@@ -583,8 +584,50 @@ namespace MCPForUnity.Editor.Tools
                         {
                             // Do not read custom ILayoutIgnorer, Selectable, Graphic or hidden enum getters.
                             // Known non-layout built-ins do not supply geometry to this preview.
-                            if (!builtin || (name != "UnityEngine.UI.GraphicRaycaster" && name != "UnityEngine.UI.Button"))
+                            if (
+                                !builtin
+                                || (
+                                    !new[]
+                                    {
+                                        "UnityEngine.UI.GraphicRaycaster",
+                                        "UnityEngine.UI.Button",
+                                        "UnityEngine.UI.Toggle",
+                                        "UnityEngine.UI.Slider",
+                                        "UnityEngine.UI.Scrollbar",
+                                        "UnityEngine.UI.Mask",
+                                        "UnityEngine.UI.RectMask2D",
+                                    }.Contains(name)
+                                )
+                            )
+                            {
                                 unsupported = true;
+                                if (b.UnsupportedComponent == null)
+                                {
+                                    string path = source.name;
+                                    Transform ancestor = source.parent;
+                                    int depth = 0;
+                                    while (ancestor != null && depth++ < 16 && path.Length < 240 && b.Charge("ancestors"))
+                                    {
+                                        path = ancestor.name + "/" + path;
+                                        ancestor = ancestor.parent;
+                                    }
+                                    var detail = new JObject
+                                    {
+                                        ["instance_id"] = source.gameObject.GetInstanceIDCompat(),
+                                        ["component_type"] = name.Length > 256 ? name.Substring(0, 256) : name,
+                                        ["path"] = path.Length > 256 ? path.Substring(path.Length - 256) : path,
+                                        ["path_truncated"] = ancestor != null || path.Length > 256,
+                                    };
+                                    int characters = detail.ToString(Formatting.None).Length;
+                                    if (characters <= options.Characters - b.Characters && b.Charge("output"))
+                                    {
+                                        b.Characters += characters;
+                                        b.UnsupportedComponent = detail;
+                                    }
+                                    else
+                                        b.Reasons.Add("max_characters");
+                                }
+                            }
                         }
                     }
                     if (item.parent != null)
@@ -953,6 +996,7 @@ namespace MCPForUnity.Editor.Tools
                 },
                 ["profiles"] = reports,
                 ["projection"] = projection,
+                ["unsupported_component"] = b.UnsupportedComponent,
                 ["budget"] = new JObject
                 {
                     ["max_nodes"] = o.Nodes,

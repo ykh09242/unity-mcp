@@ -68,6 +68,7 @@ namespace MCPForUnity.Editor.Tools
             public int TargetId;
             public int? EventId;
             public string ModuleType;
+            public JObject UnsupportedComponent;
             public bool? ModuleActive;
             public Vector2 Position;
             public readonly JArray Hits = new JArray();
@@ -119,6 +120,7 @@ namespace MCPForUnity.Editor.Tools
                     ["display"] = 0,
                     ["status"] = status,
                     ["reason"] = reason,
+                    ["unsupported_component"] = UnsupportedComponent,
                     ["policy"] = new JObject
                     {
                         ["allow_custom_filters"] = Allow,
@@ -355,6 +357,7 @@ namespace MCPForUnity.Editor.Tools
                 throw new Unavailable("registry_uninitialized");
             var dictionary = Field(registryType, registry, "m_RaycastableGraphics", query) as IDictionary;
             Type graphicType = NativeType(ui, "UnityEngine.UI.Graphic");
+            Type maskableGraphicType = NativeType(ui, "UnityEngine.UI.MaskableGraphic");
             Type setType = NativeType(ui, "UnityEngine.UI.Collections.IndexedSet").MakeGenericType(graphicType);
             if (dictionary == null || dictionary.GetType() != typeof(Dictionary<,>).MakeGenericType(typeof(Canvas), setType))
                 throw new Unavailable("unsupported_native_shape");
@@ -393,8 +396,32 @@ namespace MCPForUnity.Editor.Tools
                     query.Spend(1);
                     query.Graphics++;
                     var graphic = list[item] as Component;
-                    if (graphic == null || graphic.GetType().Assembly != ui || !Graphics.Contains(graphic.GetType().FullName))
+                    if (graphic == null)
+                        throw new Unavailable("unsupported_native_shape");
+                    Type actual = graphic.GetType();
+                    bool knownGraphic = actual.Assembly == ui && Graphics.Contains(actual.FullName);
+                    // TMP's exact built-ins inherit native Graphic/MaskableGraphic.Raycast and
+                    // Graphic.raycastTarget. The caret remains a real candidate, not an inert exception.
+                    bool tmp =
+                        actual.Assembly.GetName().Name == "Unity.TextMeshPro"
+                        && new[] { "TMPro.TMP_SelectionCaret", "TMPro.TextMeshProUGUI", "TMPro.TMP_SubMeshUI" }.Contains(actual.FullName);
+                    if (tmp)
+                    {
+                        query.Spend(2);
+                        Type raycastOwner = actual.GetMethod("Raycast", new[] { typeof(Vector2), typeof(Camera) })?.DeclaringType;
+                        tmp =
+                            (raycastOwner == graphicType || raycastOwner == maskableGraphicType)
+                            && actual.GetProperty("raycastTarget")?.GetMethod?.DeclaringType == graphicType;
+                    }
+                    if (!knownGraphic && !tmp)
+                    {
+                        query.Reserve(512);
+                        query.UnsupportedComponent = DescribeComponent(graphic, query);
                         throw new Unavailable("unsupported_graphic");
+                    }
+                    // Match the native early rejection only after proving the getter is built-in.
+                    if (!(bool)Property(graphicType, graphic, "raycastTarget", query))
+                        continue;
                     int depth = 0;
                     for (Transform current = graphic.transform; current != null; current = current.parent, depth++)
                     {
@@ -428,6 +455,35 @@ namespace MCPForUnity.Editor.Tools
                     }
                 }
             }
+        }
+
+        private static JObject DescribeComponent(Component component, Query query)
+        {
+            var names = new List<string>();
+            Transform current = component.transform;
+            int length = 0;
+            bool truncated = false;
+            while (current != null && names.Count < 16 && length < 240)
+            {
+                query.Spend(1);
+                string name = Metadata(current.name);
+                if (name.Length > 240 - length)
+                {
+                    name = name.Substring(0, 240 - length);
+                    truncated = true;
+                }
+                names.Add(name);
+                length += name.Length + 1;
+                current = current.parent;
+            }
+            names.Reverse();
+            return new JObject
+            {
+                ["instance_id"] = component.gameObject.GetInstanceIDCompat(),
+                ["component_type"] = Metadata(component.GetType().FullName),
+                ["path"] = string.Join("/", names),
+                ["path_truncated"] = truncated || current != null,
+            };
         }
 
         private static JObject Hit(Assembly ui, Type resultType, object result, int rank, Query query)

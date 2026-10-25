@@ -16,6 +16,33 @@ using UnityEngine.SceneManagement;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
+    public class UguiCompoundAdmissionDiagnosticsTests
+    {
+        [Test]
+        public void MissingAndConflictingControlFieldsHaveActionableAdmissionErrors()
+        {
+            var missing = JObject.FromObject(ManageUGUI.HandleCommand(new JObject { ["action"] = "create_control", ["element_type"] = "unknown" }));
+            Assert.That(missing["success"].Value<bool>(), Is.False);
+            Assert.That(missing["message"].Value<string>(), Is.EqualTo("invalid_compound_control_request"));
+            Assert.That(missing["data"]["missing_fields"].Values<string>(), Is.EquivalentTo(new[] { "parent", "name" }));
+            Assert.That(missing["data"]["allowed_element_types"].Values<string>(), Does.Contain("tmp_input"));
+            var conflict = JObject.FromObject(
+                ManageUGUI.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "create_control",
+                        ["element_type"] = "slider",
+                        ["target"] = "PRIVATE_VALUE",
+                    }
+                )
+            );
+            Assert.That(conflict["data"]["conflicting_fields"].Values<string>(), Is.EquivalentTo(new[] { "target" }));
+            Assert.That(conflict["data"]["allowed_properties"].Values<string>(), Does.Contain("minValue"));
+            Assert.That(conflict["data"]["allowed_values"]["properties.direction"].Values<string>(), Does.Contain("LeftToRight"));
+            StringAssert.DoesNotContain("PRIVATE_VALUE", conflict.ToString());
+        }
+    }
+
     public abstract class CompoundOwnedFixture
     {
         protected const string EmptySceneTemplateGuid = "d8f5ae9136f356e190abdc5c9be58fb6";

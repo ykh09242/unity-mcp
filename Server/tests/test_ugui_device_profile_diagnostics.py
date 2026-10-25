@@ -256,3 +256,120 @@ def test_actual_native_decoder_refuses_forged_evidence(actual_native_case, tampe
     # When / Then
     with pytest.raises(ValueError, match="unsupported_device_profile_response"):
         validate_ugui_device_profile_diagnostics(report)
+
+
+@pytest.fixture(params=["observed_profile_unavailable", "invalid_scaler_math", "budget_incomplete"])
+def unavailable_layout_report(request):
+    """Mirror Overlay's early receipts after an omitted layout script was identified."""
+    reason = request.param
+    profile = {
+        **virtual(),
+        "dpi_source": "request",
+        "route": "owned_overlay_preview",
+        "status": "unavailable",
+        "reasons": [reason],
+        "scale_factor": None,
+        "reference_pixels_per_unit": None,
+        "layout_dpi_source": "not_used",
+        "nodes": [],
+    }
+    if reason == "observed_profile_unavailable":
+        profile.update(
+            source="observed",
+            width=0,
+            height=0,
+            dpi=None,
+            dpi_source="unavailable",
+            safe_area=None,
+            orientation=None,
+        )
+    return {
+        "kind": "ugui_device_profile_diagnostics",
+        "schema_version": 1,
+        "frame": 0,
+        "status": "partial",
+        "minimum_touch_target_mm": None,
+        "policy": {
+            "pixel_origin": "bottom_left",
+            "orientation": "supplied_frame_no_rotation",
+            "layout": "owned_builtin_preview_or_current_camera",
+            "custom_callbacks": "not_invoked",
+            "measurement": "dpi_geometry_estimate",
+            "interaction": "not_observed",
+            "rendering": "not_observed",
+        },
+        "profiles": [profile],
+        "projection": None,
+        "unsupported_component": {
+            "instance_id": 11,
+            "component_type": "UnityEngine.UI.ScrollRect",
+            "path": "Canvas/Scroll",
+            "path_truncated": False,
+        },
+        "budget": {
+            "max_nodes": 200,
+            "max_depth": 10,
+            "max_evaluations": 16,
+            "max_characters": 65536,
+            "evaluations": 16,
+            "characters": 256,
+            "evaluation_counts": {
+                "snapshot_and_resolver": 2,
+                "ancestors": 3,
+                "transforms": 4,
+                "components": 5,
+                "profile_setups": 1,
+                "assessment_pairs": 0,
+                "projection": 0,
+                "output": 1,
+            },
+            "reasons": ["max_evaluations"] if reason == "budget_incomplete" else [],
+        },
+        "limitations": [],
+    }
+
+
+def test_unavailable_profile_preserves_prior_unsupported_component(unavailable_layout_report):
+    result = validate_ugui_device_profile_diagnostics(unavailable_layout_report)
+    assert result == unavailable_layout_report
+    assert result["status"] == "partial"
+    assert result["profiles"][0]["nodes"] == []
+    assert result["unsupported_component"]["component_type"] == "UnityEngine.UI.ScrollRect"
+
+
+@pytest.mark.parametrize(
+    "claim", ["complete", "missing_layout_reason", "safe_area_pass", "unavailable_geometry"]
+)
+def test_unsupported_component_still_rejects_geometry_pass_claims(unavailable_layout_report, claim):
+    report = copy.deepcopy(unavailable_layout_report)
+    profile = report["profiles"][0]
+    profile.update(
+        **virtual(), dpi_source="request", status="partial", reasons=["unsupported_layout_provider"]
+    )
+    profile["nodes"] = [
+        {
+            "instance_id": 12,
+            "pixel_bounds": [1, 1, 48, 48],
+            "raycast_rectangle_candidate": True,
+            "width_mm": None,
+            "height_mm": None,
+            "unsafe_region_area_px2": None,
+            "safe_area_relation": "unknown",
+            "touch_target": "unknown",
+        }
+    ]
+    report["budget"]["max_evaluations"] = report["budget"]["evaluations"] = 18
+    report["budget"]["evaluation_counts"].update(assessment_pairs=1, output=2)
+    assert validate_ugui_device_profile_diagnostics(report) == report
+    if claim == "complete":
+        profile["status"] = "complete"
+    elif claim == "unavailable_geometry":
+        profile["status"] = "unavailable"
+    elif claim == "missing_layout_reason":
+        profile["reasons"] = ["incomplete_preview"]
+    else:
+        profile["nodes"][0].update(
+            safe_area_relation="inside_geometric_safe_area", unsafe_region_area_px2=0
+        )
+    with pytest.raises(ValueError, match="unsupported_device_profile_response"):
+        validate_ugui_device_profile_diagnostics(report)

@@ -198,3 +198,29 @@ def test_closed_unknown_fields_do_not_publish_private_exception_text():
     with pytest.raises(UnsupportedRaycastResponse) as caught:
         validate_ugui_raycast_response(reply)
     assert "PRIVATE_SENTINEL" not in str(caught.value)
+
+
+def test_unsupported_graphic_preserves_culprit_and_prior_input_observations():
+    reply = sample()
+    reply["data"].update(
+        status="unknown",
+        reason="unsupported_graphic",
+        hits=[],
+        hits_total=None,
+        first_hit_targets_handler=None,
+        unsupported_component={
+            "instance_id": 11,
+            "component_type": "Custom.Graphic",
+            "path": "Canvas/Input/Caret",
+            "path_truncated": False,
+        },
+    )
+    reply["data"]["policy"].update(native_query_attempted=False, custom_filters_present=None)
+    reply["data"]["budget"]["characters_reserved"] = 512
+    result = validate_ugui_raycast_response(reply)
+    assert result == reply
+    assert result["data"]["input"]["event_system_id"] == 3
+    assert result["data"]["first_hit_targets_handler"] is None
+    reply["data"]["unsupported_component"]["path"] = "x" * 257
+    with pytest.raises(UnsupportedRaycastResponse):
+        validate_ugui_raycast_response(reply)

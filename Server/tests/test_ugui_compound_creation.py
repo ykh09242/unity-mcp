@@ -105,7 +105,15 @@ INVALID = [
 @pytest.mark.parametrize("payload", INVALID, ids=[f"closed-{n}" for n in range(len(INVALID))])
 async def test_invalid_control_is_zero_preflight_and_zero_transport(boundary, payload):
     result = await manage_ugui(SimpleNamespace(), **copy.deepcopy(payload))
-    assert result == {"success": False, "message": "invalid_compound_control_request"}
+    assert result["success"] is False
+    assert result["message"] == "invalid_compound_control_request"
+    assert result["data"]["required_fields"] == ["element_type", "parent", "name"]
+    assert result["data"]["allowed_element_types"] == [
+        "scroll_view",
+        "toggle",
+        "slider",
+        "tmp_input",
+    ]
     for call in boundary.values():
         call.assert_not_awaited()
 
@@ -169,3 +177,45 @@ async def test_real_sdk_publishes_and_dispatches_compound_kind(boundary, mode):
         result = await client.call_tool("manage_ugui", request("toggle", label="Owned"))
         assert result.is_error is False
     boundary["send_mutation"].assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_compound_conflict_names_fields_without_echoing_values(boundary):
+    result = await manage_ugui(SimpleNamespace(), **request(), target="PRIVATE_TARGET")
+    assert result["data"]["conflicting_fields"] == ["target"]
+    assert "minValue" in result["data"]["allowed_properties"]
+    assert "PRIVATE_TARGET" not in str(result)
+    for call in boundary.values():
+        call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_compound_missing_and_invalid_fields_have_bounded_guidance(boundary):
+    payload = request(direction="private-invalid-direction")
+    payload.pop("name")
+    result = await manage_ugui(SimpleNamespace(), **payload)
+    assert {item["field"] for item in result["data"]["issues"]} >= {
+        "slider.name",
+        "slider.properties.direction",
+    }
+    assert "private-invalid-direction" not in str(result)
+    assert result["data"]["missing_fields"] == ["name"]
+    assert result["data"]["allowed_values"]["properties.direction"] == [
+        "LeftToRight",
+        "RightToLeft",
+        "BottomToTop",
+        "TopToBottom",
+    ]
+    assert "minValue < maxValue" in result["data"]["guidance"]
+    for call in boundary.values():
+        call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_compound_range_issue_explains_conflicting_values_without_echo(boundary):
+    result = await manage_ugui(SimpleNamespace(), **request(minValue=10, maxValue=20, value=5))
+    assert result["data"]["issues"] == [
+        {"field": "slider.properties", "code": "compound_value_outside_range"}
+    ]
+    for call in boundary.values():
+        call.assert_not_awaited()

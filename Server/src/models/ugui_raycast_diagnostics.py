@@ -154,7 +154,15 @@ class Budget(Closed):
         return self
 
 
+class UnsupportedComponent(Closed):
+    instance_id: Annotated[int, Field(strict=True, ge=-(2**31), le=2**31 - 1)]
+    component_type: Annotated[str, Field(max_length=256)]
+    path: Annotated[str, Field(max_length=256)]
+    path_truncated: StrictBool
+
+
 class RaycastEvidence(Closed):
+    unsupported_component: UnsupportedComponent | None = None
     kind: Literal["ugui_raycast_diagnostics"]
     schema_version: Literal[1]
     framework: Literal["ugui"]
@@ -177,6 +185,10 @@ class RaycastEvidence(Closed):
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
+        if self.unsupported_component is not None and (
+            self.reason != "unsupported_graphic" or self.budget.characters_reserved < 512
+        ):
+            raise UnsupportedRaycastResponse()
         if not self.target_id or self.limitations != list(LIMITATIONS):
             raise UnsupportedRaycastResponse()
         metadata = sum(len(hit.name.encode("utf-16-le")) // 2 for hit in self.hits)
@@ -264,6 +276,6 @@ def validate_ugui_raycast_response(data: JsonValue) -> dict[str, JsonValue]:
         model = RaycastReply.model_validate_json(
             json.dumps(data, ensure_ascii=True, allow_nan=False)
         )
-        return model.model_dump(mode="json")
+        return model.model_dump(mode="json", exclude_unset=True)
     except (ValueError, TypeError, OverflowError, UnicodeError):
         raise UnsupportedRaycastResponse() from None

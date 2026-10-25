@@ -3,7 +3,7 @@
 import json
 import math
 import struct
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import (
     AfterValidator,
@@ -13,6 +13,7 @@ from pydantic import (
     JsonValue,
     StrictInt,
     TypeAdapter,
+    ValidationError,
     field_validator,
     model_validator,
 )
@@ -196,3 +197,72 @@ def validate_compound_creation(
     if len(encoded) > 16384:
         raise ValueError("compound_request_limit")
     return result
+
+
+CONTROL_PROPERTIES: Final = {
+    "scroll_view": Scroll,
+    "toggle": Toggle,
+    "slider": Slider,
+    "tmp_input": Input,
+}
+
+
+def compound_request_error(
+    kind: str | None,
+    error: ValueError | TypeError | RecursionError | None = None,
+    *,
+    conflicts: list[str] | None = None,
+    missing: list[str] | None = None,
+) -> dict[str, JsonValue]:  # noqa: DICT_OK - MCP JSON error envelope
+    """Return bounded field guidance without echoing submitted values or exceptions."""
+    issues: list[JsonValue] = []
+    if isinstance(error, ValidationError):
+        known_codes = {
+            "invalid_compound_range",
+            "compound_value_outside_range",
+            "compound_requires_integral_values",
+            "compound_character_limit",
+            "invalid_compound_size",
+            "invalid_compound_parent",
+            "invalid_compound_name",
+            "invalid_compound_number",
+            "compound_text_limit",
+        }
+        for issue in error.errors(include_input=False)[:8]:
+            constraint = str(issue.get("ctx", {}).get("error", ""))
+            issues.append(
+                {
+                    "field": ".".join(str(part)[:128] for part in issue["loc"][:5]),
+                    "code": constraint if constraint in known_codes else issue["type"],
+                }
+            )
+    model = CONTROL_PROPERTIES.get(kind or "")
+    return {
+        "success": False,
+        "message": "invalid_compound_control_request",
+        "data": {
+            "action": "create_control",
+            "reason": "conflicting_fields" if conflicts else "invalid_fields",
+            "required_fields": ["element_type", "parent", "name"],
+            "missing_fields": missing or [],
+            "allowed_element_types": list(CONTROL_PROPERTIES),
+            "allowed_properties": list(model.model_fields) if model else [],
+            "conflicting_fields": conflicts or [],
+            "allowed_values": {
+                "properties.eventSystem": ["preserve", "create_legacy_if_missing"],
+                "properties.direction": [
+                    "LeftToRight",
+                    "RightToLeft",
+                    "BottomToTop",
+                    "TopToBottom",
+                ],
+            },
+            "issues": issues,
+            "guidance": (
+                "Use properties for control-specific values; omit target and diagnostic options. "
+                "Slider requires minValue < maxValue, value within range, and integral values when wholeNumbers=true. "
+                "TMP input text must fit characterLimit (0 means unlimited); sizeDelta components must be 1..8192. "
+                "eventSystem allows preserve or create_legacy_if_missing."
+            ),
+        },
+    }

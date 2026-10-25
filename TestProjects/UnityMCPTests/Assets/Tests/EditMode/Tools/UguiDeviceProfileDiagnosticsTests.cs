@@ -590,6 +590,33 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(State(), Is.EqualTo(before));
         }
 
+        [TestCase("Toggle")]
+        [TestCase("Slider")]
+        [TestCase("Scrollbar")]
+        [TestCase("Mask")]
+        [TestCase("RectMask2D")]
+        public void ExactNonLayoutControlsDoNotInvalidateGeometry(string name)
+        {
+            target.AddComponent(Ui(name));
+            string before = State();
+            var data = Call(Request(Virtual(800, 600, 160)));
+            Assert.That(data["profiles"][0]["status"].Value<string>(), Is.EqualTo("complete"), data.ToString());
+            Assert.That(Node(data, 0)["safe_area_relation"].Value<string>(), Is.Not.EqualTo("unknown"));
+            Assert.That(State(), Is.EqualTo(before));
+        }
+
+        [Test]
+        public void UnsupportedScrollRectNamesProviderAndWithholdsPassFindings()
+        {
+            target.AddComponent(Ui("ScrollRect"));
+            var data = Call(Request(Virtual(800, 600, 160)));
+            Assert.That(data["profiles"][0]["reasons"].Values<string>(), Does.Contain("unsupported_layout_provider"));
+            Assert.That(data["unsupported_component"]["component_type"].Value<string>(), Is.EqualTo("UnityEngine.UI.ScrollRect"));
+            Assert.That(data["unsupported_component"]["path"].Value<string>(), Is.EqualTo("Canvas/Target"));
+            Assert.That(Node(data, 0)["safe_area_relation"].Value<string>(), Is.EqualTo("unknown"));
+            Assert.That(Node(data, 0)["touch_target"].Value<string>(), Is.EqualTo("unknown"));
+        }
+
         [Test]
         public void CustomIgnorerGetterIsNeverCalled()
         {
