@@ -93,3 +93,26 @@ This action reports the current native hit order and separate handler/input-modu
 Custom ICanvasRaycastFilter implementations are refused before their potentially applicable callbacks by default. Set allow_custom_filters=True only to permit the native query to evaluate that user code. The receipt reports policy, presence, native-query attempt and whether user code may have run; it does not instrument exact callback counts. Opted-in code can mutate, dispatch events, throw or never return. There is no rollback, interruptibility or hard deadline, and the package still dispatches no events itself.
 
 max_nodes caps initial registered Graphics, max_depth caps filter ancestry, and max_evaluations is shared by admitted target lookup, package inspection/results and handler metadata. Handler lookups have a separate private 64-ancestor cap; an unadmitted first-hit relationship is null while admitted hit evidence remains. Name/path selectors require a complete bounded active-scene search; use the current instance ID if a large hierarchy cannot be admitted. Camera/resolution overrides, edits and include_inactive=True are rejected for this action.
+
+
+When raycast preflight cannot admit a Graphic, `unsupported_component` identifies the first
+component by type, GameObject ID and bounded hierarchy path (`path_truncated` marks an
+incomplete path). EventSystem, module and inspection counters collected before refusal
+remain available; hit order and handler relationships stay unknown. Exact TMP caret,
+TextMeshProUGUI and TMP submesh types are admitted only while their raycast method and
+raycast-target getter retain the native Graphic implementation. A caret can be a native
+hit candidate; its presence never justifies ignoring an obstruction.
+
+`diagnose_device_profiles` previews exact supported layout providers and omits known
+non-layout Button, Toggle, Slider, Scrollbar, Mask, RectMask2D and GraphicRaycaster
+components. Unsupported providers, including ScrollRect, TMP layout and custom scripts,
+keep affected safe-area and touch-target findings unknown. `unsupported_component`
+identifies the first omitted script when the output budget permits. The preview does not
+run that component's getters; inspect its layout behavior and verify the rendered UI in
+the target device configuration before interpreting its geometry as a pass.
+
+Invalid `create_control` requests include required and missing fields, allowed control
+kinds, per-kind properties, allowed enum values, conflicting action fields and bounded
+validation issue paths when available. Submitted values are not echoed. Supply `parent`
+for creation and omit `target` and diagnostic-only options. Slider values must lie within
+`minValue < maxValue`; `wholeNumbers=true` also requires integral values.
