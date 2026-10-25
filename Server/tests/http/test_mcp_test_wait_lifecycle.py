@@ -8,6 +8,7 @@ import asyncio
 import threading
 import time
 import stat
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -74,40 +75,55 @@ def test_journal_result_survives_reopen_without_native_or_new_wait(tmp_path):
 
 @pytest.mark.parametrize("status", ["completed", "failed"])
 @pytest.mark.parametrize(
-    "payload, decoded",
+    "payload, decoded, expects_warning",
     [
         (
             {"null": None, "unicode": "한글 😀 é", "numbers": [0, -3, 2**60, -0.0, 1e-200]},
             {"null": None, "unicode": "한글 😀 é", "numbers": [0, -3, 2**60, -0.0, 1e-200]},
+            False,
         ),
         (
             {"nested": [{"last": None, "first": True}, [], {}]},
             {"nested": [{"last": None, "first": True}, [], {}]},
+            False,
         ),
-        ({"tuple": (None, "value", 1)}, {"tuple": [None, "value", 1]}),
+        ({"tuple": (None, "value", 1)}, {"tuple": [None, "value", 1]}, True),
         (
             {"subclass": JournalPayloadDict(value=JournalPayloadInt(17))},
             {"subclass": {"value": 17}},
+            False,
         ),
-        ({"model": JournalPayloadModel(value="kept")}, {"model": {"value": "kept"}}),
+        ({"model": JournalPayloadModel(value="kept")}, {"model": {"value": "kept"}}, True),
     ],
     ids=["scalars", "containers", "tuple", "subclasses", "model"],
 )
-def test_journal_terminal_bytes_match_storage_projection(tmp_path, status, payload, decoded):
+def test_journal_terminal_bytes_match_storage_projection(
+    tmp_path, status, payload, decoded, expects_warning
+):
+    def projection_warnings():
+        if expects_warning:
+            return pytest.warns(
+                UserWarning,
+                match=r"(?s)Pydantic serializer warnings:.*PydanticSerializationUnexpectedValue",
+            )
+        return nullcontext()
+
     # Given the existing storage projection, including fallback-only values.
     with WaitJournal(tmp_path / "waits", clock=lambda: 1000.0) as journal:
         record = journal.create(operation())
         field = "result" if status == "completed" else "error"
         expected_record = record.model_copy(update={"status": status, field: payload})
-        expected = json.dumps(
-            expected_record.model_dump(exclude_none=True),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode()
+        with projection_warnings():
+            expected = json.dumps(
+                expected_record.model_dump(exclude_none=True),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode()
 
         # When committing the ordinary result or JSON-RPC error.
-        journal.finish(record.task_id, status, **{field: payload})
+        with projection_warnings():
+            journal.finish(record.task_id, status, **{field: payload})
 
         # Then the committed bytes and reopened value preserve that wire contract.
         assert (journal.root / f"{record.task_id}.json").read_bytes() == expected
