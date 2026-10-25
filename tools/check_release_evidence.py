@@ -401,12 +401,59 @@ def entry_files(index_path: Path, entry: JsonMap, required: set[str]) -> dict[st
     return result
 
 
-def checkout_revision(data: bytes) -> str:
-    lines = []
+def _checkout_log_records(data: bytes) -> list[str]:
+    """Keep timestamped records authoritative; recognize recorded action path inputs."""
+    lines: list[str] = []
+    path_inputs = {
+        "astral-sh/setup-uv": "cache-dependency-glob",
+        "actions/upload-artifact": "path",
+    }
+    input_key: str | None = None
+    in_inputs = False
+    continuation_prefix: str | None = None
     for raw in data.decode("utf-8-sig").splitlines():
         found = LOG_LINE.fullmatch(raw)
-        require(found is not None, "Unsupported checkout log line format")
-        lines.append(found[1])
+        if found is None:
+            require(
+                continuation_prefix is not None and raw.startswith(continuation_prefix),
+                "Unsupported checkout log line format",
+            )
+            value = raw[len(continuation_prefix) :]
+            require(
+                not value
+                or re.fullmatch(r"[A-Za-z0-9_.*?-]+(?:/[A-Za-z0-9_.*?-]+)+/?", value) is not None
+                and not {".", ".."}.intersection(value.split("/")),
+                "Unsupported multiline action path input",
+            )
+            # A trailing empty value ends this input. Never scan its payload as
+            # a checkout command, source revision, or additional checkout step.
+            if not value:
+                continuation_prefix = None
+            continue
+        line = found[1]
+        lines.append(line)
+        continuation_prefix = None
+        action = re.fullmatch(r"##\[group\]Run ([A-Za-z0-9_./-]+)@\S+", line)
+        if action is not None:
+            input_key = path_inputs.get(action[1])
+            in_inputs = False
+        elif input_key is not None and line == "with:":
+            in_inputs = True
+        elif in_inputs and line.startswith("  "):
+            if line.startswith(f"  {input_key}: "):
+                # gh may add job and step columns before the timestamp. Only
+                # that exact wrapper may precede subsequent path payloads.
+                header = raw[: found.start(1)]
+                prefix, separator, _ = header.rpartition("\t")
+                continuation_prefix = prefix + separator
+        else:
+            input_key = None
+            in_inputs = False
+    return lines
+
+
+def checkout_revision(data: bytes) -> str:
+    lines = _checkout_log_records(data)
     require(
         sum(line.startswith("##[group]Run actions/checkout@") for line in lines) == 1,
         "Missing or ambiguous source checkout step",
