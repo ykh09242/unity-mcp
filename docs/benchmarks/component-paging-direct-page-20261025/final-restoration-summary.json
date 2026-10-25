@@ -1,0 +1,40 @@
+{
+  "schema": "pc06-final-restored-baseline-v1",
+  "nativeFunctionalRun": 451,
+  "counts": {
+    "total": 43,
+    "passed": 43,
+    "failed": 0,
+    "skipped": 0
+  },
+  "productionSHA256": "1de68ed4a6b11ebcb0fdb99b4ba8c069334d82a9be7338eb959fdcd152da7198",
+  "loadedBaselineProvenance": {
+    "sourceStage": "baseline",
+    "block": 1,
+    "sessionPosition": 1,
+    "productionSourceSHA256": "1de68ed4a6b11ebcb0fdb99b4ba8c069334d82a9be7338eb959fdcd152da7198",
+    "productionMethodILSHA256": "ef65b85d35ebf3b464723843d3bc27e210cb20f5224571ac53cac3ce169df6c9",
+    "productionAssemblyMvid": "b961ba7e-28dd-4f2e-bc4a-ae003b9bceb7"
+  },
+  "actualBaselineRecompileVerified": true,
+  "pagingTestSHA256": "8aac018b3af3a2ca6ae5e40ff1d2d1361cfd082d99ac7542115b4feef061add8",
+  "lastHelperSHA256": "fe48519457f9c932bea04334598f067625c864aa0c42ba205c024db53d5c5d0d",
+  "comparatorSHA256": "9666f5f78e3bd08051f815d9b5ef7d5e4ad5a5045a7115193927476d9bb87524",
+  "inputCountBefore": 2008,
+  "originalInputCountRestored": 2002,
+  "allOriginalInputHashesVerified": true,
+  "originalManifestSHA256": "56c2584a4f8797d8dced4bd81501368a66df2786f2d05db64f96302f2b6fca9c",
+  "originalManifestByteForByteRestored": true,
+  "runnerRestoredSHA256": "8166ac8c78d0f71252794c413f2b43089c7ac2e09212a9686c80a61d2fb18560",
+  "launcherRestoredSHA256": "fbe7f43fd33bd3478afec5f5c394ba18f5089b4e64fe1477156604cec6d18cab",
+  "filters": [],
+  "removedOnlyVerifiedOwnedAdditions": 6,
+  "removedPathsVerifiedInsideOwnedWarmProject": true,
+  "noRecursiveDeletion": true,
+  "cacheAndEvidenceRetained": true,
+  "noAdditionalUnityLaunchAfter451": true,
+  "ownedProcessSurvivors": 0,
+  "protectedProcessIdentitiesPreserved": true,
+  "originalRestorationReceiptSHA256": "c247ec5a2d406fcd268aab1aabe771dea124513519963b0cc251fa67187f0259",
+  "runtimeOptimizationShipped": false
+}

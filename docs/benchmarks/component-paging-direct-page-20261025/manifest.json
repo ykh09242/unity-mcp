@@ -1,0 +1,46 @@
+{
+  "schema": "pc06-direct-page-manifest-v1",
+  "status": "candidate2 rejected at first complete matched source screen; production restored to baseline",
+  "baseCommit": "233957665fa9d23de64714532c82f3ca9350c776",
+  "sourcePins": {
+    "MCPForUnity/Editor/Resources/Scene/GameObjectResource.cs": "9c517f31965ef0292e778846678805ad60d4aa47113fdd76963a72d6843f58ad",
+    "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Resources/GameObjectComponentsPagingTests.cs": "8aac018b3af3a2ca6ae5e40ff1d2d1361cfd082d99ac7542115b4feef061add8",
+    "docs/benchmarks/PC06ProductionMethodPagingBenchmark.cs": "fe48519457f9c932bea04334598f067625c864aa0c42ba205c024db53d5c5d0d",
+    "docs/benchmarks/PC04FrozenBaselineComponentsResource.cs": "9666f5f78e3bd08051f815d9b5ef7d5e4ad5a5045a7115193927476d9bb87524",
+    "docs/benchmarks/component-paging-direct-page-20261025/baseline-GameObjectResource.cs.txt": "1de68ed4a6b11ebcb0fdb99b4ba8c069334d82a9be7338eb959fdcd152da7198",
+    "docs/benchmarks/component-paging-direct-page-20261025/candidate2-GameObjectResource.cs.txt": "9c517f31965ef0292e778846678805ad60d4aa47113fdd76963a72d6843f58ad"
+  },
+  "sourceOrders": [
+    [
+      "baseline",
+      "candidate2-direct-page"
+    ],
+    [
+      "candidate2-direct-page",
+      "baseline"
+    ],
+    [
+      "baseline",
+      "candidate2-direct-page"
+    ]
+  ],
+  "freshBaselineRequired": true,
+  "rowsPerPhase": 720,
+  "casesPerPhase": 120,
+  "productionArms": [
+    "production-a",
+    "production-b",
+    "production-c",
+    "production-d"
+  ],
+  "withinSessionReplicatesAreIndependentBlocks": false,
+  "driftOnlyArms": [
+    "control-a",
+    "control-b"
+  ],
+  "driftCorrectionAllowed": false,
+  "testClass": "MCPForUnityTests.Editor.Resources.PC06ProductionMethodPagingBenchmark",
+  "candidate1Disposition": "rejected at first complete PC05 screen; medium sampled-heap preservation failed",
+  "noFurtherAlgorithmAfterThisScreen": true,
+  "runtimeOptimizationAccepted": false
+}
