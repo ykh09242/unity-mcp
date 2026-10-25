@@ -574,6 +574,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private PlayScenarioFailure Attribute(PlayScenarioFailure failure)
         {
+            if (failure.Code == "play_start_timeout")
+                return new PlayScenarioFailure
+                {
+                    Code = failure.Code,
+                    Stage = "starting",
+                    Message = Bounded(failure.Message, 4096),
+                };
             PlayScenarioStepResult result = State.Cursor < State.Steps.Count ? State.Steps[State.Cursor] : State.Steps.LastOrDefault();
             if (_completingIteration.HasValue)
                 result = State.Steps.LastOrDefault(entry => entry.Iteration == _completingIteration.Value);
@@ -765,7 +772,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             Timeline(now, "failure", State.Failure?.Code + ": " + State.Failure?.Message);
             try
             {
-                _onFailure?.Invoke(State, State.Phase == "settling" && State.Cursor > 0 ? DefinitionStep(State.Steps[State.Cursor - 1]) : CurrentStep, now);
+                _onFailure?.Invoke(
+                    State,
+                    State.Phase == "starting" ? null
+                        : State.Phase == "settling" && State.Cursor > 0 ? DefinitionStep(State.Steps[State.Cursor - 1])
+                        : CurrentStep,
+                    now
+                );
             }
             catch (Exception error)
             {
