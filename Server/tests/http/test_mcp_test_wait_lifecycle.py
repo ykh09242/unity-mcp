@@ -22,7 +22,22 @@ from services.test_wait_journal import (
     TaskNotFound,
     WaitJournal,
     WaitOperation,
+    WaitRecord,
 )
+from pydantic import BaseModel, field_serializer
+
+
+class JournalPayloadModel(BaseModel):
+    value: str
+    omitted: str | None = None
+
+
+class JournalPayloadDict(dict):
+    pass
+
+
+class JournalPayloadInt(int):
+    pass
 
 
 def operation(owner="alice", *, now=1000.0):
@@ -55,6 +70,112 @@ def test_journal_result_survives_reopen_without_native_or_new_wait(tmp_path):
         with pytest.raises(TaskNotFound):
             reopened.get(record.task_id, "bob")
         assert reopened.get(record.task_id, "alice").operation == operation()
+
+
+@pytest.mark.parametrize("status", ["completed", "failed"])
+@pytest.mark.parametrize(
+    "payload, decoded",
+    [
+        (
+            {"null": None, "unicode": "한글 😀 é", "numbers": [0, -3, 2**60, -0.0, 1e-200]},
+            {"null": None, "unicode": "한글 😀 é", "numbers": [0, -3, 2**60, -0.0, 1e-200]},
+        ),
+        (
+            {"nested": [{"last": None, "first": True}, [], {}]},
+            {"nested": [{"last": None, "first": True}, [], {}]},
+        ),
+        ({"tuple": (None, "value", 1)}, {"tuple": [None, "value", 1]}),
+        (
+            {"subclass": JournalPayloadDict(value=JournalPayloadInt(17))},
+            {"subclass": {"value": 17}},
+        ),
+        ({"model": JournalPayloadModel(value="kept")}, {"model": {"value": "kept"}}),
+    ],
+    ids=["scalars", "containers", "tuple", "subclasses", "model"],
+)
+def test_journal_terminal_bytes_match_storage_projection(tmp_path, status, payload, decoded):
+    # Given the existing storage projection, including fallback-only values.
+    with WaitJournal(tmp_path / "waits", clock=lambda: 1000.0) as journal:
+        record = journal.create(operation())
+        field = "result" if status == "completed" else "error"
+        expected_record = record.model_copy(update={"status": status, field: payload})
+        expected = json.dumps(
+            expected_record.model_dump(exclude_none=True),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+
+        # When committing the ordinary result or JSON-RPC error.
+        journal.finish(record.task_id, status, **{field: payload})
+
+        # Then the committed bytes and reopened value preserve that wire contract.
+        assert (journal.root / f"{record.task_id}.json").read_bytes() == expected
+    with WaitJournal(tmp_path / "waits", clock=lambda: 1001.0) as reopened:
+        restored = reopened.get(record.task_id, "alice")
+        assert getattr(restored, field) == decoded
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), {1: "non-string-key"}])
+def test_journal_refuses_invalid_payload_before_replacing_working_record(tmp_path, invalid):
+    # Given a committed working record and an unsupported ordinary payload.
+    with WaitJournal(tmp_path / "waits", clock=lambda: 1000.0) as journal:
+        record = journal.create(operation())
+        path = journal.root / f"{record.task_id}.json"
+        committed = path.read_bytes()
+
+        # When final admission refuses that payload.
+        with pytest.raises(JournalUnavailable):
+            journal.finish(record.task_id, "completed", result={"invalid": invalid})
+
+        # Then the reservation and original record remain available for cancellation.
+        assert path.read_bytes() == committed
+        assert not list(journal.root.glob("*.stage"))
+        assert journal.request_cancel(record.task_id, "alice").cancel_requested
+
+
+def test_journal_record_subclass_keeps_its_serialization_rules(tmp_path):
+    class ProjectedRecord(WaitRecord):
+        @field_serializer("result")
+        def project_result(self, _value):
+            return {"projected": True}
+
+    # Given an extension record with an explicit storage serializer.
+    with WaitJournal(tmp_path / "waits", clock=lambda: 1000.0) as journal:
+        record = journal.create(operation())
+        projected = ProjectedRecord.model_validate(record.model_dump())
+        projected.status = "completed"
+        projected.result = {"ordinary": "value"}
+
+        # When that record is committed through the compatibility path.
+        journal._write(projected, active=False)
+
+        # Then the serializer's storage contract is preserved.
+        assert journal.get(record.task_id, "alice").result == {"projected": True}
+
+
+def test_journal_projection_failure_preserves_commit_and_cleans_stage(tmp_path):
+    class RefusedRecord(WaitRecord):
+        @field_serializer("result")
+        def refuse_result(self, _value):
+            raise ValueError("synthetic projection refusal")
+
+    # Given a previously committed record and a refused extension projection.
+    with WaitJournal(tmp_path / "waits", clock=lambda: 1000.0) as journal:
+        record = journal.create(operation())
+        path = journal.root / f"{record.task_id}.json"
+        committed = path.read_bytes()
+        refused = RefusedRecord.model_validate(record.model_dump())
+        refused.status = "completed"
+        refused.result = {"ordinary": "value"}
+
+        # When the storage serializer refuses the atomic replacement.
+        with pytest.raises(JournalUnavailable):
+            journal._write(refused, active=False)
+
+        # Then the original commit survives with no partial stage.
+        assert path.read_bytes() == committed
+        assert not list(journal.root.glob("*.stage"))
 
 
 def test_interrupted_work_is_honest_jsonrpc_failure_on_reopen(tmp_path):
