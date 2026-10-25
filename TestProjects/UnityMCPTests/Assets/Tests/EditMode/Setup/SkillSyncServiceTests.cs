@@ -298,7 +298,8 @@ namespace MCPForUnityTests.Editor.Setup
             Assert.IsTrue(result.Success, result.Error);
             Assert.IsTrue(result.PartialApplication);
             Assert.AreEqual(0, result.Added + result.Updated + result.Deleted);
-            CollectionAssert.AreEqual(before[Path.Combine(_install, "references/guide.md")], File.ReadAllBytes(Path.Combine(_install, "references/guide.md")));
+            string localGuide = Path.Combine(_install, "references", "guide.md");
+            CollectionAssert.AreEqual(before[localGuide], File.ReadAllBytes(localGuide));
             var baseline = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(Path.Combine(_install, BaselineName)));
             Assert.IsFalse(baseline["files"].Any(file => (string)file["path"] == "references/guide.md"), "Unknown bytes must not become a baseline.");
             var repeat = Preview(remote, CommitB);
