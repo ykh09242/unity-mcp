@@ -355,7 +355,7 @@ namespace MCPForUnityTests.Editor.Services
             ledger.Started(context);
             ledger.Finished(context);
             Assert.AreEqual("unknown", (string)ledger.Query(Id)["outcome"]);
-            Assert.AreEqual("incomplete_events", (string)ledger.Query(Id)["reason"]);
+            Assert.AreEqual("no_assembly_compilation", (string)ledger.Query(Id)["reason"]);
         }
 
         [Test]

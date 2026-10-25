@@ -270,7 +270,10 @@ namespace MCPForUnityTests.Editor.Services
                 Control = control,
             };
             TestRunnerNoThrottle.ApplyNoThrottlingPreemptive();
-            var callbacks = (IErrorCallbacks)typeof(TestRunnerNoThrottle).GetField("_callbacks", StaticPrivate).GetValue(null);
+            // Controlled native hosts may release the automatic observer to isolate preferences.
+            // Exercise the production callback implementation without registering a native observer.
+            var callbackType = typeof(TestRunnerNoThrottle).GetNestedType("TestCallbacks", BindingFlags.NonPublic);
+            var callbacks = (IErrorCallbacks)Activator.CreateInstance(callbackType, true);
             if (error)
                 callbacks.OnError("owned fixture error");
             else
