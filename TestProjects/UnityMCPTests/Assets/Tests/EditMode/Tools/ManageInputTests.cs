@@ -30,7 +30,9 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(result, Is.Not.Null);
             var data = JObject.FromObject(result.Data);
             Assert.That(data.Value<bool>("legacy_raw_input"), Is.False);
-            Assert.That(data.Value<int>("max_frames"), Is.EqualTo(600));
+            Assert.That(data.Value<bool>("ui_dispatch_changes_raw_input"), Is.False);
+            Assert.That(data.Value<int>("max_frames"), Is.EqualTo(InputSimulationRequest.MaxFrames));
+            Assert.That(data.Value<string>("active_input_handling"), Is.EqualTo(ManageInput.ActiveInputHandling));
         }
 
         [TestCase("ui_click")]
@@ -55,7 +57,7 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [TestCase("0")]
-        [TestCase("601")]
+        [TestCase("36001")]
         [TestCase("true")]
         [TestCase("1.5")]
         [TestCase("\"2\"")]

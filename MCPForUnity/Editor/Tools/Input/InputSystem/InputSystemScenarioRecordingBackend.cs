@@ -15,7 +15,7 @@ namespace MCPForUnity.Editor.Tools.Input
 {
     /// <summary>Observes delivered Input System state packets; never queues input or modifies devices/settings.</summary>
     [InitializeOnLoad]
-    public sealed class InputSystemScenarioRecordingBackend : IPlayScenarioInputRecordingBackend
+    public sealed class InputSystemScenarioRecordingBackend : IPlayScenarioInputRecordingBackend, IPlayScenarioInputRecordingCapabilities
     {
         static InputSystemScenarioRecordingBackend()
         {
@@ -23,6 +23,21 @@ namespace MCPForUnity.Editor.Tools.Input
             PlayScenarioRecordingService.InputBackend = new InputSystemScenarioRecordingBackend();
 #endif
         }
+
+        public JObject Capabilities =>
+            new JObject
+            {
+                ["backend"] = "input_system",
+                ["source"] = "UnityEngine.InputSystem",
+                ["frame_clock"] = "game_input_update",
+                ["keyboard"] = true,
+                ["mouse"] = true,
+                ["touch"] = true,
+                ["wheel"] = true,
+                ["gamepad"] = false,
+                ["raw_replay_available"] = new RuntimeInputSystemSimulationBackend().Available,
+                ["raw_replay_scope"] = "Input System consumers only; virtual devices do not change UnityEngine.Input in Both mode.",
+            };
 
         public IPlayScenarioInputRecordingSession Begin(Action<JObject, long> observed, Action<string> diagnose)
         {

@@ -31,6 +31,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         IPlayScenarioInputRecordingSession Begin(Action<JObject, long> observed, Action<string> diagnose);
     }
 
+    public interface IPlayScenarioInputRecordingCapabilities
+    {
+        JObject Capabilities { get; }
+    }
+
     /// <summary>Editor-owned recording lifecycle. Reloads retain a bounded snapshot, never live Unity references.</summary>
     [InitializeOnLoad]
     public static class PlayScenarioRecordingService
@@ -110,6 +115,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 try
                 {
                     inputSession = InputBackend?.Begin(OnInput, draft.Diagnose);
+                    if (inputSession != null && InputBackend is IPlayScenarioInputRecordingCapabilities source)
+                        draft.DescribeInputObservation(source.Capabilities);
                 }
                 catch (InvalidOperationException error)
                 {
@@ -120,7 +127,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (session == null && inputSession == null)
                     throw new InvalidOperationException("No available recorder provided an observation session.");
                 if (inputSession == null)
-                    draft.Diagnose("Optional Input System observation is unavailable; raw keyboard/mouse/touch/wheel input requires manual authoring.");
+                    draft.Diagnose(
+                        "Raw input observation is unavailable; retain supported uGUI clicks or author input manually after checking manage_input status."
+                    );
                 lastPointerUpdate = -1;
                 deadline = EditorApplication.timeSinceStartup + durationSeconds;
                 nextScan = EditorApplication.timeSinceStartup + 2;
@@ -235,7 +244,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (draft == null || !draft.Recording)
                 return;
-            if (inputSession != null && lastPointerUpdate == inputSession.UpdateCount)
+            if (inputSession != null && lastPointerUpdate == inputSession.UpdateCount && draft.RawInputReplayAvailable)
             {
                 draft.Diagnose(
                     "A uGUI click coincident with recorded raw pointer input was not duplicated; review screen-position replay and target identity."
@@ -243,6 +252,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 Remember();
                 return;
             }
+            if (inputSession != null && lastPointerUpdate == inputSession.UpdateCount && !draft.RawInputReplayAvailable)
+                draft.Diagnose(
+                    "A uGUI target click was retained alongside legacy raw pointer observation. For Old-mode replay, remove the raw input steps and retain the target-based click_ui; do not replay both copies."
+                );
             // Button callbacks may load a scene before the observer receives pointerClick.
             // Keep that source click before its queued transition; a click in the new scene flushes first.
             if (sceneScope == "all_loaded" || (target != null && target.Scene != draft.CurrentScene))

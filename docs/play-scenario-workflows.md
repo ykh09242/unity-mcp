@@ -262,8 +262,8 @@ After the mandatory initial scene load, an input step can inject a bounded virtu
 }
 ```
 
-The nested action is `key`, `mouse`, `touch` or `release_all`. Press is the default state; move and
-release are explicit. Press leases accept `frames` 1-600, default 1. `wait_frames` is 1-600, default
+The nested action is `key`, `mouse`, `touch`, `gamepad`, `wheel` or `release_all`. Press is the default state; move and
+release are explicit. Press leases accept `frames` 1-36000, default 1. `wait_frames` is 1-36000, default
 1, and waits for actual game Input System updates rather than condition polls. `release_all` is
 immediate and does not accept `wait_frames`. Keys use named controls; mouse buttons are `left`,
 `right` or `middle`; touch IDs are 1-10. A position contains two finite screen-pixel coordinates
@@ -272,12 +272,16 @@ between 0 and 1,000,000. Move/touch requirements and unrelated fields are valida
 For a deliberate drag, author mouse press with a long enough bounded lease, then move and release
 steps; touch supports the same sequence. Releases are also enforced on failure, cancellation,
 interruption and iteration completion, and on Editor pause, domain reload or Play Mode exit. An
-absolute 30-second lease prevents a stalled host from retaining injected state.
+30-second inactivity lease prevents a stalled host from retaining injected state; actual held-input updates
+can renew it up to one hour.
 
 Input steps require the optional Input System package 1.7 or newer and Input System Package/Both
 active handling. Manual-update or legacy-only injection is explicitly unavailable. Each host owns
 dedicated virtual devices; focus/settings still apply and device-paired `PlayerInput` bindings may
 require pairing. Injection is not a claim of OS hardware input or a universal controller setup.
+Old Input Handling supports uGUI event dispatch and legacy observation; Unity's public API does not
+inject recorded raw state into `UnityEngine.Input`. Both-mode virtual devices affect Input System
+consumers only. No tool changes the project's handling mode or focuses OS windows.
 
 Input has no object selector. The existing stable `target_id` is reused by `wait_object` and
 `click_ui` when a game exposes a registered target; it was not introduced by this workflow. Use
@@ -299,8 +303,8 @@ unity-mcp --instance "MyProject@<hash>" --format json scenario-recording stop RE
 ```
 
 The MCP surface is `manage_scenario_recording` with `start`, `status`, `checkpoint`, `stop` or
-`cancel`. `start` returns immediately; `status` observes once. `max_events` is 1-31 (default 31) and
-duration 1-600 seconds (default 300). The initial scene load is retained separately from the event
+`cancel`. `start` returns immediately; `status` observes once. `max_events` is 1-127 (default 31) and
+duration 1-3600 seconds (default 300). The initial scene load is retained separately from the event
 count. Stopping saves a new named scenario with `draft: true` and a `recorded-draft` tag; it refuses
 to replace an existing scenario. Cancelling discards the session without saving.
 
@@ -308,11 +312,20 @@ Recording observes supported left-button/touch pointer clicks without suppressin
 them. Clicks become `click_ui` with `click_mode: "raycast"`, preserving a reliable existing
 `target_id` or exact hierarchy path; ambiguous selectors are diagnosed and omitted. Scene transitions become
 observed `wait_scene` steps. It does not infer readiness conditions, delays, state assertions or
-reset policy. Raw/keyboard input, drag, scroll, UI Toolkit and programmatic `onClick` callbacks need
-manual authoring. Additive-scene interactions and objects created between observer scans may be
+reset policy. Available Input System or Old-mode legacy observers capture delivered key, mouse, touch
+and wheel changes; `status.input_observation` identifies source, frame clock and replay limits.
+UI Toolkit, gamepad and programmatic `onClick` callbacks need manual authoring. Additive-scene interactions and objects created between observer scans may be
 omitted with diagnostics.
 
-The observer scans every 250 ms and after scene loads, with at most 512 loaded Buttons. Event or
+Old-mode recordings retain the `recorded-legacy-input` tag. Their raw steps cannot replay into
+`UnityEngine.Input`; keep target-based `click_ui` and remove overlapping raw pointer steps during
+review. The recorder retains legacy uGUI target clicks with a duplication diagnostic. Wheel units,
+keyboard layout and timing require review before any cross-backend replay. Existing Unity focus
+and background policy determines which physical input is observed; the recorder never changes it.
+See [input observation and limitations](INPUT_AND_LOGGING.md) for supported controls and cleanup.
+
+The uGUI observer reconciles every two seconds and after scene loads, with hierarchy changes coalesced
+to at most four scans per second and at most 512 loaded Buttons. Event or
 duration limits stop observation without silently saving. Explicitly stop to save or cancel to
 discard the in-memory draft. Play Mode exit, reload and quit release observers. After reload, the
 last bounded status remains inspectable, but that session cannot resume or save; review its returned

@@ -34,19 +34,23 @@ class ScenarioRecordingResponse(TypedDict, total=False):
     group="testing",
     description=(
         "Record observed uGUI Button pointer clicks and scene changes during unpaused Editor Play Mode. "
-        "An optional enabled Input System observer also captures delivered raw key/mouse/touch/wheel events "
-        "from game Dynamic/Fixed updates; manual Input System update mode is unsupported. "
-        "Observed holds and spacing are quantized to 1..600 input updates, with diagnostics for simultaneous "
+        "An enabled Input System observer captures delivered key/mouse/touch/wheel events from game "
+        "Dynamic/Fixed updates; Old Input Handling uses read-only UnityEngine.Input observation in game Update. "
+        "Status input_observation identifies source, frame clock and replay limits. Old-mode raw observation "
+        "cannot replay into UnityEngine.Input: retain target-based click_ui for uGUI and review/remove raw "
+        "steps before Old-mode replay. No input handling, focus or background settings are changed. "
+        "Manual Input System update mode is unsupported. Observed holds and spacing are quantized "
+        "to 1..36000 game updates, with diagnostics for simultaneous "
         "events and incomplete coverage; subframe timing and gameplay outcomes are not inferred. "
         "start returns recording_id immediately; status polls explicitly. stop saves a NEW scenario with "
         "draft=true and requires review before running; cancel discards it. max_events counts emitted clicks, "
         "raw input steps, transitions and requested checkpoints, plus one initial load_scene step "
-        "(at most 32 total steps). checkpoint requests a named screenshot in the future replay, never an "
+        "(at most 128 total steps). checkpoint requests a named screenshot in the future replay, never an "
         "inferred assertion. Opt-in all_loaded captures a bounded initial scene context and exact "
         "scene-qualified clicks; transitions are observed waits, never inferred loading/unloading effects. "
         "UI Toolkit element-target recording remains manual; raw packets do not prove which handler consumed "
         "them. At least one supported observer is required: optional com.unity.ugui for Button clicks or "
-        "optional Input System for raw input. Pause, reload or Play Mode exit stops observation and retains "
+        "Input System or Old Input Handling for raw observation. Pause, reload or Play Mode exit stops observation and retains "
         "a status snapshot; domain-reloaded sessions cannot be resumed or saved."
     ),
     annotations=ToolAnnotations(
@@ -56,7 +60,11 @@ class ScenarioRecordingResponse(TypedDict, total=False):
 async def manage_scenario_recording(
     ctx: Context,
     action: Annotated[RecordingAction, "start, status, stop, cancel or checkpoint"],
-    name: Annotated[ScenarioName | None, "NEW saved draft name for start"] = None,
+    name: Annotated[
+        ScenarioName | None,
+        "NEW saved draft slug for start: 1-64 lowercase letters/digits, hyphens or underscores; "
+        "start with a lowercase letter/digit, e.g. menu-flow-01 (pattern ^[a-z0-9][a-z0-9_-]{0,63}$)",
+    ] = None,
     recording_id: Annotated[
         JobId | None, "Required for stop/cancel/checkpoint; optional current status filter"
     ] = None,
@@ -70,7 +78,9 @@ async def manage_scenario_recording(
         RecordingSceneScope | MISSING, "start-only scene scope: active (default) or all_loaded"
     ] = MISSING,
     checkpoint_name: Annotated[
-        ScenarioName | None, "Explicit named screenshot checkpoint; required for checkpoint"
+        ScenarioName | None,
+        "Screenshot checkpoint slug, required for checkpoint: 1-64 lowercase letters/digits, hyphens "
+        "or underscores, starting with a letter/digit; e.g. menu-ready",
     ] = None,
 ) -> ScenarioRecordingResponse:
     try:
@@ -84,7 +94,20 @@ async def manage_scenario_recording(
             **({"scene_scope": scene_scope} if scene_scope is not MISSING else {}),
         )
     except ValidationError as error:
-        return {"success": False, "error": f"Invalid scenario recording parameters: {error}"}
+        result: ScenarioRecordingResponse = {
+            "success": False,
+            "error": f"Invalid scenario recording parameters: {error}",
+        }
+        if any(
+            issue["type"] == "string_pattern_mismatch"
+            and issue["loc"] in (("name",), ("checkpoint_name",))
+            for issue in error.errors()
+        ):
+            result["hint"] = (
+                "Use a 1-64 character lowercase slug matching ^[a-z0-9][a-z0-9_-]{0,63}$, "
+                "for example menu-flow-01. Spaces, uppercase letters and localized names are not accepted."
+            )
+        return result
     unity_instance = await get_unity_instance_from_context(ctx)
     response = await send_with_unity_instance(
         async_send_command_with_retry,

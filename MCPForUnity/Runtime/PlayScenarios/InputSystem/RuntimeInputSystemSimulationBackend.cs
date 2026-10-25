@@ -58,7 +58,7 @@ namespace MCPForUnity.Editor.Tools.Input
 #if ENABLE_INPUT_SYSTEM
             "Manual Input System update mode is unsupported. Select Process Events In Dynamic Update or Fixed Update for bounded input simulation.";
 #else
-            "Enable Input System Package or Both in Project Settings > Player > Active Input Handling. Legacy UnityEngine.Input cannot be injected.";
+            "Old Input Handling supports uGUI event dispatch and legacy input observation. UnityEngine.Input exposes no public raw-state injection API; virtual-device replay only affects Input System consumers. Use ui_click/click_ui for uGUI or review recorded raw steps for a compatible Input System consumer.";
 #endif
 
         public object Status =>

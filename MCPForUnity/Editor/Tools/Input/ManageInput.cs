@@ -1,5 +1,6 @@
 using System;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services.PlayScenarios;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -73,10 +74,7 @@ namespace MCPForUnity.Editor.Tools.Input
                         return UguiBackend.Click(InputTargetResolver.Resolve(request.Target));
                     default:
                         if (InputBackend == null || !InputBackend.Available)
-                            return new ErrorResponse(
-                                InputBackend?.UnavailableReason
-                                    ?? "Raw input simulation requires com.unity.inputsystem (1.7+), with Active Input Handling set to Input System Package or Both. Legacy UnityEngine.Input cannot be injected. ui_click can work independently with uGUI."
-                            );
+                            return new ErrorResponse(InputBackend?.UnavailableReason ?? RawInputUnavailableReason);
                         return InputBackend.Apply(request);
                 }
             }
@@ -98,6 +96,7 @@ namespace MCPForUnity.Editor.Tools.Input
                 {
                     playing = EditorApplication.isPlaying,
                     paused = EditorApplication.isPaused,
+                    active_input_handling = ActiveInputHandling,
                     ui_click = UguiBackend != null,
                     input_system = InputBackend?.Available ?? false,
                     keyboard = InputBackend?.Available ?? false,
@@ -110,16 +109,39 @@ namespace MCPForUnity.Editor.Tools.Input
                     multi_touch = InputBackend?.Available ?? false,
                     max_touch_contacts = 10,
                     legacy_raw_input = false,
+                    legacy_input_observation = LegacyInputObservationAvailable,
+                    input_observation = (PlayScenarioRecordingService.InputBackend as IPlayScenarioInputRecordingCapabilities)?.Capabilities,
+                    ui_dispatch_changes_raw_input = false,
                     max_frames = InputSimulationRequest.MaxFrames,
                     device_timeout_seconds = InputSimulationRequest.DeviceTimeoutSeconds,
-                    raw_input_unavailable_reason = InputBackend?.Available == true
-                        ? null
-                        : InputBackend?.UnavailableReason
-                            ?? "Install com.unity.inputsystem and enable Input System Package or Both under Active Input Handling. Legacy UnityEngine.Input is unsupported.",
+                    raw_input_unavailable_reason = InputBackend?.Available == true ? null : InputBackend?.UnavailableReason ?? RawInputUnavailableReason,
                     simulation = InputBackend?.Status,
-                    notes = "Virtual devices affect Input System bindings that accept newly added devices. Use player_status for actual action/device resolution and pair_player for explicit reversible routing to one selected PlayerInput. release_player ends the owned device lease and restores prior membership. frames counts game Input System updates (dynamic or fixed), not Editor updates. No OS input is sent.",
+                    notes = "ui_click dispatches uGUI events independently of Old/New/Both input handling and does not change UnityEngine.Input. Old mode supports legacy observation, not raw injection. Virtual devices affect Input System consumers only, including in Both mode. Use player_status for actual action/device resolution and pair_player for explicit reversible routing to one selected PlayerInput. release_player ends the owned device lease and restores prior membership. frames counts game Input System updates (dynamic or fixed), not Editor updates. No OS input is sent.",
                 }
             );
+
+        public static string RawInputUnavailableReason =>
+            LegacyInputObservationAvailable
+                ? LegacyInputScenarioRecordingBackend.RawReplayUnavailableReason
+                : "Raw input replay requires an enabled com.unity.inputsystem (1.7+) backend and an Input System consumer. ui_click dispatches uGUI events independently. UnityEngine.Input cannot be injected through public APIs.";
+
+        public static bool LegacyInputObservationAvailable =>
+#if ENABLE_LEGACY_INPUT_MANAGER
+            true;
+#else
+            false;
+#endif
+
+        public static string ActiveInputHandling =>
+#if ENABLE_LEGACY_INPUT_MANAGER && ENABLE_INPUT_SYSTEM
+            "Both";
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            "Old";
+#elif ENABLE_INPUT_SYSTEM
+            "Input System Package";
+#else
+            "unknown";
+#endif
 
         private static void Cleanup() => InputBackend?.ReleaseAll();
     }

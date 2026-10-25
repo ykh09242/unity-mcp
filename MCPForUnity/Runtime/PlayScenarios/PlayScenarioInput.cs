@@ -119,7 +119,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
             if (backend != null && backend.Available)
                 return;
             string reason =
-                backend?.UnavailableReason ?? "Scenario raw input requires com.unity.inputsystem 1.7+ and Input System Package or Both active input handling.";
+                backend?.UnavailableReason
+                ?? "Scenario raw replay requires an enabled com.unity.inputsystem 1.7+ backend and an Input System consumer. Old Input Handling supports legacy observation and click_ui, but UnityEngine.Input has no public raw-state injection API. Review recorded-legacy-input drafts and replace raw UI input with target-based click_ui steps.";
             Release();
             throw new PlayScenarioException(new PlayScenarioFailure { Code = "capability_unavailable", Message = reason });
         }
