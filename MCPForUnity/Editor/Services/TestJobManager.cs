@@ -682,6 +682,7 @@ namespace MCPForUnity.Editor.Services
             {
                 EditorApplication.update -= TickNativeControls;
                 _controlMonitor = false;
+                TestRunnerNoThrottle.RestoreAfterRun();
             }
         }
 

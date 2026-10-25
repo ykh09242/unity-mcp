@@ -235,7 +235,7 @@ namespace MCPForUnity.Editor.Services
             if (IsTestRunActive())
                 ApplyNoThrottling();
             else if (AreSettingsCaptured())
-                RestoreThrottling();
+                RestoreAfterRun();
             else
                 TryLease(current =>
                 {
@@ -253,7 +253,7 @@ namespace MCPForUnity.Editor.Services
             if (IsTestRunActive())
                 ApplyNoThrottling();
             else if (AreSettingsCaptured())
-                RestoreThrottling();
+                RestoreAfterRun();
             else if (!TryLease(current => current.Recover()))
                 return;
             bool pending = true;
@@ -295,6 +295,17 @@ namespace MCPForUnity.Editor.Services
                 SetSettingsCaptured(false);
         }
 
+        internal static void RestoreAfterRun()
+        {
+            SetTestRunActive(false);
+            // RunFinished precedes UTF's task disposal and final GUID progress event.
+            // Keep background ticks available until that resource owner confirms release.
+            if (TestJobManager.NativeAdmissionBlocked)
+                ScheduleMaintenance();
+            else
+                RestoreThrottling();
+        }
+
         private static void OnQuit()
         {
             RestoreThrottling();
@@ -324,13 +335,13 @@ namespace MCPForUnity.Editor.Services
 
             public void RunFinished(ITestResultAdaptor result)
             {
-                RestoreThrottling();
+                RestoreAfterRun();
             }
 
             public void OnError(string message)
             {
                 // Build/prebuild failures may terminate before RunFinished is delivered.
-                RestoreThrottling();
+                RestoreAfterRun();
             }
 
             public void TestStarted(ITestAdaptor test) { }
