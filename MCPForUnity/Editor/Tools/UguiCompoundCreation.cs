@@ -67,13 +67,13 @@ namespace MCPForUnity.Editor.Tools
                 Name,
                 EventSystem;
             internal GameObject Parent;
-            internal GameObject ExistingEventSystem;
+            internal GameObject ExistingEventSystem = null;
             internal Vector2 Size,
                 Position;
             internal JObject Values;
             internal UnityEngine.Object Font;
             internal Scene Scene;
-            internal bool NewEventSystem;
+            internal bool NewEventSystem = false;
             internal readonly Dictionary<string, Type> Types = new Dictionary<string, Type>();
             internal readonly Dictionary<string, MemberSlot> Properties = new Dictionary<string, MemberSlot>();
             internal readonly Dictionary<string, MethodInfo> Methods = new Dictionary<string, MethodInfo>();
