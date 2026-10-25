@@ -124,6 +124,20 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         }
 
         [Test]
+        public void MissingBackendExplainsConsumerAndProjectIntegrationRequirements()
+        {
+            PlayScenarioPlayerInput.CreateInputBackend = null;
+            var session = new PlayScenarioInputSession();
+            var exception = Assert.Throws<PlayScenarioException>(() => session.Evaluate(Definition().Steps[1], true));
+            Assert.That(exception.Failure.Code, Is.EqualTo("capability_unavailable"));
+            Assert.That(exception.Failure.Message, Does.Contain("Input System Package/Both handling and an Input System consumer"));
+            Assert.That(exception.Failure.Message, Does.Contain("changing handling alone does not redirect"));
+            Assert.That(exception.Failure.Message, Does.Contain("target-based click_ui"));
+            Assert.That(exception.Failure.Message, Does.Contain("explicit project-code integration"));
+            Assert.That(backend.Applies, Is.Zero);
+        }
+
+        [Test]
         public void ExpiredLifetimeFailsWithoutRedispatchingTheInput()
         {
             var session = new PlayScenarioInputSession();
