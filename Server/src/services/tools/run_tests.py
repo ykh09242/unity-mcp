@@ -208,6 +208,9 @@ async def _update_job_nudge(
         state.editor_is_focused = progress.get("editor_is_focused", True)
     progress["focus_nudge_attempts"] = state.attempts
     progress["focus_nudge_limit"] = _MAX_JOB_NUDGES
+    if focus_nudge._is_disabled():
+        progress["focus_nudge_status"] = "disabled"
+        return
     if state.attempts >= _MAX_JOB_NUDGES:
         progress["stuck_suspected"] = True
         progress["focus_nudge_status"] = "attempt_limit_reached"

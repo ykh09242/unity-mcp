@@ -25,6 +25,7 @@ def isolate_nudge_state(monkeypatch):
     import utils.focus_nudge as fn
 
     monkeypatch.delenv("UNITY_MCP_DISABLE_FOCUS_NUDGE", raising=False)
+    monkeypatch.setenv("UNITY_MCP_ENABLE_FOCUS_NUDGE", "1")
     for name in ("_last_nudge_time", "_consecutive_nudges", "_last_progress_time"):
         monkeypatch.setattr(fn, name, 0)
     monkeypatch.setattr(fn, "_nudge_in_flight", False)
@@ -203,6 +204,31 @@ class TestNudgeUnityFocus:
         ):
             result = await nudge_unity_focus(force=False)
             assert result is False
+
+
+@pytest.mark.parametrize("value", [None, "", "0", "false", "off", "invalid"])
+@pytest.mark.asyncio
+async def test_no_desktop_access_without_explicit_focus_recovery_opt_in(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("UNITY_MCP_ENABLE_FOCUS_NUDGE", raising=False)
+    else:
+        monkeypatch.setenv("UNITY_MCP_ENABLE_FOCUS_NUDGE", value)
+    # A false legacy opt-out does not authorize changing the user's desktop.
+    monkeypatch.setenv("UNITY_MCP_DISABLE_FOCUS_NUDGE", "0")
+    with (
+        patch("utils.focus_nudge.subprocess.run") as run,
+        patch("utils.focus_nudge._get_frontmost_app") as frontmost,
+    ):
+        assert not should_nudge("running", False, None)
+        assert not await nudge_unity_focus(force=True)
+    run.assert_not_called()
+    frontmost.assert_not_called()
+
+
+@pytest.mark.parametrize("value", ["1", "true", " YES ", "On"])
+def test_explicit_focus_recovery_opt_in_retains_stall_decision(monkeypatch, value):
+    monkeypatch.setenv("UNITY_MCP_ENABLE_FOCUS_NUDGE", value)
+    assert should_nudge("running", False, None)
 
 
 @pytest.mark.parametrize("value", ["1", "true", " YES ", "On"])

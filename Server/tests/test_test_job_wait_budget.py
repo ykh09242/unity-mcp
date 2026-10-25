@@ -25,6 +25,8 @@ RUNNING = {
 
 @pytest.fixture
 def job_transport(monkeypatch):
+    monkeypatch.setenv("UNITY_MCP_ENABLE_FOCUS_NUDGE", "1")
+    monkeypatch.delenv("UNITY_MCP_DISABLE_FOCUS_NUDGE", raising=False)
     monkeypatch.setattr(jobs.config, "transport_mode", "http")
     monkeypatch.setattr(jobs.config, "http_remote_hosted", False)
     sender = AsyncMock(return_value=deepcopy(RUNNING))

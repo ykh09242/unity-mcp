@@ -238,11 +238,23 @@ The server and Editor-control CLI have different options. `unity-mcp` requires l
 | `UNITY_MCP_DEFAULT_INSTANCE` | Server default selector; not a substitute for hosted per-request targeting. |
 | `UNITY_MCP_SKIP_STARTUP_CONNECT=1` | Skip initial Unity connection attempt. |
 | `UNITY_MCP_LOG_DIR` | Override rotating server log directory. |
-| `UNITY_MCP_DISABLE_FOCUS_NUDGE=1` | Disable local test-focus nudges. |
+| `UNITY_MCP_ENABLE_FOCUS_NUDGE=1` | Opt in to legacy local test-focus recovery; disabled by default. |
+| `UNITY_MCP_DISABLE_FOCUS_NUDGE=1` | Disable local test-focus recovery, even when explicitly enabled. |
 | `UNITY_MCP_TEST_WAIT_TASKS_DIR` | Opt in to bounded test-wait Tasks over HTTP with a private journal directory. |
 | `UNITY_MCP_SCENE_LOAD_INPUTS=1` | Opt in to missing-target scene-load form input over HTTP. |
 
 Hosted mode requires an HTTPS validator and private HTTPS/WSS proxy plus `--http-behind-tls-proxy`; this assertion does not enable TLS. Its flags, environment variables and deployment examples live in [Remote Server Auth](../website/docs/guides/remote-server-auth.md). Local REST/CLI control is unavailable in hosted mode.
+
+Test-job polling leaves desktop focus and minimized windows untouched by default.
+Normal Editor background dispatch, test execution and deadlines are unchanged;
+`progress.focus_nudge_status` reports `disabled` when recovery is not enabled.
+If tests repeatedly stop progressing only while Unity is unfocused, a local server
+can explicitly enable the legacy fallback with `UNITY_MCP_ENABLE_FOCUS_NUDGE=1`
+and restart the server. This temporarily activates Unity and can restore a
+minimized window; returning focus to the previous app does not re-minimize Unity.
+Use this only when that desktop interaction is acceptable. A long-running test
+without progress updates alone does not establish that focus recovery is needed.
+Hosted servers never manipulate the server host's desktop, including with opt-in.
 
 ## Tripo local image consent and task recovery
 

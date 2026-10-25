@@ -32,6 +32,7 @@ def policy(monkeypatch):
     monkeypatch.setattr(mod.config, "transport_mode", "stdio")
     monkeypatch.setattr(mod.config, "http_remote_hosted", False)
     monkeypatch.delenv("UNITY_MCP_DISABLE_FOCUS_NUDGE", raising=False)
+    monkeypatch.setenv("UNITY_MCP_ENABLE_FOCUS_NUDGE", "1")
     monkeypatch.setattr(mod.focus_nudge, "_BASE_NUDGE_INTERVAL_S", 0)
     monkeypatch.setattr(mod.focus_nudge, "_MAX_NUDGE_INTERVAL_S", 0)
     monkeypatch.setattr(mod, "_get_unity_project_path", AsyncMock(return_value=r"C:\Project"))
@@ -126,7 +127,25 @@ async def test_background_execution_skips_even_long_test_without_progress(policy
 
 
 @pytest.mark.asyncio
-async def test_old_editor_without_background_field_retains_bounded_nudges(policy):
+async def test_default_polls_leave_desktop_untouched_even_when_test_looks_stalled(
+    policy, monkeypatch
+):
+    monkeypatch.delenv("UNITY_MCP_ENABLE_FOCUS_NUDGE", raising=False)
+    resolve_project = AsyncMock(return_value=r"C:\Project")
+    monkeypatch.setattr(mod, "_get_unity_project_path", resolve_project)
+
+    for _ in range(6):
+        data = await poll()
+
+    policy.assert_not_awaited()
+    resolve_project.assert_not_awaited()
+    assert data["progress"]["focus_nudge_attempts"] == 0
+    assert data["progress"]["focus_nudge_status"] == "disabled"
+    assert not data["progress"].get("stuck_suspected", False)
+
+
+@pytest.mark.asyncio
+async def test_opted_in_old_editor_without_background_field_retains_bounded_nudges(policy):
     await poll(snapshot())
     policy.assert_awaited_once()
     assert policy.call_args.kwargs["force"] is True
