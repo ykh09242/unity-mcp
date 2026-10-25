@@ -45,8 +45,16 @@ Screen Space Overlay uses an owned preview scene. The source is never rebuilt.
 Only exact installed built-in Horizontal/Vertical/GridLayoutGroup, LayoutElement,
 ContentSizeFitter, AspectRatioFitter, Image, and RawImage providers are copied.
 Source custom layout, Graphic, Selectable, and ILayoutIgnorer getters are never
-invoked. Other layout providers, including Text/TMP, are omitted and mark the
-preview partial. Affected size, safe-area, and touch findings become unknown.
+invoked. Exact installed `TMPro.TextMeshProUGUI` fixed rectangles are supported
+without cloning TMP or calculating text/font metrics. This includes glyph auto
+sizing within a fixed rectangle, GridLayoutGroup cells, and linear layout groups
+with both child-control axes disabled. A TMP rectangle remains partial when
+`autoSizeTextContainer` is enabled, an enabled ContentSizeFitter on the text fits
+either axis, or an enabled direct-parent Horizontal/VerticalLayoutGroup controls
+either child axis. These cases need text preferred metrics, which are not reused
+from source caches across virtual profile dimensions. TMP subclasses and other
+layout providers, including legacy Text, are omitted and mark the preview partial.
+Affected size, safe-area, and touch findings become unknown.
 Nested Canvas contexts are also partial. This intentionally conservative scope
 avoids claiming that an incomplete layout passed.
 
@@ -105,3 +113,10 @@ renders, or dispatches pointer/selection events. Preview cleanup runs in `finall
 The server rejects unknown peer fields, unqualified legacy output, incorrect
 budget/profile/threshold echoes, impossible physical/safe-area findings, and
 invalid retained projection evidence.
+
+A finite rectangle with zero or negative extent is omitted with
+`degenerate_geometry`; NaN, Infinity, or nonfinite endpoints use
+`nonfinite_geometry`. Reasons apply to the profile: another valid node can retain
+finite bounds alongside a reason caused by an omitted degenerate node. Neither
+reason certifies that every node has invalid bounds. Older peer reports using
+`nonfinite_geometry` remain accepted.

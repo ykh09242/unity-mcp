@@ -95,7 +95,8 @@ namespace MCPForUnity.Editor.Tools
             internal RectTransform Source,
                 Preview;
             internal int Depth;
-            internal bool Candidate;
+            internal bool Candidate,
+                ConsumesChildTextMetrics;
         }
 
         private sealed class SelectorFrame
@@ -396,6 +397,54 @@ namespace MCPForUnity.Editor.Tools
                 .FirstOrDefault(t => t != null);
         }
 
+        private static Type NativeTmp() =>
+            AppDomain
+                .CurrentDomain.GetAssemblies()
+                .Where(a => a.GetName().Name == "Unity.TextMeshPro")
+                .Select(a => a.GetType("TMPro.TextMeshProUGUI", false))
+                .FirstOrDefault(t => t != null);
+
+        private static bool ReadNativeTmp(Component component, Type nativeType, string member)
+        {
+            if (component.GetType() != nativeType)
+                throw new ArgumentException();
+            var property = component.GetType().GetProperty(member, BindingFlags.Public | BindingFlags.Instance);
+            string assembly = property?.DeclaringType?.Assembly.GetName().Name;
+            if (assembly != "Unity.TextMeshPro" && assembly != "UnityEngine.UI")
+                throw new ArgumentException();
+            return (bool)property.GetValue(component);
+        }
+
+        private static void RecordUnsupported(Component component, RectTransform source, Budget b)
+        {
+            if (b.UnsupportedComponent != null)
+                return;
+            string name = component.GetType().FullName;
+            string path = source.name;
+            Transform ancestor = source.parent;
+            int depth = 0;
+            while (ancestor != null && depth++ < 16 && path.Length < 240 && b.Charge("ancestors"))
+            {
+                path = ancestor.name + "/" + path;
+                ancestor = ancestor.parent;
+            }
+            var detail = new JObject
+            {
+                ["instance_id"] = source.gameObject.GetInstanceIDCompat(),
+                ["component_type"] = name.Length > 256 ? name.Substring(0, 256) : name,
+                ["path"] = path.Length > 256 ? path.Substring(path.Length - 256) : path,
+                ["path_truncated"] = ancestor != null || path.Length > 256,
+            };
+            int characters = detail.ToString(Formatting.None).Length;
+            if (characters <= b.Options.Characters - b.Characters && b.Charge("output"))
+            {
+                b.Characters += characters;
+                b.UnsupportedComponent = detail;
+            }
+            else
+                b.Reasons.Add("max_characters");
+        }
+
         private static T Read<T>(Component component, string member, T fallback)
         {
             if (component == null)
@@ -496,9 +545,10 @@ namespace MCPForUnity.Editor.Tools
                 root.SetActive(false);
                 SceneManager.MoveGameObjectToScene(root, scene);
                 var nodes = new List<Node>();
-                var stack = new Stack<(Transform source, Transform parent, int depth)>();
+                var stack = new Stack<(Transform source, Node parent, int depth)>();
                 stack.Push((canvas.transform, null, 0));
                 var scalerType = Builtin("UnityEngine.UI.CanvasScaler");
+                var tmpType = NativeTmp();
                 Component scaler = null;
                 bool unsupported = false,
                     targetFound = false;
@@ -521,7 +571,7 @@ namespace MCPForUnity.Editor.Tools
                     var rect = (RectTransform)clone.transform;
                     if (item.parent != null)
                     {
-                        rect.SetParent(item.parent, false);
+                        rect.SetParent(item.parent.Preview, false);
                         rect.anchorMin = source.anchorMin;
                         rect.anchorMax = source.anchorMax;
                         rect.pivot = source.pivot;
@@ -544,6 +594,8 @@ namespace MCPForUnity.Editor.Tools
                         unsupported = true;
                         break;
                     }
+                    Component fixedText = null;
+                    bool fitsText = false;
                     foreach (var component in components)
                     {
                         if (component == null)
@@ -554,6 +606,12 @@ namespace MCPForUnity.Editor.Tools
                         Type type = component.GetType();
                         string name = type.FullName;
                         bool builtin = type == Builtin(name);
+                        if (type == tmpType)
+                        {
+                            // No TMP clone, text parsing, preferred-size getter, font lookup or callback.
+                            fixedText = component;
+                            continue;
+                        }
                         if (builtin && PreviewNames.Contains(name))
                         {
                             // Screen-space root AspectRatioFitter is inert. Do not enable it on our WorldSpace root.
@@ -561,6 +619,13 @@ namespace MCPForUnity.Editor.Tools
                                 continue;
                             var copy = clone.AddComponent(type);
                             EditorUtility.CopySerialized(component, copy);
+                            if (((Behaviour)component).isActiveAndEnabled)
+                            {
+                                if (name == "UnityEngine.UI.HorizontalLayoutGroup" || name == "UnityEngine.UI.VerticalLayoutGroup")
+                                    node.ConsumesChildTextMetrics = Read(component, "childControlWidth", true) || Read(component, "childControlHeight", true);
+                                if (name == "UnityEngine.UI.ContentSizeFitter")
+                                    fitsText = EnumRead(component, "horizontalFit") != 0 || EnumRead(component, "verticalFit") != 0;
+                            }
                             if (
                                 (name == "UnityEngine.UI.Image" || name == "UnityEngine.UI.RawImage")
                                 && ((Behaviour)component).isActiveAndEnabled
@@ -601,34 +666,22 @@ namespace MCPForUnity.Editor.Tools
                             )
                             {
                                 unsupported = true;
-                                if (b.UnsupportedComponent == null)
-                                {
-                                    string path = source.name;
-                                    Transform ancestor = source.parent;
-                                    int depth = 0;
-                                    while (ancestor != null && depth++ < 16 && path.Length < 240 && b.Charge("ancestors"))
-                                    {
-                                        path = ancestor.name + "/" + path;
-                                        ancestor = ancestor.parent;
-                                    }
-                                    var detail = new JObject
-                                    {
-                                        ["instance_id"] = source.gameObject.GetInstanceIDCompat(),
-                                        ["component_type"] = name.Length > 256 ? name.Substring(0, 256) : name,
-                                        ["path"] = path.Length > 256 ? path.Substring(path.Length - 256) : path,
-                                        ["path_truncated"] = ancestor != null || path.Length > 256,
-                                    };
-                                    int characters = detail.ToString(Formatting.None).Length;
-                                    if (characters <= options.Characters - b.Characters && b.Charge("output"))
-                                    {
-                                        b.Characters += characters;
-                                        b.UnsupportedComponent = detail;
-                                    }
-                                    else
-                                        b.Reasons.Add("max_characters");
-                                }
+                                RecordUnsupported(component, source, b);
                             }
                         }
+                    }
+                    if (fixedText != null)
+                    {
+                        bool active = ((Behaviour)fixedText).isActiveAndEnabled;
+                        // TMP contributes preferred metrics only when a fitter or a direct parent
+                        // linear group consumes them. Grid cells and fixed rectangles do not.
+                        if (active && (fitsText || item.parent?.ConsumesChildTextMetrics == true || ReadNativeTmp(fixedText, tmpType, "autoSizeTextContainer")))
+                        {
+                            unsupported = true;
+                            RecordUnsupported(fixedText, source, b);
+                        }
+                        else if (active && ReadNativeTmp(fixedText, tmpType, "raycastTarget"))
+                            node.Candidate = true;
                     }
                     if (item.parent != null)
                         clone.SetActive(source.gameObject.activeSelf);
@@ -644,7 +697,7 @@ namespace MCPForUnity.Editor.Tools
                     {
                         var child = source.GetChild(i);
                         if (options.Inactive || child.gameObject.activeInHierarchy)
-                            stack.Push((child, rect, item.depth + 1));
+                            stack.Push((child, node, item.depth + 1));
                     }
                 }
                 if (!targetFound)
@@ -907,7 +960,11 @@ namespace MCPForUnity.Editor.Tools
             if (!RectValid(r))
             {
                 report["status"] = "partial";
-                ((JArray)report["reasons"]).Add("nonfinite_geometry");
+                ((JArray)report["reasons"]).Add(
+                    Finite(r.x) && Finite(r.y) && Finite(r.width) && Finite(r.height) && Finite(r.xMax) && Finite(r.yMax)
+                        ? "degenerate_geometry"
+                        : "nonfinite_geometry"
+                );
                 return;
             }
             double widthMm = (double)r.width / p.Dpi * 25.4,

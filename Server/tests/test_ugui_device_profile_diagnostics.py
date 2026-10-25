@@ -373,3 +373,24 @@ def test_unsupported_component_still_rejects_geometry_pass_claims(unavailable_la
         )
     with pytest.raises(ValueError, match="unsupported_device_profile_response"):
         validate_ugui_device_profile_diagnostics(report)
+
+
+@pytest.mark.parametrize("reason", ["degenerate_geometry", "nonfinite_geometry"])
+def test_partial_empty_geometry_receipt_accepts_precise_and_legacy_reason(
+    unavailable_layout_report, reason
+):
+    report = copy.deepcopy(unavailable_layout_report)
+    report["unsupported_component"] = None
+    report["budget"]["evaluation_counts"]["output"] = 0
+    report["budget"]["evaluations"] -= 1
+    report["budget"]["characters"] = 0
+    report["profiles"][0].update(
+        status="partial",
+        reasons=[reason],
+        scale_factor=1.0,
+        reference_pixels_per_unit=100.0,
+        layout_dpi_source="request",
+    )
+    if report["profiles"][0]["source"] == "observed":
+        report["profiles"][0].update(**virtual(), dpi_source="request")
+    assert validate_ugui_device_profile_diagnostics(report) == report

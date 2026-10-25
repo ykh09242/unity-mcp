@@ -122,6 +122,7 @@ class ProfileReport(Closed):
             "camera_resolution_resimulation_unsupported",
             "projection_incomplete",
             "nonfinite_geometry",
+            "degenerate_geometry",
         ]
     ]
     scale_factor: Positive | None

@@ -640,6 +640,180 @@ namespace MCPForUnityTests.EditMode.Tools
 #endif
         }
 
+        [Test]
+        public void FixedNativeTmpRectangleHasNumericalProfileFindingsWithoutChangingSource()
+        {
+            var text = CreateTmpTarget();
+            Set(text, "text", "Device profile label");
+            Set(text, "enableAutoSizing", true); // Glyph sizing does not resize a fixed rectangle.
+            Set(text, "raycastTarget", true);
+            string before = State();
+            var request = Request(Virtual(800, 600, 160), Virtual(1200, 800, 320));
+            request["minimum_touch_target_mm"] = 7;
+            var data = Call(request);
+            TestContext.WriteLine("UI14_TMP_REQUEST:" + request.ToString(Newtonsoft.Json.Formatting.None));
+            TestContext.WriteLine("UI14_TMP_REPORT:" + data.ToString(Newtonsoft.Json.Formatting.None));
+            Assert.That(data["status"].Value<string>(), Is.EqualTo("complete"), data.ToString());
+            Assert.That(data["unsupported_component"].Type, Is.EqualTo(JTokenType.Null));
+            Assert.That(Node(data, 0)["pixel_bounds"].Values<float>(), Is.EqualTo(new[] { 376f, 276f, 48f, 48f }));
+            Assert.That(Node(data, 1)["pixel_bounds"].Values<float>(), Is.EqualTo(new[] { 576f, 376f, 48f, 48f }));
+            Assert.That(Node(data, 0)["width_mm"].Value<double>(), Is.EqualTo(7.62).Within(0.00001));
+            Assert.That(Node(data, 1)["width_mm"].Value<double>(), Is.EqualTo(3.81).Within(0.00001));
+            Assert.That(Node(data, 0)["touch_target"].Value<string>(), Is.EqualTo("meets_caller_threshold"));
+            Assert.That(Node(data, 1)["touch_target"].Value<string>(), Is.EqualTo("below_caller_threshold"));
+            Assert.That(Node(data, 0)["safe_area_relation"].Value<string>(), Is.EqualTo("inside_geometric_safe_area"));
+            Assert.That(State(), Is.EqualTo(before));
+        }
+
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        public void NativeTmpParentDrivenAxisRemainsUnknown(bool width, bool height)
+        {
+            CreateTmpTarget();
+            var parent = new GameObject("LinearParent", typeof(RectTransform));
+            parent.transform.SetParent(root.transform, false);
+            target.transform.SetParent(parent.transform, false);
+            var group = parent.AddComponent(Ui("HorizontalLayoutGroup"));
+            Set(group, "childControlWidth", width);
+            Set(group, "childControlHeight", height);
+            var data = Call(Request(Virtual(800, 600, 160)));
+            AssertTmpUnsupported(data);
+        }
+
+        [TestCase("HorizontalLayoutGroup")]
+        [TestCase("VerticalLayoutGroup")]
+        [TestCase("GridLayoutGroup")]
+        public void NativeTmpNonConsumingLayoutMatchesNativeRectangle(string kind)
+        {
+            CreateTmpTarget();
+            var group = root.AddComponent(Ui(kind));
+            if (kind == "GridLayoutGroup")
+                Set(group, "cellSize", new Vector2(64, 32));
+            else
+            {
+                Set(group, "childControlWidth", false);
+                Set(group, "childControlHeight", false);
+                Set(group, "childForceExpandWidth", false);
+                Set(group, "childForceExpandHeight", false);
+            }
+            // Only fixture setup rebuilds the source; compare an actual native layout result.
+            Rebuild((RectTransform)root.transform);
+            Vector2 expected = ((RectTransform)target.transform).rect.size;
+            string before = State();
+            var data = Call(Request(Virtual(800, 600, 160)));
+            Assert.That(data["status"].Value<string>(), Is.EqualTo("complete"), data.ToString());
+            Assert.That(Node(data, 0)["pixel_bounds"][2].Value<float>(), Is.EqualTo(expected.x).Within(0.001));
+            Assert.That(Node(data, 0)["pixel_bounds"][3].Value<float>(), Is.EqualTo(expected.y).Within(0.001));
+            Assert.That(State(), Is.EqualTo(before));
+        }
+
+        [TestCase("horizontalFit")]
+        [TestCase("verticalFit")]
+        public void NativeTmpContentFitterRemainsUnknown(string axis)
+        {
+            CreateTmpTarget();
+            var fitter = target.AddComponent(Ui("ContentSizeFitter"));
+            SetEnum(fitter, axis, "PreferredSize");
+            AssertTmpUnsupported(Call(Request(Virtual(800, 600, 160))));
+        }
+
+        [Test]
+        public void NativeTmpAutoSizeContainerRemainsUnknown()
+        {
+            var text = CreateTmpTarget();
+            Set(text, "autoSizeTextContainer", true);
+            AssertTmpUnsupported(Call(Request(Virtual(800, 600, 160))));
+        }
+
+        [Test]
+        public void ZeroSizeChildReportsDegenerateGeometryAlongsideFiniteTarget()
+        {
+            var child = new GameObject("Empty", typeof(RectTransform));
+            child.transform.SetParent(target.transform, false);
+            ((RectTransform)child.transform).sizeDelta = Vector2.zero;
+            var data = Call(Request(Virtual(800, 600, 160)));
+            Assert.That(data["profiles"][0]["reasons"].Values<string>(), Does.Contain("degenerate_geometry"));
+            Assert.That(data["profiles"][0]["reasons"].Values<string>(), Does.Not.Contain("nonfinite_geometry"));
+            Assert.That(Node(data, 0)["pixel_bounds"].Values<float>(), Is.EqualTo(new[] { 376f, 276f, 48f, 48f }));
+        }
+
+        [Test]
+        public void NativeTmpPreprocessorIsNotInvokedForFixedGeometry()
+        {
+#if MCP_UI14_TMP_WITNESS
+            var text = (TMPro.TextMeshProUGUI)CreateTmpTarget();
+            var witness = new Ui14ArmedTextPreprocessor();
+            text.textPreprocessor = witness;
+            text.text = "Callback must not run";
+            string before = State();
+            var data = Call(Request(Virtual(800, 600, 160)));
+            Assert.That(data["status"].Value<string>(), Is.EqualTo("complete"), data.ToString());
+            Assert.That(witness.Calls, Is.Zero);
+            Assert.That(State(), Is.EqualTo(before));
+#else
+            Assert.Ignore("Mandatory TMP callback witness requires the owned native TMP reference and MCP_UI14_TMP_WITNESS define.");
+#endif
+        }
+
+        [Test]
+        public void CustomTmpOverrideIsNotAdmittedOrInvoked()
+        {
+#if MCP_UI14_TMP_WITNESS
+            UnityEngine.Object.DestroyImmediate(target.GetComponent(Ui("Image")));
+            var text = target.AddComponent<Ui14ArmedTmpOverride>();
+            text.Armed = true;
+            string before = State();
+            var data = Call(Request(Virtual(800, 600, 160)));
+            Assert.That(data["status"].Value<string>(), Is.EqualTo("partial"));
+            Assert.That(data["unsupported_component"]["component_type"].Value<string>(), Is.EqualTo(typeof(Ui14ArmedTmpOverride).FullName));
+            Assert.That(text.Calls, Is.Zero);
+            Assert.That(Node(data, 0)["safe_area_relation"].Value<string>(), Is.EqualTo("unknown"));
+            Assert.That(State(), Is.EqualTo(before));
+            text.Armed = false;
+#else
+            Assert.Ignore("Mandatory TMP override witness requires the owned native TMP reference and MCP_UI14_TMP_WITNESS define.");
+#endif
+        }
+
+        [Test]
+        public void FixedNativeTmpLargeGraphStillObeysSharedBudget()
+        {
+            CreateTmpTarget();
+            for (int i = 0; i < 120; i++)
+            {
+                var child = new GameObject("Bounded_" + i, typeof(RectTransform));
+                child.transform.SetParent(target.transform, false);
+            }
+            var request = Request(Virtual(800, 600, 160), Virtual(1200, 800, 320));
+            request["max_evaluations"] = 64;
+            string before = State();
+            var data = Call(request);
+            Assert.That(data["status"].Value<string>(), Is.EqualTo("partial"));
+            Assert.That(data["budget"]["evaluations"].Value<int>(), Is.LessThanOrEqualTo(64));
+            Assert.That(data["budget"]["reasons"].Values<string>(), Does.Contain("max_evaluations"));
+            Assert.That(State(), Is.EqualTo(before));
+        }
+
+        private Component CreateTmpTarget()
+        {
+            var type = UnityTypeResolver.ResolveComponent("TMPro.TextMeshProUGUI");
+            if (type == null)
+                Assert.Ignore("Optional TMP is unavailable; this is not a passing native TMP geometry check.");
+            UnityEngine.Object.DestroyImmediate(target.GetComponent(Ui("Image")));
+            var text = target.AddComponent(type);
+            Set(text, "autoSizeTextContainer", false);
+            return text;
+        }
+
+        private void AssertTmpUnsupported(JObject data)
+        {
+            Assert.That(data["profiles"][0]["status"].Value<string>(), Is.EqualTo("partial"), data.ToString());
+            Assert.That(data["profiles"][0]["reasons"].Values<string>(), Does.Contain("unsupported_layout_provider"));
+            Assert.That(data["unsupported_component"]["component_type"].Value<string>(), Is.EqualTo("TMPro.TextMeshProUGUI"));
+            Assert.That(Node(data, 0)["safe_area_relation"].Value<string>(), Is.EqualTo("unknown"));
+            Assert.That(Node(data, 0)["touch_target"].Value<string>(), Is.EqualTo("unknown"));
+        }
+
         private string State()
         {
             var screen = new JObject
@@ -715,6 +889,41 @@ namespace MCPForUnityTests.EditMode.Tools
                 .GetMethod("ForceRebuildLayoutImmediate", BindingFlags.Public | BindingFlags.Static)
                 .Invoke(null, new object[] { rect });
     }
+
+#if MCP_UI14_TMP_WITNESS
+    public sealed class Ui14ArmedTextPreprocessor : TMPro.ITextPreprocessor
+    {
+        public int Calls;
+
+        public string PreprocessText(string text)
+        {
+            Calls++;
+            throw new InvalidOperationException("UI14 TMP preprocessor executed");
+        }
+    }
+
+    public sealed class Ui14ArmedTmpOverride : TMPro.TextMeshProUGUI
+    {
+        [NonSerialized]
+        public bool Armed;
+
+        [NonSerialized]
+        public int Calls;
+        public override bool autoSizeTextContainer
+        {
+            get
+            {
+                if (Armed)
+                {
+                    Calls++;
+                    throw new InvalidOperationException("UI14 custom TMP getter executed");
+                }
+                return base.autoSizeTextContainer;
+            }
+            set => base.autoSizeTextContainer = value;
+        }
+    }
+#endif
 
 #if MCP_UI14_UGUI_WITNESS
     // Native-only owned projection adds the installed uGUI reference and this define.
