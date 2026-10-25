@@ -151,7 +151,15 @@ namespace MCPForUnityTests.Editor.Tools
 #endif
                 }
                 var beforePosition = go.transform.position;
-                var response = Send("simulate_step", dimension, new JObject { ["step_size"] = JToken.Parse(value) });
+                JToken requestedStep = JToken.Parse(value);
+                if (requestedStep.Type == JTokenType.String || requestedStep.Type == JTokenType.Array)
+                    LogAssert.Expect(
+                        LogType.Error,
+                        new Regex(
+                            "\\[ManagePhysics\\] Action 'simulate_step' failed: System.ArgumentException: Invalid parameter 'step_size': expected Single, got (String|Array)\\."
+                        )
+                    );
+                var response = Send("simulate_step", dimension, new JObject { ["step_size"] = requestedStep });
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 StringAssert.Contains("step_size", response.Value<string>("error"));
                 Assert.AreEqual(beforePosition, go.transform.position);
