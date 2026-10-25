@@ -338,13 +338,34 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That(engine.State.PlayRequested, Is.True);
         }
 
-        [Test]
-        public void StartingJobAlsoHasAWallClockDeadline()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void StartingJobTimeoutDistinguishesPlayStartupFromStepFailure(bool playRequested)
         {
             var host = new Host();
-            var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(Definition(), new string('d', 32), 1, 1, 1000), host);
+            int captures = 0;
+            PlayScenarioStep capturedStep = null;
+            var engine = new PlayScenarioEngine(
+                PlayScenarioEngine.Create(Definition(), new string('d', 32), 1, 1, 1000),
+                host,
+                (_, step, __) =>
+                {
+                    captures++;
+                    capturedStep = step;
+                }
+            );
+            engine.State.PlayRequested = playRequested;
             engine.Tick(2000, false);
             Assert.That(engine.State.Status, Is.EqualTo("timed_out"));
+            Assert.That(engine.State.Failure.Code, Is.EqualTo("play_start_timeout"));
+            Assert.That(engine.State.Failure.Stage, Is.EqualTo("starting"));
+            Assert.That(engine.State.Failure.Iteration, Is.Null);
+            Assert.That(engine.State.Failure.StepIndex, Is.Null);
+            Assert.That(engine.State.Failure.Target, Is.Null);
+            Assert.That(captures, Is.EqualTo(1));
+            Assert.That(capturedStep, Is.Null, "Startup diagnostics must not describe an untouched step as the failed operation.");
+            StringAssert.Contains("before any scenario step executed", engine.State.Error);
+            Assert.That(engine.State.Steps.All(step => step.Status == "skipped" && step.PollCount == 0), Is.True);
             Assert.That(host.Calls, Is.Zero);
         }
 

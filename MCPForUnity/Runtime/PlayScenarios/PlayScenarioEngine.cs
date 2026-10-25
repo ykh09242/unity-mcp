@@ -154,7 +154,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
             else if (now >= State.DeadlineUnixMs)
             {
-                RequestOutcome("timed_out", "Run exceeded its wall-clock timeout.", now, Failure("run_timeout", "Run exceeded its wall-clock timeout."));
+                bool starting = State.Phase == "starting";
+                string error = starting
+                    ? "Play Mode startup exceeded the run wall-clock timeout before any scenario step executed."
+                    : "Run exceeded its wall-clock timeout.";
+                RequestOutcome("timed_out", error, now, Failure(starting ? "play_start_timeout" : "run_timeout", error));
                 return;
             }
             if (!Running || State.Phase == "starting")
@@ -570,6 +574,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private PlayScenarioFailure Attribute(PlayScenarioFailure failure)
         {
+            if (failure.Code == "play_start_timeout")
+                return new PlayScenarioFailure
+                {
+                    Code = failure.Code,
+                    Stage = "starting",
+                    Message = Bounded(failure.Message, 4096),
+                };
             PlayScenarioStepResult result = State.Cursor < State.Steps.Count ? State.Steps[State.Cursor] : State.Steps.LastOrDefault();
             if (_completingIteration.HasValue)
                 result = State.Steps.LastOrDefault(entry => entry.Iteration == _completingIteration.Value);
@@ -761,7 +772,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             Timeline(now, "failure", State.Failure?.Code + ": " + State.Failure?.Message);
             try
             {
-                _onFailure?.Invoke(State, State.Phase == "settling" && State.Cursor > 0 ? DefinitionStep(State.Steps[State.Cursor - 1]) : CurrentStep, now);
+                _onFailure?.Invoke(
+                    State,
+                    State.Phase == "starting" ? null
+                        : State.Phase == "settling" && State.Cursor > 0 ? DefinitionStep(State.Steps[State.Cursor - 1])
+                        : CurrentStep,
+                    now
+                );
             }
             catch (Exception error)
             {

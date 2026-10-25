@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using NUnit.Framework;
 
@@ -116,6 +117,39 @@ namespace MCPForUnityTests.Editor.Services
             _context.Drain();
             PumpMethod.Invoke(null, null);
             Assert.That(task.GetAwaiter().GetResult(), Is.EqualTo(mainThread));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CallbackAdmission_NativeTickDoesNotWaitForThePostedContext(bool missingContext)
+        {
+            if (missingContext)
+                ContextField.SetValue(null, null);
+            int calls = 0;
+            var task = Post(() => ++calls, CancellationToken.None);
+            Assert.That(task.IsCompleted, Is.False);
+            typeof(EditorMainThreadWakeup).GetMethod("NativeTick", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+            Assert.That(task.IsCompletedSuccessfully, Is.True);
+            Assert.That(task.GetAwaiter().GetResult(), Is.EqualTo(1));
+            _context.Drain();
+            PumpMethod.Invoke(null, null);
+            Assert.That(calls, Is.EqualTo(1), "A late context or update must not repeat the native-tick callback.");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CommandAdmission_NativeTickDoesNotWaitForThePostedContext(bool missingContext)
+        {
+            if (missingContext)
+                ContextField.SetValue(null, null);
+            Task<string> response = null;
+            var thread = new Thread(() => response = TransportCommandDispatcher.ExecuteCommandJsonAsync("ping", CancellationToken.None));
+            thread.Start();
+            Assert.That(thread.Join(TimeSpan.FromSeconds(5)), Is.True);
+            Assert.That(response.IsCompleted, Is.False);
+            typeof(EditorMainThreadWakeup).GetMethod("NativeTick", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+            Assert.That(response.IsCompletedSuccessfully, Is.True, "Native tick must admit work even while the posted synchronization context is idle.");
+            StringAssert.Contains("pong", response.GetAwaiter().GetResult());
         }
 
         [Test]

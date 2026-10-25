@@ -346,10 +346,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         }
 
         private static int QueuedPlayRequests() =>
-            EditorApplication
-                .delayCall?.GetInvocationList()
-                .Count(callback => callback.Method.DeclaringType == Service && callback.Method.Name == "RequestPlay")
-            ?? 0;
+            Service.GetField("_playRequest", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null) == null ? 0 : 1;
 
         private static void Invoke(string name) => Service.GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
 
