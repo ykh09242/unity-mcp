@@ -93,6 +93,10 @@ async def test_public_readiness_exposes_scan_coverage(monkeypatch, complete, lim
                 "external_changes_dirty": False,
                 "external_changes_scan_complete": complete,
                 "external_changes_scan_limited": limited,
+                "external_changes_scan_in_progress": True,
+                "external_changes_scan_limited_reason": "local_package_root_limit"
+                if limited
+                else None,
             }
         ),
     )
@@ -100,6 +104,10 @@ async def test_public_readiness_exposes_scan_coverage(monkeypatch, complete, lim
     assert response.success
     assert response.data["assets"]["external_changes_scan_complete"] is complete
     assert response.data["assets"]["external_changes_scan_limited"] is limited
+    assert response.data["assets"]["external_changes_scan_in_progress"] is True
+    assert response.data["assets"]["external_changes_scan_limited_reason"] == (
+        "local_package_root_limit" if limited else None
+    )
     assert response.data["advice"]["ready_for_tools"] is (complete and not limited)
     if not complete or limited:
         assert any("scan" in reason for reason in response.data["advice"]["blocking_reasons"])

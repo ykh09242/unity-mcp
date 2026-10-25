@@ -67,7 +67,7 @@ URI: mcpforunity://editor/selection
 
 **URI:** `mcpforunity://editor/state`
 
-Canonical editor readiness snapshot. Includes advice, server-computed staleness, and assets.external_changes_scan_complete/limited coverage. A pending or limited local scan is not ready_for_tools; unknown remote coverage remains null.
+Canonical editor readiness snapshot. Includes advice, server-computed staleness, and assets.external_changes_scan_complete/limited coverage. scan_in_progress distinguishes a routine recheck from verified coverage. Initial pending or limited local coverage is not ready_for_tools; unknown remote coverage remains null.
 
 URI: mcpforunity://editor/state
 

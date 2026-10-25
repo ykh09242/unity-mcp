@@ -404,6 +404,8 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
 async def _shutdown_server_resources(
     server, api_key_service, telemetry_timers, registry, pool
 ) -> None:
+    from services.state.external_changes_scanner import external_changes_scanner
+
     # Startup connection can be skipped while later requests create the pool.
     if pool is None:
         from transport.legacy import unity_connection
@@ -448,6 +450,9 @@ async def _shutdown_server_resources(
             # Resync can publish to the catalog and own executor work. Retire it
             # before closing the hub, receipts, or any connection resources.
             cleanup.push_async_callback(pool.aclose)
+        # Capture before the first cleanup await: a later lifespan may create
+        # new scanner owners while this generation's worker is still draining.
+        cleanup.push_async_callback(external_changes_scanner.begin_shutdown())
     logger.info("Unity MCP (ykh09242) server resources closed")
 
 
