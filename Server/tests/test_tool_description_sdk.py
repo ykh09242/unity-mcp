@@ -706,12 +706,42 @@ async def test_bounded_public_inspection_refuses_without_schema_evaluation(monke
 @pytest.mark.asyncio
 async def test_stalled_cleanup_is_separately_bounded_and_reported(monkeypatch):
     import anyio
+    from contextlib import contextmanager
+    from types import SimpleNamespace
     from cli.utils.config import CLIConfig
     import cli.utils.tool_description as inspection
 
+    cleanup_scope = None
+    # Keep the logical origin ahead of real time until cleanup is explicitly entered.
+    clock = anyio.current_time() + watchdog_timeout()
+
+    @contextmanager
+    def phase_timeout(delay):
+        nonlocal cleanup_scope
+        # Defer setup/read scheduling; cleanup below expires a real scope.
+        with anyio.fail_after(None) as scope:
+            if delay == pytest.approx(
+                inspection._READ_TIMEOUT_SECONDS + inspection._CLEANUP_GRACE_SECONDS
+            ):
+                cleanup_scope = scope
+            yield scope
+
     class CloseBlocked(ScriptedConnection):
+        entered = False
+
+        async def __aenter__(self):
+            self.entered = True
+            return self
+
         async def __aexit__(self, *_):
             self.closed = True
+            assert self.entered and self.calls == 1
+            assert cleanup_scope is not None
+            assert cleanup_scope.deadline - clock == pytest.approx(
+                inspection._CLEANUP_GRACE_SECONDS
+            )
+            assert not cleanup_scope.cancel_called
+            cleanup_scope.deadline = anyio.current_time()
             await anyio.sleep_forever()
 
     connection = CloseBlocked([{"name": "fixture", "inputSchema": {}}])
@@ -719,9 +749,22 @@ async def test_stalled_cleanup_is_separately_bounded_and_reported(monkeypatch):
     monkeypatch.setattr(inspection, "_CLEANUP_GRACE_SECONDS", 0.03)
     monkeypatch.setattr(inspection, "_auth_headers", lambda _: {})
     monkeypatch.setattr(inspection, "_make_client", lambda *_: connection)
+    monkeypatch.setattr(
+        inspection,
+        "anyio",
+        SimpleNamespace(
+            current_time=lambda: clock,
+            fail_after=phase_timeout,
+            to_thread=anyio.to_thread,
+        ),
+    )
     with anyio.fail_after(watchdog_timeout()):
         receipt = await inspection.inspect_tool(CLIConfig(), "fixture")
+    assert (
+        cleanup_scope is not None and cleanup_scope.cancel_called and cleanup_scope.cancelled_caught
+    )
     assert receipt.tool is not None and receipt.partial and receipt.cleanup_complete is False
+    assert receipt.limits["read_timeout_seconds"] == receipt.limits["cleanup_grace_seconds"] == 0.03
     assert receipt.evidence["cleanup"]["reason"] == "cleanup_incomplete" and connection.closed
 
 
