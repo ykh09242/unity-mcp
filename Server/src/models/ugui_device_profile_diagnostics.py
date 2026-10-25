@@ -222,8 +222,15 @@ class DeviceProfileReport(Closed):
             raise ValueError("budget_exceeded")
         if self.status == "complete" and (b.reasons or not self.profiles):
             raise ValueError("incomplete_complete_report")
+        # Overlay identifies omitted scripts before profile admission. An unavailable
+        # profile can retain a prior route/scaler/budget reason without assessing layout;
+        # the unavailable-profile invariant below still prohibits any retained geometry.
         if self.unsupported_component is not None and any(
-            profile.status == "complete" or "unsupported_layout_provider" not in profile.reasons
+            profile.status == "complete"
+            or (
+                profile.status != "unavailable"
+                and "unsupported_layout_provider" not in profile.reasons
+            )
             for profile in self.profiles
         ):
             raise ValueError("unsupported_component_pass")
