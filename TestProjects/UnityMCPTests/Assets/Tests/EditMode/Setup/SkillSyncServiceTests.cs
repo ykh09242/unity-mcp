@@ -39,6 +39,30 @@ namespace MCPForUnityTests.Editor.Setup
         }
 
         [Test]
+        public void DescribeResult_ConflictOnlyReportsNoWritesAndAllRetainedFiles()
+        {
+            var summary = SkillSyncService.DescribeResult(
+                new SkillSyncService.SyncResult
+                {
+                    Success = true,
+                    Conflicts = new[] { "references/guide.md" },
+                    Preserved = new[] { "personal.md" },
+                }
+            );
+            Assert.That(summary, Does.StartWith("No skill files changed."));
+            Assert.That(summary, Does.Contain("Preserved locally: 2"));
+            Assert.That(summary, Does.Contain("Review required (1)"));
+            Assert.That(summary, Does.Not.Contain("Applied:"));
+            Assert.That(summary, Does.Contain("Back up"));
+        }
+
+        [Test]
+        public void DescribeResult_NoDifferencesReportsUpToDate()
+        {
+            Assert.That(SkillSyncService.DescribeResult(new SkillSyncService.SyncResult { Success = true }), Does.StartWith("Skills are already up to date."));
+        }
+
+        [Test]
         public void ApplyPlan_UnknownBaselinePreservesDifferingLocalFile()
         {
             var before = Snapshot();
@@ -259,6 +283,32 @@ namespace MCPForUnityTests.Editor.Setup
             Assert.AreEqual("local addition", File.ReadAllText(Path.Combine(_install, "personal.md")));
             CollectionAssert.Contains(Preview(remote).Conflicts, "SKILL.md", "Migration must not silently adopt conflicting bytes.");
             Assert.IsEmpty(Directory.GetDirectories(_root, ".unity-mcp-sync-*"));
+        }
+
+        [Test]
+        public void PreviewApply_UnbasedOlderFilesStayProtectedAcrossRepeatAndExplainReview()
+        {
+            EstablishBaseline();
+            Write("references/guide.md", "older upstream or personal edit");
+            var remote = Remote(("SKILL.md", "old skill"), ("references/guide.md", "new pinned upstream"));
+            var before = Snapshot();
+            var preview = Preview(remote, CommitB);
+            CollectionAssert.AreEqual(new[] { "references/guide.md" }, preview.UnknownBaselineConflicts);
+            var result = ApplyPreview(preview, remote, CommitB, _ => throw new AssertionException("Unbased conflicts must not download or overwrite content."));
+            Assert.IsTrue(result.Success, result.Error);
+            Assert.IsTrue(result.PartialApplication);
+            Assert.AreEqual(0, result.Added + result.Updated + result.Deleted);
+            string localGuide = Path.Combine(_install, "references", "guide.md");
+            CollectionAssert.AreEqual(before[localGuide], File.ReadAllBytes(localGuide));
+            var baseline = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(Path.Combine(_install, BaselineName)));
+            Assert.IsFalse(baseline["files"].Any(file => (string)file["path"] == "references/guide.md"), "Unknown bytes must not become a baseline.");
+            var repeat = Preview(remote, CommitB);
+            CollectionAssert.AreEqual(preview.UnknownBaselineConflicts, repeat.UnknownBaselineConflicts);
+            var summary = SkillSyncService.DescribeResult(result);
+            Assert.That(summary, Does.Contain("No recorded baseline"));
+            Assert.That(summary, Does.Contain("Preserved locally: 1"));
+            Assert.That(summary, Does.Contain("https://github.com/example/owned-test/tree/" + CommitB + "/.claude/skills/unity-mcp-skill"));
+            Assert.That(summary, Does.Contain("preview again"));
         }
 
         [TestCase(false, false)]
