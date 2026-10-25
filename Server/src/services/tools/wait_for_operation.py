@@ -14,6 +14,7 @@ from pydantic import Field
 from core.config import config
 from models.models import MCPResponse
 from models.response_lifetime import ResponsePollLifetime
+from models.unity_response import normalize_unity_response
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.test_job_wait import test_job_wait_deadline
@@ -30,7 +31,7 @@ _COMMANDS = {
     "package": "manage_packages",
     "scenario": "manage_play_scenario",
 }
-_TERMINAL = frozenset({"succeeded", "failed", "cancelled", "skipped", "interrupted"})
+_TERMINAL = frozenset({"succeeded", "failed", "cancelled", "skipped", "interrupted", "timed_out"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +126,9 @@ async def fetch_status(target: ObservationTarget, kind: JobKind, job_id: str):
 def project_observation(kind: JobKind, job_id: str, response) -> dict:
     if isinstance(response, MCPResponse):
         response = response.model_dump(exclude_none=True)
+    # Direct HTTP reads retain the transport envelope; its success only
+    # acknowledges the query, never completion of the enclosed native job.
+    response = normalize_unity_response(response)
     if not isinstance(response, dict):
         return unavailable("invalid_job_observation")
     if response.get("success") is not True:
@@ -199,13 +203,18 @@ async def wait_for_operation(
         len(job_id) != 32 or any(c not in "0123456789abcdef" for c in job_id)
     ):
         return unavailable("invalid_scenario_job_id")
-    target = await capture_target(ctx)
-    if target is None:
-        return unavailable("observation_connection_unavailable_or_changed")
     loop = asyncio.get_running_loop()
     deadline = test_job_wait_deadline.get()
     if deadline is None:
         deadline = loop.time() + wait_timeout
+    try:
+        target = await asyncio.wait_for(
+            capture_target(ctx), max(0.0, deadline - loop.time()) if wait_timeout else None
+        )
+    except TimeoutError:
+        return unavailable("observation_wait_expired_before_status")
+    if target is None:
+        return unavailable("observation_connection_unavailable_or_changed")
     response = None
     async with ResponsePollLifetime() as lifetime:
         while True:

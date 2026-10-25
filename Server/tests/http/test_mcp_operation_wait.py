@@ -65,8 +65,9 @@ async def test_real_sdk_task_matches_ordinary_existing_job_observation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("enveloped", [False, True])
 async def test_finalizing_is_polled_until_owner_publishes_terminal(
-    command_hub, tmp_path, monkeypatch
+    command_hub, tmp_path, monkeypatch, enveloped
 ):
     monkeypatch.setattr(module, "POLL_INTERVAL", 0)
 
@@ -80,9 +81,12 @@ async def test_finalizing_is_polled_until_owner_publishes_terminal(
                 pending_status="succeeded",
                 runner_resources_released=False,
             )
+        result = {"success": True, "data": data}
+        if enveloped:
+            result = {"status": "success", "result": result}
         await command_hub.endpoint._handle_command_result(
             command_hub.websocket,
-            CommandResultMessage(id=message["id"], result={"success": True, "data": data}),
+            CommandResultMessage(id=message["id"], result=result),
         )
 
     command_hub.websocket.send_json = answer
