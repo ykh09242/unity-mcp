@@ -1904,15 +1904,15 @@ def test_registry_extraction_rejects_unsafe_members(tmp_path: Path, name: str, k
 
 
 @pytest.mark.parametrize(
-    "version,profile,framework",
+    "version,profile,framework,coroutines",
     [
-        ("2021.3.45f2", "legacy-lts", "1.4.6"),
-        ("2022.3.76f1", "legacy-lts", "1.4.6"),
-        ("6000.0.84f1", "unity-six", "1.6.0"),
-        ("6000.3.25f1", "unity-six", "1.6.0"),
-        ("6000.6.4f1", "unity-six", "1.6.0"),
-        ("6000.7.0b2", "unity-six", "1.6.0"),
-        ("6000.7.0a6", "unity-six", "1.6.0"),
+        ("2021.3.45f2", "legacy-lts", "1.4.6", "1.0.1"),
+        ("2022.3.76f1", "unity-2022-lts", "1.4.6", "1.1.0"),
+        ("6000.0.84f1", "unity-six", "1.6.0", "1.1.0"),
+        ("6000.3.25f1", "unity-six", "1.6.0", "1.1.0"),
+        ("6000.6.4f1", "unity-six", "1.6.0", "1.1.0"),
+        ("6000.7.0b2", "unity-six", "1.6.0", "1.1.0"),
+        ("6000.7.0a6", "unity-six", "1.6.0", "1.1.0"),
     ],
 )
 def test_real_profile_matrix_selects_verified_legacy_or_editor_sources(
@@ -1920,6 +1920,7 @@ def test_real_profile_matrix_selects_verified_legacy_or_editor_sources(
     version: str,
     profile: str,
     framework: str,
+    coroutines: str,
 ) -> None:
     repo, data, cache, _ = environment
     builtin = data / "Resources/PackageManager/BuiltInPackages"
@@ -1943,12 +1944,10 @@ def test_real_profile_matrix_selects_verified_legacy_or_editor_sources(
     assert resolved["com.unity.test-framework"]["source"] == (
         "editor" if profile == "unity-six" else "registry-cache"
     )
-    assert resolved["com.unity.editorcoroutines"]["version"] == (
-        "1.1.0" if profile == "unity-six" else "1.0.1"
-    )
+    assert resolved["com.unity.editorcoroutines"]["version"] == coroutines
     assert resolved["com.unity.editorcoroutines"]["source"] == "registry-cache"
     assert resolved["com.unity.editorcoroutines"]["minimumUnity"] == (
-        "2022.3" if profile == "unity-six" else "2018.1"
+        "2018.1" if coroutines == "1.0.1" else "2022.3"
     )
     assert (
         repo / result.editor_coroutines_source / "Editor/Unity.EditorCoroutines.Editor.asmdef"
