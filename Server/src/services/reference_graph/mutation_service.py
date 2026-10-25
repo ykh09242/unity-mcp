@@ -121,11 +121,19 @@ async def execute(service, entry, editor, action, options):
             if "guids" in options
             else options["paths"]
         )
-        rows, observed = await probe(entry, paths)
+        # Imports can land between the routing status and this read-only probe.
+        # Retry only the initial preparation, before any receipt or write exists.
+        # Additional pages must retain their original native/graph checkpoint.
+        for attempt in range(3):
+            rows, observed = await probe(entry, paths)
+            if observed == checkpoint(editor):
+                break
+            if action != "begin_mutation" or attempt == 2:
+                raise RevisionConflict("Import state changed while preparing the mutation")
+            await entry.check()
+            editor = await entry.collect("status")
         if "guids" in options and [row.get("guid") for row in rows] != options["guids"]:
             raise RevisionConflict("GUID paths changed; synchronize and retry target preparation")
-        if observed != checkpoint(editor):
-            raise RevisionConflict("Import state changed while preparing the mutation")
         if action == "begin_mutation":
             data = await drained_thread(receipts.begin, rows, observed)
         else:
