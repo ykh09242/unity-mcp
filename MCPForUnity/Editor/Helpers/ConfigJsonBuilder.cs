@@ -6,6 +6,7 @@ using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using UnityEditor;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Helpers
@@ -296,8 +297,47 @@ namespace MCPForUnity.Editor.Helpers
 
             args.Add("--transport");
             args.Add("stdio");
+            string profile = StartupToolProfile.Selection;
+            if (!string.IsNullOrEmpty(profile))
+            {
+                args.Add("--tool-profile");
+                args.Add(profile);
+            }
 
             return args;
         }
+    }
+
+    internal static class StartupToolProfile
+    {
+        internal static string PreferenceKey(string projectHash) => EditorPrefKeys.StartupToolProfilePrefix + projectHash;
+
+        internal static string Selection
+        {
+            get
+            {
+                string value = EditorPrefs.GetString(PreferenceKey(ProjectIdentityUtility.GetProjectHash()), "");
+                return value is "core" or "full" or "minimal" ? value : "";
+            }
+            set
+            {
+                string key = PreferenceKey(ProjectIdentityUtility.GetProjectHash());
+                if (string.IsNullOrEmpty(value))
+                    EditorPrefs.DeleteKey(key);
+                else
+                {
+                    CommandSuffix(value);
+                    EditorPrefs.SetString(key, value);
+                }
+            }
+        }
+
+        internal static string CommandSuffix(string profile) =>
+            profile switch
+            {
+                null or "" => "",
+                "core" or "full" or "minimal" => " --tool-profile " + profile,
+                _ => throw new ArgumentException("Startup tool profile must be minimal, core, full or the server default.", nameof(profile)),
+            };
     }
 }

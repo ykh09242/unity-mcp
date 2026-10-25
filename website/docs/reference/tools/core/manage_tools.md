@@ -12,7 +12,7 @@ description: "Manage visible groups or individual feature tools in this session.
 
 ## Description
 
-Manage visible groups or individual feature tools in this session. Actions: list_groups (show all groups and their status), activate/deactivate (select exactly one group or tool), sync (refresh availability from Unity Editor's toggle states), reset (restore configured profile), describe (full schema for one tool). Activating a group makes its tools appear; deactivating hides them. Use sync after toggling tools in the Unity Editor GUI.
+Manage visible groups or individual feature tools in this session. Actions: list_groups (show all groups and their status), activate/deactivate (select exactly one group or tool), sync (refresh availability from Unity Editor's toggle states), reset (restore configured profile), describe (full schema for one tool). Selection changes server tools/list; it does not confirm the client's callable inventory. Use sync after toggling tools in the Unity Editor GUI.
 
 ## Parameters
 

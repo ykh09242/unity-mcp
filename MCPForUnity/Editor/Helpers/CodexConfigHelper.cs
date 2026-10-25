@@ -17,14 +17,6 @@ namespace MCPForUnity.Editor.Helpers
     /// </summary>
     public static class CodexConfigHelper
     {
-        private static void AddUvxModeFlags(TomlArray args)
-        {
-            if (args == null)
-                return;
-            foreach (var flag in AssetPathUtility.GetUvxDevFlagsList())
-                args.Add(new TomlString { Value = flag });
-        }
-
         public static string BuildCodexServerBlock(string uvPath)
         {
             var table = new TomlTable();
@@ -49,15 +41,10 @@ namespace MCPForUnity.Editor.Helpers
                 unityMCP["command"] = uvxPath;
 
                 var args = new TomlArray();
-                AddUvxModeFlags(args);
-                // Use centralized helper for beta server / prerelease args
-                foreach (var arg in AssetPathUtility.GetBetaServerFromArgsList())
+                foreach (var arg in ConfigJsonBuilder.BuildUvxArgs(null, packageName))
                 {
                     args.Add(new TomlString { Value = arg });
                 }
-                args.Add(new TomlString { Value = packageName });
-                args.Add(new TomlString { Value = "--transport" });
-                args.Add(new TomlString { Value = "stdio" });
 
                 unityMCP["args"] = args;
 
@@ -542,15 +529,10 @@ namespace MCPForUnity.Editor.Helpers
                 unityMCP["command"] = new TomlString { Value = uvxPath };
 
                 var argsArray = new TomlArray();
-                AddUvxModeFlags(argsArray);
-                // Use centralized helper for beta server / prerelease args
-                foreach (var arg in AssetPathUtility.GetBetaServerFromArgsList())
+                foreach (var arg in ConfigJsonBuilder.BuildUvxArgs(null, packageName))
                 {
                     argsArray.Add(new TomlString { Value = arg });
                 }
-                argsArray.Add(new TomlString { Value = packageName });
-                argsArray.Add(new TomlString { Value = "--transport" });
-                argsArray.Add(new TomlString { Value = "stdio" });
                 unityMCP["args"] = argsArray;
 
                 // Add Windows-specific environment configuration for stdio mode

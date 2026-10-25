@@ -239,6 +239,7 @@ async def test_refresh_notifications_are_idempotent_and_fixed_inventory_stays_ex
             await client.call_tool("manage_tools", {"action": "activate", "tool": "effect_probe"})
         ).structured_content
         assert "fixed" in result["message"].lower()
+        assert result["client_inventory_status"] == "unconfirmed"
         await await_signal(changed, "selection notification")
         refreshed = await names(client)
         assert "effect_probe" in refreshed and "effect_probe" not in fixed_inventory
@@ -246,6 +247,23 @@ async def test_refresh_notifications_are_idempotent_and_fixed_inventory_stays_ex
         await client.call_tool("manage_tools", {"action": "activate", "tool": "effect_probe"})
         await client.list_tools()
         assert len(notifications) == count
+
+
+@pytest.mark.asyncio
+async def test_full_startup_serves_optional_schema_to_a_fixed_inventory_client(discovery_server):
+    build, _ = discovery_server
+    server, _ = build("full")
+    async with Client(server, mode="legacy", cache=False) as client:
+        initial_inventory = {tool.name: tool for tool in await client.list_tools()}
+        assert "effect_probe" in initial_inventory
+        assert initial_inventory["effect_probe"].input_schema["required"] == ["strength"]
+        # No activation or second tools/list is needed by this connection.
+        result = await client.call_tool("effect_probe", {"strength": 2.5, "enabled": False})
+        assert result.structured_content == {"strength": 2.5, "enabled": False}
+        capability = (
+            await client.call_tool("manage_tools", {"action": "list_groups"})
+        ).structured_content["discovery"]
+        assert capability["client_inventory_status"] == "unconfirmed"
 
 
 def test_unknown_profile_fails_at_registration(discovery_server):

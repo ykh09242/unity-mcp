@@ -3,11 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Windows.Components.Tools;
 using MCPForUnityTests.Editor.Services;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine.UIElements;
 
 namespace MCPForUnityTests.Editor.Windows
@@ -42,6 +44,68 @@ namespace MCPForUnityTests.Editor.Windows
             section.Refresh();
             StringAssert.Contains("Not confirmed", root.Q<Label>("tools-apply-status").text);
             Assert.IsFalse(root.Q<Button>("retry-tools-button").enabledSelf);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void StartupProfile_SelectionIsExplicitAndRemoteHttpCannotChangeIt(bool remote)
+        {
+            // Given: a project has no startup override; native tool selection has a read-only fake.
+            string key = "MCPForUnity.StartupToolProfile." + ProjectIdentityUtility.GetProjectHash();
+            bool hadProfile = EditorPrefs.HasKey(key);
+            string savedProfile = EditorPrefs.GetString(key, "");
+            const string scopeKey = "MCPForUnity.HttpTransportScope";
+            bool hadScope = EditorPrefs.HasKey(scopeKey);
+            string savedScope = EditorPrefs.GetString(scopeKey, "local");
+            try
+            {
+                EditorPrefs.DeleteKey(key);
+                EditorPrefs.SetString(scopeKey, remote ? "remote" : "local");
+                EditorConfigurationCache.Instance.Refresh();
+                var root = Root();
+                root.Add(new DropdownField { name = "startup-tool-profile" });
+                root.Add(new Label { name = "startup-tool-profile-help" });
+                using var panel = new OwnedConsentPanel(root);
+                var section = new McpToolsSection(root, null, true);
+                var dropdown = root.Q<DropdownField>("startup-tool-profile");
+                Assert.IsNotNull(dropdown.panel, "The real UI Toolkit panel must dispatch the dropdown's production change callback.");
+                // When: the panel reads startup settings, without enabling or granting tools.
+                section.Refresh();
+                // Then: default emits no persisted choice; remote HTTP cannot change server startup.
+                Assert.AreEqual("Server default", dropdown.value);
+                Assert.IsFalse(EditorPrefs.HasKey(key));
+                Assert.AreEqual(!remote, dropdown.enabledSelf);
+                if (remote)
+                {
+                    StringAssert.Contains("Remote HTTP", dropdown.tooltip);
+                    dropdown.value = "Full (static clients)";
+                    Assert.IsFalse(EditorPrefs.HasKey(key));
+                }
+                else
+                {
+                    dropdown.value = "Full (static clients)";
+                    Assert.AreEqual("full", EditorPrefs.GetString(key));
+                    StringAssert.Contains("Restart local HTTP", root.Q<Label>("startup-tool-profile-help").text);
+                    Assert.IsFalse(root.Q<Label>("startup-tool-profile-help").ClassListContains("catalog-hidden"));
+                    dropdown.value = "Core (compact)";
+                    Assert.AreEqual("core", EditorPrefs.GetString(key));
+                    dropdown.value = "Server default";
+                    Assert.IsFalse(EditorPrefs.HasKey(key));
+                    Assert.IsTrue(root.Q<Label>("startup-tool-profile-help").ClassListContains("catalog-hidden"));
+                }
+            }
+            finally
+            {
+                if (hadProfile)
+                    EditorPrefs.SetString(key, savedProfile);
+                else
+                    EditorPrefs.DeleteKey(key);
+                if (hadScope)
+                    EditorPrefs.SetString(scopeKey, savedScope);
+                else
+                    EditorPrefs.DeleteKey(scopeKey);
+                EditorConfigurationCache.Instance.Refresh();
+            }
         }
 
         [Test]

@@ -1159,6 +1159,7 @@ Environment Variables:
   UNITY_MCP_SKIP_STARTUP_CONNECT   Skip initial Unity connection attempt (set to 1/true/yes/on)
   UNITY_MCP_TELEMETRY_ENABLED   Enable telemetry (set to 1/true/yes/on)
   UNITY_MCP_TRANSPORT   Transport protocol: stdio or http (default: stdio)
+  UNITY_MCP_TOOL_PROFILE   Startup tool selection: minimal, core or full (local default: core)
   UNITY_MCP_HTTP_URL   HTTP server URL (default: http://127.0.0.1:8080)
   UNITY_MCP_HTTP_HOST   HTTP server host (overrides URL host)
   UNITY_MCP_HTTP_PORT   HTTP server port (overrides URL port)
@@ -1192,6 +1193,14 @@ Examples:
         default="stdio",
         help="Transport protocol to use: stdio or http (default: stdio). "
         "Overrides UNITY_MCP_TRANSPORT environment variable.",
+    )
+    parser.add_argument(
+        "--tool-profile",
+        choices=["minimal", "core", "full"],
+        default=None,
+        help="Initial tool selection. Use full for clients that capture a fixed tool inventory. "
+        "Overrides UNITY_MCP_TOOL_PROFILE; otherwise preserves the local core/hosted full default. "
+        "Unity availability and permissions still apply.",
     )
     parser.add_argument(
         "--http-url",
@@ -1311,6 +1320,8 @@ Examples:
         parser.error(str(exc))
 
     # Set environment variables from command line args
+    if args.tool_profile is not None:
+        os.environ["UNITY_MCP_TOOL_PROFILE"] = args.tool_profile
     if args.default_instance:
         os.environ["UNITY_MCP_DEFAULT_INSTANCE"] = args.default_instance
         logger.info(f"Using default Unity instance from command-line: {args.default_instance}")

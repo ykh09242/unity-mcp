@@ -27,6 +27,8 @@
                 <ui:Label text="Use Recommended starts with essentials. A smaller selection reduces tool definitions sent to your client. Refresh the client tool list after changing selections if needed." class="help-text" />
             </ui:Foldout>
             <ui:Foldout text="Advanced connection options" value="false" class="catalog-advanced">
+                <ui:DropdownField name="startup-tool-profile" label="Startup tools" />
+                <ui:Label name="startup-tool-profile-help" class="help-text catalog-hidden" />
                 <ui:Toggle name="project-scoped-tools-toggle" text="Register project-defined tools" />
                 <ui:Label text="For custom tools declared by this Unity project. Reconfigure your client after changing this option." class="help-text" />
                 <ui:VisualElement class="catalog-toolbar">

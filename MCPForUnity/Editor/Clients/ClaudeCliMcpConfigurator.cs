@@ -341,7 +341,8 @@ namespace MCPForUnity.Editor.Clients
             string uvxDevFlags,
             string apiKey,
             Models.ConfiguredTransport serverTransport,
-            bool unregister
+            bool unregister,
+            string startupToolProfile = null
         )
         {
             if (unregister)
@@ -361,7 +362,8 @@ namespace MCPForUnity.Editor.Clients
                     packageName,
                     uvxDevFlags,
                     apiKey,
-                    serverTransport
+                    serverTransport,
+                    startupToolProfile
                 );
             }
         }
@@ -380,7 +382,8 @@ namespace MCPForUnity.Editor.Clients
             string packageName,
             string uvxDevFlags,
             string apiKey,
-            Models.ConfiguredTransport serverTransport
+            Models.ConfiguredTransport serverTransport,
+            string startupToolProfile
         )
         {
             if (string.IsNullOrEmpty(claudePath))
@@ -397,7 +400,8 @@ namespace MCPForUnity.Editor.Clients
             {
                 // Use --scope local to register in the project-local config, avoiding conflicts with user-level config (#664)
                 GetExistingConfigForRegistration(projectDir);
-                args = $"mcp add --scope local --transport stdio UnityMCP -- \"{uvxPath}\" {uvxDevFlags}{fromArgs} {packageName}";
+                args =
+                    $"mcp add --scope local --transport stdio UnityMCP -- \"{uvxPath}\" {uvxDevFlags}{fromArgs} {packageName}{StartupToolProfile.CommandSuffix(startupToolProfile)}";
             }
 
             RemoveSelectedLocalRegistrations(claudePath, projectDir, pathPrepend);
@@ -465,7 +469,8 @@ namespace MCPForUnity.Editor.Clients
                 string devFlags = AssetPathUtility.GetUvxDevFlags();
                 string fromArgs = AssetPathUtility.GetBetaServerFromArgs(quoteFromPath: true);
                 // Use --scope local to register in the project-local config, avoiding conflicts with user-level config (#664)
-                args = $"mcp add --scope local --transport stdio UnityMCP -- \"{uvxPath}\" {devFlags}{fromArgs} {packageName}";
+                args =
+                    $"mcp add --scope local --transport stdio UnityMCP -- \"{uvxPath}\" {devFlags}{fromArgs} {packageName}{StartupToolProfile.CommandSuffix(StartupToolProfile.Selection)}";
             }
 
             string pathPrepend = null;
@@ -574,7 +579,7 @@ namespace MCPForUnity.Editor.Clients
             string fromArgs = AssetPathUtility.GetBetaServerFromArgs(quoteFromPath: true);
 
             return "# Register the MCP server with Claude Code:\n"
-                + $"claude mcp add --scope local --transport stdio UnityMCP -- \"{uvxPath}\" {devFlags}{fromArgs} mcp-for-unity\n\n"
+                + $"claude mcp add --scope local --transport stdio UnityMCP -- \"{uvxPath}\" {devFlags}{fromArgs} mcp-for-unity{StartupToolProfile.CommandSuffix(StartupToolProfile.Selection)}\n\n"
                 + "# Remove the local registration for the selected project:\n"
                 + "claude mcp remove --scope local UnityMCP\n\n"
                 + "# List registered servers:\n"

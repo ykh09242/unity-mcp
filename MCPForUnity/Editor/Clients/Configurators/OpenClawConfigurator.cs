@@ -278,17 +278,10 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 }
 
                 var args = new JArray();
-                foreach (string value in AssetPathUtility.GetUvxDevFlagsList())
+                foreach (string value in ConfigJsonBuilder.BuildUvxArgs(null, packageName))
                 {
                     args.Add(value);
                 }
-                foreach (string value in AssetPathUtility.GetBetaServerFromArgsList())
-                {
-                    args.Add(value);
-                }
-                args.Add(packageName);
-                args.Add("--transport");
-                args.Add("stdio");
 
                 return new JObject
                 {

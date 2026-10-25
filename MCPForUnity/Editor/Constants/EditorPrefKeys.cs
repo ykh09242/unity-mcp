@@ -31,6 +31,7 @@ namespace MCPForUnity.Editor.Constants
         internal const string GitUrlOverride = "MCPForUnity.GitUrlOverride";
         internal const string DevModeForceServerRefresh = "MCPForUnity.DevModeForceServerRefresh";
         internal const string ProjectScopedToolsLocalHttp = "MCPForUnity.ProjectScopedTools.LocalHttp";
+        internal const string StartupToolProfilePrefix = "MCPForUnity.StartupToolProfile.";
         internal const string AllowLanHttpBind = "MCPForUnity.Security.AllowLanHttpBind";
         internal const string AllowInsecureRemoteHttp = "MCPForUnity.Security.AllowInsecureRemoteHttp";
 
