@@ -454,7 +454,10 @@ CAPABILITY_DESCRIPTIONS = {
     "gameobject_create": "Create a GameObject with transform, components and optional prefab output.",
     "gameobject_edit": "Modify or delete an existing GameObject and its components.",
     "gameobject_duplicate": "Duplicate a GameObject with optional name, parent and position changes.",
-    "gameobject_positioning": "Move a GameObject relative to a reference or orient it toward a target.",
+    "gameobject_positioning": (
+        "Move or orient a GameObject selected by target (or name). move_relative requires "
+        "reference_object plus direction or offset; look_at requires look_at_target."
+    ),
     "gameobject_placement": "Preview or apply alignment and distribution of selected GameObjects.",
     "prefab_inspect": "Inspect prefab metadata or a bounded hierarchy page.",
     "prefab_create": "Create a prefab asset from an existing GameObject.",

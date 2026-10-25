@@ -122,3 +122,57 @@ def test_bundle_result_variants_keep_native_wire_fields_and_machine_errors(mode)
         asyncio.run(scenario())
     """.replace("MODE", repr(mode))
     )
+
+
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+def test_positioning_conditional_schema_requires_the_action_reference(mode):
+    run_sdk_regression(
+        """
+        import asyncio
+        import sys
+        sys.path.insert(0, "src")
+        from importlib import import_module
+        from unittest.mock import AsyncMock
+        from fastmcp import Client, FastMCP
+        from jsonschema import Draft202012Validator
+        from core.config import config
+        from services.tools import register_all_tools
+        from transport.response_limit_middleware import ResponseLimitMiddleware
+        module = import_module("services.tools.manage_gameobject")
+
+        async def scenario():
+            # Given: callers discover the real SDK schema for both positioning actions.
+            config.transport_mode = "stdio"
+            config.http_remote_hosted = False
+            module.preflight = AsyncMock(return_value=None)
+            module.get_unity_instance_from_context = AsyncMock(return_value="Fixture@hash")
+            send = module.send_with_unity_instance = AsyncMock(return_value={"success": True})
+            server = FastMCP("positioning-contract")
+            server.add_middleware(ResponseLimitMiddleware())
+            register_all_tools(server, project_scoped_tools=False)
+            server.enable(tags={"group:scene"}, components={"tool"})
+            async with Client(server, mode=MODE) as client:
+                tool = next(tool for tool in await client.list_tools() if tool.name == "gameobject_positioning")
+                validator = Draft202012Validator(tool.input_schema)
+                # When: the action reference is omitted, null or blank.
+                for action, reference in (("move_relative", "reference_object"), ("look_at", "look_at_target")):
+                    for value in ({}, {reference: None}, {reference: " "}):
+                        arguments = {"action": action, "target": "Mover", **value}
+                        # Then: schema and callable reject before native dispatch.
+                        assert not validator.is_valid(arguments), arguments
+                        result = await client.call_tool(tool.name, arguments, raise_on_error=False)
+                        assert result.is_error, result
+                send.assert_not_awaited()
+                module.preflight.assert_not_awaited()
+                # Valid action-specific requests still reach their original command.
+                for arguments in (
+                    {"action": "move_relative", "target": "Mover", "reference_object": "Anchor", "offset": [1, 0, 0]},
+                    {"action": "look_at", "target": "Mover", "look_at_target": [0, 0, 0]},
+                ):
+                    validator.validate(arguments)
+                    result = await client.call_tool(tool.name, arguments)
+                    assert not result.is_error, result
+                assert send.await_count == 2
+        asyncio.run(scenario())
+        """.replace("MODE", repr(mode))
+    )
