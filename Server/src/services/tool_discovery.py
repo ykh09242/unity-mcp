@@ -16,9 +16,14 @@ from services.registry import DEFAULT_ENABLED_GROUPS, TOOL_GROUPS
 from transport.protocol import is_sessionless
 
 
+CLIENT_INVENTORY_GUIDANCE = (
+    "Unconfirmed means the server cannot inspect the host's callable bindings, not that tools "
+    "are missing; a successful call confirms that tool for that request. "
+)
 REFRESH_GUIDANCE = (
     "Server selection updated; the client's callable inventory is unconfirmed. "
-    "Unity availability and permissions still apply. "
+    + CLIENT_INVENTORY_GUIDANCE
+    + "Unity availability and permissions still apply. "
     "Refresh tools/list after tools/list_changed. If the client uses a fixed inventory, "
     "start the server with --tool-profile full (or UNITY_MCP_TOOL_PROFILE=full), "
     "then establish a fresh client connection after enabling the desired tools in Unity. "
@@ -28,7 +33,7 @@ UNSCOPED_GUIDANCE = (
     "This sessionless connection has no supported stable client scope and resolved project. "
     "Use a stateful handshake, a project-bound stdio connection, or authenticated SDK scope. "
     "Alternatively start the server with UNITY_MCP_TOOL_PROFILE=full and reconnect. "
-    "Editor toggles still control availability."
+    "Editor toggles still control availability. " + CLIENT_INVENTORY_GUIDANCE
 )
 SETUP_GUIDANCE = (
     "Check manage_tools(action='list_groups').discovery before selecting optional tools; "

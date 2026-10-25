@@ -1300,7 +1300,14 @@ class CustomToolService:
         self.register_global_tools([definition for definition, _ in prepared])
 
     def _get_builtin_tool_names(self) -> set[str]:
-        return {tool["name"] for tool in get_registered_tools()}
+        # Native implementation names belong to their validated public wrappers.
+        # A legacy descriptor may omit parameters and cannot define a second API.
+        return {
+            name
+            for tool in get_registered_tools()
+            for name in (tool["name"], tool.get("unity_target"))
+            if name
+        }
 
     def _register_global_tool(self, definition: ToolDefinitionModel) -> None:
         self.register_global_tools([definition])

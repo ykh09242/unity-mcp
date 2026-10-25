@@ -300,7 +300,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("gameobject_positioning", AutoRegister = false, Group = "scene",
-        DisplayName = "Relative Position & Look At", Description = "Move a GameObject relative to a reference or orient it toward a target.")]
+        DisplayName = "Relative Position & Look At", Description = "Move or orient a GameObject selected by target (or name). move_relative requires reference_object plus direction or offset; look_at requires look_at_target. Action inputs: move_relative: requires reference_object. look_at: requires look_at_target.")]
     public static class GameobjectPositioning
     {
         private static readonly string[] Actions = { "move_relative", "look_at" };

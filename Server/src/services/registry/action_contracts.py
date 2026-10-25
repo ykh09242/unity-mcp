@@ -42,6 +42,18 @@ _PREVIEW_FORBIDDEN = tuple(
 )
 
 ACTION_RULES: dict[str, tuple[ActionRule, ...]] = {
+    "gameobject_positioning": (
+        ActionRule(
+            "move_relative",
+            ("reference_object",),
+            example=(("target", "Mover"), ("reference_object", "Anchor"), ("offset", [1, 0, 0])),
+        ),
+        ActionRule(
+            "look_at",
+            ("look_at_target",),
+            example=(("target", "Mover"), ("look_at_target", [0, 0, 0])),
+        ),
+    ),
     "asset_edit": tuple(
         ActionRule(
             action, required, example=tuple((name, _ASSET_EXAMPLES[name]) for name in required)

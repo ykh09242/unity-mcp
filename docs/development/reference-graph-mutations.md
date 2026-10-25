@@ -25,6 +25,12 @@ If graph preparation fails, the write remains available and the response explici
 reports unavailable or incomplete tracking. Inspect a partial preparation receipt
 before releasing it; it does not represent the entire attempted batch.
 
+If the import checkpoint moves during initial preparation, the server uses at most
+three read-only target probes before dispatch. This never retries the
+native write, and persistent movement still reports unavailable tracking. Receipt
+metadata is checked against external source grants rather than unrelated graph
+worker revisions; target-page and diff evidence retain their revision fences.
+
 The outcome is `accepted`, `failed`, or `unknown`. Disconnects, timeouts, cancelled
 dispatch, and read-back recovery retain `unknown` rather than proving causation
 from an observed file. Native writes are never replayed to repair graph tracking.
@@ -61,6 +67,13 @@ does not cancel the graph watcher, delete snapshots, or lose target verification
 progress. Another request can release a receipt while a caller is waiting.
 After a server restart, use the same Editor/user scope and receipt ID. An open
 receipt whose response was lost can be sealed with `unknown`.
+
+An automatic write response with `state=pending` has recorded the tool outcome,
+but has not yet verified imported evidence. Call `await_mutation` with that receipt
+ID to advance verification; use its pending reason to distinguish deferred import,
+compilation failure and collection work. If tracking is unavailable without an ID,
+inspect graph status and the script's current hash. A new receipt cannot reconstruct
+the missing before snapshot, and repeating the successful edit cannot repair it.
 
 ## Evidence boundary
 

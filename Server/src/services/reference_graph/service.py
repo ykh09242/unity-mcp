@@ -704,6 +704,19 @@ class ReferenceGraphService:
             raise RevisionConflict("Graph changed before exploration delivery; restart the page")
         return changed
 
+    def _validate_receipt_sources(self, workspace: GraphWorkspace, expected: dict) -> None:
+        """Reauthorize receipt metadata without fencing unrelated graph publication."""
+        sources = {
+            source["provider"]: source
+            for source in workspace.store.sources()
+            if source["enabled"] and source["provider"].startswith("external:")
+        }
+        if {provider: source["version"] for provider, source in sources.items()} != expected:
+            raise RevisionConflict("Mutation source grants changed; restart receipt preparation")
+        for source in sources.values():
+            self._grant(workspace.store.scope, source["config"])
+            self._operator_grant(workspace.store.scope, source["config"])
+
     async def execute(self, ctx, action: str, options: dict) -> dict:
         fields = {
             "overview": set(),
@@ -871,17 +884,13 @@ class ReferenceGraphService:
             # grants. Recheck before capture and again before delivery.
             sources = await drained_thread(store.sources)
             source_fence = {
-                "revision": await drained_thread(store.revision),
-                "sources": {
-                    source["provider"]: source["version"]
-                    for source in sources
-                    if source["enabled"] and source["provider"].startswith("external:")
-                },
+                source["provider"]: source["version"]
+                for source in sources
+                if source["enabled"] and source["provider"].startswith("external:")
             }
-            await drained_thread(self._validate_exploration, workspace, source_fence)
+            await drained_thread(self._validate_receipt_sources, workspace, source_fence)
             data = await execute_mutation(self, entry, editor, action, options)
-            source_fence["revision"] = await drained_thread(store.revision)
-            await drained_thread(self._validate_exploration, workspace, source_fence)
+            await drained_thread(self._validate_receipt_sources, workspace, source_fence)
             editor = await entry.collect("status")
             if action == "mutation_diff":
                 external_changed = await drained_thread(self._validate_exploration, workspace, data)

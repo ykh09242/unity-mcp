@@ -340,6 +340,130 @@ async def test_inactive_graph_and_preview_make_no_extra_requests(service_graph):
     )
 
 
+@pytest.mark.asyncio
+async def test_preparation_reprobes_a_moving_import_checkpoint_without_replaying_write(
+    service_graph, monkeypatch
+):
+    # Given: an import lands after resolution but before the target probe.
+    _, native, ctx, entry = service_graph
+    collect = entry.collect
+    probes = []
+    writes = []
+
+    async def moving(action, **options):
+        if action == "probe":
+            probes.append(action)
+            if len(probes) == 1:
+                native.edit()
+        return await collect(action, **options)
+
+    monkeypatch.setattr(entry, "collect", moving)
+
+    async def invoke():
+        writes.append("write")
+        native.edit()
+        return {"success": True}
+
+    # When: the automatic boundary prepares and dispatches one mutation.
+    result = await tracked_mutation(
+        ctx, ctx.instance, "manage_asset", {"action": "modify", "path": PATH}, invoke
+    )
+
+    # Then: a fresh baseline is captured before the sole write.
+    assert len(probes) == 2
+    assert writes == ["write"]
+    assert result["data"]["reference_graph"]["state"] == "pending"
+    receipt = entry.workspace.mutations().read(result["data"]["reference_graph"]["id"])
+    assert receipt["baseline"]["revision"] == 1
+
+
+@pytest.mark.asyncio
+async def test_receipt_metadata_survives_unrelated_graph_progress(service_graph, monkeypatch):
+    # Given: a background worker publishes between source-list reads.
+    service, _, ctx, entry = service_graph
+    store = entry.workspace.store
+    sources = store.sources
+
+    def progressing_sources():
+        with store._connect(write=True) as connection:
+            store._bump(connection)
+        return sources()
+
+    monkeypatch.setattr(store, "sources", progressing_sources)
+
+    # When: a receipt captures its own durable before snapshot.
+    result = await call(service, ctx, "begin_mutation", paths=[PATH])
+
+    # Then: unrelated publication cannot lose the newly prepared receipt ID.
+    receipt = result["receipt"]
+    assert receipt["state"] == "open"
+    assert receipt["targets"] == 1
+    assert entry.workspace.mutations().read(receipt["id"])["id"] == receipt["id"]
+
+
+@pytest.mark.asyncio
+async def test_continuously_moving_preparation_stays_unavailable_and_dispatches_once(
+    service_graph, monkeypatch
+):
+    # Given: every probe observes another import revision.
+    _, native, ctx, entry = service_graph
+    collect = entry.collect
+    probes = []
+    writes = []
+
+    async def moving(action, **options):
+        if action == "probe":
+            probes.append(action)
+            native.edit()
+        return await collect(action, **options)
+
+    monkeypatch.setattr(entry, "collect", moving)
+
+    async def invoke():
+        writes.append("write")
+        return {"success": True}
+
+    # When: preparation cannot reach a stable checkpoint within its read budget.
+    result = await tracked_mutation(
+        ctx, ctx.instance, "manage_asset", {"action": "modify", "path": PATH}, invoke
+    )
+
+    # Then: the native result is preserved and tracking failure stays explicit.
+    assert len(probes) == 3
+    assert writes == ["write"]
+    assert result["success"] is True
+    assert result["data"]["reference_graph"] == {
+        "state": "unavailable",
+        "reason": "RevisionConflict",
+    }
+
+
+@pytest.mark.asyncio
+async def test_receipt_metadata_still_refuses_a_changed_external_source_grant(
+    service_graph, monkeypatch, tmp_path
+):
+    # Given: a valid source participates in the before snapshot.
+    service, _, ctx, entry = service_graph
+    store = entry.workspace.store
+    store.set_source(
+        "external:fixture", {"root": str(tmp_path), "include": ["*.json"]}, expected_version=0
+    )
+    collect = entry.collect
+
+    async def revoked(action, **options):
+        result = await collect(action, **options)
+        if action == "probe":
+            store.set_source("external:fixture", {}, expected_version=1, enabled=False)
+        return result
+
+    monkeypatch.setattr(entry, "collect", revoked)
+
+    # When: the source grant changes during preparation.
+    # Then: the new metadata fence still fails closed.
+    with pytest.raises(RevisionConflict, match="source grants"):
+        await call(service, ctx, "begin_mutation", paths=[PATH])
+
+
 def test_append_target_pages_has_no_total_target_cap(graph):
     _, receipts = graph
     identity = begin(receipts)
