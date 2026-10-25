@@ -73,6 +73,33 @@ def test_journal_result_survives_reopen_without_native_or_new_wait(tmp_path):
         assert reopened.get(record.task_id, "alice").operation == operation()
 
 
+@pytest.mark.parametrize("damage", ["changed-result", "invalid-utf8", "invalid-json"])
+def test_journal_reads_current_committed_bytes_after_a_successful_read(tmp_path, damage):
+    # Given a completed result that has already been read successfully.
+    with WaitJournal(tmp_path / "waits", clock=lambda: 1000.0) as journal:
+        record = journal.create(operation())
+        journal.finish(record.task_id, "completed", result={"value": "original"})
+        assert journal.get(record.task_id, "alice").result == {"value": "original"}
+        path = journal.root / f"{record.task_id}.json"
+        document = json.loads(path.read_bytes())
+        document["result"] = {"value": "current"}
+        replacement = {
+            "changed-result": json.dumps(document, ensure_ascii=False).encode(),
+            "invalid-utf8": b"\xff",
+            "invalid-json": b'{"incomplete":',
+        }[damage]
+
+        # When committed storage changes after the prior read.
+        path.write_bytes(replacement)
+
+        # Then retrieval uses the current bytes or fails closed on their corruption.
+        if damage == "changed-result":
+            assert journal.get(record.task_id, "alice").result == {"value": "current"}
+        else:
+            with pytest.raises(JournalUnavailable, match="Invalid journal record"):
+                journal.get(record.task_id, "alice")
+
+
 @pytest.mark.parametrize("status", ["completed", "failed"])
 @pytest.mark.parametrize(
     "payload, decoded, expects_warning",
