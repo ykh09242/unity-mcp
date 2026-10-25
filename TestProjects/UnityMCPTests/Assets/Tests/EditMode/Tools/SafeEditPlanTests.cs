@@ -533,11 +533,15 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void PrefabUnsupportedNativeComponent_ReportsExactChildWithoutSaving()
         {
-            var child = new GameObject("PhysicsChild");
+            var child = new GameObject("UnsupportedChild");
             child.transform.SetParent(root.transform, false);
-            child.AddComponent<Rigidbody>();
+            child.AddComponent<Camera>();
             string path = folder + "/Native.prefab";
             PrefabUtility.SaveAsPrefabAsset(root, path);
+            Assert.IsNotNull(
+                AssetDatabase.LoadAssetAtPath<GameObject>(path).GetComponentInChildren<Camera>(),
+                "The excluded native component must be persisted in the source fixture."
+            );
             byte[] before = System.IO.File.ReadAllBytes(path);
             JObject rejected = Prefab(
                 new JObject
@@ -549,8 +553,8 @@ namespace MCPForUnityTests.Editor.Tools
             );
             Assert.IsFalse(rejected.Value<bool>("success"), rejected.ToString());
             string error = rejected.Value<string>("error");
-            StringAssert.Contains(typeof(Rigidbody).FullName, error);
-            StringAssert.Contains("Native/PhysicsChild", error);
+            StringAssert.Contains(typeof(Camera).FullName, error);
+            StringAssert.Contains("Native/UnsupportedChild", error);
             StringAssert.Contains("unsupported component type", error);
             CollectionAssert.AreEqual(before, System.IO.File.ReadAllBytes(path));
         }
