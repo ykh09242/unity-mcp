@@ -110,6 +110,7 @@ namespace MCPForUnity.Editor.Tools.Input
                     max_touch_contacts = 10,
                     legacy_raw_input = false,
                     legacy_input_observation = LegacyInputObservationAvailable,
+                    legacy_input_observation_unavailable_reason = LegacyInputObservationUnavailableReason,
                     input_observation = (PlayScenarioRecordingService.InputBackend as IPlayScenarioInputRecordingCapabilities)?.Capabilities,
                     ui_dispatch_changes_raw_input = false,
                     max_frames = InputSimulationRequest.MaxFrames,
@@ -126,11 +127,16 @@ namespace MCPForUnity.Editor.Tools.Input
                 : "Raw input replay requires an enabled com.unity.inputsystem (1.7+) backend and an Input System consumer. ui_click dispatches uGUI events independently. UnityEngine.Input cannot be injected through public APIs.";
 
         public static bool LegacyInputObservationAvailable =>
-#if ENABLE_LEGACY_INPUT_MANAGER
+#if ENABLE_LEGACY_INPUT_MANAGER && !ENABLE_INPUT_SYSTEM
             true;
 #else
             false;
 #endif
+
+        public static string LegacyInputObservationUnavailableReason =>
+            LegacyInputObservationAvailable
+                ? null
+                : "Legacy input observation is selected only for Old Input Handling. New and Both retain the Input System observer; inspect input_observation for its current capabilities.";
 
         public static string ActiveInputHandling =>
 #if ENABLE_LEGACY_INPUT_MANAGER && ENABLE_INPUT_SYSTEM

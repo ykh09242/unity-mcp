@@ -35,6 +35,25 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(data.Value<string>("active_input_handling"), Is.EqualTo(ManageInput.ActiveInputHandling));
         }
 
+        [Test]
+        public void LegacyObservationCapabilityIsReachableOnlyInOldMode()
+        {
+            var result = (SuccessResponse)ManageInput.HandleCommand(new JObject { ["action"] = "status" });
+            var data = JObject.FromObject(result.Data);
+#if ENABLE_LEGACY_INPUT_MANAGER && !ENABLE_INPUT_SYSTEM
+            Assert.That(data.Value<bool>("legacy_input_observation"), Is.True);
+            Assert.That(data["legacy_input_observation_unavailable_reason"].Type, Is.EqualTo(JTokenType.Null));
+#else
+            Assert.That(data.Value<bool>("legacy_input_observation"), Is.False);
+            Assert.That(data.Value<string>("legacy_input_observation_unavailable_reason"), Does.Contain("Old Input Handling"));
+            var error = Assert.Throws<InvalidOperationException>(() => new LegacyInputScenarioRecordingBackend().Begin((_, __) => { }, _ => { }));
+            Assert.That(error.Message, Does.Contain("New and Both retain the Input System observer"));
+#endif
+#if ENABLE_LEGACY_INPUT_MANAGER && ENABLE_INPUT_SYSTEM
+            Assert.That(data.Value<string>("active_input_handling"), Is.EqualTo("Both"));
+#endif
+        }
+
         [TestCase("ui_click")]
         [TestCase("key")]
         [TestCase("mouse")]
