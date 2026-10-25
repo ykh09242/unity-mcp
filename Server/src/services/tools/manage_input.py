@@ -4,14 +4,13 @@ from typing import Annotated, Literal, assert_never
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
-from typing_extensions import TypedDict
-
 from models.models import MCPResponse
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
+from typing_extensions import TypedDict
 
 InputAction = Literal[
     "status",
@@ -162,7 +161,10 @@ class InputCommand(BaseModel):
         "touch_id 1..10 permits concurrent contacts across calls; move preserves the original release deadline. "
         "release_all removes only MCP virtual devices. Active input updates renew a 30-second inactivity lease "
         "up to 1 hour; play exit/reload cleans devices. Pause also cleans pairing; release_player/release_all remain callable while paused. "
-        "PlayerInput eligibility does not guarantee gameplay handling. Legacy UnityEngine.Input and OS input are unsupported."
+        "PlayerInput eligibility does not guarantee gameplay handling. Old Input Handling supports uGUI ui_click "
+        "and legacy observation through manage_scenario_recording. status exposes the active handling mode, "
+        "observation backend and raw replay limits. UnityEngine.Input has no public raw-state injection API; "
+        "Both-mode virtual devices only affect Input System consumers. No OS input is sent."
     ),
     annotations=ToolAnnotations(title="Manage Input", readOnlyHint=False, destructiveHint=True),
 )

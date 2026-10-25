@@ -13,7 +13,7 @@ namespace MCPForUnity.Editor.Tools
         "manage_scenario_recording",
         AutoRegister = false,
         Group = "testing",
-        Description = "Record bounded uGUI Button pointer clicks and observed active-scene transitions into a saved scenario draft. Stop explicitly saves; cancel discards."
+        Description = "Record bounded uGUI clicks, scene transitions and available Input System or Old-mode legacy input into a reviewable draft. Status identifies observation source and replay limits. Stop saves; cancel discards."
     )]
     public static class ManageScenarioRecording
     {

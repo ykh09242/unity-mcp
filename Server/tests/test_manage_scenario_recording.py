@@ -5,13 +5,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from cli.commands.scenario_recording import scenario_recording
 from click.testing import CliRunner
 from fastmcp import Client, FastMCP
-from pydantic import TypeAdapter, ValidationError
-
-from cli.commands.scenario_recording import scenario_recording
 from models.models import MCPResponse
 from models.scenario_recording import ScenarioRecordingCommand
+from pydantic import TypeAdapter, ValidationError
 from services.registry.tool_registry import get_registered_tools
 from services.tools.manage_scenario_recording import manage_scenario_recording
 
@@ -117,6 +116,17 @@ async def test_invalid_request_has_no_side_effect(route, arguments):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["Menu Flow", "메뉴-흐름", "../menu"])
+async def test_invalid_recording_slug_has_an_actionable_example(route, name):
+    result = await manage_scenario_recording(SimpleNamespace(), action="start", name=name)
+    assert result["success"] is False
+    assert "^[a-z0-9][a-z0-9_-]{0,63}$" in result["hint"]
+    assert "menu-flow-01" in result["hint"]
+    route.select.assert_not_called()
+    route.send.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_preserves_interrupted_draft_diagnostics(route):
     route.send.return_value = {
         "success": True,
@@ -156,6 +166,9 @@ async def test_actual_sdk_dispatch_and_schema(route, mode):
     server.tool(**metadata["kwargs"])(manage_scenario_recording)
     registered = (await server.list_tools(run_middleware=False))[0]
     assert registered.parameters["properties"]["max_events"]["anyOf"][0]["maximum"] == 127
+    assert "menu-flow-01" in registered.parameters["properties"]["name"]["description"]
+    assert "UnityEngine.Input" in metadata["description"]
+    assert "raw observation" in metadata["description"]
     async with Client(server, mode=mode) as client:
         advertised = (await client.list_tools())[0]
         hints = advertised.annotations.model_dump(by_alias=True)

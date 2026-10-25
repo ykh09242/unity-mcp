@@ -13,6 +13,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     {
         private readonly JArray steps = new JArray();
         private readonly JArray diagnostics = new JArray();
+        private JObject inputObservation;
 
         private sealed class HeldInput
         {
@@ -35,6 +36,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         public bool Saved { get; private set; }
         public bool Recording => Status == "recording";
         public string CurrentScene => scene;
+        public bool RawInputReplayAvailable => inputObservation?.Value<bool?>("raw_replay_available") != false;
 
         public PlayScenarioRecordingDraft(string name, string initialScene, int maxEvents = 31, string sceneScope = "active", string[] initialScenes = null)
         {
@@ -95,7 +97,10 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             {
                 ["name"] = Name,
                 ["draft"] = true,
-                ["tags"] = new JArray("recorded-draft"),
+                ["tags"] =
+                    inputObservation?.Value<string>("backend") == "legacy_input_manager"
+                        ? new JArray("recorded-draft", "recorded-legacy-input")
+                        : new JArray("recorded-draft"),
                 ["steps"] = steps.DeepClone(),
             };
             if (sceneScope == "all_loaded")
@@ -111,6 +116,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (diagnostics.Count < 32 && !diagnostics.Any(value => (string)value == bounded))
                 diagnostics.Add(bounded);
         }
+
+        public void DescribeInputObservation(JObject capabilities) => inputObservation = capabilities == null ? null : (JObject)capabilities.DeepClone();
 
         /// <summary>Advances only the actual game-input update counter supplied by the observer.</summary>
         public bool InputFrameObserved(long frame)
@@ -371,12 +378,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 ["event_count"] = steps.Count - 1,
                 ["max_events"] = MaxEvents,
                 ["diagnostics"] = diagnostics.DeepClone(),
+                ["input_observation"] = inputObservation == null ? JValue.CreateNull() : inputObservation.DeepClone(),
                 ["last_observed_input_update"] = inputFrame.HasValue ? new JValue(inputFrame.Value) : JValue.CreateNull(),
                 ["limitations"] = new JArray(
                     sceneScope == "active"
-                        ? "Supported uGUI Button pointer clicks and available Input System key/mouse/touch/wheel events are observed. UI Toolkit, programmatic callbacks, gamepad and legacy-only input require manual authoring."
+                        ? "Supported uGUI Button pointer clicks and available key/mouse/touch/wheel observation are recorded. input_observation identifies the actual backend and raw replay limits. UI Toolkit, programmatic callbacks and gamepad require manual authoring."
                         : "Supported uGUI Button pointer clicks carry exact scene selectors. Initial loaded context is explicit setup requiring review; observed transitions are waits, never inferred loading/unloading effects.",
-                    "Raw positions are observed screen pixels, not stable UI identities. Holds and spacing count game Input System updates; same-update ordering is retained but exact simultaneous replay needs review.",
+                    "Raw positions are observed screen pixels, not stable UI identities. Holds and spacing count the observer's game updates; same-update ordering is retained but exact simultaneous replay and cross-backend units need review.",
                     "Objects created between observer scans may be missed. Scene changes preserve observed order, not inferred waits or readiness conditions.",
                     "Review selectors, scene readiness, state expectations and reset policy before clearing draft. Checkpoints request future screenshots and do not create image assertions."
                 ),
