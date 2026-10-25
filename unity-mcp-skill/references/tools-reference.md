@@ -80,7 +80,7 @@ Image inclusion and file-output behavior depend on the chosen capture route. Ins
 
 Use `manage_editor(action="get_game_view_size")` to inspect the open Game View. Explicit `set_game_view_size` accepts fixed width/height, an aspect ratio, or a discovered preset. Retain the returned `restore_token` for `restore_game_view_size`; screenshots do not resize the view. `manage_recording` captures a visible view over time and scales frames to its output dimensions; it does not set the Game View size.
 
-For recording, call `capabilities` before `start`, retain `data.job_id`, then call `status` or `stop` with that ID. Inspect actual frame counts/skipped slots and final status. Output stays within `Captures/Recordings`; interrupted jobs discard partial video. Linux, batch mode, audio and inline video data are unsupported.
+For recording, call `capabilities` before `start`, retain `data.job_id`, then call `status` or `stop` with that ID. Game View recording requires unpaused Play Mode and actual rendered frames, not keyboard focus; the tool does not activate or restore the Editor window. Inspect actual frame counts/skipped slots and final status. Output stays within `Captures/Recordings`; interrupted jobs discard partial video. Linux, batch mode, audio and inline video data are unsupported.
 
 Audio example, only after the user has requested playback in Play mode and an existing source is resolved:
 
