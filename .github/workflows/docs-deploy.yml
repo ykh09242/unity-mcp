@@ -32,7 +32,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: pages
+  # PR previews must not replace another PR's pending build or a Pages deployment.
+  group: ${{ github.event_name == 'pull_request' && format('pages-pr-{0}', github.event.pull_request.number) || 'pages' }}
   cancel-in-progress: false
 
 jobs:
