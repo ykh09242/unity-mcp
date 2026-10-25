@@ -27,7 +27,10 @@ import time
 import tracemalloc
 from typing import TypedDict
 
-import test_wait_journal_cost as legacy
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from tools.experiments import test_wait_journal_cost as legacy
 
 
 class Observation(TypedDict, total=False):

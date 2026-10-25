@@ -18226,5 +18226,670 @@
         "cancel-failure": {}
       }
     }
+  },
+  "measurement_harness_snapshot": "docs/benchmarks/test-wait-journal-read-lifetime-measured.py.txt",
+  "reproduction_harness": {
+    "source": "tools/experiments/test_wait_journal_read_lifetime_cost.py",
+    "sha256": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db",
+    "change": "repository-root bootstrap and package-qualified helper import only, before measurement",
+    "function_and_class_ast_bodies_unchanged": [
+      "Observation",
+      "worker",
+      "summarize",
+      "paired",
+      "main"
+    ],
+    "definition_ast_sha256": "f75e71f511d2e463a9e47f48b460a135e1591aec8f274afd352c34234ba84b47",
+    "unchanged_dependency_sha256": {
+      "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+      "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+      "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3"
+    },
+    "canonical_scoped_lint_before": {
+      "exit_code": 1,
+      "diagnostic": "E0401 Unable to import test_wait_journal_cost"
+    },
+    "canonical_scoped_lint_after": {
+      "exit_code": 0
+    },
+    "script_and_module_help": {
+      "exit_code": 0
+    },
+    "arbitrary_working_directory_script_and_file_import": {
+      "exit_code": 0
+    },
+    "readiness": {
+      "private_original_sha256": "5c42b12c6710116f2fe6c207d41b0e73c1535436498c00ebb8e0e5aba2694034",
+      "row_count": 22,
+      "measured": false,
+      "command_exit": 0,
+      "invocation": [
+        "<existing-server-python>",
+        "-m",
+        "tools.experiments.test_wait_journal_read_lifetime_cost",
+        "--repository",
+        "<checkout>",
+        "--baseline",
+        "<baseline-source>",
+        "--candidate",
+        "<candidate_a-source>",
+        "--scratch",
+        "<private-synthetic-scratch>",
+        "--output",
+        "<private-output>/repair-readiness.json",
+        "--check",
+        "--runs",
+        "1"
+      ],
+      "rows": [
+        {
+          "case": "scalar-1k",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "source_sha256": "8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "5b7b39d742db13015c053f2ee1756508192bc33612ec502352ba262393b30af6",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "baseline",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "scalar-1k",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "source_sha256": "2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "5b7b39d742db13015c053f2ee1756508192bc33612ec502352ba262393b30af6",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "candidate",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "scalar-4m",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "source_sha256": "2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "c5676e4f1db24da09620714069b3400fc81f025251220dbdb4f33a63ac484fa4",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "candidate",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "scalar-4m",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "source_sha256": "8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "c5676e4f1db24da09620714069b3400fc81f025251220dbdb4f33a63ac484fa4",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "baseline",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "scalar-near64m",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "source_sha256": "8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "4a55168a19152c7e0676b9900b1f9c1ad64806c0bb54fa359e3f29014b2c5a0f",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "baseline",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "scalar-near64m",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "source_sha256": "2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "4a55168a19152c7e0676b9900b1f9c1ad64806c0bb54fa359e3f29014b2c5a0f",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "candidate",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "container-1k",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "source_sha256": "2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "ececdeff185a1c0c468bec744d6cafbaaaff30071dccb760a35ffe02efbff5a3",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "candidate",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "container-1k",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "source_sha256": "8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "ececdeff185a1c0c468bec744d6cafbaaaff30071dccb760a35ffe02efbff5a3",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "baseline",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "container-4m",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "source_sha256": "8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "cbbef6080d349327cf22e00df73cdcdc80ce1151e70bfcd37849ffca11ee6797",
+          "gc_collections": [
+            11,
+            1,
+            1
+          ],
+          "label": "baseline",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "container-4m",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "source_sha256": "2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "cbbef6080d349327cf22e00df73cdcdc80ce1151e70bfcd37849ffca11ee6797",
+          "gc_collections": [
+            11,
+            1,
+            1
+          ],
+          "label": "candidate",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "container-near64m",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "source_sha256": "2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "71250340e18b8e6d2f910a41496cd10b968b921b1e8fbc816860fb58c99ca3f5",
+          "gc_collections": [
+            11,
+            1,
+            1
+          ],
+          "label": "candidate",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "container-near64m",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "source_sha256": "8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "71250340e18b8e6d2f910a41496cd10b968b921b1e8fbc816860fb58c99ca3f5",
+          "gc_collections": [
+            11,
+            1,
+            1
+          ],
+          "label": "baseline",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "fallback-4m",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "source_sha256": "8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "cbbef6080d349327cf22e00df73cdcdc80ce1151e70bfcd37849ffca11ee6797",
+          "gc_collections": [
+            11,
+            1,
+            1
+          ],
+          "label": "baseline",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "fallback-4m",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "source_sha256": "2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "cbbef6080d349327cf22e00df73cdcdc80ce1151e70bfcd37849ffca11ee6797",
+          "gc_collections": [
+            11,
+            1,
+            1
+          ],
+          "label": "candidate",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "aliased-4m",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "source_sha256": "2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "1b41d15a11375e46cafb6071aacd8adbb97f1408d3fd2340a12656bf4d7357e3",
+          "gc_collections": [
+            11,
+            1,
+            1
+          ],
+          "label": "candidate",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "aliased-4m",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "source_sha256": "8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "1b41d15a11375e46cafb6071aacd8adbb97f1408d3fd2340a12656bf4d7357e3",
+          "gc_collections": [
+            11,
+            1,
+            1
+          ],
+          "label": "baseline",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "cancel",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "source_sha256": "8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "914496477bb509f29ee8cf41bed587b19d56cc5f94e1cff24d3dc55f3ab55d1a",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "baseline",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "cancel",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "source_sha256": "2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "914496477bb509f29ee8cf41bed587b19d56cc5f94e1cff24d3dc55f3ab55d1a",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "candidate",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "replace-failure",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "source_sha256": "2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "914496477bb509f29ee8cf41bed587b19d56cc5f94e1cff24d3dc55f3ab55d1a",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "candidate",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "replace-failure",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "source_sha256": "8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "914496477bb509f29ee8cf41bed587b19d56cc5f94e1cff24d3dc55f3ab55d1a",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "baseline",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "cancel-failure",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "source_sha256": "8c6a9fd1666a27dd0667e959f9a0e34b91f020c882fd75d5f6a04bb7035c239e",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "914496477bb509f29ee8cf41bed587b19d56cc5f94e1cff24d3dc55f3ab55d1a",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "baseline",
+          "run": 0,
+          "round": 0
+        },
+        {
+          "case": "cancel-failure",
+          "mode": "check",
+          "source": "Server/src/services/test_wait_journal.py@2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "source_sha256": "2950063ffe45293a70673e1b3d6376800548f2ed289d465d22b2ebd7c4905633",
+          "dependency_sha256": {
+            "limits": "af60933aa12f899686ad11bd2eed5d4bacba5274a8f34fd0bb784edc6e37a67a",
+            "bootstrap": "88c8d778293e16c66dcc4a6648f8c23b8e857ca659c39861d286644d30cd1d5d",
+            "payload_scenario_harness": "7b8202b576a2d1875f7b5af83cad38e6affc1a0d5a8f689524fb38563442b0a3",
+            "measurement_harness": "cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db"
+          },
+          "imports": {
+            "limits": "Server/src/models/response_limits.py",
+            "bootstrap": "Server/src/services/private_store_bootstrap.py"
+          },
+          "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+          "pydantic": "2.14.1",
+          "document_sha256": "914496477bb509f29ee8cf41bed587b19d56cc5f94e1cff24d3dc55f3ab55d1a",
+          "gc_collections": [
+            0,
+            0,
+            1
+          ],
+          "label": "candidate",
+          "run": 0,
+          "round": 0
+        }
+      ],
+      "summary": {
+        "scalar-1k": {},
+        "scalar-4m": {},
+        "scalar-near64m": {},
+        "container-1k": {},
+        "container-4m": {},
+        "container-near64m": {},
+        "fallback-4m": {},
+        "aliased-4m": {},
+        "cancel": {},
+        "replace-failure": {},
+        "cancel-failure": {}
+      }
+    }
   }
 }

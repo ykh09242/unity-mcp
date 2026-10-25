@@ -101,6 +101,26 @@ source/helper hashes, adverse observations and original private artifact hashes
 are retained. The measurement helper SHA-256 is
 `5dd9e39bf7c38a425e05b977f2cbb9af368f32ddbf7e1b93d101aaad666a48df`.
 
+### Import repair and historical runner provenance
+
+The [exact measured runner snapshot](../benchmarks/test-wait-journal-read-lifetime-measured.py.txt)
+retains that original hash. The current reproduction runner has SHA-256
+`cd48b504cd201b6b388cc33c8b8364c9bcff595614a062272545b0700923d7db`.
+Its only source change bootstraps the repository root for direct script execution
+and imports the shared helper through `tools.experiments`. This fixes canonical
+Pylint import resolution and supports module execution. The earlier local lint
+command included an extra experiments search path that masked the error; the
+canonical path reproduced `E0401` before this repair and passes afterward.
+
+All function and class AST bodies match the measured snapshot, and the shared
+scenario, response-limit and bootstrap helper hashes are unchanged. Import setup
+runs before the measurement boundary. Script/module help, direct script and
+file-based import from another working directory, and 22 new untimed children
+covering all eleven baseline/candidate-A pairs pass. The manifest records those
+new readiness observations separately. The original 448 measured observations
+and original 22 readiness observations are unchanged; no performance samples were
+rerun or relabeled after this import repair.
+
 ### Candidate A: complete lifecycle and cleanup
 
 Wall values below are medians of three fresh children per arm per block, in
@@ -196,7 +216,8 @@ were not exercised on this Windows host.
 Use a disposable checkout at the pinned base and the existing server interpreter;
 keep normal checkout/runtime data unchanged. Copy the baseline journal source
 before applying one of the patches above. Source and dependency/helper hashes
-must match the manifest. Runtime output belongs in private scratch storage.
+must match the manifest's measured or reproduction identity as appropriate.
+Runtime output belongs in private scratch storage.
 
 ```powershell
 $python = '<existing-server-python>'
@@ -217,3 +238,9 @@ baseline/baseline controls use `--runs 1 --rounds 3 --modes latency` and supply 
 baseline source for both arms. Apply the raw-only patch to a separate clean
 disposable checkout for that diagnostic. Do not combine concurrent test, build,
 Unity or benchmark work with measured children.
+
+For literal historical-runner reproduction, copy the measured `.py.txt` snapshot
+over the runner path in a disposable experiment checkout and invoke it as a
+script. Its historical bare helper import supports that invocation but fails
+canonical lint and module execution. Use the repaired runner for current work;
+its distinct hash remains visible in any new output.
