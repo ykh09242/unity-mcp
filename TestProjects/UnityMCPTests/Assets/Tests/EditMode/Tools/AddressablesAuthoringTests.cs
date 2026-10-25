@@ -426,9 +426,48 @@ namespace MCPForUnityTests.Editor.Tools
             SameAsset(nativeFirst, AssetDatabase.LoadMainAssetAtPath(AssetDatabase.GetAssetPath(nativeFirst)));
             Undo.FlushUndoRecordObjects();
             Undo.PerformUndo();
+            object sourceRestored = Invoke(first, "GetAssetEntry", assetGuid);
+            object destinationRestored = Invoke(second, "GetAssetEntry", assetGuid);
+            Assert.IsNotNull(sourceRestored, "Native Undo must restore the source group's entry collection.");
+            Assert.IsNull(destinationRestored, "Native Undo must remove the entry from the destination group's collection.");
             object restored = Invoke(settings, "FindAssetEntry", assetGuid);
-            Assert.AreEqual((string)Get(first, "Guid"), Get(Get(restored, "parentGroup"), "Guid"), "Native Undo must restore original group membership.");
+            Assert.AreEqual(
+                (string)Get(first, "Guid"),
+                Get(Get(restored, "parentGroup"), "Guid"),
+                "Native settings lookup must agree with restored group collections after Undo."
+            );
             CollectionAssert.AreEqual(labels, Labels(restored));
+            Assert.AreEqual("owned/renamed", Get(restored, "address"), "Undoing the move must preserve the preceding address edit.");
+            Undo.PerformRedo();
+            restored = Invoke(settings, "FindAssetEntry", assetGuid);
+            Assert.AreEqual((string)Get(second, "Guid"), Get(Get(restored, "parentGroup"), "Guid"), "Redo must refresh the native settings lookup too.");
+            CollectionAssert.AreEqual(labels, Labels(restored));
+            Undo.PerformUndo();
+            Undo.PerformUndo();
+            restored = Invoke(settings, "FindAssetEntry", assetGuid);
+            Assert.AreEqual((string)Get(first, "Guid"), Get(Get(restored, "parentGroup"), "Guid"));
+            Assert.AreEqual("owned/first", Get(restored, "address"), "Undo must also restore the address through the settings lookup cache.");
+            Undo.PerformRedo();
+            Undo.PerformRedo();
+            restored = Invoke(settings, "FindAssetEntry", assetGuid);
+            Assert.AreEqual((string)Get(second, "Guid"), Get(Get(restored, "parentGroup"), "Guid"));
+            Assert.AreEqual("owned/renamed", Get(restored, "address"));
+
+            var bytes = Directory.GetFiles(root, "*", SearchOption.AllDirectories).ToDictionary(path => path, File.ReadAllBytes);
+            JObject metadata = Read();
+            Texture2D unrelated = AssetDatabase.LoadAssetAtPath<Texture2D>(root + "/First.asset");
+            string name = unrelated.name;
+            Undo.IncrementCurrentGroup();
+            Undo.RegisterCompleteObjectUndo(unrelated, "Unrelated texture name");
+            unrelated.name = name + "Changed";
+            Undo.FlushUndoRecordObjects();
+            Undo.PerformUndo();
+            Assert.AreEqual(name, unrelated.name);
+            Assert.AreEqual(metadata.Value<string>("revision"), Read().Value<string>("revision"), "Unrelated Undo must not change Addressables metadata.");
+            restored = Invoke(settings, "FindAssetEntry", assetGuid);
+            Assert.AreEqual((string)Get(second, "Guid"), Get(Get(restored, "parentGroup"), "Guid"));
+            foreach (var pair in bytes)
+                CollectionAssert.AreEqual(pair.Value, File.ReadAllBytes(pair.Key), "Undo/Redo cache refresh must not write owned asset files.");
         }
 
         [Test]

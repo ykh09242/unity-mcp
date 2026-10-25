@@ -24,6 +24,16 @@ compatible settings. Missing or incompatible API members return
 `addressables_api_unsupported` with the affected action/member. Unsupported
 stored profile versions return `addressables_profile_schema_unsupported`.
 
+Addressables 1.x edits additionally require its native internal
+`AddressableAssetSettings.ClearFindAssetEntryCache()` hook with the verified
+assembly, declaring type and signature. After native Undo/Redo restores group
+collections, this hook invalidates only the nonserialized settings lookup cache
+that otherwise can retain stale entry instances. The adapter keeps weak
+references to settings actually edited through the tool, prunes destroyed
+owners and releases its event subscription on domain reload or Editor shutdown.
+It does not rewrite assets, hashes or unrelated settings. A missing hook refuses
+1.x authoring before Undo registration; inspection remains available.
+
 Inspection reads the stored active profile and profile fields directly.
 It does not call getters that create default profiles or migrate stored data.
 Existing revision guards, bounded scans, read-only checks, native readback,

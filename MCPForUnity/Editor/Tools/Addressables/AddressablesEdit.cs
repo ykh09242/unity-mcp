@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json.Linq;
@@ -132,6 +133,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
             AddressablesState fresh = AddressablesState.Capture(request);
             if (fresh.Revision != expected || fresh.Settings != before.Settings)
                 AddressablesState.Fail("stale_addressables_revision", "Settings or native identity changed before Undo.");
+            AddressablesUndoCache.Prepare(before.Settings, before.Version, action);
             int undo = Undo.GetCurrentGroup();
             try
             {
@@ -168,6 +170,78 @@ namespace MCPForUnity.Editor.Tools.Addressables
             {
                 Undo.CollapseUndoOperations(undo);
             }
+        }
+    }
+
+    internal static class AddressablesUndoCache
+    {
+        private sealed class Record
+        {
+            internal WeakReference<UnityEngine.Object> Settings;
+            internal MethodInfo Clear;
+        }
+
+        private static readonly List<Record> Records = new List<Record>();
+
+        static AddressablesUndoCache()
+        {
+            Undo.undoRedoPerformed += Refresh;
+            AssemblyReloadEvents.beforeAssemblyReload += Release;
+            EditorApplication.quitting += Release;
+        }
+
+        internal static void Prepare(UnityEngine.Object settings, string version, string action)
+        {
+            if (!version.StartsWith("1.", StringComparison.Ordinal))
+                return;
+            Type type = settings.GetType();
+            MethodInfo clear = type.GetMethod("ClearFindAssetEntryCache", BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+            if (
+                type.FullName != "UnityEditor.AddressableAssets.Settings.AddressableAssetSettings"
+                || type.Assembly.GetName().Name != "Unity.Addressables.Editor"
+                || clear == null
+                || clear.DeclaringType != type
+                || !clear.IsAssembly
+                || clear.ContainsGenericParameters
+                || clear.ReturnType != typeof(void)
+            )
+                AddressablesState.Fail(
+                    "addressables_api_unsupported",
+                    action + " requires the Addressables 1.x native transient lookup-cache reset API for Undo/Redo."
+                );
+            Prune();
+            if (Records.Any(record => record.Settings.TryGetTarget(out UnityEngine.Object owner) && owner == settings))
+                return;
+            Records.Add(new Record { Settings = new WeakReference<UnityEngine.Object>(settings), Clear = clear });
+        }
+
+        private static void Prune() => Records.RemoveAll(record => !record.Settings.TryGetTarget(out UnityEngine.Object owner) || owner == null);
+
+        private static void Refresh()
+        {
+            Prune();
+            foreach (Record record in Records)
+                if (record.Settings.TryGetTarget(out UnityEngine.Object owner) && owner != null)
+                    try
+                    {
+                        // 1.x restores group maps but can retain cached entries referring to their pre-Undo instances.
+                        // Its native hook clears only this nonserialized lookup cache; no asset or hash is rewritten.
+                        record.Clear.Invoke(owner, null);
+                    }
+                    catch (TargetInvocationException)
+                    {
+                        Debug.LogWarning(
+                            "Addressables lookup cache could not refresh after Undo/Redo; inspect package API compatibility before further authoring."
+                        );
+                    }
+        }
+
+        private static void Release()
+        {
+            Records.Clear();
+            Undo.undoRedoPerformed -= Refresh;
+            AssemblyReloadEvents.beforeAssemblyReload -= Release;
+            EditorApplication.quitting -= Release;
         }
     }
 }
