@@ -1,0 +1,110 @@
+{
+  "schema": "pc03-portable-functional-summary-v1",
+  "runs": [
+    {
+      "run": 425,
+      "candidate": "rejected-full",
+      "productionSHA256": "5901e11b6376fb5cf445813dff9be17960b877640fc49057d001a09dcc19b123",
+      "counts": {
+        "total": 34,
+        "passed": 34,
+        "failed": 0,
+        "skipped": 0
+      },
+      "classes": {
+        "MCPForUnityTests.Editor.Resources.GameObjectComponentsPagingTests": {
+          "Passed": 33
+        },
+        "MCPForUnityTests.Editor.Resources.PC03PairedNativeBenchmark": {
+          "Passed": 1
+        }
+      },
+      "all2008InputHashesUnchanged": true,
+      "result": "passed",
+      "performanceClaim": false
+    },
+    {
+      "run": 430,
+      "candidate": "narrowed",
+      "productionSHA256": "a9696079b3e4520322700cc3d6226240c449f344135711997fa1a1f10e51ee7d",
+      "counts": {
+        "total": 42,
+        "passed": 42,
+        "failed": 0,
+        "skipped": 0
+      },
+      "classes": {
+        "MCPForUnityTests.Editor.Resources.GameObjectComponentsPagingTests": {
+          "Passed": 33
+        },
+        "MCPForUnityTests.Editor.Resources.GameObjectSerializationReadOnlyTests": {
+          "Passed": 1
+        },
+        "MCPForUnityTests.Editor.Resources.PC03PairedNativeBenchmark": {
+          "Passed": 1
+        },
+        "MCPForUnityTests.Editor.Tools.ComponentSerializationBudgetTests": {
+          "Passed": 7
+        }
+      },
+      "all2008InputHashesUnchanged": true,
+      "result": "passed",
+      "performanceClaim": false
+    },
+    {
+      "run": 435,
+      "candidate": "restored-original-beta",
+      "productionSHA256": "1de68ed4a6b11ebcb0fdb99b4ba8c069334d82a9be7338eb959fdcd152da7198",
+      "counts": {
+        "total": 42,
+        "passed": 42,
+        "failed": 0,
+        "skipped": 0
+      },
+      "classes": {
+        "MCPForUnityTests.Editor.Resources.GameObjectComponentsPagingTests": {
+          "Passed": 33
+        },
+        "MCPForUnityTests.Editor.Tools.ComponentSerializationBudgetTests": {
+          "Passed": 7
+        },
+        "MCPForUnityTests.Editor.Resources.GameObjectSerializationReadOnlyTests": {
+          "Passed": 1
+        },
+        "MCPForUnityTests.Editor.Resources.PC03PairedNativeBenchmark": {
+          "Passed": 1
+        }
+      },
+      "all2008InputHashesUnchanged": true,
+      "result": "passed",
+      "performanceClaim": false
+    }
+  ],
+  "earlierFixtureFailure": {
+    "run": 424,
+    "candidate": "rejected-full",
+    "counts": {
+      "total": 36,
+      "passed": 28,
+      "failed": 8,
+      "skipped": 0
+    },
+    "productionSHA256": "5901e11b6376fb5cf445813dff9be17960b877640fc49057d001a09dcc19b123",
+    "pagingTestsSHA256": "bd68dec12dcb8409b29ef5cfbed30f000ba793231eac653563f8afeb18477f5b",
+    "cause": "Six stale strict-scalar expectations and two native missing-slot fixture setup failures; corrected in tests before run 425.",
+    "productionChangedToRepairFixture": false
+  },
+  "finalRestoration": {
+    "runtimeOptimizationShipped": false,
+    "productionSHA256": "1de68ed4a6b11ebcb0fdb99b4ba8c069334d82a9be7338eb959fdcd152da7198",
+    "originalInputCount": 2002,
+    "originalManifestByteForByteRestored": true,
+    "allOriginalInputHashesVerified": true,
+    "temporaryAdditionsRemoved": 6,
+    "temporaryFiltersCleared": true,
+    "runnerAndLauncherRestored": true,
+    "ownedSurvivors": 0,
+    "protectedPreserved": true,
+    "cacheLibraryAndEvidenceRetained": true
+  }
+}

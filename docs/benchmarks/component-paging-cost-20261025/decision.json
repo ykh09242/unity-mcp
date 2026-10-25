@@ -1,0 +1,65 @@
+{
+  "schema": "pc03-decision-v1",
+  "fullCandidate": {
+    "sourceSHA256": "5901e11b6376fb5cf445813dff9be17960b877640fc49057d001a09dcc19b123",
+    "decision": "rejected",
+    "runs": [426, 427, 428, 429],
+    "reason": "Repeated sampled managed-heap increase in a property-heavy mixed wire workload despite aggregate wall and GC improvement.",
+    "adverseCase": {
+      "count": 256,
+      "pageSize": 100,
+      "properties": true,
+      "workload": "mixed",
+      "output": "construct-and-wire",
+      "firstSampledHeapBaselineCandidateBytes": [7270400, 7563264],
+      "repeatSampledHeapBaselineCandidateBytes": [7231488, 7974912]
+    }
+  },
+  "narrowedCandidate": {
+    "sourceSHA256": "a9696079b3e4520322700cc3d6226240c449f344135711997fa1a1f10e51ee7d",
+    "decision": "rejected",
+    "runs": [431, 432, 433, 434],
+    "reason": "Ordinary property mixed wire wall and sampled-heap increases repeated despite source-identical property statements and metadata-path gains.",
+    "adverseCase": {
+      "count": 16,
+      "pageSize": 25,
+      "properties": true,
+      "workload": "mixed",
+      "output": "construct-and-wire",
+      "firstWallBaselineCandidateMicrosecondsPerRead": [262.78033854166665, 287.57929687499995],
+      "repeatWallBaselineCandidateMicrosecondsPerRead": [257.0454427083333, 277.52460937499995],
+      "firstSampledHeapBaselineCandidateBytes": [6225920, 6955008],
+      "repeatSampledHeapBaselineCandidateBytes": [6426624, 7043072],
+      "firstWallControlSpreadRatio": 1.0139655668713972,
+      "repeatWallControlSpreadRatio": 1.007515457543281,
+      "firstHeapControlSpreadRatio": 1.0,
+      "repeatHeapControlSpreadRatio": 1.0006410256410256
+    },
+    "metadataBenefitsRetainedInEvidence": {
+      "count": 2048,
+      "pageSize": 1,
+      "properties": false,
+      "workload": "full",
+      "firstConstructWallRatio": 0.6927937733568263,
+      "repeatConstructWallRatio": 0.700299756343882,
+      "firstWireWallRatio": 0.7604038855318033,
+      "repeatWireWallRatio": 0.7480854382276669,
+      "timingConstructBaselineCandidateGC": [33, 11],
+      "timingWireBaselineCandidateGC": [35, 13]
+    }
+  },
+  "disposition": {
+    "runtimeOptimizationShipped": false,
+    "restoredRuntimeSHA256": "1de68ed4a6b11ebcb0fdb99b4ba8c069334d82a9be7338eb959fdcd152da7198",
+    "baselineCommit": "a3efdeb8ae63ad5bf80ff63936f64398e17058d9",
+    "delivery": "tests, opt-in benchmark and complete rejected-experiment evidence",
+    "additionalExperimentsOrVariants": false
+  },
+  "counterLimits": {
+    "allocatedBytes": "uncalibrated and null in all eight measured phases; no allocation-byte or event-saving claim",
+    "zeroOnlyWorkingSetAndLifetimePeak": "unavailable; no per-arm process-memory equality or improvement claim",
+    "sampledManagedHeap": "can miss peaks; separate from allocation, retained leak, native memory and whole-process memory",
+    "processCPU": "coarse; no zero-bearing case ratio claim",
+    "GCGenerations": "identical runtime counts; never summed across generation indices"
+  }
+}

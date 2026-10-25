@@ -43,3 +43,7 @@ tools/compile-refs/*.txt text eol=lf
 /docs/benchmarks/*.patch text eol=lf
 # Unified-diff blank context lines contain a required leading space.
 /docs/benchmarks/test-wait-journal-projection.patch whitespace=-blank-at-eol
+
+# Preserve native benchmark rows and source snapshots byte-for-byte.
+/docs/benchmarks/component-paging-cost-20261025/*.jsonl text eol=lf
+/docs/benchmarks/component-paging-cost-20261025/*.txt text eol=lf

@@ -1,0 +1,12 @@
+{
+  "schema": "pc03-narrowed-metadata-source-proof-v1",
+  "baselineCommit": "a3efdeb8ae63ad5bf80ff63936f64398e17058d9",
+  "baselineSHA256": "1de68ed4a6b11ebcb0fdb99b4ba8c069334d82a9be7338eb959fdcd152da7198",
+  "rejectedFullCandidateSHA256": "5901e11b6376fb5cf445813dff9be17960b877640fc49057d001a09dcc19b123",
+  "narrowedCandidateSHA256": "a9696079b3e4520322700cc3d6226240c449f344135711997fa1a1f10e51ee7d",
+  "removingOnlyMetadataHelperAndEarlyGuardRecoversExactBaseline": true,
+  "propertyBranchCollectionProjectionBudgetAndEnvelopeVerbatim": true,
+  "testsSHA256": "49860541bae86c1c7d52998dba0fadfb5a917b2e8785b867f0c603e780103895",
+  "helperSHA256": "26c3c1dcc88ccf77cb0c441a20f120bc02adfe4082e52f11230d0b5794ca9c01",
+  "baselineAdapterSHA256": "fa82694268b0873928c1de33c89166933f82eaa55eb38c1c7bd57dd7a677ae9b"
+}

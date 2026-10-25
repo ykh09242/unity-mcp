@@ -1,0 +1,223 @@
+{
+  "schema": "pc03-portable-evidence-history-v1",
+  "status": {
+    "fullCandidate": "rejected",
+    "narrowedCandidate": "rejected after final unchanged confirmation repeated ordinary property-workload cost increases",
+    "restoredRuntime": "exact original beta; final functional validation tracked separately"
+  },
+  "sourcePins": {
+    "baselineCommit": "a3efdeb8ae63ad5bf80ff63936f64398e17058d9",
+    "baselineGitBlob": "af79af4a9f7711b614a765ef09052af68df1f7df",
+    "baselineSourceSHA256": "1de68ed4a6b11ebcb0fdb99b4ba8c069334d82a9be7338eb959fdcd152da7198",
+    "rejectedFullSourceSHA256": "5901e11b6376fb5cf445813dff9be17960b877640fc49057d001a09dcc19b123",
+    "narrowedSourceSHA256": "a9696079b3e4520322700cc3d6226240c449f344135711997fa1a1f10e51ee7d",
+    "pagingTestsSHA256": "49860541bae86c1c7d52998dba0fadfb5a917b2e8785b867f0c603e780103895",
+    "helperSHA256": "26c3c1dcc88ccf77cb0c441a20f120bc02adfe4082e52f11230d0b5794ca9c01",
+    "baselineAdapterSHA256": "fa82694268b0873928c1de33c89166933f82eaa55eb38c1c7bd57dd7a677ae9b"
+  },
+  "sourceSnapshots": {
+    "rejected-full": "rejected-fullcandidate-GameObjectResource.cs.txt",
+    "narrowed": "narrowed-GameObjectResource.cs.txt"
+  },
+  "helper": "../PC03PairedNativeBenchmark.cs",
+  "baselineAdapter": "../PC03FrozenBaselineComponentsResource.cs",
+  "narrowedSourceProof": "narrowed-source-proof.json",
+  "rawRuns": [
+    {
+      "run": 426,
+      "candidate": "rejected-full",
+      "phase": "timing",
+      "nativeResult": "passed",
+      "nativeTestCount": 1,
+      "metadata": {
+        "schema": "pc03-native-v1",
+        "unityVersion": "6000.0.69f1",
+        "phase": "timing",
+        "stopwatchFrequency": 10000000,
+        "allocationCounterCalibrated": false,
+        "calibrationDelta": 0
+      },
+      "rowCount": 720,
+      "rows": "rejected-full-426-timing.jsonl",
+      "originalRawJSONSHA256": "ee28b13e24865ca93f84e5ba13532a35801d55f69ec04e005d2e9cb911384894",
+      "exportJSONLSHA256": "1aca1e60f117644b694c8aca4dfb47e2eb721862049306f3ed9a5ef5a46877ea",
+      "rowOrder": "original array order; one original arm row per line",
+      "counterValues": "unchanged, including zero-only process counters and null allocation bytes"
+    },
+    {
+      "run": 427,
+      "candidate": "rejected-full",
+      "phase": "allocation",
+      "nativeResult": "passed",
+      "nativeTestCount": 1,
+      "metadata": {
+        "schema": "pc03-native-v1",
+        "unityVersion": "6000.0.69f1",
+        "phase": "allocation",
+        "stopwatchFrequency": 10000000,
+        "allocationCounterCalibrated": false,
+        "calibrationDelta": 0
+      },
+      "rowCount": 720,
+      "rows": "rejected-full-427-allocation.jsonl",
+      "originalRawJSONSHA256": "cc07512a6031c07506dddd7145a884481926d1f493cc7e32462b0a1f816ed356",
+      "exportJSONLSHA256": "dc5cbbd0953beec7b37282dd9c19f613c17b30281944a26f43288b39933ac20f",
+      "rowOrder": "original array order; one original arm row per line",
+      "counterValues": "unchanged, including zero-only process counters and null allocation bytes"
+    },
+    {
+      "run": 428,
+      "candidate": "rejected-full",
+      "phase": "timing",
+      "nativeResult": "passed",
+      "nativeTestCount": 1,
+      "metadata": {
+        "schema": "pc03-native-v1",
+        "unityVersion": "6000.0.69f1",
+        "phase": "timing",
+        "stopwatchFrequency": 10000000,
+        "allocationCounterCalibrated": false,
+        "calibrationDelta": 0
+      },
+      "rowCount": 720,
+      "rows": "rejected-full-428-timing.jsonl",
+      "originalRawJSONSHA256": "8caaeb1346f3ff4127e6f6127a761ea4f8d01d8ec2c7fa492d59faa529753b17",
+      "exportJSONLSHA256": "5f964bc276188b7ebf0d613b690b8ebcb89994537b0d6a421f650f26109e8242",
+      "rowOrder": "original array order; one original arm row per line",
+      "counterValues": "unchanged, including zero-only process counters and null allocation bytes"
+    },
+    {
+      "run": 429,
+      "candidate": "rejected-full",
+      "phase": "allocation",
+      "nativeResult": "passed",
+      "nativeTestCount": 1,
+      "metadata": {
+        "schema": "pc03-native-v1",
+        "unityVersion": "6000.0.69f1",
+        "phase": "allocation",
+        "stopwatchFrequency": 10000000,
+        "allocationCounterCalibrated": false,
+        "calibrationDelta": 0
+      },
+      "rowCount": 720,
+      "rows": "rejected-full-429-allocation.jsonl",
+      "originalRawJSONSHA256": "56651299592220eb2836074338399c7dd2ab6c04bc8ce9d4497dd6aafc581cff",
+      "exportJSONLSHA256": "6b5d19c142d2242d37ac9d945c10456e9b947237d5ba2d2d40dcf2fc3ccdfe76",
+      "rowOrder": "original array order; one original arm row per line",
+      "counterValues": "unchanged, including zero-only process counters and null allocation bytes"
+    }
+  ],
+  "counterInterpretation": {
+    "allocationBytes": "uncalibrated; unavailable, not zero allocations",
+    "zeroOnlyProcessWorkingSetAndPeak": "unavailable; no per-arm process-memory claim",
+    "sampledManagedHeap": "samples can miss peaks and are distinct from allocation/native/process memory",
+    "processCPU": "coarse; zero-bearing comparisons do not support ratios",
+    "GCGenerations": "identical runtime counters; do not add generations together"
+  },
+  "packagingValidation": {
+    "originalArmRowsAndOrderRoundtrip": true,
+    "runCount": 8,
+    "allRuns720Rows": true,
+    "originalAndExportHashesMatch": true,
+    "rejectedSourceSnapshotExactBytes": true,
+    "helperAndComparatorExactExecutedBytes": true,
+    "portableContentScanPassed": true,
+    "scope": "public rejected/narrowed candidate history; no native re-execution"
+  },
+  "narrowedRawRuns": [
+    {
+      "run": 431,
+      "candidate": "narrowed",
+      "phase": "timing",
+      "productionSHA256": "a9696079b3e4520322700cc3d6226240c449f344135711997fa1a1f10e51ee7d",
+      "nativeResult": "passed",
+      "nativeTestCount": 1,
+      "metadata": {
+        "schema": "pc03-native-v1",
+        "unityVersion": "6000.0.69f1",
+        "phase": "timing",
+        "stopwatchFrequency": 10000000,
+        "allocationCounterCalibrated": false,
+        "calibrationDelta": 0
+      },
+      "rowCount": 720,
+      "rows": "narrowed-431-timing.jsonl",
+      "originalRawJSONSHA256": "58fcdb4ad2847a0945f06d8495ea2bb88f624b89fb0a63f97a3bc9fe6072ebc3",
+      "exportJSONLSHA256": "1a92c376c972b536cd98a68d4f5c01b6e41f67e8b7d30f3a5d81eb3b5c8ca6d8",
+      "rowOrder": "original array order; one original arm row per line",
+      "counterValues": "unchanged, including zero-only process counters and null allocation bytes"
+    },
+    {
+      "run": 432,
+      "candidate": "narrowed",
+      "phase": "allocation",
+      "productionSHA256": "a9696079b3e4520322700cc3d6226240c449f344135711997fa1a1f10e51ee7d",
+      "nativeResult": "passed",
+      "nativeTestCount": 1,
+      "metadata": {
+        "schema": "pc03-native-v1",
+        "unityVersion": "6000.0.69f1",
+        "phase": "allocation",
+        "stopwatchFrequency": 10000000,
+        "allocationCounterCalibrated": false,
+        "calibrationDelta": 0
+      },
+      "rowCount": 720,
+      "rows": "narrowed-432-allocation.jsonl",
+      "originalRawJSONSHA256": "165a07c14ff6a0884ef7443cd18dc5a3a07add0f8969b612d7e7569a3b9c30de",
+      "exportJSONLSHA256": "54c0a237d206ee3780160c858c53a5d677e81f727244c2cc56f9b7bbfafbe756",
+      "rowOrder": "original array order; one original arm row per line",
+      "counterValues": "unchanged, including zero-only process counters and null allocation bytes"
+    },
+    {
+      "run": 433,
+      "candidate": "narrowed",
+      "phase": "timing",
+      "productionSHA256": "a9696079b3e4520322700cc3d6226240c449f344135711997fa1a1f10e51ee7d",
+      "nativeResult": "passed",
+      "nativeTestCount": 1,
+      "metadata": {
+        "schema": "pc03-native-v1",
+        "unityVersion": "6000.0.69f1",
+        "phase": "timing",
+        "stopwatchFrequency": 10000000,
+        "allocationCounterCalibrated": false,
+        "calibrationDelta": 0
+      },
+      "rowCount": 720,
+      "rows": "narrowed-433-timing.jsonl",
+      "originalRawJSONSHA256": "54f140647098fea39996bebea53eb2cb907c937844d80fd1afb2a2c8f13e2879",
+      "exportJSONLSHA256": "93ced768ecb352a673db22588fee47715d35a27f8212615fd3a85e506ca774dd",
+      "rowOrder": "original array order; one original arm row per line",
+      "counterValues": "unchanged, including zero-only process counters and null allocation bytes"
+    },
+    {
+      "run": 434,
+      "candidate": "narrowed",
+      "phase": "allocation",
+      "productionSHA256": "a9696079b3e4520322700cc3d6226240c449f344135711997fa1a1f10e51ee7d",
+      "nativeResult": "passed",
+      "nativeTestCount": 1,
+      "metadata": {
+        "schema": "pc03-native-v1",
+        "unityVersion": "6000.0.69f1",
+        "phase": "allocation",
+        "stopwatchFrequency": 10000000,
+        "allocationCounterCalibrated": false,
+        "calibrationDelta": 0
+      },
+      "rowCount": 720,
+      "rows": "narrowed-434-allocation.jsonl",
+      "originalRawJSONSHA256": "a4a718592950116a3e55b9b405143fd7e35088164d467454b4a62ce268c176c1",
+      "exportJSONLSHA256": "d19ebe81505dc92fd3df0c39f0e27845d86342f9515642ea2a2a95e450d021e0",
+      "rowOrder": "original array order; one original arm row per line",
+      "counterValues": "unchanged, including zero-only process counters and null allocation bytes"
+    }
+  ],
+  "finalRuntimeSourceSHA256": "1de68ed4a6b11ebcb0fdb99b4ba8c069334d82a9be7338eb959fdcd152da7198",
+  "delivery": {
+    "scope": "tests, opt-in benchmark, and rejected-experiment evidence",
+    "runtimeOptimizationShipped": false
+  }
+}
