@@ -302,7 +302,6 @@ async def test_authoritative_state_separates_ordinary_flights_before_private_rpc
     strict = asyncio.create_task(
         read(peer, "get_editor_state", editor_state_read_mode="authoritative")
     )
-    await peer.reply(await peer.next_command())
     strict_command = await peer.next_command()
     fresh = asyncio.create_task(read(peer, "get_editor_state", editor_state_read_mode="ordinary"))
     await peer.reply(await peer.next_command())
@@ -856,17 +855,22 @@ async def test_two_private_state_reads_succeed_after_both_identity_captures(
     await entered.wait()
     # When: another fresh private read advances the epoch before first admission.
     second = asyncio.create_task(private_read())
-    await peer.reply(await peer.next_command())
+    if mode != "authoritative":
+        await peer.reply(await peer.next_command())
     second_command = await peer.next_command()
     release.set()
-    await peer.reply(await peer.next_command())
+    if mode != "authoritative":
+        await peer.reply(await peer.next_command())
     first_command = await peer.next_command()
     await peer.reply(second_command, {"success": True, "data": {"value": 9}})
     await peer.reply(first_command, {"success": True, "data": {"value": 11}})
     # Then: neither independent fresh read is refused by the other observation.
     assert (await first)["data"]["value"] == 11
     assert (await second)["data"]["value"] == 9
-    assert peer.counts() == {"ping": 2, "get_editor_state": 2}
+    expected = {"get_editor_state": 2}
+    if mode != "authoritative":
+        expected["ping"] = 2
+    assert peer.counts() == expected
 
 
 @pytest.mark.asyncio
