@@ -1,7 +1,7 @@
 ---
 title: gameobject_positioning
 sidebar_label: gameobject_positioning
-description: "Move a GameObject relative to a reference or orient it toward a target."
+description: "Move or orient a GameObject selected by target (or name). move_relative requires reference_object plus direction or offset; look_at requires look_at_target."
 ---
 
 # `gameobject_positioning`
@@ -12,7 +12,7 @@ description: "Move a GameObject relative to a reference or orient it toward a ta
 
 ## Description
 
-Move a GameObject relative to a reference or orient it toward a target.
+Move or orient a GameObject selected by target (or name). move_relative requires reference_object plus direction or offset; look_at requires look_at_target. Action inputs: move_relative: requires reference_object. look_at: requires look_at_target.
 
 ## Parameters
 
