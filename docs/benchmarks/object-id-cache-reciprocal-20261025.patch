@@ -1,0 +1,76 @@
+diff --git a/MCPForUnity/Runtime/Helpers/UnityObjectIdCompat.cs b/MCPForUnity/Runtime/Helpers/UnityObjectIdCompat.cs
+--- a/MCPForUnity/Runtime/Helpers/UnityObjectIdCompat.cs
++++ b/MCPForUnity/Runtime/Helpers/UnityObjectIdCompat.cs
+@@ -96,6 +96,7 @@
+         // not hash handles. HashNext belongs to a bucket OR the free list, never both.
+         private Entry[] entries = System.Array.Empty<Entry>();
+         private int[] buckets = System.Array.Empty<int>();
++        private ulong bucketMultiplier;
+         private int used;
+         private int free;
+         private int count;
+@@ -145,11 +146,22 @@
+             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+         }
+
++        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
++        private static int Bucket(int handle, int capacity, ulong multiplier)
++        {
++            uint value = (uint)(handle & int.MaxValue);
++            if (System.IntPtr.Size != 8)
++                return (int)(value % (uint)capacity);
++            // Reciprocal reduction used by .NET HashHelpers.FastMod. Capacities
++            // stay below 2^31; the low product intentionally wraps modulo 2^64.
++            return unchecked((int)(((((multiplier * value) >> 32) + 1) * (uint)capacity) >> 32));
++        }
++
+         private int Find(int handle)
+         {
+             if (count == 0)
+                 return -1;
+-            for (int slot = buckets[(handle & int.MaxValue) % buckets.Length] - 1; slot >= 0; slot = entries[slot].HashNext - 1)
++            for (int slot = buckets[Bucket(handle, buckets.Length, bucketMultiplier)] - 1; slot >= 0; slot = entries[slot].HashNext - 1)
+                 if (entries[slot].Handle == handle)
+                     return slot;
+             return -1;
+@@ -179,7 +191,7 @@
+                 }
+                 else
+                     slot = used++;
+-                int bucket = (handle & int.MaxValue) % buckets.Length;
++                int bucket = Bucket(handle, buckets.Length, bucketMultiplier);
+                 int last = count == 0 ? slot : entries[first].Previous;
+                 entries[slot] = new Entry
+                 {
+@@ -212,12 +224,13 @@
+             int capacity = NextCapacity(entries.Length);
+             var newEntries = new Entry[capacity];
+             var newBuckets = new int[capacity];
++            ulong newMultiplier = ulong.MaxValue / (uint)capacity + 1;
+             System.Array.Copy(entries, newEntries, used);
+             // Free slots reuse HashNext. Only live ring members can be rehashed.
+             int slot = first;
+             for (int copied = 0; copied < count; copied++)
+             {
+-                int bucket = (newEntries[slot].Handle & int.MaxValue) % capacity;
++                int bucket = Bucket(newEntries[slot].Handle, capacity, newMultiplier);
+                 newEntries[slot].HashNext = newBuckets[bucket];
+                 newBuckets[bucket] = slot + 1;
+                 slot = newEntries[slot].Next;
+@@ -225,6 +238,7 @@
+             // Publish only after both allocations and the rebuild succeed.
+             entries = newEntries;
+             buckets = newBuckets;
++            bucketMultiplier = newMultiplier;
+         }
+
+         private static int NextCapacity(int current)
+@@ -329,7 +343,7 @@
+         private void Remove(int slot)
+         {
+             Entry entry = entries[slot];
+-            int bucket = (entry.Handle & int.MaxValue) % buckets.Length;
++            int bucket = Bucket(entry.Handle, buckets.Length, bucketMultiplier);
+             int previous = -1;
+             for (int current = buckets[bucket] - 1; current != slot; current = entries[current].HashNext - 1)
+                 previous = current;
