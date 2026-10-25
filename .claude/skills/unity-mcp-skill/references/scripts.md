@@ -65,4 +65,4 @@ Then validate and inspect the actual compiler diagnostics:
 {"tool":"read_console","params":{"action":"get","types":["error"],"count":10,"include_stacktrace":true}}
 ```
 
-Validation is not a substitute for compiling the project with its real assemblies. Attach a new component only after successful compilation; a write acknowledgement alone does not prove the class is usable. After a disconnect, inspect the script/hash before repeating create/edit/delete.
+Validation is not a substitute for compiling the project with its real assemblies. An observed compile cycle with no assembly events reports `unknown/no_assembly_compilation`; it does not certify a successful rebuild. If a compile request overlaps an active cycle, wait for that cycle before requesting attributable compilation. Attach a new component only after successful compilation; a write acknowledgement alone does not prove the class is usable. After a disconnect or reference-graph receipt error, inspect the script/hash and mutation outcome before repeating create/edit/delete; a graph reconciliation failure must not replay an already successful write.

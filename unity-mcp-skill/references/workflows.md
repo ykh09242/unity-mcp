@@ -46,6 +46,8 @@ Headless prefab editing and scene-instance editing are different. Inspect the pr
 
 For scene-instance overrides, call `list_overrides` with the resolved instance target. Select the returned `overrideId` values for `revert_overrides` or `apply_overrides`; apply also requires the listed `prefab_path`. Scope follows the nearest nested instance root. Re-list after structural edits because IDs are editor-session identifiers. Do not infer apply-all from an empty selection; inspect rejected compound properties and structural dependencies before retrying.
 
+For Addressables, inspect the installed package and the requested action's capabilities. Stable 1.28+ in the 1.x family and stable 2.x are eligible when their required API and Undo capabilities match; this is not a promise that every action or layout format is supported. Use the returned capability reason rather than upgrading the project's package to bypass a refusal.
+
 ## UI Creation Workflows
 
 Respect the project's existing UI framework. Read `mcpforunity://project/info` when the request depends on UI/input packages. Its `packages` flags and `activeInputHandler` distinguish uGUI, TMP and old/new input support; do not install or migrate frameworks without scope.
@@ -72,7 +74,11 @@ For physics, choose 2D or 3D explicitly in the action's schema. Inspect collisio
 
 When Play readiness matters, use `manage_editor(action="play", wait_until="scene_loaded")` or `"first_frame"` and retain its returned job ID. Poll `get_play_mode_job` with a bounded deadline. `first_frame` observes simulation progress; it does not establish rendered pixels or completion of application-specific async loading. `cancel_play_mode_job` cancels monitoring without stopping Play Mode.
 
-For requested interaction checks, enable/discover `testing` and query `manage_input(action="status")`. `ui_click` uses an integer instance ID or exact hierarchy path and directly dispatches uGUI pointer events. Verify the resulting application state; this path does not test raycast ordering. Raw key/mouse/touch input requires Input System 1.7+ with Input System/Both handling and advances on game input updates. Holds are limited to 1–600 updates with a hard 30-second lease. Device-paired PlayerInput actions may need virtual-device pairing; legacy UnityEngine.Input is unsupported. Pausing automatically releases MCP-owned virtual devices; `release_all` also permits explicit cleanup.
+For requested interaction checks, enable/discover `testing` and query `manage_input(action="status")`. `ui_click` uses an integer instance ID or exact hierarchy path and directly dispatches uGUI pointer events in Old, New or Both handling. Verify the resulting application state; this path does not test raycast ordering or change `UnityEngine.Input` state.
+
+Raw key/mouse/touch simulation requires Input System 1.7+ with New/Both handling and advances on game input updates. Holds are limited to 1–600 updates with a hard 30-second lease. Device-paired PlayerInput actions may need virtual-device pairing. Pausing automatically releases MCP-owned virtual devices; `release_all` also permits explicit cleanup.
+
+Old handling supports read-only legacy input observation during an explicit scenario recording session, subject to Unity's existing focus/background policy. Inspect `input_observation`, its backend and `raw_replay_available`. A `recorded-legacy-input` draft cannot inject its raw steps into `UnityEngine.Input`; retain target-based UI clicks and remove overlapping raw pointer steps when reviewing a UI-only flow. New/Both retain the Input System observer. Do not change Active Input Handling to make a diagnostic pass.
 
 Start a specific requested test run, then retain its returned `data.job_id`:
 
@@ -86,9 +92,9 @@ Poll that identity rather than starting another run:
 {"tool":"get_test_job","params":{"job_id":"returned-job-id","wait_timeout":30,"include_failed_tests":true}}
 ```
 
-Terminal statuses are `succeeded`, `failed` and `cancelled`; a polling timeout can simply mean the job is still running. Inspect counts/failed details even when the poll request itself has `success=true`. Do not use `clear_stuck` against another active run as an automatic retry. Preserve job identity across reload and report what actually ran.
+Terminal statuses are `succeeded`, `failed` and `cancelled`; a polling timeout can simply mean the job is still running. Inspect counts/failed details even when the poll request itself has `success=true`. A result callback can precede native resource release: inspect `data.native_control.released` before starting another run. Missing release evidence is unconfirmed; requery the same job within the observation budget. Do not use `clear_stuck` against another active run as an automatic retry. Preserve job identity across reload and report what actually ran.
 
-Build/package/asset-generation jobs likewise require their own returned ID/status contract. Poll the advertised action; do not infer a generic `get_job` tool or assume a queued response means an asset/build succeeded.
+Build/package/asset-generation jobs likewise require their own returned ID/status contract. Poll the advertised action or supported `wait_for_operation` kind with that identity; do not infer a generic `get_job` tool or assume a queued response means an asset/build succeeded. A successful observation may contain a failed native outcome; inspect that outcome and its error.
 
 ## Verification And Recovery
 
