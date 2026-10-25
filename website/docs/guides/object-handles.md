@@ -47,6 +47,8 @@ This resource accepts GameObject handles and returns `identity` plus the existin
 
 The public tool alias and resource URI remain stable. Compatible Editors expose native commands `manage_object_handles_v2` and `get_gameobject_by_handle_v2`; older Editors fail closed without fallback or reload retry. Old v1 tokens are refused and must be recaptured.
 
+Call the public `manage_object_handles` tool with its capture/resolve schema. The native command name `manage_object_handles_v2` is an implementation route and is not separately published as a custom MCP tool. Existing public capture/resolve calls and the resource URI are unchanged.
+
 `require_persistent` and `allow_asset_load` are unsupported. Omit both fields entirely: explicit false is also an error before context selection, preflight or outbound dispatch. Their Python schema entries remain only to reject legacy callers explicitly; neither is a supported option. Capture accepts only `action` and `instance_id`; resolve accepts only `action` and `handle`.
 
 Handles have no persistent scene/asset identity or asset dependency-revision guarantee. The registry writes no markers, sidecars, scenes or assets. Use explicit rediscovery after any expiry boundary.
