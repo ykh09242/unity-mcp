@@ -263,6 +263,33 @@ namespace MCPForUnityTests.Editor.Services
             ledger.Finished(new object());
             ledger.Finished(context);
             Assert.AreEqual("unknown", (string)ledger.Query(Id)["outcome"]);
+            Assert.AreEqual("incomplete_events", (string)ledger.Query(Id)["reason"]);
+        }
+
+        [Test]
+        public void CompleteEmptyIncrementalCycleHasNoCompilerVerdictAndDoesNotPoisonNextRequest()
+        {
+            var ledger = Ledger();
+            ledger.Begin(Id);
+            ledger.ExplicitRequest(Id);
+            ledger.Dispatched(Id);
+            var context = new object();
+            ledger.Started(context);
+            ledger.Finished(context);
+            var result = Ledger(_saved).Query(Id);
+            Assert.AreEqual("finished", (string)result["state"]);
+            Assert.AreEqual("unknown", (string)result["outcome"]);
+            Assert.AreEqual("observed_after_request", (string)result["attribution"]);
+            Assert.AreEqual("no_assembly_compilation", (string)result["reason"]);
+            Assert.IsTrue((bool)result["collection_complete"]);
+            Assert.AreEqual(0, (int)result["assembly_count"]);
+            Assert.AreEqual("unknown", (string)ledger.Summary()["outcome"]);
+            ledger.Begin(Other);
+            ledger.ExplicitRequest(Other);
+            ledger.Dispatched(Other);
+            Cycle(ledger, new object(), true);
+            Assert.AreEqual("failed", (string)ledger.Query(Other)["outcome"]);
+            Assert.AreEqual("no_assembly_compilation", (string)ledger.Query(Id)["reason"]);
         }
 
         [Test]

@@ -14,6 +14,78 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class RefreshUnityTests
     {
+        [TestCase("force")]
+        [TestCase("if_dirty")]
+        public void BusyCompilationLeavesPendingSourcesForAnExplicitRefreshAfterIdle(string mode)
+        {
+            var flags = BindingFlags.NonPublic | BindingFlags.Static;
+            var running = typeof(TestRunStatus).GetField("_isRunning", flags);
+            object previousRun = running.GetValue(null);
+            var compiling = RefreshUnity.IsCompiling;
+            var refresh = RefreshUnity.RefreshAssets;
+            var request = RefreshUnity.RequestCompilation;
+            var ledger = RefreshUnity.LedgerOverride;
+            bool pendingSource = true;
+            bool pipelineBusy = true;
+            int imports = 0,
+                requests = 0;
+            try
+            {
+                RefreshUnity.RefreshAssets = _ =>
+                {
+                    imports++;
+                    pendingSource = false;
+                };
+                RefreshUnity.RequestCompilation = () => requests++;
+                RefreshUnity.IsCompiling = () => pipelineBusy;
+                RefreshUnity.LedgerOverride = new CompilationLedger("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "C:/fixture", _ => { });
+                running.SetValue(null, false);
+                var parameters = new JObject
+                {
+                    ["mode"] = mode,
+                    ["scope"] = "all",
+                    ["compile"] = "request",
+                    ["wait_for_ready"] = false,
+                };
+                var busy = ToJObject(RefreshUnity.HandleCommand(parameters).GetAwaiter().GetResult());
+                Assert.IsFalse((bool)busy["success"]);
+                Assert.AreEqual("preexisting_compile", (string)busy["data"]["reason"]);
+                Assert.IsTrue((bool)busy["data"]["retryable"]);
+                Assert.IsFalse((bool)busy["data"]["refresh_triggered"]);
+                Assert.IsFalse((bool)busy["data"]["compile_requested"]);
+                Assert.IsTrue(pendingSource);
+                Assert.AreEqual(0, imports);
+                Assert.AreEqual(0, requests);
+                StringAssert.Contains("explicitly refresh again", (string)busy["data"]["hint"]);
+
+                pipelineBusy = false;
+                var refreshed = ToJObject(RefreshUnity.HandleCommand(parameters).GetAwaiter().GetResult());
+                Assert.IsTrue((bool)refreshed["success"]);
+                Assert.IsTrue((bool)refreshed["data"]["refresh_triggered"]);
+                Assert.IsTrue((bool)refreshed["data"]["compile_requested"]);
+                Assert.IsFalse(pendingSource);
+                Assert.AreEqual(1, imports);
+                Assert.AreEqual(1, requests);
+                // Asset-only refresh remains available even when the script pipeline is busy.
+                pipelineBusy = true;
+                parameters["compile"] = "none";
+                var assets = ToJObject(RefreshUnity.HandleCommand(parameters).GetAwaiter().GetResult());
+                Assert.IsTrue((bool)assets["success"]);
+                Assert.IsTrue((bool)assets["data"]["refresh_triggered"]);
+                Assert.IsFalse((bool)assets["data"]["compile_requested"]);
+                Assert.AreEqual(2, imports);
+                Assert.AreEqual(1, requests);
+            }
+            finally
+            {
+                RefreshUnity.RefreshAssets = refresh;
+                RefreshUnity.RequestCompilation = request;
+                RefreshUnity.LedgerOverride = ledger;
+                RefreshUnity.IsCompiling = compiling;
+                running.SetValue(null, previousRun);
+            }
+        }
+
         [TestCase("timeout_seconds", "0")]
         [TestCase("timeout_seconds", "-1")]
         [TestCase("timeout_seconds", "86401")]
