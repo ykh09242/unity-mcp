@@ -236,8 +236,9 @@ class GraphQueries:
                     "INSERT INTO graph_query_queue(job,node) VALUES (?,?)", (job["id"], node)
                 )
             edges, budget = [], limit * 2
+            examined = 0
             route_node = job["last"] or (node if target == node else "")
-            while not route_node and budget and len(edges) < limit:
+            while not route_node and budget and examined < limit:
                 queued = connection.execute(
                     "SELECT q.*,n.depth,n.via FROM graph_query_queue q JOIN graph_query_nodes n ON n.job=q.job AND n.node=q.node WHERE q.job=? ORDER BY q.seq LIMIT 1",
                     (job["id"],),
@@ -251,7 +252,7 @@ class GraphQueries:
                     )
                     continue
                 column = "owner" if direction == "outgoing" else "target"
-                count = min(limit - len(edges), max(1, budget), 256)
+                count = min(limit - examined, max(1, budget), 256)
                 rows = connection.execute(
                     _SELECT + f"e.{column}=? AND e.id>? ORDER BY e.id LIMIT ?",
                     (queued["node"], queued["last"], count),
@@ -268,9 +269,19 @@ class GraphQueries:
                             "INSERT INTO graph_query_queue(job,node) VALUES (?,?)",
                             (job["id"], neighbor),
                         )
-                    edges.append(
-                        {**self._evidence(row), "depth": queued["depth"] + 1, "via": queued["via"]}
-                    )
+                    if target is None:
+                        edges.append(
+                            {
+                                **self._evidence(row),
+                                "depth": queued["depth"] + 1,
+                                "via": queued["via"],
+                            }
+                        )
+                    else:
+                        # Discovery still rejects corrupt evidence outside the
+                        # chosen route, but need not retain its decoded payload.
+                        self._evidence(row)
+                    examined += 1
                     if target == neighbor:
                         route_node = neighbor
                         break
