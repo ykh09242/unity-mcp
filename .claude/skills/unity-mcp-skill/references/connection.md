@@ -10,13 +10,15 @@ If a tool is absent, check its group and the selected Editor's enabled tools. Wh
 {"tool":"manage_tools","params":{"action":"list_groups"}}
 ```
 
-Activate only the group needed for the request, then refresh the client inventory:
+Check `list_groups.discovery.selection_supported` before changing selection. Activate only the group or tool needed for the request when supported, then refresh the client's actual callable inventory:
 
 ```json
 {"tool":"manage_tools","params":{"action":"activate","group":"asset_gen"}}
 ```
 
-Sessionless clients cannot persist activate/deactivate/reset operations. Use a stateful MCP handshake or the user's Editor configuration rather than attempting to call hidden handlers through a batch. Group visibility is not consent and does not install optional Unity packages.
+Modern selection requires a supported project-bound stdio connection or a verified SDK principal and resolved project. The existing HTTP API-key layer does not supply that principal. Legacy selection follows the connection and is lost on reconnect. Follow the returned discovery reason rather than inferring support from the transport name.
+
+Successful activation changes the server selection; `client_inventory_status: "unconfirmed"` means the host's current-turn call list has not been verified. Do not invent a function binding or repeatedly activate a tool after the server has accepted it. For fixed-inventory clients, choose **Tools > Advanced connection options > Startup tools > Full**, restart the local server (or regenerate stdio configuration), then reconnect after enabling the desired Editor tools. Manual servers support `--tool-profile full` or `UNITY_MCP_TOOL_PROFILE=full`. The setting does not override a remote server, Editor availability, consent or optional-package requirements.
 
 An activated group can still be filtered by the selected Unity Editor's per-tool toggle. If
 the user wants that capability, have them enable the specific tool in the Editor's MCP Tools
@@ -32,7 +34,7 @@ pushes its enabled catalog through the authenticated plugin session, and session
 activation cannot grant a tool absent from that catalog. Resolve the Editor toggle/catalog
 or authentication problem instead of repeatedly activating a group.
 
-Project custom tools may be advertised directly or through `execute_custom_tool`. If available, inspect `mcpforunity://custom-tools` and use the tool's actual name/parameter schema. Hosted mode does not expose arbitrary project custom tools. Do not infer a capability solely from an example in this skill.
+Project custom tools may be advertised directly or through `execute_custom_tool`. If available, inspect `mcpforunity://custom-tools` and use the declared custom tool's actual name/parameter schema. Do not dispatch hidden built-in handlers through this tool or a batch: doing so does not reproduce the built-in wrapper's argument mapping or client binding. Hosted mode does not expose arbitrary project custom tools. A returned tool description or an example in this skill does not establish a callable client function.
 
 ## Select The Project
 
@@ -72,4 +74,4 @@ Do not co-install the upstream `com.coplaydev.unity-mcp` package: assembly names
 
 The package's `mcpServerSource` pins the same-fork Server subdirectory to a full Git commit. Defaults do not use PyPI or a floating branch. Explicit development source overrides remain supported; do not silently replace them. Fork update checks use `beta` for tagged/SHA installs; explicit `#main` remains intentional and can reference inherited upstream content.
 
-The Editor skill installer mirrors this repository's `unity-mcp-skill/` subtree into the chosen client's skill directory. The `.claude/` copy in this checkout is a self-contained repository-local variant, not the installer's source. Sync is a requested installation action and may replace files within its managed skill root; it does not authorize other global configuration changes.
+The Editor skill installer mirrors this repository's `.claude/skills/unity-mcp-skill/` subtree at the package's pinned revision into the chosen client's skill directory. The root `unity-mcp-skill/` copy is maintained identically for manual distribution. Sync preserves local edits and files whose baseline ownership is unknown. For a reported conflict, back up and compare the named file with the exact resolved source, merge the intended changes, then preview again; a no-change result does not mean those files were updated. Sync does not authorize other global configuration changes.

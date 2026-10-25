@@ -60,11 +60,12 @@ namespace MCPForUnity.Editor.Services.Server
             string devFlags = AssetPathUtility.GetUvxDevFlags();
             bool projectScopedTools = EditorPrefs.GetBool(EditorPrefKeys.ProjectScopedToolsLocalHttp, true);
             string scopedFlag = projectScopedTools ? " --project-scoped-tools" : string.Empty;
+            string profileFlag = StartupToolProfile.CommandSuffix(StartupToolProfile.Selection);
 
             // Use the same source resolver as JSON and TOML client configs.
             string fromArgs = AssetPathUtility.GetBetaServerFromArgs(quoteFromPath: true);
 
-            string args = $"{devFlags}{fromArgs} {packageName} --transport http --http-url {httpUrl}{scopedFlag}";
+            string args = $"{devFlags}{fromArgs} {packageName} --transport http --http-url {httpUrl}{scopedFlag}{profileFlag}";
 
             fileName = uvxPath;
             arguments = args;

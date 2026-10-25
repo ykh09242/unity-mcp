@@ -82,6 +82,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 PackageSource,
                 HttpUrl,
                 UvxPath,
+                StartupProfile,
                 UserConfigPath;
             internal bool UseHttp,
                 Remote,
@@ -98,6 +99,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 && PackageSource == other.PackageSource
                 && HttpUrl == other.HttpUrl
                 && UvxPath == other.UvxPath
+                && StartupProfile == other.StartupProfile
                 && UserConfigPath == other.UserConfigPath
                 && UseHttp == other.UseHttp
                 && Remote == other.Remote
@@ -143,6 +145,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 Transport = HttpEndpointUtility.GetCurrentServerTransport(),
                 PackageSource = http ? null : GetExpectedPackageSourceForCurrentPackage(),
                 UvxPath = http ? null : MCPServiceLocator.Paths.GetUvxPath(),
+                StartupProfile = http ? null : StartupToolProfile.Selection,
                 HttpUrl = http ? HttpEndpointUtility.GetMcpRpcUrl() : null,
                 UserConfigPath = ClaudeCliMcpConfigurator.GetUserConfigPath(),
                 Headers = headers,
@@ -835,7 +838,8 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                         uvxDevFlags,
                         apiKey,
                         context.Transport,
-                        unregister
+                        unregister,
+                        context.StartupProfile
                     );
                 });
                 if (!IsCurrentCliState(client, state))

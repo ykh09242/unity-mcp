@@ -1,9 +1,14 @@
 using System;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
+using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Server;
+using MCPForUnity.External.Tommy;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -31,10 +36,17 @@ namespace MCPForUnityTests.Editor.Helpers
         private string _originalToken;
         private string _tokenPath;
         private Func<bool> _originalCodexCapabilityProbe;
+        private string _profileKey;
+        private string _originalProfile;
+        private bool _hadProfile;
 
         [SetUp]
         public void SetUp()
         {
+            _profileKey = "MCPForUnity.StartupToolProfile." + ProjectIdentityUtility.GetProjectHash();
+            _hadProfile = EditorPrefs.HasKey(_profileKey);
+            _originalProfile = EditorPrefs.GetString(_profileKey, "");
+            EditorPrefs.DeleteKey(_profileKey);
             _originalCodexCapabilityProbe = CodexHttpAuth.SupportsHeadersHelper;
             CodexHttpAuth.SupportsHeadersHelper = () => true;
             _hadHttpTransport = EditorPrefs.HasKey(UseHttpTransportPrefKey);
@@ -57,6 +69,10 @@ namespace MCPForUnityTests.Editor.Helpers
         [TearDown]
         public void TearDown()
         {
+            if (_hadProfile)
+                EditorPrefs.SetString(_profileKey, _originalProfile);
+            else
+                EditorPrefs.DeleteKey(_profileKey);
             CodexHttpAuth.SupportsHeadersHelper = _originalCodexCapabilityProbe;
             Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", _originalTokenFile);
             Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN", _originalToken);
@@ -88,6 +104,122 @@ namespace MCPForUnityTests.Editor.Helpers
             foreach (var path in new[] { client.windowsConfigPath, client.macConfigPath, client.linuxConfigPath })
             {
                 Assert.AreEqual("kilo.jsonc", System.IO.Path.GetFileName(path), "Kilo Code config must target kilo.jsonc, not mcp_settings.json");
+            }
+        }
+
+        [TestCase("")]
+        [TestCase("core")]
+        [TestCase("full")]
+        [TestCase("minimal")]
+        public void StartupProfile_StdioBuildersUseSameExplicitChoice(string profile)
+        {
+            // Given: this project's explicit startup choice does not change Unity tool toggles.
+            EditorPrefs.SetBool(UseHttpTransportPrefKey, false);
+            EditorPrefs.SetString(_profileKey, profile);
+            EditorConfigCache.Instance.Refresh();
+            // When: generic JSON, Codex manual/update TOML and specialized client snippets are generated.
+            var json = JObject.Parse(ConfigJsonBuilder.BuildManualConfigJson("uv", new McpClient()));
+            string[] expected = json["mcpServers"]["unityMCP"]["args"].ToObject<string[]>();
+            foreach (string document in new[] { CodexConfigHelper.BuildCodexServerBlock("uv"), CodexConfigHelper.UpsertCodexServerBlock("", "uv") })
+            {
+                using var reader = new StringReader(document);
+                var args = TOML.Parse(reader)["mcp_servers"]["unityMCP"]["args"].AsArray.Children.Select(node => node.AsString.Value).ToArray();
+                CollectionAssert.AreEqual(expected, args);
+            }
+            var openClaw = JObject.Parse(new OpenClawConfigurator().GetManualSnippet());
+            CollectionAssert.AreEqual(expected, openClaw.SelectToken("plugins.entries.openclaw-mcp-bridge.config.servers.unityMCP.args").ToObject<string[]>());
+            var openCode = JObject.Parse(new OpenCodeConfigurator().GetManualSnippet());
+            CollectionAssert.AreEqual(expected, openCode["mcp"]["unityMCP"]["command"].ToObject<string[]>().Skip(1));
+            // Then: no flag preserves server/env defaults; explicit choices occur once after server args.
+            Assert.AreEqual(string.IsNullOrEmpty(profile) ? 0 : 1, expected.Count(arg => arg == "--tool-profile"));
+            if (!string.IsNullOrEmpty(profile))
+                CollectionAssert.AreEqual(new[] { "--tool-profile", profile }, expected.Skip(expected.Length - 2));
+        }
+
+        [Test]
+        public void StartupProfile_HttpClientConfigurationDoesNotChange()
+        {
+            // Given: the Editor's local HTTP server is configured independently of URL-only clients.
+            var client = new McpClient();
+            string beforeJson = ConfigJsonBuilder.BuildManualConfigJson("uv", client);
+            string beforeToml = CodexConfigHelper.BuildCodexServerBlock("uv");
+            EditorPrefs.SetString(_profileKey, "full");
+            // When/Then: selecting the startup profile does not add flags to client URL/auth config.
+            Assert.AreEqual(beforeJson, ConfigJsonBuilder.BuildManualConfigJson("uv", client));
+            Assert.AreEqual(beforeToml, CodexConfigHelper.BuildCodexServerBlock("uv"));
+        }
+
+        [Test]
+        public void StartupProfile_LocalHttpLaunchUsesExplicitChoice()
+        {
+            // Given: the local server launch uses the same project startup choice.
+            EditorPrefs.SetString(_profileKey, "full");
+            var builder = new ServerCommandBuilder();
+            // When: the Editor constructs the HTTP server command without launching it.
+            Assert.IsTrue(builder.TryBuildCommand(out _, out var args, out var display, out var error), error);
+            // Then: the server receives the explicit choice without changing the client endpoint.
+            StringAssert.Contains(" --tool-profile full", args);
+            StringAssert.Contains(" --tool-profile full", display);
+        }
+
+        [TestCase("json")]
+        [TestCase("toml")]
+        public void StartupProfile_CapturedConfigurationRetainsChoiceAndChangesFingerprint(string format)
+        {
+            // Given: a configuration preview captured the default stdio launch arguments.
+            EditorPrefs.SetBool(UseHttpTransportPrefKey, false);
+            EditorConfigCache.Instance.Refresh();
+            var capture = typeof(ClientConfigurationChangeService).GetMethod("Capture", BindingFlags.Static | BindingFlags.NonPublic);
+            var initial = (ClientConfigurationInputs)capture.Invoke(null, new object[] { format });
+            string fingerprint = initial.Fingerprint();
+            // When: the project selects Full after capture, the current context must become different.
+            StartupToolProfile.Selection = "full";
+            var current = (ClientConfigurationInputs)capture.Invoke(null, new object[] { format });
+            // Then: stale-context detection can reject that preview, and captured generation uses its original choice.
+            Assert.AreNotEqual(fingerprint, current.Fingerprint());
+            CollectionAssert.DoesNotContain(initial.Args, "--tool-profile");
+            CollectionAssert.AreEqual(new[] { "--tool-profile", "full" }, current.Args.Skip(current.Args.Length - 2));
+            if (format == "toml")
+            {
+                StringAssert.DoesNotContain("--tool-profile", CodexConfigHelper.UpsertCodexServerBlock("", "uv", initial));
+                StringAssert.Contains("--tool-profile", CodexConfigHelper.UpsertCodexServerBlock("", "uv", current));
+            }
+            else
+            {
+                var root = ConfigJsonBuilder.ApplyUnityServerToExistingConfig(new JObject(), "uv", new McpClient(), initial, true);
+                CollectionAssert.AreEqual(initial.Args, root["mcpServers"]["unityMCP"]["args"].ToObject<string[]>());
+            }
+        }
+
+        [Test]
+        public void StartupProfile_InvalidStoredOrRequestedValueCannotBecomeAnArgument()
+        {
+            // Given: malformed persisted text cannot be used as a command fragment.
+            EditorPrefs.SetString(_profileKey, "full --other-flag");
+            // When/Then: reading preserves server defaults, and an invalid setter cannot overwrite it.
+            Assert.AreEqual("", StartupToolProfile.Selection);
+            Assert.Throws<ArgumentException>(() => StartupToolProfile.Selection = "full --other-flag");
+            Assert.AreEqual("full --other-flag", EditorPrefs.GetString(_profileKey));
+        }
+
+        [Test]
+        public void StartupProfile_SelectionDoesNotChangeAnotherProjectPreference()
+        {
+            // Given: an unrelated synthetic project has an independent startup choice.
+            string other = StartupToolProfile.PreferenceKey("owned-test-" + Guid.NewGuid().ToString("N"));
+            EditorPrefs.SetString(other, "minimal");
+            try
+            {
+                // When: this project chooses Full.
+                StartupToolProfile.Selection = "full";
+                // Then: the unrelated scoped preference remains intact.
+                Assert.AreEqual("full", StartupToolProfile.Selection);
+                Assert.AreEqual("minimal", EditorPrefs.GetString(other));
+                Assert.AreNotEqual(other, _profileKey);
+            }
+            finally
+            {
+                EditorPrefs.DeleteKey(other);
             }
         }
 

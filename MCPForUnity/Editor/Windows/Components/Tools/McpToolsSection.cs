@@ -27,6 +27,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
     {
         private readonly Dictionary<string, Toggle> toolToggleMap = new();
         private Toggle projectScopedToolsToggle;
+        private DropdownField startupToolProfile;
+        private Label startupToolProfileHelp;
         private Label summaryLabel;
         private Label noteLabel;
         private Label applyStatusLabel;
@@ -139,6 +141,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private void CacheUIElements()
         {
             projectScopedToolsToggle = Root.Q<Toggle>("project-scoped-tools-toggle");
+            startupToolProfile = Root.Q<DropdownField>("startup-tool-profile");
+            startupToolProfileHelp = Root.Q<Label>("startup-tool-profile-help");
             summaryLabel = Root.Q<Label>("tools-summary");
             noteLabel = Root.Q<Label>("tools-note");
             applyStatusLabel = Root.Q<Label>("tools-apply-status");
@@ -159,6 +163,24 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
         private void RegisterCallbacks()
         {
+            if (startupToolProfile != null)
+            {
+                startupToolProfile.choices = new List<string> { "Server default", "Core (compact)", "Full (static clients)", "Minimal" };
+                RefreshStartupToolProfile();
+                startupToolProfile.RegisterValueChangedCallback(evt =>
+                {
+                    if (IsHttpMode() && HttpEndpointUtility.IsRemoteScope())
+                        return;
+                    StartupToolProfile.Selection = evt.newValue switch
+                    {
+                        "Core (compact)" => "core",
+                        "Full (static clients)" => "full",
+                        "Minimal" => "minimal",
+                        _ => "",
+                    };
+                    RefreshStartupToolProfile();
+                });
+            }
             searchField?.RegisterValueChangedCallback(evt => ApplySearch());
             if (enableMatchingButton != null)
                 enableMatchingButton.clicked += () => SetToolsState(allTools.Where(MatchesFilter).ToList(), true);
@@ -224,6 +246,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         /// </summary>
         public void Refresh()
         {
+            RefreshStartupToolProfile();
             BindStatusSource();
             toolToggleMap.Clear();
             consentScopeLabels.Clear();
@@ -288,6 +311,33 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
 
             UpdateSummary();
             ApplySearch();
+        }
+
+        private void RefreshStartupToolProfile()
+        {
+            if (startupToolProfile == null)
+                return;
+            bool remote = IsHttpMode() && HttpEndpointUtility.IsRemoteScope();
+            string profile = StartupToolProfile.Selection;
+            startupToolProfile.SetValueWithoutNotify(
+                profile switch
+                {
+                    "core" => "Core (compact)",
+                    "full" => "Full (static clients)",
+                    "minimal" => "Minimal",
+                    _ => "Server default",
+                }
+            );
+            startupToolProfile.SetEnabled(!remote);
+            startupToolProfile.tooltip = remote
+                ? "Remote HTTP startup is controlled by its server administrator. This project setting only configures local HTTP and generated stdio launches."
+                : "Saved for this project. Server default emits no override. Full advertises enabled tool groups at startup for clients with a fixed inventory; Core keeps a compact catalog. Unity availability and permissions still apply.";
+            if (startupToolProfileHelp != null)
+            {
+                startupToolProfileHelp.text =
+                    "Restart local HTTP, or reconfigure stdio, then reconnect your client. Existing client inventories may stay unchanged.";
+                startupToolProfileHelp.EnableInClassList("catalog-hidden", remote || string.IsNullOrEmpty(profile));
+            }
         }
 
         private static string GetGroupDisplayName(string group)

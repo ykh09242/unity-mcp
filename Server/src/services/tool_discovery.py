@@ -17,9 +17,11 @@ from transport.protocol import is_sessionless
 
 
 REFRESH_GUIDANCE = (
-    "Selection updated; Unity availability and permissions still apply. "
+    "Server selection updated; the client's callable inventory is unconfirmed. "
+    "Unity availability and permissions still apply. "
     "Refresh tools/list after tools/list_changed. If the client uses a fixed inventory, "
-    "start the server with UNITY_MCP_TOOL_PROFILE=full and reconnect. "
+    "start the server with --tool-profile full (or UNITY_MCP_TOOL_PROFILE=full), "
+    "then establish a fresh client connection after enabling the desired tools in Unity. "
     "Reconnect alone does not preserve a legacy session selection."
 )
 UNSCOPED_GUIDANCE = (
@@ -45,6 +47,7 @@ class DiscoveryCapability(TypedDict):
     selection_supported: bool
     reason: str
     guidance: str
+    client_inventory_status: Literal["unconfirmed"]
 
 
 class ToolDiscovery(Transform):
@@ -96,6 +99,7 @@ class ToolDiscovery(Transform):
             "selection_supported": supported,
             "reason": reason,
             "guidance": REFRESH_GUIDANCE if supported else UNSCOPED_GUIDANCE,
+            "client_inventory_status": "unconfirmed",
         }
 
     async def scope_key(self, ctx):

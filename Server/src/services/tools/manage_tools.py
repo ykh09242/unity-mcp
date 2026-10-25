@@ -38,7 +38,7 @@ logger = logging.getLogger("mcp-for-unity-server")
         "activate/deactivate (select exactly one group or tool), "
         "sync (refresh availability from Unity Editor's toggle states), "
         "reset (restore configured profile), describe (full schema for one tool). "
-        "Activating a group makes its tools appear; deactivating hides them. "
+        "Selection changes server tools/list; it does not confirm the client's callable inventory. "
         "Use sync after toggling tools in the Unity Editor GUI."
     ),
     annotations=ToolAnnotations(
@@ -103,6 +103,7 @@ async def manage_tools(
         return {
             "activated_tool" if action == "activate" else "deactivated_tool": tool,
             "changed": changed,
+            "client_inventory_status": "unconfirmed",
             "message": REFRESH_GUIDANCE,
         }
 
@@ -127,6 +128,7 @@ async def manage_tools(
             "activated": group,
             "tools": get_group_tool_names().get(group, []),
             "changed": changed,
+            "client_inventory_status": "unconfirmed",
             "message": REFRESH_GUIDANCE,
         }
 
@@ -144,6 +146,7 @@ async def manage_tools(
             "deactivated": group,
             "tools": get_group_tool_names().get(group, []),
             "changed": changed,
+            "client_inventory_status": "unconfirmed",
             "message": REFRESH_GUIDANCE,
         }
 
@@ -168,6 +171,7 @@ async def manage_tools(
             return {"error": msg}
         return {
             "synced": True,
+            "client_inventory_status": "unconfirmed",
             "enabled_groups": result.get("enabled_groups", []),
             "disabled_groups": result.get("disabled_groups", []),
             "enabled_tool_count": result.get("enabled_tool_count", 0),
@@ -180,6 +184,7 @@ async def manage_tools(
             ),
             "message": (
                 "Unity availability refreshed; client selection is unchanged. "
+                "The client's callable inventory is unconfirmed; refresh it or reconnect. "
                 f"Enabled groups: {', '.join(result.get('enabled_groups', []))}. "
                 f"Disabled groups: {', '.join(result.get('disabled_groups', []) or ['none'])}."
             ),
@@ -198,7 +203,11 @@ async def manage_tools(
                 discovery.default_groups if discovery else DEFAULT_ENABLED_GROUPS
             ),
             "visible_tools": sorted(tool.name for tool in visible),
-            "message": "Client selection restored to configured server defaults. Unity availability still applies.",
+            "client_inventory_status": "unconfirmed",
+            "message": (
+                "Server selection restored to configured defaults. Unity availability still applies. "
+                "The client's callable inventory is unconfirmed; refresh it or reconnect."
+            ),
         }
 
     return {"error": f"Unknown action '{action}'"}

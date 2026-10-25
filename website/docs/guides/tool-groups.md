@@ -12,7 +12,7 @@ Tools are grouped so an assistant can discover the relevant operations without l
 
 ## Discovery profiles
 
-Set `UNITY_MCP_TOOL_PROFILE` in the server process environment before starting it:
+Choose **Tools > Advanced connection options > Startup tools** in the Editor, or pass `--tool-profile minimal|core|full` when starting the server. The command-line choice overrides `UNITY_MCP_TOOL_PROFILE` in the server environment. **Server default** emits no override and preserves the existing defaults:
 
 | Profile | Initial built-in selection | Suitable clients |
 |---|---|---|
@@ -22,13 +22,15 @@ Set `UNITY_MCP_TOOL_PROFILE` in the server process environment before starting i
 
 Unity availability and authorization cap every profile. `full` does not grant native permission or install optional packages. Profiles change the initial built-in selection, not schemas, operation budgets or project-size limits. Custom catalogs retain their own project scope. An invalid profile fails at startup instead of silently choosing a different inventory.
 
+The Editor choice is scoped to the current project. It configures local HTTP startup and generated stdio launch arguments. After changing it, restart the local HTTP server or regenerate the stdio client configuration, then reconnect the client. Remote HTTP servers keep their administrator's startup settings. A profile change cannot update an already-running server or a model's current-turn tool inventory.
+
 `manage_tools(action="describe", tool="query_physics")` returns the complete declared description, input schema and output schema without selecting or calling it. `list_groups` reports the configured profile, its default groups and the tools actually visible after the Unity availability cap.
 
 A controlled Windows probe at the dependency-upgrade baseline, before common routing metadata was added, of the production built-in registry through the real MCP SDK measured **4 tools / 3,247 UTF-8 schema bytes** for `minimal`, **41 / 88,101** for `core` and **119 / 377,019** for `full`. This fixture excludes the optional custom-tool dispatcher and live Editor catalogs. Expanding either smaller profile produced exactly the same 119 descriptors as `full`; representative valid and invalid calls preserved results and validation. These are serialized bytes, not model tokens or a claim about model task success. Client-side context handling and custom catalogs affect actual usage.
 
 ## Start with the needed feature
 
-Local HTTP and stdio start with essential `core` tools. Ask for `manage_tools(action="list_groups")` to discover all registered names and the `enabled_tools` actually visible in each group. Consult the generated [tool catalog](../reference/tools/index.md) for action and parameter schemas.
+Local HTTP and stdio default to essential `core` tools unless a startup profile overrides them. Ask for `manage_tools(action="list_groups")` to discover all registered names and the `enabled_tools` actually visible in each group. Consult the generated [tool catalog](../reference/tools/index.md) for action and parameter schemas.
 
 The larger combined tools are split by function. Each feature exposes only its supported actions and inputs while retaining the same validation, execution, response processing and project permissions.
 
@@ -89,7 +91,7 @@ The server keeps standard `tools/list` responses and full schemas for visible to
 
 The [MCP client best practices](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/docs/2026-07-28/develop/clients/client-best-practices.mdx) recommend progressive tool discovery in the client: inspect the catalog, select relevant tools and refresh it when tool-list notifications arrive. Server visibility settings complement that behavior; they do not implement host-side tool search or guarantee the same token savings in every client.
 
-Both local transports start with essential tools. Editor synchronization updates availability without changing the client selection. Enabling one optional tool in Unity does not select its group or reveal unavailable peers. Select the desired group or individual tool separately; both HTTP and stdio apply the current project catalog after selection. An explicitly empty catalog hides native tools, while an unknown or disconnected local catalog preserves offline discovery. Native execution still requires the selected Editor and its permissions.
+Both local transports default to essential tools. Editor synchronization updates availability without changing the client selection. Enabling one optional tool in Unity does not select its group or reveal unavailable peers. Select the desired group or individual tool separately, or use the explicit `full` startup profile; both HTTP and stdio apply the current project catalog after selection. An explicitly empty catalog hides native tools, while an unknown or disconnected local catalog preserves offline discovery. Native execution still requires the selected Editor and its permissions.
 
 ## Related capabilities
 
@@ -113,11 +115,13 @@ The existing HTTP API-key layer does not provide an SDK principal. Such modern H
 
 Check `manage_tools(action="list_groups").discovery` before attempting selection. It reports the current `profile`, `mode`, `selection_supported`, `reason` and `guidance`. Supported modes are `legacy_connection` and `scoped_project`; `static_profile` means the current connection cannot change selection. Reasons distinguish missing SDK principal, unresolved project, unsupported SDK and unavailable selection storage. The read-only `mcpforunity://doctor/runtime` resource reports the same connection capability without contacting Unity; because it does not resolve routing, a modern connection may report `resolved_project_required` there before a project-bound call. Server startup logs and connection instructions also explain the available setup paths.
 
-For local modern HTTP using the existing API-key layer, set `UNITY_MCP_TOOL_PROFILE=full` in the server process environment, restart the server, then reconnect the client. Optional tools allowed by the Editor are then available without dynamic activation. Alternatively use a client explicitly configured for a supported stateful legacy protocol. Supplying a client name, project selector or raw API key never creates a trusted SDK principal. Custom verified SDK authentication remains subject to the same project and native permission checks.
+For local modern HTTP using the existing API-key layer, select **Full** in the Editor startup profile, or start the server with `--tool-profile full` / `UNITY_MCP_TOOL_PROFILE=full`. Restart the server, then reconnect the client after enabling the desired tools in Unity. Optional tools allowed by the Editor are then available without dynamic activation. Alternatively use a client explicitly configured for a supported stateful legacy protocol. Supplying a client name, project selector or raw API key never creates a trusted SDK principal. Custom verified SDK authentication remains subject to the same project and native permission checks.
 
 The existing bounded session store owns modern preferences and legacy connection preferences. Each scope stores a finite map of built-in overrides rather than an ever-growing action log. Repeating a selection leaves that map unchanged; later group or individual-tool choices take precedence for the affected tools. Reads and unchanged selections renew active preferences at most hourly; changed selections write immediately. Idle preferences expire after 24 hours, reset removes them and server shutdown releases them. Expiring a preference does not cancel a running Unity operation. Storage admission failure preserves other clients' live selections.
 
 Refresh-capable clients should request `tools/list` after `tools/list_changed`. Repeating an already-applied selection does not emit another notification on either protocol. Catalog publication retains its coalesced invalidation delivery. The server cannot confirm whether a host refreshed its model inventory. For a client that freezes its list at connection time, configure `UNITY_MCP_TOOL_PROFILE=full`, restart the server and reconnect after enabling the desired tools in Unity. Reconnecting alone does not preserve a legacy session selection.
+
+Selection and sync responses report `client_inventory_status: "unconfirmed"`. A successful activation confirms server selection, not that a new function is callable in the current conversation. Check the host's actual tool inventory before invoking it. `execute_custom_tool` dispatches declared project custom tools; it is not a replacement for unavailable built-in wrappers, their argument normalization or authorization. A descriptor returned by `describe` is information, not a newly installed client function.
 
 ## Hosted clients
 
