@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -55,7 +57,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 {
                     address = AddressablesState.Text(request["address"], "address");
                     if (address.Contains('[') && address.Contains(']'))
-                        AddressablesState.Fail("invalid_addressables_request", "Addressables2.7.6 addresses cannot contain both '[' and ']'.");
+                        AddressablesState.Fail("invalid_addressables_request", "Addressables addresses cannot contain both '[' and ']'.");
                     if (((JArray)intended["entries"]).Any(e => e.Value<string>("guid") != guid && e.Value<string>("address") == address))
                         AddressablesState.Fail("duplicate_address", "The requested address is already assigned to another explicit entry.");
                     row["address"] = address;
@@ -89,9 +91,49 @@ namespace MCPForUnity.Editor.Tools.Addressables
                         }
                     )
                 );
+            // Resolve the complete action signature before Undo, so an unsupported API cannot begin an edit.
+            object mutationTarget;
+            object[] mutationArguments;
+            MethodInfo mutation;
+            if (action == "set_address")
+            {
+                mutationTarget = entry;
+                mutationArguments = new object[] { address, true };
+                mutation = AddressablesCompatibility.RequireMethod(entry, action, "SetAddress", typeof(void), typeof(string), typeof(bool));
+            }
+            else if (action == "move_entry")
+            {
+                mutationTarget = before.Settings;
+                mutationArguments = new object[] { (string)AddressablesState.Get(entry, "guid"), group, false, true };
+                mutation = AddressablesCompatibility.RequireMethod(
+                    before.Settings,
+                    action,
+                    "CreateOrMoveEntry",
+                    entry.GetType(),
+                    typeof(string),
+                    group.GetType(),
+                    typeof(bool),
+                    typeof(bool)
+                );
+            }
+            else
+            {
+                mutationTarget = before.ProfilesObject;
+                mutationArguments = new object[] { profileId, variableName, value };
+                mutation = AddressablesCompatibility.RequireMethod(
+                    before.ProfilesObject,
+                    action,
+                    "SetValue",
+                    typeof(void),
+                    typeof(string),
+                    typeof(string),
+                    typeof(string)
+                );
+            }
             AddressablesState fresh = AddressablesState.Capture(request);
             if (fresh.Revision != expected || fresh.Settings != before.Settings)
                 AddressablesState.Fail("stale_addressables_revision", "Settings or native identity changed before Undo.");
+            AddressablesUndoCache.Prepare(before.Settings, before.Version, action);
             int undo = Undo.GetCurrentGroup();
             try
             {
@@ -99,12 +141,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 undo = Undo.GetCurrentGroup();
                 var targets = new[] { before.Settings, oldGroup as UnityEngine.Object, group as UnityEngine.Object }.Where(v => v != null).Distinct().ToArray();
                 Undo.RegisterCompleteObjectUndo(targets, "Edit Addressables metadata");
-                if (action == "set_address")
-                    AddressablesState.Call(entry, "SetAddress", address, true);
-                else if (action == "move_entry")
-                    AddressablesState.Call(before.Settings, "CreateOrMoveEntry", (string)AddressablesState.Get(entry, "guid"), group, false, true);
-                else
-                    AddressablesState.Call(before.ProfilesObject, "SetValue", profileId, variableName, value);
+                mutation.Invoke(mutationTarget, mutationArguments);
                 AddressablesState after = AddressablesState.Capture(request);
                 if (!JToken.DeepEquals(intended, after.Document))
                     AddressablesState.Fail(
@@ -133,6 +170,78 @@ namespace MCPForUnity.Editor.Tools.Addressables
             {
                 Undo.CollapseUndoOperations(undo);
             }
+        }
+    }
+
+    internal static class AddressablesUndoCache
+    {
+        private sealed class Record
+        {
+            internal WeakReference<UnityEngine.Object> Settings;
+            internal MethodInfo Clear;
+        }
+
+        private static readonly List<Record> Records = new List<Record>();
+
+        static AddressablesUndoCache()
+        {
+            Undo.undoRedoPerformed += Refresh;
+            AssemblyReloadEvents.beforeAssemblyReload += Release;
+            EditorApplication.quitting += Release;
+        }
+
+        internal static void Prepare(UnityEngine.Object settings, string version, string action)
+        {
+            if (!version.StartsWith("1.", StringComparison.Ordinal))
+                return;
+            Type type = settings.GetType();
+            MethodInfo clear = type.GetMethod("ClearFindAssetEntryCache", BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+            if (
+                type.FullName != "UnityEditor.AddressableAssets.Settings.AddressableAssetSettings"
+                || type.Assembly.GetName().Name != "Unity.Addressables.Editor"
+                || clear == null
+                || clear.DeclaringType != type
+                || !clear.IsAssembly
+                || clear.ContainsGenericParameters
+                || clear.ReturnType != typeof(void)
+            )
+                AddressablesState.Fail(
+                    "addressables_api_unsupported",
+                    action + " requires the Addressables 1.x native transient lookup-cache reset API for Undo/Redo."
+                );
+            Prune();
+            if (Records.Any(record => record.Settings.TryGetTarget(out UnityEngine.Object owner) && owner == settings))
+                return;
+            Records.Add(new Record { Settings = new WeakReference<UnityEngine.Object>(settings), Clear = clear });
+        }
+
+        private static void Prune() => Records.RemoveAll(record => !record.Settings.TryGetTarget(out UnityEngine.Object owner) || owner == null);
+
+        private static void Refresh()
+        {
+            Prune();
+            foreach (Record record in Records)
+                if (record.Settings.TryGetTarget(out UnityEngine.Object owner) && owner != null)
+                    try
+                    {
+                        // 1.x restores group maps but can retain cached entries referring to their pre-Undo instances.
+                        // Its native hook clears only this nonserialized lookup cache; no asset or hash is rewritten.
+                        record.Clear.Invoke(owner, null);
+                    }
+                    catch (TargetInvocationException)
+                    {
+                        Debug.LogWarning(
+                            "Addressables lookup cache could not refresh after Undo/Redo; inspect package API compatibility before further authoring."
+                        );
+                    }
+        }
+
+        private static void Release()
+        {
+            Records.Clear();
+            Undo.undoRedoPerformed -= Refresh;
+            AssemblyReloadEvents.beforeAssemblyReload -= Release;
+            EditorApplication.quitting -= Release;
         }
     }
 }
