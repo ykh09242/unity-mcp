@@ -8,11 +8,11 @@ description: Install the stable fork, authenticate a client, and verify the Unit
 
 # Install And Connect
 
-Install stable **Unity MCP (ykh09242) 1.2.1**, then connect an MCP client to your Editor. This is a Git-distributed fork of CoplayDev/unity-mcp, not an upstream release or a hosted AI service.
+Install stable **Unity MCP (ykh09242) 2.0.0**, then connect an MCP client to your Editor. This is a Git-distributed fork of CoplayDev/unity-mcp, not an upstream release or a hosted AI service.
 
 ## Before you start
 
-- Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.2.1).
+- Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v2.0.0).
 - Git available to Unity Package Manager.
 - Python **3.11+** and [`uv`/`uvx`](../guides/uv-setup.md) available to Unity.
 - An MCP client. Use a client you already have; [client configuration](./clients.md) describes the package's configurators without requiring a specific provider.
@@ -24,14 +24,10 @@ Install stable **Unity MCP (ykh09242) 1.2.1**, then connect an MCP client to you
 In **Window > Package Manager**, choose **+ > Add package from git URL**:
 
 ```text
-https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v1.2.1
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v2.0.0
 ```
 
-This tag identifies stable `1.2.1`. For a commit-addressed install, use the package preparation commit below. It contains the same Unity package as the release tag; subsequent release documentation commits do not change package contents:
-
-```text
-https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#63cd2f7d725980598dcae63bb04ac7bac7febf96
-```
+This tag identifies stable `2.0.0`. For a commit-addressed install, replace the tag after `#` with the full 40-character package commit SHA recorded in the verified release notes.
 
 `#beta` follows a moving development branch; its name does not make the stable release a beta. The installed package's `mcpServerSource` selects its matching Python source independently. Do not substitute an inherited upstream tag or a PyPI package. See [version and update policy](./migrate.md#versions-and-updates).
 
@@ -58,8 +54,8 @@ resolved as a package dependency for UPM waits; server connections remain indepe
 of window lifetime.
 :::
 
-Unity package **1.2.1** keeps the unchanged Python server **1.2.0** source and the
-**Python 3.11+** requirement introduced in 1.1.4.
+Unity package **2.0.0** selects Python server **2.0.0** through its installed
+`mcpServerSource` pin and retains the **Python 3.11+** requirement introduced in 1.1.4.
 Install a supported interpreter with `uv python install 3.11`, clear unintended
 server source overrides, and regenerate existing stdio client configurations
 after updating. Custom commands selecting Python 3.10 must also be updated.
@@ -84,7 +80,7 @@ see the release notes for exact startup, compile and runtime-evidence limits.
 
 Use the Editor window's client configuration section for the selected client, or configure the detected clients together. Review the result, then reconnect or restart the client if it has not reloaded its configuration.
 
-Local HTTP rotates `X-Unity-MCP-Token` each server launch. In **1.2.1**, verified Codex and Claude Code clients use generated token-file helpers: configure once after upgrading, then reconnect when necessary without copying a new token. Older or unverified CLIs should use stdio. Other clients still use static headers and need **Configure** plus reconnection after a server restart. Native CLI and Unity connections look up the current token automatically. Never commit token files or token-bearing client configurations.
+Local HTTP rotates `X-Unity-MCP-Token` each server launch. Since **1.2.1**, verified Codex and Claude Code clients use generated token-file helpers: configure once after upgrading, then reconnect when necessary without copying a new token. Older or unverified CLIs should use stdio. Other clients still use static headers and need **Configure** plus reconnection after a server restart. Native CLI and Unity connections look up the current token automatically. Never commit token files or token-bearing client configurations.
 
 For unsupported clients, use [Manual Client Configuration](./clients.md#manual-client-configuration). For a manually launched Python server, see [Server README](https://github.com/ykh09242/unity-mcp/blob/beta/Server/README.md). Hosted HTTPS/API-key deployment is a different mode: [Remote Server Auth](../guides/remote-server-auth.md).
 
@@ -94,7 +90,9 @@ Ask your assistant:
 
 > Read `mcpforunity://instances`, show the available Editor IDs, and read the project info and active scene for the Editor I choose. Do not modify anything yet.
 
-Use the returned `Name@hash` as `unity_instance` on each tool call and `_meta.unity_instance` on each resource read. Stateful legacy sessions can retain a default; modern sessionless clients cannot. See [Multi-Instance Routing](../guides/multi-instance.md).
+Use the returned `Name@hash` as `unity_instance` on each tool call and `_meta.unity_instance` on each resource read. Stateful legacy sessions can retain a default Editor; modern sessionless clients cannot. See [Multi-Instance Routing](../guides/multi-instance.md).
+
+Tool discovery selection is separate from the default Editor. Supported modern scopes can retain project-bound tool choices; modern HTTP using the existing API-key layer cannot change selection. For that mode, set `UNITY_MCP_TOOL_PROFILE=full` in the server environment, restart and reconnect to expose tools allowed by the Editor. See [Tool Visibility And Groups](../guides/tool-groups.md#modern-client-selection-and-inventory-refresh).
 
 Then try [Your First Prompt](./first-prompt.md) in a disposable or saved scene. Enable only the needed tools and review [consent and safe operation](../guides/security.md).
 

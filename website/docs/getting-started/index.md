@@ -17,7 +17,7 @@ Unity MCP (ykh09242) is a Git-only fork of CoplayDev/unity-mcp that bridges AI a
 - **Editor tools** exposed over MCP — scene/object/asset authoring, scripting, physics, tests, and more. The [generated reference](../reference/tools/index.md) is the current inventory, not a fixed feature count.
 - **Read-only resources** for state introspection — editor state, components, project capabilities, connected instances, and more.
 - **Auto-configuration** for popular MCP clients — Claude Desktop, Claude Code, Cursor, VS Code, Windsurf, Cline, Codex, Qwen, Gemini CLI, Copilot CLI, OpenClaw.
-- **Multi-instance support** — explicitly target each tool/resource request; persistent selection is available only on stateful legacy connections.
+- **Multi-instance support** — explicitly target each tool/resource request; a persistent default Editor selection is available on stateful legacy connections. Tool discovery has separate [connection-scope requirements](../guides/tool-groups.md#modern-client-selection-and-inventory-refresh).
 - **Two transports** — HTTP (multi-agent, default) and stdio (single-agent legacy).
 
 ## When you'd use it
@@ -35,7 +35,7 @@ Unity MCP (ykh09242) is a Git-only fork of CoplayDev/unity-mcp that bridges AI a
 - **[Migration](./migrate.md)** — Replace upstream without co-installing shared assemblies/GUIDs; understand stable release versus development branch.
 - **[Security And Consent](../guides/security.md)** — Local authentication, high-impact tools, credentials, budgets, and retry limits.
 
-Stable fork `1.1.3` follows its own release series. [Fork release notes](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v1.1.3) list the exact tested versions and limits. [Upstream history](../releases.md) is retained separately and is not the fork's latest release.
+Stable fork `2.0.0` follows its own release series. [Fork release notes](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v2.0.0) list the exact tested versions and limits. [Upstream history](../releases.md) is retained separately and is not the fork's latest release.
 
 ---
 

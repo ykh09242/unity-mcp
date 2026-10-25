@@ -25,12 +25,12 @@ The Python distribution is `ykh09242-unity-mcp-server`; executables remain `mcp-
 
 | Source | What it selects |
 |---|---|
-| `#ykh09242-v1.1.3` | The current stable fork release tag. |
+| `#ykh09242-v2.0.0` | The current stable fork release tag. |
 | Full 40-character SHA | A commit-addressed Unity package revision. |
 | `#beta` | The moving development branch, not an immutable release. |
 | Installed `mcpServerSource` | Matching Python source at a full SHA and `Server` subdirectory. |
 
-Unity and Python versions can evolve independently. Python `1.1.1` remains pinned to `bcb5c418e125208a3208e4c000421347e83eceef`. The current package downloads that commit's source archive to bypass Git for Windows checkout limits; the Python implementation is unchanged. The server pin need not match the Unity package's later release commit. Default launch validates the same-fork full-commit archive (or a legacy full-commit Git pin) and does not silently fall back to PyPI or a floating branch.
+Unity and Python versions can evolve independently; this release uses `2.0.0` for both. The installed package's `MCPForUnity/package.json` is authoritative for `mcpServerSource`, the immutable Python server archive. Downloading that archive bypasses Git for Windows checkout limits. Its source commit need not match the Unity package's later release commit. Default launch validates the same-fork full-commit archive (or a legacy full-commit Git pin) and does not silently fall back to PyPI or a floating branch.
 
 Update checks are **notifications**, not changes to the installed pin. Tagged/SHA/default fork installs check `beta` metadata. Explicit `#main` checks inherited `main`; explicit `#beta` checks `beta`. Other revision spellings do not imply a preserved separate update channel. Local-copy/Asset Store update routing is unsupported; manage local copies manually.
 
@@ -38,8 +38,9 @@ Update checks are **notifications**, not changes to the installed pin. Tagged/SH
 
 - Since `1.1.1`, setup opens only when requested. Closing an MCP window does not stop its server or bridge; HTTP auto-start remains an optional background preference. Previously saved Editor layouts can still restore an open tab.
 - Send JSON booleans for flags and whole integers for integer fields. Invalid scalar values are rejected rather than rounded, truncated, or silently defaulted; documented string alternatives remain supported.
-- Local HTTP/WebSocket needs a fresh token each launch. Reconfigure HTTP MCP clients after restarting.
-- Modern sessionless calls need explicit targets when local selection is ambiguous, and always in hosted mode. Tools use `unity_instance`; resources use `_meta.unity_instance`. Persistent selection/group changes require stateful legacy connections.
+- Local HTTP/WebSocket needs a fresh token each launch. Since `1.2.1`, verified Codex and Claude Code configurations use token-file helpers; reconnect when necessary. Static-header clients still need reconfiguration after restarting. See [client configuration](./clients.md).
+- Modern sessionless calls need explicit targets when local selection is ambiguous, and always in hosted mode. Tools use `unity_instance`; resources use `_meta.unity_instance`. Stateful legacy connections can retain a default Editor selection.
+- Tool discovery is separate from Editor selection: supported modern scopes retain project-bound tool choices. Modern HTTP using the existing API-key layer cannot change tool selection; set `UNITY_MCP_TOOL_PROFILE=full` in the server environment, restart and reconnect when needed. See [Tool Visibility And Groups](../guides/tool-groups.md#modern-client-selection-and-inventory-refresh).
 - High-impact tools need explicit Editor consent; general enablement does not grant it. See [Security And Consent](../guides/security.md).
 - Validation and budgets reject more invalid/oversized requests, but errors do not guarantee an unchanged project: best-effort operations can apply valid fields before reporting invalid ones. Inspect state before retrying writes. CLI Unity failures now return nonzero status; review shell-script assumptions.
 - A timeout after dispatch does not prove a write was canceled. Inspect state before retrying.

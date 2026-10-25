@@ -126,11 +126,12 @@ def test_upm_install_examples_select_the_fork_subdirectory_and_release() -> None
         _read(SITE / "getting-started/install.md"),
     )
 
-    # When parsing tag and commit-addressed install URLs.
-    assert len(urls) == 2
+    # When parsing maintained install URLs, require the current stable tag example.
+    assert urls
+    assert any(urlsplit(raw).fragment == f"ykh09242-v{package['version']}" for raw in urls)
     for raw in urls:
         parsed = urlsplit(raw)
-        # Then both select the package subdirectory, with stable tag or full SHA.
+        # Then every example selects the package subdirectory and an immutable revision.
         assert parsed.query == "path=/MCPForUnity"
         assert parsed.fragment == f"ykh09242-v{package['version']}" or re.fullmatch(
             r"[0-9a-f]{40}", parsed.fragment
