@@ -11,7 +11,7 @@ from contextvars import Context
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import Iterable
+from typing import Awaitable, Callable, Iterable
 from urllib.request import url2pathname
 
 from core.config import config
@@ -192,6 +192,32 @@ class ExternalChangesScanner:
                 self._release_state(state)
             self._states.clear()
             self._last_access.clear()
+
+    def begin_shutdown(self) -> Callable[[], Awaitable[None]]:
+        """Retire this generation now and return its independently owned async drain."""
+        owners = (self._progress_task, self._worker_future)
+        self.close()
+        self._progress_task = None
+        self._worker_future = None
+
+        async def drain() -> None:
+            cancelled = False
+            for owner in owners:
+                while owner is not None:
+                    try:
+                        await asyncio.shield(owner)
+                    except asyncio.CancelledError:
+                        if owner.cancelled():
+                            break
+                        cancelled = True
+                        continue
+                    except Exception:
+                        logger.warning("External-change scan shutdown owner failed", exc_info=True)
+                    break
+            if cancelled:
+                raise asyncio.CancelledError
+
+        return drain
 
     def _scan_paths_max_mtime_ns(self, roots: Iterable[Path]) -> int | None:
         # Keep the existing scan boundary for callers and controlled cancellation tests.
