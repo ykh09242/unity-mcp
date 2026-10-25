@@ -85,7 +85,7 @@ namespace MCPForUnity.Editor.Services
             Scheduled[] callbacks;
             lock (Gate)
             {
-                if (Pending.Count == 0)
+                if (_stopped != 0 || Pending.Count == 0)
                     return;
                 callbacks = new Scheduled[Pending.Count];
                 Pending.CopyTo(callbacks, 0);
@@ -94,7 +94,12 @@ namespace MCPForUnity.Editor.Services
                     scheduled.Node = null;
             }
             foreach (Scheduled scheduled in callbacks)
-                scheduled.Invoke();
+            {
+                if (Volatile.Read(ref _stopped) != 0)
+                    scheduled.Clear();
+                else
+                    scheduled.Invoke();
+            }
         }
 
         private static void Stop()
