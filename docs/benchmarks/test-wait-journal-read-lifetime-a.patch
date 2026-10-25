@@ -1,0 +1,22 @@
+--- a/Server/src/services/test_wait_journal.py
++++ b/Server/src/services/test_wait_journal.py
+@@ -310,9 +310,8 @@
+             raise JournalUnavailable("Invalid journal record")
+         self._require_private(path)
+         try:
+-            raw = path.read_bytes()
+             bounded = bounded_json_text(
+-                raw,
++                path.read_bytes(),
+                 max_bytes=self._record_bytes,
+                 max_depth=MAX_RESPONSE_DEPTH + 4,
+                 max_nodes=MAX_RESPONSE_NODES + 256,
+@@ -320,6 +319,8 @@
+             if bounded is None:
+                 raise ValueError("Journal graph exceeds bounds")
+             record = WaitRecord.model_validate_json(bounded)
++            # Neither input buffer is needed while validating the decoded graph.
++            del bounded
+             if (
+                 record.task_id != task_id
+                 or (record.status == "completed") != (record.result is not None)

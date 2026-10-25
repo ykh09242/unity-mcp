@@ -1,0 +1,13 @@
+--- a/Server/src/services/test_wait_journal.py
++++ b/Server/src/services/test_wait_journal.py
+@@ -310,9 +310,8 @@
+             raise JournalUnavailable("Invalid journal record")
+         self._require_private(path)
+         try:
+-            raw = path.read_bytes()
+             bounded = bounded_json_text(
+-                raw,
++                path.read_bytes(),
+                 max_bytes=self._record_bytes,
+                 max_depth=MAX_RESPONSE_DEPTH + 4,
+                 max_nodes=MAX_RESPONSE_NODES + 256,
