@@ -99,8 +99,9 @@ When raycast preflight cannot admit a Graphic, `unsupported_component` identifie
 component by type, GameObject ID and bounded hierarchy path (`path_truncated` marks an
 incomplete path). EventSystem, module and inspection counters collected before refusal
 remain available; hit order and handler relationships stay unknown. Exact TMP caret,
-TextMeshProUGUI and TMP submesh types are admitted only while their raycast method and
-raycast-target getter retain the native Graphic implementation. A caret can be a native
+TextMeshProUGUI and TMP submesh types are admitted only while their
+raycast method retains the native Graphic or MaskableGraphic implementation and the
+raycast-target getter retains the native Graphic implementation. A caret can be a native
 hit candidate; its presence never justifies ignoring an obstruction.
 
 `diagnose_device_profiles` previews exact supported layout providers and omits known

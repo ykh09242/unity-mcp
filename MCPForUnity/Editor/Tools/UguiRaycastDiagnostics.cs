@@ -357,6 +357,7 @@ namespace MCPForUnity.Editor.Tools
                 throw new Unavailable("registry_uninitialized");
             var dictionary = Field(registryType, registry, "m_RaycastableGraphics", query) as IDictionary;
             Type graphicType = NativeType(ui, "UnityEngine.UI.Graphic");
+            Type maskableGraphicType = NativeType(ui, "UnityEngine.UI.MaskableGraphic");
             Type setType = NativeType(ui, "UnityEngine.UI.Collections.IndexedSet").MakeGenericType(graphicType);
             if (dictionary == null || dictionary.GetType() != typeof(Dictionary<,>).MakeGenericType(typeof(Canvas), setType))
                 throw new Unavailable("unsupported_native_shape");
@@ -399,13 +400,19 @@ namespace MCPForUnity.Editor.Tools
                         throw new Unavailable("unsupported_native_shape");
                     Type actual = graphic.GetType();
                     bool knownGraphic = actual.Assembly == ui && Graphics.Contains(actual.FullName);
-                    // TMP's exact built-ins inherit Graphic.Raycast and raycastTarget. The caret
-                    // remains a real candidate when native state says so; do not pretend it is inert.
+                    // TMP's exact built-ins inherit native Graphic/MaskableGraphic.Raycast and
+                    // Graphic.raycastTarget. The caret remains a real candidate, not an inert exception.
                     bool tmp =
                         actual.Assembly.GetName().Name == "Unity.TextMeshPro"
-                        && new[] { "TMPro.TMP_SelectionCaret", "TMPro.TextMeshProUGUI", "TMPro.TMP_SubMeshUI" }.Contains(actual.FullName)
-                        && actual.GetMethod("Raycast", new[] { typeof(Vector2), typeof(Camera) })?.DeclaringType == graphicType
-                        && actual.GetProperty("raycastTarget")?.GetMethod?.DeclaringType == graphicType;
+                        && new[] { "TMPro.TMP_SelectionCaret", "TMPro.TextMeshProUGUI", "TMPro.TMP_SubMeshUI" }.Contains(actual.FullName);
+                    if (tmp)
+                    {
+                        query.Spend(2);
+                        Type raycastOwner = actual.GetMethod("Raycast", new[] { typeof(Vector2), typeof(Camera) })?.DeclaringType;
+                        tmp =
+                            (raycastOwner == graphicType || raycastOwner == maskableGraphicType)
+                            && actual.GetProperty("raycastTarget")?.GetMethod?.DeclaringType == graphicType;
+                    }
                     if (!knownGraphic && !tmp)
                     {
                         query.Reserve(512);
