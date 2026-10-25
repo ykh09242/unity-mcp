@@ -35,6 +35,10 @@
 tools/compile-defines.txt text eol=lf
 tools/compile-refs/*.txt text eol=lf
 
+# Preserve byte identities of the retained graph measurement artifacts.
+/docs/benchmarks/reference-graph-path-cost-20261025/*.jsonl text eol=lf
+/docs/benchmarks/reference-graph-path-cost-20261025/*.txt text eol=lf
+
 # Benchmark patches must match LF C# sources, including on Windows checkouts.
 /docs/benchmarks/*.patch text eol=lf
 # Unified-diff blank context lines contain a required leading space.

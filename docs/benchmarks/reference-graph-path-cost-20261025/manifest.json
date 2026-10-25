@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "decision": "adopt_bounded_discovery_peak_gc_cpu_optimization",
+  "scope": "Synthetic isolated SQLite path discovery; no real database, external repository, service, Unity or GameData access.",
+  "baseline_revision": "a3efdeb8ae63ad5bf80ff63936f64398e17058d9",
+  "query_source": {
+    "repository_path": "Server/src/services/reference_graph/queries.py",
+    "baseline_git_blob": "10d489593a1470c2ded6edbf59a0da32ac315076",
+    "baseline_sha256": "5cc20bf5c551e32912b2a2614dfa21b965b7d9ceacd4475abba121276c76c72e",
+    "candidate_sha256": "cdbd0e3d7df47d3261f815adcaadcd5cd00dba0e2caf836749c386ccd654fb9e"
+  },
+  "cohorts": [
+    {
+      "file": "verify-screen.jsonl",
+      "phase": "verification",
+      "runner_sha256": "079bf2923e38a88c1cdd1ab0e241959df06496041e4217e9be1fd1c8eb7b7468",
+      "sample_rows": 0,
+      "verification_rows": 8,
+      "runner_provenance": "reconstructed_after_run_not_contemporaneously_captured"
+    },
+    {
+      "file": "cpu-screen.jsonl",
+      "phase": "initial_cpu",
+      "runner_sha256": "10abbb9286c9b6e1ace0d7ef570cd98f4fcbef2d3e73ada3cc8e808d2d33ab8e",
+      "sample_rows": 36,
+      "verification_rows": 6,
+      "runner_provenance": "frozen_and_guarded_before_and_after_measurement"
+    },
+    {
+      "file": "memory-screen.jsonl",
+      "phase": "initial_memory_gc",
+      "runner_sha256": "10abbb9286c9b6e1ace0d7ef570cd98f4fcbef2d3e73ada3cc8e808d2d33ab8e",
+      "sample_rows": 12,
+      "verification_rows": 2,
+      "runner_provenance": "frozen_and_guarded_before_and_after_measurement"
+    },
+    {
+      "file": "cpu-wall-repeat.jsonl",
+      "phase": "independent_cpu_wall",
+      "runner_sha256": "1c194cabc557ad9351ae43671f43cb0b3d101b25e9a2c11c41836de9781078d4",
+      "sample_rows": 36,
+      "verification_rows": 6,
+      "runner_provenance": "frozen_and_guarded_before_and_after_measurement"
+    },
+    {
+      "file": "baseline-controls.jsonl",
+      "phase": "independent_identical_baseline_controls",
+      "runner_sha256": "1c194cabc557ad9351ae43671f43cb0b3d101b25e9a2c11c41836de9781078d4",
+      "sample_rows": 18,
+      "verification_rows": 3,
+      "runner_provenance": "frozen_and_guarded_before_and_after_measurement"
+    },
+    {
+      "file": "trace-repeat.jsonl",
+      "phase": "independent_trace_repeat",
+      "runner_sha256": "1c194cabc557ad9351ae43671f43cb0b3d101b25e9a2c11c41836de9781078d4",
+      "sample_rows": 2,
+      "verification_rows": 1,
+      "runner_provenance": "frozen_and_guarded_before_and_after_measurement"
+    },
+    {
+      "file": "terminal-diagnostic.jsonl",
+      "phase": "bounded_interleaved_terminal_diagnostic",
+      "runner_sha256": "3441587791bac79ba4cc31ae3981b2df46135cb2f40c70765d2c3a2fd81b68b6",
+      "sample_rows": 12,
+      "verification_rows": 1,
+      "runner_provenance": "frozen_and_guarded_before_and_after_measurement"
+    },
+    {
+      "file": "cleanup-diagnostic.jsonl",
+      "phase": "bounded_cleanup_diagnostic",
+      "runner_sha256": "3441587791bac79ba4cc31ae3981b2df46135cb2f40c70765d2c3a2fd81b68b6",
+      "sample_rows": 2,
+      "verification_rows": 1,
+      "runner_provenance": "frozen_and_guarded_before_and_after_measurement"
+    }
+  ],
+  "summary_files": [
+    "initial-summary.json",
+    "followup-summary.json",
+    "diagnostic-summary.json"
+  ],
+  "historical_runner_snapshots": {
+    "runner-initial-10abbb.py.txt": "10abbb9286c9b6e1ace0d7ef570cd98f4fcbef2d3e73ada3cc8e808d2d33ab8e",
+    "runner-wall-control-1c194.py.txt": "1c194cabc557ad9351ae43671f43cb0b3d101b25e9a2c11c41836de9781078d4",
+    "runner-diagnostic-344158.py.txt": "3441587791bac79ba4cc31ae3981b2df46135cb2f40c70765d2c3a2fd81b68b6",
+    "verifier-reconstructed-079bf.py.txt": "079bf2923e38a88c1cdd1ab0e241959df06496041e4217e9be1fd1c8eb7b7468"
+  },
+  "reproduction": {
+    "runner_repository_path": "tools/experiments/reference_graph_path_cost.py",
+    "historical_runner_usage": "Copy the selected UTF-8 LF snapshot to its original runner repository path in an isolated checkout before reproducing that phase. The baseline query source is recoverable from baseline_revision and query_source.repository_path.",
+    "fixture_selection": "Case parameters and source identities are retained in every raw cohort. See docs/development/reference-graph-path-cost.md for commands and measurement boundaries.",
+    "line_endings": "UTF-8 LF; raw JSONL numeric fields and sample order preserved."
+  },
+  "provenance_notes": [
+    "Every performance sample from the initial screen, independent repeat, identical-baseline controls and final bounded diagnostic is published; unfavorable observations and outliers were not filtered.",
+    "Initial verification rows recorded both query source hashes but no runner hash. Its loaded runner is reconstructed by removing five metadata-only lines from the initial measurement runner. The reconstruction was not captured contemporaneously; fixture/query/verification behavior was unchanged.",
+    "Reused verification metadata is carried into measurement cohorts; these rows do not represent additional performance samples.",
+    "Historical initial/followup summaries retain their then-pending recommendation fields. The final manifest decision follows the bounded diagnostic and independent review; historical fields were not rewritten.",
+    "Preparatory untimed smoke files are private setup evidence, not adopted performance cohorts."
+  ],
+  "limits": [
+    "Initial page CPU values are quantized and are not request wall latency.",
+    "The small-page initial CPU regressions, case 3 repeat wall regression and all unfavorable maximum-page samples remain in the raw cohorts.",
+    "Observed maxima fluctuate under identical-baseline controls. No absolute or cross-machine worst-case latency guarantee is claimed.",
+    "Earlier traced_retained_bytes records end-current with completed response and harness locals still owned. Only cleanup-diagnostic.jsonl measures current after explicit local release and GC; production does not force GC.",
+    "Peak reduction and repeated representative large-query CPU/wall gains are supported. Generic retained-memory or across-the-board latency improvement is not claimed."
+  ]
+}

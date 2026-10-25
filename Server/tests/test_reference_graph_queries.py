@@ -1,5 +1,7 @@
 """Disk-backed exploration keeps exact revision and scope boundaries."""
 
+import json
+
 import pytest
 
 from services.reference_graph.queries import GraphQueries
@@ -245,3 +247,67 @@ def test_query_schema_upgrade_preserves_existing_resumable_job(graph):
     with store._connect() as db:
         assert db.execute("SELECT version FROM graph_queries_schema").fetchone()[0] == 2
         assert db.execute("SELECT abandoned FROM graph_queries").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("direction", ["incoming", "outgoing"])
+@pytest.mark.parametrize(
+    ("column", "corrupt", "error"),
+    [
+        ("payload", "{", json.JSONDecodeError),
+        ("payload", "[]", TypeError),
+        ("provenance", "{", json.JSONDecodeError),
+        ("provenance", "[]", AttributeError),
+    ],
+)
+def test_path_rejects_corrupt_examined_evidence_outside_selected_route(
+    graph, direction, column, corrupt, error
+):
+    # Given: the first examined relationship is outside the final direct route.
+    store, queries = graph
+    publish(store, "root", ["branch", "destination"])
+    with store._connect(write=True) as db:
+        rows = db.execute("SELECT id,target FROM edges ORDER BY id").fetchall()
+        if direction == "incoming":
+            db.execute("UPDATE edges SET owner=target,target='root'")
+        if column == "payload":
+            db.execute("UPDATE edges SET payload=? WHERE id=?", (corrupt, rows[0]["id"]))
+        else:
+            db.execute(
+                "INSERT OR REPLACE INTO evidence_context VALUES (?,'code',1,'{}',?)",
+                (rows[0]["target"] if direction == "incoming" else "root", corrupt),
+            )
+        target = rows[1]["target"]
+
+    # When/Then: discovery must reject corruption, even though that edge is not returned.
+    with pytest.raises(error):
+        queries.path("root", target, direction=direction, limit=100)
+    with store._connect() as db:
+        assert db.execute("SELECT count(*) FROM graph_queries").fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM graph_query_nodes").fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM graph_query_queue").fetchone()[0] == 0
+
+
+def test_failed_path_continuation_preserves_cursor_and_scratch(graph):
+    # Given: the next page encounters corrupt evidence after one committed page.
+    store, queries = graph
+    publish(store, "root", ["a", "b", "c"])
+    with store._connect(write=True) as db:
+        rows = db.execute("SELECT id FROM edges ORDER BY id").fetchall()
+        db.execute("UPDATE edges SET payload='{' WHERE id=?", (rows[1]["id"],))
+    first = queries.path("root", "missing", direction="outgoing", limit=1)
+    with store._connect() as db:
+        before = {
+            table: [tuple(row) for row in db.execute(f"SELECT * FROM {table}")]
+            for table in ("graph_queries", "graph_query_nodes", "graph_query_queue")
+        }
+
+    # When: a resumed query fails while decoding its second relationship.
+    with pytest.raises(json.JSONDecodeError):
+        queries.path("root", "missing", direction="outgoing", limit=1, cursor=first["next_cursor"])
+
+    # Then: its committed cursor and traversal state remain unchanged.
+    with store._connect() as db:
+        after = {
+            table: [tuple(row) for row in db.execute(f"SELECT * FROM {table}")] for table in before
+        }
+    assert after == before
