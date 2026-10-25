@@ -6,6 +6,7 @@ using MCPForUnity.Editor.Tools.Physics;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.TestTools;
 
@@ -150,7 +151,15 @@ namespace MCPForUnityTests.Editor.Tools
 #endif
                 }
                 var beforePosition = go.transform.position;
-                var response = Send("simulate_step", dimension, new JObject { ["step_size"] = JToken.Parse(value) });
+                JToken requestedStep = JToken.Parse(value);
+                if (requestedStep.Type == JTokenType.String || requestedStep.Type == JTokenType.Array)
+                    LogAssert.Expect(
+                        LogType.Error,
+                        new Regex(
+                            "\\[ManagePhysics\\] Action 'simulate_step' failed: System.ArgumentException: Invalid parameter 'step_size': expected Single, got (String|Array)\\."
+                        )
+                    );
+                var response = Send("simulate_step", dimension, new JObject { ["step_size"] = requestedStep });
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 StringAssert.Contains("step_size", response.Value<string>("error"));
                 Assert.AreEqual(beforePosition, go.transform.position);
@@ -161,6 +170,52 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 UnityEngine.Object.DestroyImmediate(go);
             }
+        }
+
+        [Test]
+        public void SimulationPreservesSettingsValuesAndTheirOriginalDirtyState()
+        {
+            UnityEngine.Object settings = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/DynamicsManager.asset")[0];
+            bool dirtyBefore = EditorUtility.IsDirty(settings);
+            string stateBefore = EditorJsonUtility.ToJson(settings);
+            var response = Send("simulate_step", "3d", new JObject { ["steps"] = 1, ["step_size"] = 0.02f });
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(stateBefore, EditorJsonUtility.ToJson(settings), "The temporary simulation mode must be restored.");
+            Assert.AreEqual(dirtyBefore, EditorUtility.IsDirty(settings), "Transient simulation must not schedule unchanged project settings for saving.");
+        }
+
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public void DirtyStateScopePreservesExistingAndConcurrentChanges(bool originallyDirty, bool changedValue)
+        {
+            var target = ScriptableObject.CreateInstance<PhysicsDirtyStateProbe>();
+            try
+            {
+                EditorUtility.ClearDirty(target);
+                if (originallyDirty)
+                    EditorUtility.SetDirty(target);
+                Type scopeType = typeof(ManagePhysics).Assembly.GetType("MCPForUnity.Editor.Tools.Physics.PhysicsSimulationOps+SettingsDirtyState");
+                Assert.IsNotNull(scopeType);
+                using ((IDisposable)Activator.CreateInstance(scopeType, new object[] { target }))
+                {
+                    if (changedValue)
+                        target.value = 42;
+                    EditorUtility.SetDirty(target);
+                }
+                Assert.AreEqual(originallyDirty || changedValue, EditorUtility.IsDirty(target));
+                Assert.AreEqual(changedValue ? 42 : 0, target.value, "The scope must never rewrite settings values.");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(target);
+            }
+        }
+
+        private sealed class PhysicsDirtyStateProbe : ScriptableObject
+        {
+            public int value;
         }
 
         [Test]

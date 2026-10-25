@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
+using UnityEditor;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools.Physics
@@ -63,6 +64,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     );
 
                 bool changedMode = prevMode != UnityPhysicsCompat.SimulationMode.Script;
+                using var dirtyState = changedMode ? new SettingsDirtyState(LoadSettings()) : null;
                 if (changedMode && !UnityPhysicsCompat.TrySetPhysicsSimulationMode(UnityPhysicsCompat.SimulationMode.Script))
                     return new ErrorResponse(
                         "Could not enable Script simulation mode; no steps were run.",
@@ -145,6 +147,41 @@ namespace MCPForUnity.Editor.Tools.Physics
                     rigidbodies,
                 },
             };
+        }
+
+        private static UnityEngine.Object LoadSettings()
+        {
+            var assets = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/DynamicsManager.asset");
+            return assets.Length == 1 ? assets[0] : null;
+        }
+
+        private sealed class SettingsDirtyState : IDisposable
+        {
+            private readonly UnityEngine.Object settings;
+            private readonly string original;
+
+            public SettingsDirtyState(UnityEngine.Object target)
+            {
+                if (target == null || EditorUtility.IsDirty(target))
+                    return;
+                string snapshot = EditorJsonUtility.ToJson(target);
+                if (string.IsNullOrEmpty(snapshot) || snapshot == "{}")
+                    return;
+                settings = target;
+                original = snapshot;
+            }
+
+            public void Dispose()
+            {
+                // Native simulation-mode setters dirty DynamicsManager even after restoring its value.
+                // Clear only our net-zero change; never overwrite values or discard earlier/callback edits.
+                if (
+                    settings != null
+                    && EditorUtility.IsDirty(settings)
+                    && string.Equals(original, EditorJsonUtility.ToJson(settings), StringComparison.Ordinal)
+                )
+                    EditorUtility.ClearDirty(settings);
+            }
         }
 
         private static List<object> CollectTargetRigidbody(string targetStr, string searchMethod, string dimension)
