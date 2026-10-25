@@ -7,13 +7,17 @@ import time
 import asyncio
 import threading
 from collections import OrderedDict
+from contextvars import Context
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Iterable
 from urllib.request import url2pathname
 
 from core.config import config
 from services.state.external_changes_walk import ScanCursor
+
+logger = logging.getLogger("mcp-for-unity-server")
 
 _EMPTY_RESULT = {
     "external_changes_dirty": False,
@@ -22,6 +26,8 @@ _EMPTY_RESULT = {
     "last_cleared_unix_ms": None,
     "external_changes_scan_complete": None,
     "external_changes_scan_limited": None,
+    "external_changes_scan_in_progress": None,
+    "external_changes_scan_limited_reason": None,
 }
 
 
@@ -47,12 +53,15 @@ class ExternalChangesState:
     extra_roots: list[str] | None = None
     manifest_last_mtime_ns: int | None = None
     manifest_content_hash: bytes | None = None
+    manifest_limited_reason: str | None = None
     cursor: ScanCursor | None = None
+    scan_roots: tuple[Path, ...] | None = None
     fingerprint: tuple[int, int] | None = None
     revision: int = 0
     # Coverage is unknown until a verified local project root is available.
     scan_complete: bool | None = None
     scan_limited: bool | None = None
+    scan_limited_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,7 +88,7 @@ class ExternalChangesScanner:
         max_scan_seconds: float = 0.25,
         max_manifest_bytes: int = 1024 * 1024,
         max_extra_roots: int = 256,
-        max_scan_bytes: int = 2 * 1024 * 1024,
+        max_scan_bytes: int = 16 * 1024 * 1024,
     ):
         self._states: OrderedDict[str, ExternalChangesState] = OrderedDict()
         self._last_access: dict[str, int] = {}
@@ -96,6 +105,8 @@ class ExternalChangesScanner:
         self._state_lock = threading.RLock()
         self._active_stop: threading.Event | None = None
         self._scan_deadline = 0.0
+        self._progress_task: asyncio.Task[None] | None = None
+        self._worker_future: asyncio.Future | None = None
 
     def _get_state(self, instance_id: str) -> ExternalChangesState:
         now = _now_unix_ms()
@@ -174,6 +185,8 @@ class ExternalChangesScanner:
 
     def close(self) -> None:
         """Retire cached cursors; an active worker cooperatively closes its own handles."""
+        if self._progress_task is not None:
+            self._progress_task.cancel()
         with self._state_lock:
             for state in self._states.values():
                 self._release_state(state)
@@ -184,6 +197,13 @@ class ExternalChangesScanner:
         # Keep the existing scan boundary for callers and controlled cancellation tests.
         state = self._scan_state
         cursor = state.cursor if state is not None else None
+        roots = tuple(roots)
+        if state is not None and state.scan_roots != roots:
+            if cursor is not None:
+                cursor.close()
+                state.cursor = cursor = None
+            state.scan_roots = roots
+            state.scan_complete = False
         if cursor is None:
             watched = (
                 Path(state.project_root) / "Packages/manifest.json"
@@ -197,8 +217,16 @@ class ExternalChangesScanner:
         if state is None:
             cursor.close()
         else:
-            state.scan_complete = cursor.complete and not cursor.limited
-            state.scan_limited = cursor.limited
+            # Coverage belongs to the last verified pass. Routine rechecks do not
+            # revoke it; a changed scope or incomplete traversal does.
+            state.scan_limited_reason = state.manifest_limited_reason or (
+                "filesystem_coverage_limited" if cursor.limited else None
+            )
+            state.scan_limited = state.scan_limited_reason is not None
+            if state.scan_limited:
+                state.scan_complete = False
+            elif cursor.complete:
+                state.scan_complete = True
         return cursor.newest
 
     def _scan_stopped(self) -> bool:
@@ -229,35 +257,52 @@ class ExternalChangesScanner:
         """
         manifest_path = project_root / "Packages" / "manifest.json"
         if self._scan_stopped():
+            st.manifest_limited_reason = "manifest_scan_budget"
             return []
         try:
             stat = manifest_path.stat()
-        except OSError:
+        except FileNotFoundError:
             st.extra_roots = []
             st.manifest_last_mtime_ns = None
+            st.manifest_limited_reason = None
+            return []
+        except OSError:
+            st.manifest_limited_reason = "manifest_unreadable"
             return []
 
         mtime_ns = getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))
-        if st.extra_roots is not None and st.manifest_last_mtime_ns == mtime_ns:
+        if (
+            st.extra_roots is not None
+            and st.manifest_last_mtime_ns == mtime_ns
+            and st.manifest_limited_reason is None
+        ):
             return self._existing_directory_roots(st.extra_roots)
 
+        st.manifest_limited_reason = None
         try:
             if stat.st_size > self._max_manifest_bytes:
+                st.manifest_limited_reason = "manifest_byte_limit"
                 raise ValueError("Local package manifest exceeds scanner budget")
             # Bound the read itself, including a file that grows after stat.
             with manifest_path.open("rb") as source:
                 raw = source.read(self._max_manifest_bytes + 1)
             if len(raw) > self._max_manifest_bytes:
+                st.manifest_limited_reason = "manifest_byte_limit"
                 raise ValueError("Local package manifest exceeds scanner budget")
             st.manifest_content_hash = blake2b(raw, digest_size=32).digest()
             doc = json.loads(raw)
         except (OSError, ValueError, UnicodeError):
+            st.manifest_limited_reason = (
+                st.manifest_limited_reason or "manifest_unreadable_or_invalid"
+            )
             st.extra_roots = []
             st.manifest_last_mtime_ns = mtime_ns
             return []
 
         deps = doc.get("dependencies") if isinstance(doc, dict) else None
         if not isinstance(deps, dict):
+            if deps is not None or not isinstance(doc, dict):
+                st.manifest_limited_reason = "manifest_invalid_dependencies"
             st.extra_roots = []
             st.manifest_last_mtime_ns = mtime_ns
             return []
@@ -266,7 +311,8 @@ class ExternalChangesScanner:
         base_dir = manifest_path.parent
 
         for _, ver in deps.items():
-            if self._scan_stopped() or len(roots) >= self._max_extra_roots:
+            if self._scan_stopped():
+                st.manifest_limited_reason = "manifest_scan_budget"
                 break
             if not isinstance(ver, str):
                 continue
@@ -284,6 +330,9 @@ class ExternalChangesScanner:
                 candidate = Path(suffix)
             else:
                 candidate = (base_dir / suffix).resolve()
+            if len(roots) >= self._max_extra_roots:
+                st.manifest_limited_reason = "local_package_root_limit"
+                break
             roots.append(str(candidate))
 
         # De-dupe, preserve order
@@ -298,7 +347,7 @@ class ExternalChangesScanner:
         st.manifest_last_mtime_ns = mtime_ns
         return self._existing_directory_roots(deduped)
 
-    def update_and_get(self, instance_id: str) -> dict[str, int | bool | None]:
+    def update_and_get(self, instance_id: str) -> dict[str, int | bool | str | None]:
         """Run one bounded local scan, or return cached state when another is active."""
         if config.http_remote_hosted or len(instance_id) > 256:
             return _EMPTY_RESULT.copy()
@@ -306,7 +355,7 @@ class ExternalChangesScanner:
             return self._cached_result(instance_id)
         return self._run_update_locked(instance_id, threading.Event())
 
-    async def update_and_get_async(self, instance_id: str) -> dict[str, int | bool | None]:
+    async def update_and_get_async(self, instance_id: str) -> dict[str, int | bool | str | None]:
         """Offload local traversal; cancellation requests cooperative worker stop."""
         if config.http_remote_hosted or len(instance_id) > 256:
             return _EMPTY_RESULT.copy()
@@ -319,6 +368,7 @@ class ExternalChangesScanner:
             st = self._get_state(instance_id)
             if (
                 st.last_scan_unix_ms is not None
+                and st.cursor is None
                 and _now_unix_ms() - st.last_scan_unix_ms < self._scan_interval_ms
             ):
                 self._scan_lock.release()
@@ -330,15 +380,83 @@ class ExternalChangesScanner:
             future = submit_owned_executor(
                 asyncio.get_running_loop(), None, self._run_update_locked, instance_id, stop
             )
+            self._worker_future = future
         except BaseException:
             self._scan_lock.release()
             raise
         try:
-            return await asyncio.shield(future)
+            result = await asyncio.shield(future)
+            self._continue_pending_scan()
+            return result
         finally:
             stop.set()
 
-    def _cached_result(self, instance_id: str) -> dict[str, int | bool | None]:
+    def _continue_pending_scan(self) -> None:
+        """Own continuation independently of request polling and request Context."""
+        if self._progress_task is not None and not self._progress_task.done():
+            return
+        with self._state_lock:
+            if any(state.cursor is not None for state in self._states.values()):
+                self._progress_task = asyncio.create_task(
+                    self._finish_pending_scans(), context=Context()
+                )
+
+    async def _finish_pending_scans(self) -> None:
+        """Finish pending passes fairly; advancing a state moves it to the LRU tail."""
+        state = None
+        try:
+            while not config.http_remote_hosted:
+                with self._state_lock:
+                    pending = next(
+                        (
+                            (key, value)
+                            for key, value in self._states.items()
+                            if value.cursor is not None
+                        ),
+                        None,
+                    )
+                if pending is None:
+                    break
+                instance_id, state = pending
+                await asyncio.sleep(0.01)
+                if self._states.get(instance_id) is not state or state.cursor is None:
+                    continue
+                await self.update_and_get_async(instance_id)
+        except asyncio.CancelledError:
+            # The request waiter may stop immediately; this scanner-owned task
+            # drains its cooperative worker before retiring the continuation.
+            future = self._worker_future
+            while future is not None:
+                try:
+                    await asyncio.shield(future)
+                except asyncio.CancelledError:
+                    if future.cancelled():
+                        break
+                    continue
+                except Exception:
+                    logger.warning(
+                        "External-change scan worker failed during shutdown", exc_info=True
+                    )
+                break
+            raise
+        except Exception:
+            # This is a detached task boundary: retain failure evidence for the next read.
+            if state is not None:
+                state.scan_complete = False
+                state.scan_limited = True
+                state.scan_limited_reason = "scan_worker_failed"
+                self._release_state(state)
+            logger.warning("External-change scan continuation failed", exc_info=True)
+        finally:
+            if config.http_remote_hosted:
+                with self._state_lock:
+                    for state in self._states.values():
+                        self._release_state(state)
+                        state.scan_complete = False
+            if self._progress_task is asyncio.current_task():
+                self._progress_task = None
+
+    def _cached_result(self, instance_id: str) -> dict[str, int | bool | str | None]:
         with self._state_lock:
             st = self._states.get(instance_id)
             if st is None:
@@ -350,11 +468,13 @@ class ExternalChangesScanner:
                 "last_cleared_unix_ms": st.last_cleared_unix_ms,
                 "external_changes_scan_complete": st.scan_complete,
                 "external_changes_scan_limited": st.scan_limited,
+                "external_changes_scan_in_progress": st.cursor is not None,
+                "external_changes_scan_limited_reason": st.scan_limited_reason,
             }
 
     def _run_update_locked(
         self, instance_id: str, stop: threading.Event
-    ) -> dict[str, int | bool | None]:
+    ) -> dict[str, int | bool | str | None]:
         self._active_stop = stop
         self._scan_deadline = time.monotonic() + self._max_scan_seconds
         try:
@@ -380,7 +500,7 @@ class ExternalChangesScanner:
             self._scan_deadline = 0.0
             self._scan_lock.release()
 
-    def _update_and_get(self, instance_id: str) -> dict[str, int | bool | None]:
+    def _update_and_get(self, instance_id: str) -> dict[str, int | bool | str | None]:
         """
         Returns a small dict suitable for embedding in editor_state_v2.assets:
           - external_changes_dirty
@@ -398,11 +518,14 @@ class ExternalChangesScanner:
                 "last_cleared_unix_ms": st.last_cleared_unix_ms,
                 "external_changes_scan_complete": st.scan_complete,
                 "external_changes_scan_limited": st.scan_limited,
+                "external_changes_scan_in_progress": st.cursor is not None,
+                "external_changes_scan_limited_reason": st.scan_limited_reason,
             }
 
         now = _now_unix_ms()
         if (
             st.last_scan_unix_ms is not None
+            and st.cursor is None
             and (now - st.last_scan_unix_ms) < self._scan_interval_ms
         ):
             return {
@@ -412,6 +535,8 @@ class ExternalChangesScanner:
                 "last_cleared_unix_ms": st.last_cleared_unix_ms,
                 "external_changes_scan_complete": st.scan_complete,
                 "external_changes_scan_limited": st.scan_limited,
+                "external_changes_scan_in_progress": st.cursor is not None,
+                "external_changes_scan_limited_reason": st.scan_limited_reason,
             }
 
         st.last_scan_unix_ms = now
@@ -425,6 +550,8 @@ class ExternalChangesScanner:
                 "last_cleared_unix_ms": st.last_cleared_unix_ms,
                 "external_changes_scan_complete": st.scan_complete,
                 "external_changes_scan_limited": st.scan_limited,
+                "external_changes_scan_in_progress": st.cursor is not None,
+                "external_changes_scan_limited_reason": st.scan_limited_reason,
             }
 
         root = Path(project_root)
@@ -433,11 +560,15 @@ class ExternalChangesScanner:
         try:
             paths.extend(self._resolve_manifest_extra_roots(root, st))
         except Exception:
-            pass
+            st.manifest_limited_reason = "manifest_resolution_failed"
         self._scan_state = st
         newest = self._scan_paths_max_mtime_ns(paths)
         with self._state_lock:
-            if self._states.get(instance_id) is not st or self._scan_stopped():
+            if (
+                self._states.get(instance_id) is not st
+                or config.http_remote_hosted
+                or (self._active_stop is not None and self._active_stop.is_set())
+            ):
                 return self._cached_result(instance_id)
             cursor = st.cursor
             if cursor is not None and cursor.complete:
@@ -447,10 +578,10 @@ class ExternalChangesScanner:
                     and cursor.watched_digest != st.manifest_content_hash
                 ):
                     st.manifest_last_mtime_ns = None
-                changed = cursor.limited or (
+                changed = st.scan_limited or (
                     st.fingerprint is not None and current != st.fingerprint
                 )
-                if not cursor.limited:
+                if not st.scan_limited:
                     st.fingerprint = current
                 if newest is not None:
                     st.last_seen_mtime_ns = (
@@ -474,6 +605,8 @@ class ExternalChangesScanner:
             "last_cleared_unix_ms": st.last_cleared_unix_ms,
             "external_changes_scan_complete": st.scan_complete,
             "external_changes_scan_limited": st.scan_limited,
+            "external_changes_scan_in_progress": st.cursor is not None,
+            "external_changes_scan_limited_reason": st.scan_limited_reason,
         }
 
 

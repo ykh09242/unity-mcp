@@ -95,6 +95,8 @@ class EditorStateAssets(BaseModel):
     external_changes_dirty: bool | None = None
     external_changes_scan_complete: bool | None = None
     external_changes_scan_limited: bool | None = None
+    external_changes_scan_in_progress: bool | None = None
+    external_changes_scan_limited_reason: str | None = None
     external_changes_last_seen_unix_ms: int | None = None
     external_changes_dirty_since_unix_ms: int | None = None
     external_changes_last_cleared_unix_ms: int | None = None
@@ -339,8 +341,9 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
     name="editor_state",
     description=(
         "Canonical editor readiness snapshot. Includes advice, server-computed staleness, "
-        "and assets.external_changes_scan_complete/limited coverage. A pending or limited "
-        "local scan is not ready_for_tools; unknown remote coverage remains null."
+        "and assets.external_changes_scan_complete/limited coverage. scan_in_progress "
+        "distinguishes a routine recheck from verified coverage. Initial pending or limited "
+        "local coverage is not ready_for_tools; unknown remote coverage remains null."
         "\n\nURI: mcpforunity://editor/state"
     ),
 )
@@ -468,6 +471,12 @@ async def _read_editor_state(
             assets["external_changes_dirty"] = bool(ext.get("external_changes_dirty", False))
             assets["external_changes_scan_complete"] = ext.get("external_changes_scan_complete")
             assets["external_changes_scan_limited"] = ext.get("external_changes_scan_limited")
+            assets["external_changes_scan_in_progress"] = ext.get(
+                "external_changes_scan_in_progress"
+            )
+            assets["external_changes_scan_limited_reason"] = ext.get(
+                "external_changes_scan_limited_reason"
+            )
             assets["external_changes_last_seen_unix_ms"] = ext.get(
                 "external_changes_last_seen_unix_ms"
             )
