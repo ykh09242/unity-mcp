@@ -114,6 +114,8 @@ namespace MCPForUnityTests.Editor.Tools.Fixtures
         private int hidden = 19;
         public int after = 29;
         public long wide = 9007199254740993L;
+        public uint unsigned32 = uint.MaxValue;
+        public ulong unsigned64 = ulong.MaxValue;
         public double precise = 1.0000000000000002;
         public string text = "sample";
         public string[] texts = Array.Empty<string>();
