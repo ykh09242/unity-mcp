@@ -38,8 +38,10 @@ namespace MCPForUnity.Editor.Setup
             public int Deleted { get; set; }
             public string CommitSha { get; set; }
             public string SourceDescription { get; set; }
+            public string ReviewSourceUrl { get; set; }
             public string Error { get; set; }
             public string[] Conflicts { get; set; } = Array.Empty<string>();
+            public string[] UnknownBaselineConflicts { get; set; } = Array.Empty<string>();
             public string[] Preserved { get; set; } = Array.Empty<string>();
             public bool PartialApplication { get; set; }
             public bool RolledBack { get; set; }
@@ -56,12 +58,14 @@ namespace MCPForUnity.Editor.Setup
             public string InstallPath { get; }
             public string CommitSha { get; }
             public string SourceDescription => Source?.Description;
+            public string ReviewSourceUrl => $"https://github.com/{Repository}/tree/{CommitSha}/{SkillSubdir}";
             public string Error { get; }
             public bool Success => Error == null;
             public ReadOnlyCollection<string> Added { get; }
             public ReadOnlyCollection<string> Updated { get; }
             public ReadOnlyCollection<string> Deleted { get; }
             public ReadOnlyCollection<string> Conflicts { get; }
+            public ReadOnlyCollection<string> UnknownBaselineConflicts { get; }
             public ReadOnlyCollection<string> Preserved { get; }
 
             internal SyncPreview(string error)
@@ -82,6 +86,7 @@ namespace MCPForUnity.Editor.Setup
                 Updated = Array.AsReadOnly(plan.Updated.ToArray());
                 Deleted = Array.AsReadOnly(plan.Deleted.ToArray());
                 Conflicts = Array.AsReadOnly(plan.Conflicts.ToArray());
+                UnknownBaselineConflicts = Array.AsReadOnly(plan.UnknownBaselineConflicts.ToArray());
                 Preserved = Array.AsReadOnly(plan.Preserved.ToArray());
             }
         }
@@ -167,6 +172,8 @@ namespace MCPForUnity.Editor.Setup
                     budget.ThrowIfCancellationRequested();
                     log?.Invoke(preview.SourceDescription + "; resolved commit " + preview.CommitSha);
                     LogPlanDetails(preview.Plan, log);
+                    if (preview.Conflicts.Count > 0)
+                        log?.Invoke("Review the resolved source: " + preview.ReviewSourceUrl);
                 }
                 catch (Exception error)
                 {
@@ -364,7 +371,9 @@ namespace MCPForUnity.Editor.Setup
                         Deleted = preview.Deleted.Count,
                         CommitSha = preview.CommitSha,
                         SourceDescription = preview.SourceDescription,
+                        ReviewSourceUrl = preview.ReviewSourceUrl,
                         Conflicts = preview.Conflicts.ToArray(),
+                        UnknownBaselineConflicts = preview.UnknownBaselineConflicts.ToArray(),
                         Preserved = preview.Preserved.ToArray(),
                         PartialApplication = preview.Conflicts.Count > 0,
                         RecoveryPath = preview.Plan.RecoveryPath,
@@ -375,7 +384,9 @@ namespace MCPForUnity.Editor.Setup
                     var result = FailureResult(error);
                     result.CommitSha = preview?.CommitSha;
                     result.SourceDescription = preview?.SourceDescription;
+                    result.ReviewSourceUrl = preview?.ReviewSourceUrl;
                     result.Conflicts = preview?.Conflicts?.ToArray() ?? Array.Empty<string>();
+                    result.UnknownBaselineConflicts = preview?.UnknownBaselineConflicts?.ToArray() ?? Array.Empty<string>();
                     result.Preserved = preview?.Preserved?.ToArray() ?? Array.Empty<string>();
                     return result;
                 }
@@ -409,9 +420,21 @@ namespace MCPForUnity.Editor.Setup
                 summary =
                     unchanged && result.Preserved.Length == 0 && result.Conflicts.Length == 0
                         ? "Skills are already up to date."
-                        : $"Applied: +{result.Added} ~{result.Updated} -{result.Deleted}. Local changes preserved: {result.Preserved.Length}.";
+                        : (unchanged ? "No skill files changed." : $"Applied: +{result.Added} ~{result.Updated} -{result.Deleted}.")
+                            + $" Preserved locally: {result.Preserved.Length + result.Conflicts.Length} (including conflicts).";
                 if (result.Conflicts.Length > 0)
-                    summary += $"\nConflicts kept locally ({result.Conflicts.Length}):\n" + string.Join("\n", result.Conflicts);
+                {
+                    summary += $"\nReview required ({result.Conflicts.Length}); local files or deletions kept:\n" + string.Join("\n", result.Conflicts);
+                    if (result.UnknownBaselineConflicts.Length > 0)
+                        summary +=
+                            "\nNo recorded baseline for these differing files; previous upstream content and local edits cannot be distinguished:\n"
+                            + string.Join("\n", result.UnknownBaselineConflicts);
+                    if (!string.IsNullOrEmpty(result.ReviewSourceUrl))
+                        summary += "\nResolved source for comparison: " + result.ReviewSourceUrl;
+                    summary +=
+                        "\nBack up the local skill, compare the listed paths with the resolved source, merge desired changes manually, then preview again. "
+                        + "Files kept different will continue to require review; sync does not overwrite them or adopt an unknown baseline.";
+                }
             }
             if (!string.IsNullOrEmpty(result.RecoveryPath))
                 summary += "\nRecovery files retained at: " + result.RecoveryPath;
@@ -788,7 +811,11 @@ namespace MCPForUnity.Editor.Setup
                     plan.NextBaseline[name] = remoteHash;
                 }
                 else
+                {
                     plan.Conflicts.Add(name);
+                    if (baselineHash == null)
+                        plan.UnknownBaselineConflicts.Add(name);
+                }
             }
             foreach (string path in plan.Added.Concat(plan.Updated).ToArray())
             {
@@ -807,7 +834,7 @@ namespace MCPForUnity.Editor.Setup
                     plan.NextBaseline.Remove(path);
             }
             RejectCaseParentChanges(plan, localHashes.Keys, previous);
-            foreach (var list in new[] { plan.Added, plan.Updated, plan.Deleted, plan.Conflicts, plan.Preserved })
+            foreach (var list in new[] { plan.Added, plan.Updated, plan.Deleted, plan.Conflicts, plan.UnknownBaselineConflicts, plan.Preserved })
                 list.Sort(StringComparer.Ordinal);
             return plan;
         }
@@ -1491,7 +1518,11 @@ namespace MCPForUnity.Editor.Setup
             foreach (var path in plan.Preserved)
                 log?.Invoke($"Preserve local: {path}");
             foreach (var path in plan.Conflicts)
-                log?.Invoke($"Conflict, local preserved: {path}");
+                log?.Invoke(
+                    plan.UnknownBaselineConflicts.Contains(path)
+                        ? $"Review required, no recorded baseline; local file kept: {path}"
+                        : $"Review required, local file or deletion kept: {path}"
+                );
         }
 
         internal readonly struct GitHubRepoInfo
@@ -1603,6 +1634,7 @@ namespace MCPForUnity.Editor.Setup
             public List<string> Updated { get; } = new();
             public List<string> Deleted { get; } = new();
             public List<string> Conflicts { get; } = new();
+            public List<string> UnknownBaselineConflicts { get; } = new();
             public List<string> Preserved { get; } = new();
             internal Dictionary<string, string> LocalHashes = new(StringComparer.OrdinalIgnoreCase);
             internal Dictionary<string, string> NextBaseline = new(StringComparer.OrdinalIgnoreCase);
