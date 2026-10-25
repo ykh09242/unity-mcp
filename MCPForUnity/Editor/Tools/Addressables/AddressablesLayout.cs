@@ -25,9 +25,56 @@ namespace MCPForUnity.Editor.Tools.Addressables
 
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
 
+        private static Type Nested(Type layout, string name)
+        {
+            Type type = layout?.GetNestedType(name);
+            if (type == null)
+                AddressablesState.Fail("addressables_api_unsupported", "analyze_layout requires the native layout type: " + name + ".");
+            return type;
+        }
+
+        private static void Field(Type type, string name, Type expected) => AddressablesCompatibility.RequireField(type, "analyze_layout", name, expected);
+
+        private static void ListField(Type type, string name, Type element) => Field(type, name, typeof(List<>).MakeGenericType(element));
+
+        internal static void RequireSchema(Type layout)
+        {
+            // Check even empty reports: native constructors would otherwise hide missing fields behind empty defaults.
+            Type asset = Nested(layout, "AssetDuplicationData"),
+                duplicate = Nested(layout, "ObjectDuplicationData"),
+                file = Nested(layout, "File"),
+                bundle = Nested(layout, "Bundle"),
+                implicitAsset = Nested(layout, "DataFromOtherAsset"),
+                item = Nested(layout, "ObjectData");
+            if (layout.GetConstructor(Type.EmptyTypes) == null)
+                AddressablesState.Fail("addressables_api_unsupported", "analyze_layout requires a native layout constructor.");
+            Field(layout, "PackageVersion", typeof(string));
+            Field(layout, "BuildTarget", typeof(BuildTarget));
+            Field(layout, "UnityVersion", typeof(string));
+            Field(layout, "BuildError", typeof(string));
+            ListField(layout, "Groups", Nested(layout, "Group"));
+            ListField(layout, "DuplicatedAssets", asset);
+            Field(asset, "AssetGuid", typeof(string));
+            ListField(asset, "DuplicatedObjects", duplicate);
+            Field(duplicate, "LocalIdentifierInFile", typeof(long));
+            ListField(duplicate, "IncludedInBundleFiles", file);
+            Field(file, "Bundle", bundle);
+            Field(file, "Name", typeof(string));
+            ListField(file, "OtherAssets", implicitAsset);
+            Field(bundle, "Name", typeof(string));
+            Field(implicitAsset, "AssetGuid", typeof(string));
+            Field(implicitAsset, "AssetPath", typeof(string));
+            ListField(implicitAsset, "Objects", item);
+            Field(item, "LocalIdentifierInFile", typeof(long));
+            Field(item, "SerializedSize", typeof(ulong));
+            Field(item, "StreamedSize", typeof(ulong));
+        }
+
         internal static object Read(JObject request)
         {
             AddressablesState.RequirePackage(out Type settingsType, out string version);
+            Type layoutType = settingsType.Assembly.GetType("UnityEditor.AddressableAssets.Build.Layout.BuildLayout");
+            RequireSchema(layoutType);
             string relative = AddressablesState.Text(request["layout_path"], "layout_path");
             if (
                 (
@@ -66,16 +113,18 @@ namespace MCPForUnity.Editor.Tools.Addressables
             using (var text = new StringReader(json))
             using (var reader = new JsonTextReader(text) { MaxDepth = 64 })
                 header = JObject.Load(reader);
-            // Native2.7.6 BuildLayoutGenerationTask declares both package identity and version.
+            // Both supported families' BuildLayoutGenerationTask declares package identity and version.
             // Do not substitute the installed package version for missing or different report metadata.
             JToken declaration = header["PackageVersion"];
             if (declaration?.Type != JTokenType.String || declaration.Value<string>() != "com.unity.addressables: " + version)
-                AddressablesState.Fail("addressables_layout_version_unsupported", "Only a native declared com.unity.addressables: 2.7.6 report is supported.");
-            if (header.Property("DuplicatedAssets") == null || header.Property("Groups") == null)
+                AddressablesState.Fail(
+                    "addressables_layout_version_unsupported",
+                    "The native report must declare com.unity.addressables: " + version + ", matching the installed package."
+                );
+            if (!(header["DuplicatedAssets"] is JArray) || !(header["Groups"] is JArray))
                 AddressablesState.Fail("addressables_layout_invalid", "Required native layout schema is missing.");
-            Type layoutType = settingsType.Assembly.GetType("UnityEditor.AddressableAssets.Build.Layout.BuildLayout", true);
             object layout = Activator.CreateInstance(layoutType);
-            // This is the exact native deserializer used by2.7.6 BuildLayout.ReadFull, applied to the bounded immutable bytes.
+            // Both families' BuildLayout.ReadFull use this native deserializer; apply it to the bounded immutable bytes.
             // Avoid reopening a changing report or writing a temporary file during this read action.
             EditorJsonUtility.FromJsonOverwrite(json, layout);
             string revision;

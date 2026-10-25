@@ -13,6 +13,117 @@ using UnityEngine;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    public class AddressablesCompatibilityTests
+    {
+        private static object Policy(string name, params object[] args)
+        {
+            Type type = Type.GetType("MCPForUnity.Editor.Tools.Addressables.AddressablesCompatibility, MCPForUnity.Editor", true);
+            return type.GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, args);
+        }
+
+        [TestCase("1.28.2", true)]
+        [TestCase("1.28.3", true)]
+        [TestCase("2.0.0", true)]
+        [TestCase("2.7.6", true)]
+        [TestCase("2.8.0", true)]
+        [TestCase("1.27.0", false)]
+        [TestCase("3.0.0", false)]
+        [TestCase("2.7.6-pre.1", false)]
+        [TestCase("2.7", false)]
+        [TestCase("2.7.6.1", false)]
+        [TestCase(" 2.7.6", false)]
+        [TestCase("2.-7.6", false)]
+        [TestCase("02.7.6", false)]
+        [TestCase("2.7.2147483648", false)]
+        [TestCase(null, false)]
+        public void StableFamiliesRequireStrictPackageVersions(string version, bool expected) => Assert.AreEqual(expected, Policy("SupportsVersion", version));
+
+        private sealed class EditApi
+        {
+            internal int Calls;
+
+            public void SetAddress(string address, bool postEvent) => Calls++;
+
+            public void SetAddress(string address) => Calls++;
+
+            public bool SetValue(string profile, string name, string value)
+            {
+                Calls++;
+                return true;
+            }
+
+            public static void StaticEdit(string value) { }
+
+            public void GenericEdit<T>(string value) => Calls++;
+        }
+
+        [Test]
+        public void EditCapabilityResolutionChecksExactSignatureWithoutInvokingIt()
+        {
+            var target = new EditApi();
+            var method = (MethodInfo)Policy("RequireMethod", target, "set_address", "SetAddress", typeof(void), new[] { typeof(string), typeof(bool) });
+            Assert.AreEqual(2, method.GetParameters().Length);
+            Assert.AreEqual(0, target.Calls, "Capability checks must never invoke native edits.");
+        }
+
+        [TestCase("SetAddress", "move_entry")]
+        [TestCase("SetValue", "set_profile_value")]
+        [TestCase("StaticEdit", "set_address")]
+        [TestCase("Missing", "set_address")]
+        public void MissingOrIncompatibleEditApisRefuseBeforeInvocation(string method, string action)
+        {
+            var target = new EditApi();
+            var error = Assert.Throws<TargetInvocationException>(() =>
+                Policy("RequireMethod", target, action, method, typeof(void), new[] { typeof(string), typeof(string), typeof(string) })
+            );
+            Assert.AreEqual(
+                "addressables_api_unsupported",
+                error.InnerException.GetType().GetField("Code", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(error.InnerException)
+            );
+            StringAssert.Contains(action, error.InnerException.Message);
+            Assert.AreEqual(0, target.Calls);
+        }
+
+        [TestCase("StaticEdit")]
+        [TestCase("GenericEdit")]
+        public void StaticAndOpenGenericMethodsAreNotNativeEditCapabilities(string method)
+        {
+            var target = new EditApi();
+            var error = Assert.Throws<TargetInvocationException>(() =>
+                Policy("RequireMethod", target, "set_address", method, typeof(void), new[] { typeof(string) })
+            );
+            Assert.AreEqual(
+                "addressables_api_unsupported",
+                error.InnerException.GetType().GetField("Code", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(error.InnerException)
+            );
+            Assert.AreEqual(0, target.Calls);
+        }
+
+        [Test]
+        public void MissingLayoutSchemaRefusesWithAnActionSpecificCapabilityError()
+        {
+            Type type = Type.GetType("MCPForUnity.Editor.Tools.Addressables.AddressablesLayout, MCPForUnity.Editor", true);
+            var error = Assert.Throws<TargetInvocationException>(() =>
+                type.GetMethod("RequireSchema", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { typeof(object) })
+            );
+            Assert.AreEqual(
+                "addressables_api_unsupported",
+                error.InnerException.GetType().GetField("Code", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(error.InnerException)
+            );
+            StringAssert.Contains("analyze_layout", error.InnerException.Message);
+        }
+
+        [Test]
+        public void InstalledPackageHasTheCompleteConsumedLayoutSchema()
+        {
+            Type layout = Type.GetType("UnityEditor.AddressableAssets.Build.Layout.BuildLayout, Unity.Addressables.Editor");
+            if (layout == null)
+                Assert.Ignore("A supported real Addressables package is required.");
+            Type adapter = Type.GetType("MCPForUnity.Editor.Tools.Addressables.AddressablesLayout, MCPForUnity.Editor", true);
+            Assert.DoesNotThrow(() => adapter.GetMethod("RequireSchema", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { layout }));
+        }
+    }
+
     [Parallelizable(ParallelScope.None)]
     public class AddressablesAuthoringTests
     {
@@ -63,7 +174,7 @@ namespace MCPForUnityTests.Editor.Tools
             root = null;
             settingsType = Type.GetType("UnityEditor.AddressableAssets.Settings.AddressableAssetSettings, Unity.Addressables.Editor");
             if (settingsType == null)
-                Assert.Ignore("Real Addressables2.7.6 package is required.");
+                Assert.Ignore("A supported real Addressables package is required.");
             scenes.Create("McpAddressables_", Guid.NewGuid().ToString("N"));
             root = "Assets/__McpAddressables_" + Guid.NewGuid().ToString("N");
             rootGuid = AssetDatabase.CreateFolder("Assets", root.Substring(7));
@@ -84,7 +195,7 @@ namespace MCPForUnityTests.Editor.Tools
             settingsPath = root + "/Config/Settings.asset";
             AssetDatabase.CreateAsset(temporary, settingsPath);
             AssetDatabase.SaveAssetIfDirty(temporary);
-            // m_IsTemporary is not serialized in2.7.6. A real reload establishes persisted native settings.
+            // m_IsTemporary is not serialized in either baseline package. Reload establishes persisted native settings.
             UnityEngine.Resources.UnloadAsset(temporary);
             settings = AssetDatabase.LoadAssetAtPath(settingsPath, settingsType);
             Assert.IsNotNull(settings);
@@ -177,6 +288,8 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void PagedEntriesGroupsProfilesPreserveNativeIdentityAndLabels()
         {
+            var bytes = Directory.GetFiles(root, "*", SearchOption.AllDirectories).ToDictionary(path => path, File.ReadAllBytes);
+            bool dirty = EditorUtility.IsDirty((UnityEngine.Object)settings);
             JObject firstPage = Read("entries", 1, 1);
             Assert.AreEqual(2, firstPage.Value<int>("total"));
             JObject lastPage = Read("entries", 2, 1, firstPage.Value<string>("revision"));
@@ -187,7 +300,73 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.Greater(Read("profiles").Value<int>("total"), 0);
             CollectionAssert.AreEqual(new[] { "owned-label" }, Labels(entry));
             SameAsset((UnityEngine.Object)settings, AssetDatabase.LoadMainAssetAtPath(settingsPath));
-            Assert.AreEqual("2.7.6", firstPage.Value<string>("package_version"));
+            Assert.AreEqual(UnityEditor.PackageManager.PackageInfo.FindForAssembly(settingsType.Assembly).version, firstPage.Value<string>("package_version"));
+            Assert.AreEqual(dirty, EditorUtility.IsDirty((UnityEngine.Object)settings), "Inspection must not dirty or migrate settings.");
+            foreach (var pair in bytes)
+                CollectionAssert.AreEqual(pair.Value, File.ReadAllBytes(pair.Key), "Inspection must preserve existing owned asset bytes.");
+        }
+
+        [Test]
+        public void UnknownStoredProfileSchemaRefusesWithoutMigration()
+        {
+            FieldInfo field = profiles.GetType().GetField("m_ProfileVersion", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(field);
+            object original = field.GetValue(profiles);
+            bool dirty = EditorUtility.IsDirty((UnityEngine.Object)settings);
+            try
+            {
+                field.SetValue(profiles, 2);
+                JObject response = Call("inspect");
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual("addressables_profile_schema_unsupported", response.Value<string>("code"));
+                Assert.AreEqual(2, field.GetValue(profiles), "Inspection must not invoke a native profile migration.");
+                Assert.AreEqual(dirty, EditorUtility.IsDirty((UnityEngine.Object)settings));
+            }
+            finally
+            {
+                field.SetValue(profiles, original);
+            }
+        }
+
+        [Test]
+        public void ExistingNativeLayoutUsesInstalledVersionAndRejectsMismatchedReportMetadata()
+        {
+            string version = UnityEditor.PackageManager.PackageInfo.FindForAssembly(settingsType.Assembly).version;
+            Type layoutType = settingsType.Assembly.GetType("UnityEditor.AddressableAssets.Build.Layout.BuildLayout", true);
+            object layout = Activator.CreateInstance(layoutType);
+            layoutType.GetField("PackageVersion").SetValue(layout, "com.unity.addressables: " + version);
+            layoutType.GetField("BuildTarget").SetValue(layout, EditorUserBuildSettings.activeBuildTarget);
+            layoutType.GetField("UnityVersion").SetValue(layout, Application.unityVersion);
+            string directory = "Library/MCPForUnity/Addressables/compat-" + Guid.NewGuid().ToString("N");
+            string path = directory + "/layout.json";
+            Assert.IsFalse(Directory.Exists(directory));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                string json = EditorJsonUtility.ToJson(layout);
+                File.WriteAllText(path, json);
+                Type handler = Type.GetType("MCPForUnity.Editor.Tools.Addressables.ManageAddressables, MCPForUnity.Editor", true);
+                var request = new JObject { ["action"] = "analyze_layout", ["layout_path"] = path };
+                JObject response = JObject.FromObject(handler.GetMethod("HandleCommand").Invoke(null, new object[] { request }));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(version, response["data"].Value<string>("package_version"));
+                Assert.AreEqual(0, response["data"].Value<int>("total"));
+                Assert.IsFalse(response["data"].Value<bool>("content_build_started"));
+                Assert.AreEqual(json, File.ReadAllText(path), "Existing reports are read-only.");
+
+                layoutType.GetField("PackageVersion").SetValue(layout, "com.unity.addressables: 0.0.0");
+                json = EditorJsonUtility.ToJson(layout);
+                File.WriteAllText(path, json);
+                response = JObject.FromObject(handler.GetMethod("HandleCommand").Invoke(null, new object[] { request }));
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual("addressables_layout_version_unsupported", response.Value<string>("code"));
+                Assert.AreEqual(json, File.ReadAllText(path));
+            }
+            finally
+            {
+                File.Delete(path);
+                Directory.Delete(directory);
+            }
         }
 
         [Test]

@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Reflection;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -55,7 +56,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 {
                     address = AddressablesState.Text(request["address"], "address");
                     if (address.Contains('[') && address.Contains(']'))
-                        AddressablesState.Fail("invalid_addressables_request", "Addressables2.7.6 addresses cannot contain both '[' and ']'.");
+                        AddressablesState.Fail("invalid_addressables_request", "Addressables addresses cannot contain both '[' and ']'.");
                     if (((JArray)intended["entries"]).Any(e => e.Value<string>("guid") != guid && e.Value<string>("address") == address))
                         AddressablesState.Fail("duplicate_address", "The requested address is already assigned to another explicit entry.");
                     row["address"] = address;
@@ -89,6 +90,45 @@ namespace MCPForUnity.Editor.Tools.Addressables
                         }
                     )
                 );
+            // Resolve the complete action signature before Undo, so an unsupported API cannot begin an edit.
+            object mutationTarget;
+            object[] mutationArguments;
+            MethodInfo mutation;
+            if (action == "set_address")
+            {
+                mutationTarget = entry;
+                mutationArguments = new object[] { address, true };
+                mutation = AddressablesCompatibility.RequireMethod(entry, action, "SetAddress", typeof(void), typeof(string), typeof(bool));
+            }
+            else if (action == "move_entry")
+            {
+                mutationTarget = before.Settings;
+                mutationArguments = new object[] { (string)AddressablesState.Get(entry, "guid"), group, false, true };
+                mutation = AddressablesCompatibility.RequireMethod(
+                    before.Settings,
+                    action,
+                    "CreateOrMoveEntry",
+                    entry.GetType(),
+                    typeof(string),
+                    group.GetType(),
+                    typeof(bool),
+                    typeof(bool)
+                );
+            }
+            else
+            {
+                mutationTarget = before.ProfilesObject;
+                mutationArguments = new object[] { profileId, variableName, value };
+                mutation = AddressablesCompatibility.RequireMethod(
+                    before.ProfilesObject,
+                    action,
+                    "SetValue",
+                    typeof(void),
+                    typeof(string),
+                    typeof(string),
+                    typeof(string)
+                );
+            }
             AddressablesState fresh = AddressablesState.Capture(request);
             if (fresh.Revision != expected || fresh.Settings != before.Settings)
                 AddressablesState.Fail("stale_addressables_revision", "Settings or native identity changed before Undo.");
@@ -99,12 +139,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 undo = Undo.GetCurrentGroup();
                 var targets = new[] { before.Settings, oldGroup as UnityEngine.Object, group as UnityEngine.Object }.Where(v => v != null).Distinct().ToArray();
                 Undo.RegisterCompleteObjectUndo(targets, "Edit Addressables metadata");
-                if (action == "set_address")
-                    AddressablesState.Call(entry, "SetAddress", address, true);
-                else if (action == "move_entry")
-                    AddressablesState.Call(before.Settings, "CreateOrMoveEntry", (string)AddressablesState.Get(entry, "guid"), group, false, true);
-                else
-                    AddressablesState.Call(before.ProfilesObject, "SetValue", profileId, variableName, value);
+                mutation.Invoke(mutationTarget, mutationArguments);
                 AddressablesState after = AddressablesState.Capture(request);
                 if (!JToken.DeepEquals(intended, after.Document))
                     AddressablesState.Fail(

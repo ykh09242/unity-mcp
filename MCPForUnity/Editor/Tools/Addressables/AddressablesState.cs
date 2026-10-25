@@ -24,6 +24,57 @@ namespace MCPForUnity.Editor.Tools.Addressables
             : base(message) => Code = code;
     }
 
+    internal static class AddressablesCompatibility
+    {
+        // Stable 1.28+ and 2.x share the adapter's stored profile schema and public authoring APIs.
+        // Membership permits probing; it does not replace the per-action API and stored-schema checks.
+        internal static bool SupportsVersion(string version)
+        {
+            if (version == null || version.Length > 64)
+                return false;
+            string[] parts = version.Split('.');
+            if (parts.Length != 3)
+                return false;
+            var numbers = new int[3];
+            for (int i = 0; i < parts.Length; i++)
+                if (
+                    parts[i].Length == 0
+                    || (parts[i].Length > 1 && parts[i][0] == '0')
+                    || !int.TryParse(parts[i], NumberStyles.None, CultureInfo.InvariantCulture, out numbers[i])
+                )
+                    return false;
+            return (numbers[0] == 1 && numbers[1] >= 28) || numbers[0] == 2;
+        }
+
+        internal static MethodInfo RequireMethod(object target, string action, string name, Type result, params Type[] parameters)
+        {
+            MethodInfo[] methods = target
+                ?.GetType()
+                .GetMethods(BindingFlags.Instance | BindingFlags.Public)
+                .Where(m =>
+                    m.Name == name
+                    && !m.ContainsGenericParameters
+                    && m.ReturnType == result
+                    && m.GetParameters().Select(p => p.ParameterType).SequenceEqual(parameters)
+                )
+                .ToArray();
+            if (methods == null || methods.Length != 1)
+                throw new AddressablesException(
+                    "addressables_api_unsupported",
+                    action + " requires the native public API signature: " + name + ". No edit was started."
+                );
+            return methods[0];
+        }
+
+        internal static FieldInfo RequireField(Type type, string action, string name, Type expected, bool nonPublic = false)
+        {
+            FieldInfo field = type?.GetField(name, BindingFlags.Instance | BindingFlags.Public | (nonPublic ? BindingFlags.NonPublic : 0));
+            if (field == null || field.FieldType != expected)
+                throw new AddressablesException("addressables_api_unsupported", action + " requires the native stored field: " + name + ".");
+            return field;
+        }
+    }
+
     internal sealed class AddressablesState
     {
         internal UnityEngine.Object Settings;
@@ -50,22 +101,6 @@ namespace MCPForUnity.Editor.Tools.Addressables
             if (field != null)
                 return field.GetValue(value);
             throw new AddressablesException("addressables_api_unsupported", "The declared package adapter lacks a required field: " + name);
-        }
-
-        internal static object Call(object value, string name, params object[] args)
-        {
-            var methods = value
-                .GetType()
-                .GetMethods(BindingFlags.Instance | BindingFlags.Public)
-                .Where(m =>
-                    m.Name == name
-                    && m.GetParameters().Length == args.Length
-                    && m.GetParameters().Select((p, i) => args[i] == null || p.ParameterType.IsInstanceOfType(args[i])).All(v => v)
-                )
-                .ToArray();
-            if (methods.Length != 1)
-                Fail("addressables_api_unsupported", "The declared package adapter lacks a unique required method: " + name);
-            return methods[0].Invoke(value, args);
         }
 
         internal static string Text(JToken token, string name, int max = 512, bool empty = false)
@@ -188,8 +223,11 @@ namespace MCPForUnity.Editor.Tools.Addressables
             if (type == null)
                 throw new AddressablesException("addressables_unavailable", "Addressables package is not installed.");
             version = UnityEditor.PackageManager.PackageInfo.FindForAssembly(type.Assembly)?.version;
-            if (version != "2.7.6")
-                Fail("addressables_version_unsupported", "This adapter supports the verified Addressables2.7.6 API and stored profile schema.");
+            if (!AddressablesCompatibility.SupportsVersion(version))
+                Fail(
+                    "addressables_version_unsupported",
+                    "This adapter requires stable Addressables 1.28+ or 2.x, compatible action APIs and stored profile schema 1."
+                );
         }
 
         internal static AddressablesState Capture(JObject request)
@@ -270,11 +308,16 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 groupRow["entry_guids"] = new JArray(((JArray)groupRow["entry_guids"]).Values<string>().OrderBy(x => x, StringComparer.Ordinal));
             }
             state.Document["labels"] = new JArray(
-                List(Call(settings, "GetLabels"), 256).Select(x => state.String(x, 128)).OrderBy(x => x, StringComparer.Ordinal)
+                List(AddressablesCompatibility.RequireMethod(settings, "inspect", "GetLabels", typeof(List<string>)).Invoke(settings, null), 256)
+                    .Select(x => state.String(x, 128))
+                    .OrderBy(x => x, StringComparer.Ordinal)
             );
             state.ProfilesObject = Get(settings, "m_ProfileSettings");
-            // Public profile getters can create defaults or migrate data. Read this verified2.7.6 stored schema instead.
-            if ((int)Get(state.ProfilesObject, "m_ProfileVersion") != 1)
+            // Public profile getters can create defaults or migrate data. Both supported families store schema 1.
+            if (state.ProfilesObject == null)
+                Fail("addressables_profile_schema_unsupported", "Stored profile settings are missing; no defaults were created.");
+            FieldInfo profileVersion = AddressablesCompatibility.RequireField(state.ProfilesObject.GetType(), "inspect", "m_ProfileVersion", typeof(int), true);
+            if ((int)profileVersion.GetValue(state.ProfilesObject) != 1)
                 Fail("addressables_profile_schema_unsupported", "Stored profiles need an explicit package migration outside this read operation.");
             foreach (object variable in List(Get(state.ProfilesObject, "m_ProfileEntryNames"), 64))
                 ((JArray)state.Document["variables"]).Add(
