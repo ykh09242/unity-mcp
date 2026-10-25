@@ -154,7 +154,13 @@ def check_resources(row: ModeCapture) -> None:
             name: after.get(name, 0) - before.get(name, 0) for name in set(before) | set(after)
         }
         delta = {name: count for name, count in delta.items() if count}
-        if delta != {"get_editor_state": expected, "ping": expected}:
+        expected_calls = {"get_editor_state": expected, "ping": expected}
+        # Older products probe before each authoritative RPC; newer products
+        # use the fresh main-thread state itself. Both still require two private
+        # state producers. Ordinary resources keep their existing ping contract.
+        if cohort.mode == "authoritative" and "ping" not in delta:
+            expected_calls = {"get_editor_state": expected}
+        if delta != expected_calls:
             raise ValueError("Resource source/readiness RPC contract changed")
         if (
             cohort.held.hub_reserved_bytes + cohort.held.shared_read_reserved_bytes <= 0
@@ -357,6 +363,15 @@ def compare(baseline: Capture, candidate: Capture) -> dict[str, JsonValue]:
         if not equivalent_outputs([left.observations, right.observations]):
             raise ValueError("Baseline/candidate decoded outputs differ")
         if left.resource_contract is not None and right.resource_contract is not None:
+            for before, after in zip(left.resource_contract, right.resource_contract, strict=True):
+                before_pings = before.after.commands.get("ping", 0) - before.before.commands.get(
+                    "ping", 0
+                )
+                after_pings = after.after.commands.get("ping", 0) - after.before.commands.get(
+                    "ping", 0
+                )
+                if after.mode == "authoritative" and after_pings > before_pings:
+                    raise ValueError("Candidate increased authoritative readiness RPC count")
             if [cohort.normalized_sha256 for cohort in left.resource_contract] != [
                 cohort.normalized_sha256 for cohort in right.resource_contract
             ]:

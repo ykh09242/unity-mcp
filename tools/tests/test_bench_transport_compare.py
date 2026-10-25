@@ -19,6 +19,75 @@ from tools.bench_transport_resource import normalize_resource
 from tools.bench_transport_report import fingerprint
 
 
+def resource_report(report: Capture, authoritative_pings: int) -> Capture:
+    """Build exact ordinary/shared and authoritative/private resource cohorts."""
+    raw = report.model_dump(mode="json")
+    raw["options"]["resource_contract"] = True
+    row = next(row for row in raw["results"] if row["mode"] == "http")
+    row["fixture_metadata"]["ordinary_resource_strategy"] = "inflight_shared"
+    row["client_rpc_counts"]["tools/call"] += 10
+    row["client_rpc_counts"]["resources/read"] = 4
+    clean = row["lifecycle"]["after_reconnect"]["accounting"]
+    state = {
+        "success": True,
+        "data": {"observed_at_unix_ms": 100, "staleness": {"age_ms": 0}},
+    }
+    row["resource_contract"] = [
+        {
+            "mode": mode,
+            "before": {"commands": {}, "registrations": 2, "accounting": clean},
+            "after": {"commands": commands, "registrations": 2, "accounting": clean},
+            "held": {**clean, "hub_reserved_bytes": 1},
+            "raw_results": [state, state],
+            "normalized_sha256": [fingerprint(normalize_resource(state))[0]] * 2,
+            "normalization_paths": list(comparator.NORMALIZATION_PATHS),
+        }
+        for mode, commands in (
+            ("ordinary", {"get_editor_state": 1, "ping": 1}),
+            (
+                "authoritative",
+                {
+                    "get_editor_state": 2,
+                    **({"ping": authoritative_pings} if authoritative_pings else {}),
+                },
+            ),
+        )
+    ]
+    return Capture.model_validate(raw)
+
+
+def test_authoritative_state_rpc_replaces_exact_legacy_ping_cohort(report: Capture) -> None:
+    # Older captures retain their exact two-ping contract for version comparison.
+    baseline, candidate = resource_report(report, 2), resource_report(report, 0)
+    assert compare(baseline, candidate)["semantic_parity"] is True
+    with pytest.raises(ValueError, match="increased authoritative"):
+        compare(candidate, baseline)
+
+
+@pytest.mark.parametrize(
+    "mode,commands",
+    [
+        ("authoritative", {}),
+        ("authoritative", {"get_editor_state": 1}),
+        ("authoritative", {"get_editor_state": 3}),
+        ("authoritative", {"get_editor_state": 2, "ping": 1}),
+        ("authoritative", {"get_editor_state": 2, "ping": 3}),
+        ("authoritative", {"get_editor_state": 2, "unknown": 1}),
+        ("ordinary", {"get_editor_state": 1}),
+        ("ordinary", {"get_editor_state": 1, "ping": 2}),
+    ],
+)
+def test_resource_rpc_contract_rejects_skipped_extra_or_partial_work(
+    report: Capture, mode: str, commands: dict[str, int]
+) -> None:
+    candidate = resource_report(report, 0).model_dump(mode="json")
+    row = next(row for row in candidate["results"] if row["mode"] == "http")
+    cohort = next(cohort for cohort in row["resource_contract"] if cohort["mode"] == mode)
+    cohort["after"]["commands"] = commands
+    with pytest.raises(ValueError, match="source/readiness RPC contract"):
+        comparator.check_contract(Capture.model_validate(candidate))
+
+
 @pytest.fixture
 def report() -> Capture:
     """Small coherent report exercises comparison guards without process timing."""
