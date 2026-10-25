@@ -158,6 +158,56 @@ namespace MCPForUnity.Editor.Tools
                     ["data"] = data,
                 };
             }
+            catch (ArgumentException error)
+            {
+                string kind = input?["element_type"]?.Type == JTokenType.String ? input.Value<string>("element_type") : null;
+                string[] common = { "sizeDelta", "anchoredPosition", "eventSystem" };
+                string[] specific =
+                    kind == "scroll_view" ? new[] { "spacing" }
+                    : kind == "toggle" ? new[] { "label", "isOn" }
+                    : kind == "slider" ? new[] { "minValue", "maxValue", "value", "wholeNumbers", "direction" }
+                    : kind == "tmp_input" ? new[] { "text", "placeholder", "characterLimit" }
+                    : Array.Empty<string>();
+                string[] allowed = { "action", "element_type", "parent", "name", "properties", "include_inactive" };
+                return new JObject
+                {
+                    ["success"] = false,
+                    ["message"] = "invalid_compound_control_request",
+                    ["data"] = new JObject
+                    {
+                        ["reason"] =
+                            error.Message.StartsWith("compound_", StringComparison.Ordinal)
+                            || error.Message.StartsWith("invalid_compound_", StringComparison.Ordinal)
+                                ? error.Message
+                                : "invalid_fields",
+                        ["required_fields"] = new JArray("element_type", "parent", "name"),
+                        ["missing_fields"] = new JArray(
+                            new[] { "element_type", "parent", "name" }.Where(key => input?[key] == null || input[key].Type == JTokenType.Null)
+                        ),
+                        ["allowed_element_types"] = new JArray("scroll_view", "toggle", "slider", "tmp_input"),
+                        ["allowed_properties"] = new JArray(common.Concat(specific)),
+                        ["conflicting_fields"] = new JArray(
+                            (input?.Properties().Where(p => !allowed.Contains(p.Name)).Select(p => p.Name) ?? Enumerable.Empty<string>())
+                                .Concat(
+                                    (input?["properties"] as JObject)
+                                        ?.Properties()
+                                        .Where(p => !common.Concat(specific).Contains(p.Name))
+                                        .Select(p => "properties." + p.Name)
+                                        ?? Enumerable.Empty<string>()
+                                )
+                                .Take(8)
+                                .Select(field => field.Length > 128 ? field.Substring(0, 128) : field)
+                        ),
+                        ["allowed_values"] = new JObject
+                        {
+                            ["properties.eventSystem"] = new JArray("preserve", "create_legacy_if_missing"),
+                            ["properties.direction"] = new JArray("LeftToRight", "RightToLeft", "BottomToTop", "TopToBottom"),
+                        },
+                        ["guidance"] =
+                            "Use parent, name and element_type. Slider requires minValue < maxValue, value within range and integral wholeNumbers. eventSystem allows preserve or create_legacy_if_missing; sizeDelta must be 1..8192.",
+                    },
+                };
+            }
             var tx = new Transaction(plan);
             int group = -1;
             JObject success = null;

@@ -18,7 +18,7 @@ from pydantic import (
 from typing_extensions import assert_never
 
 from models import MCPResponse
-from models.ugui_compound_creation import validate_compound_creation
+from models.ugui_compound_creation import compound_request_error, validate_compound_creation
 from models.ugui_device_profile_diagnostics import (
     DEVICE_PROFILES,
     DeviceProfiles,
@@ -881,31 +881,45 @@ async def manage_ugui(
     """
     action_lower = action.strip().lower()
     if action_lower == "create_control":
-        if (
-            max_nodes != 200
-            or allow_custom_filters is not False
-            or any(
-                value is not None
-                for value in (
-                    target,
-                    camera,
-                    max_depth,
-                    max_evaluations,
-                    max_characters,
-                    resolutions,
-                    device_profiles,
-                    minimum_touch_target_mm,
-                    screen_position,
-                )
-            )
-        ):
-            return {"success": False, "message": "invalid_compound_control_request"}
+        conflicts = [
+            field
+            for field, value in {
+                "target": target,
+                "camera": camera,
+                "max_depth": max_depth,
+                "max_evaluations": max_evaluations,
+                "max_characters": max_characters,
+                "resolutions": resolutions,
+                "device_profiles": device_profiles,
+                "minimum_touch_target_mm": minimum_touch_target_mm,
+                "screen_position": screen_position,
+            }.items()
+            if value is not None
+        ]
+        if max_nodes != 200:
+            conflicts.append("max_nodes")
+        if allow_custom_filters is not False:
+            conflicts.append("allow_custom_filters")
+        if conflicts:
+            return compound_request_error(element_type, conflicts=conflicts)
         try:
             params = validate_compound_creation(
                 parent, name, element_type, properties, include_inactive
             )
-        except (ValueError, TypeError, RecursionError):
-            return {"success": False, "message": "invalid_compound_control_request"}
+        except (ValueError, TypeError, RecursionError) as error:
+            return compound_request_error(
+                element_type,
+                error,
+                missing=[
+                    field
+                    for field, value in {
+                        "element_type": element_type,
+                        "parent": parent,
+                        "name": name,
+                    }.items()
+                    if value is None
+                ],
+            )
         blocked = await preflight(ctx, requires_no_tests=True, wait_for_no_compile=True)
         if blocked is not None:
             return blocked.model_dump()
