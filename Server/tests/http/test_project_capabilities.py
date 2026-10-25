@@ -602,37 +602,127 @@ async def test_final_revalidation_lock_clears_identity_within_disclosed_maximum(
     # Given: one stalled cancellation also prevents final ownership revalidation.
     import services.capabilities as capabilities
 
-    monkeypatch.setattr(capabilities, "_QUERY_TIMEOUT_SECONDS", 0.15)
-    monkeypatch.setattr(PluginHub, "CANCEL_TIMEOUT", 0.2)
+    query_timeout = watchdog_timeout()
+    cleanup_grace = 0.2
+    monkeypatch.setattr(capabilities, "_QUERY_TIMEOUT_SECONDS", query_timeout)
+    monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", query_timeout)
+    monkeypatch.setattr(PluginHub, "CANCEL_TIMEOUT", cleanup_grace)
     await install_native_replies(command_hub, native_observations())
     reply = command_hub.websocket.send_json
+    read_source = capabilities._read_source
+    connection = capabilities._connection
+    scopes = {}
+    probe_deadlines = set()
+    read_deadlines = set()
+    completed_sources = set()
+    expected_sources = set(native_observations()) - {"manage_recording"}
+    observed = anyio.Event()
+    recording_entered = anyio.Event()
+    revalidation_entered = anyio.Event()
+    revalidation_cancelled = anyio.Event()
+    revalidation_deadlines = []
+    cancellation_budgets = []
+    connection_reads = 0
+
+    def observe_scope(deadline):
+        scope = anyio.move_on_at(deadline)
+        scopes[deadline] = scope
+        return scope
+
+    class ObservedAnyio:
+        move_on_at = staticmethod(observe_scope)
+
+        def __getattr__(self, name):
+            return getattr(anyio, name)
+
+    monkeypatch.setattr(capabilities, "anyio", ObservedAnyio())
+
+    async def observe_source(name, ctx, owner, user_id, deadline, observations):
+        probe_deadlines.add(deadline)
+        read_deadlines.add(capabilities._read_deadline.get())
+        assert anyio.current_effective_deadline() <= deadline
+        await read_source(name, ctx, owner, user_id, deadline, observations)
+        if name in expected_sources:
+            assert observations[name].evidence.status == "observed"
+            completed_sources.add(name)
+            if completed_sources == expected_sources:
+                observed.set()
+
+    async def observe_connection(instance, user_id):
+        nonlocal connection_reads
+        connection_reads += 1
+        if connection_reads == 1:
+            return await connection(instance, user_id)
+        revalidation_deadlines.append(anyio.current_effective_deadline())
+        revalidation_entered.set()
+        try:
+            return await connection(instance, user_id)
+        except anyio.get_cancelled_exc_class():
+            revalidation_cancelled.set()
+            raise
+
+    monkeypatch.setattr(capabilities, "_read_source", observe_source)
+    monkeypatch.setattr(capabilities, "_connection", observe_connection)
 
     async def block_final_identity(message):
         if message["type"] == "cancel":
             await command_hub.registry._lock.acquire()
+            cancellation_budgets.append(anyio.current_effective_deadline() - anyio.current_time())
             await anyio.sleep_forever()
         elif message["name"] == "manage_recording":
             command_hub.sent.append(message)
+            recording_entered.set()
             await anyio.sleep_forever()
         else:
             await reply(message)
+
+    async def expire_query_scopes():
+        await observed.wait()
+        await recording_entered.wait()
+        assert len(probe_deadlines) == len(read_deadlines) == 1
+        probe_deadline = next(iter(probe_deadlines))
+        read_deadline = next(iter(read_deadlines))
+        assert probe_deadline < read_deadline
+        outer_deadline = read_deadline + cleanup_grace
+        outer_scope = scopes[outer_deadline]
+        assert scopes[read_deadline].deadline == read_deadline
+        scopes[probe_deadline].cancel()
+
+        # The real cancellation timeout expires while holding the registry lock.
+        # Final revalidation must share the outer query bound and honor its cancellation.
+        await revalidation_entered.wait()
+        assert command_hub.registry._lock.locked()
+        assert len(revalidation_deadlines) == 1
+        assert revalidation_deadlines[0] <= outer_deadline
+        outer_scope.cancel()
+        await revalidation_cancelled.wait()
 
     command_hub.websocket.send_json = block_final_identity
     async with Client(capability_server(), mode="legacy") as client:
         await client.call_tool("select_fixture")
         try:
             # When: cleanup finishes but verification cannot establish a current owner.
-            started = anyio.current_time()
-            data = await read_capabilities(client)
-            elapsed = anyio.current_time() - started
+            with anyio.fail_after(watchdog_timeout()):
+                async with anyio.create_task_group() as tasks:
+                    tasks.start_soon(expire_query_scopes)
+                    data = await read_capabilities(client)
         finally:
             if command_hub.registry._lock.locked():
                 command_hub.registry._lock.release()
 
     # Then: the maximum includes revalidation and unverifiable evidence never escapes.
-    assert elapsed < data["limits"]["query_max_elapsed_seconds"] + 0.15
+    # SDK delivery and runner scheduling are outside this deadline/lock-cancellation contract.
+    assert data["limits"]["query_max_elapsed_seconds"] == pytest.approx(
+        query_timeout + cleanup_grace
+    )
+    assert revalidation_cancelled.is_set()
+    assert len(cancellation_budgets) == 1
+    assert math.isfinite(cancellation_budgets[0])
+    assert cancellation_budgets[0] <= cleanup_grace
     assert data["connection"]["status"] == "unknown"
+    assert data["connection"]["reason"] == "connection_changed_or_deadline"
     assert data["target"]["instance_id"] is None
+    assert data["target"]["project_hash"] is None
     assert data["connection"]["generation"] is None
     assert all(item["status"] == "unknown" for item in data["evidence"].values())
     assert PluginHub._pending == {}
