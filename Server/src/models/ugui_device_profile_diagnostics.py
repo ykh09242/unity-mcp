@@ -10,6 +10,7 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    StrictBool,
     TypeAdapter,
     field_validator,
     model_validator,
@@ -186,7 +187,15 @@ class Budget(Closed):
     ]
 
 
+class UnsupportedComponent(Closed):
+    instance_id: Annotated[int, Field(strict=True, ge=-(2**31), le=2**31 - 1)]
+    component_type: Annotated[str, Field(max_length=256)]
+    path: Annotated[str, Field(max_length=256)]
+    path_truncated: StrictBool
+
+
 class DeviceProfileReport(Closed):
+    unsupported_component: UnsupportedComponent | None = None
     kind: Literal["ugui_device_profile_diagnostics"]
     schema_version: Literal[1]
     frame: Annotated[int, Field(strict=True, ge=0)]
@@ -213,12 +222,19 @@ class DeviceProfileReport(Closed):
             raise ValueError("budget_exceeded")
         if self.status == "complete" and (b.reasons or not self.profiles):
             raise ValueError("incomplete_complete_report")
+        if self.unsupported_component is not None and any(
+            profile.status == "complete" or "unsupported_layout_provider" not in profile.reasons
+            for profile in self.profiles
+        ):
+            raise ValueError("unsupported_component_pass")
         retained_nodes = sum(len(profile.nodes) for profile in self.profiles)
         if b.evaluation_counts.profile_setups < len(self.profiles):
             raise ValueError("profile_accounting")
         if b.evaluation_counts.assessment_pairs < retained_nodes:
             raise ValueError("assessment_accounting")
-        if b.evaluation_counts.output != retained_nodes + int(self.projection is not None):
+        if b.evaluation_counts.output != retained_nodes + int(self.projection is not None) + int(
+            self.unsupported_component is not None
+        ):
             raise ValueError("output_accounting")
         if self.projection is not None and (
             b.evaluation_counts.projection != self.projection.traversal.evaluations
@@ -322,6 +338,6 @@ def validate_ugui_device_profile_diagnostics(data: JsonValue) -> dict[str, JsonV
         model = DeviceProfileReport.model_validate_json(
             json.dumps(data, ensure_ascii=True, allow_nan=False)
         )
-        return model.model_dump(mode="json")
+        return model.model_dump(mode="json", exclude_unset=True)
     except (ValueError, TypeError, OverflowError, UnicodeError) as error:
         raise ValueError("unsupported_device_profile_response") from error

@@ -571,6 +571,33 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             Export("ui09-unsupported-raycaster.json", reply);
         }
 
+        [UnityTest]
+        public IEnumerator TmpSelectionCaretDoesNotPoisonUnrelatedButtonObservation()
+        {
+            Type caretType = AppDomain
+                .CurrentDomain.GetAssemblies()
+                .Where(a => a.GetName().Name == "Unity.TextMeshPro")
+                .Select(a => a.GetType("TMPro.TMP_SelectionCaret", false))
+                .FirstOrDefault(t => t != null);
+            Assert.IsNotNull(caretType, "Installed TMP caret is required for this regression witness.");
+            cover.GetComponent<Image>().raycastTarget = false;
+            var go = new GameObject("UI09UnrelatedCaret", typeof(RectTransform), caretType);
+            go.transform.SetParent(canvas.transform, false);
+            ((RectTransform)go.transform).anchoredPosition = new Vector2(10000, 10000);
+            var caret = go.GetComponent<UnityEngine.UI.Graphic>();
+            Assert.IsTrue(caret.raycastTarget, "Exercise a registered candidate, not an inert replacement.");
+            foreach (bool active in new[] { true, false, true })
+            {
+                go.SetActive(active);
+                yield return null;
+                Canvas.ForceUpdateCanvases();
+                var reply = Observe();
+                EqualNativeOrder(reply);
+                Assert.IsTrue(reply["data"].Value<bool>("first_hit_targets_handler"), reply.ToString());
+            }
+            Assert.AreEqual(0, eventProbe.Calls);
+        }
+
         [Test]
         public void UnknownGraphicOverrideRefusesBeforeUserRaycast()
         {
@@ -580,6 +607,10 @@ namespace MCPForUnityTests.EditMode.Tools.Input
             var reply = Observe(Request(true));
             Assert.AreEqual("unsupported_graphic", (string)reply["data"]["reason"]);
             Assert.AreEqual(0, graphic.Calls);
+            Assert.AreEqual(typeof(Ui09UnknownGraphic).FullName, (string)reply["data"]["unsupported_component"]["component_type"]);
+            StringAssert.EndsWith("/UI09CustomGraphic", (string)reply["data"]["unsupported_component"]["path"]);
+            Assert.IsNotNull(reply["data"]["input"]["event_system_id"]);
+            Assert.IsFalse(reply["data"]["policy"].Value<bool>("native_query_attempted"));
             Export("ui09-unsupported-graphic.json", reply);
         }
 
