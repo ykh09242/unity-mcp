@@ -12,7 +12,10 @@ namespace MCPForUnity.Editor.Tools.GameObjects
     {
         internal static object Handle(JToken targetToken, string searchMethod)
         {
-            List<GameObject> targets = ManageGameObjectCommon.FindObjectsInternal(targetToken, searchMethod, true);
+            // Deletion resolves the same active-scene search scope as find, including inactive
+            // descendants. Resolving before destruction also keeps bulk matching stable.
+            var findParams = new JObject { ["searchInactive"] = true };
+            List<GameObject> targets = ManageGameObjectCommon.FindObjectsInternal(targetToken, searchMethod, true, findParams);
 
             if (targets.Count == 0)
             {
@@ -21,20 +24,21 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             List<object> deletedObjects = new List<object>();
             string deletedName = null;
+            Undo.IncrementCurrentGroup();
+            int undoGroup = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("Delete GameObject");
             foreach (var targetGo in targets)
             {
                 if (targetGo != null)
                 {
                     string goName = targetGo.name;
                     int goId = targetGo.GetInstanceIDCompat();
-                    // Note: Undo.DestroyObjectImmediate doesn't work reliably in test context,
-                    // so we use Object.DestroyImmediate. This means delete isn't undoable.
-                    // TODO: Investigate Undo.DestroyObjectImmediate behavior in Unity 2022+
-                    Object.DestroyImmediate(targetGo);
+                    Undo.DestroyObjectImmediate(targetGo);
                     deletedObjects.Add(new { name = goName, instanceID = goId });
                     deletedName = goName;
                 }
             }
+            Undo.CollapseUndoOperations(undoGroup);
 
             if (deletedObjects.Count > 0)
             {

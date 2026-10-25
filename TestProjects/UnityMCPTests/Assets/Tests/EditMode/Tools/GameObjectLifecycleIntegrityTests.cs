@@ -110,6 +110,74 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static void Succeeded(JObject response) => Assert.IsTrue(response.Value<bool>("success"), response.ToString());
 
+        [TestCase("by_id", true)]
+        [TestCase("by_name", true)]
+        [TestCase("by_path", true)]
+        [TestCase("by_id", false)]
+        [TestCase("by_name", false)]
+        [TestCase("by_path", false)]
+        public void DeleteInactiveChildResolvesWithoutActivationAndUndoes(string method, bool inactiveParent)
+        {
+            var parent = Owned("InactiveDeleteParent");
+            var child = Owned("InactiveDeleteChild");
+            child.transform.SetParent(parent.transform);
+            child.AddComponent<InactiveDeleteEnableProbe>();
+            if (inactiveParent)
+                parent.SetActive(false);
+            else
+                child.SetActive(false);
+            InactiveDeleteEnableProbe.EnableCalls = 0;
+            int id = child.GetInstanceIDCompat();
+            string childName = child.name;
+            var request = new JObject
+            {
+                ["action"] = "delete",
+                ["searchMethod"] = method,
+                ["target"] =
+                    method == "by_id" ? (JToken)id
+                    : method == "by_path" ? parent.name + "/" + child.name
+                    : child.name,
+            };
+
+            var result = Call(request);
+            Succeeded(result);
+            Assert.That(((JArray)result["data"]).Select(item => item.Value<int>("instanceID")), Does.Contain(id));
+            Assert.IsTrue(child == null);
+            Assert.AreEqual(!inactiveParent, parent.activeSelf);
+            Assert.AreEqual(0, InactiveDeleteEnableProbe.EnableCalls, "Lookup must not activate an inactive target or ancestor.");
+            Undo.PerformUndo();
+            var restored = parent.transform.Cast<Transform>().Single(t => t.name == childName).gameObject;
+            Assert.IsFalse(restored.activeInHierarchy);
+            Assert.AreEqual(inactiveParent, restored.activeSelf);
+            Assert.AreEqual(0, InactiveDeleteEnableProbe.EnableCalls);
+        }
+
+        [Test]
+        public void DeleteByNameRetainsBulkScopeAcrossActiveAndInactiveMatches()
+        {
+            var active = Owned("BulkDelete");
+            var inactive = Owned("BulkDelete");
+            inactive.SetActive(false);
+            var other = Owned("BulkDeleteOther");
+            int[] ids = { active.GetInstanceIDCompat(), inactive.GetInstanceIDCompat() };
+            var result = Call(
+                new JObject
+                {
+                    ["action"] = "delete",
+                    ["target"] = active.name,
+                    ["searchMethod"] = "by_name",
+                }
+            );
+            Succeeded(result);
+            CollectionAssert.AreEquivalent(ids, ((JArray)result["data"]).Select(item => item.Value<int>("instanceID")).ToArray());
+            Assert.IsTrue(active == null && inactive == null);
+            Assert.IsTrue(other != null);
+            Undo.PerformUndo();
+            var restored = Objects().Where(go => go.name == prefix + "BulkDelete").ToArray();
+            Assert.AreEqual(2, restored.Length);
+            Assert.AreEqual(1, restored.Count(go => !go.activeSelf));
+        }
+
         private JObject Create(string name = null) => new JObject { ["action"] = "create", ["name"] = name ?? prefix + "Created" };
 
         private JObject Duplicate(GameObject source) =>
@@ -136,20 +204,36 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(assetRoot, AssetDatabase.GUIDToAssetPath(guid));
         }
 
-        [TestCase("missing")]
-        [TestCase("empty")]
-        [TestCase("null")]
-        public void RejectedParent_PreservesExistingObjectsAndSelection(string kind)
+        [Test]
+        public void RejectedParent_PreservesExistingObjectsAndSelection()
         {
             var existing = Owned("Existing");
             Selection.activeGameObject = existing;
             var before = Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray();
             var request = Create();
-            request["parent"] = kind == "null" ? JValue.CreateNull() : new JValue(kind == "empty" ? "" : prefix + "Missing");
+            request["parent"] = prefix + "Missing";
             var response = Call(request);
             Assert.IsFalse(response.Value<bool>("success"));
             CollectionAssert.AreEqual(before, Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray());
             Assert.AreSame(existing, Selection.activeGameObject);
+        }
+
+        [TestCase("omitted")]
+        [TestCase("empty")]
+        [TestCase("null")]
+        public void EmptyOrNullParent_CreatesAtRoot(string kind)
+        {
+            var existing = Owned("Existing");
+            var request = Create();
+            if (kind != "omitted")
+                request["parent"] = kind == "null" ? JValue.CreateNull() : new JValue("");
+            var response = Call(request);
+            Succeeded(response);
+            var created = ResponseObject(response);
+            Assert.IsNull(created.transform.parent);
+            Assert.AreEqual(ownedScene, created.scene);
+            Assert.AreSame(created, Selection.activeGameObject);
+            Assert.IsTrue(existing != null);
         }
 
         [Test]
@@ -1319,4 +1403,11 @@ namespace MCPForUnityTests.Editor.Tools
     }
 
     public abstract class LifecycleAbstractComponent : MonoBehaviour { }
+
+    public class InactiveDeleteEnableProbe : MonoBehaviour
+    {
+        public static int EnableCalls;
+
+        private void OnEnable() => EnableCalls++;
+    }
 }

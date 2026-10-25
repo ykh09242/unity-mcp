@@ -471,6 +471,424 @@ namespace MCPForUnityTests.EditMode.Tools
     [Explicit("Requires a fresh owned NativeQA case, the saved empty scene and owned font-input/UI16.ttf.")]
     public class UguiCompoundCreationTests : CompoundOwnedFixture
     {
+        private ScriptableObject NewDynamicFont()
+        {
+            var factory = fontType
+                .GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .Single(m => m.Name == "CreateFontAsset" && m.GetParameters().Length == 7 && m.GetParameters()[0].ParameterType == typeof(string));
+            string path = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "font-input", "UI16.ttf"));
+            var asset = (ScriptableObject)
+                factory.Invoke(null, new object[] { path, 0, 90, 9, Enum.Parse(factory.GetParameters()[4].ParameterType, "SDFAA"), 1024, 1024 });
+            Assert.That(asset, Is.Not.Null);
+            fontObjects.Add(asset);
+            Write(asset, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Dynamic"));
+            return asset;
+        }
+
+        private static string SharedFontState(ScriptableObject asset)
+        {
+            var material = (Material)Read(asset, "material");
+            var textures = ((IEnumerable)Read(asset, "atlasTextures")).Cast<Texture2D>().ToArray();
+            return new JObject
+            {
+                ["font"] = EditorJsonUtility.ToJson(asset),
+                ["fontDirty"] = EditorUtility.IsDirty(asset),
+                ["material"] = material == null ? null : EditorJsonUtility.ToJson(material),
+                ["materialDirty"] = material != null && EditorUtility.IsDirty(material),
+                ["textures"] = new JArray(textures.Select(texture => texture == null ? null : texture.imageContentsHash.ToString())),
+                ["textureDirty"] = new JArray(textures.Select(texture => texture != null && EditorUtility.IsDirty(texture))),
+            }.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        private static JObject MaterialWithoutDerivedRatios(string serialized)
+        {
+            var material = JObject.Parse(serialized);
+            var floats = material.SelectToken("Material.m_SavedProperties.m_Floats") as JArray;
+            Assert.That(floats, Is.Not.Null);
+            foreach (var property in floats.OfType<JObject>())
+            {
+                string name = property.Value<string>("first");
+                if (name == "_ScaleRatioA" || name == "_ScaleRatioB" || name == "_ScaleRatioC")
+                    property["second"] = 0f;
+            }
+            return material;
+        }
+
+        private static float SavedFloat(JObject material, string name) =>
+            ((JArray)material.SelectToken("Material.m_SavedProperties.m_Floats"))
+                .OfType<JObject>()
+                .Single(entry => entry.Value<string>("first") == name)
+                .Value<float>("second");
+
+        private static JArray DerivedRatios(JObject material) =>
+            new JArray(
+                ((JArray)material.SelectToken("Material.m_SavedProperties.m_Floats"))
+                    .OfType<JObject>()
+                    .Where(entry => new[] { "_ScaleRatioA", "_ScaleRatioB", "_ScaleRatioC" }.Contains(entry.Value<string>("first")))
+                    .Select(entry => entry.DeepClone())
+            );
+
+        private static void AssertDerivedRatios(Material material, JObject priorMaterial)
+        {
+            // TMP_ShaderUtilities.UpdateShaderRatios computes these shader values on every
+            // normal text layout. The same initialization occurs for manual and static text.
+            float scale = material.GetFloat("_GradientScale");
+            float dilate = material.GetFloat("_FaceDilate");
+            float outline = material.GetFloat("_OutlineWidth");
+            float softness = material.GetFloat("_OutlineSoftness");
+            float weight = Mathf.Max(material.GetFloat("_WeightNormal"), material.GetFloat("_WeightBold")) / 4f;
+            bool enabled = !material.shaderKeywords.Contains("RATIOS_OFF");
+            float a = enabled ? (scale - 1f) / (scale * Mathf.Max(1f, weight + dilate + outline + softness)) : 1f;
+            Assert.That(material.GetFloat("_ScaleRatioA"), Is.EqualTo(a).Within(0.000001f));
+            if (material.HasProperty("_GlowOffset"))
+            {
+                float range = (weight + dilate) * (scale - 1f);
+                float t = Mathf.Max(1f, material.GetFloat("_GlowOffset") + material.GetFloat("_GlowOuter"));
+                float b = enabled ? Mathf.Max(0f, scale - 1f - range) / (scale * t) : 1f;
+                Assert.That(material.GetFloat("_ScaleRatioB"), Is.EqualTo(b).Within(0.000001f));
+            }
+            else
+                Assert.That(material.GetFloat("_ScaleRatioB"), Is.EqualTo(SavedFloat(priorMaterial, "_ScaleRatioB")).Within(0.000001f));
+            if (material.HasProperty("_UnderlayOffsetX"))
+            {
+                float range = (weight + dilate) * (scale - 1f);
+                float offset = Mathf.Max(Mathf.Abs(material.GetFloat("_UnderlayOffsetX")), Mathf.Abs(material.GetFloat("_UnderlayOffsetY")));
+                float t = Mathf.Max(1f, offset + material.GetFloat("_UnderlayDilate") + material.GetFloat("_UnderlaySoftness"));
+                float c = enabled ? Mathf.Max(0f, scale - 1f - range) / (scale * t) : 1f;
+                Assert.That(material.GetFloat("_ScaleRatioC"), Is.EqualTo(c).Within(0.000001f));
+            }
+            else
+                Assert.That(material.GetFloat("_ScaleRatioC"), Is.EqualTo(SavedFloat(priorMaterial, "_ScaleRatioC")).Within(0.000001f));
+        }
+
+        private static void AssertSharedFontOnlyDerivedRatiosChanged(ScriptableObject asset, string before)
+        {
+            var previous = JObject.Parse(before);
+            var current = JObject.Parse(SharedFontState(asset));
+            var material = (Material)Read(asset, "material");
+            var priorMaterial = JObject.Parse(previous.Value<string>("material"));
+            var currentMaterial = JObject.Parse(current.Value<string>("material"));
+            AssertDerivedRatios(material, priorMaterial);
+            bool ratioChanged = !JToken.DeepEquals(DerivedRatios(priorMaterial), DerivedRatios(currentMaterial));
+            Assert.That(current.Value<bool>("materialDirty"), Is.EqualTo(previous.Value<bool>("materialDirty") || ratioChanged));
+            previous["material"] = MaterialWithoutDerivedRatios(previous.Value<string>("material"));
+            current["material"] = MaterialWithoutDerivedRatios(current.Value<string>("material"));
+            previous.Remove("materialDirty");
+            current.Remove("materialDirty");
+            Assert.That(
+                JToken.DeepEquals(current, previous),
+                Is.True,
+                "Only TMP's derived material ratios may change; font, glyphs, atlas, and other material state must remain identical."
+            );
+        }
+
+        private void CacheGlyphs(ScriptableObject asset, string glyphs)
+        {
+            var add = fontType.GetMethod("TryAddCharacters", new[] { typeof(string), typeof(string).MakeByRefType(), typeof(bool) });
+            var args = new object[] { glyphs, null, false };
+            Assert.That((bool)add.Invoke(asset, args), Is.True, "Owned test font must cache the requested glyphs before admission.");
+        }
+
+        private void EnableLigaturesWithOutput(uint output)
+        {
+            var tags = (IList)settingsType.GetField("m_ActiveFontFeatures", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(settings);
+            tags.Add(Enum.Parse(tags.GetType().GetGenericArguments()[0], "liga"));
+            var records = (IList)Read(Read(font, "fontFeatureTable"), "ligatureRecords");
+            Type recordType = records.GetType().GetGenericArguments()[0];
+            object record = Activator.CreateInstance(recordType);
+            recordType.GetProperty("componentGlyphIDs").SetValue(record, new uint[] { 1, 2 });
+            recordType.GetProperty("ligatureGlyphID").SetValue(record, output);
+            records.Add(record);
+        }
+
+        private void RenderAndUndo(JObject result)
+        {
+            var created = Created(result);
+            Canvas.ForceUpdateCanvases();
+            foreach (var text in created.GetComponentsInChildren(Require("TMPro.TextMeshProUGUI"), true))
+                Invoke(text, "ForceMeshUpdate", true, true);
+            Undo.PerformUndo();
+            Assert.That(created == null, Is.True, "Undo must remove the complete owned control.");
+        }
+
+        [TestCase("toggle")]
+        [TestCase("tmp_input")]
+        public void PopulatedDynamicDefaultFontCreatesWithoutSharedFontMutation(string kind)
+        {
+            UseFont();
+            Write(font, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Dynamic"));
+            CacheGlyphs(font, "\u2026");
+            string before = SharedFontState(font);
+            RenderAndUndo(Send(Request(kind)));
+            AssertSharedFontOnlyDerivedRatiosChanged(font, before);
+        }
+
+        [Test]
+        public void MissingDynamicCaretSentinelRefusesBeforeAllocation()
+        {
+            UseFont();
+            Write(font, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Dynamic"));
+            CacheGlyphs(font, "\u2026");
+            var lookup = (IDictionary)fontType.GetField("m_CharacterLookupDictionary", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(font);
+            Assert.That(lookup.Contains((uint)0x200B), Is.True, "Fixture must begin with TMP's synthesized caret sentinel.");
+            lookup.Remove((uint)0x200B);
+            string before = SharedFontState(font);
+            var objects = AllSceneObjects();
+            int group = Undo.GetCurrentGroup();
+            var result = Send(Request("tmp_input"));
+            Assert.That(result.Value<bool>("success"), Is.False, result.ToString());
+            Assert.That(result["data"].Value<string>("role"), Is.EqualTo("caret_sentinel"));
+            Assert.That(result["data"].Value<string>("unicode"), Is.EqualTo("U+200B"));
+            Assert.That(AllSceneObjects(), Is.EquivalentTo(objects));
+            Assert.That(Undo.GetCurrentGroup(), Is.EqualTo(group));
+            Assert.That(SharedFontState(font), Is.EqualTo(before));
+        }
+
+        [TestCase("Ready\u0001", "U+0001")]
+        [TestCase("Ready\u007F", "U+007F")]
+        [TestCase("Ready\\u003F", "U+003F")]
+        [TestCase("Ready\\U0000003F", "U+003F")]
+        [TestCase("Ready\\u41G0", "U+005C")]
+        public void DynamicDecodedPayloadMissingGlyphRefusesBeforeAllocation(string label, string unicode)
+        {
+            UseFont();
+            Write(font, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Dynamic"));
+            CacheGlyphs(font, "\u2026");
+            string before = SharedFontState(font);
+            var objects = AllSceneObjects();
+            int group = Undo.GetCurrentGroup();
+            var result = Send(WithProperty(Request("toggle"), "label", label));
+            Assert.That(result.Value<bool>("success"), Is.False, result.ToString());
+            Assert.That(result["data"].Value<string>("role"), Is.EqualTo("label"));
+            Assert.That(result["data"].Value<string>("unicode"), Is.EqualTo(unicode));
+            Assert.That(AllSceneObjects(), Is.EquivalentTo(objects));
+            Assert.That(Undo.GetCurrentGroup(), Is.EqualTo(group));
+            Assert.That(SharedFontState(font), Is.EqualTo(before));
+        }
+
+        [Test]
+        public void InputTextWithNullCharacterRefusesBeforeAllocation()
+        {
+            UseFont();
+            var objects = AllSceneObjects();
+            int group = Undo.GetCurrentGroup();
+            var result = Send(WithProperty(Request("tmp_input"), "text", "Ready\0?"));
+            Assert.That(result.Value<bool>("success"), Is.False, result.ToString());
+            Assert.That(result.Value<string>("error"), Is.EqualTo("compound_input_null_character"));
+            Assert.That(AllSceneObjects(), Is.EquivalentTo(objects));
+            Assert.That(Undo.GetCurrentGroup(), Is.EqualTo(group));
+        }
+
+        [TestCase("Ready\\u0054")]
+        [TestCase("Ready\nNext")]
+        [TestCase("Ready\tNext")]
+        public void DynamicSafeDecodedTextCreatesWithoutAtlasMutation(string label)
+        {
+            UseFont();
+            Write(font, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Dynamic"));
+            CacheGlyphs(font, "\u2026");
+            string before = SharedFontState(font);
+            RenderAndUndo(Send(WithProperty(Request("toggle"), "label", label)));
+            AssertSharedFontOnlyDerivedRatiosChanged(font, before);
+        }
+
+        [Test]
+        public void MissingDynamicLigatureOutputRefusesBeforeAllocation()
+        {
+            UseFont();
+            Write(font, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Dynamic"));
+            CacheGlyphs(font, "\u2026");
+            EnableLigaturesWithOutput(uint.MaxValue);
+            string before = SharedFontState(font);
+            var objects = AllSceneObjects();
+            int group = Undo.GetCurrentGroup();
+            var result = Send(Request("toggle"));
+            Assert.That(result.Value<bool>("success"), Is.False, result.ToString());
+            Assert.That(result["data"].Value<string>("reason"), Is.EqualTo("ligature_glyph_may_populate_atlas"));
+            Assert.That(result["data"].Value<uint>("glyph_index"), Is.EqualTo(uint.MaxValue));
+            Assert.That(AllSceneObjects(), Is.EquivalentTo(objects));
+            Assert.That(Undo.GetCurrentGroup(), Is.EqualTo(group));
+            Assert.That(SharedFontState(font), Is.EqualTo(before));
+        }
+
+        [Test]
+        public void CachedDynamicLigatureOutputCreatesWithoutAtlasMutation()
+        {
+            UseFont();
+            Write(font, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Dynamic"));
+            CacheGlyphs(font, "\u2026");
+            uint cachedOutput = (uint)Read(((IEnumerable)Read(font, "glyphTable")).Cast<object>().First(), "index");
+            EnableLigaturesWithOutput(cachedOutput);
+            string before = SharedFontState(font);
+            RenderAndUndo(Send(Request("toggle")));
+            AssertSharedFontOnlyDerivedRatiosChanged(font, before);
+        }
+
+        [TestCase("\uFE0F", "U+FE0F")]
+        [TestCase("\udb40\udd00", "U+E0100")]
+        public void DynamicVariationSequenceRefusesBeforeAllocation(string selector, string unicode)
+        {
+            UseFont();
+            Write(font, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Dynamic"));
+            CacheGlyphs(font, "\u2026");
+            string before = SharedFontState(font);
+            var objects = AllSceneObjects();
+            int group = Undo.GetCurrentGroup();
+            var result = Send(WithProperty(Request("toggle"), "label", "a" + selector));
+            Assert.That(result.Value<bool>("success"), Is.False, result.ToString());
+            Assert.That(result["data"].Value<string>("reason"), Is.EqualTo("variation_glyph_may_populate_atlas"));
+            Assert.That(result["data"].Value<string>("unicode"), Is.EqualTo(unicode));
+            Assert.That(AllSceneObjects(), Is.EquivalentTo(objects));
+            Assert.That(Undo.GetCurrentGroup(), Is.EqualTo(group));
+            Assert.That(SharedFontState(font), Is.EqualTo(before));
+        }
+
+        [Test]
+        public void StaticVariationSequenceCreatesWithoutAtlasMutation()
+        {
+            UseFont();
+            string before = SharedFontState(font);
+            RenderAndUndo(Send(WithProperty(Request("toggle"), "label", "a\uFE0F")));
+            AssertSharedFontOnlyDerivedRatiosChanged(font, before);
+        }
+
+        [Test]
+        public void UnusedDynamicGlobalFallbackDoesNotBlockOrMutate()
+        {
+            UseFont();
+            Write(font, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Dynamic"));
+            CacheGlyphs(font, "\u2026");
+            Write(font, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Static"));
+            var unused = NewDynamicFont();
+            var slot = settingsType.GetField("m_fallbackFontAssets", BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.That(slot, Is.Not.Null);
+            var globals = (IList)Activator.CreateInstance(slot.FieldType);
+            globals.Add(unused);
+            slot.SetValue(settings, globals);
+            string before = SharedFontState(unused);
+            RenderAndUndo(Send(Request("toggle")));
+            Assert.That(SharedFontState(unused), Is.EqualTo(before));
+            Assert.That(ReferenceEquals(slot.GetValue(settings), globals), Is.True);
+        }
+
+        [Test]
+        public void CachedDynamicFallbackGlyphCreatesWithoutSharedFontMutation()
+        {
+            UseFont();
+            var fallback = NewDynamicFont();
+            CacheGlyphs(fallback, "?\u2026");
+            var table = (IList)Activator.CreateInstance(fontType.GetProperty("fallbackFontAssetTable").PropertyType);
+            table.Add(fallback);
+            Write(font, "fallbackFontAssetTable", table);
+            string beforeRoot = SharedFontState(font),
+                beforeFallback = SharedFontState(fallback);
+            RenderAndUndo(Send(WithProperty(Request("toggle"), "label", "Ready?")));
+            AssertSharedFontOnlyDerivedRatiosChanged(font, beforeRoot);
+            AssertSharedFontOnlyDerivedRatiosChanged(fallback, beforeFallback);
+        }
+
+        [Test]
+        public void MissingDynamicGlyphRefusesBeforeAllocationWithRemediation()
+        {
+            UseFont();
+            Write(font, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Dynamic"));
+            CacheGlyphs(font, "\u2026");
+            string before = SharedFontState(font);
+            var objects = AllSceneObjects();
+            int group = Undo.GetCurrentGroup();
+            bool dirty = owned.isDirty;
+            var result = Send(WithProperty(Request("toggle"), "label", "Ready?"));
+            Assert.That(result.Value<bool>("success"), Is.False, result.ToString());
+            Assert.That(result.Value<string>("message"), Is.EqualTo("compound_font_glyph_unavailable"));
+            Assert.That(result["data"].Value<string>("reason"), Is.EqualTo("dynamic_font_missing_glyph"));
+            Assert.That(result["data"].Value<string>("role"), Is.EqualTo("label"));
+            Assert.That(result["data"].Value<string>("unicode"), Is.EqualTo("U+003F"));
+            StringAssert.Contains("Populate", result["data"].Value<string>("remediation"));
+            Assert.That(AllSceneObjects(), Is.EquivalentTo(objects));
+            Assert.That(Undo.GetCurrentGroup(), Is.EqualTo(group));
+            Assert.That(owned.isDirty, Is.EqualTo(dirty));
+            Assert.That(SharedFontState(font), Is.EqualTo(before));
+        }
+
+        [Test]
+        public void CachedFallbackDoesNotBypassMissingDynamicAncestor()
+        {
+            UseFont();
+            var fallback = NewDynamicFont();
+            CacheGlyphs(fallback, "?");
+            Write(fallback, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Static"));
+            var table = (IList)Activator.CreateInstance(fontType.GetProperty("fallbackFontAssetTable").PropertyType);
+            table.Add(fallback);
+            Write(font, "fallbackFontAssetTable", table);
+            Write(font, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Dynamic"));
+            CacheGlyphs(font, "\u2026");
+            string beforeRoot = SharedFontState(font),
+                beforeFallback = SharedFontState(fallback);
+            var objects = AllSceneObjects();
+            int group = Undo.GetCurrentGroup();
+            var result = Send(WithProperty(Request("toggle"), "label", "Ready?"));
+            Assert.That(result.Value<bool>("success"), Is.False, result.ToString());
+            Assert.That(result["data"].Value<string>("reason"), Is.EqualTo("dynamic_font_missing_glyph"));
+            Assert.That(result["data"].Value<string>("unicode"), Is.EqualTo("U+003F"));
+            Assert.That(AllSceneObjects(), Is.EquivalentTo(objects));
+            Assert.That(Undo.GetCurrentGroup(), Is.EqualTo(group));
+            Assert.That(SharedFontState(font), Is.EqualTo(beforeRoot));
+            Assert.That(SharedFontState(fallback), Is.EqualTo(beforeFallback));
+        }
+
+        [TestCase("ellipsis", "U+2026")]
+        [TestCase("underline", "U+005F")]
+        public void MissingDynamicSpecialGlyphRefusesBeforeAllocation(string special, string unicode)
+        {
+            UseFont();
+            ScriptableObject selected;
+            if (special == "ellipsis")
+            {
+                selected = font;
+                Write(selected, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Dynamic"));
+            }
+            else
+            {
+                selected = NewDynamicFont();
+                CacheGlyphs(selected, "Toggle\u2026");
+                settingsType.GetField("m_defaultFontAsset", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(settings, selected);
+            }
+            string before = SharedFontState(selected);
+            var objects = AllSceneObjects();
+            int group = Undo.GetCurrentGroup();
+            var result = Send(Request("toggle"));
+            Assert.That(result.Value<bool>("success"), Is.False, result.ToString());
+            Assert.That(result.Value<string>("message"), Is.EqualTo("compound_font_glyph_unavailable"));
+            Assert.That(result["data"].Value<string>("role"), Is.EqualTo(special));
+            Assert.That(result["data"].Value<string>("unicode"), Is.EqualTo(unicode));
+            Assert.That(AllSceneObjects(), Is.EquivalentTo(objects));
+            Assert.That(Undo.GetCurrentGroup(), Is.EqualTo(group));
+            Assert.That(SharedFontState(selected), Is.EqualTo(before));
+        }
+
+        [Test]
+        public void StaticDefaultMissingEllipsisRejectsReachableDynamicGlobalFallback()
+        {
+            UseFont();
+            var fallback = NewDynamicFont();
+            var slot = settingsType.GetField("m_fallbackFontAssets", BindingFlags.NonPublic | BindingFlags.Instance);
+            var globals = (IList)Activator.CreateInstance(slot.FieldType);
+            globals.Add(fallback);
+            slot.SetValue(settings, globals);
+            string beforeRoot = SharedFontState(font),
+                beforeFallback = SharedFontState(fallback);
+            var objects = AllSceneObjects();
+            int group = Undo.GetCurrentGroup();
+            var result = Send(Request("toggle"));
+            Assert.That(result.Value<bool>("success"), Is.False, result.ToString());
+            Assert.That(result["data"].Value<string>("role"), Is.EqualTo("ellipsis"));
+            Assert.That(result["data"].Value<string>("unicode"), Is.EqualTo("U+2026"));
+            Assert.That(AllSceneObjects(), Is.EquivalentTo(objects));
+            Assert.That(Undo.GetCurrentGroup(), Is.EqualTo(group));
+            Assert.That(SharedFontState(font), Is.EqualTo(beforeRoot));
+            Assert.That(SharedFontState(fallback), Is.EqualTo(beforeFallback));
+        }
+
         [TestCase("scroll_view")]
         [TestCase("toggle")]
         [TestCase("slider")]
@@ -969,15 +1387,12 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("type")]
         [TestCase("member")]
         [TestCase("font_missing")]
-        [TestCase("font_dynamic")]
         [TestCase("emoji_capability")]
         public void UnsupportedDependencyFailsBeforeUndoOrAllocation(string fault)
         {
             UseFont();
             if (fault == "font_missing")
                 settingsType.GetField("m_defaultFontAsset", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(settings, null);
-            if (fault == "font_dynamic")
-                Write(font, "atlasPopulationMode", Enum.Parse(fontType.GetProperty("atlasPopulationMode").PropertyType, "Dynamic"));
             if (fault == "type")
                 SetHook("ResolveForTests", (Func<string, Type>)(name => name == "TMPro.TMP_InputField" ? null : UnityTypeResolver.ResolveAny(name)));
             if (fault == "member" || fault == "emoji_capability")
