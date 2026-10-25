@@ -123,3 +123,59 @@ def test_failed_resolve_trigger_preserves_unknown_native_completion():
     assert result["data"]["terminal"] is False
     assert result["data"]["job_status"] == "failed"
     assert result["data"]["job"] is data
+
+
+@pytest.mark.parametrize("operation", ["list_packages", "search_packages"])
+def test_fresh_package_query_completion_retains_identity_and_original_payload(operation):
+    data = {
+        "job_id": "job",
+        "operation": operation,
+        "status": "succeeded",
+        "count": 1,
+        "packages": [{"name": "com.fixture", "version": "1.0.0"}],
+    }
+    result = wait_module.project_observation("package", "job", {"success": True, "data": data})
+    assert result["success"] is True
+    assert result["data"]["terminal"] is True
+    assert result["data"]["job"] is data
+
+
+@pytest.mark.asyncio
+async def test_http_target_uses_canonical_project_hash_and_rejects_foreign_identity(monkeypatch):
+    monkeypatch.setattr(wait_module.config, "transport_mode", "http")
+    monkeypatch.setattr(wait_module.config, "http_remote_hosted", False)
+    ctx = AsyncMock()
+    state = {"unity_session_id": "session", "operation_wait_generation": None}
+    ctx.get_state.side_effect = lambda key: state.get(key)
+    monkeypatch.setattr(
+        wait_module, "get_unity_instance_from_context", AsyncMock(return_value="Main@owned-hash")
+    )
+    monkeypatch.setattr(
+        wait_module.PluginHub,
+        "_read_identity",
+        AsyncMock(return_value=SimpleNamespace(generation="one", user_id=None)),
+    )
+    registry = SimpleNamespace(
+        get_session=AsyncMock(return_value=SimpleNamespace(project_hash="owned-hash"))
+    )
+    monkeypatch.setattr(wait_module.PluginHub, "_registry", registry)
+    target = await wait_module.capture_target(ctx)
+    assert target == wait_module.ObservationTarget("Main@owned-hash", "session", "one", None)
+    registry.get_session.return_value = SimpleNamespace(project_hash="foreign-hash")
+    assert await wait_module.capture_target(ctx) is None
+    registry.get_session.return_value = SimpleNamespace(project_hash="owned-hash")
+    state["operation_wait_generation"] = "old"
+    assert await wait_module.capture_target(ctx) is None
+
+
+def test_generation_change_guides_fresh_observation_without_replaying_mutation():
+    original = {
+        "success": False,
+        "error": "connection changed",
+        "data": {"reason": "observation_generation_changed", "native_job_unchanged": True},
+    }
+    result = wait_module.project_observation("package", "job", original)
+    assert result["success"] is False
+    assert result["data"] is original["data"]
+    assert "same job_id" in result["hint"]
+    assert "do not restart or replay" in result["hint"]

@@ -315,7 +315,7 @@ namespace MCPForUnityTests.EditMode.Tools
 
         [TestCase(false)]
         [TestCase(true)]
-        public void TerminalQueryCacheRetainsTheSameResponseWithoutUPM(bool failure)
+        public void TerminalQueryCacheRetainsIdentityAndPayloadWithoutUPM(bool failure)
         {
             cache.Clear();
             order.Clear();
@@ -323,10 +323,19 @@ namespace MCPForUnityTests.EditMode.Tools
             object response = failure
                 ? (object)new ErrorResponse("Owned query error")
                 : new SuccessResponse("Owned query result", new { count = 0, packages = new object[0] });
-            Cache(id, response);
+            var cached = (JObject)Cache(id, response);
             // Public status retry is exercised in the controlled full-source host.
             // A regressed public cache branch could initialize real SessionState recovery.
-            Assert.AreSame(response, cache[id]);
+            Assert.AreSame(cached, cache[id]);
+            Assert.AreEqual(id, (string)cached["data"]["job_id"]);
+            Assert.AreEqual(failure ? "failed" : "succeeded", (string)cached["data"]["status"]);
+            Assert.AreEqual("list_packages", (string)cached["data"]["operation"]);
+            Assert.AreEqual(!failure, (bool)cached["success"]);
+            if (!failure)
+            {
+                Assert.AreEqual(0, (int)cached["data"]["count"]);
+                Assert.AreEqual(0, ((JArray)cached["data"]["packages"]).Count);
+            }
             Assert.AreEqual(id, order.Peek());
         }
 
@@ -373,7 +382,8 @@ namespace MCPForUnityTests.EditMode.Tools
             }
             try
             {
-                Cache(id, new SuccessResponse("Owned terminal result"));
+                var result = (JObject)Cache(id, new SuccessResponse("Owned terminal result"));
+                Assert.AreEqual(search ? "search_packages" : "list_packages", (string)result["data"]["operation"]);
                 Assert.IsFalse(lists.ContainsKey(id) || searches.ContainsKey(id));
                 Assert.IsTrue(search ? searches.ContainsKey(active) : lists.ContainsKey(active));
             }

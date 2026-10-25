@@ -308,7 +308,12 @@ namespace MCPForUnity.Editor.Tools
                 return new PendingResponse(
                     "Listing installed packages...",
                     pollIntervalSeconds: 1.0,
-                    data: new { job_id = jobId, operation = "list_packages" }
+                    data: new
+                    {
+                        job_id = jobId,
+                        operation = "list_packages",
+                        status = "running",
+                    }
                 );
             }
             catch (Exception e)
@@ -324,7 +329,12 @@ namespace MCPForUnity.Editor.Tools
                 return new PendingResponse(
                     "Listing installed packages...",
                     pollIntervalSeconds: 1.0,
-                    data: new { job_id = jobId, operation = "list_packages" }
+                    data: new
+                    {
+                        job_id = jobId,
+                        operation = "list_packages",
+                        status = "running",
+                    }
                 );
             }
 
@@ -379,6 +389,7 @@ namespace MCPForUnity.Editor.Tools
                     {
                         job_id = jobId,
                         operation = "search_packages",
+                        status = "running",
                         query = queryResult.Value,
                     }
                 );
@@ -393,7 +404,16 @@ namespace MCPForUnity.Editor.Tools
         {
             if (!request.IsCompleted)
             {
-                return new PendingResponse("Searching packages...", pollIntervalSeconds: 1.0, data: new { job_id = jobId, operation = "search_packages" });
+                return new PendingResponse(
+                    "Searching packages...",
+                    pollIntervalSeconds: 1.0,
+                    data: new
+                    {
+                        job_id = jobId,
+                        operation = "search_packages",
+                        status = "running",
+                    }
+                );
             }
 
             try
@@ -819,13 +839,22 @@ namespace MCPForUnity.Editor.Tools
 
         private static object CacheQueryResult(string jobId, object result)
         {
+            // Query jobs share the same immutable identity/status contract as mutations.
+            // Retain it after the native request is released and on every status retry.
+            string operation = PendingSearchRequests.ContainsKey(jobId) ? "search_packages" : "list_packages";
+            var response = JObject.FromObject(result);
+            var data = response["data"] as JObject ?? new JObject();
+            data["job_id"] = jobId;
+            data["operation"] = operation;
+            data["status"] = (bool?)response["success"] == true ? "succeeded" : "failed";
+            response["data"] = data;
             PendingListRequests.Remove(jobId);
             PendingSearchRequests.Remove(jobId);
-            CompletedQueryResults[jobId] = result;
+            CompletedQueryResults[jobId] = response;
             CompletedQueryOrder.Enqueue(jobId);
             while (CompletedQueryOrder.Count > MaxCompletedQueries)
                 CompletedQueryResults.Remove(CompletedQueryOrder.Dequeue());
-            return result;
+            return response;
         }
 
         private static JObject ReadRegistryManifest(string path)
