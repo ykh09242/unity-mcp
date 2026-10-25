@@ -50,3 +50,11 @@ tools/compile-refs/*.txt text eol=lf
 # Preserve native benchmark rows and source snapshots byte-for-byte.
 /docs/benchmarks/component-paging-cost-20261025/*.jsonl text eol=lf
 /docs/benchmarks/component-paging-cost-20261025/*.txt text eol=lf
+
+# Preserve same-assembly paging controls and alternative source snapshots.
+/docs/benchmarks/component-paging-alternatives-20261025/*.jsonl text eol=lf
+/docs/benchmarks/component-paging-alternatives-20261025/*.txt text eol=lf
+
+# Preserve the final direct-page crossover experiment's raw rows and snapshots.
+/docs/benchmarks/component-paging-direct-page-20261025/*.jsonl text eol=lf
+/docs/benchmarks/component-paging-direct-page-20261025/*.txt text eol=lf

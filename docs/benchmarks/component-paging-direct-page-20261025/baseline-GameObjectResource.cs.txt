@@ -1,0 +1,427 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Threading;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport;
+using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json.Linq;
+using UnityEditor;
+using UnityEngine;
+using BigInteger = System.Numerics.BigInteger;
+
+namespace MCPForUnity.Editor.Resources.Scene
+{
+    /// <summary>
+    /// Resource handler for reading GameObject data.
+    /// Provides read-only access to GameObject information without component serialization.
+    ///
+    /// URI: unity://scene/gameobject/{instanceID}
+    /// </summary>
+    [McpForUnityResource("get_gameobject")]
+    public static class GameObjectResource
+    {
+        public static object HandleCommand(JObject @params)
+        {
+            if (@params == null)
+            {
+                return new ErrorResponse("Parameters cannot be null.");
+            }
+
+            // Get instance ID from params
+            int? instanceID = null;
+
+            var idToken = @params["instanceID"] ?? @params["instance_id"] ?? @params["id"];
+            if (idToken != null)
+            {
+                instanceID = ParamCoercion.CoerceInt(idToken, -1);
+                if (instanceID == -1)
+                {
+                    instanceID = null;
+                }
+            }
+
+            if (!instanceID.HasValue)
+            {
+                return new ErrorResponse("'instanceID' parameter is required.");
+            }
+
+            try
+            {
+                var options = HierarchyPaging.Parse(@params, true);
+                var go = GameObjectLookup.ResolveInstanceID(instanceID.Value) as GameObject;
+                if (go == null)
+                {
+                    return new ErrorResponse($"GameObject with instance ID {instanceID} not found.");
+                }
+
+                return new { success = true, data = SerializeGameObject(go, options) };
+            }
+            catch (ArgumentException e)
+            {
+                return new ErrorResponse(e.Message);
+            }
+            catch (Exception e)
+            {
+                McpLog.Error($"[GameObjectResource] Error getting GameObject: {e}");
+                return new ErrorResponse($"Error getting GameObject: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Serializes a GameObject without component details.
+        /// For component data, use GetComponents or GetComponent resources.
+        /// </summary>
+        public static object SerializeGameObject(GameObject go)
+        {
+            return SerializeGameObject(go, HierarchyPaging.Parse(new JObject(), true));
+        }
+
+        private static object SerializeGameObject(GameObject go, HierarchyPaging.Options options)
+        {
+            if (go == null)
+                return null;
+
+            var transform = go.transform;
+
+            var budget = new HierarchyPaging.Budget(CancellationToken.None);
+            var children = HierarchyPaging.Children(go, options, budget);
+            var componentTypes = HierarchyPaging.ComponentNames(go, budget, false, out int componentCount);
+
+            int layer = go.layer;
+            var parent = transform.parent;
+
+            var data = JObject.FromObject(
+                new
+                {
+                    instanceID = go.GetInstanceIDCompat(),
+                    name = budget.Text(go.name),
+                    tag = budget.Text(go.tag),
+                    layer = layer,
+                    layerName = budget.Text(LayerMask.LayerToName(layer)),
+                    active = go.activeSelf,
+                    activeInHierarchy = go.activeInHierarchy,
+                    isStatic = go.isStatic,
+                    transform = new
+                    {
+                        position = SerializeVector3(transform.position),
+                        localPosition = SerializeVector3(transform.localPosition),
+                        rotation = SerializeVector3(transform.eulerAngles),
+                        localRotation = SerializeVector3(transform.localEulerAngles),
+                        scale = SerializeVector3(transform.localScale),
+                        lossyScale = SerializeVector3(transform.lossyScale),
+                    },
+                    parent = parent != null ? parent.gameObject.GetInstanceIDCompat() : (int?)null,
+                    componentTypes = componentTypes,
+                    componentCount = componentCount,
+                    componentTypesTruncated = componentCount > HierarchyPaging.ComponentLimit,
+                    path = HierarchyPaging.ObjectPath(transform, budget),
+                }
+            );
+            data.Merge(children);
+            data["metadataTruncated"] = budget.Truncated;
+            data["workUsed"] = budget.Used;
+            data["workLimit"] = HierarchyPaging.WorkLimit;
+            data["outputLimitBytes"] = HierarchyPaging.OutputLimit;
+            data["componentTypeLimit"] = HierarchyPaging.ComponentLimit;
+            data["stringLimit"] = HierarchyPaging.StringLimit;
+            data["childrenCursorTtlSeconds"] = 30;
+            return data;
+        }
+
+        private static object SerializeVector3(Vector3 v)
+        {
+            return new
+            {
+                x = v.x,
+                y = v.y,
+                z = v.z,
+            };
+        }
+    }
+
+    /// <summary>
+    /// Resource handler for reading all components on a GameObject.
+    ///
+    /// URI: unity://scene/gameobject/{instanceID}/components
+    /// </summary>
+    internal static class ComponentInspectionOptions
+    {
+        internal static bool Read(JObject parameters, out bool evaluateGetters)
+        {
+            evaluateGetters = false;
+            var camel = parameters["evaluateGetters"];
+            var snake = parameters["evaluate_getters"];
+            if (camel != null && snake != null && !JToken.DeepEquals(camel, snake))
+                return false;
+            JToken token = camel ?? snake;
+            if (token == null)
+                return true;
+            if (token.Type == JTokenType.Boolean)
+            {
+                evaluateGetters = (bool)token;
+                return true;
+            }
+            if (token.Type == JTokenType.String && ((string)token == "true" || (string)token == "false"))
+            {
+                evaluateGetters = (string)token == "true";
+                return true;
+            }
+            return false;
+        }
+    }
+
+    [McpForUnityResource("get_gameobject_components")]
+    public static class GameObjectComponentsResource
+    {
+        public static object HandleCommand(JObject @params)
+        {
+            if (@params == null)
+            {
+                return new ErrorResponse("Parameters cannot be null.");
+            }
+
+            var idToken = @params["instanceID"] ?? @params["instance_id"] ?? @params["id"];
+            int instanceID = ParamCoercion.CoerceInt(idToken, -1);
+            if (instanceID == -1)
+            {
+                return new ErrorResponse("'instanceID' parameter is required.");
+            }
+
+            if (!ComponentInspectionOptions.Read(@params, out bool evaluateGetters))
+                return new ErrorResponse("evaluate_getters must be true or false with matching aliases.");
+
+            // Pagination parameters
+            int pageSize = CoercePaginationInt(@params["pageSize"] ?? @params["page_size"], 25);
+            int cursor = CoercePaginationInt(@params["cursor"], 0);
+            bool includeProperties = ParamCoercion.CoerceBool(@params["includeProperties"] ?? @params["include_properties"], true);
+
+            pageSize = Mathf.Clamp(pageSize, 1, 100);
+
+            try
+            {
+                var go = GameObjectLookup.ResolveInstanceID(instanceID) as GameObject;
+                if (go == null)
+                {
+                    return new ErrorResponse($"GameObject with instance ID {instanceID} not found.");
+                }
+
+                var allComponents = go.GetComponents<Component>().Where(c => c != null).ToList();
+                int total = allComponents.Count;
+
+                cursor = Mathf.Clamp(cursor, 0, total);
+
+                var pagedComponents = allComponents.Skip(cursor).Take(pageSize).ToList();
+
+                var componentData = new List<object>();
+                var budget = new BoundedResponseJson.Budget();
+                foreach (var component in pagedComponents)
+                {
+                    if (includeProperties)
+                    {
+                        componentData.Add(GameObjectSerializer.GetComponentDataBounded(component, budget, true, evaluateGetters));
+                    }
+                    else
+                    {
+                        componentData.Add(new { typeName = component.GetType().FullName, instanceID = component.GetInstanceIDCompat() });
+                    }
+                }
+
+                int? nextCursor = cursor + pagedComponents.Count < total ? cursor + pagedComponents.Count : (int?)null;
+
+                return new
+                {
+                    success = true,
+                    data = new
+                    {
+                        gameObjectID = instanceID,
+                        gameObjectName = go.name,
+                        components = componentData,
+                        cursor = cursor,
+                        pageSize = pageSize,
+                        nextCursor = nextCursor,
+                        totalCount = total,
+                        hasMore = nextCursor.HasValue,
+                        includeProperties = includeProperties,
+                    },
+                };
+            }
+            catch (Exception e)
+            {
+                McpLog.Error($"[GameObjectComponentsResource] Error getting components: {e}");
+                return new ErrorResponse($"Error getting components: {e.Message}");
+            }
+        }
+
+        private static int CoercePaginationInt(JToken token, int defaultValue)
+        {
+            // Saturate whole numbers before Int32 conversion can reset paging to its defaults.
+            if (
+                token != null
+                && (token.Type == JTokenType.Integer || token.Type == JTokenType.String)
+                && BigInteger.TryParse(token.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+            )
+                return (int)BigInteger.Min(BigInteger.Max(value, int.MinValue), int.MaxValue);
+
+            return ParamCoercion.CoerceInt(token, defaultValue);
+        }
+    }
+
+    /// <summary>
+    /// Resource handler for reading a single component on a GameObject.
+    ///
+    /// URI: unity://scene/gameobject/{instanceID}/component/{componentName}
+    /// </summary>
+    [McpForUnityResource("get_gameobject_component_selected")]
+    public static class GameObjectComponentSelectedResource
+    {
+        public static object HandleCommand(JObject parameters) => GameObjectComponentResource.HandleSelected(parameters);
+    }
+
+    [McpForUnityResource("get_gameobject_component")]
+    public static class GameObjectComponentResource
+    {
+        internal static object HandleSelected(JObject parameters)
+        {
+            try
+            {
+                if (!MCPServiceLocator.ResourceDiscovery.IsResourceEnabled("get_gameobject_component"))
+                    return new ComponentSelection.Failure(
+                        "resource_disabled",
+                        "Resource 'get_gameobject_component' is disabled in the Unity Editor."
+                    ).Response();
+                if (parameters == null)
+                    return new ComponentSelection.Failure("invalid_selection", "Parameters cannot be null.").Response();
+                if (!ComponentInspectionOptions.Read(parameters, out bool evaluateGetters))
+                    return new ErrorResponse("evaluate_getters must be true or false with matching aliases.");
+                ComponentSelection.ValidateSelectors(parameters, out int? index, out int? componentId);
+                JToken target = ComponentSelection.Alias(parameters, "instanceID", "instance_id");
+                if (target != null && parameters["id"] != null && !JToken.DeepEquals(target, parameters["id"]))
+                    throw new ComponentSelection.Failure("invalid_selection", "Conflicting GameObject ID aliases.");
+                target = target ?? parameters["id"];
+                if (
+                    target == null
+                    || (target.Type != JTokenType.Integer && target.Type != JTokenType.String)
+                    || !int.TryParse(target.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int targetId)
+                    || targetId == 0
+                )
+                    throw new ComponentSelection.Failure("invalid_target", "instanceID must be a nonzero Int32 GameObject ID.");
+                JToken name = ComponentSelection.Alias(parameters, "componentName", "component_name");
+                if (name != null && parameters["component"] != null && !JToken.DeepEquals(name, parameters["component"]))
+                    throw new ComponentSelection.Failure("invalid_selection", "Conflicting component type aliases.");
+                name = name ?? parameters["component"];
+                if (name?.Type != JTokenType.String)
+                    throw new ComponentSelection.Failure("invalid_component_type", "componentName must be a canonical component type name.");
+                ComponentSelection.BeforeTargetLookupForTests?.Invoke();
+                var go = GameObjectLookup.FindById(targetId);
+                ComponentSelection.Result selection = ComponentSelection.Resolve(go, name.ToString(), index, componentId);
+                JObject description = selection.Describe();
+                return new
+                {
+                    success = true,
+                    data = new
+                    {
+                        gameObjectID = targetId,
+                        gameObjectName = go.name,
+                        component = GameObjectSerializer.GetComponentData(selection.Component, true, evaluateGetters),
+                        selection = description,
+                    },
+                };
+            }
+            catch (ComponentSelection.Failure failure)
+            {
+                return failure.Response();
+            }
+            catch (Exception exception)
+            {
+                McpLog.Error($"[GameObjectComponentResource] Error getting selected component: {exception}");
+                return new ErrorResponse($"Error getting component: {exception.Message}");
+            }
+        }
+
+        public static object HandleCommand(JObject @params)
+        {
+            if (@params == null)
+            {
+                return new ErrorResponse("Parameters cannot be null.");
+            }
+
+            try
+            {
+                if (ComponentSelection.IsRequested(@params, true))
+                    return HandleSelected(@params);
+            }
+            catch (ComponentSelection.Failure failure)
+            {
+                return failure.Response();
+            }
+
+            var idToken = @params["instanceID"] ?? @params["instance_id"] ?? @params["id"];
+            int instanceID = ParamCoercion.CoerceInt(idToken, -1);
+            if (instanceID == -1)
+            {
+                return new ErrorResponse("'instanceID' parameter is required.");
+            }
+
+            if (!ComponentInspectionOptions.Read(@params, out bool evaluateGetters))
+                return new ErrorResponse("evaluate_getters must be true or false with matching aliases.");
+            string componentName = ParamCoercion.CoerceString(@params["componentName"] ?? @params["component_name"] ?? @params["component"], null);
+            if (string.IsNullOrEmpty(componentName))
+            {
+                return new ErrorResponse("'componentName' parameter is required.");
+            }
+
+            try
+            {
+                var go = GameObjectLookup.ResolveInstanceID(instanceID) as GameObject;
+                if (go == null)
+                {
+                    return new ErrorResponse($"GameObject with instance ID {instanceID} not found.");
+                }
+
+                // Find the component by type name
+                Component targetComponent = null;
+                foreach (var component in go.GetComponents<Component>())
+                {
+                    if (component == null)
+                        continue;
+
+                    var typeName = component.GetType().Name;
+                    var fullTypeName = component.GetType().FullName;
+
+                    if (
+                        string.Equals(typeName, componentName, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(fullTypeName, componentName, StringComparison.OrdinalIgnoreCase)
+                    )
+                    {
+                        targetComponent = component;
+                        break;
+                    }
+                }
+
+                if (targetComponent == null)
+                {
+                    return new ErrorResponse($"Component '{componentName}' not found on GameObject '{go.name}'.");
+                }
+
+                return new
+                {
+                    success = true,
+                    data = new
+                    {
+                        gameObjectID = instanceID,
+                        gameObjectName = go.name,
+                        component = GameObjectSerializer.GetComponentData(targetComponent, true, evaluateGetters),
+                    },
+                };
+            }
+            catch (Exception e)
+            {
+                McpLog.Error($"[GameObjectComponentResource] Error getting component: {e}");
+                return new ErrorResponse($"Error getting component: {e.Message}");
+            }
+        }
+    }
+}

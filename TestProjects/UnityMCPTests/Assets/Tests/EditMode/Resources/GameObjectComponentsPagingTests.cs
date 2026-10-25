@@ -265,6 +265,44 @@ namespace MCPForUnityTests.Editor.Resources
             }
         }
 
+        [Test]
+        public void GetterMutation_PreservesInitialCountOrderAndDestroyedSlot()
+        {
+            var mutator = _target.AddComponent<PagingMutatingComponent>();
+            mutator.DestroyTarget = _target.AddComponent<SphereCollider>();
+            var snapshot = _target.GetComponents<Component>();
+            var expectedIds = snapshot.Take(snapshot.Length - 1).Select(value => value.GetInstanceIDCompat()).ToArray();
+
+            var response = JObject.FromObject(
+                GameObjectComponentsResource.HandleCommand(
+                    new JObject
+                    {
+                        ["instanceID"] = _target.GetInstanceIDCompat(),
+                        ["pageSize"] = 100,
+                        ["includeProperties"] = true,
+                        ["evaluate_getters"] = true,
+                    }
+                )
+            );
+
+            Assert.IsTrue((bool)response["success"]);
+            Assert.Greater(mutator.Reads, 0);
+            var data = response["data"];
+            Assert.AreEqual(snapshot.Length, (int)data["totalCount"]);
+            Assert.AreEqual(snapshot.Length, data["components"].Count());
+            CollectionAssert.AreEqual(expectedIds, data["components"].Take(expectedIds.Length).Select(value => (int)value["instanceID"]));
+            Assert.AreEqual(JTokenType.Null, data["components"].Last.Type, "A later destroyed snapshot entry keeps the serializer's null result.");
+            Assert.IsFalse((bool)data["hasMore"]);
+
+            var fresh = ReadPage(0, new JValue(100))["data"];
+            Assert.AreEqual(snapshot.Length + 1, (int)fresh["totalCount"]);
+            Assert.AreEqual(snapshot.Length + 1, fresh["components"].Count());
+            CollectionAssert.AreEqual(
+                _target.GetComponents<Component>().Select(value => value.GetInstanceIDCompat()),
+                fresh["components"].Select(value => (int)value["instanceID"])
+            );
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void ReturnedPage_RemainsDetachedAcrossLaterReadsAndMutation(bool includeProperties)
@@ -299,6 +337,30 @@ namespace MCPForUnityTests.Editor.Resources
                     }
                 )
             );
+    }
+
+    public sealed class PagingMutatingComponent : MonoBehaviour
+    {
+        [System.NonSerialized]
+        public Component DestroyTarget;
+
+        [System.NonSerialized]
+        public int Reads;
+
+        public int ChangedCount
+        {
+            get
+            {
+                Reads++;
+                if (Reads == 1)
+                {
+                    Object.DestroyImmediate(DestroyTarget);
+                    gameObject.AddComponent<SphereCollider>();
+                    gameObject.AddComponent<CapsuleCollider>();
+                }
+                return gameObject.GetComponents<Component>().Length;
+            }
+        }
     }
 
     public sealed class PagingReentrantComponent : MonoBehaviour

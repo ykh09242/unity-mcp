@@ -1,0 +1,54 @@
+{
+  "schema": "pc05-production-crossover-manifest-v1",
+  "status": "candidate1 rejected at first complete matched source screen; production restored to baseline",
+  "baseCommit": "233957665fa9d23de64714532c82f3ca9350c776",
+  "sourcePins": {
+    "MCPForUnity/Editor/Resources/Scene/GameObjectResource.cs": "59c7834e59afab00d3b56de5df1e053791c16d3c8b4793c1d65889146c8a923c",
+    "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Resources/GameObjectComponentsPagingTests.cs": "8aac018b3af3a2ca6ae5e40ff1d2d1361cfd082d99ac7542115b4feef061add8",
+    "docs/benchmarks/PC05ProductionMethodPagingBenchmark.cs": "21fd1f2c32e301b11ef054acd081123bcb0a3daed1652190ec42aeeaf76cc178",
+    "docs/benchmarks/PC04FrozenBaselineComponentsResource.cs": "9666f5f78e3bd08051f815d9b5ef7d5e4ad5a5045a7115193927476d9bb87524",
+    "docs/benchmarks/component-paging-alternatives-20261025/baseline-GameObjectResource.cs.txt": "1de68ed4a6b11ebcb0fdb99b4ba8c069334d82a9be7338eb959fdcd152da7198",
+    "docs/benchmarks/component-paging-alternatives-20261025/candidate1-GameObjectResource.cs.txt": "59c7834e59afab00d3b56de5df1e053791c16d3c8b4793c1d65889146c8a923c"
+  },
+  "sourceOrders": [
+    [
+      "baseline",
+      "candidate1-array-compaction"
+    ],
+    [
+      "candidate1-array-compaction",
+      "baseline"
+    ],
+    [
+      "baseline",
+      "candidate1-array-compaction"
+    ]
+  ],
+  "rowsPerPhase": 720,
+  "casesPerPhase": 120,
+  "productionClockedArms": [
+    "production-a",
+    "production-b",
+    "production-c",
+    "production-d"
+  ],
+  "withinSessionReplicatesAreIndependentBlocks": false,
+  "independentMatchedSourceBlocksIfPromising": 3,
+  "driftOnlyArms": [
+    "control-a",
+    "control-b"
+  ],
+  "controlOffsetSubtractionOrVarianceInflationAllowed": false,
+  "baselineFunctionalFilter": "MCPForUnityTests.Editor.Resources.PC05ProductionMethodPagingBenchmark.VerifyNativeParity",
+  "timingFilter": "MCPForUnityTests.Editor.Resources.PC05ProductionMethodPagingBenchmark.RunTimingMatrix",
+  "allocationFilter": "MCPForUnityTests.Editor.Resources.PC05ProductionMethodPagingBenchmark.RunAllocationMatrix",
+  "compiledProvenance": [
+    "runtime staged-source SHA256",
+    "loaded production assembly MVID",
+    "loaded production HandleCommand IL SHA256",
+    "QA sealed input manifest and explicit recompile receipt"
+  ],
+  "priorPC04HelperSHA256": "d194c2f32444cc24c9f6077e7294617f100c086324eef9c862af30d148b2f0d8",
+  "priorPC04RawRowsPreserved": 1440,
+  "runtimeOptimizationAccepted": false
+}
