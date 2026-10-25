@@ -18,7 +18,7 @@ The [Client Configurators](../guides/client-configurators.md) guide documents th
 
 - The package configures Claude Desktop through stdio regardless of the globally selected transport. This describes the configurator, not every transport the vendor may support.
 - VS Code uses `servers` rather than `mcpServers`.
-- Codex uses TOML. Version 1.2.1 uses `http_headers_helper` for verified local HTTP clients and `http_headers` for remote credentials.
+- Codex uses TOML. Since 1.2.1, the package uses `http_headers_helper` for verified local HTTP clients and `http_headers` for remote credentials.
 - OpenClaw requires its MCP bridge plugin; Pi requires an MCP extension. A config write cannot install or enable those integrations.
 - Some clients need an MCP toggle or restart. Successful configuration is not proof of a live connection.
 
@@ -77,7 +77,7 @@ Restart or reconnect Codex after saving. **Configured** validates configuration,
 
 ### Claude Code HTTP
 
-Version 1.2.1 uses Claude Code's `headersHelper` via `claude mcp add-json --scope local`. The configurator verifies the selected CLI version before changing registrations. Its automatic-configuration baseline is **2.1.193**, whose [official changelog](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21193) introduces helper refresh and reconnect on tool-call authentication failures. This is a conservative refresh baseline, not the first version to support the field.
+Since 1.2.1, the package uses Claude Code's `headersHelper` via `claude mcp add-json --scope local`. The configurator verifies the selected CLI version before changing registrations. Its automatic-configuration baseline is **2.1.193**, whose [official changelog](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21193) introduces helper refresh and reconnect on tool-call authentication failures. This is a conservative refresh baseline, not the first version to support the field.
 
 For an older, unrecognized or unavailable CLI, choose stdio or update Claude Code. On Windows, use its executable or npm `.cmd` shim rather than a PowerShell `.ps1` shim. Existing custom helpers and OAuth settings require manual review and are not overwritten by this migration.
 
@@ -112,7 +112,7 @@ This beta checkout uses the following immutable server source. Unity and Python 
         "--python",
         ">=3.11",
         "--from",
-        "https://github.com/ykh09242/unity-mcp/archive/fb4a33d07b494cad7052fee074e9e63c6c5ed7ce.zip#subdirectory=Server",
+        "https://github.com/ykh09242/unity-mcp/archive/2d39fccbc741bdaa4aa4a1a81bddfd60c1fec0bd.zip#subdirectory=Server",
         "mcp-for-unity",
         "--transport",
         "stdio"
