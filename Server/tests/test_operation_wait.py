@@ -140,6 +140,67 @@ def test_fresh_package_query_completion_retains_identity_and_original_payload(op
     assert result["data"]["job"] is data
 
 
+@pytest.mark.parametrize("operation", ["list_packages", "search_packages"])
+@pytest.mark.parametrize("enveloped", [False, True])
+def test_failed_package_query_is_a_terminal_observation_with_original_error(operation, enveloped):
+    data = {"job_id": "job", "operation": operation, "status": "failed"}
+    native = {
+        "success": False,
+        "error": "Owned query could not reach the registry.",
+        "code": "owned_query_failure",
+        "data": data,
+    }
+    response = {"status": "success", "result": native} if enveloped else native
+    result = wait_module.project_observation("package", "job", response)
+    assert result["success"] is True
+    assert result["data"]["phase"] == "terminal"
+    assert result["data"]["terminal"] is True
+    assert result["data"]["job_status"] == "failed"
+    assert result["data"]["job"] == {
+        **data,
+        "error": native["error"],
+        "code": native["code"],
+    }
+    assert data == {"job_id": "job", "operation": operation, "status": "failed"}
+
+
+@pytest.mark.parametrize(
+    "kind,data",
+    [
+        ("package", None),
+        ("package", {"operation": "list_packages", "status": "failed"}),
+        ("package", {"job_id": "foreign", "operation": "list_packages", "status": "failed"}),
+        ("package", {"job_id": "job", "operation": "list_packages", "status": "unknown"}),
+        ("package", {"job_id": "job", "operation": "list_packages", "status": "succeeded"}),
+        ("package", {"job_id": "job", "operation": "invalid_action", "status": "failed"}),
+        ("package", {"job_id": "job", "operation": [], "status": "failed"}),
+        ("package", {"job_id": "job", "operation": {}, "status": "failed"}),
+        ("scenario", {"job_id": "job", "operation": "list_packages", "status": "failed"}),
+    ],
+)
+def test_query_observation_does_not_turn_unknown_or_invalid_requests_into_completion(kind, data):
+    response = {"success": False, "error": "Native request failed.", "data": data}
+    assert wait_module.project_observation(kind, "job", response) is response
+
+
+@pytest.mark.asyncio
+async def test_wait_stops_at_identified_failed_package_query_without_replaying(monkeypatch):
+    monkeypatch.setattr(wait_module, "capture_target", AsyncMock(return_value=object()))
+    fetch = AsyncMock(
+        return_value={
+            "success": False,
+            "error": "Owned list query failed.",
+            "data": {"job_id": "job", "operation": "list_packages", "status": "failed"},
+        }
+    )
+    monkeypatch.setattr(wait_module, "fetch_status", fetch)
+    result = await wait_module.wait_for_operation(AsyncMock(), "package", "job", 60)
+    assert result["success"] is True
+    assert result["data"]["terminal"] is True
+    assert result["data"]["job"]["error"] == "Owned list query failed."
+    fetch.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 async def test_http_target_uses_canonical_project_hash_and_rejects_foreign_identity(monkeypatch):
     monkeypatch.setattr(wait_module.config, "transport_mode", "http")

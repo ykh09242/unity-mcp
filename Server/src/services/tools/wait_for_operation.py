@@ -141,12 +141,26 @@ def project_observation(kind: JobKind, job_id: str, response) -> dict:
     response = normalize_unity_response(response)
     if not isinstance(response, dict):
         return unavailable("invalid_job_observation")
-    if response.get("success") is not True:
-        data = response.get("data")
-        if isinstance(data, dict) and data.get("reason") == "observation_generation_changed":
-            response = {**response, "hint": unavailable("observation_generation_changed")["hint"]}
-        return response
     data = response.get("data")
+    if response.get("success") is not True:
+        if (
+            response.get("success") is False
+            and kind == "package"
+            and isinstance(data, dict)
+            and data.get("job_id") == job_id
+            and data.get("operation") in ("list_packages", "search_packages")
+            and data.get("status") == "failed"
+        ):
+            # UPM query failures keep their direct ErrorResponse contract. A failed
+            # identified job is still a successful observation of its native outcome.
+            data = {**data, **{key: response[key] for key in ("error", "code") if key in response}}
+        else:
+            if isinstance(data, dict) and data.get("reason") == "observation_generation_changed":
+                response = {
+                    **response,
+                    "hint": unavailable("observation_generation_changed")["hint"],
+                }
+            return response
     if not isinstance(data, dict) or data.get("job_id") != job_id:
         return unavailable("job_observation_identity_mismatch")
     state = data.get("result" if kind == "build" else "status")

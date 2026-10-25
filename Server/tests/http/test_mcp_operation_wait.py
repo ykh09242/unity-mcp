@@ -17,16 +17,17 @@ from transport.models import CommandResultMessage
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "kind,state",
+    "kind,state,native_success",
     [
-        ("build", "failed"),
-        ("package", "unknown"),
-        ("package", "succeeded"),
-        ("scenario", "succeeded"),
+        ("build", "failed", True),
+        ("package", "unknown", True),
+        ("package", "succeeded", True),
+        ("package", "failed", False),
+        ("scenario", "succeeded", True),
     ],
 )
 async def test_real_sdk_task_matches_ordinary_existing_job_observation(
-    command_hub, tmp_path, monkeypatch, kind, state
+    command_hub, tmp_path, monkeypatch, kind, state, native_success
 ):
     job = "a" * 32
 
@@ -34,14 +35,18 @@ async def test_real_sdk_task_matches_ordinary_existing_job_observation(
         command_hub.sent.append(message)
         assert message["name"] == module._COMMANDS[kind]
         assert message["params"] == {"action": "status", "job_id": job}
+        native = {
+            "success": native_success,
+            "data": {"job_id": job, "result" if kind == "build" else "status": state},
+        }
+        if not native_success:
+            native["data"]["operation"] = "list_packages"
+            native["error"] = "Owned query failed."
         await command_hub.endpoint._handle_command_result(
             command_hub.websocket,
             CommandResultMessage(
                 id=message["id"],
-                result={
-                    "success": True,
-                    "data": {"job_id": job, "result" if kind == "build" else "status": state},
-                },
+                result=native,
             ),
         )
 
@@ -58,6 +63,8 @@ async def test_real_sdk_task_matches_ordinary_existing_job_observation(
         payload = task["result"]["structuredContent"]["data"]
         assert payload["job_status"] == state
         assert payload["terminal"] == (state != "unknown")
+        if not native_success:
+            assert payload["job"]["error"] == "Owned query failed."
         captured = runtime.journal.get(task["taskId"], runtime.journal.local_owner).operation
         assert captured.tool_name == "wait_for_operation" and captured.job_kind == kind
         assert captured.generation == "generation"
