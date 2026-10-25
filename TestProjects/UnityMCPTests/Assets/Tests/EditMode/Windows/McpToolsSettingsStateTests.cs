@@ -65,8 +65,10 @@ namespace MCPForUnityTests.Editor.Windows
                 var root = Root();
                 root.Add(new DropdownField { name = "startup-tool-profile" });
                 root.Add(new Label { name = "startup-tool-profile-help" });
+                using var panel = new OwnedConsentPanel(root);
                 var section = new McpToolsSection(root, null, true);
                 var dropdown = root.Q<DropdownField>("startup-tool-profile");
+                Assert.IsNotNull(dropdown.panel, "The real UI Toolkit panel must dispatch the dropdown's production change callback.");
                 // When: the panel reads startup settings, without enabling or granting tools.
                 section.Refresh();
                 // Then: default emits no persisted choice; remote HTTP cannot change server startup.
