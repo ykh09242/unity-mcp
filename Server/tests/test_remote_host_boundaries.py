@@ -69,6 +69,8 @@ async def test_remote_editor_and_jobs_never_touch_host(
 
     monkeypatch.setattr(config, "transport_mode", "http")
     monkeypatch.setattr(config, "http_remote_hosted", True)
+    monkeypatch.setenv("UNITY_MCP_ENABLE_FOCUS_NUDGE", "1")
+    monkeypatch.delenv("UNITY_MCP_DISABLE_FOCUS_NUDGE", raising=False)
     counts = {"project": 0, "scan": 0, "root": 0, "focus": 0}
 
     class Selected(Middleware):
@@ -334,7 +336,8 @@ def test_manifest_read_and_retained_package_roots_are_bounded(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_local_public_job_still_schedules_nudge(monkeypatch, tmp_path, request):
+@pytest.mark.parametrize("opt_in", [False, True])
+async def test_local_public_job_nudges_only_when_opted_in(monkeypatch, tmp_path, request, opt_in):
     if _run_sdk_child(request, tmp_path):
         return
     from fastmcp import Client, FastMCP
@@ -345,6 +348,11 @@ async def test_local_public_job_still_schedules_nudge(monkeypatch, tmp_path, req
 
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "transport_mode", "http")
+    monkeypatch.delenv("UNITY_MCP_DISABLE_FOCUS_NUDGE", raising=False)
+    if opt_in:
+        monkeypatch.setenv("UNITY_MCP_ENABLE_FOCUS_NUDGE", "1")
+    else:
+        monkeypatch.delenv("UNITY_MCP_ENABLE_FOCUS_NUDGE", raising=False)
 
     async def send(instance, command, params, **kwargs):
         return {
@@ -384,13 +392,14 @@ async def test_local_public_job_still_schedules_nudge(monkeypatch, tmp_path, req
     release.set()
     if run_tests._background_tasks:
         await asyncio.gather(*run_tests._background_tasks)
-    assert nudges == [
+    expected_nudges = [
         {
             "unity_project_path": str(tmp_path),
             "force": True,
             "focus_duration_s": run_tests.focus_nudge._DEFAULT_FOCUS_DURATION_S,
         }
     ]
+    assert nudges == (expected_nudges if opt_in else [])
 
 
 def test_remote_scanner_guard_precedes_state_and_filesystem(monkeypatch):

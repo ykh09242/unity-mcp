@@ -71,12 +71,11 @@ class _FrontmostAppInfo:
 
 
 def _is_disabled() -> bool:
-    return os.environ.get("UNITY_MCP_DISABLE_FOCUS_NUDGE", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    """Legacy recovery changes desktop state, so it requires explicit opt-in."""
+    enabled_values = ("1", "true", "yes", "on")
+    disable = os.environ.get("UNITY_MCP_DISABLE_FOCUS_NUDGE", "").strip().lower()
+    enable = os.environ.get("UNITY_MCP_ENABLE_FOCUS_NUDGE", "").strip().lower()
+    return disable in enabled_values or enable not in enabled_values
 
 
 def _is_available() -> bool:
