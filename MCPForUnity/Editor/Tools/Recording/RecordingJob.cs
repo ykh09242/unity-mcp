@@ -189,7 +189,9 @@ namespace MCPForUnity.Editor.Tools.Recording
                 if (_error == null && (status == "completed" || status == "stopped"))
                 {
                     if (Frames == 0)
-                        throw new InvalidOperationException("No frames were captured. Keep the requested view visible and Game View focused during Play Mode.");
+                        throw new InvalidOperationException(
+                            "No frames were captured. Keep the requested view rendering; Game View needs unpaused Play Mode and end-of-frame callbacks. Focus is not checked or changed."
+                        );
                     SafePathUtility.ResolveWithinRoot(_permittedRoot, _stagingFile);
                     if (!File.Exists(_stagingFile) || new FileInfo(_stagingFile).Length == 0)
                         throw new IOException("Video encoder produced no output file.");
