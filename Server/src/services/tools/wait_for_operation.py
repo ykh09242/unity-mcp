@@ -49,11 +49,21 @@ operation_wait_target: ContextVar[ObservationTarget | None] = ContextVar(
 
 
 def unavailable(reason: str) -> dict:
-    return {
+    response = {
         "success": False,
         "error": reason,
         "data": {"reason": reason, "native_job_unchanged": True},
     }
+    if reason in {
+        "observation_generation_changed",
+        "observation_connection_unavailable_or_changed",
+    }:
+        response["hint"] = (
+            "The observation connection changed. Re-select the same Unity instance and explicitly "
+            "observe the same job_id again. This does not establish native job failure; do not "
+            "restart or replay the operation."
+        )
+    return response
 
 
 async def capture_target(ctx: Context) -> ObservationTarget | None:
@@ -131,9 +141,26 @@ def project_observation(kind: JobKind, job_id: str, response) -> dict:
     response = normalize_unity_response(response)
     if not isinstance(response, dict):
         return unavailable("invalid_job_observation")
-    if response.get("success") is not True:
-        return response
     data = response.get("data")
+    if response.get("success") is not True:
+        if (
+            response.get("success") is False
+            and kind == "package"
+            and isinstance(data, dict)
+            and data.get("job_id") == job_id
+            and data.get("operation") in ("list_packages", "search_packages")
+            and data.get("status") == "failed"
+        ):
+            # UPM query failures keep their direct ErrorResponse contract. A failed
+            # identified job is still a successful observation of its native outcome.
+            data = {**data, **{key: response[key] for key in ("error", "code") if key in response}}
+        else:
+            if isinstance(data, dict) and data.get("reason") == "observation_generation_changed":
+                response = {
+                    **response,
+                    "hint": unavailable("observation_generation_changed")["hint"],
+                }
+            return response
     if not isinstance(data, dict) or data.get("job_id") != job_id:
         return unavailable("job_observation_identity_mismatch")
     state = data.get("result" if kind == "build" else "status")
@@ -180,7 +207,7 @@ def project_observation(kind: JobKind, job_id: str, response) -> dict:
 @mcp_for_unity_tool(
     group="core",
     unity_target=None,
-    description="Observe an existing build, package mutation/resolve, or single scenario job. "
+    description="Observe an existing build, package query/mutation/resolve, or single scenario job. "
     "Never starts, retries or cancels native work. wait_timeout bounds only this observation (0 is one poll). "
     "Reports waiting/running/finalizing/terminal/unknown with the original job evidence; a failed job is a valid observation. "
     "An authenticated connection is captured once; reload/disconnect requires a fresh explicit observation. "

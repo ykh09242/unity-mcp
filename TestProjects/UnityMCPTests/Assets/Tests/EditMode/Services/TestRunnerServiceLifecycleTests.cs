@@ -248,6 +248,59 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(2, TestRunnerNoThrottle.ReadPreference("InteractionMode", 0));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ResultCallbackRetainsBackgroundProgressUntilNativeResourcesRelease(bool error)
+        {
+            const string id = "1234567890abcdef1234567890abcdef";
+            const string guid = "fedcba0987654321fedcba0987654321";
+            var view = new JObject
+            {
+                ["registered"] = new JArray(guid),
+                ["active"] = new JArray(guid),
+                ["serialized_active"] = new JArray(guid),
+                ["global_active"] = true,
+            };
+            using var control = new NativeTestRunControl(id, 0, () => 10, () => view, _ => true);
+            control.BindGuid(guid);
+            Jobs[id] = new TestJob
+            {
+                JobId = id,
+                Status = TestJobStatus.Succeeded,
+                Control = control,
+            };
+            TestRunnerNoThrottle.ApplyNoThrottlingPreemptive();
+            // Controlled native hosts may release the automatic observer to isolate preferences.
+            // Exercise the production callback implementation without registering a native observer.
+            var callbackType = typeof(TestRunnerNoThrottle).GetNestedType("TestCallbacks", BindingFlags.NonPublic);
+            var callbacks = (IErrorCallbacks)Activator.CreateInstance(callbackType, true);
+            if (error)
+                callbacks.OnError("owned fixture error");
+            else
+                callbacks.RunFinished(null);
+            Assert.AreEqual(0, TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4));
+            Assert.AreEqual(1, TestRunnerNoThrottle.ReadPreference("InteractionMode", 0));
+            Assert.IsTrue(TestJobManager.NativeAdmissionBlocked);
+
+            view = new JObject
+            {
+                ["registered"] = new JArray(),
+                ["active"] = new JArray(),
+                ["serialized_active"] = new JArray(),
+                ["global_active"] = false,
+            };
+            control.Tick();
+            TestRunnerNoThrottle.RestoreAfterRun();
+            Assert.AreEqual(0, TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4), "Idle alone cannot release native ownership.");
+            control.ObserveFinal(guid);
+            Assert.IsTrue(TestJobManager.NativeAdmissionBlocked, "The final callback cannot admit a replacement reentrantly.");
+            control.Tick();
+            TestRunnerNoThrottle.RestoreAfterRun();
+            Assert.IsFalse(TestJobManager.NativeAdmissionBlocked);
+            Assert.AreEqual(_idleTime, TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4));
+            Assert.AreEqual(_interactionMode, TestRunnerNoThrottle.ReadPreference("InteractionMode", 0));
+        }
+
         [Test]
         public void ApiRelease_DestroysOwnedApiAndIsIdempotentBeforeDispose()
         {

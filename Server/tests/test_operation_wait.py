@@ -123,3 +123,120 @@ def test_failed_resolve_trigger_preserves_unknown_native_completion():
     assert result["data"]["terminal"] is False
     assert result["data"]["job_status"] == "failed"
     assert result["data"]["job"] is data
+
+
+@pytest.mark.parametrize("operation", ["list_packages", "search_packages"])
+def test_fresh_package_query_completion_retains_identity_and_original_payload(operation):
+    data = {
+        "job_id": "job",
+        "operation": operation,
+        "status": "succeeded",
+        "count": 1,
+        "packages": [{"name": "com.fixture", "version": "1.0.0"}],
+    }
+    result = wait_module.project_observation("package", "job", {"success": True, "data": data})
+    assert result["success"] is True
+    assert result["data"]["terminal"] is True
+    assert result["data"]["job"] is data
+
+
+@pytest.mark.parametrize("operation", ["list_packages", "search_packages"])
+@pytest.mark.parametrize("enveloped", [False, True])
+def test_failed_package_query_is_a_terminal_observation_with_original_error(operation, enveloped):
+    data = {"job_id": "job", "operation": operation, "status": "failed"}
+    native = {
+        "success": False,
+        "error": "Owned query could not reach the registry.",
+        "code": "owned_query_failure",
+        "data": data,
+    }
+    response = {"status": "success", "result": native} if enveloped else native
+    result = wait_module.project_observation("package", "job", response)
+    assert result["success"] is True
+    assert result["data"]["phase"] == "terminal"
+    assert result["data"]["terminal"] is True
+    assert result["data"]["job_status"] == "failed"
+    assert result["data"]["job"] == {
+        **data,
+        "error": native["error"],
+        "code": native["code"],
+    }
+    assert data == {"job_id": "job", "operation": operation, "status": "failed"}
+
+
+@pytest.mark.parametrize(
+    "kind,data",
+    [
+        ("package", None),
+        ("package", {"operation": "list_packages", "status": "failed"}),
+        ("package", {"job_id": "foreign", "operation": "list_packages", "status": "failed"}),
+        ("package", {"job_id": "job", "operation": "list_packages", "status": "unknown"}),
+        ("package", {"job_id": "job", "operation": "list_packages", "status": "succeeded"}),
+        ("package", {"job_id": "job", "operation": "invalid_action", "status": "failed"}),
+        ("package", {"job_id": "job", "operation": [], "status": "failed"}),
+        ("package", {"job_id": "job", "operation": {}, "status": "failed"}),
+        ("scenario", {"job_id": "job", "operation": "list_packages", "status": "failed"}),
+    ],
+)
+def test_query_observation_does_not_turn_unknown_or_invalid_requests_into_completion(kind, data):
+    response = {"success": False, "error": "Native request failed.", "data": data}
+    assert wait_module.project_observation(kind, "job", response) is response
+
+
+@pytest.mark.asyncio
+async def test_wait_stops_at_identified_failed_package_query_without_replaying(monkeypatch):
+    monkeypatch.setattr(wait_module, "capture_target", AsyncMock(return_value=object()))
+    fetch = AsyncMock(
+        return_value={
+            "success": False,
+            "error": "Owned list query failed.",
+            "data": {"job_id": "job", "operation": "list_packages", "status": "failed"},
+        }
+    )
+    monkeypatch.setattr(wait_module, "fetch_status", fetch)
+    result = await wait_module.wait_for_operation(AsyncMock(), "package", "job", 60)
+    assert result["success"] is True
+    assert result["data"]["terminal"] is True
+    assert result["data"]["job"]["error"] == "Owned list query failed."
+    fetch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_http_target_uses_canonical_project_hash_and_rejects_foreign_identity(monkeypatch):
+    monkeypatch.setattr(wait_module.config, "transport_mode", "http")
+    monkeypatch.setattr(wait_module.config, "http_remote_hosted", False)
+    ctx = AsyncMock()
+    state = {"unity_session_id": "session", "operation_wait_generation": None}
+    ctx.get_state.side_effect = lambda key: state.get(key)
+    monkeypatch.setattr(
+        wait_module, "get_unity_instance_from_context", AsyncMock(return_value="Main@owned-hash")
+    )
+    monkeypatch.setattr(
+        wait_module.PluginHub,
+        "_read_identity",
+        AsyncMock(return_value=SimpleNamespace(generation="one", user_id=None)),
+    )
+    registry = SimpleNamespace(
+        get_session=AsyncMock(return_value=SimpleNamespace(project_hash="owned-hash"))
+    )
+    monkeypatch.setattr(wait_module.PluginHub, "_registry", registry)
+    target = await wait_module.capture_target(ctx)
+    assert target == wait_module.ObservationTarget("Main@owned-hash", "session", "one", None)
+    registry.get_session.return_value = SimpleNamespace(project_hash="foreign-hash")
+    assert await wait_module.capture_target(ctx) is None
+    registry.get_session.return_value = SimpleNamespace(project_hash="owned-hash")
+    state["operation_wait_generation"] = "old"
+    assert await wait_module.capture_target(ctx) is None
+
+
+def test_generation_change_guides_fresh_observation_without_replaying_mutation():
+    original = {
+        "success": False,
+        "error": "connection changed",
+        "data": {"reason": "observation_generation_changed", "native_job_unchanged": True},
+    }
+    result = wait_module.project_observation("package", "job", original)
+    assert result["success"] is False
+    assert result["data"] is original["data"]
+    assert "same job_id" in result["hint"]
+    assert "do not restart or replay" in result["hint"]

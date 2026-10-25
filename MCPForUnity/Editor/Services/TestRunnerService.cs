@@ -80,7 +80,7 @@ namespace MCPForUnity.Editor.Services
             var completion = owner._runCompletionSource;
             owner._runCompletionSource = null;
             owner._leafResults.Clear();
-            TestRunnerNoThrottle.RestoreThrottling();
+            TestRunnerNoThrottle.RestoreAfterRun();
             if (PlayModeOptionsGuard.IsPending)
                 PlayModeOptionsGuard.Restore();
             completion?.TrySetException(new InvalidOperationException(message));
@@ -308,7 +308,7 @@ namespace MCPForUnity.Editor.Services
                 }
                 if (appliedNoThrottling)
                 {
-                    TestRunnerNoThrottle.RestoreThrottling();
+                    TestRunnerNoThrottle.RestoreAfterRun();
                 }
                 // Ensure the status is cleared if we failed to start the run.
                 TestRunStatus.MarkFinished();

@@ -17,6 +17,11 @@ namespace MCPForUnity.Editor.Tools
     public static class RefreshUnity
     {
         private const int DefaultWaitTimeoutSeconds = 300;
+        internal static Action<ImportAssetOptions> RefreshAssets = AssetDatabase.Refresh;
+        internal static Action RequestCompilation = CompilationPipeline.RequestScriptCompilation;
+        internal static Func<bool> IsCompiling = EditorStateCache.GetActualIsCompiling;
+        internal static CompilationLedger LedgerOverride;
+        private static CompilationLedger Ledger => LedgerOverride ?? CompilationJobTracker.Ledger;
 
         private static string ReadOption(JObject parameters, string name, string defaultValue, params string[] allowedValues)
         {
@@ -75,16 +80,31 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("tests_running", new { reason = "tests_running", retry_after_ms = 5000 });
             }
 
+            if (compileId != null && IsCompiling())
+                return new ErrorResponse(
+                    "compilation_in_progress",
+                    new
+                    {
+                        reason = "preexisting_compile",
+                        retryable = true,
+                        refresh_triggered = false,
+                        compile_requested = false,
+                        compilation = Ledger.Query(compileId),
+                        current_compilation = Ledger.Summary(),
+                        hint = "Wait for the current compilation to finish, then explicitly refresh again to import pending source changes. No refresh or compilation was queued by this request.",
+                    }
+                );
+
             bool refreshTriggered = false;
             bool compileRequested = false;
             int compileCountBefore = EditorStateCache.CompileCount;
 
-            if (compileId != null && !CompilationJobTracker.Ledger.Begin(compileId))
+            if (compileId != null && !Ledger.Begin(compileId))
                 return new SuccessResponse(
                     "Compilation request already tracked or tracking capacity reached; no work repeated.",
                     new
                     {
-                        compilation = CompilationJobTracker.Ledger.Query(compileId),
+                        compilation = Ledger.Query(compileId),
                         refresh_triggered = false,
                         compile_requested = false,
                     }
@@ -105,16 +125,16 @@ namespace MCPForUnity.Editor.Tools
                     }
                     else
                     {
-                        AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+                        RefreshAssets(ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
                         refreshTriggered = true;
                     }
                 }
 
                 if (string.Equals(compile, "request", StringComparison.OrdinalIgnoreCase))
                 {
-                    CompilationJobTracker.Ledger.ExplicitRequest(compileId);
-                    CompilationPipeline.RequestScriptCompilation();
-                    CompilationJobTracker.Ledger.Dispatched(compileId);
+                    Ledger.ExplicitRequest(compileId);
+                    RequestCompilation();
+                    Ledger.Dispatched(compileId);
                     compileRequested = true;
                 }
 
@@ -123,18 +143,15 @@ namespace MCPForUnity.Editor.Tools
                     // If the caller asked for "all" and we skipped refresh above (e.g., scripts-only path),
                     // do a lightweight refresh now. Use ForceSynchronousImport to ensure the refresh
                     // completes before returning, preventing stalls when Unity is backgrounded.
-                    AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                    RefreshAssets(ImportAssetOptions.ForceSynchronousImport);
                     refreshTriggered = true;
                 }
             }
             catch (Exception ex)
             {
                 if (compileId != null)
-                    CompilationJobTracker.Ledger.Reject(compileId);
-                return new ErrorResponse(
-                    $"refresh_failed: {ex.Message}",
-                    new { compilation = compileId == null ? null : CompilationJobTracker.Ledger.Query(compileId) }
-                );
+                    Ledger.Reject(compileId);
+                return new ErrorResponse($"refresh_failed: {ex.Message}", new { compilation = compileId == null ? null : Ledger.Query(compileId) });
             }
 
             // RequestScriptCompilation only queues; the pipeline starts on a later
@@ -185,7 +202,7 @@ namespace MCPForUnity.Editor.Tools
                         "refresh_timeout_waiting_for_ready",
                         new
                         {
-                            compilation = compileId == null ? null : CompilationJobTracker.Ledger.Query(compileId),
+                            compilation = compileId == null ? null : Ledger.Query(compileId),
                             refresh_triggered = refreshTriggered,
                             compile_requested = compileRequested,
                             compile_started = compileStarted,
@@ -205,7 +222,7 @@ namespace MCPForUnity.Editor.Tools
                 "Refresh requested.",
                 new
                 {
-                    compilation = compileId == null ? null : CompilationJobTracker.Ledger.Query(compileId),
+                    compilation = compileId == null ? null : Ledger.Query(compileId),
                     refresh_triggered = refreshTriggered,
                     compile_requested = compileRequested,
                     compile_started = compileStarted,

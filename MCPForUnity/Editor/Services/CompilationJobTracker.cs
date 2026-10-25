@@ -310,9 +310,17 @@ namespace MCPForUnity.Editor.Services
             }
             if (run == null || run.Finished == null || request.Phase != "closed" || request.ExplicitGeneration != run.Generation)
                 return result;
-            if (!run.Complete || run.Assemblies == 0)
+            if (!run.Complete)
             {
                 result["reason"] = "incomplete_events";
+                return result;
+            }
+            if (run.Assemblies == 0)
+            {
+                // Incremental requests may finish a complete cycle without compiling an assembly.
+                // This observes the cycle, not a new compiler verdict or source revision proof.
+                result["attribution"] = "observed_after_request";
+                result["reason"] = "no_assembly_compilation";
                 return result;
             }
             result["outcome"] = run.Errors > 0 ? "failed" : "success";

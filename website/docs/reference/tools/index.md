@@ -85,7 +85,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`script_change_set`](./core/script_change_set.md)** — Prepare, apply, inspect or recover 1–256 existing C# source replacements as one bounded change set.
 - **[`set_active_instance`](./core/set_active_instance.md)** — Set the active Unity instance for this client/session.
 - **[`validate_script`](./core/validate_script.md)** — Validate a C# script and report diagnostics, the effective validation engine, and context limitations.
-- **[`wait_for_operation`](./core/wait_for_operation.md)** — Observe an existing build, package mutation/resolve, or single scenario job.
+- **[`wait_for_operation`](./core/wait_for_operation.md)** — Observe an existing build, package query/mutation/resolve, or single scenario job.
 
 ## `docs` &nbsp; (2 tools)
 Unity API reflection and documentation lookup
