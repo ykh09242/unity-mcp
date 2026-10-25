@@ -227,17 +227,34 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 Transform node = pending.Pop();
                 if (++count > 10000 || pending.Count + node.childCount > 10000)
                     throw new ArgumentException("Safe prefab sources are limited to 10000 objects.");
-                if (
-                    PrefabUtility.IsPartOfPrefabInstance(node.gameObject)
-                    || node.gameObject.GetComponents<Component>()
-                        .Any(component => component == null || !SceneEditValues.Types.Values.Contains(component.GetType()))
-                )
-                    throw new ArgumentException(
-                        "Safe prefab sources exclude nested instances, custom components and unsupported native components/RequireComponent dependencies."
-                    );
+                if (PrefabUtility.IsPartOfPrefabInstance(node.gameObject))
+                    throw SourceRestriction(root, node, node.GetType().FullName, "nested prefab instance; safe source plans do not unpack nested instances");
+                var components = node.gameObject.GetComponents<Component>();
+                for (int index = 0; index < components.Length; index++)
+                {
+                    var component = components[index];
+                    if (component == null)
+                        throw SourceRestriction(root, node, "<missing script>", "missing component script at component index " + index);
+                    if (!SceneEditValues.Types.Values.Contains(component.GetType()))
+                        throw SourceRestriction(
+                            root,
+                            node,
+                            component.GetType().FullName,
+                            "unsupported component type at component index "
+                                + index
+                                + "; only the safe native allowlist is accepted, including RequireComponent dependencies"
+                        );
+                }
                 for (int i = node.childCount - 1; i >= 0; i--)
                     pending.Push(node.GetChild(i));
             }
+        }
+
+        private static ArgumentException SourceRestriction(GameObject root, Transform node, string componentType, string reason)
+        {
+            string relative = AnimationUtility.CalculateTransformPath(node, root.transform);
+            string path = root.name + (relative.Length == 0 ? "" : "/" + relative);
+            return new ArgumentException("Safe prefab source rejected component '" + componentType + "' at hierarchy path '" + path + "': " + reason + ".");
         }
 
         private static string SourceHash(string path)
