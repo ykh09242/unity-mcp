@@ -11,6 +11,14 @@ Play mode transitions request a sweep through the same bounded path. An individu
 lookup removes a dead handle immediately. Assembly reload, Editor exit and
 disposal clear owned state and callbacks.
 
+## Latest arithmetic and traversal follow-up
+
+Two additional candidates were measured against the current indexed beta cache:
+reciprocal bucket arithmetic and scalar-only traversal reads. Neither established
+a repeatable benefit without regressions at large scale, so production is retained.
+The [follow-up report](benchmarks/object-id-cache-followup-20261025.md) includes
+the independent repeat, all raw rows, rejected patches and measurement limits.
+
 ## Empty-idle capacity experiment
 
 The indexed implementation at `5bdd0516` remains the production policy. A
@@ -177,7 +185,7 @@ MCPForUnityTests.Editor.Tools.ObjectIdCacheCostTests.BenchmarkPairedMaintenanceC
 Four cases use 32,768 or 131,072 temporary hidden ScriptableObjects, with alternating
 or clustered destruction. Each case warms both strategies, then takes seven
 alternating-order paired samples for all-live, half-dead and all-dead states.
-`ObjectIdCacheBenchmarkBaseline` freezes the bounded beta algorithm at `996daf65`;
+`ObjectIdCacheBenchmarkBaseline` freezes the indexed beta algorithm at `356e2462`;
 the candidate is the actual production class. Both use the same real native IDs
 and handle keys. Every sample checks exact live counts and the 128-call budget.
 Eight additional cycles add/destroy/remove 4,096 objects against retained live

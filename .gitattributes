@@ -34,3 +34,6 @@
 # become part of every -define: symbol and reference name.
 tools/compile-defines.txt text eol=lf
 tools/compile-refs/*.txt text eol=lf
+
+# Benchmark patches must match LF C# sources, including on Windows checkouts.
+/docs/benchmarks/*.patch text eol=lf

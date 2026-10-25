@@ -1,0 +1,13 @@
+experiment,size,clustered,byte_delta,events
+reciprocal,32768,False,0,32
+reciprocal,131072,False,0,32
+reciprocal,32768,True,0,32
+reciprocal,131072,True,0,32
+scalar-first,32768,False,0,32
+scalar-first,131072,False,0,32
+scalar-first,32768,True,0,32
+scalar-first,131072,True,0,32
+scalar-repeat,32768,False,0,32
+scalar-repeat,131072,False,0,32
+scalar-repeat,32768,True,0,32
+scalar-repeat,131072,True,0,32

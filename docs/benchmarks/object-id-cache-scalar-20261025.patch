@@ -1,0 +1,20 @@
+diff --git a/MCPForUnity/Runtime/Helpers/UnityObjectIdCompat.cs b/MCPForUnity/Runtime/Helpers/UnityObjectIdCompat.cs
+--- a/MCPForUnity/Runtime/Helpers/UnityObjectIdCompat.cs
++++ b/MCPForUnity/Runtime/Helpers/UnityObjectIdCompat.cs
+@@ -293,12 +293,13 @@
+                 for (int inspected = 0; inspected < LookupsPerUpdate && remaining > 0; inspected++)
+                 {
+                     int slot = cursor;
+-                    Entry entry = entries[slot];
+-                    cursor = entry.Next;
++                    int handle = entries[slot].Handle;
++                    uint upper = entries[slot].Upper;
++                    cursor = entries[slot].Next;
+                     remaining--;
+                     // Never keep an array/ref across the native callback: it can grow
+                     // or replace storage. Reacquire the current field each iteration.
+-                    if (resolve(((ulong)entry.Upper << 32) | unchecked((uint)entry.Handle)) == null)
++                    if (resolve(((ulong)upper << 32) | unchecked((uint)handle)) == null)
+                     {
+                         if (version != mutationVersion)
+                             break;
