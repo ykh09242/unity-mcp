@@ -104,9 +104,60 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
+        private sealed class FontAdmissionException : NotSupportedException
+        {
+            internal readonly string Role;
+            internal readonly string Reason;
+            internal readonly string FontName;
+            internal readonly uint Unicode;
+            internal readonly uint? GlyphIndex;
+            internal readonly string Remediation;
+
+            internal FontAdmissionException(string role, string reason, uint unicode, UnityEngine.Object font, uint? glyphIndex = null)
+                : base("compound_font_glyph_unavailable")
+            {
+                Role = role;
+                Reason = reason;
+                Unicode = unicode;
+                GlyphIndex = glyphIndex;
+                FontName = font != null ? font.name : null;
+                Remediation =
+                    role == "caret_sentinel" || role == "zero_width_space"
+                        ? "Use a TMP font with U+200B already in its character lookup, or choose a static font."
+                    : reason == "ligature_glyph_may_populate_atlas"
+                        ? "Use a TMP font with its ligature output glyphs already cached, or disable liga in TMP settings."
+                    : reason == "variation_glyph_may_populate_atlas" ? "Use a static font for this variation sequence, or remove the variation selector."
+                    : "Populate this glyph in the TMP font before creation, or choose a default font with this glyph already cached.";
+            }
+        }
+
         internal static object Run(JObject input)
         {
-            Plan plan = Prepare(input); // All intrinsic admission and identity snapshots precede Undo/allocation.
+            Plan plan;
+            try
+            {
+                plan = Prepare(input); // All intrinsic admission and identity snapshots precede Undo/allocation.
+            }
+            catch (FontAdmissionException error)
+            {
+                var data = new JObject
+                {
+                    ["reason"] = error.Reason,
+                    ["role"] = error.Role,
+                    ["font_asset"] = error.FontName,
+                    ["remediation"] = error.Remediation,
+                };
+                if (error.GlyphIndex.HasValue)
+                    data["glyph_index"] = error.GlyphIndex.Value;
+                else
+                    data["unicode"] = "U+" + error.Unicode.ToString("X4");
+                return new JObject
+                {
+                    ["success"] = false,
+                    ["message"] = error.Message,
+                    ["data"] = data,
+                };
+            }
             var tx = new Transaction(plan);
             int group = -1;
             JObject success = null;
@@ -351,6 +402,10 @@ namespace MCPForUnity.Editor.Tools
             if (kind == "tmp_input")
             {
                 string text = Text(values["text"], "", 1024);
+                // TMP_InputField.SetText removes NUL before it updates the rendered label.
+                // Reject it before allocation so admission checks the text that will render.
+                if (text.IndexOf('\0') >= 0)
+                    throw new ArgumentException("compound_input_null_character");
                 JToken limit = values["characterLimit"];
                 if (limit != null && (limit.Type != JTokenType.Integer || limit.Value<long>() < 0 || limit.Value<long>() > 1024))
                     throw new ArgumentException("invalid_compound_character_limit");
@@ -468,7 +523,7 @@ namespace MCPForUnity.Editor.Tools
                 if (kind == "tmp_input")
                     NeedMember(p, text, "color", typeof(Color));
                 p.Font = ManageUGUI.DefaultFont();
-                CheckFontGraph(p.Font, font);
+                CheckFontCoverage(p, font);
             }
             p.Before = Snapshot();
             if (p.EventSystem == "create_legacy_if_missing")
@@ -529,66 +584,333 @@ namespace MCPForUnity.Editor.Tools
             return result;
         }
 
-        private static void CheckFontGraph(UnityEngine.Object root, Type fontType)
+        private static bool Hex(char value) => (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f') || (value >= 'A' && value <= 'F');
+
+        private static uint HexValue(char value) => (uint)(value <= '9' ? value - '0' : (value & ~0x20) - 'A' + 10);
+
+        private static bool DecodeHex(string value, int start, int count, out uint unicode)
         {
-            Type settings = Resolve("TMPro.TMP_Settings");
-            var fallback = settings.GetProperty("fallbackFontAssets", BindingFlags.Public | BindingFlags.Static);
-            if (root == null || !fontType.IsInstanceOfType(root) || fallback == null)
-                throw new NotSupportedException("compound_static_font_unavailable");
-            var pending = new Queue<UnityEngine.Object>();
-            pending.Enqueue(root);
-            int edges = 0;
-            Action<object> add = value =>
+            unicode = 0;
+            if (start + count > value.Length)
+                return false;
+            for (int i = start; i < start + count; i++)
             {
-                if (value == null)
-                    return;
-                if (++edges > 64 || !(value is UnityEngine.Object asset) || !fontType.IsInstanceOfType(asset))
-                    throw new NotSupportedException("compound_font_graph_limit");
-                pending.Enqueue(asset);
-            };
-            object globalValue = fallback.GetValue(null);
-            var globals = globalValue as IEnumerable;
-            if (globalValue != null && (!(globalValue is ICollection collection) || collection.Count > 64 || globals == null))
-                throw new NotSupportedException("compound_font_fallback_unavailable");
-            if (globals != null)
-                foreach (var item in globals)
-                    add(item);
-            var visited = new List<UnityEngine.Object>();
-            while (pending.Count > 0)
+                if (!Hex(value[i]))
+                    return false;
+                unicode = (unicode << 4) | HexValue(value[i]);
+            }
+            return true;
+        }
+
+        private static IEnumerable<uint> RenderedCodePoints(string value, bool parseControls)
+        {
+            for (int i = 0; i < value.Length; i++)
             {
-                var asset = pending.Dequeue();
-                if (visited.Any(item => ReferenceEquals(item, asset)))
-                    continue;
-                if (visited.Count >= 16)
-                    throw new NotSupportedException("compound_font_graph_limit");
-                visited.Add(asset);
-                var population = Member(fontType, "atlasPopulationMode", null, false);
-                if (population.GetValue(asset)?.ToString() != "Static")
-                    throw new NotSupportedException("compound_requires_static_fonts");
-                foreach (string member in new[] { "fallbackFontAssetTable", "fontWeightTable" })
+                uint unicode = value[i];
+                if (unicode == 0)
+                    yield break;
+                // TMP_Text.PopulateTextProcessingArray decodes Unicode escapes even when
+                // parseCtrlCharacters and richText are disabled. Match that lookup stream.
+                if (value[i] == '\\' && i + 1 < value.Length)
                 {
-                    object value = Member(fontType, member, null, false).GetValue(asset);
-                    if (value == null)
-                        continue;
-                    if (!(value is IEnumerable values) || !(value is ICollection slots) || slots.Count > (member == "fontWeightTable" ? 10 : 64))
-                        throw new NotSupportedException("compound_font_graph_unavailable");
-                    foreach (object item in values)
+                    char escape = value[i + 1];
+                    if (escape == 'u' && DecodeHex(value, i + 2, 4, out uint decoded16))
                     {
-                        if (member == "fallbackFontAssetTable")
-                            add(item);
-                        else if (item != null)
+                        i += 5;
+                        yield return decoded16;
+                        continue;
+                    }
+                    if (escape == 'U' && DecodeHex(value, i + 2, 8, out uint decoded32))
+                    {
+                        i += 9;
+                        yield return decoded32;
+                        continue;
+                    }
+                    if (parseControls)
+                    {
+                        if (escape == '\\')
                         {
-                            foreach (string field in new[] { "regularTypeface", "italicTypeface" })
-                            {
-                                FieldInfo slot = item.GetType().GetField(field, PublicInstance);
-                                if (slot == null)
-                                    throw new NotSupportedException("compound_font_weight_unavailable");
-                                add(slot.GetValue(item));
-                            }
+                            i++;
+                            yield return '\\';
+                            continue;
+                        }
+                        if (escape == 'n' || escape == 'r' || escape == 't' || escape == 'v')
+                        {
+                            i++;
+                            yield return escape == 'n' ? 10u
+                            : escape == 'r' ? 13u
+                            : escape == 't' ? 9u
+                            : 11u;
+                            continue;
                         }
                     }
                 }
+                if (char.IsHighSurrogate(value[i]) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+                {
+                    unicode = (uint)char.ConvertToUtf32(value[i], value[i + 1]);
+                    i++;
+                }
+                yield return unicode;
             }
+        }
+
+        private static bool IsVariationSelector(uint unicode) => (unicode >= 0xFE00 && unicode <= 0xFE0F) || (unicode >= 0xE0100 && unicode <= 0xE01EF);
+
+        private static bool HasVariationBase(uint unicode) => unicode >= 32 && unicode != 127 && unicode != 0x200B && !IsVariationSelector(unicode);
+
+        private static IEnumerable<uint> CodePoints(string value, bool parseControls)
+        {
+            uint previous = 0;
+            foreach (uint unicode in RenderedCodePoints(value, parseControls))
+            {
+                // TMP_InputField's caret sentinel is checked separately against TMP's
+                // synthesized runtime lookup. A selector after a base is handled below.
+                if (unicode != 0x200B && !(IsVariationSelector(unicode) && HasVariationBase(previous)))
+                    yield return unicode;
+                previous = unicode;
+            }
+        }
+
+        private static IEnumerable<KeyValuePair<uint, uint>> VariationPairs(string value, bool parseControls)
+        {
+            uint previous = 0;
+            foreach (uint unicode in RenderedCodePoints(value, parseControls))
+            {
+                if (IsVariationSelector(unicode) && HasVariationBase(previous))
+                    yield return new KeyValuePair<uint, uint>(previous, unicode);
+                previous = unicode;
+            }
+        }
+
+        private static bool HasCachedGlyph(
+            UnityEngine.Object asset,
+            Type fontType,
+            uint unicode,
+            HashSet<uint> needed,
+            Dictionary<UnityEngine.Object, HashSet<uint>> cached
+        )
+        {
+            if (!cached.TryGetValue(asset, out HashSet<uint> present))
+            {
+                present = new HashSet<uint>();
+                object table = Member(fontType, "characterTable", null, false).GetValue(asset);
+                if (table != null && !(table is IEnumerable))
+                    throw new NotSupportedException("compound_font_character_table_unavailable");
+                if (table is IEnumerable characters)
+                {
+                    PropertyInfo code = null;
+                    foreach (object character in characters)
+                    {
+                        if (character == null)
+                            continue;
+                        if (code == null)
+                            code = character.GetType().GetProperty("unicode", PublicInstance);
+                        if (code == null || code.PropertyType != typeof(uint))
+                            throw new NotSupportedException("compound_font_character_table_unavailable");
+                        uint value = (uint)code.GetValue(character);
+                        if (needed.Contains(value))
+                            present.Add(value);
+                    }
+                }
+                cached.Add(asset, present);
+            }
+            if (!present.Contains(unicode))
+            {
+                // Read TMP's existing lookup without initializing it. It includes synthetic
+                // whitespace/control characters that do not occupy atlas pixels.
+                FieldInfo lookup = fontType.GetField("m_CharacterLookupDictionary", BindingFlags.Instance | BindingFlags.NonPublic);
+                if (lookup == null)
+                    throw new NotSupportedException("compound_font_lookup_unavailable");
+                if (lookup.GetValue(asset) is IDictionary values && values.Contains(unicode))
+                {
+                    object character = values[unicode];
+                    PropertyInfo textAsset = character?.GetType().GetProperty("textAsset", PublicInstance);
+                    if (textAsset != null && ReferenceEquals(textAsset.GetValue(character), asset))
+                        present.Add(unicode);
+                }
+            }
+            return present.Contains(unicode);
+        }
+
+        private static uint PublicUInt(object value, string name)
+        {
+            Type type = value.GetType();
+            object result = type.GetProperty(name, PublicInstance)?.GetValue(value) ?? type.GetField(name, PublicInstance)?.GetValue(value);
+            if (result is uint index)
+                return index;
+            throw new NotSupportedException("compound_font_feature_unavailable:" + name);
+        }
+
+        private static void CheckLigatureOutputs(UnityEngine.Object asset, Type fontType, string role)
+        {
+            object features = Member(fontType, "fontFeatureTable", null, false).GetValue(asset);
+            if (features == null)
+                throw new NotSupportedException("compound_font_feature_unavailable");
+            object source = Member(features.GetType(), "ligatureRecords", null, false).GetValue(features);
+            if (!(source is IEnumerable records))
+                throw new NotSupportedException("compound_font_feature_unavailable");
+            var needed = new HashSet<uint>();
+            foreach (object record in records)
+                if (record != null)
+                {
+                    uint index = PublicUInt(record, "ligatureGlyphID");
+                    if (index != 0)
+                        needed.Add(index);
+                }
+            if (needed.Count == 0)
+                return;
+            object table = Member(fontType, "glyphTable", null, false).GetValue(asset);
+            if (!(table is IEnumerable glyphs))
+                throw new NotSupportedException("compound_font_glyph_table_unavailable");
+            foreach (object glyph in glyphs)
+                if (glyph != null)
+                    needed.Remove(PublicUInt(glyph, "index"));
+            if (needed.Count > 0)
+                throw new FontAdmissionException(role, "ligature_glyph_may_populate_atlas", 0, asset, needed.First());
+        }
+
+        private static UnityEngine.Object CachedInChain(
+            UnityEngine.Object asset,
+            Type fontType,
+            uint unicode,
+            string role,
+            HashSet<UnityEngine.Object> visited,
+            ref int edges,
+            bool includeFallbacks,
+            HashSet<uint> needed,
+            Dictionary<UnityEngine.Object, HashSet<uint>> cached
+        )
+        {
+            if (asset == null || !visited.Add(asset))
+                return null;
+            if (++edges > 64 || visited.Count > 16 || !fontType.IsInstanceOfType(asset))
+                throw new NotSupportedException("compound_font_graph_limit");
+            if (HasCachedGlyph(asset, fontType, unicode, needed, cached))
+                return asset;
+            // TMP can try to populate a dynamic ancestor before consulting its fallbacks.
+            // A later cached fallback therefore cannot make this route safe.
+            if (Member(fontType, "atlasPopulationMode", null, false).GetValue(asset)?.ToString() != "Static")
+                throw new FontAdmissionException(role, "dynamic_font_missing_glyph", unicode, asset);
+            if (!includeFallbacks)
+                return null;
+            object value = Member(fontType, "fallbackFontAssetTable", null, false).GetValue(asset);
+            if (value == null)
+                return null;
+            if (!(value is IEnumerable fallbacks) || !(value is ICollection slots) || slots.Count > 64)
+                throw new NotSupportedException("compound_font_graph_unavailable");
+            foreach (object item in fallbacks)
+            {
+                if (item != null && !(item is UnityEngine.Object))
+                    throw new NotSupportedException("compound_font_graph_limit");
+                UnityEngine.Object found = CachedInChain(item as UnityEngine.Object, fontType, unicode, role, visited, ref edges, true, needed, cached);
+                if (found != null)
+                    return found;
+            }
+            return null;
+        }
+
+        private static void CheckFontCoverage(Plan plan, Type fontType)
+        {
+            Type settings = Resolve("TMPro.TMP_Settings");
+            PropertyInfo global = settings.GetProperty("fallbackFontAssets", BindingFlags.Public | BindingFlags.Static);
+            if (plan.Font == null || !fontType.IsInstanceOfType(plan.Font) || global == null)
+                throw new NotSupportedException("compound_font_unavailable");
+            var roles = plan.Kind == "toggle" ? new[] { "label" } : new[] { "text", "placeholder" };
+            var needed = new HashSet<uint> { 0x2026, 0x5F };
+            PropertyInfo escapeSetting = settings.GetProperty("enableParseEscapeCharacters", BindingFlags.Public | BindingFlags.Static);
+            if (escapeSetting == null || escapeSetting.PropertyType != typeof(bool))
+                throw new NotSupportedException("compound_font_escape_setting_unavailable");
+            bool parseControls = (bool)escapeSetting.GetValue(null);
+            PropertyInfo featureSetting = settings.GetProperty("fontFeatures", BindingFlags.Public | BindingFlags.Static);
+            if (featureSetting == null || !(featureSetting.GetValue(null) is IEnumerable features))
+                throw new NotSupportedException("compound_font_feature_unavailable");
+            bool ligaturesEnabled = features.Cast<object>().Any(feature => feature?.ToString() == "liga");
+            bool needsZeroWidthSpace =
+                plan.Kind == "tmp_input" || roles.Any(role => RenderedCodePoints(plan.Values.Value<string>(role), parseControls).Contains(0x200Bu));
+            if (needsZeroWidthSpace)
+                needed.Add(0x200B);
+            foreach (string role in roles)
+                needed.UnionWith(CodePoints(plan.Values.Value<string>(role), parseControls));
+            var cached = new Dictionary<UnityEngine.Object, HashSet<uint>>();
+            // TMP_Text.LoadFontAsset always probes ellipsis through local/global fallbacks,
+            // then underline in the primary font only. An absent static-only special glyph
+            // is safe: TMP leaves that optional feature unresolved.
+            CheckFontRoute(plan.Font, fontType, global, 0x2026, "ellipsis", false, true, needed, cached);
+            var underlineVisited = new HashSet<UnityEngine.Object>();
+            int underlineEdges = 0;
+            CachedInChain(plan.Font, fontType, 0x5F, "underline", underlineVisited, ref underlineEdges, false, needed, cached);
+            // A static primary font synthesizes U+200B during font definition loading.
+            // A dynamic primary must already have the serialized or synthetic character.
+            if (needsZeroWidthSpace && Member(fontType, "atlasPopulationMode", null, false).GetValue(plan.Font)?.ToString() != "Static")
+                CheckFontRoute(
+                    plan.Font,
+                    fontType,
+                    global,
+                    0x200B,
+                    plan.Kind == "tmp_input" ? "caret_sentinel" : "zero_width_space",
+                    false,
+                    true,
+                    needed,
+                    cached
+                );
+            var checkedLigatures = new HashSet<UnityEngine.Object>();
+            foreach (string role in roles)
+            {
+                uint[] rendered = CodePoints(plan.Values.Value<string>(role), parseControls).ToArray();
+                foreach (uint unicode in rendered.Distinct())
+                {
+                    UnityEngine.Object selected = CheckFontRoute(plan.Font, fontType, global, unicode, role, true, true, needed, cached);
+                    if (
+                        ligaturesEnabled
+                        && rendered.Length > 1
+                        && checkedLigatures.Add(selected)
+                        && Member(fontType, "atlasPopulationMode", null, false).GetValue(selected)?.ToString() != "Static"
+                    )
+                        CheckLigatureOutputs(selected, fontType, role);
+                }
+                foreach (var pair in VariationPairs(plan.Values.Value<string>(role), parseControls).Distinct())
+                {
+                    UnityEngine.Object selected = CheckFontRoute(plan.Font, fontType, global, pair.Key, role, true, true, needed, cached);
+                    if (Member(fontType, "atlasPopulationMode", null, false).GetValue(selected)?.ToString() != "Static")
+                        throw new FontAdmissionException(role, "variation_glyph_may_populate_atlas", pair.Value, selected);
+                }
+            }
+        }
+
+        private static UnityEngine.Object CheckFontRoute(
+            UnityEngine.Object root,
+            Type fontType,
+            PropertyInfo global,
+            uint unicode,
+            string role,
+            bool required,
+            bool includeFallbacks,
+            HashSet<uint> needed,
+            Dictionary<UnityEngine.Object, HashSet<uint>> cached
+        )
+        {
+            var visited = new HashSet<UnityEngine.Object>();
+            int edges = 0;
+            UnityEngine.Object found = CachedInChain(root, fontType, unicode, role, visited, ref edges, includeFallbacks, needed, cached);
+            if (found != null)
+                return found;
+            object value = global.GetValue(null);
+            if (value != null && (!(value is IEnumerable) || !(value is ICollection slots) || slots.Count > 64))
+                throw new NotSupportedException("compound_font_fallback_unavailable");
+            if (value is IEnumerable fallbacks)
+            {
+                foreach (object item in fallbacks)
+                {
+                    if (item != null && !(item is UnityEngine.Object))
+                        throw new NotSupportedException("compound_font_graph_limit");
+                    found = CachedInChain(item as UnityEngine.Object, fontType, unicode, role, visited, ref edges, true, needed, cached);
+                    if (found != null)
+                        return found;
+                }
+            }
+            if (required)
+                throw new FontAdmissionException(role, "missing_glyph", unicode, root);
+            return null;
         }
 
         private static void RequireEnum(Plan plan, Type type, string member, string value)
