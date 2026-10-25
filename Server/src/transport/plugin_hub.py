@@ -3260,11 +3260,20 @@ class PluginHub(WebSocketEndpoint):
         # the Unity Editor is unfocused). For fast-path commands, we do a bounded readiness probe using
         # a main-thread ping command (handled by TransportCommandDispatcher) rather than waiting on
         # register_tools (which can be delayed by EditorApplication.delayCall).
+        # A strict empty-param state RPC itself runs on that same main thread and
+        # supplies the readiness advice. Keep its fresh, identity-pinned RPC while
+        # avoiding a second main-thread roundtrip before every readiness poll.
+        authoritative_state = (
+            command_type == "get_editor_state"
+            and editor_state_read_mode == "authoritative"
+            and not params
+        )
         if (
             retry_on_reload
             and probe_allowed
             and command_type in cls._FAST_FAIL_COMMANDS
             and command_type != "ping"
+            and not authoritative_state
         ):
             max_wait_s = _read_bounded_wait_env(
                 "UNITY_MCP_SESSION_READY_WAIT_SECONDS", default_s=6.0, max_s=MAX_COMMAND_TIMEOUT
