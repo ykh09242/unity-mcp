@@ -37,3 +37,5 @@ tools/compile-refs/*.txt text eol=lf
 
 # Benchmark patches must match LF C# sources, including on Windows checkouts.
 /docs/benchmarks/*.patch text eol=lf
+# Unified-diff blank context lines contain a required leading space.
+/docs/benchmarks/test-wait-journal-projection.patch whitespace=-blank-at-eol

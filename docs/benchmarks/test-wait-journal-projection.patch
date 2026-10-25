@@ -1,0 +1,63 @@
+diff --git a/Server/src/services/test_wait_journal.py b/Server/src/services/test_wait_journal.py
+index b4e03f33..4db68481 100644
+--- a/Server/src/services/test_wait_journal.py
++++ b/Server/src/services/test_wait_journal.py
+@@ -30,6 +30,7 @@ from models.response_limits import (
+     MAX_RESPONSE_BYTES,
+     MAX_RESPONSE_DEPTH,
+     MAX_RESPONSE_NODES,
++    ResponseCopyPlan,
+     bounded_json_text,
+     response_size,
+ )
+@@ -331,7 +332,7 @@ class WaitJournal:
+         except (ValueError, RecursionError) as error:
+             raise JournalUnavailable("Invalid journal record") from error
+ 
+-    def _validate(self, record: WaitRecord) -> None:
++    def _validate(self, record: WaitRecord, *, copy_plan: ResponseCopyPlan | None = None) -> dict:
+         metadata = record.model_dump(exclude_none=True, exclude={"result", "error"})
+         # The added result key/separator also belongs to metadata, not to the
+         # ordinary result ceiling. A valid ceiling-sized payload still fits.
+@@ -346,18 +347,38 @@ class WaitJournal:
+         ):
+             raise JournalUnavailable("Wait metadata exceeds supported bounds")
+         payload = record.result if record.result is not None else record.error
+-        if payload is not None and response_size(payload, max_bytes=self.result_bytes) is None:
++        if (
++            payload is not None
++            and response_size(payload, max_bytes=self.result_bytes, copy_plan=copy_plan) is None
++        ):
+             raise JournalUnavailable("Ordinary result exceeds supported response ceiling")
++        return metadata
+ 
+     def _write(self, record: WaitRecord, *, active: bool) -> None:
+-        self._validate(record)
++        copy_plan = ResponseCopyPlan()
++        metadata = self._validate(record, copy_plan=copy_plan)
+         stage = self.root / f"{record.task_id}.stage"
+         final = self.root / f"{record.task_id}.json"
+         encoder = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+         count = 0
+         try:
+             with self._create_private(stage) as stream:
+-                for chunk in encoder.iterencode(record.model_dump(exclude_none=True)):
++                if (
++                    type(record) is WaitRecord
++                    and (record.result is None or record.error is None)
++                    and (copy_plan.shareable or (record.result is None and record.error is None))
++                ):
++                    # Admission already proved an owned exact-builtin JSON graph.
++                    # Keep its values and order without a second recursive copy.
++                    document = metadata
++                    if record.result is not None:
++                        document["result"] = record.result
++                    if record.error is not None:
++                        document["error"] = record.error
++                else:
++                    # Models, tuples and subclasses keep Pydantic's projection.
++                    document = record.model_dump(exclude_none=True)
++                for chunk in encoder.iterencode(document):
+                     encoded = chunk.encode()
+                     count += len(encoded)
+                     if count > self._record_bytes:
