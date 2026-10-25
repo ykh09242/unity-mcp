@@ -32,6 +32,7 @@ namespace MCPForUnity.Editor.Services
         }
 
         private static Job _job;
+        private static IDisposable _playRequest;
         internal static Func<double> _clockOverride = null;
         internal static Func<bool> _readinessOverride = null;
 
@@ -100,7 +101,8 @@ namespace MCPForUnity.Editor.Services
             }
             Persist();
             // Return the job ID before requesting the transition that may destroy this domain.
-            EditorApplication.delayCall += RequestPlay;
+            _playRequest?.Dispose();
+            _playRequest = EditorMainThreadWakeup.Schedule(RequestPlay);
             return new SuccessResponse("Play mode readiness job started; poll get_play_mode_job.", Snapshot());
         }
 
@@ -120,6 +122,8 @@ namespace MCPForUnity.Editor.Services
         {
             if (_job == null || (_job.status != "running" && _job.status != "timed_out"))
                 return;
+            _playRequest?.Dispose();
+            _playRequest = null;
             _job.status = "cancelled";
             _job.error = reason;
             Persist();

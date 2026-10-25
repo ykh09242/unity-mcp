@@ -145,6 +145,7 @@ namespace MCPForUnity.Editor.Services.Transport
             _mainThreadId = Thread.CurrentThread.ManagedThreadId;
 
             EnsureInitialised();
+            EditorMainThreadWakeup.Pump += ProcessQueue;
 
             // Always keep the update hook installed so commands arriving from background
             // websocket tasks don't depend on a background-thread event subscription.
@@ -274,6 +275,12 @@ namespace MCPForUnity.Editor.Services.Transport
 
             void Invoke()
             {
+                lock (PendingLock)
+                {
+                    if (queuedCallback?.List != null)
+                        MainThreadCallbacks.Remove(queuedCallback);
+                    queuedCallback = null;
+                }
                 try
                 {
                     // Claim once so cancellation and a late editor callback cannot retain or rerun work.
@@ -296,20 +303,6 @@ namespace MCPForUnity.Editor.Services.Transport
                 }
             }
 
-            // Best-effort nudge: if we're posting from a background thread (e.g., websocket receive),
-            // encourage Unity to run a loop iteration so the posted callback can execute even when unfocused.
-            try
-            {
-                EditorApplication.QueuePlayerLoopUpdate();
-            }
-            catch { }
-
-            if (_mainThreadContext != null && Thread.CurrentThread.ManagedThreadId != _mainThreadId)
-            {
-                _mainThreadContext.Post(_ => Invoke(), null);
-                return tcs.Task;
-            }
-
             if (Thread.CurrentThread.ManagedThreadId != _mainThreadId)
             {
                 lock (PendingLock)
@@ -317,8 +310,12 @@ namespace MCPForUnity.Editor.Services.Transport
                     if (!tcs.Task.IsCompleted)
                         queuedCallback = MainThreadCallbacks.AddLast(Invoke);
                 }
+                // Both routes claim the same callback once. Native ticks do not depend on
+                // UnitySynchronizationContext being drained by an Inspector/player update.
+                _mainThreadContext?.Post(_ => Invoke(), null);
                 if (tcs.Task.IsCompleted)
                     registration.Dispose();
+                EditorMainThreadWakeup.Request();
                 return tcs.Task;
             }
             Invoke();
@@ -345,11 +342,14 @@ namespace MCPForUnity.Editor.Services.Transport
             if (_mainThreadContext != null && Thread.CurrentThread.ManagedThreadId != _mainThreadId)
             {
                 _mainThreadContext.Post(_ => Pump(), null);
+                EditorMainThreadWakeup.Request();
                 return;
             }
 
             if (Thread.CurrentThread.ManagedThreadId == _mainThreadId)
                 Pump();
+            else
+                EditorMainThreadWakeup.Request();
         }
 
         private static void EnsureInitialised()
@@ -431,6 +431,9 @@ namespace MCPForUnity.Editor.Services.Transport
             finally
             {
                 Interlocked.Exchange(ref _processingFlag, 0);
+                lock (PendingLock)
+                    if (ReadyCommands.Count > 0 || MainThreadCallbacks.Count > 0)
+                        EditorMainThreadWakeup.Request();
             }
         }
 

@@ -18,6 +18,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static PlayScenarioLogBuffer _logs;
         private static Application.LogCallback _logCallback;
         private static bool _attached;
+        private static IDisposable _playRequest;
         private static bool _finalized;
         private static bool _suppressCapture;
         private static int _processedUnexpectedLogCount;
@@ -56,7 +57,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                         _engine.Interrupt("Assembly reload interrupted scenario execution; effects were not replayed.", Now);
                     Synchronize(true);
                     if (_engine.Running && !state.PlayRequested)
-                        EditorApplication.delayCall += RequestPlay;
+                        _playRequest = EditorMainThreadWakeup.Schedule(RequestPlay);
                 }
             }
             catch (Exception exception)
@@ -145,7 +146,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             Synchronize(true);
             // Return the job before a possible domain reload. No transport retry is needed.
             if (!EditorApplication.isPlaying)
-                EditorApplication.delayCall += RequestPlay;
+                _playRequest = EditorMainThreadWakeup.Schedule(RequestPlay);
             return new SuccessResponse("Scenario job started.", Snapshot(state));
         }
 
@@ -384,7 +385,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             _logCallback = null;
             _logs?.Close();
             EditorApplication.update -= Tick;
-            EditorApplication.delayCall -= RequestPlay;
+            _playRequest?.Dispose();
+            _playRequest = null;
             EditorApplication.playModeStateChanged -= PlayModeChanged;
             AssemblyReloadEvents.beforeAssemblyReload -= BeforeReload;
             EditorApplication.quitting -= Quit;

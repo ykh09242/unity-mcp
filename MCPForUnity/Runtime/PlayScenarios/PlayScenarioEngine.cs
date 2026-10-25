@@ -154,7 +154,11 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
             else if (now >= State.DeadlineUnixMs)
             {
-                RequestOutcome("timed_out", "Run exceeded its wall-clock timeout.", now, Failure("run_timeout", "Run exceeded its wall-clock timeout."));
+                bool starting = State.Phase == "starting";
+                string error = starting
+                    ? "Play Mode startup exceeded the run wall-clock timeout before any scenario step executed."
+                    : "Run exceeded its wall-clock timeout.";
+                RequestOutcome("timed_out", error, now, Failure(starting ? "play_start_timeout" : "run_timeout", error));
                 return;
             }
             if (!Running || State.Phase == "starting")
