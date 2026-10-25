@@ -156,6 +156,20 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void CapabilitiesDescribeRenderedFramesWithoutRequiringOrChangingFocus()
+        {
+            var focused = UnityEditor.EditorWindow.focusedWindow;
+            var response = JObject.FromObject(ManageRecording.HandleCommand(new JObject { ["action"] = "capabilities" }));
+            Assert.That(response.Value<bool>("success"), Is.True, response.ToString());
+            var capabilities = response["data"];
+            Assert.That(capabilities.Value<bool>("game_view_requires_play_mode"), Is.True);
+            Assert.That(capabilities.Value<bool>("game_view_requires_visible_focused_view"), Is.False);
+            Assert.That(capabilities.Value<bool>("game_view_requires_rendered_frames"), Is.True);
+            Assert.That(capabilities.Value<double>("frame_timeout_seconds"), Is.EqualTo(5));
+            Assert.That(UnityEditor.EditorWindow.focusedWindow, Is.SameAs(focused));
+        }
+
+        [Test]
         public void EmptyCaptureFailsAndDeletesPartialOutput()
         {
             var encoder = Start();

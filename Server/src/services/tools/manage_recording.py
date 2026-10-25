@@ -20,7 +20,9 @@ MAX_PIXEL_FRAMES: Final = 20_000_000_000_000
     description=(
         "Start, poll or stop a bounded silent MP4 recording of Unity Game View or Scene View. "
         "start returns job_id immediately; poll status explicitly or stop to finalize. Game View requires "
-        "running unpaused Play Mode and a visible focused Game View; Scene View must stay visible. "
+        "running unpaused Play Mode and rendered end-of-frame callbacks; Scene View must stay visible. "
+        "Focus is not checked or changed. Keep Game View rendering: switching views or hiding it may "
+        "suspend callbacks; five seconds without a rendered frame fails the job. "
         "Windows/macOS interactive Editors only, subject to native MediaEncoder codec availability; "
         "capabilities reports support. Frames carry actual capture timestamps (variable frame rate); "
         "status reports actual frames and skipped sample slots. Output paths are local to the Unity host, "

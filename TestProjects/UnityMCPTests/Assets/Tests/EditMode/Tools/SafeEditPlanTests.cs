@@ -522,8 +522,73 @@ namespace MCPForUnityTests.Editor.Tools
                 }
             );
             Assert.IsFalse(rejected.Value<bool>("success"));
+            string error = rejected.Value<string>("error");
+            StringAssert.Contains(nested ? "UnityEngine.Transform" : typeof(SafeEditRequiredComponent).FullName, error);
+            StringAssert.Contains(nested ? "Unsafe/Child" : "Unsafe", error);
+            StringAssert.Contains(nested ? "nested prefab instance" : "unsupported component type", error);
             Assert.AreEqual(before, AssetDatabase.GetAssetDependencyHash(path).ToString());
             Assert.AreEqual(Vector3.zero, AssetDatabase.LoadAssetAtPath<GameObject>(path).transform.localPosition);
+        }
+
+        [Test]
+        public void PrefabUnsupportedNativeComponent_ReportsExactChildWithoutSaving()
+        {
+            var child = new GameObject("UnsupportedChild");
+            child.transform.SetParent(root.transform, false);
+            child.AddComponent<Camera>();
+            string path = folder + "/Native.prefab";
+            PrefabUtility.SaveAsPrefabAsset(root, path);
+            Assert.IsNotNull(
+                AssetDatabase.LoadAssetAtPath<GameObject>(path).GetComponentInChildren<Camera>(),
+                "The excluded native component must be persisted in the source fixture."
+            );
+            byte[] before = System.IO.File.ReadAllBytes(path);
+            JObject rejected = Prefab(
+                new JObject
+                {
+                    ["action"] = "preview_modify_contents",
+                    ["prefabPath"] = path,
+                    ["position"] = new JArray(1, 2, 3),
+                }
+            );
+            Assert.IsFalse(rejected.Value<bool>("success"), rejected.ToString());
+            string error = rejected.Value<string>("error");
+            StringAssert.Contains(typeof(Camera).FullName, error);
+            StringAssert.Contains("Native/UnsupportedChild", error);
+            StringAssert.Contains("unsupported component type", error);
+            CollectionAssert.AreEqual(before, System.IO.File.ReadAllBytes(path));
+        }
+
+        [Test]
+        public void PrefabMissingScript_ReportsExactChildWithoutSaving()
+        {
+            var child = new GameObject("BrokenChild");
+            child.transform.SetParent(root.transform, false);
+            var component = child.AddComponent<SafeEditRequiredComponent>();
+            string scriptPath = AssetDatabase.GetAssetPath(MonoScript.FromMonoBehaviour(component));
+            string scriptGuid = AssetDatabase.AssetPathToGUID(scriptPath);
+            Assert.IsNotEmpty(scriptGuid);
+            string path = folder + "/Missing.prefab";
+            PrefabUtility.SaveAsPrefabAsset(root, path);
+            string serialized = System.IO.File.ReadAllText(path);
+            StringAssert.Contains("guid: " + scriptGuid, serialized);
+            System.IO.File.WriteAllText(path, serialized.Replace("guid: " + scriptGuid, "guid: " + Guid.NewGuid().ToString("N")));
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            byte[] before = System.IO.File.ReadAllBytes(path);
+            JObject rejected = Prefab(
+                new JObject
+                {
+                    ["action"] = "preview_modify_contents",
+                    ["prefabPath"] = path,
+                    ["position"] = new JArray(1, 2, 3),
+                }
+            );
+            Assert.IsFalse(rejected.Value<bool>("success"), rejected.ToString());
+            string error = rejected.Value<string>("error");
+            StringAssert.Contains("<missing script>", error);
+            StringAssert.Contains("Missing/BrokenChild", error);
+            StringAssert.Contains("missing component script at component index", error);
+            CollectionAssert.AreEqual(before, System.IO.File.ReadAllBytes(path));
         }
 
         [Test]

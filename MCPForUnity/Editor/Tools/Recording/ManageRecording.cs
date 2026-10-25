@@ -21,6 +21,7 @@ namespace MCPForUnity.Editor.Tools
     {
         private const string HistoryKey = "MCPForUnity.Recording.History";
         private const int HistoryLimit = 8;
+        private const double FrameTimeoutSeconds = 5;
         private static readonly List<JObject> History = new List<JObject>();
         private static RecordingJob _active;
         private static string _rememberedJobId;
@@ -89,7 +90,11 @@ namespace MCPForUnity.Editor.Tools
                 ["game_view_supported"] = OptionalUnityModules.ScreenCapture,
                 ["game_view_unavailable_reason"] = OptionalUnityModules.ScreenCapture ? null : OptionalUnityModules.ScreenCaptureUnavailableReason,
                 ["game_view_requires_play_mode"] = true,
-                ["game_view_requires_visible_focused_view"] = true,
+                ["game_view_requires_visible_focused_view"] = false,
+                ["game_view_requires_rendered_frames"] = true,
+                ["game_view_focus_policy"] =
+                    "Focus is not checked or changed. Game View capture waits for rendered end-of-frame callbacks; an inactive or hidden Game View may stop delivering frames.",
+                ["frame_timeout_seconds"] = FrameTimeoutSeconds,
                 ["scene_view_requires_visible_view"] = true,
                 ["audio_recorded"] = false,
                 ["max_duration_seconds"] = RecordingOptions.MaxDurationSeconds,
@@ -127,7 +132,9 @@ namespace MCPForUnity.Editor.Tools
             if (options.Source == "game_view" && !OptionalUnityModules.ScreenCapture)
                 return new ErrorResponse(OptionalUnityModules.ScreenCaptureUnavailableReason, capabilities);
             if (options.Source == "game_view" && (!EditorApplication.isPlaying || EditorApplication.isPaused))
-                return new ErrorResponse("Game View recording requires running, unpaused Play Mode and a visible, focused Game View.");
+                return new ErrorResponse(
+                    "Game View recording requires running, unpaused Play Mode and rendered end-of-frame callbacks; focus is not checked or changed."
+                );
             var sceneView = options.Source == "scene_view" ? SceneView.lastActiveSceneView : null;
             if (options.Source == "scene_view" && (sceneView == null || sceneView.camera == null))
                 return new ErrorResponse("Open a visible Scene View before starting scene_view recording.");
@@ -204,12 +211,12 @@ namespace MCPForUnity.Editor.Tools
             job.Tick(now);
             if (job.IsActive && job.Options.Source == "game_view" && (!EditorApplication.isPlaying || EditorApplication.isPaused))
                 job.Finish("interrupted", "play_mode_paused_or_stopped", now);
-            if (job.IsActive && now - _lastFrameAt > 5)
+            if (job.IsActive && now - _lastFrameAt > FrameTimeoutSeconds)
                 job.Finish(
                     "failed",
                     "frame_timeout",
                     now,
-                    "No rendered frame arrived for five seconds. Keep the capture view visible and Game View focused and unpaused."
+                    "No rendered frame arrived for five seconds. Keep the capture view rendering; for Game View, keep Play Mode unpaused and make Game View visible. Focus is not checked or changed; switching views can suspend end-of-frame callbacks."
                 );
             if (_sceneView != null && !_sceneCaptureQueued && job.IsDue(now))
                 _sceneView.Repaint();

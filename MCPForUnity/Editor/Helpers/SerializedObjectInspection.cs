@@ -631,7 +631,13 @@ namespace MCPForUnity.Editor.Helpers
             switch (type)
             {
                 case SerializedPropertyType.Integer:
-                    if (nativeType == "long" || nativeType == "SInt64")
+                    // Unity 2021.3 exposes unsigned fields through intValue/longValue.
+                    // Preserve their raw bits instead of sign-extending or converting through double.
+                    if (nativeType == "uint" || nativeType == "UInt32")
+                        value = budget.Read("value", path, () => unchecked((uint)property.intValue));
+                    else if (nativeType == "ulong" || nativeType == "UInt64")
+                        value = budget.Read("value", path, () => unchecked((ulong)property.longValue));
+                    else if (nativeType == "long" || nativeType == "SInt64")
                         value = budget.Read("value", path, () => property.longValue);
                     else if (SignedInteger(nativeType))
                         value = budget.Read("value", path, () => property.intValue);

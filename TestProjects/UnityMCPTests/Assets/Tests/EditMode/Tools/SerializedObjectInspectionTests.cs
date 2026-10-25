@@ -125,6 +125,35 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void UnsignedIntegerReadsPreserveFullRangesWithoutAdvertisingWrites()
+        {
+            string path = _root + "/Values.asset";
+            byte[] before = File.ReadAllBytes(path);
+            foreach (uint value in new[] { 0u, (uint)int.MaxValue, (uint)int.MaxValue + 1u, uint.MaxValue })
+            {
+                _asset.unsigned32 = value;
+                var record = Data(Request(_asset, "value", "unsigned32"))["records"][0];
+                Assert.AreEqual("available", record.Value<string>("value_status"), record.ToString());
+                Assert.AreEqual(JTokenType.Integer, record["value"].Type);
+                Assert.AreEqual(value, (uint)JToken.Parse(record["value"].ToString(Newtonsoft.Json.Formatting.None)));
+                Assert.AreEqual("not_advertised", record.SelectToken("write_contract.status").Value<string>());
+                Assert.IsEmpty(record.SelectToken("write_contract.input_shapes"));
+            }
+            foreach (ulong value in new[] { 0UL, (ulong)long.MaxValue, (ulong)long.MaxValue + 1UL, ulong.MaxValue })
+            {
+                _asset.unsigned64 = value;
+                var record = Data(Request(_asset, "value", "unsigned64"))["records"][0];
+                Assert.AreEqual("available", record.Value<string>("value_status"), record.ToString());
+                Assert.AreEqual(JTokenType.Integer, record["value"].Type);
+                Assert.AreEqual(value, (ulong)JToken.Parse(record["value"].ToString(Newtonsoft.Json.Formatting.None)));
+                Assert.AreEqual("not_advertised", record.SelectToken("write_contract.status").Value<string>());
+                Assert.IsEmpty(record.SelectToken("write_contract.input_shapes"));
+            }
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(path), "Inspection must not save changed fixture values.");
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
         public void ActualLargeArrayReturnsOnlyRequestedTailValues()
         {
             _asset.items = Enumerable.Range(0, 100000).ToArray();
