@@ -722,12 +722,70 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 }
                 if (depths.Length == 1)
                     precision *= channels;
-                totalWork = checked(totalWork + Pixels(width, height, Math.Max(4 * largestSample, precision)));
-                Require(totalWork <= limits.MaxImageBytes, "TIFF aggregate page work exceeds the per-image budget");
-                bool tiles = tags.ContainsKey(324);
+                long pixelBytes = Math.Max(4 * largestSample, precision);
+                long imageDepth = Values(32997, 1, 1)[0],
+                    planar = Values(284, 1, 1)[0];
+                Require(imageDepth > 0 && imageDepth <= limits.MaxSide && (planar == 1 || planar == 2), "invalid TIFF depth or planar configuration");
+                long canvasWork = checked(Pixels(width, height, pixelBytes) * imageDepth);
+                bool tiles = tags.ContainsKey(322) || tags.ContainsKey(323) || tags.ContainsKey(324) || tags.ContainsKey(325) || tags.ContainsKey(32998);
+                long workingWork,
+                    striles;
+                long DivideUp(long value, long unit) => value / unit + (value % unit == 0 ? 0 : 1);
+                long RoundUp(long value, long unit) => checked(DivideUp(value, unit) * unit);
+                long samplingX = 1,
+                    samplingY = 1;
+                if (Values(262, 0, 1)[0] == 6 && planar == 1)
+                {
+                    long[] sampling = tags.ContainsKey(530) ? Values(530, 0, 2) : new long[] { 2, 2 };
+                    Require(channels == 3 && sampling.Length == 2, "invalid TIFF YCbCr sampling metadata");
+                    samplingX = sampling[0];
+                    samplingY = sampling[1];
+                    Require(
+                        (samplingX == 1 || samplingX == 2 || samplingX == 4) && (samplingY == 1 || samplingY == 2 || samplingY == 4),
+                        "invalid TIFF YCbCr subsampling"
+                    );
+                }
+                if (tiles)
+                {
+                    Require(
+                        tags.ContainsKey(322)
+                            && tags.ContainsKey(323)
+                            && tags.ContainsKey(324)
+                            && tags.ContainsKey(325)
+                            && !tags.ContainsKey(273)
+                            && !tags.ContainsKey(279),
+                        "incomplete or mixed TIFF tile/strip layout"
+                    );
+                    long tileWidth = Values(322, 0, 1)[0],
+                        tileHeight = Values(323, 0, 1)[0],
+                        tileDepth = Values(32998, 1, 1)[0];
+                    Require(tileDepth > 0 && tileDepth <= limits.MaxSide, "invalid TIFF tile depth");
+                    // Native tile decoders allocate the full tile, including padding beyond the canvas.
+                    // Sum the padded grid once per pixel's channels; planar storage only multiplies the offset count.
+                    long tileWork = checked(Pixels(tileWidth, tileHeight, pixelBytes) * tileDepth);
+                    long grid = checked(DivideUp(width, tileWidth) * DivideUp(height, tileHeight) * DivideUp(imageDepth, tileDepth));
+                    workingWork = checked(tileWork * grid);
+                    if (samplingX > 1 || samplingY > 1)
+                        workingWork = checked(RoundUp(tileWidth, samplingX) * RoundUp(tileHeight, samplingY) * tileDepth * pixelBytes * 2 * grid);
+                    striles = checked(grid * (planar == 2 ? channels : 1));
+                }
+                else
+                {
+                    long rows = Values(278, uint.MaxValue, 1)[0];
+                    Require(rows > 0 && rows <= uint.MaxValue, "invalid TIFF RowsPerStrip");
+                    // TIFFStripSize clamps oversized RowsPerStrip (including UINT32_MAX) to ImageLength.
+                    rows = Math.Min(rows, height);
+                    long fullStrips = height / rows,
+                        remainder = height % rows;
+                    long paddedRows = checked(fullStrips * RoundUp(rows, samplingY) + RoundUp(remainder, samplingY));
+                    workingWork = checked(RoundUp(width, samplingX) * paddedRows * imageDepth * pixelBytes * 2);
+                    striles = checked(DivideUp(height, rows) * (planar == 2 ? channels : 1));
+                }
+                totalWork = checked(totalWork + Math.Max(canvasWork, workingWork));
+                Require(totalWork <= limits.MaxImageBytes, "TIFF aggregate page/tile work exceeds the per-image budget");
                 long[] offsets = Values(tiles ? 324 : 273, 0),
                     lengths = Values(tiles ? 325 : 279, 0);
-                Require(offsets.Length == lengths.Length, "TIFF strip/tile counts differ");
+                Require(offsets.Length == lengths.Length && offsets.Length == striles, "TIFF strip/tile counts do not match its geometry and planes");
                 for (int i = 0; i < offsets.Length; i++)
                 {
                     Require(lengths[i] > 0, "missing TIFF pixel data");

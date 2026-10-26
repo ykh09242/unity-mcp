@@ -420,6 +420,208 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.Throws<InvalidDataException>(() => Inspect(new ImageAdmission(new ImageAdmission.Limits { MaxImageBytes = 64 }), ktx, ".ktx2"));
         }
 
+        private static byte[] TiffGeometry(
+            bool wide = false,
+            uint tileWidth = 32,
+            uint tileHeight = 32,
+            uint imageDepth = 1,
+            uint tileDepth = 1,
+            int bits = 8,
+            int planar = 1,
+            bool tiled = true,
+            uint rows = uint.MaxValue,
+            bool mixed = false,
+            int payloadBytes = 4096
+        )
+        {
+            // Small real uncompressed tiles reproduce the native working-buffer geometry.
+            // Hostile dimension variants keep the payload bounded; they must fail on metadata.
+            var tags = new SortedDictionary<ushort, (ushort type, ulong[] values)>
+            {
+                [256] = (4, new[] { 1UL }),
+                [257] = (4, new[] { 1UL }),
+                [258] = (3, Enumerable.Repeat((ulong)bits, 4).ToArray()),
+                [259] = (3, new[] { 1UL }),
+                [262] = (3, new[] { 2UL }),
+                [277] = (3, new[] { 4UL }),
+                [284] = (3, new[] { (ulong)planar }),
+                [338] = (3, new[] { 2UL }),
+            };
+            int planes = planar == 2 ? 4 : 1;
+            if (tiled)
+            {
+                tags[322] = (4, new[] { (ulong)tileWidth });
+                tags[323] = (4, new[] { (ulong)tileHeight });
+                tags[324] = (4, new ulong[planes]);
+                tags[325] = (4, Enumerable.Repeat((ulong)payloadBytes, planes).ToArray());
+                if (tileDepth != 1)
+                    tags[32998] = (4, new[] { (ulong)tileDepth });
+            }
+            if (!tiled || mixed)
+            {
+                tags[273] = (4, new ulong[planes]);
+                tags[278] = (4, new[] { (ulong)rows });
+                tags[279] = (4, Enumerable.Repeat((ulong)payloadBytes, planes).ToArray());
+            }
+            if (imageDepth != 1)
+                tags[32997] = (4, new[] { (ulong)imageDepth });
+            int inline = wide ? 8 : 4;
+            int offset = (wide ? 16 + 8 + 8 : 8 + 2 + 4) + tags.Count * (wide ? 20 : 12);
+            var external = new Dictionary<ushort, int>();
+            foreach (var tag in tags)
+            {
+                int size = (tag.Value.type == 3 ? 2 : 4) * tag.Value.values.Length;
+                if (size > inline)
+                {
+                    external[tag.Key] = offset;
+                    offset += size;
+                }
+            }
+            foreach (ushort tag in new ushort[] { 273, 324 })
+                if (tags.TryGetValue(tag, out var value))
+                    for (int i = 0; i < planes; i++)
+                        value.values[i] = (ulong)(offset + i * payloadBytes);
+            return Build(w =>
+            {
+                w.Write((ushort)0x4949);
+                w.Write((ushort)(wide ? 43 : 42));
+                void Offset(ulong n)
+                {
+                    if (wide)
+                        w.Write(n);
+                    else
+                        w.Write((uint)n);
+                }
+                if (wide)
+                {
+                    w.Write((ushort)8);
+                    w.Write((ushort)0);
+                }
+                Offset(wide ? 16UL : 8UL);
+                if (wide)
+                    w.Write((ulong)tags.Count);
+                else
+                    w.Write((ushort)tags.Count);
+                void Values((ushort type, ulong[] values) tag)
+                {
+                    foreach (ulong n in tag.values)
+                        if (tag.type == 3)
+                            w.Write((ushort)n);
+                        else
+                            w.Write((uint)n);
+                }
+                foreach (var tag in tags)
+                {
+                    w.Write(tag.Key);
+                    w.Write(tag.Value.type);
+                    Offset((ulong)tag.Value.values.Length);
+                    if (external.TryGetValue(tag.Key, out int position))
+                        Offset((ulong)position);
+                    else
+                    {
+                        long start = w.BaseStream.Position;
+                        Values(tag.Value);
+                        w.Write(new byte[inline - (int)(w.BaseStream.Position - start)]);
+                    }
+                }
+                Offset(0);
+                foreach (var tag in tags)
+                    if (external.ContainsKey(tag.Key))
+                        Values(tag.Value);
+                w.Write(new byte[payloadBytes * planes]);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void TiffWorkingTileBudgetIncludesPaddedPixelsBeyondCanvas(bool wide)
+        {
+            byte[] image = TiffGeometry(wide);
+            if (!wide)
+                Assert.AreEqual(4262, image.Length, "Exact reviewed 1x1 RGBA8 / 32x32 tile reproduction.");
+            Assert.Throws<InvalidDataException>(() => Inspect(new ImageAdmission(new ImageAdmission.Limits { MaxImageBytes = 1024 }), image, ".tif"));
+            var admission = new ImageAdmission(new ImageAdmission.Limits { MaxImageBytes = 8192 });
+            Inspect(admission, image, ".tif");
+            Assert.AreEqual(8192, admission.WorkBytes);
+            Assert.Throws<InvalidDataException>(() => Inspect(new ImageAdmission(new ImageAdmission.Limits { MaxImageBytes = 8191 }), image, ".tif"));
+        }
+
+        [Test]
+        public void TiffWorkingGeometryAccountsPrecisionPlanesAndDepth()
+        {
+            void AtBoundary(byte[] bytes, long expected)
+            {
+                var admission = new ImageAdmission(new ImageAdmission.Limits { MaxImageBytes = expected });
+                Inspect(admission, bytes, ".tif");
+                Assert.AreEqual(expected, admission.WorkBytes);
+                Assert.Throws<InvalidDataException>(() =>
+                    Inspect(new ImageAdmission(new ImageAdmission.Limits { MaxImageBytes = expected - 1 }), bytes, ".tif")
+                );
+            }
+            AtBoundary(TiffGeometry(bits: 16, payloadBytes: 8192), 16384);
+            AtBoundary(TiffGeometry(planar: 2, payloadBytes: 1024), 8192);
+            AtBoundary(TiffGeometry(tileDepth: 2, payloadBytes: 8192), 16384);
+            AtBoundary(TiffGeometry(tiled: false, imageDepth: 128, payloadBytes: 512), 1024);
+            AtBoundary(TiffGeometry(tiled: false, payloadBytes: 4), 8);
+        }
+
+        [Test]
+        public void TiffWorkingGeometryRejectsInvalidOrAmbiguousDeclarations()
+        {
+            foreach (
+                byte[] bytes in new[]
+                {
+                    TiffGeometry(tileWidth: 0),
+                    TiffGeometry(tileHeight: uint.MaxValue),
+                    TiffGeometry(imageDepth: uint.MaxValue),
+                    TiffGeometry(tileDepth: uint.MaxValue),
+                    TiffGeometry(planar: 3),
+                    TiffGeometry(tiled: false, rows: 0),
+                    TiffGeometry(mixed: true),
+                }
+            )
+                Assert.Throws<InvalidDataException>(() => Inspect(new ImageAdmission(), bytes, ".tif"));
+        }
+
+        [TestCase("model.bin")]
+        [TestCase("./model.bin")]
+        [TestCase("././model.bin")]
+        [TestCase(".//model.bin")]
+        [TestCase("%2E/model.bin")]
+        public void ArchiveEmbeddedImageBufferAcceptsContainedDotSegments(string uri)
+        {
+            byte[] image = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==");
+            string json =
+                "{\"asset\":{\"version\":\"2.0\"},\"buffers\":[{\"uri\":\""
+                + uri
+                + "\",\"byteLength\":"
+                + image.Length
+                + "}],\"bufferViews\":[{\"buffer\":0,\"byteLength\":"
+                + image.Length
+                + "}],\"images\":[{\"bufferView\":0,\"mimeType\":\"image/png\"}]}";
+            using var bytes = new MemoryStream();
+            using (var zip = new ZipArchive(bytes, ZipArchiveMode.Create, true))
+            {
+                using (var writer = new StreamWriter(zip.CreateEntry("scene.gltf").Open()))
+                    writer.Write(json);
+                using var output = zip.CreateEntry("model.bin").Open();
+                output.Write(image, 0, image.Length);
+            }
+            bytes.Position = 0;
+            using var archive = new ZipArchive(bytes, ZipArchiveMode.Read);
+            Assert.DoesNotThrow(() => ArchiveAssetAdmission.Validate(archive, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".gltf", ".bin" }));
+        }
+
+        [TestCase("../model.bin")]
+        [TestCase("%2E%2E/model.bin")]
+        [TestCase("/model.bin")]
+        [TestCase("%2Fmodel.bin")]
+        [TestCase("https://example.invalid/model.bin")]
+        public void ModelResourcePathsRejectTraversalAndRootedForms(string uri)
+        {
+            Assert.Throws<InvalidDataException>(() => ModelMetadataAdmission.LocalUri(uri));
+        }
+
         [Test]
         public void LocalCopySharesReservationsCancelsRollsBackAndPreservesSource()
         {

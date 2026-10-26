@@ -150,9 +150,16 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             if (string.IsNullOrWhiteSpace(uri) || uri.IndexOf(':') >= 0 || uri.IndexOf('\\') >= 0 || uri.StartsWith("/", StringComparison.Ordinal))
                 throw new InvalidDataException("Model resources must be contained local paths or bounded data URIs.");
             string decoded = Uri.UnescapeDataString(uri);
-            if (decoded.IndexOf(':') >= 0 || decoded.IndexOf('\\') >= 0 || decoded.IndexOf('%') >= 0 || Array.IndexOf(decoded.Split('/'), "..") >= 0)
+            if (
+                decoded.StartsWith("/", StringComparison.Ordinal)
+                || decoded.IndexOfAny(new[] { ':', '\\', '%', '?', '#' }) >= 0
+                || Array.IndexOf(decoded.Split('/'), "..") >= 0
+            )
                 throw new InvalidDataException("Model resource path contains unsafe URI syntax.");
-            return decoded;
+            string normalized = string.Join("/", Array.FindAll(decoded.Split('/'), segment => segment.Length != 0 && segment != "."));
+            if (string.IsNullOrWhiteSpace(normalized))
+                throw new InvalidDataException("Model resource path does not name a file.");
+            return normalized;
         }
 
         private static string Extension(string mime) =>
