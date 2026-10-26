@@ -111,21 +111,60 @@ namespace MCPForUnityTests.Editor.Tools
                 observedProjection = rendering.projectionMatrix;
             }
             Camera.onPreRender += Observe;
+            bool allocationCounterAvailable = false;
+            string allocationCounterUnavailableReason = null;
+            long? ReadAllocationCounter()
+            {
+                if (!allocationCounterAvailable)
+                    return null;
+                try
+                {
+                    return GC.GetAllocatedBytesForCurrentThread();
+                }
+                catch (Exception error) when (error is NotSupportedException || error is NotImplementedException)
+                {
+                    allocationCounterAvailable = false;
+                    allocationCounterUnavailableReason = error.GetType().Name;
+                    return null;
+                }
+            }
+            long? AllocationDelta(long? before, long? after)
+            {
+                if (!before.HasValue || !after.HasValue)
+                    return null;
+                if (after.Value >= before.Value)
+                    return after.Value - before.Value;
+                allocationCounterAvailable = false;
+                allocationCounterUnavailableReason = "Counter was not monotonic on the measurement thread.";
+                return null;
+            }
             try
             {
-                var timer = System.Diagnostics.Stopwatch.StartNew();
-                long before = GC.GetAllocatedBytesForCurrentThread();
+                try
+                {
+                    long calibration = GC.GetAllocatedBytesForCurrentThread();
+                    GC.KeepAlive(new byte[4096]);
+                    allocationCounterAvailable = GC.GetAllocatedBytesForCurrentThread() >= calibration + 4096;
+                    if (!allocationCounterAvailable)
+                        allocationCounterUnavailableReason = "Counter did not observe the calibration allocation.";
+                }
+                catch (Exception error) when (error is NotSupportedException || error is NotImplementedException)
+                {
+                    allocationCounterUnavailableReason = error.GetType().Name;
+                }
+                long? before = ReadAllocationCounter();
+                long started = System.Diagnostics.Stopwatch.GetTimestamp();
                 expected = ScreenshotUtility.RenderCameraToTexture(camera, maxResolution);
-                long baselineBytes = GC.GetAllocatedBytesForCurrentThread() - before;
-                double baselineMs = timer.Elapsed.TotalMilliseconds;
+                double baselineMs = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                long? baselineBytes = AllocationDelta(before, ReadAllocationCounter());
                 Assert.AreEqual(width, observedWidth);
                 Assert.AreEqual(height, observedHeight);
                 var budget = new ScreenshotUtility.CaptureBatchBudget();
-                timer.Restart();
-                before = GC.GetAllocatedBytesForCurrentThread();
+                before = ReadAllocationCounter();
+                started = System.Diagnostics.Stopwatch.GetTimestamp();
                 actual = ScreenshotUtility.RenderOwnedCameraTileToTexture(camera, maxResolution, budget);
-                long batchBytes = GC.GetAllocatedBytesForCurrentThread() - before;
-                double batchMs = timer.Elapsed.TotalMilliseconds;
+                double batchMs = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                long? batchBytes = AllocationDelta(before, ReadAllocationCounter());
                 Assert.AreEqual(actual.width, observedWidth);
                 Assert.AreEqual(actual.height, observedHeight);
                 Assert.AreEqual((long)actual.width * actual.height, budget.RenderedPixels);
@@ -180,6 +219,8 @@ namespace MCPForUnityTests.Editor.Tools
                     ["batch_ms"] = batchMs,
                     ["baseline_managed_bytes"] = baselineBytes,
                     ["batch_managed_bytes"] = batchBytes,
+                    ["allocation_counter_available"] = allocationCounterAvailable,
+                    ["allocation_counter_unavailable_reason"] = allocationCounterUnavailableReason,
                     ["max_color_delta"] = maxDelta,
                     ["graphics_type"] = SystemInfo.graphicsDeviceType.ToString(),
                     ["baseline_png"] = baselinePath,
@@ -189,6 +230,133 @@ namespace MCPForUnityTests.Editor.Tools
                 // Retained solely as native QA evidence; the runner may remove this exact nonce directory after review.
                 File.WriteAllText(Path.Combine(evidence, "measurement.json"), measurement.ToString());
                 TestContext.WriteLine("CAPTURE_BUDGET_MEASUREMENT " + measurement.ToString(Newtonsoft.Json.Formatting.None));
+                if (width >= 2048)
+                {
+                    const int warmupsPerHelper = 2;
+                    const int pairCount = 8;
+                    var seriesBudget = new ScreenshotUtility.CaptureBatchBudget();
+                    var samples = new JArray();
+                    var texturesBefore = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceIDCompat()).ToArray();
+                    Color32 referenceColor = actual.GetPixel(actual.width / 2, actual.height / 2);
+                    JObject CaptureSample(bool ownedBatch, int pair, int position, bool record)
+                    {
+                        Texture2D captured = null;
+                        double milliseconds = 0;
+                        long? allocatedBytes = null;
+                        int renderWidth = 0,
+                            renderHeight = 0,
+                            outputWidth = 0,
+                            outputHeight = 0;
+                        try
+                        {
+                            long? allocatedBefore = ReadAllocationCounter();
+                            long start = System.Diagnostics.Stopwatch.GetTimestamp();
+                            captured = ownedBatch
+                                ? ScreenshotUtility.RenderOwnedCameraTileToTexture(camera, maxResolution, seriesBudget)
+                                : ScreenshotUtility.RenderCameraToTexture(camera, maxResolution);
+                            milliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - start) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                            allocatedBytes = AllocationDelta(allocatedBefore, ReadAllocationCounter());
+                            renderWidth = observedWidth;
+                            renderHeight = observedHeight;
+                            outputWidth = captured.width;
+                            outputHeight = captured.height;
+                            Assert.AreEqual(ownedBatch ? actual.width : width, renderWidth);
+                            Assert.AreEqual(ownedBatch ? actual.height : height, renderHeight);
+                            Assert.AreEqual(actual.width, outputWidth);
+                            Assert.AreEqual(actual.height, outputHeight);
+                            Assert.AreEqual(projection, observedProjection);
+                            Assert.AreEqual(projection, camera.projectionMatrix);
+                            Assert.AreEqual(1.7f, camera.aspect);
+                            Assert.AreEqual(47f, camera.fieldOfView);
+                            Assert.AreSame(originalTarget, camera.targetTexture);
+                            Assert.AreSame(priorActive, RenderTexture.active);
+                            Color32 pixel = captured.GetPixel(outputWidth / 2, outputHeight / 2);
+                            Assert.AreEqual(referenceColor.r, pixel.r, 2);
+                            Assert.AreEqual(referenceColor.g, pixel.g, 2);
+                            Assert.AreEqual(referenceColor.b, pixel.b, 2);
+                            Assert.AreEqual(referenceColor.a, pixel.a, 2);
+                        }
+                        finally
+                        {
+                            if (captured != null)
+                                Object.DestroyImmediate(captured);
+                        }
+                        Assert.IsTrue(captured == null, "Each timed CPU readback texture must be released before the next capture.");
+                        if (!record)
+                            return null;
+                        return new JObject
+                        {
+                            ["pair"] = pair,
+                            ["position"] = position,
+                            ["mode"] = ownedBatch ? "batch" : "baseline",
+                            ["elapsed_ms"] = milliseconds,
+                            ["managed_bytes"] = allocatedBytes,
+                            ["allocation_counter_available"] = allocatedBytes.HasValue,
+                            ["render_width"] = renderWidth,
+                            ["render_height"] = renderHeight,
+                            ["render_pixels"] = (long)renderWidth * renderHeight,
+                            ["output_width"] = outputWidth,
+                            ["output_height"] = outputHeight,
+                            ["targets_restored"] = true,
+                            ["readback_texture_destroyed"] = true,
+                        };
+                    }
+                    // Warm both paths and alternate the first helper. Exclude these captures from samples and medians.
+                    for (int warmup = 0; warmup < warmupsPerHelper; warmup++)
+                    for (int position = 0; position < 2; position++)
+                        CaptureSample((warmup + position) % 2 != 0, -1, position, false);
+                    for (int pair = 0; pair < pairCount; pair++)
+                    for (int position = 0; position < 2; position++)
+                        samples.Add(CaptureSample((pair + position) % 2 != 0, pair, position, true));
+                    double Median(string mode, string field)
+                    {
+                        double[] values = samples
+                            .Where(sample => sample.Value<string>("mode") == mode)
+                            .Select(sample => sample.Value<double>(field))
+                            .OrderBy(value => value)
+                            .ToArray();
+                        return (values[values.Length / 2 - 1] + values[values.Length / 2]) / 2;
+                    }
+                    CollectionAssert.AreEquivalent(
+                        texturesBefore,
+                        UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceIDCompat()).ToArray()
+                    );
+                    Assert.AreEqual(warmupsPerHelper + pairCount, seriesBudget.Shots);
+                    Assert.AreEqual((long)actual.width * actual.height * (warmupsPerHelper + pairCount), seriesBudget.RenderedPixels);
+                    bool allAllocationSamplesAvailable = samples.All(sample => sample.Value<bool>("allocation_counter_available"));
+                    var pairedMeasurement = new JObject
+                    {
+                        ["schema_version"] = 1,
+                        ["source_width"] = width,
+                        ["source_height"] = height,
+                        ["output_width"] = actual.width,
+                        ["output_height"] = actual.height,
+                        ["graphics_type"] = SystemInfo.graphicsDeviceType.ToString(),
+                        ["warmup_captures_per_helper"] = warmupsPerHelper,
+                        ["warmups_excluded"] = true,
+                        ["pair_count"] = pairCount,
+                        ["baseline_first_pairs"] = pairCount / 2,
+                        ["batch_first_pairs"] = pairCount / 2,
+                        ["timed_scope"] = "One synchronous product helper; excludes counter reads, pixel assertions, destruction, PNG encoding and JSON.",
+                        ["baseline_median_ms"] = Median("baseline", "elapsed_ms"),
+                        ["batch_median_ms"] = Median("batch", "elapsed_ms"),
+                        ["allocation_counter"] = "GC.GetAllocatedBytesForCurrentThread",
+                        ["allocation_counter_calibration_bytes"] = 4096,
+                        ["allocation_counter_available"] = allAllocationSamplesAvailable,
+                        ["allocation_counter_unavailable_reason"] = allocationCounterUnavailableReason,
+                        ["baseline_median_managed_bytes"] = allAllocationSamplesAvailable
+                            ? new JValue(Median("baseline", "managed_bytes"))
+                            : JValue.CreateNull(),
+                        ["batch_median_managed_bytes"] = allAllocationSamplesAvailable ? new JValue(Median("batch", "managed_bytes")) : JValue.CreateNull(),
+                        ["texture_inventory_restored"] = true,
+                        ["samples"] = samples,
+                        ["baseline_png"] = baselinePath,
+                        ["batch_png"] = batchPath,
+                        ["batch_sha256"] = measurement["batch_sha256"].DeepClone(),
+                    };
+                    File.WriteAllText(Path.Combine(evidence, "paired-measurement.json"), pairedMeasurement.ToString());
+                    TestContext.WriteLine("CAPTURE_BUDGET_PAIRED_MEASUREMENT " + pairedMeasurement.ToString(Newtonsoft.Json.Formatting.None));
+                }
             }
             finally
             {
