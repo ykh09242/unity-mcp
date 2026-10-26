@@ -1373,6 +1373,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             dest[7] = (byte)(value);
         }
 
+        private static bool UsesNativeArbitration(QueuedCommand queued) =>
+            queued.Session != null && queued.Session.Capabilities.Contains(NativeCommandArbitrator.Capability);
+
         private static void ProcessCommands()
         {
             if (!isRunning)
@@ -1416,19 +1419,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         return;
                     }
 
-                    foreach (var kvp in commandQueue)
-                    {
-                        // A timeout cancels the response, not a legacy handler's
-                        // execution. Keep later mutations behind actual settlement,
-                        // including requests from a replacement connection.
-                        if (kvp.Value.IsExecuting)
-                            return;
-                    }
-
+                    bool hasExecuting = commandQueue.Values.Any(command => command.IsExecuting);
                     foreach (var kvp in commandQueue)
                     {
                         var queued = kvp.Value;
                         if (queued.IsExecuting)
+                            continue;
+                        // Old peers retain FIFO through actual settlement. Negotiated peers
+                        // reach native admission promptly: conflicts receive a no-start receipt,
+                        // and audited control can observe/cancel an owner on another connection.
+                        if (hasExecuting && !UsesNativeArbitration(queued))
                             continue;
                         queued.IsExecuting = true;
                         work = kvp;
@@ -1514,6 +1514,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 try
                 {
                     var command = TransportJson.DeserializeCommand(payload);
+                    if (queuedCommand.Session == null || !queuedCommand.Session.Capabilities.Contains(NativeCommandArbitrator.Capability))
+                        command.arbitration = null;
                     operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(
                         command,
                         cts.Token,

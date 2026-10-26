@@ -24,7 +24,7 @@ namespace MCPForUnity.Editor.Services.Transport
             _capacity = capacity;
         }
 
-        public string TryStart(string id, Func<Task, Task> work, Action cancel = null)
+        public string TryStart(string id, Func<Task, Task> work, Action cancel = null, bool bypassPredecessor = false)
         {
             var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             Task predecessor;
@@ -39,8 +39,9 @@ namespace MCPForUnity.Editor.Services.Transport
                 _tasks.Add(id, completion.Task);
                 if (cancel != null)
                     _cancellations.Add(id, cancel);
-                predecessor = _tail;
-                _tail = completion.Task;
+                predecessor = bypassPredecessor ? Task.CompletedTask : _tail;
+                if (!bypassPredecessor)
+                    _tail = completion.Task;
             }
 
             // Submit synchronously up to the first await: dispatcher insertion order is receive order.

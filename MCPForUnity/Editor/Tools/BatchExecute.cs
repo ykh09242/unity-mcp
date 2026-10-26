@@ -300,6 +300,7 @@ namespace MCPForUnity.Editor.Tools
         public static async Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken, ICommandProgress progress)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var parentLease = NativeCommandArbitrator.TakeBatchLease();
             object rejected = ReadEnvelope(@params, false, out var commandsToken, out bool failFast, out bool parallelRequested, out int? maxParallel);
             if (rejected != null)
                 return rejected;
@@ -319,6 +320,7 @@ namespace MCPForUnity.Editor.Tools
 
             var outcomes = NewOutcomes(commandsToken, "not_run", "fail_fast");
             var commandResults = new List<object>(commandsToken.Count);
+            int nativeNotStartedCount = 0;
             int invocationSuccessCount = 0;
             int invocationFailureCount = 0;
             bool anyCommandFailed = false;
@@ -412,7 +414,7 @@ namespace MCPForUnity.Editor.Tools
                         // there is no Editor yield between release and handler invocation.
                         targetObservation?.Dispose();
                         verification?.Dispose();
-                        var result = await CommandRegistry.InvokeCommandAsync(toolName, commandParams, cancellationToken).ConfigureAwait(true);
+                        var result = await CommandRegistry.InvokeCommandAsync(toolName, commandParams, cancellationToken, parentLease).ConfigureAwait(true);
                         cancellationToken.ThrowIfCancellationRequested();
                         bool callSucceeded = DetermineCallSucceeded(result);
                         SetOutcome(outcomes, index, callSucceeded ? "succeeded" : "failed", callSucceeded ? "ok" : "handler_failed");
@@ -439,6 +441,23 @@ namespace MCPForUnity.Editor.Tools
                         {
                             break;
                         }
+                    }
+                    catch (NativeCommandBlockedException ex)
+                    {
+                        SetOutcome(outcomes, index, "not_run", ex.Reason);
+                        nativeNotStartedCount++;
+                        anyCommandFailed = true;
+                        commandResults.Add(
+                            new
+                            {
+                                tool = toolName,
+                                callSucceeded = false,
+                                result = new ErrorResponse(ex.Message),
+                                notExecuted = true,
+                            }
+                        );
+                        // Earlier children may have committed changes. Never replay this wrapper.
+                        break;
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
@@ -483,9 +502,11 @@ namespace MCPForUnity.Editor.Tools
                 results = commandResults,
                 outcomes,
                 requestedCount = commandsToken.Count,
-                attemptedCount = commandResults.Count,
-                notRunCount = commandsToken.Count - commandResults.Count,
-                executionStatus = commandResults.Count == commandsToken.Count ? "completed" : "partial",
+                attemptedCount = commandResults.Count - nativeNotStartedCount,
+                notRunCount = commandsToken.Count - commandResults.Count + nativeNotStartedCount,
+                executionStatus = nativeNotStartedCount > 0 && commandResults.Count == nativeNotStartedCount ? "not_started"
+                : nativeNotStartedCount == 0 && commandResults.Count == commandsToken.Count ? "completed"
+                : "partial",
                 rollbackPerformed = false,
                 callSuccessCount = invocationSuccessCount,
                 callFailureCount = invocationFailureCount,

@@ -20,11 +20,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         internal IReadOnlyCollection<string> Capabilities { get; }
         internal string SessionGeneration => ServerGeneration + ":" + SessionId;
 
-        internal StdioAuthenticatedSession(string generation, string session, bool progress)
+        internal StdioAuthenticatedSession(string generation, string session, bool progress, bool arbitration = false)
         {
             ServerGeneration = generation;
             SessionId = session;
-            Capabilities = Array.AsReadOnly(progress ? new[] { CommandProgressBuffer.Capability } : Array.Empty<string>());
+            var capabilities = new List<string>();
+            if (progress)
+                capabilities.Add(CommandProgressBuffer.Capability);
+            if (arbitration)
+                capabilities.Add(NativeCommandArbitrator.Capability);
+            Capabilities = capabilities.AsReadOnly();
         }
     }
 
@@ -91,7 +96,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             return session?.SessionId;
         }
 
-        private static bool OffersCommandProgress(JToken offered)
+        private static bool OffersCapability(JToken offered, string requested)
         {
             if (!(offered is JArray values) || values.Count > 16)
                 return false;
@@ -103,7 +108,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 string capability = (string)value;
                 if (capability.Length > 64 || Encoding.UTF8.GetByteCount(capability) > 64)
                     return false;
-                supported |= string.Equals(capability, CommandProgressBuffer.Capability, StringComparison.Ordinal);
+                supported |= string.Equals(capability, requested, StringComparison.Ordinal);
             }
             return supported;
         }
@@ -156,7 +161,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             )
                 return null;
             string session = Guid.NewGuid().ToString("N");
-            bool progress = OffersCommandProgress(request["capabilities"]);
+            bool progress = OffersCapability(request["capabilities"], CommandProgressBuffer.Capability);
+            bool arbitration = OffersCapability(request["capabilities"], NativeCommandArbitrator.Capability);
             var acknowledgement = new JObject
             {
                 ["type"] = "authenticated",
@@ -164,8 +170,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 ["session_id"] = session,
                 ["proof"] = Proof(token, "server", Generation, challenge, nonce, session),
             };
-            if (progress)
-                acknowledgement["capabilities"] = new JArray(CommandProgressBuffer.Capability);
+            var negotiated = new StdioAuthenticatedSession(Generation, session, progress, arbitration);
+            if (negotiated.Capabilities.Count > 0)
+                acknowledgement["capabilities"] = new JArray(negotiated.Capabilities);
+            if (arbitration)
+                acknowledgement["arbitration_generation"] = NativeCommandArbitrator.Shared.Generation;
             byte[] reply = Encoding.ASCII.GetBytes(acknowledgement.ToString(Formatting.None));
             ulong remaining = (ulong)reply.Length;
             for (int i = 7; i >= 0; i--)
@@ -175,7 +184,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             await stream.WriteAsync(header, 0, header.Length, deadline.Token).ConfigureAwait(false);
             await stream.WriteAsync(reply, 0, reply.Length, deadline.Token).ConfigureAwait(false);
-            return new StdioAuthenticatedSession(Generation, session, progress);
+            return negotiated;
         }
 
         public void Dispose() => credential?.Dispose();

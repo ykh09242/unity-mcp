@@ -29,6 +29,34 @@ namespace MCPForUnity.Editor.Tools
         internal Func<JObject, BatchActionValidation> BatchValidator { get; set; }
         internal HandlerInfo AliasOwner { get; set; }
         internal Type SourceType { get; set; }
+        private Type registeredSource;
+        private MethodInfo registeredMethod;
+        private Func<JObject, object> registeredSync;
+        private Func<JObject, Task<object>> registeredAsync;
+        private Func<JObject, CancellationToken, Task<object>> registeredCooperative;
+        private Func<JObject, CancellationToken, ICommandProgress, Task<object>> registeredProgressive;
+
+        internal void BindRegistration(Type source, MethodInfo method)
+        {
+            SourceType = registeredSource = source;
+            registeredMethod = method;
+            registeredSync = SyncHandler;
+            registeredAsync = AsyncHandler;
+            registeredCooperative = CooperativeAsyncHandler;
+            registeredProgressive = ProgressiveAsyncHandler;
+        }
+
+        internal bool HasTrustedRegistration =>
+            registeredSource != null
+            && SourceType == registeredSource
+            && registeredMethod?.DeclaringType == registeredSource
+            && registeredSource.Assembly == typeof(CommandRegistry).Assembly
+            && registeredSource.Namespace != null
+            && registeredSource.Namespace.StartsWith("MCPForUnity.Editor.", StringComparison.Ordinal)
+            && ReferenceEquals(registeredSync, SyncHandler)
+            && ReferenceEquals(registeredAsync, AsyncHandler)
+            && ReferenceEquals(registeredCooperative, CooperativeAsyncHandler)
+            && ReferenceEquals(registeredProgressive, ProgressiveAsyncHandler);
         private string previewIdentity;
         internal string PreviewIdentity => previewIdentity ??= Guid.NewGuid().ToString("N");
 
@@ -276,7 +304,7 @@ namespace MCPForUnity.Editor.Tools
                     _handlers.Remove("batch_validate");
                     _handlers.Remove("batch_apply_preview");
                 }
-                handlerInfo.SourceType = type;
+                handlerInfo.BindRegistration(type, method);
                 _handlers[commandName] = handlerInfo;
                 if (type == typeof(BatchExecute) && commandName == "batch_execute")
                 {
@@ -308,6 +336,19 @@ namespace MCPForUnity.Editor.Tools
                 && _handlers.TryGetValue("batch_execute", out var owner)
                 && ReferenceEquals(owner, handler.AliasOwner)
             );
+
+        internal static bool IsTrustedBuiltInHandler(string commandName)
+        {
+            if (!_handlers.TryGetValue(commandName, out var handler) || !IsCurrentAlias(handler))
+                return false;
+            return (handler.AliasOwner ?? handler).HasTrustedRegistration;
+        }
+
+        internal static bool IsTrustedBatchHandler(string commandName) =>
+            _handlers.TryGetValue(commandName, out var handler)
+            && IsCurrentAlias(handler)
+            && (handler.AliasOwner ?? handler).HasTrustedRegistration
+            && (handler.AliasOwner ?? handler).SourceType == typeof(BatchExecute);
 
         internal static string GetAdmissionName(string commandName) =>
             _handlers.TryGetValue(commandName, out var handler) && handler.AliasOwner != null && IsCurrentAlias(handler) ? "batch_execute" : commandName;
@@ -430,7 +471,55 @@ namespace MCPForUnity.Editor.Tools
         /// <param name="params">Parameters to pass to the command (optional).</param>
         public static Task<object> InvokeCommandAsync(string commandName, JObject @params) => InvokeCommandAsync(commandName, @params, CancellationToken.None);
 
-        public static Task<object> InvokeCommandAsync(string commandName, JObject @params, CancellationToken cancellationToken)
+        public static Task<object> InvokeCommandAsync(string commandName, JObject @params, CancellationToken cancellationToken) =>
+            InvokeCommandAsync(commandName, @params, cancellationToken, null);
+
+        internal static Task<object> InvokeCommandAsync(
+            string commandName,
+            JObject @params,
+            CancellationToken cancellationToken,
+            NativeCommandArbitrator.Lease parent
+        )
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            GetHandlerInfo(commandName);
+            bool trustedBuiltIn = IsTrustedBuiltInHandler(commandName);
+            var policy = ToolOperationPolicy.Resolve(commandName, @params, trustedBuiltIn);
+            if (
+                !NativeCommandArbitrator.Shared.TryAcquire(
+                    policy.Mode,
+                    trustedBuiltIn ? commandName : null,
+                    @params,
+                    parent,
+                    out var lease,
+                    out NativeAdmissionBlocker blocker
+                )
+            )
+                throw new NativeCommandBlockedException(blocker);
+            try
+            {
+                var task = InvokeCommandCoreAsync(commandName, @params, cancellationToken);
+                if (task.IsCompleted)
+                {
+                    lease.Dispose();
+                    return task;
+                }
+                return ReleaseAfterSettlementAsync(task, lease);
+            }
+            catch
+            {
+                lease.Dispose();
+                throw;
+            }
+        }
+
+        private static async Task<object> ReleaseAfterSettlementAsync(Task<object> task, NativeCommandArbitrator.Lease lease)
+        {
+            using (lease)
+                return await task.ConfigureAwait(true);
+        }
+
+        private static Task<object> InvokeCommandCoreAsync(string commandName, JObject @params, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var handlerInfo = GetHandlerInfo(commandName);

@@ -8,9 +8,40 @@ namespace MCPForUnity.Editor.Services.Transport
     /// <summary>A response envelope retained as structured data until the transport writes it.</summary>
     internal sealed class TransportCommandResponse
     {
-        private TransportCommandResponse(object payload) => Payload = payload;
+        private TransportCommandResponse(object payload) => this.payload = payload;
 
-        public object Payload { get; }
+        private object payload;
+        private JObject admission;
+        public object Payload => admission == null ? payload : new { native_arbitration = admission, payload };
+
+        // Only the dispatcher attaches provenance, after checking the transport-owned request binding.
+        internal TransportCommandResponse WithAdmission(JObject request, bool notStarted = false, NativeAdmissionBlocker blocker = default)
+        {
+            if (!IsBoundRequest(request))
+                return this;
+            admission = new JObject
+            {
+                ["version"] = 1,
+                ["request_nonce"] = request.Value<string>("request_nonce"),
+                ["instance_generation"] = NativeCommandArbitrator.Shared.Generation,
+                ["disposition"] = notStarted ? "not_started" : "started",
+                ["retryable"] = notStarted && blocker.Retryable,
+            };
+            if (notStarted)
+            {
+                admission["reason"] = blocker.Reason;
+            }
+            return this;
+        }
+
+        internal static bool IsBoundRequest(JObject request) =>
+            request?["version"]?.Type == JTokenType.Integer
+            && request["version"].ToString(Formatting.None) == "1"
+            && request["request_nonce"]?.Type == JTokenType.String
+            && request.Value<string>("request_nonce").Length >= 16
+            && request.Value<string>("request_nonce").Length <= 128
+            && request["instance_generation"]?.Type == JTokenType.String
+            && request.Value<string>("instance_generation") == NativeCommandArbitrator.Shared.Generation;
 
         public string ToJson()
         {

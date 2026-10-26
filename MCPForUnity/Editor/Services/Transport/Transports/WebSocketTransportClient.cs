@@ -11,6 +11,7 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
+using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -81,6 +82,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private bool _compressionNegotiated;
         private bool _phaseTimingOffered;
         private bool _phaseTimingNegotiated;
+        private bool _arbitrationOffered;
+        private bool _arbitrationNegotiated;
         private bool _commandProgressOffered;
         private bool _commandProgressNegotiated;
 
@@ -413,6 +416,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 _commandWork = null;
                 _statePublisher = null;
                 _largeResultNegotiated = false;
+                _arbitrationOffered = false;
+                _arbitrationNegotiated = false;
                 _phaseTimingOffered = false;
                 _phaseTimingNegotiated = false;
                 _commandProgressOffered = false;
@@ -592,6 +597,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _largeResultNegotiated = false;
                     _commandCancellationNegotiated = false;
                     _compressionNegotiated = false;
+                    _arbitrationOffered = false;
+                    _arbitrationNegotiated = false;
                     _phaseTimingOffered = false;
                     _phaseTimingNegotiated = false;
                     _commandProgressOffered = false;
@@ -941,6 +948,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 if (!IsCurrentConnectionToken(token))
                     return;
+                _arbitrationOffered = HasCapability(payload, NativeCommandArbitrator.Capability);
+                if (!_arbitrationOffered)
+                    _arbitrationNegotiated = false;
                 _phaseTimingOffered = HasCapability(payload, CommandPhaseTiming.Capability);
                 if (!_phaseTimingOffered)
                     _phaseTimingNegotiated = false;
@@ -988,6 +998,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _largeResultNegotiated = HasCapability(payload, LargeResultWriter.Capability);
                     _compressionNegotiated = _largeResultNegotiated && HasCapability(payload, LargeResultWriter.CompressionCapability);
                     _commandCancellationNegotiated = HasCapability(payload, ConnectionCommandWork.CancellationCapability);
+                    _arbitrationNegotiated = _arbitrationOffered && HasCapability(payload, NativeCommandArbitrator.Capability);
                     _phaseTimingNegotiated = _phaseTimingOffered && HasCapability(payload, CommandPhaseTiming.Capability);
                     _commandProgressNegotiated = _commandProgressOffered && HasCommandProgressCapability(payload);
                     _statePublisher?.Dispose();
@@ -1204,6 +1215,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             string sessionId;
             bool progressNegotiated;
             bool phaseTimingNegotiated;
+            bool arbitrationNegotiated;
             lock (_ownershipLock)
             {
                 if (!IsCurrentConnectionToken(token))
@@ -1212,12 +1224,19 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 sessionId = _sessionId;
                 progressNegotiated = _commandProgressNegotiated;
                 phaseTimingNegotiated = _phaseTimingNegotiated;
+                arbitrationNegotiated = _arbitrationNegotiated;
             }
             if (work == null)
                 return;
             var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
             deadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, Math.Min(int.MaxValue / 1000, timeoutSeconds))));
-            var command = new Command { type = commandName, @params = parameters };
+            var command = new Command
+            {
+                type = commandName,
+                @params = parameters,
+                arbitration = arbitrationNegotiated ? payload["arbitration"] as JObject : null,
+                server_info = payload["server_info"],
+            };
             var request = new QueuedCommand
             {
                 Id = commandId,
@@ -1229,7 +1248,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 SessionId = sessionId,
                 Progress = progressNegotiated && RequestsCommandProgress(payload, commandId) ? new CommandProgressBuffer() : null,
             };
-            string rejection = work.TryStart(commandId, previous => ExecuteQueuedCommandAsync(previous, request, token), request.Cancel);
+            // Only negotiated peers can relax the legacy FIFO predecessor. Native admission
+            // still rechecks the actual handler identity and all current owner barriers.
+            bool bypass = AllowsArbitrationBypass(arbitrationNegotiated, command);
+            string rejection = work.TryStart(commandId, previous => ExecuteQueuedCommandAsync(previous, request, token), request.Cancel, bypass);
             if (rejection != null)
             {
                 request.Progress?.Dispose();
@@ -1237,7 +1259,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 request.Timing?.ExecutionDone();
                 try
                 {
-                    await SendTimedCommandResultAsync(commandId, new { status = "error", error = rejection }, token, request.Timing).ConfigureAwait(false);
+                    var response = TransportCommandResponse.FromObject(new { status = "error", error = rejection });
+                    if (rejection == "Command queue is full")
+                        response.WithAdmission(command.arbitration, true, new NativeAdmissionBlocker("operation_busy", true));
+                    await SendTimedCommandResultAsync(commandId, response.Payload, token, request.Timing).ConfigureAwait(false);
                     request.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Sent);
                 }
                 catch (OperationCanceledException)
@@ -1251,6 +1276,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     throw;
                 }
             }
+        }
+
+        internal static bool AllowsArbitrationBypass(bool negotiated, Command command)
+        {
+            if (!negotiated || command == null || !TransportCommandResponse.IsBoundRequest(command.arbitration))
+                return false;
+            // ping is implemented by the transport dispatcher itself, even if a custom
+            // registry handler publishes that name. Its identity is therefore audited here.
+            bool ping = string.Equals(command.type, "ping", StringComparison.OrdinalIgnoreCase);
+            return ToolOperationPolicy
+                    .Resolve(ping ? "ping" : command.type, command.@params, ping || CommandRegistry.IsTrustedBuiltInHandler(command.type))
+                    .Mode != ToolOperationMode.Exclusive;
         }
 
         private sealed class QueuedCommand
@@ -1591,6 +1628,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 ["type"] = "register",
                 // session_id is now server-authoritative; omitted here or sent as null
                 ["project_name"] = _projectName,
+                ["arbitration_generation"] = NativeCommandArbitrator.Shared.Generation,
                 ["project_hash"] = _projectHash,
                 ["unity_version"] = _unityVersion,
                 ["project_path"] = _projectPath,
@@ -1601,7 +1639,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     ToolSettingsState.Capability,
                     LargeResultWriter.CompressionCapability,
                     CommandProgressBuffer.Capability,
-                    CommandPhaseTiming.Capability
+                    CommandPhaseTiming.Capability,
+                    NativeCommandArbitrator.Capability
                 ),
             };
 
