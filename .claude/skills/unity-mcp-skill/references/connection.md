@@ -56,6 +56,10 @@ For resource requests, the server accepts `_meta.unity_instance`; use the client
 
 Confirm `data.projectRoot` from `mcpforunity://project/info` against the user's intended project. A remote Editor's path is not evidence that the same path exists or is writable on the agent's host.
 
+## Concurrent Connections
+
+Keep the intended Editor explicit when parallel agents share a connection. Supported servers and compatible native packages automatically mediate calls against that bound instance; coordination never selects a different Editor to avoid waiting. Older packages retain conservative sequencing with reduced guarantees, rather than inheriting native cross-process protection from the server alone. Inspect advertised coordination support and returned readiness/recovery guidance before relying on it; do not infer support from a version-looking string or a tool name.
+
 ## Authentication And Failures
 
 Local HTTP/WebSocket launches use `X-Unity-MCP-Token`; hosted mode uses `X-API-Key`. Configure credentials through the client's private settings and the supported Unity setup, never in examples, reports or source control. Automatic local-token discovery is loopback-only. Preserve authentication instead of disabling it to make a request work.
