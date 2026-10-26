@@ -83,7 +83,10 @@ handler entry. Every canonical native operation commits its server-classified pe
 floor union before send. Existing lease/catalog/project/generation guards run again after
 journal I/O. Historical reads check original stored floor, current authority before/after
 I/O and before delivery. Weaker/retired credentials for the same owner cannot retrieve
-output. Unknown policy/schema versions refuse; schema 2 is the initial exposed format.
+output. Unknown policy/schema versions refuse. New metadata uses schema 3; the reader
+also accepts the initial schema 2 format. Schema 3 adds private raw-wall recovery
+evidence without changing the public receipt shape. Older binaries refuse schema 3,
+so downgrading a private store written by a newer binary fails closed.
 
 Intent is committed before returning the single execution capability. Restarted pending
 intent becomes UNKNOWN. Only proven pre-handler, pre-native rejection is not_dispatched.
@@ -109,19 +112,32 @@ continuation legs refuse before handler effects. Ordinary explicit scene paths r
 
 ## Clock health and recovery
 
-Within one open store, timestamps and expiry advance from its validated opening wall
+Within one open store, timestamps and expiry advance from its validated opening logical
 time using monotonic elapsed time. Later wall-clock adjustments cannot prematurely
 expire a key or extend result retention. A backward or invalid wall/monotonic sample
 temporarily refuses receipt-protected operations. Availability checks sample clock
 health without journal I/O; once valid samples catch up to the observed high-water
 marks, operations can resume with the same records and installation identity.
 
-Exclusive reopen still validates the wall clock against persisted record timestamps
-before recovery or pruning. A clock behind those timestamps refuses startup without
-altering the records; correct the clock and reopen that same private directory. Time
-spent outside a process has no portable monotonic evidence, so persisted wall-time
-expiry remains the restart boundary. Actual corruption or uncertain writes remain
-poisoned and require exclusive reconciliation; clock catch-up cannot clear them.
+Each metadata commit includes the last validated raw-wall high-water in the same
+atomic record write. Its short clock snapshot lock is released before disk I/O.
+Availability samples made after that snapshot become durable only through a later
+metadata commit. Raw wall time and logical timestamps may differ when the wall clock
+is coarse, stopped or adjusted forward; neither is substituted for the other.
+
+Exclusive reopen validates raw wall time against the persisted raw-wall high-water
+before recovery or pruning. A clock behind that mark refuses startup without altering
+the records; correct the clock and reopen that same private directory. Logical time
+starts at the greater of the current wall and persisted logical update times, so an
+immediate restart within one coarse wall tick cannot move receipt timestamps backward.
+Legacy schema 2 has no distinct raw-wall evidence and conservatively uses its persisted
+logical update times as the wall floor until an ordinary commit upgrades the record.
+A legacy timestamp ahead of the current wall continues to refuse until catch-up.
+
+Time spent outside a process has no portable monotonic evidence, so persisted wall-time
+expiry remains the restart boundary. No restart automatically replays an invocation.
+Actual corruption or uncertain writes remain poisoned and require exclusive
+reconciliation; clock catch-up cannot clear them.
 Live workers continue to pin their keys, and credential authorization is unchanged.
 An interrupted completion remains non-replayable; exclusive restart classifies
 unobserved pending records as UNKNOWN.

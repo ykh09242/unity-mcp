@@ -1222,3 +1222,276 @@ def test_clock_recovery_keeps_expired_key_pinned_to_actual_worker(tmp_path):
     finally:
         worker.close()
         store.close()
+
+
+def test_coarse_wall_crash_recovers_unknown_with_original_key(tmp_path):
+    # Given a child whose monotonic clock advances within one coarse wall-clock tick.
+    source = Path(ledger.__file__).resolve().parents[1]
+    root = tmp_path / "coarse-crash"
+    code = "\n".join(
+        [
+            "import os,sys",
+            "from pathlib import Path",
+            f"sys.path.insert(0,{str(source)!r})",
+            "from services.execution_receipt_identity import ("
+            "ReceiptScope,ReceiptOptions,capture_identity)",
+            "from services.execution_receipts import ExecutionReceiptStore",
+            "elapsed=[0.0]",
+            f"s=ExecutionReceiptStore(Path({str(root)!r}),private_root=True,"
+            "clock=lambda:1000.0,monotonic=lambda:elapsed[0])",
+            "elapsed[0]=0.005",
+            f"o=ReceiptOptions(s.store_id,{PROJECT!r},{KEY!r})",
+            "i=capture_identity(surface='mcp-tool',name='controlled_operation',arguments={},"
+            "options=o,semantic_context={})",
+            f"s.admit(ReceiptScope('stable-user-A',{PROJECT!r}),o,i,"
+            "floor=frozenset(['edit']),grants=frozenset(['edit']))",
+            "os._exit(23)",
+        ]
+    )
+    result = subprocess.run(
+        [sys._base_executable, "-B", "-I", "-S", "-c", code],
+        cwd=tmp_path,
+        timeout=8,
+        check=False,
+        capture_output=True,
+    )
+    assert result.returncode == 23, result.stderr.decode(errors="replace")
+    path = next(root.glob("*.json"))
+    original = json.loads(path.read_bytes())
+    assert original["created_at"] == original["updated_at"] == 1000.005
+
+    # When a new process opens before the coarse wall tick advances.
+    store = ExecutionReceiptStore(root, private_root=True, clock=Clock(), monotonic=Clock(0.010))
+    try:
+        # Then the logical floor and deduplication survive without a fresh invocation.
+        duplicate = admit(store)
+        assert isinstance(duplicate, ReceiptView) and duplicate.status == "unknown"
+        assert duplicate.receipt_id == original["receipt_id"]
+        assert duplicate.updated_at >= original["updated_at"]
+        assert duplicate.expires_at == original["expires_at"]
+        assert isinstance(admit(store), ReceiptView)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("rollback", [0.001, 8000])
+def test_restart_uses_raw_wall_floor_after_forward_adjustment(tmp_path, rollback):
+    # Given a commit whose raw wall is far ahead of its monotonic-derived timestamp.
+    wall, elapsed = Clock(), Clock(0)
+    root = tmp_path / "forward-wall"
+    store = ExecutionReceiptStore(root, private_root=True, clock=wall, monotonic=elapsed)
+    invocation = admit(store)
+    wall.value, elapsed.value = 10000, 1
+    original = invocation.finish("not_dispatched")
+    assert original.updated_at == 1001
+    store.close()
+    before = {path.name: path.read_bytes() for path in root.iterdir()}
+
+    # When even a sub-tick actual wall rollback occurs before exclusive reopen.
+    wall.value -= rollback
+    unexpected = None
+    try:
+        with pytest.raises(ReceiptUnavailable, match="receipt_clock_unavailable"):
+            unexpected = ExecutionReceiptStore(
+                root, private_root=True, clock=wall, monotonic=elapsed
+            )
+    finally:
+        if unexpected is not None:
+            unexpected.close()
+
+    # Then the original bytes/key stay intact until that raw-wall high-water catches up.
+    assert {path.name: path.read_bytes() for path in root.iterdir()} == before
+    wall.value = 10000
+    recovered = ExecutionReceiptStore(root, private_root=True, clock=wall, monotonic=elapsed)
+    try:
+        # Existing restart semantics expire fixed wall-time deadlines across downtime.
+        replacement = admit(recovered)
+        assert isinstance(replacement, ReceiptInvocation)
+        assert replacement.receipt_id != original.receipt_id
+        replacement.finish("not_dispatched")
+    finally:
+        recovered.close()
+
+
+def test_stopped_wall_does_not_extend_result_or_owned_key_lifetimes(tmp_path):
+    # Given a retained result plus an UNKNOWN invocation with an actual live worker.
+    wall, elapsed = Clock(), Clock(0)
+    store = ExecutionReceiptStore(
+        tmp_path / "stopped-wall", private_root=True, clock=wall, monotonic=elapsed
+    )
+    completed = admit(store, retain=True)
+    completed.enter_handler()
+    original = completed.finish("completed", result=b"retained")
+    owned = admit(store, key="owned-stopped-wall-002", retain=True)
+    worker = owned.acquire_worker()
+    owned.enter_handler()
+    stopped = owned.finish("unknown", cause="wrapper_cancelled")
+    try:
+        # When monotonic time passes both TTLs while the raw wall remains stopped.
+        elapsed.value = ledger.RESULT_TTL_SECONDS
+        duplicate = admit(store, retain=True)
+        assert isinstance(duplicate, ReceiptView) and not duplicate.result_available
+        assert duplicate.receipt_id == original.receipt_id
+        elapsed.value = TTL_SECONDS + 1
+
+        # Then unowned keys expire, but the actual worker still pins its own key/charge.
+        replacement = admit(store, retain=True)
+        assert isinstance(replacement, ReceiptInvocation)
+        assert replacement.receipt_id != original.receipt_id
+        replacement.finish("not_dispatched")
+        pinned = admit(store, key="owned-stopped-wall-002", retain=True)
+        assert isinstance(pinned, ReceiptView) and pinned.receipt_id == stopped.receipt_id
+        assert store.charged_result_bytes == 2 * ledger.RESULT_BYTES
+        worker.close()
+        fresh = admit(store, key="owned-stopped-wall-002", retain=True)
+        assert isinstance(fresh, ReceiptInvocation) and fresh.receipt_id != stopped.receipt_id
+        fresh.finish("not_dispatched")
+    finally:
+        worker.close()
+        store.close()
+
+
+def test_clock_health_and_ownership_progress_during_commit_and_next_commit_stamps_wall(
+    tmp_path, monkeypatch
+):
+    # Given a metadata commit stopped inside disk I/O after taking its clock snapshot.
+    wall, elapsed = Clock(), Clock(0)
+    root = tmp_path / "blocked-clock"
+    store = ExecutionReceiptStore(root, private_root=True, clock=wall, monotonic=elapsed)
+    invocation = admit(store)
+    blocked, resume = threading.Event(), threading.Event()
+    original_write = store._files.write
+
+    def blocked_write(receipt_id, raw):
+        blocked.set()
+        assert resume.wait(timeout=watchdog_timeout())
+        original_write(receipt_id, raw)
+
+    def health_and_ownership():
+        worker = invocation.acquire_worker()
+        try:
+            return store.available, store.active_count
+        finally:
+            worker.close()
+
+    monkeypatch.setattr(store._files, "write", blocked_write)
+    finished = False
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            committing = pool.submit(invocation.extend_floor, frozenset({"run"}), grants=GRANTS)
+            try:
+                assert blocked.wait(timeout=watchdog_timeout())
+                wall.value, elapsed.value = 1001, 1
+                # When availability/ownership sample the newer wall during the blocked write.
+                health = pool.submit(health_and_ownership)
+                assert health.result(timeout=watchdog_timeout()) == (True, 1)
+                assert not committing.done()
+            finally:
+                resume.set()
+                committing.result(timeout=watchdog_timeout())
+        monkeypatch.setattr(store._files, "write", original_write)
+
+        # Then a later commit persists that validated sample without any extra clock file.
+        invocation.finish("not_dispatched")
+        finished = True
+        raw = json.loads((root / (invocation.receipt_id + ".json")).read_bytes())
+        assert raw["schema_version"] == 3 and raw["wall_clock_high_water"] == 1001
+    finally:
+        resume.set()
+        monkeypatch.setattr(store._files, "write", original_write)
+        if not finished:
+            invocation.finish("not_dispatched")
+        store.close()
+
+
+def test_mixed_legacy_and_current_records_recover_without_rebinding_keys(opened, tmp_path):
+    # Given one legacy pending record beside a current terminal record.
+    create, _ = opened
+    store = create()
+    legacy = admit(store).finish("not_dispatched")
+    current = admit(store, key="current-schema-key-002").finish("not_dispatched")
+    store.close()
+    path = tmp_path / "receipts" / (legacy.receipt_id + ".json")
+    data = json.loads(path.read_bytes())
+    data.pop("wall_clock_high_water", None)
+    data.update(schema_version=2, status="pending", cause="intent_committed")
+    path.write_bytes(json.dumps(data).encode("utf-8"))
+
+    # When exclusive recovery upgrades the pending legacy observation.
+    recovered = create()
+
+    # Then both keys keep their IDs and only UNKNOWN metadata is returned for legacy intent.
+    duplicate = admit(recovered)
+    assert isinstance(duplicate, ReceiptView) and duplicate.status == "unknown"
+    assert duplicate.receipt_id == legacy.receipt_id
+    assert admit(recovered, key="current-schema-key-002").receipt_id == current.receipt_id
+    upgraded = json.loads(path.read_bytes())
+    assert upgraded["schema_version"] == 3 and upgraded["wall_clock_high_water"] == 1000
+
+
+def test_legacy_future_logical_timestamp_stays_fail_closed_until_wall_catches_up(tmp_path):
+    # Given an old schema record with no evidence separating wall from logical time.
+    wall, elapsed = Clock(), Clock(0)
+    root = tmp_path / "legacy-future"
+    store = ExecutionReceiptStore(root, private_root=True, clock=wall, monotonic=elapsed)
+    elapsed.value = 0.005
+    original = admit(store).finish("not_dispatched")
+    store.close()
+    path = root / (original.receipt_id + ".json")
+    data = json.loads(path.read_bytes())
+    data.pop("wall_clock_high_water", None)
+    data["schema_version"] = 2
+    path.write_bytes(json.dumps(data).encode("utf-8"))
+    before = {entry.name: entry.read_bytes() for entry in root.iterdir()}
+
+    # When the legacy logical timestamp is still ahead of the wall, refuse unchanged.
+    with pytest.raises(ReceiptUnavailable, match="receipt_clock_unavailable"):
+        ExecutionReceiptStore(root, private_root=True, clock=wall, monotonic=elapsed)
+    assert {entry.name: entry.read_bytes() for entry in root.iterdir()} == before
+
+    # Then validated catch-up reopens that same key without manufacturing an invocation.
+    wall.value = original.updated_at
+    recovered = ExecutionReceiptStore(root, private_root=True, clock=wall, monotonic=elapsed)
+    try:
+        duplicate = admit(recovered)
+        assert isinstance(duplicate, ReceiptView) and duplicate.receipt_id == original.receipt_id
+    finally:
+        recovered.close()
+
+
+@pytest.mark.parametrize("invalid", [None, True, "1000", -1, float("nan"), float("inf")])
+def test_current_schema_requires_finite_numeric_raw_wall_floor(opened, tmp_path, invalid):
+    # Given current metadata with a malformed wall-domain recovery floor.
+    create, _ = opened
+    store = create()
+    original = admit(store).finish("not_dispatched")
+    store.close()
+    path = tmp_path / "receipts" / (original.receipt_id + ".json")
+    data = json.loads(path.read_bytes())
+    data.update(schema_version=3, wall_clock_high_water=invalid)
+    path.write_bytes(json.dumps(data).encode("utf-8"))
+    before = path.read_bytes()
+
+    # When exclusive recovery reads the invalid floor, it refuses unchanged.
+    with pytest.raises(ReceiptUnavailable):
+        create()
+    assert path.read_bytes() == before
+
+
+def test_current_schema_requires_raw_wall_floor_member(opened, tmp_path):
+    # Given current metadata with its required wall-domain evidence removed.
+    create, _ = opened
+    store = create()
+    original = admit(store).finish("not_dispatched")
+    store.close()
+    path = tmp_path / "receipts" / (original.receipt_id + ".json")
+    data = json.loads(path.read_bytes())
+    data["schema_version"] = 3
+    data.pop("wall_clock_high_water", None)
+    path.write_bytes(json.dumps(data).encode("utf-8"))
+    before = path.read_bytes()
+
+    # When exclusive recovery reads it, it cannot reinterpret it as legacy evidence.
+    with pytest.raises(ReceiptUnavailable):
+        create()
+    assert path.read_bytes() == before
