@@ -93,10 +93,10 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         public async Task<string> ResolveDownloadUrlAsync(string uid, string apiKey, IHttpTransport http, CancellationToken ct)
         {
-            string url = ModelUrl(uid, true);
+            string requestUrl = ModelUrl(uid, true);
             if (http == null)
                 throw new ArgumentNullException(nameof(http));
-            var spec = new HttpRequestSpec { Method = "GET", Url = url };
+            var spec = new HttpRequestSpec { Method = "GET", Url = requestUrl };
             spec.Headers["Authorization"] = "Token " + apiKey;
 
             HttpResult res = await http.SendAsync(spec, ct);
