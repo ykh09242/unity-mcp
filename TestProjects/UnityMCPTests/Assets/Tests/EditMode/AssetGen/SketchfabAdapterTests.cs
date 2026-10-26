@@ -13,6 +13,7 @@ namespace MCPForUnityTests.Editor.AssetGen
     /// </summary>
     public class SketchfabAdapterTests
     {
+        private const string ModelUid = "49d97ca2fbf34f85b6c88ae8ebc7514f";
         private static HttpResult Json(string json, int status = 200) =>
             new HttpResult
             {
@@ -61,11 +62,11 @@ namespace MCPForUnityTests.Editor.AssetGen
             var http = new FakeHttpTransport { Handler = _ => Json("{\"gltf\":{\"url\":\"https://dl.sketchfab.com/models/abc/file.zip?sig=x\"}}") };
             var adapter = new SketchfabAdapter();
 
-            string url = adapter.ResolveDownloadUrlAsync("abc", "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult();
+            string url = adapter.ResolveDownloadUrlAsync(ModelUid, "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult();
 
             Assert.AreEqual("https://dl.sketchfab.com/models/abc/file.zip?sig=x", url);
             HttpRequestSpec rec = http.RecordedRequests[0];
-            StringAssert.Contains("/v3/models/abc/download", rec.Url);
+            Assert.AreEqual("https://api.sketchfab.com/v3/models/" + ModelUid + "/download", rec.Url);
             StringAssert.StartsWith("Token ", rec.Headers["Authorization"]);
         }
 
@@ -75,7 +76,39 @@ namespace MCPForUnityTests.Editor.AssetGen
             var http = new FakeHttpTransport { Handler = _ => Json("{\"usdz\":{\"url\":\"https://x/y.usdz\"}}") };
             var adapter = new SketchfabAdapter();
 
-            Assert.Throws<System.Exception>(() => adapter.ResolveDownloadUrlAsync("abc", "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult());
+            Assert.Throws<System.Exception>(() => adapter.ResolveDownloadUrlAsync(ModelUid, "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult());
+        }
+
+        [Test]
+        public void Preview_UsesOnlyCanonicalModelRoute()
+        {
+            var http = new FakeHttpTransport { Handler = _ => Json("{\"uid\":\"model\"}") };
+            var adapter = new SketchfabAdapter();
+            adapter.PreviewAsync(ModelUid, "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual("https://api.sketchfab.com/v3/models/" + ModelUid, http.RecordedRequests[0].Url);
+        }
+
+        [TestCase("../me")]
+        [TestCase("%2e%2e%2fme")]
+        [TestCase("49d97ca2fbf34f85b6c88ae8ebc7514f?x=1")]
+        [TestCase("49d97ca2fbf34f85b6c88ae8ebc7514f#fragment")]
+        [TestCase("49d97ca2fbf34f85b6c88ae8ebc7514")]
+        [TestCase("49d97ca2fbf34f85b6c88ae8ebc7514fg")]
+        public void PreviewAndDownload_RejectNoncanonicalUidBeforeTransport(string uid)
+        {
+            var http = new FakeHttpTransport { Handler = _ => Json("{}") };
+            var adapter = new SketchfabAdapter();
+            Assert.Throws<System.ArgumentException>(() => adapter.PreviewAsync(uid, "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult());
+            Assert.Throws<System.ArgumentException>(() => adapter.ResolveDownloadUrlAsync(uid, "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult());
+            Assert.IsEmpty(http.RecordedRequests);
+        }
+
+        [Test]
+        public void UppercaseHexUid_NormalizesToCanonicalModelRoute()
+        {
+            var http = new FakeHttpTransport { Handler = _ => Json("{}") };
+            new SketchfabAdapter().PreviewAsync(ModelUid.ToUpperInvariant(), "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual("https://api.sketchfab.com/v3/models/" + ModelUid, http.RecordedRequests[0].Url);
         }
     }
 }

@@ -416,7 +416,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void NonfiniteTarget_CannotBecomeAResumableFiniteDefault(float target, bool marketplace)
         {
             AssetGenJob job = marketplace
-                ? AssetGenJobManager.StartMarketplaceImport("owned-marketplace", target, "owned", output)
+                ? AssetGenJobManager.StartMarketplaceImport("49d97ca2fbf34f85b6c88ae8ebc7514f", target, "owned", output)
                 : AssetGenJobManager.StartModelGeneration(
                     new ModelGenRequest
                     {

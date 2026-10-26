@@ -115,7 +115,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 ModelGenRequest request = Req();
                 request.TargetSize = target;
                 AssetGenJob job = marketplace
-                    ? AssetGenJobManager.StartMarketplaceImport("owned-model", target, "owned-target", TestFolder)
+                    ? AssetGenJobManager.StartMarketplaceImport("49d97ca2fbf34f85b6c88ae8ebc7514f", target, "owned-target", TestFolder)
                     : AssetGenJobManager.StartModelGeneration(request);
                 Assert.AreEqual(target, job.TargetSize);
                 Assert.IsEmpty(_fake.RecordedRequests, "Creating the job must not call a real provider or dispatch before its controlled pump.");

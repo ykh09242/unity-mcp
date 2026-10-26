@@ -101,6 +101,9 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             string uid = p.Get("uid");
             if (string.IsNullOrWhiteSpace(uid))
                 return new ErrorResponse("'uid' is required for preview.");
+            if (!SketchfabAdapter.TryNormalizeModelUid(uid, out string canonicalUid))
+                return new ErrorResponse("'uid' must be a 32-character hexadecimal Sketchfab model ID.");
+            uid = canonicalUid;
             if (!SecureKeyStore.Current.TryGet(Provider, out string key) || string.IsNullOrEmpty(key))
                 return KeyError();
 
@@ -123,6 +126,9 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             string uid = p.Get("uid");
             if (string.IsNullOrWhiteSpace(uid))
                 return new ErrorResponse("'uid' is required for import.");
+            if (!SketchfabAdapter.TryNormalizeModelUid(uid, out string canonicalUid))
+                return new ErrorResponse("'uid' must be a 32-character hexadecimal Sketchfab model ID.");
+            uid = canonicalUid;
             AssetGenProviders.Marketplace(Provider); // throws NotSupportedException for unimplemented providers
 
             float targetSize = p.GetFloat("targetSize", 1f) ?? 1f;

@@ -16,7 +16,39 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
     public sealed class SketchfabAdapter : IMarketplaceProviderAdapter
     {
         private const string SearchEndpoint = "https://api.sketchfab.com/v3/search";
-        private const string ModelsEndpoint = "https://api.sketchfab.com/v3/models";
+
+        // Sketchfab model URLs use a 32-character hexadecimal UID. Normalize ASCII
+        // uppercase before attaching a stored token or persisting a marketplace job.
+        internal static bool TryNormalizeModelUid(string uid, out string canonicalUid)
+        {
+            canonicalUid = null;
+            if (uid == null || uid.Length != 32)
+                return false;
+            foreach (char c in uid)
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+                    return false;
+            canonicalUid = uid.ToLowerInvariant();
+            return true;
+        }
+
+        private static string ModelUrl(string uid, bool download)
+        {
+            if (!TryNormalizeModelUid(uid, out string canonicalUid))
+                throw new ArgumentException("'uid' must be a 32-character hexadecimal Sketchfab model ID.", nameof(uid));
+            string expectedPath = "/v3/models/" + Uri.EscapeDataString(canonicalUid) + (download ? "/download" : string.Empty);
+            var uri = new Uri("https://api.sketchfab.com" + expectedPath, UriKind.Absolute);
+            if (
+                uri.Scheme != Uri.UriSchemeHttps
+                || uri.IdnHost != "api.sketchfab.com"
+                || !uri.IsDefaultPort
+                || uri.UserInfo.Length != 0
+                || uri.AbsolutePath != expectedPath
+                || uri.Query.Length != 0
+                || uri.Fragment.Length != 0
+            )
+                throw new InvalidOperationException("Sketchfab model route is invalid.");
+            return uri.AbsoluteUri;
+        }
 
         public string Id => "sketchfab";
 
@@ -50,11 +82,10 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         public async Task<string> PreviewAsync(string uid, string apiKey, IHttpTransport http, CancellationToken ct)
         {
-            if (string.IsNullOrEmpty(uid))
-                throw new ArgumentNullException(nameof(uid));
+            string url = ModelUrl(uid, false);
             if (http == null)
                 throw new ArgumentNullException(nameof(http));
-            var spec = new HttpRequestSpec { Method = "GET", Url = ModelsEndpoint + "/" + uid };
+            var spec = new HttpRequestSpec { Method = "GET", Url = url };
             spec.Headers["Authorization"] = "Token " + apiKey;
             HttpResult res = await http.SendAsync(spec, ct);
             return RawOk(res, apiKey, "preview");
@@ -62,11 +93,10 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
 
         public async Task<string> ResolveDownloadUrlAsync(string uid, string apiKey, IHttpTransport http, CancellationToken ct)
         {
-            if (string.IsNullOrEmpty(uid))
-                throw new ArgumentNullException(nameof(uid));
+            string url = ModelUrl(uid, true);
             if (http == null)
                 throw new ArgumentNullException(nameof(http));
-            var spec = new HttpRequestSpec { Method = "GET", Url = ModelsEndpoint + "/" + uid + "/download" };
+            var spec = new HttpRequestSpec { Method = "GET", Url = url };
             spec.Headers["Authorization"] = "Token " + apiKey;
 
             HttpResult res = await http.SendAsync(spec, ct);
