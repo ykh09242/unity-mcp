@@ -556,6 +556,12 @@ class TelemetryCollector:
                             logger.debug(f"Telemetry sent (urllib): {record.record_type}")
                         else:
                             logger.warning(f"Telemetry failed (urllib): HTTP {resp.getcode()}")
+                except urllib.error.HTTPError as error:
+                    # urlopen raises before the response context can own this body.
+                    try:
+                        logger.warning("Telemetry send failed (urllib): %s", type(error).__name__)
+                    finally:
+                        error.close()
                 except urllib.error.URLError as ue:
                     logger.warning("Telemetry send failed (urllib): %s", type(ue).__name__)
 

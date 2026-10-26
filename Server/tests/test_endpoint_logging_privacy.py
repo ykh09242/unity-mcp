@@ -212,6 +212,47 @@ def test_urllib_exceptions_do_not_echo_endpoint(
     assert "Telemetry send failed" in diagnostics.getvalue()
 
 
+@pytest.mark.parametrize("failure", ["none", "logging", "closing"])
+def test_urllib_http_error_closes_owned_body_before_return(
+    diagnostics, telemetry_config, monkeypatch, failure
+):
+    telemetry = importlib.import_module("core.telemetry")
+    collector = TelemetryCollector.__new__(TelemetryCollector)
+    collector.config = telemetry_config()
+    monkeypatch.setattr(telemetry, "httpx", None)
+    body = io.BytesIO(b"unread error response")
+    error = urllib.error.HTTPError(ENDPOINT, 500, UNTRUSTED, None, body)
+    close = error.close
+
+    def fail_request(*args, **kwargs):
+        raise error
+
+    def fail_logging(*args, **kwargs):
+        raise RuntimeError(UNTRUSTED)
+
+    def fail_closing():
+        close()
+        raise OSError(UNTRUSTED)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail_request)
+    if failure == "logging":
+        monkeypatch.setattr(telemetry.logger, "warning", fail_logging)
+    if failure == "closing":
+        monkeypatch.setattr(error, "close", fail_closing)
+    try:
+        collector._send_telemetry(record())
+        assert body.closed, "The sender must close the HTTPError response before returning"
+        expected = {
+            "none": "Telemetry send failed (urllib): HTTPError",
+            "logging": "Telemetry send failed: RuntimeError",
+            "closing": "Telemetry send failed: OSError",
+        }
+        assert expected[failure] in diagnostics.getvalue()
+    finally:
+        # A failing pre-fix assertion must still release the test's synthetic body.
+        close()
+
+
 def test_worker_exception_traceback_never_reveals_endpoint(diagnostics, monkeypatch):
     collector = TelemetryCollector.__new__(TelemetryCollector)
     collector._queue = queue.Queue()
