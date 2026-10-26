@@ -598,12 +598,14 @@ namespace MCPForUnityTests.Editor.AssetGen
             StringAssert.DoesNotContain("GEN06_SIGNED_MARKER", SessionState.GetString(Prefix + job.JobId, ""));
         }
 
-        [TestCase("../me")]
-        [TestCase("%2e%2e%2fme")]
-        [TestCase("0123456789abcdef0123456789abcde ")]
-        [TestCase("0123456789abcdef0123456789abcde\n")]
-        public void MarketplaceReload_InvalidUidNeverReadsKeyOrRequests(string uid)
+        [TestCase("owned-marketplace")]
+        [TestCase("gggggggggggggggggggggggggggggggg")]
+        [TestCase("0123456789abcdef0123456789abcde")]
+        [TestCase("0123456789abcdef0123456789abcdef0")]
+        public void MarketplaceReload_NonCanonicalUidNeverReadsKeyOrRequests(string uid)
         {
+            // These IDs pass the journal's general SafeId grammar, so rejection
+            // must come from the provider-specific recovery guard after restore.
             var cp = Checkpoint(provider: "sketchfab", kind: "marketplace");
             cp.Extension = "zip";
             cp.Subfolder = "Sketchfab";
