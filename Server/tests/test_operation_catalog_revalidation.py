@@ -40,7 +40,10 @@ async def test_withdrawn_selected_builtin_does_not_begin_queued_refresh_prefligh
         )
     )
     hub = SimpleNamespace(
-        _registry=registry, _connections={"owned": socket}, _supports=PluginHub._supports
+        _registry=registry,
+        _connections={"owned": socket},
+        _supports=PluginHub._supports,
+        _pending_capacity_error=lambda *_: None,
     )
     target = await capture_http_target("owned", hub=hub)
     if transport == "stdio":

@@ -92,9 +92,10 @@ async def wait_for_editor_ready(ctx: Context, timeout_s: float | None = None) ->
 
 
 def is_reloading_rejection(resp: Any) -> bool:
-    """True when Unity rejected a command because it thinks it is reloading.
+    """Recognize a reported refusal for conservative acknowledgement decisions.
 
-    The command was never executed, so retrying is safe.
+    Handler dictionaries are not proof of zero dispatch; retry requires the
+    separate typed local-preflight check.
     """
     if isinstance(resp, MCPResponse):
         return (
@@ -107,6 +108,12 @@ def is_reloading_rejection(resp: Any) -> bool:
         return False
     data = resp.get("data") or {}
     return data.get("reason") == "reloading" and resp.get("hint") == "retry"
+
+
+def _is_preflight_reload(resp: Any) -> bool:
+    # Handler data can conservatively prevent acknowledgement, but never prove
+    # zero dispatch. Only the transport's in-process preflight model can retry.
+    return isinstance(resp, MCPResponse) and is_reloading_rejection(resp)
 
 
 def is_connection_lost_after_send(resp: Any) -> bool:
@@ -159,7 +166,7 @@ async def _send_mutation(
 
     Handles the full retry/recovery pattern for script mutations:
     1. Send with retry_on_reload=False (don't re-send if Unity is reloading)
-    2. If reloading rejection (command never executed) → wait + retry once
+    2. If a typed local transport preflight refused before dispatch → wait + retry once
     3. If connection lost after send → wait + verify via callback
     4. Wait for editor readiness after successful or disconnected mutations
 
@@ -175,7 +182,7 @@ async def _send_mutation(
         params,
         retry_on_reload=False,
     )
-    if is_reloading_rejection(resp):
+    if _is_preflight_reload(resp):
         ready, _ = await wait_for_editor_ready(ctx)
         if not ready:
             return resp

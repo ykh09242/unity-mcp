@@ -61,6 +61,7 @@ from transport.native_arbitration import (
     NativeNotStarted,
     decode_native_reply,
     valid_generation,
+    may_retry_wire_attempt,
 )
 
 
@@ -1804,7 +1805,7 @@ def send_command_with_retry(
                 )
                 return response
             except NativeNotStarted as refusal:
-                if not refusal.reply.retryable or command_type == "batch_execute":
+                if not may_retry_wire_attempt(command_type, refusal.reply):
                     return refusal.reply.payload
                 connection = get_unity_connection(instance_id) if connection is None else connection
                 expected_generation = refusal.transport_generation
@@ -1906,7 +1907,9 @@ def _send_command_with_retry(
     retries = 0
     wait_started = None
     reason = _extract_response_reason(response)
-    require_preflight = command_type == "blender_bridge"
+    # A handler may report reload after applying a mutation. Only this process's
+    # typed local preflight refusal proves no handler was invoked.
+    require_preflight = True
     while (
         retry_on_reload
         and _is_reloading_response(response, require_preflight=require_preflight)
@@ -2158,7 +2161,7 @@ async def _async_send_command_response(
                         _operation_guard=operation_guard,
                     )
                 except NativeNotStarted as refusal:
-                    if not refusal.reply.retryable or command_type == "batch_execute":
+                    if not may_retry_wire_attempt(command_type, refusal.reply):
                         return refusal.reply.payload
                     params = refusal.params
                     _expected_generation = refusal.transport_generation

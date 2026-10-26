@@ -124,6 +124,12 @@ def test_unknown_registered_callback_cannot_spoof_a_builtin_read_name():
     assert mod.trusted_tool(callback, "get_sha") is False
 
 
+def test_ingress_sized_argument_retention_does_not_inherit_http_command_ceiling():
+    value = {"text": "x" * (64 * 1024 * 1024 - 1024)}
+    charge = mod.operation_payload_charge(value)
+    assert charge is not None and 256 * 1024 * 1024 < charge < 1024 * 1024 * 1024
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "name,params,allowed",

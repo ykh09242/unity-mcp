@@ -66,6 +66,17 @@ def valid_generation(value: str | None) -> bool:
     return isinstance(value, str) and _IDENTITY.fullmatch(value) is not None
 
 
+def may_retry_wire_attempt(command: str, reply: NativeReply) -> bool:
+    from services.operation_policy import resolve_operation_policy
+
+    # Classify the envelope itself, independently of handler-controlled fields
+    # or malformed parameters. A whole batch is never replayed automatically.
+    return (
+        reply.retryable
+        and resolve_operation_policy(command, {}, native=True).reason != "batch_envelope"
+    )
+
+
 def decode_native_reply(
     value: dict[str, JsonValue], request: NativeArbitrationRequest | None
 ) -> NativeReply:

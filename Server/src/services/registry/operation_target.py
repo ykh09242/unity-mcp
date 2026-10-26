@@ -21,6 +21,9 @@ class OperationTarget:
     public_available: Callable[[tuple[str, ...], object | None], Awaitable[bool]] | None = field(
         default=None, repr=False, compare=False
     )
+    capacity_error: Callable[[], dict[str, JsonValue] | None] | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 async def capture_target(
@@ -156,4 +159,5 @@ async def capture_http_target(session_id: str, *, hub=None) -> OperationTarget |
         authorize if config.http_remote_hosted else None,
         generation,
         available,
+        lambda: hub._pending_capacity_error(session_id, session.user_id),
     )

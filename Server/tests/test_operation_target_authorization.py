@@ -36,6 +36,7 @@ async def test_authoritative_principal_and_selected_plugin_grants_precede_writer
         _connections={"owned": socket},
         _supports=PluginHub._supports,
         _socket_lease=PluginHub._socket_lease,
+        _pending_capacity_error=lambda *_: None,
     )
     entered = []
 

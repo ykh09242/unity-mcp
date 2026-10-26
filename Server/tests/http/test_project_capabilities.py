@@ -500,6 +500,10 @@ async def test_stalled_cancel_has_explicit_grace_and_keeps_verified_partial_evid
     monkeypatch.setattr(capabilities, "anyio", ObservedAnyio())
 
     async def observe_source(name, ctx, connection, user_id, deadline, observations):
+        # Establish the verified prefix before holding the conservative writer;
+        # later Exclusive probes must not be required to overtake this request.
+        if name == "manage_recording":
+            await observed.wait()
         probe_deadlines.add(deadline)
         read_deadlines.add(capabilities._read_deadline.get())
         await read_source(name, ctx, connection, user_id, deadline, observations)
@@ -638,6 +642,8 @@ async def test_final_revalidation_lock_clears_identity_within_disclosed_maximum(
     monkeypatch.setattr(capabilities, "anyio", ObservedAnyio())
 
     async def observe_source(name, ctx, owner, user_id, deadline, observations):
+        if name == "manage_recording":
+            await observed.wait()
         probe_deadlines.add(deadline)
         read_deadlines.add(capabilities._read_deadline.get())
         assert anyio.current_effective_deadline() <= deadline

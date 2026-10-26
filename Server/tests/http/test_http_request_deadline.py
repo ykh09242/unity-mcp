@@ -273,7 +273,26 @@ async def test_sdk_scope_restores_prior_context_and_concurrent_budgets(command_h
             client.call_tool("manage_scene", raise_on_error=False),
         )
         assert long_result.structured_content["success"] is True
-        assert short_result.structured_content["data"]["reason"] == "outcome_unknown"
+        short_dispatches = [
+            message
+            for message in command_hub.sent
+            if message["type"] == "execute" and message["name"] == "manage_scene"
+        ]
+        assert len(short_dispatches) <= 1
+        # A short request may expire behind the long writer. Only an observed
+        # send boundary can establish the old in-flight unknown-outcome case.
+        expected = "outcome_unknown" if short_dispatches else "command_deadline_exceeded"
+        assert short_result.structured_content["data"]["reason"] == expected
+        assert (
+            len(
+                [
+                    message
+                    for message in command_hub.sent
+                    if message["type"] == "execute" and message["name"] == "blender_bridge"
+                ]
+            )
+            == 1
+        )
         probe = await client.call_tool("request_probe")
         assert probe.structured_content["budget"] == pytest.approx(0.02)
         assert probe.structured_content["instance"] == "Fixture@hash"

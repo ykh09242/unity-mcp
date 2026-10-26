@@ -5,15 +5,18 @@ from contextlib import asynccontextmanager
 from functools import wraps
 import asyncio  # noqa: ANYIO_OK -- share the existing public request budget.
 import inspect
+import importlib
 import logging
+import time
 from pathlib import Path
-from typing import ParamSpec, TypeVar
+from typing import ParamSpec, TypeVar, get_args
 
 from pydantic_core import to_jsonable_python
 from pydantic.fields import FieldInfo
 
 from core.config import config
 from models.response_limits import response_size
+from models.models import MCPResponse
 from services.execution_receipt_context import owned_to_thread
 from services.operation_permissions import JsonValue, authorize_remote_operation
 from services.operation_policy import OperationMode, resolve_operation_policy
@@ -116,24 +119,45 @@ def trusted_tool(function: Callable, name: str) -> bool:
     source = Path(code.co_filename).resolve()
     services = Path(__file__).resolve().parent.parent
     if function.__module__.startswith("services.tools."):
-        return source.is_relative_to(services / "tools")
+        if (
+            not source.is_relative_to(services / "tools")
+            or function.__name__ != name
+            or code.co_name != name
+        ):
+            return False
+        try:
+            module = importlib.import_module(function.__module__)
+        except ImportError:
+            return False
+        return getattr(module, name, None) is function
     if function.__module__ == "services.registry.capability_adapter":
         from services.registry.capability_catalog import CAPABILITIES
+        from services.registry.capability_adapter import get_capability_implementation
 
-        return source == services / "registry" / "capability_adapter.py" and any(
-            capability.name == name for capability in CAPABILITIES
+        feature = next((item for item in CAPABILITIES if item.name == name), None)
+        implementation = get_capability_implementation(function, name)
+        return (
+            source == services / "registry" / "capability_adapter.py"
+            and feature is not None
+            and implementation is not None
+            and trusted_tool(implementation, feature.source)
         )
     return False
 
 
 def operation_payload_charge(params: dict[str, JsonValue]) -> int | None:
-    """Use the existing command structure/byte ceilings before queue retention."""
+    """Account retained memory without imposing HTTP's wire limit on other routes."""
+    from transport.legacy.unity_connection import FRAMED_MAX
+
+    retention_limit = 1024 * 1024 * 1024
     return response_size(
         params,
-        max_bytes=32 * 1024 * 1024,
+        # Whole SDK arguments need not be one native command. Existing ingress
+        # and transport writers remain authoritative for their own wire limits.
+        max_bytes=FRAMED_MAX,
         max_depth=64,
-        max_nodes=1_000_000,
-        max_retained=256 * 1024 * 1024,
+        max_nodes=retention_limit // 128,
+        max_retained=retention_limit,
     )
 
 
@@ -149,17 +173,41 @@ def _omitted_default(default, value) -> bool:
     )
 
 
-def _deadline(name: str, params: dict[str, JsonValue]) -> float | None:
+def _deadline(
+    name: str, params: dict[str, JsonValue], *, function=None, trusted_builtin=False
+) -> float | None:
     from transport.command_budget import http_request_budget
     from transport.legacy.unity_connection import _command_deadline
+    from services.execution_receipt_context import execution_owner
+    from services.registry.operation_budget import resolve_public_budget
 
+    policy = resolve_public_budget(function, name, params, trusted_builtin=trusted_builtin)
     request = http_request_budget.get()
+    started = request.started_at if request is not None else time.monotonic()
+    ceilings = []
+    if policy.hard_seconds is not None:
+        ceilings.append(started + policy.hard_seconds)
+    parent = active_operation()
+    if parent is not None and parent.request.expires_at is not None:
+        ceilings.append(parent.request.expires_at)
+    receipt = execution_owner.get()
+    if receipt is not None:
+        ceilings.append(receipt.expires_at)
+    if request is not None and request.hard_expires_at is not None:
+        ceilings.append(request.hard_expires_at)
     if request is not None:
         from transport.plugin_hub import PluginHub
 
-        request.extend(PluginHub._command_timeouts(name, params)[1])
-        return request.budget.expires_at
-    return _command_deadline(name, params)
+        desired = started + max(
+            PluginHub._command_timeouts(name, params)[1], policy.readiness_seconds
+        )
+        request.extend(max(0.0, min([desired, *ceilings]) - started))
+        deadline = request.budget.expires_at
+    else:
+        deadline = _command_deadline(name, params)
+        if deadline is not None:
+            deadline = max(deadline, started + policy.readiness_seconds)
+    return min([deadline, *ceilings]) if deadline is not None else min(ceilings, default=None)
 
 
 def _refusal(reason: str) -> dict[str, JsonValue]:
@@ -175,6 +223,14 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
     """Wrap once at registration; direct native senders retain their own admission."""
     signature = inspect.signature(function)
     trusted = trusted_tool(function, name)
+    try:
+        result_type = inspect.get_annotations(function, eval_str=True).get("return")
+    except (NameError, TypeError):
+        result_type = None
+    model_response = result_type is MCPResponse or MCPResponse in get_args(result_type)
+
+    def refusal_result(value: dict[str, JsonValue]):
+        return MCPResponse.model_validate(value) if model_response else value
 
     @wraps(function)
     async def invoke(*args: P.args, **kwargs: P.kwargs):
@@ -208,7 +264,7 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
             return await call()
         from services.tools import get_unity_instance_from_context
 
-        expires_at = _deadline(name, params)
+        expires_at = _deadline(name, params, function=function, trusted_builtin=trusted)
         instance = await get_unity_instance_from_context(ctx)
         user = None
         if config.http_remote_hosted:
@@ -223,13 +279,17 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
             return await call()
         if target.authorize_public is not None:
             await target.authorize_public(name, params)
+        if target.capacity_error is not None:
+            refusal = target.capacity_error()
+            if refusal is not None:
+                return refusal_result(refusal)
         if target.public_available is not None and not await target.public_available(
             (name, unity_target), getattr(ctx, "fastmcp", None)
         ):
-            return _refusal("operation_tool_unavailable")
+            return refusal_result(_refusal("operation_tool_unavailable"))
         charge = operation_payload_charge(params)
         if charge is None:
-            return _refusal("operation_payload_limit")
+            return refusal_result(_refusal("operation_payload_limit"))
         policy = resolve_operation_policy(name, params, trusted_builtin=trusted)
         request = admission_for(target, policy.mode, expires_at=expires_at, retained_bytes=charge)
         try:
@@ -237,17 +297,21 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                 await authorize_remote_operation(name, params, ctx=ctx)
                 if target.authorize_public is not None:
                     await target.authorize_public(name, params)
+                if target.capacity_error is not None:
+                    refusal = target.capacity_error()
+                    if refusal is not None:
+                        return refusal_result(refusal)
                 await validate_enabled()
                 if target.public_available is not None and not await target.public_available(
                     (name, unity_target), getattr(ctx, "fastmcp", None)
                 ):
-                    return _refusal("operation_tool_unavailable")
+                    return refusal_result(_refusal("operation_tool_unavailable"))
                 if not target.is_current():
                     raise OperationScopeChanged()
                 return await call()
         except OperationScopeChanged:
-            return _refusal("operation_target_changed")
+            return refusal_result(_refusal("operation_target_changed"))
         except OperationCapacityError:
-            return _refusal("operation_capacity")
+            return refusal_result(_refusal("operation_capacity"))
 
     return invoke

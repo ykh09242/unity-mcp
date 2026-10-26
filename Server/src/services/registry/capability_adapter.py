@@ -2,6 +2,7 @@
 
 from contextvars import ContextVar
 import inspect
+from types import CodeType
 from typing import Annotated, Callable, Literal
 
 from mcp.types import ToolAnnotations
@@ -9,12 +10,25 @@ from pydantic import Field
 
 from models.capability_results import BUNDLE_RESULT, validate_bundle_result
 from services.registry.action_contracts import action_input_error
-from services.registry.capability_catalog import Capability
+from services.registry.capability_catalog import Capability, CAPABILITIES
 from services.registry.tool_registry import mcp_for_unity_tool
 
 _command_route: ContextVar[tuple[str, str] | None] = ContextVar(
     "unity_capability_command", default=None
 )
+_adapter_code: CodeType | None = None
+
+
+def get_capability_implementation(function: Callable, name: str) -> Callable | None:
+    """Read the real adapter closure, never mutable catalog/name-only metadata."""
+    if _adapter_code is None or getattr(function, "__code__", None) is not _adapter_code:
+        return None
+    captured = inspect.getclosurevars(function).nonlocals
+    capability = captured.get("capability")
+    if not any(item is capability and item.name == name for item in CAPABILITIES):
+        return None
+    implementation = captured.get("implementation")
+    return implementation if callable(implementation) else None
 
 
 def capability_command(source: str) -> str:
@@ -25,6 +39,7 @@ def capability_command(source: str) -> str:
 
 def register_capability(capability: Capability, implementation: Callable) -> Callable:
     """Keep original defaults/types while admitting only this feature's inputs."""
+    global _adapter_code
     signature = inspect.signature(implementation)
     admitted = {"ctx", "action", *capability.parameters}
     unknown = admitted - signature.parameters.keys()
@@ -65,6 +80,7 @@ def register_capability(capability: Capability, implementation: Callable) -> Cal
         finally:
             _command_route.reset(token)
 
+    _adapter_code = invoke.__code__
     invoke.__name__ = capability.name
     invoke.__qualname__ = capability.name
     invoke.__doc__ = capability.description

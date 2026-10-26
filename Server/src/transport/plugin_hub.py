@@ -105,6 +105,7 @@ from transport.native_arbitration import (
     NativeNotStarted,
     decode_native_reply,
     valid_generation,
+    may_retry_wire_attempt,
 )
 
 if TYPE_CHECKING:
@@ -588,6 +589,36 @@ class PluginHub(WebSocketEndpoint):
             hint="retry",
             data={"reason": "command_capacity", "retry_after_ms": 250},
         ).model_dump()
+
+    @classmethod
+    def _pending_usage(cls, session_id, user_id):
+        user_count = session_count = total_bytes = user_bytes = session_bytes = 0
+        for entry in cls._pending.values():
+            size = entry.get("payload_bytes", 0)
+            total_bytes += size
+            if entry.get("user_id") == user_id:
+                user_count += 1
+                user_bytes += size
+            if entry.get("session_id") == session_id:
+                session_count += 1
+                session_bytes += size
+        return user_count, session_count, total_bytes, user_bytes, session_bytes
+
+    @classmethod
+    def _pending_capacity_error(cls, session_id, user_id):
+        users, sessions, total_bytes, user_bytes, session_bytes = cls._pending_usage(
+            session_id, user_id
+        )
+        if (
+            len(cls._pending) >= cls.MAX_PENDING_COMMANDS
+            or users >= cls.MAX_PENDING_PER_USER
+            or sessions >= cls.MAX_PENDING_PER_SESSION
+            or total_bytes >= cls.MAX_PENDING_PAYLOAD_BYTES
+            or user_bytes >= cls.MAX_PENDING_PAYLOAD_BYTES_PER_USER
+            or session_bytes >= cls.MAX_PENDING_PAYLOAD_BYTES_PER_SESSION
+        ):
+            return cls._command_capacity_response()
+        return None
 
     @classmethod
     def configure(
@@ -1408,7 +1439,6 @@ class PluginHub(WebSocketEndpoint):
             admission_for,
             operation_session,
             is_observational_continuation,
-            operation_payload_charge,
         )
         from services.registry.operation_target import capture_http_target
 
@@ -1432,6 +1462,8 @@ class PluginHub(WebSocketEndpoint):
             )
         if _expected_generation is None:
             _expected_generation = target.transport_generation
+        requester = None
+        socket = cls._connections.get(session_id)
         if config.http_remote_hosted:
             requester = await require_credential_lease()
             socket = cls._connections.get(session_id)
@@ -1447,15 +1479,25 @@ class PluginHub(WebSocketEndpoint):
                     custom=_catalog_guard is not None,
                     native=True,
                 )
+        if cls._lock is not None:
+            async with cls._authorized_socket_lock(socket, cls._lock, requester):
+                user = (
+                    target.scope.principal.removeprefix("remote:")
+                    if target.scope.principal.startswith("remote:")
+                    else None
+                )
+                capacity = cls._pending_capacity_error(session_id, user)
+                if capacity is not None:
+                    return capacity
         policy = resolve_operation_policy(
             command_type, params, native=True, trusted_builtin=_catalog_guard is None
         )
-        charge = operation_payload_charge(params)
+        charge = cls._command_payload_size(command_type, params)
         if charge is None:
             return MCPResponse(
                 success=False,
-                error="operation_payload_limit",
-                data={"reason": "operation_payload_limit", "dispatch": "not_dispatched"},
+                error="Unity command payload exceeds supported size or structure",
+                data={"reason": "command_payload_limit", "dispatch": "not_dispatched"},
             ).model_dump()
         async with operation_session(
             admission_for(
@@ -1503,33 +1545,32 @@ class PluginHub(WebSocketEndpoint):
         lease = await require_credential_lease() if config.http_remote_hosted else None
         try:
             async with lease.own() if lease is not None else nullcontext():
-                async with asyncio.timeout_at(budget.expires_at):
-                    while True:
-                        try:
-                            return await cls._send_command(
-                                session_id,
-                                command_type,
-                                params,
-                                budget,
-                                _expected_read=_expected_read,
-                                **(
-                                    {"_expected_generation": _expected_generation}
-                                    if _expected_generation is not None
-                                    else {}
-                                ),
-                                _catalog_guard=_catalog_guard,
-                                **({"_progress": _progress} if _progress is not None else {}),
-                            )
-                        except NativeNotStarted as refusal:
-                            # Only an exact transport-owned pre-handler receipt
-                            # can clear this attempt's dispatch uncertainty.
-                            budget.dispatched = False
-                            if not refusal.reply.retryable or command_type == "batch_execute":
-                                return refusal.reply.payload
-                            params = refusal.params
-                            _expected_generation = refusal.transport_generation
-                            budget.phase = "native_admission"
-                            await asyncio.sleep(min(0.1, budget.remaining()))
+                while True:
+                    try:
+                        return await cls._send_command(
+                            session_id,
+                            command_type,
+                            params,
+                            budget,
+                            _expected_read=_expected_read,
+                            **(
+                                {"_expected_generation": _expected_generation}
+                                if _expected_generation is not None
+                                else {}
+                            ),
+                            _catalog_guard=_catalog_guard,
+                            **({"_progress": _progress} if _progress is not None else {}),
+                        )
+                    except NativeNotStarted as refusal:
+                        # Only an exact transport-owned pre-handler receipt
+                        # can clear this attempt's dispatch uncertainty.
+                        budget.dispatched = False
+                        if not may_retry_wire_attempt(command_type, refusal.reply):
+                            return refusal.reply.payload
+                        params = refusal.params
+                        _expected_generation = refusal.transport_generation
+                        budget.phase = "native_admission"
+                        await asyncio.sleep(min(0.1, budget.remaining()))
         except OperationPermissionError:
             if budget.dispatched:
                 return command_outcome_unknown(
@@ -1631,16 +1672,9 @@ class PluginHub(WebSocketEndpoint):
                     )
             # _pending is the single source of accounting: every existing pop on
             # result/cancel/timeout/disconnect/eviction/shutdown returns capacity.
-            user_count = session_count = total_bytes = user_bytes = session_bytes = 0
-            for entry in cls._pending.values():
-                entry_bytes = entry.get("payload_bytes", 0)
-                total_bytes += entry_bytes
-                if entry.get("user_id") == user_id:
-                    user_count += 1
-                    user_bytes += entry_bytes
-                if entry["session_id"] == session_id:
-                    session_count += 1
-                    session_bytes += entry_bytes
+            user_count, session_count, total_bytes, user_bytes, session_bytes = cls._pending_usage(
+                session_id, user_id
+            )
             if (
                 len(cls._pending) >= cls.MAX_PENDING_COMMANDS
                 or user_count >= cls.MAX_PENDING_PER_USER

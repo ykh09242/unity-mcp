@@ -31,6 +31,7 @@ async def peer(monkeypatch):
             self.commands = []
             self.mode = "busy_until_control"
             self.allow_write = False
+            self.applied_count = 0
 
         def sendall(self, payload):
             if self.header_pending:
@@ -79,6 +80,13 @@ async def peer(monkeypatch):
                             "lengthBytes": 14,
                         },
                     },
+                }
+            if self.mode == "started_reload_hint":
+                refused = False
+                self.applied_count += 1
+                value = {
+                    "status": "success",
+                    "result": {"success": False, "hint": "retry", "data": {"reason": "reloading"}},
                 }
             if binding is not None:
                 proof = {
@@ -133,7 +141,9 @@ async def test_not_started_wait_releases_same_connection_for_control(peer):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["recovery", "unknown", "spoof", "wrong_nonce"])
+@pytest.mark.parametrize(
+    "mode", ["recovery", "unknown", "spoof", "wrong_nonce", "started_reload_hint"]
+)
 async def test_only_exact_transport_owned_transient_refusal_can_replay(peer, mode):
     peer.socket.mode = mode
     result = await write()
@@ -142,6 +152,9 @@ async def test_only_exact_transport_owned_transient_refusal_can_replay(peer, mod
         assert result == {"native_arbitration": {"disposition": "not_started", "retryable": True}}
     elif mode == "wrong_nonce":
         assert "invalid_native_arbitration_response" in result.error
+    elif mode == "started_reload_hint":
+        assert result == {"success": False, "hint": "retry", "data": {"reason": "reloading"}}
+        assert peer.socket.applied_count == 1
     else:
         assert result == {
             "status": "error",
@@ -251,6 +264,108 @@ async def test_old_reload_wait_cannot_drop_whole_operation_generation_guard(peer
     result = await write()
     assert result["data"] == {"reason": "operation_target_changed", "dispatch": "not_dispatched"}
     assert not peer.socket.commands
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("negotiated", [True, False])
+async def test_mutation_wrapper_never_replays_handler_reload_hint(peer, monkeypatch, negotiated):
+    from services.tools import refresh_unity
+
+    monkeypatch.setattr(config, "transport_mode", "stdio")
+    if not negotiated:
+        peer.connection.authenticated_session = None
+    peer.socket.mode = "started_reload_hint"
+
+    async def ready(*args, **kwargs):
+        return True, 0
+
+    monkeypatch.setattr(refresh_unity, "wait_for_editor_ready", ready)
+    result = await refresh_unity._send_mutation(
+        None,
+        "Owned@deadbeef",
+        "manage_script",
+        {"action": "create", "name": "Owned", "path": "Assets"},
+    )
+    assert result == {"success": False, "hint": "retry", "data": {"reason": "reloading"}}
+    assert len(peer.socket.commands) == peer.socket.applied_count == 1
+    assert ("arbitration" in peer.socket.commands[0]) is negotiated
+
+
+@pytest.mark.asyncio
+async def test_mutation_wrapper_retries_only_typed_local_zero_dispatch_preflight(peer, monkeypatch):
+    from services.tools import refresh_unity
+
+    monkeypatch.setattr(config, "transport_mode", "stdio")
+    original = peer.connection.authenticated_session
+    replacement = type(peer.socket)()
+    replacement.allow_write = True
+    states = iter([{"reloading": True}, None])
+    monkeypatch.setattr(uc, "read_status_file", lambda *_: next(states, None))
+    ready_calls = []
+
+    async def ready(*args, **kwargs):
+        if not ready_calls:
+            peer.connection.sock = replacement
+            peer.connection.authenticated_session = replace(
+                original, session_id="replacement", arbitration_generation="c" * 32
+            )
+            peer.connection.session_generation = (
+                peer.connection.authenticated_session.session_generation
+            )
+        ready_calls.append(True)
+        return True, 0
+
+    monkeypatch.setattr(refresh_unity, "wait_for_editor_ready", ready)
+    result = await refresh_unity._send_mutation(
+        None,
+        "Owned@deadbeef",
+        "manage_script",
+        {"action": "create", "name": "Owned", "path": "Assets"},
+    )
+    assert result["success"] is True
+    assert peer.socket.commands == []
+    assert len(replacement.commands) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["batch_execute", "batch_apply_preview", "batch_validate"])
+async def test_exact_not_started_batch_envelope_is_never_reexecuted(peer, command):
+    result = await uc.async_send_command_with_retry(
+        command, {"commands": [], "action": []}, instance_id="Owned@deadbeef"
+    )
+    assert result == {"status": "error", "error": "operation_busy"}
+    assert len(peer.socket.commands) == 1
+
+
+@pytest.mark.asyncio
+async def test_queued_legacy_payload_above_http_limit_reaches_real_framing(peer, monkeypatch):
+    size = 33 * 1024 * 1024
+    peer.socket.allow_write = True
+    owner = scheduler()
+    queued = asyncio.Event()
+    wake = owner._wake
+
+    def observe(key, state):
+        wake(key, state)
+        if state.waiting:
+            queued.set()
+
+    monkeypatch.setattr(owner, "_wake", observe)
+    async with owner.session(
+        OperationAdmission(OperationScope("local", "deadbeef", "holder"), "exclusive", lambda: True)
+    ):
+        pending = asyncio.create_task(
+            uc.async_send_command_with_retry(
+                "custom_large", {"text": "x" * size}, instance_id="Owned@deadbeef"
+            )
+        )
+        await await_signal(queued, "large legacy request retained behind its instance predecessor")
+        assert size < owner.snapshot()["retained_bytes"] < 1024 * 1024 * 1024
+        assert peer.socket.commands == []
+    assert await pending == {"success": True}
+    assert len(peer.socket.commands[0]["params"]["text"]) == size
+    assert owner.snapshot()["retained_bytes"] == 0
+    peer.socket.commands.clear()
 
 
 @pytest.mark.asyncio
