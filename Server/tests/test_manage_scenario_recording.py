@@ -12,6 +12,8 @@ from models.models import MCPResponse
 from models.scenario_recording import ScenarioRecordingCommand
 from pydantic import TypeAdapter, ValidationError
 from services.registry.tool_registry import get_registered_tools
+from services.registry import operation_invocation
+from services import tools
 from services.tools.manage_scenario_recording import manage_scenario_recording
 
 
@@ -42,42 +44,42 @@ def route(monkeypatch):
     return SimpleNamespace(select=select, send=send)
 
 
+RECORDING_REQUESTS = [
+    (
+        {"action": "start", "name": "menu-draft"},
+        {
+            "action": "start",
+            "name": "menu-draft",
+            "max_events": 31,
+            "duration_seconds": 300,
+        },
+    ),
+    ({"action": "status"}, {"action": "status"}),
+    (
+        {"action": "stop", "recording_id": RECORDING_ID},
+        {"action": "stop", "recording_id": RECORDING_ID},
+    ),
+    (
+        {"action": "cancel", "recording_id": RECORDING_ID},
+        {"action": "cancel", "recording_id": RECORDING_ID},
+    ),
+    (
+        {
+            "action": "checkpoint",
+            "recording_id": RECORDING_ID,
+            "checkpoint_name": "after-menu",
+        },
+        {
+            "action": "checkpoint",
+            "recording_id": RECORDING_ID,
+            "checkpoint_name": "after-menu",
+        },
+    ),
+]
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "arguments,expected",
-    [
-        (
-            {"action": "start", "name": "menu-draft"},
-            {
-                "action": "start",
-                "name": "menu-draft",
-                "max_events": 31,
-                "duration_seconds": 300,
-            },
-        ),
-        ({"action": "status"}, {"action": "status"}),
-        (
-            {"action": "stop", "recording_id": RECORDING_ID},
-            {"action": "stop", "recording_id": RECORDING_ID},
-        ),
-        (
-            {"action": "cancel", "recording_id": RECORDING_ID},
-            {"action": "cancel", "recording_id": RECORDING_ID},
-        ),
-        (
-            {
-                "action": "checkpoint",
-                "recording_id": RECORDING_ID,
-                "checkpoint_name": "after-menu",
-            },
-            {
-                "action": "checkpoint",
-                "recording_id": RECORDING_ID,
-                "checkpoint_name": "after-menu",
-            },
-        ),
-    ],
-)
+@pytest.mark.parametrize("arguments,expected", RECORDING_REQUESTS)
 async def test_dispatches_once_without_reload_replay(route, arguments, expected):
     result = await manage_scenario_recording(SimpleNamespace(), **arguments)
     assert result == route.send.return_value
@@ -156,29 +158,99 @@ async def test_legacy_failure_is_preserved(route):
     }
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
-async def test_actual_sdk_dispatch_and_schema(route, mode):
-    server = FastMCP("scenario-recording")
+@pytest.fixture
+def sdk_server(route, monkeypatch):
+    """Keep real registration wrappers while replacing discovery and native IO."""
     metadata = next(
         tool for tool in get_registered_tools() if tool["func"] is manage_scenario_recording
     )
-    server.tool(**metadata["kwargs"])(manage_scenario_recording)
-    registered = (await server.list_tools(run_middleware=False))[0]
+    monkeypatch.setattr(tools, "discover_modules", lambda *_: iter(()))
+    monkeypatch.setattr(tools, "get_registered_tools", lambda: [metadata])
+    monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", "full")
+    monkeypatch.setattr(tools, "get_unity_instance_from_context", route.select)
+    monkeypatch.setattr(operation_invocation, "capture_target", AsyncMock(return_value=None))
+    authorize = AsyncMock()
+    monkeypatch.setattr(operation_invocation, "authorize_remote_operation", authorize)
+    monkeypatch.setattr("core.telemetry_decorator.record_milestone", lambda *_: None)
+    monkeypatch.setattr("core.telemetry_decorator.record_tool_usage", lambda *_, **__: None)
+    server = FastMCP("scenario-recording")
+    tools.register_all_tools(server)
+    return SimpleNamespace(server=server, metadata=metadata, authorize=authorize)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+@pytest.mark.parametrize("arguments,expected", RECORDING_REQUESTS)
+async def test_actual_sdk_dispatch_and_schema(route, sdk_server, mode, arguments, expected):
+    registered = (await sdk_server.server.list_tools(run_middleware=False))[0]
     assert registered.parameters["properties"]["max_events"]["anyOf"][0]["maximum"] == 127
     assert "menu-flow-01" in registered.parameters["properties"]["name"]["description"]
-    assert "UnityEngine.Input" in metadata["description"]
-    assert "raw observation" in metadata["description"]
-    async with Client(server, mode=mode) as client:
+    assert "UnityEngine.Input" in sdk_server.metadata["description"]
+    assert "raw observation" in sdk_server.metadata["description"]
+    async with Client(sdk_server.server, mode=mode) as client:
         advertised = (await client.list_tools())[0]
         hints = advertised.annotations.model_dump(by_alias=True)
         assert hints["readOnlyHint"] is False
         assert hints["destructiveHint"] is True
-        result = await client.call_tool(
-            "manage_scenario_recording", {"action": "start", "name": "menu-draft"}
-        )
+        assert "scene_scope" not in advertised.input_schema.get("required", [])
+        assert advertised.input_schema["properties"]["scene_scope"]["enum"] == [
+            "active",
+            "all_loaded",
+        ]
+        result = await client.call_tool("manage_scenario_recording", arguments)
         assert json.loads(result.content[0].text) == route.send.return_value
         route.send.assert_awaited_once()
+        assert route.send.call_args.args[1:] == (
+            "Selected@recording",
+            "manage_scenario_recording",
+            expected,
+        )
+        assert "scene_scope" not in route.send.call_args.args[3]
+        assert route.send.call_args.kwargs == {"retry_on_reload": False}
+        assert "scene_scope" not in sdk_server.authorize.call_args.args[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+@pytest.mark.parametrize("scene_scope", ["active", "all_loaded"])
+async def test_actual_sdk_preserves_explicit_start_scope(route, sdk_server, mode, scene_scope):
+    async with Client(sdk_server.server, mode=mode) as client:
+        result = await client.call_tool(
+            "manage_scenario_recording",
+            {"action": "start", "name": "menu-draft", "scene_scope": scene_scope},
+        )
+    assert json.loads(result.content[0].text) == route.send.return_value
+    route.send.assert_awaited_once()
+    assert route.send.call_args.args[3] == {
+        "action": "start",
+        "name": "menu-draft",
+        "scene_scope": scene_scope,
+        "max_events": 31,
+        "duration_seconds": 300,
+    }
+    assert route.send.call_args.kwargs == {"retry_on_reload": False}
+    assert sdk_server.authorize.call_args.args[1]["scene_scope"] == scene_scope
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+async def test_actual_sdk_rejects_invalid_scope_without_dispatch(route, sdk_server, mode):
+    async with Client(sdk_server.server, mode=mode) as client:
+        for scene_scope in (None, True, 1, "unknown"):
+            result = await client.call_tool(
+                "manage_scenario_recording",
+                {"action": "start", "name": "menu-draft", "scene_scope": scene_scope},
+                raise_on_error=False,
+            )
+            assert result.is_error
+        for arguments, _ in RECORDING_REQUESTS[1:]:
+            result = await client.call_tool(
+                "manage_scenario_recording", {**arguments, "scene_scope": "active"}
+            )
+            payload = json.loads(result.content[0].text)
+            assert payload["success"] is False
+            assert "scene_scope must be a non-null start option" in payload["error"]
+    route.send.assert_not_awaited()
 
 
 def test_strict_command_rejects_unknown_fields():
