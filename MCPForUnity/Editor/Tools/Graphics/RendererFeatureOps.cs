@@ -95,6 +95,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var rendererData = GetRendererData(@params);
             if (rendererData == null)
                 return new ErrorResponse("Could not find URP ScriptableRendererData.");
+            var ownershipError = GraphicsMutationGuard.Validate(rendererData, requirePersistent: true);
+            if (ownershipError != null)
+                return ownershipError;
 
             EnsureTypes();
             if (_scriptableRendererFeatureType == null)
@@ -213,6 +216,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var rendererData = GetRendererData(@params);
             if (rendererData == null)
                 return new ErrorResponse("Could not find URP ScriptableRendererData.");
+            var ownershipError = GraphicsMutationGuard.Validate(rendererData);
+            if (ownershipError != null)
+                return ownershipError;
 
             var featuresProp = rendererData.GetType().GetProperty("rendererFeatures", BindingFlags.Public | BindingFlags.Instance);
             if (featuresProp == null)
@@ -292,6 +298,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var rendererData = GetRendererData(@params);
             if (rendererData == null)
                 return new ErrorResponse("Could not find URP ScriptableRendererData.");
+            var ownershipError = GraphicsMutationGuard.Validate(rendererData);
+            if (ownershipError != null)
+                return ownershipError;
 
             var featuresProp = rendererData.GetType().GetProperty("rendererFeatures", BindingFlags.Public | BindingFlags.Instance);
             var featuresList = featuresProp?.GetValue(rendererData) as System.Collections.IList;
@@ -305,6 +314,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var feature = featuresList[targetIndex] as ScriptableObject;
             if (feature == null)
                 return new ErrorResponse($"Feature at index {targetIndex} is null.");
+            ownershipError = GraphicsMutationGuard.Validate(feature);
+            if (ownershipError != null)
+                return ownershipError;
 
             Undo.RecordObject(feature, "Configure Renderer Feature");
             var result = ApplyFeatureProperties(feature, propertiesToken);
@@ -332,6 +344,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var rendererData = GetRendererData(@params);
             if (rendererData == null)
                 return new ErrorResponse("Could not find URP ScriptableRendererData.");
+            var ownershipError = GraphicsMutationGuard.Validate(rendererData);
+            if (ownershipError != null)
+                return ownershipError;
 
             var featuresProp = rendererData.GetType().GetProperty("rendererFeatures", BindingFlags.Public | BindingFlags.Instance);
             var featuresList = featuresProp?.GetValue(rendererData) as System.Collections.IList;
@@ -345,6 +360,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var feature = featuresList[targetIndex] as ScriptableObject;
             if (feature == null)
                 return new ErrorResponse($"Feature at index {targetIndex} is null.");
+            ownershipError = GraphicsMutationGuard.Validate(feature);
+            if (ownershipError != null)
+                return ownershipError;
 
             // ScriptableRendererFeature.SetActive(bool) is public
             var setActiveMethod = feature.GetType().GetMethod("SetActive", BindingFlags.Public | BindingFlags.Instance);
@@ -372,6 +390,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var rendererData = GetRendererData(@params);
             if (rendererData == null)
                 return new ErrorResponse("Could not find URP ScriptableRendererData.");
+            var ownershipError = GraphicsMutationGuard.Validate(rendererData);
+            if (ownershipError != null)
+                return ownershipError;
 
             var featuresProp = rendererData.GetType().GetProperty("rendererFeatures", BindingFlags.Public | BindingFlags.Instance);
             var featuresList = featuresProp?.GetValue(rendererData) as System.Collections.IList;

@@ -197,6 +197,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (pipelineAsset == null)
                 return new ErrorResponse("No render pipeline asset found.");
 
+            var ownershipError = GraphicsMutationGuard.Validate(pipelineAsset);
+            if (ownershipError != null)
+                return ownershipError;
+
             var changed = new List<string>();
             var failed = new List<string>();
 

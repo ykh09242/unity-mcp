@@ -150,6 +150,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (propsRaw == null || propsRaw.Type != JTokenType.Object)
                 return new ErrorResponse("'properties' dict is required.");
 
+            var ownershipError = GraphicsMutationGuard.Validate(skyMat);
+            if (ownershipError != null)
+                return ownershipError;
+
             var set = new List<string>();
             var failed = new List<string>();
 
