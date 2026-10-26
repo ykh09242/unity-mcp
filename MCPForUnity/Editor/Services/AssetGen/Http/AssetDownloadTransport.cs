@@ -180,14 +180,16 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
     internal sealed class DownloadedArtifact : IDisposable
     {
         private FileStream stream;
+        private AssetDiskBudget.Lease lease;
         private readonly Stream reader;
         internal string Path { get; }
         internal long Length { get; }
         internal string Sha256 { get; }
 
-        private DownloadedArtifact(FileStream stream, string path, string hash)
+        private DownloadedArtifact(FileStream stream, string path, string hash, AssetDiskBudget.Lease lease)
         {
             this.stream = stream;
+            this.lease = lease;
             reader = new ReadOnlyDownload(stream);
             Path = path;
             Length = stream.Length;
@@ -233,7 +235,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
             protected override void Dispose(bool disposing) { }
         }
 
-        public void Dispose() => Interlocked.Exchange(ref stream, null)?.Dispose();
+        public void Dispose()
+        {
+            Interlocked.Exchange(ref stream, null)?.Dispose();
+            // DeleteOnClose normally removes the staging file. If deletion fails, its
+            // reservation remains held rather than making remaining bytes invisible.
+            if (AssetDiskBudget.FileIsGone(Path))
+                Interlocked.Exchange(ref lease, null)?.Dispose();
+        }
 
         internal static async Task<DownloadedArtifact> ReadAsync(
             Stream body,
@@ -249,12 +258,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 throw new IOException("Provider download exceeds the byte limit or has an invalid body length.");
             if (string.IsNullOrWhiteSpace(projectRoot) || !System.IO.Path.IsPathRooted(projectRoot))
                 throw new InvalidOperationException("A project root is required for artifact staging.");
-            string directory = SafePathUtility.ResolveWithinRoot(projectRoot, "Temp/McpAssetDownloads");
-            Directory.CreateDirectory(directory);
-            string path = SafePathUtility.ResolveWithinRoot(projectRoot, System.IO.Path.Combine(directory, Guid.NewGuid().ToString("N") + ".part"));
+            AssetDiskBudget.Lease lease = await AssetDiskBudget.ReserveDownloadAsync(projectRoot, contentLength, ct).ConfigureAwait(false);
             FileStream output = null;
+            string path = null;
             try
             {
+                string directory = SafePathUtility.ResolveWithinRoot(projectRoot, "Temp/McpAssetDownloads");
+                Directory.CreateDirectory(directory);
+                path = SafePathUtility.ResolveWithinRoot(projectRoot, System.IO.Path.Combine(directory, Guid.NewGuid().ToString("N") + ".part"));
                 output = new FileStream(
                     path,
                     FileMode.CreateNew,
@@ -267,6 +278,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 using var sha = SHA256.Create();
                 var buffer = new byte[64 * 1024];
                 long length = 0;
+                long reserved = Math.Max(0, contentLength);
                 int read;
                 progress?.BeginTransfer();
                 progress?.ReportBytes(0, contentLength);
@@ -275,7 +287,16 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                     ct.ThrowIfCancellationRequested();
                     if (read > maxBytes - length || (contentLength >= 0 && read > contentLength - length))
                         throw new IOException("Provider download exceeds its declared length or byte limit.");
+                    if (contentLength < 0 && read > reserved - length)
+                    {
+                        // Unknown-length bodies claim in 1 MiB blocks instead of probing
+                        // disk free space for every 64 KiB read. The final unused tail is released.
+                        long growth = Math.Min(maxBytes - reserved, Math.Max(1024L * 1024, read - (reserved - length)));
+                        lease.Increase(growth);
+                        reserved += growth;
+                    }
                     await output.WriteAsync(buffer, 0, read, ct).ConfigureAwait(false);
+                    lease.RecordWritten(read);
                     sha.TransformBlock(buffer, 0, read, null, 0);
                     length += read;
                     progress?.ReportBytes(length, contentLength);
@@ -284,14 +305,29 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                     throw new IOException("Provider download ended before its declared length.");
                 await output.FlushAsync(ct).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
+                lease.TrimToWritten();
                 sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-                var artifact = new DownloadedArtifact(output, path, BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant());
+                var artifact = new DownloadedArtifact(output, path, BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant(), lease);
                 output = null;
+                lease.CompleteTransfer();
+                lease = null;
                 return artifact;
             }
             finally
             {
-                output?.Dispose();
+                try
+                {
+                    output?.Dispose();
+                }
+                finally
+                {
+                    if (lease != null)
+                    {
+                        lease.CompleteTransfer();
+                        if (AssetDiskBudget.FileIsGone(path))
+                            lease.Dispose();
+                    }
+                }
             }
         }
     }

@@ -277,7 +277,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                         selected = ModelArchiveSelection.Select(archive, ArchiveAllowedExtensions, job.ArchiveModelPath, evidence);
                         selectionComplete = true;
                     },
-                    directory => folders.EnsureFolder(AssetGenPaths.ToProjectRelative(directory))
+                    directory => folders.EnsureFolder(AssetGenPaths.ToProjectRelative(directory)),
+                    Path.GetDirectoryName(Application.dataPath)
                 );
                 string selectedAbs = SafePathUtility.ResolveWithinRoot(folderAbs, selected);
                 if (!File.Exists(selectedAbs))
