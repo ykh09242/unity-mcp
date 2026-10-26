@@ -318,7 +318,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(1, Components(borrowed).Count);
             Assert.IsTrue(bloom == (Object)Components(borrowed)[0], "Unlinking must preserve the borrowed native component.");
             Assert.IsTrue(AssetDatabase.Contains(bloom));
-            Assert.IsTrue(AssetDatabase.IsSubAsset(bloom));
+            AssertPersistentChild(borrowed, bloom);
             Assert.AreEqual(path, AssetDatabase.GetAssetPath(bloom));
             Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(bloom, out string actualGuid, out long actualLocalId));
             Assert.AreEqual(guid, actualGuid);
@@ -662,12 +662,36 @@ namespace MCPForUnityTests.Editor.Tools
                     && actualLocalId == localId
                 )
                 {
-                    Assert.IsTrue(AssetDatabase.IsSubAsset(typed));
+                    Assert.AreEqual(child.GetType(), typed.GetType(), "Reimport must preserve the concrete child type.");
+                    AssertPersistentChild(owner, typed);
                     return typed;
                 }
             }
             Assert.Fail("The imported child must retain its persistent GUID and local file ID.");
             return null;
+        }
+
+        private static void AssertPersistentChild(Object owner, Object child)
+        {
+            string path = AssetDatabase.GetAssetPath(owner);
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(owner, out string ownerGuid, out long ownerId));
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(child, out string childGuid, out long childId));
+            string identity =
+                $"owner={owner.GetType().FullName}/{ownerGuid}/{ownerId}; child={child.GetType().FullName}/{childGuid}/{childId}; flags={child.hideFlags}";
+            TestContext.Out.WriteLine("Persistent child witness: " + identity);
+            Assert.IsTrue(EditorUtility.IsPersistent(owner) && EditorUtility.IsPersistent(child), identity);
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(child), identity);
+            Assert.IsNotEmpty(ownerGuid, identity);
+            Assert.AreEqual(ownerGuid, childGuid, identity);
+            Assert.AreNotEqual(0, childId, identity);
+            Assert.AreNotEqual(ownerId, childId, identity);
+            Object main = AssetDatabase.LoadMainAssetAtPath(path);
+            Assert.IsTrue(owner == main && child != main, identity);
+            // LoadAllAssetsAtPath includes hidden subassets. Core VolumeProfile.Add deliberately
+            // uses HideInHierarchy, for which IsSubAsset is false on the native runner.
+            CollectionAssert.Contains(AssetDatabase.LoadAllAssetsAtPath(path), child, identity);
+            if ((child.hideFlags & HideFlags.HideInHierarchy) == 0)
+                Assert.IsTrue(AssetDatabase.IsSubAsset(child), identity);
         }
 
         private ScriptableObject NewRenderer(bool package)
