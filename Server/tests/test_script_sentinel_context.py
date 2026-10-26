@@ -29,6 +29,8 @@ async def sentinel_wire(monkeypatch):
     entered = asyncio.Event()
     release = threading.Event()
     conn = legacy.UnityConnection(port=6401, instance_id="EditorA@hash-A")
+    pool = legacy.UnityConnectionPool()
+    pool._connections[conn.instance_id] = conn
     original_command = conn.send_command
     contexts, requests, selections, sent, owners, responses = [], [], [], [], [], []
     selected = {"value": "EditorA@hash-A"}
@@ -42,7 +44,7 @@ async def sentinel_wire(monkeypatch):
     def get_pool():
         if config.http_remote_hosted:
             return original_pool()
-        return SimpleNamespace(get_connection=get_connection)
+        return pool
 
     async def instance(ctx):
         contexts.append(ref(ctx))
@@ -68,6 +70,8 @@ async def sentinel_wire(monkeypatch):
         return result
 
     monkeypatch.setattr(config, "http_remote_hosted", False)
+    monkeypatch.setattr(legacy, "_unity_connection_pool", pool)
+    monkeypatch.setattr(pool, "get_connection", get_connection)
     monkeypatch.setattr(legacy, "get_unity_connection_pool", get_pool)
     monkeypatch.setattr(conn, "send_command", command)
     monkeypatch.setattr(legacy, "async_send_command_with_retry", observe_send)

@@ -31,6 +31,7 @@ def connection_environment(monkeypatch, tmp_path):
         PortDiscovery, "_try_probe_unity_mcp", lambda port: probes.append(port) or True
     )
     pool = uc.UnityConnectionPool()
+    monkeypatch.setattr(uc, "_unity_connection_pool", pool)
     monkeypatch.setattr(uc, "get_unity_connection_pool", lambda: pool)
     conn = pool.get_connection("Main@deadbeef")
     monkeypatch.setattr(
