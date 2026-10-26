@@ -23,6 +23,7 @@ namespace MCPForUnityTests.Editor.Services
             var handlers = (IDictionary)typeof(CommandRegistry).GetField("_handlers", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
             var previous = handlers[name];
             using var lifetime = new CancellationTokenSource();
+            using var availability = new ScopedRegistryAvailabilityTestState(new[] { name });
             try
             {
                 Assert.AreEqual(1, CommandRegistry.RegisterCommandTypes(new[] { typeof(SignatureProbe) }, false));

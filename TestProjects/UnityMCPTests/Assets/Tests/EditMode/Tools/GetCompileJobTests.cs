@@ -27,6 +27,8 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue((bool)result["success"]);
             Assert.AreEqual("unknown", (string)result["data"]["outcome"]);
             Assert.AreEqual("result_unavailable", (string)result["data"]["reason"]);
+            Assert.IsNull(result["data"]["native_coordination"], "The legacy strict compile ledger shape remains unchanged.");
+            Assert.AreEqual("owned_request_pipeline_events", (string)result["native_coordination"]["scope"]);
             Assert.AreEqual(before, EditorStateCache.CompileCount);
         }
     }

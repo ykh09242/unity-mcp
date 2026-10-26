@@ -101,13 +101,17 @@ POLICY_RULES: Final = (
     *(
         PolicyRule(name, (), SHARED_READ, public=True)
         for name in (
-            "find_in_file",
             "get_sha",
             "manage_script_capabilities",
             "validate_script",
             "debug_request_context",
         )
     ),
+    # Native get_sha reads bytes/metadata; basic/standard validation parses text
+    # without executing project code or importing/compiling assets. Broader levels
+    # are filtered below. The deprecated native read logs a Unity warning, which
+    # can invoke project log callbacks, so find_in_file/read remain Exclusive.
+    PolicyRule("manage_script", ("get_sha", "validate"), SHARED_READ),
     *(
         PolicyRule(name, (), SHARED_READ)
         for name in (
@@ -254,6 +258,10 @@ def resolve_operation_policy(
         return _exclusive("arbitrary_execution")
     if name in {"batch_execute", "batch_validate", "batch_apply_preview"}:
         return _exclusive("batch_envelope")
+    if name == "manage_script" and action == "validate":
+        level = params.get("level", "standard")
+        if not isinstance(level, str) or level.lower() not in {"basic", "standard"}:
+            return _exclusive("unreviewed_validation_level")
     if name == "manage_ugui" and action == "diagnose_raycast":
         if params.get("allow_custom_filters", False) is not False:
             return _exclusive("conditional_callbacks")

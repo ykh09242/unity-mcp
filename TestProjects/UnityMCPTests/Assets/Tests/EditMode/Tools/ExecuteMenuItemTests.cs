@@ -35,8 +35,14 @@ namespace MCPForUnityTests.Editor.Tools
         [MenuItem(OwnedMenuPath)]
         private static void InvokeOwnedMenu() => _ownedMenuInvoked = true;
 
+        private MCPForUnityTests.Editor.Services.ScopedConsentTestState registryConsent;
+
         [SetUp]
-        public void SetUp() => _ownedMenuInvoked = false;
+        public void SetUp()
+        {
+            _ownedMenuInvoked = false;
+            registryConsent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("execute_menu_item", "execute_menu_item_observed");
+        }
 
         [TearDown]
         public void TearDown()
@@ -45,6 +51,7 @@ namespace MCPForUnityTests.Editor.Tools
             foreach (string name in new[] { "_existsOverride", "_enabledOverride", "_executeOverride", "_consoleOpenOverride", "_clockOverride" })
                 typeof(ExecuteMenuItem).GetField(name, BindingFlags.Static | BindingFlags.NonPublic)?.SetValue(null, null);
             _ownedMenuInvoked = false;
+            registryConsent?.Dispose();
         }
 
         private static JObject ToJO(object o) => JObject.FromObject(o);

@@ -29,6 +29,34 @@ namespace MCPForUnity.Editor.Tools
         internal Func<JObject, BatchActionValidation> BatchValidator { get; set; }
         internal HandlerInfo AliasOwner { get; set; }
         internal Type SourceType { get; set; }
+        private Type registeredSource;
+        private MethodInfo registeredMethod;
+        private Func<JObject, object> registeredSync;
+        private Func<JObject, Task<object>> registeredAsync;
+        private Func<JObject, CancellationToken, Task<object>> registeredCooperative;
+        private Func<JObject, CancellationToken, ICommandProgress, Task<object>> registeredProgressive;
+
+        internal void BindRegistration(Type source, MethodInfo method)
+        {
+            SourceType = registeredSource = source;
+            registeredMethod = method;
+            registeredSync = SyncHandler;
+            registeredAsync = AsyncHandler;
+            registeredCooperative = CooperativeAsyncHandler;
+            registeredProgressive = ProgressiveAsyncHandler;
+        }
+
+        internal bool HasTrustedRegistration =>
+            registeredSource != null
+            && SourceType == registeredSource
+            && registeredMethod?.DeclaringType == registeredSource
+            && registeredSource.Assembly == typeof(CommandRegistry).Assembly
+            && registeredSource.Namespace != null
+            && registeredSource.Namespace.StartsWith("MCPForUnity.Editor.", StringComparison.Ordinal)
+            && ReferenceEquals(registeredSync, SyncHandler)
+            && ReferenceEquals(registeredAsync, AsyncHandler)
+            && ReferenceEquals(registeredCooperative, CooperativeAsyncHandler)
+            && ReferenceEquals(registeredProgressive, ProgressiveAsyncHandler);
         private string previewIdentity;
         internal string PreviewIdentity => previewIdentity ??= Guid.NewGuid().ToString("N");
 
@@ -276,7 +304,7 @@ namespace MCPForUnity.Editor.Tools
                     _handlers.Remove("batch_validate");
                     _handlers.Remove("batch_apply_preview");
                 }
-                handlerInfo.SourceType = type;
+                handlerInfo.BindRegistration(type, method);
                 _handlers[commandName] = handlerInfo;
                 if (type == typeof(BatchExecute) && commandName == "batch_execute")
                 {
@@ -309,8 +337,37 @@ namespace MCPForUnity.Editor.Tools
                 && ReferenceEquals(owner, handler.AliasOwner)
             );
 
+        internal static bool IsTrustedBuiltInHandler(string commandName)
+        {
+            if (!_handlers.TryGetValue(commandName, out var handler) || !IsCurrentAlias(handler))
+                return false;
+            var owner = handler.AliasOwner ?? handler;
+            return owner.HasTrustedRegistration && ToolOperationIdentity.IsCanonicalHandler(owner.CommandName, owner.SourceType);
+        }
+
+        internal static bool IsTrustedBatchHandler(string commandName) =>
+            _handlers.TryGetValue(commandName, out var handler)
+            && IsCurrentAlias(handler)
+            && (handler.AliasOwner ?? handler).HasTrustedRegistration
+            && (handler.AliasOwner ?? handler).SourceType == typeof(BatchExecute);
+
         internal static string GetAdmissionName(string commandName) =>
             _handlers.TryGetValue(commandName, out var handler) && handler.AliasOwner != null && IsCurrentAlias(handler) ? "batch_execute" : commandName;
+
+        internal static void RequireAvailable(string commandName)
+        {
+            // Discovery intentionally hides tool metadata off-thread. Treating that null as
+            // an unlisted custom handler would turn a stored delegate into an availability bypass.
+            if (!ToolConsentThread.IsMainThread)
+                throw new InvalidOperationException("Commands must execute on the Unity Editor main thread.");
+            string admissionName = GetAdmissionName(commandName);
+            var resource = MCPServiceLocator.ResourceDiscovery.GetResourceMetadata(admissionName);
+            if (resource != null && !MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(admissionName))
+                throw new InvalidOperationException($"Resource '{commandName}' is disabled in the Unity Editor.");
+            var tool = MCPServiceLocator.ToolDiscovery.GetToolMetadata(admissionName);
+            if (tool != null && !MCPServiceLocator.ToolDiscovery.IsToolEnabled(admissionName))
+                throw new InvalidOperationException($"Tool '{commandName}' is disabled in the Unity Editor.");
+        }
 
         internal static string GetBatchTargetIdentity(string name)
         {
@@ -360,7 +417,13 @@ namespace MCPForUnity.Editor.Tools
                 throw new InvalidOperationException($"Command '{commandName}' is asynchronous and must be executed via ExecuteCommand");
             }
 
-            return handlerInfo.SyncHandler;
+            return parameters =>
+            {
+                // A retained delegate must observe later disablement or consent revocation.
+                GetHandlerInfo(commandName);
+                RequireAvailable(commandName);
+                return handlerInfo.SyncHandler(parameters);
+            };
         }
 
         /// <summary>
@@ -397,6 +460,7 @@ namespace MCPForUnity.Editor.Tools
         {
             cancellationToken.ThrowIfCancellationRequested();
             var handlerInfo = GetHandlerInfo(commandName);
+            RequireAvailable(commandName);
 
             if (handlerInfo.IsAsync)
             {
@@ -430,7 +494,56 @@ namespace MCPForUnity.Editor.Tools
         /// <param name="params">Parameters to pass to the command (optional).</param>
         public static Task<object> InvokeCommandAsync(string commandName, JObject @params) => InvokeCommandAsync(commandName, @params, CancellationToken.None);
 
-        public static Task<object> InvokeCommandAsync(string commandName, JObject @params, CancellationToken cancellationToken)
+        public static Task<object> InvokeCommandAsync(string commandName, JObject @params, CancellationToken cancellationToken) =>
+            InvokeCommandAsync(commandName, @params, cancellationToken, null);
+
+        internal static Task<object> InvokeCommandAsync(
+            string commandName,
+            JObject @params,
+            CancellationToken cancellationToken,
+            NativeCommandArbitrator.Lease parent
+        )
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            GetHandlerInfo(commandName);
+            RequireAvailable(commandName);
+            bool trustedBuiltIn = IsTrustedBuiltInHandler(commandName);
+            var policy = ToolOperationPolicy.Resolve(commandName, @params, trustedBuiltIn);
+            if (
+                !NativeCommandArbitrator.Shared.TryAcquire(
+                    policy.Mode,
+                    NativeCommandArbitrator.BarrierCandidate(commandName, policy.Mode, trustedBuiltIn),
+                    @params,
+                    parent,
+                    out var lease,
+                    out NativeAdmissionBlocker blocker
+                )
+            )
+                throw new NativeCommandBlockedException(blocker);
+            try
+            {
+                var task = InvokeCommandCoreAsync(commandName, @params, cancellationToken);
+                if (task.IsCompleted)
+                {
+                    lease.Dispose();
+                    return task;
+                }
+                return ReleaseAfterSettlementAsync(task, lease);
+            }
+            catch
+            {
+                lease.Dispose();
+                throw;
+            }
+        }
+
+        private static async Task<object> ReleaseAfterSettlementAsync(Task<object> task, NativeCommandArbitrator.Lease lease)
+        {
+            using (lease)
+                return await task.ConfigureAwait(true);
+        }
+
+        private static Task<object> InvokeCommandCoreAsync(string commandName, JObject @params, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var handlerInfo = GetHandlerInfo(commandName);

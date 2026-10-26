@@ -158,7 +158,7 @@ namespace MCPForUnityTests.Editor.Services
             return ConnectProgressPeer(port, token, null, out _);
         }
 
-        internal static TcpClient ConnectProgressPeer(int port, string token, JToken offered, out JObject reply)
+        internal static TcpClient ConnectProgressPeer(int port, string token, JToken offered, out JObject reply, bool expectAdmitted = true)
         {
             var client = new TcpClient();
             try
@@ -180,6 +180,12 @@ namespace MCPForUnityTests.Editor.Services
                     request["capabilities"] = offered;
                 SendFrame(stream, Encoding.UTF8.GetBytes(request.ToString(Formatting.None)));
                 reply = JObject.Parse(Encoding.UTF8.GetString(ReadFrame(stream, ReadTimeoutMs)));
+                if (!expectAdmitted)
+                {
+                    Assert.AreEqual("authentication_refused", reply.Value<string>("type"));
+                    Assert.AreEqual("client_admission_refused", reply.Value<string>("code"));
+                    return client;
+                }
                 Assert.AreEqual("authenticated", reply.Value<string>("type"));
                 Assert.AreEqual(2, reply.Value<int>("version"));
                 string session = reply.Value<string>("session_id");
@@ -977,6 +983,7 @@ namespace MCPForUnityTests.Editor.Services
                 AssertProgressPayload(await oldUpdate, oldId, 1);
                 var original = StdioBrokerResendTests.FindProgressQueued(business);
                 Assert.AreEqual(oldAck.Value<string>("session_id"), original.Session.SessionId);
+                oldPeer.Dispose(); // Reconnect follows an actual disconnect; a new healthy peer no longer evicts it.
                 var connectNew = host.Track(Task.Run(() => ConnectProgressPeer(host.Port, host.Token, new JArray("command_progress_v1"), out newAck)));
                 await NativeProgressProbe.AwaitOwned(connectNew);
                 replacement = await connectNew;

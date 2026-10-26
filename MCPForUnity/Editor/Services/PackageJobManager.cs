@@ -414,6 +414,8 @@ namespace MCPForUnity.Editor.Services
                 ["completion"] = "unknown",
                 ["reason"] = reason,
                 ["persistence_scope"] = "editor_session",
+                ["coordination_lifetime"] = "trigger_only",
+                ["native_lifetime_supported"] = false,
             };
 
         private static JObject NormalizeResolve(JObject raw)

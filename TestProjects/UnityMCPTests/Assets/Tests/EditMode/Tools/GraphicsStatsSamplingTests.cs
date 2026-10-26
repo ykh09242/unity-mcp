@@ -16,6 +16,18 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class GraphicsStatsSamplingTests
     {
+        private MCPForUnityTests.Editor.Services.ScopedRegistryAvailabilityTestState registryAvailability;
+
+        [SetUp]
+        public void EnableOwnedRegistryTargets() =>
+            registryAvailability = new MCPForUnityTests.Editor.Services.ScopedRegistryAvailabilityTestState(
+                new[] { "manage_graphics" },
+                new[] { "get_rendering_stats" }
+            );
+
+        [TearDown]
+        public void RestoreRegistryTargets() => registryAvailability?.Dispose();
+
         private static Type Stats => typeof(ManageGraphics).Assembly.GetType("MCPForUnity.Editor.Tools.Graphics.RenderingStatsOps", true);
 
         [UnityTest]

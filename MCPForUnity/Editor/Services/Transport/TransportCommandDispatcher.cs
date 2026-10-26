@@ -69,19 +69,21 @@ namespace MCPForUnity.Editor.Services.Transport
             public string LogType { get; set; }
             public System.Diagnostics.Stopwatch LogWatch { get; set; }
             public DateTime QueuedAt { get; }
+            public JObject Arbitration { get; set; }
+            public NativeCommandArbitrator.Lease Lease { get; set; }
 
             public void Dispose()
             {
                 CancellationRegistration.Dispose();
             }
 
-            public void TrySetResult(object payload)
+            public void TrySetResult(object payload, bool notStarted = false, NativeAdmissionBlocker blocker = default)
             {
                 Timing?.Start(CommandPhaseTiming.Phase.Prepare);
                 TransportCommandResponse response;
                 try
                 {
-                    response = TransportCommandResponse.FromObject(payload);
+                    response = TransportCommandResponse.FromObject(payload).WithAdmission(Arbitration, notStarted, blocker);
                 }
                 finally
                 {
@@ -110,14 +112,14 @@ namespace MCPForUnity.Editor.Services.Transport
                 TransportCommandResponse response;
                 try
                 {
-                    response = TransportCommandResponse.FromJson(payload);
+                    response = TransportCommandResponse.FromJson(payload).WithAdmission(Arbitration);
                 }
                 finally
                 {
                     Timing?.Stop(CommandPhaseTiming.Phase.Prepare);
                 }
                 ResponseSource.TrySetResult(response);
-                JsonResponseSource?.TrySetResult(payload);
+                JsonResponseSource?.TrySetResult(Arbitration == null ? payload : response.ToJson());
                 if (OwnsTiming)
                     Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Unobserved);
             }
@@ -492,12 +494,27 @@ namespace MCPForUnity.Editor.Services.Transport
                     return;
                 }
 
+                pending.Arbitration = command.arbitration;
                 ServerVersionDiagnostics.Observe(command.server_info, pending.Origin, DateTime.UtcNow);
 
                 if (string.Equals(command.type, "ping", StringComparison.OrdinalIgnoreCase))
                 {
                     var pingResponse = new { status = "success", result = new { message = "pong" } };
                     pending.TrySetResult(pingResponse);
+                    RemovePending(id, pending);
+                    return;
+                }
+
+                if (command.arbitration != null && !TransportCommandResponse.IsBoundRequest(command.arbitration))
+                {
+                    pending.TrySetResult(
+                        new
+                        {
+                            status = "error",
+                            error = "Native arbitration request binding is stale or invalid",
+                            code = "native_generation_changed",
+                        }
+                    );
                     RemovePending(id, pending);
                     return;
                 }
@@ -538,6 +555,34 @@ namespace MCPForUnity.Editor.Services.Transport
                     return;
                 }
 
+                bool trustedBuiltIn = CommandRegistry.IsTrustedBuiltInHandler(command.type);
+                var policy = ToolOperationPolicy.Resolve(command.type, parameters, trustedBuiltIn);
+                if (
+                    !NativeCommandArbitrator.Shared.TryAcquire(
+                        policy.Mode,
+                        NativeCommandArbitrator.BarrierCandidate(command.type, policy.Mode, trustedBuiltIn),
+                        parameters,
+                        null,
+                        out var lease,
+                        out NativeAdmissionBlocker blocker
+                    )
+                )
+                {
+                    pending.TrySetResult(
+                        new
+                        {
+                            status = "error",
+                            error = "Native operation is busy",
+                            code = blocker.Reason,
+                        },
+                        true,
+                        blocker
+                    );
+                    RemovePending(id, pending);
+                    return;
+                }
+                pending.Lease = lease;
+
                 var logType =
                     resourceMeta != null ? "resource"
                     : toolMeta != null ? "tool"
@@ -551,6 +596,11 @@ namespace MCPForUnity.Editor.Services.Transport
                 pending.Timing?.Start(CommandPhaseTiming.Phase.Handler);
                 object result;
                 using (CommandPhaseTiming.EnterHandler(pending.Timing))
+                using (
+                    NativeCommandArbitrator.EnterBatch(
+                        command.type != "batch_validate" && CommandRegistry.IsTrustedBatchHandler(command.type) ? pending.Lease : null
+                    )
+                )
                 {
                     result = CommandRegistry.ExecuteCommand(
                         command.type,
@@ -671,6 +721,8 @@ namespace MCPForUnity.Editor.Services.Transport
                 UnhookUpdateIfIdle();
             }
 
+            // Cancellation only completes the response. Actual handler settlement owns this release.
+            pending.Lease?.Dispose();
             pending.Dispose();
             pending.ExecutionSource.TrySetResult(true);
             pending.Timing?.ExecutionDone();

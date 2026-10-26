@@ -28,8 +28,9 @@ namespace MCPForUnityTests.Editor.Services
             return recorder.Count;
         }
 
-        [Test]
-        public void BusyPollingAllocatesNothingAndStillCancelsWaitingOwners()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void BusyPollingAllocatesNothingAndStillCancelsWaitingOwners(bool withWaitingLegacy)
         {
             var type = typeof(StdioBridgeHost);
             var queueField = type.GetField("commandQueue", Flags);
@@ -42,6 +43,9 @@ namespace MCPForUnityTests.Editor.Services
             var queue = new Dictionary<string, QueuedCommand>();
             var active = new QueuedCommand { IsExecuting = true };
             queue.Add("active", active);
+            var legacy = new QueuedCommand { Tcs = new TaskCompletionSource<string>() };
+            if (withWaitingLegacy)
+                queue.Add("legacy", legacy);
             try
             {
                 queueField.SetValue(null, queue);
@@ -62,8 +66,14 @@ namespace MCPForUnityTests.Editor.Services
                 queue.Add("cancelled", new QueuedCommand { OwnerCancellation = cancelled.Token, Tcs = waiting });
                 pump();
                 Assert.IsTrue(waiting.Task.IsCanceled);
-                Assert.AreEqual(1, queue.Count);
+                Assert.AreEqual(withWaitingLegacy ? 2 : 1, queue.Count);
                 Assert.AreSame(active, queue["active"]);
+                if (withWaitingLegacy)
+                {
+                    Assert.AreSame(legacy, queue["legacy"]);
+                    Assert.IsFalse(legacy.IsExecuting, "Legacy work must remain behind the actual executing owner.");
+                    Assert.IsFalse(legacy.Tcs.Task.IsCompleted);
+                }
             }
             finally
             {

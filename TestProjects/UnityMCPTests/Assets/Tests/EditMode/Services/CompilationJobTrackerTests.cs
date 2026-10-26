@@ -9,6 +9,52 @@ namespace MCPForUnityTests.Editor.Services
 {
     public class CompilationJobTrackerTests
     {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void OwnedRefreshCyclePreservesCompileDiagnosticsAndReloadableIdentity(bool finishesInsideRefresh)
+        {
+            var ledger = Ledger();
+            ledger.Begin(Id);
+            var context = new object();
+            ledger.Started(context);
+            ledger.Assembly("A.dll", new[] { Message(true, "Observed compiler failure") });
+            if (finishesInsideRefresh)
+                ledger.Finished(context);
+            ledger.AdoptOwnedRefreshCycle(Id);
+            Assert.AreEqual(finishesInsideRefresh ? "finished" : "running", (string)ledger.Query(Id)["state"]);
+            if (!finishesInsideRefresh)
+                ledger.Finished(context);
+            var result = Ledger(_saved).Query(Id);
+            Assert.AreEqual(Id, (string)result["compile_id"]);
+            Assert.AreEqual("failed", (string)result["outcome"]);
+            Assert.AreEqual("observed_after_request", (string)result["attribution"]);
+            Assert.AreEqual("Observed compiler failure", (string)result["diagnostics"][0]["message"]);
+        }
+
+        [Test]
+        public void OwnedRefreshNoOpFinishRemainsUnknownCompilerVerdictAndClosesTheCycle()
+        {
+            var ledger = Ledger();
+            ledger.Begin(Id);
+            var context = new object();
+            ledger.Started(context);
+            ledger.Finished(context);
+            ledger.AdoptOwnedRefreshCycle(Id);
+            var result = Ledger(_saved).Query(Id);
+            Assert.AreEqual("finished", (string)result["state"]);
+            Assert.AreEqual("unknown", (string)result["outcome"]);
+            Assert.AreEqual("no_assembly_compilation", (string)result["reason"]);
+        }
+
+        [Test]
+        public void RefreshCannotAdoptAnIdleSampleWithoutAnObservedCycle()
+        {
+            var ledger = Ledger();
+            ledger.Begin(Id);
+            Assert.Throws<InvalidOperationException>(() => ledger.AdoptOwnedRefreshCycle(Id));
+            Assert.AreEqual("requested", (string)ledger.Query(Id)["state"]);
+        }
+
         [Test]
         public void OverflowDiagnosticBurstPreservesBoundedPersistedOutcome()
         {

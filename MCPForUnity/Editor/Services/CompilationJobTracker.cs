@@ -120,6 +120,21 @@ namespace MCPForUnity.Editor.Services
             Save();
         }
 
+        internal void AdoptOwnedRefreshCycle(string id)
+        {
+            var request = Find(id);
+            if (request == null || request.Phase != "refreshing" || request.Candidates.Count == 0)
+                throw new InvalidOperationException("No pipeline start was observed during the owned refresh.");
+            // The caller observed a cycle during its synchronous refresh and did not
+            // issue a second void trigger. Keep the existing observational schema.
+            request.ExplicitGeneration = request.Candidates[0];
+            if (request.Reason == "refresh_phase_cycle")
+                request.Reason = "";
+            request.Phase = "awaiting_explicit_start";
+            CloseFinished(request);
+            Save();
+        }
+
         internal void Reject(string id)
         {
             var request = Find(id);
@@ -626,7 +641,64 @@ namespace MCPForUnity.Editor.Services
     {
         private const string SessionKey = "MCPForUnity.CompileJobs.Session";
         private const string LedgerKey = "MCPForUnity.CompileJobs.Ledger";
+        private const string ReservationKey = "MCPForUnity.CompileJobs.NativeReservationV1";
         internal static readonly CompilationLedger Ledger = Create();
+        internal static readonly OwnedCompilationReservation Reservation = CreateReservation();
+
+        static CompilationJobTracker()
+        {
+            EditorApplication.update += ObserveNativeQuiescence;
+        }
+
+        private static void ObserveNativeQuiescence()
+        {
+            if (Reservation.AwaitingQuiescence)
+                Reservation.ObserveQuiescence(!EditorApplication.isCompiling && !EditorApplication.isUpdating && !EditorStateCache.IsDomainReloadPending);
+        }
+
+        private static OwnedCompilationReservation CreateReservation()
+        {
+            OwnedCompilationReservation.Checkpoint checkpoint = null;
+            string saved = SessionState.GetString(ReservationKey, "");
+            if (!string.IsNullOrEmpty(saved))
+            {
+                try
+                {
+                    checkpoint = JsonConvert.DeserializeObject<OwnedCompilationReservation.Checkpoint>(saved);
+                }
+                catch (JsonException)
+                {
+                    checkpoint = new OwnedCompilationReservation.Checkpoint();
+                }
+                // An invalid checkpoint still means that completion could not be observed.
+                checkpoint ??= new OwnedCompilationReservation.Checkpoint();
+            }
+            var owner = new OwnedCompilationReservation(checkpoint);
+            owner.Changed = () =>
+            {
+                string encoded = owner.State == null ? "" : JsonConvert.SerializeObject(owner.State);
+                SessionState.SetString(ReservationKey, encoded);
+            };
+            owner.Changed();
+            return owner;
+        }
+
+        internal static object CoordinationStatus(string compileId)
+        {
+            string reason = Reservation.Blocker(EditorApplication.timeSinceStartup);
+            var state = Reservation.State;
+            return new
+            {
+                scope = "owned_request_pipeline_events",
+                phase = state == null ? "no_owned_reservation"
+                : state.JobId == compileId ? state.Phase
+                : "other_owned_reservation",
+                reason,
+                retryable = reason == "native_job_active",
+                recovery_action = reason == "recovery_required" ? "inspect_native_work_then_restart_editor" : null,
+                completion_requires = "matching_pipeline_finish_and_editor_quiescence",
+            };
+        }
 
         private static CompilationLedger Create()
         {

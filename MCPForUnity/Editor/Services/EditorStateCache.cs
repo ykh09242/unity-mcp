@@ -61,6 +61,7 @@ namespace MCPForUnity.Editor.Services
         private const string CompileCountKey = "MCPForUnity.EditorState.CompileCount";
 
         private static bool _domainReloadPending;
+        internal static bool IsDomainReloadPending => _domainReloadPending;
         private static long? _domainReloadBeforeUnixMs;
         private static long? _domainReloadAfterUnixMs;
 
@@ -312,6 +313,7 @@ namespace MCPForUnity.Editor.Services
                 UnityEditor.Compilation.CompilationPipeline.compilationStarted += context =>
                 {
                     _pipelineCompilationRunning = true;
+                    CompilationJobTracker.Reservation.Started(context);
                     CompilationJobTracker.Ledger.Started(context);
                     SetSessionUnixMs(CompileStartedKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     SessionState.SetInt(CompileCountKey, SessionState.GetInt(CompileCountKey, 0) + 1);
@@ -320,6 +322,7 @@ namespace MCPForUnity.Editor.Services
                 UnityEditor.Compilation.CompilationPipeline.compilationFinished += context =>
                 {
                     _pipelineCompilationRunning = false;
+                    CompilationJobTracker.Reservation.Finished(context);
                     CompilationJobTracker.Ledger.Finished(context);
                     // Fires before the domain reload, which is what makes the finish
                     // observable at all: the write lands while this domain is alive and

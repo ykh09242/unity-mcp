@@ -33,6 +33,7 @@ namespace MCPForUnity.Editor.Services
 
         private static Job _job;
         private static IDisposable _playRequest;
+        internal static bool HasPendingPlayRequest => _playRequest != null && _job?.status == "running" && !_job.transition_requested;
         internal static Func<double> _clockOverride = null;
         internal static Func<bool> _readinessOverride = null;
 

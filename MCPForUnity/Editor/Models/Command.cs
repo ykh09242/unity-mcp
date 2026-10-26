@@ -19,5 +19,8 @@ namespace MCPForUnity.Editor.Models
 
         /// <summary>Optional, untrusted process build metadata; never used for authentication or routing.</summary>
         public JToken server_info { get; set; }
+
+        /// <summary>Optional transport negotiation binding; never a handler concurrency hint.</summary>
+        public JObject arbitration { get; set; }
     }
 }

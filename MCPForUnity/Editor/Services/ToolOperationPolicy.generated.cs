@@ -107,11 +107,12 @@ namespace MCPForUnity.Editor.Services
             { "manage_profiler\n1profiler_status", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
             { "manage_profiler\n1window_status", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
             { "manage_profiler\n1window_cancel", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
-            { "find_in_file\n0", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
             { "get_sha\n0", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
             { "manage_script_capabilities\n0", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
             { "validate_script\n0", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
             { "debug_request_context\n0", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
+            { "manage_script\n1get_sha", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
+            { "manage_script\n1validate", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
             { "get_selection\n0", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
             { "get_active_tool\n0", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
             { "get_tags\n0", new ToolOperationPolicy(ToolOperationMode.SharedRead, ToolOperationLifetime.Command, "reviewed_read") },
@@ -205,6 +206,14 @@ namespace MCPForUnity.Editor.Services
                 return Exclusive("arbitrary_execution");
             if (commandName == "batch_execute" || commandName == "batch_validate" || commandName == "batch_apply_preview")
                 return Exclusive("batch_envelope");
+            if (commandName == "manage_script" && action == "validate")
+            {
+                var level = parameters["level"];
+                if (level != null && (level.Type != JTokenType.String
+                    || !string.Equals((string)level, "basic", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals((string)level, "standard", StringComparison.OrdinalIgnoreCase)))
+                    return Exclusive("unreviewed_validation_level");
+            }
             if (commandName == "manage_ugui" && action == "diagnose_raycast")
             {
                 var allow = parameters["allow_custom_filters"];

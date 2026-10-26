@@ -1,6 +1,7 @@
 """Reviewed operation effects are independent of permissions and client hints."""
 
 import pytest
+import importlib
 
 from services.operation_policy import (
     OperationLifetime,
@@ -30,7 +31,14 @@ def test_unknown_arbitrary_and_stateful_operations_never_inherit_read_eligibilit
     assert policy.mode == OperationMode.EXCLUSIVE
 
 
-@pytest.mark.parametrize("name,params", [("ping", {}), ("query_physics", {"action": "raycast"})])
+@pytest.mark.parametrize(
+    "name,params",
+    [
+        ("ping", {}),
+        ("query_physics", {"action": "raycast"}),
+        ("manage_script", {"action": "get_sha"}),
+    ],
+)
 def test_registered_override_cannot_inherit_builtin_mode(name, params):
     # Given / When
     policy = resolve_operation_policy(name, params, native=True, trusted_builtin=False)
@@ -258,3 +266,86 @@ def test_package_recovery_diagnostics_remain_control_while_request_owner_is_bloc
     # Then
     assert policy.mode == OperationMode.CONTROL
     assert policy.lifetime == OperationLifetime.COMMAND
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name,arguments,expected_mode,expected_action",
+    [
+        ("get_sha", {}, "shared_read", "get_sha"),
+        ("validate_script", {"level": "basic"}, "shared_read", "validate"),
+        ("validate_script", {"level": "standard"}, "shared_read", "validate"),
+        ("find_in_file", {"pattern": "class"}, "exclusive", "read"),
+    ],
+)
+async def test_actual_script_wrapper_native_routes_fit_the_public_reservation(
+    monkeypatch, name, arguments, expected_mode, expected_action
+):
+    # Given: invoke the real wrapper; substitute only the external peer boundary.
+    module = importlib.import_module(
+        "services.tools.find_in_file" if name == "find_in_file" else "services.tools.manage_script"
+    )
+    observed = []
+
+    async def target(_ctx):
+        return "policy-fixture"
+
+    async def peer(_send, instance, command, params):
+        observed.append((command, params))
+        assert instance == "policy-fixture"
+        return {"success": True, "data": {"contents": "class PolicyFixture {}"}}
+
+    monkeypatch.setattr(module, "get_unity_instance_from_context", target)
+    monkeypatch.setattr(module, "send_with_unity_instance", peer)
+    params = {"uri": "Assets/PolicyFixture.cs", **arguments}
+    # When
+    result = await getattr(module, name)(object(), **params)
+    public = resolve_operation_policy(name, params)
+    native_name, native_params = observed[0]
+    native = resolve_operation_policy(native_name, native_params, native=True)
+    # Then: this is a route contract, not a replacement for framed SDK integration.
+    assert result["success"] is True
+    assert len(observed) == 1
+    assert native_name == "manage_script"
+    assert native_params["action"] == expected_action
+    assert public.mode.value == expected_mode
+    assert native.mode == public.mode
+
+
+@pytest.mark.parametrize("level", [None, "basic", "standard", "BASIC"])
+def test_only_audited_native_validation_levels_are_shared(level):
+    # Given / When: omitted level uses native standard, not project compilation.
+    params = {"action": "validate"}
+    if level is not None:
+        params["level"] = level
+    policy = resolve_operation_policy("manage_script", params, native=True)
+    # Then
+    assert policy.mode == OperationMode.SHARED_READ
+
+
+@pytest.mark.parametrize("level", ["strict", "comprehensive", "", "future", False, 0, [], {}, None])
+def test_unreviewed_validation_levels_do_not_borrow_safe_wrapper_policy(level):
+    # Given / When: explicit null differs from omitted native default.
+    policy = resolve_operation_policy(
+        "manage_script", {"action": "validate", "level": level}, native=True
+    )
+    # Then
+    assert policy.mode == OperationMode.EXCLUSIVE
+
+
+@pytest.mark.parametrize(
+    "action", ["read", "validate_edit", "preview_edit", "future_read", "create", "update", "delete"]
+)
+def test_script_read_audit_does_not_admit_other_actions(action):
+    # Given / When
+    policy = resolve_operation_policy("manage_script", {"action": action}, native=True)
+    # Then
+    assert policy.mode == OperationMode.EXCLUSIVE
+
+
+@pytest.mark.parametrize("action", ["get_sha", "validate", "read"])
+def test_native_script_read_rules_do_not_admit_unaudited_public_router_actions(action):
+    # Given / When: public manage_script has its own schema and wrapper review.
+    policy = resolve_operation_policy("manage_script", {"action": action})
+    # Then
+    assert policy.mode == OperationMode.EXCLUSIVE

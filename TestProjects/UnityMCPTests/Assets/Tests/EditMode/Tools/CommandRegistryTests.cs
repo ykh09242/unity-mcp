@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Resources;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -341,6 +342,16 @@ namespace MCPForUnityTests.Editor.Tools
             foreach (var toolName in expectedTools)
             {
                 Assert.IsTrue(CommandRegistry.HasHandler(toolName), $"Handler for '{toolName}' should be registered");
+                // Registration does not grant availability. Disabled tools must refuse even
+                // when a project custom handler composes this public registry entry point.
+                if (!MCPServiceLocator.ToolDiscovery.IsToolEnabled(toolName))
+                {
+                    Assert.That(
+                        Assert.Throws<InvalidOperationException>(() => CommandRegistry.InvokeCommandAsync(toolName, new JObject())).Message,
+                        Does.Contain("disabled")
+                    );
+                    continue;
+                }
                 // The common entry point supports both sync tools and execute_menu_item's async contract.
                 var response = CommandRegistry.InvokeCommandAsync(toolName, new JObject());
                 Assert.IsTrue(response.Wait(TimeSpan.FromSeconds(5)));
@@ -363,15 +374,20 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 var tcs = new TaskCompletionSource<string>();
                 Assert.IsNull(CommandRegistry.ExecuteCommand(name, new JObject(), tcs), "the answer must come through the completion source, after the task");
-                Assert.AreSame(pending.Task, CommandRegistry.InvokeCommandAsync(name, new JObject()));
+                var composed = CommandRegistry.InvokeCommandAsync(name, new JObject());
+                Assert.IsFalse(composed.IsCompleted, "A lease wrapper must await the actual returned task.");
+                Assert.Greater(JObject.FromObject(NativeCommandArbitrator.Shared.CaptureStatus()).Value<int>("active_writers"), 0);
                 Assert.IsFalse(tcs.Task.IsCompleted, "the command answered before its task finished");
 
                 pending.SetResult("captured");
                 float deadline = Time.realtimeSinceStartup + 5f;
-                while (!tcs.Task.IsCompleted && Time.realtimeSinceStartup < deadline)
+                while ((!tcs.Task.IsCompleted || !composed.IsCompleted) && Time.realtimeSinceStartup < deadline)
                     yield return null;
 
                 Assert.IsTrue(tcs.Task.IsCompleted, "the command never answered");
+                Assert.IsTrue(composed.IsCompleted, "the composed invocation never settled");
+                Assert.AreEqual("captured", composed.GetAwaiter().GetResult());
+                Assert.AreEqual(0, JObject.FromObject(NativeCommandArbitrator.Shared.CaptureStatus()).Value<int>("active_writers"));
                 StringAssert.Contains("\"result\":\"captured\"", tcs.Task.Result);
             }
             finally
