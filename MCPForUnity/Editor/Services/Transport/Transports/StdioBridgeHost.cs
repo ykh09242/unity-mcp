@@ -212,7 +212,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             catch (Exception ex)
             {
-                McpLog.Error($"Auto-connect failed: {ex.Message}");
+                McpLog.Error($"Auto-connect failed ({ex.GetType().Name})");
                 TelemetryHelper.RecordBridgeConnection(false, ex.Message);
                 throw;
             }
@@ -604,7 +604,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         lock (clientsLock)
                             authentication = null;
                     }
-                    McpLog.Error($"Failed to start TCP listener: {ex.Message}");
+                    McpLog.Error($"Failed to start TCP listener ({ex.GetType().Name})");
                     WriteHeartbeat(false, "start_failed");
                 }
             }
@@ -717,7 +717,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 catch (Exception ex)
                 {
                     if (IsDebugEnabled())
-                        McpLog.Warn($"Failed to delete status file: {ex.Message}");
+                        McpLog.Warn($"Failed to delete status file ({ex.GetType().Name})");
                 }
             }
         }
@@ -785,7 +785,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     if (isRunning && !token.IsCancellationRequested)
                     {
                         if (IsDebugEnabled())
-                            McpLog.Error($"Listener error: {ex.Message}");
+                            McpLog.Error($"Listener error ({ex.GetType().Name})");
                     }
                 }
             }
@@ -870,20 +870,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         }
                         catch (Exception ex)
                         {
-                            string msg = ex.Message ?? string.Empty;
-                            bool benign =
-                                msg.IndexOf("Connection closed before reading expected bytes", StringComparison.OrdinalIgnoreCase) >= 0
-                                || msg.IndexOf("Read timed out", StringComparison.OrdinalIgnoreCase) >= 0
-                                || ex is IOException
-                                || ex is ObjectDisposedException
-                                || ex is OperationCanceledException;
-                            if (benign)
-                            {
-                                if (IsDebugEnabled())
-                                    McpLog.Info($"Client handler: {msg}", always: false);
-                            }
-                            else
-                                McpLog.Error($"Client handler error: {msg}");
+                            LogClientHandlerFailure(ex);
                             break;
                         }
                     }
@@ -988,6 +975,34 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             return (int)Math.Max(0, Math.Min(int.MaxValue, remaining));
         }
 
+        private static void LogReceivedCommand(string commandText)
+        {
+            try
+            {
+                if (IsDebugEnabled())
+                    McpLog.Info($"Received command frame (characters: {commandText.Length})", always: false);
+            }
+            catch { }
+        }
+
+        private static void LogClientHandlerFailure(Exception exception)
+        {
+            string message = exception.Message ?? string.Empty;
+            bool benign =
+                message.IndexOf("Connection closed before reading expected bytes", StringComparison.OrdinalIgnoreCase) >= 0
+                || message.IndexOf("Read timed out", StringComparison.OrdinalIgnoreCase) >= 0
+                || exception is IOException
+                || exception is ObjectDisposedException
+                || exception is OperationCanceledException;
+            if (benign)
+            {
+                if (IsDebugEnabled())
+                    McpLog.Info("Client handler connection ended", always: false);
+            }
+            else
+                McpLog.Error("Client handler failed");
+        }
+
         private static async Task HandleCommandAsync(
             TcpClient client,
             NetworkStream stream,
@@ -1041,15 +1056,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         .ConfigureAwait(false);
                     return;
                 }
-                try
-                {
-                    if (IsDebugEnabled())
-                    {
-                        var preview = commandText.Length > 120 ? commandText.Substring(0, 120) + "…" : commandText;
-                        McpLog.Info($"recv framed: {preview}", always: false);
-                    }
-                }
-                catch { }
+                LogReceivedCommand(commandText);
                 string commandId = Guid.NewGuid().ToString();
                 var result = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
                 TaskCompletionSource<string> pending = result;
@@ -1709,7 +1716,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 catch (Exception ex)
                 {
                     queuedCommand.Progress?.Close();
-                    PostEditorDiagnostic(editorContext, $"Error processing command: {ex.Message}\n{ex.StackTrace}", true);
+                    PostEditorDiagnostic(editorContext, "Command processing failed", true);
                     var response = new
                     {
                         status = "error",

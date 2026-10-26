@@ -94,9 +94,9 @@ namespace MCPForUnity.Editor.Helpers
                         Color newColor = ParseColor(colArr, serializer);
                         modified |= ApplyStructuredColor(mat, propName, newColor, colArr, serializer);
                     }
-                    catch (Exception ex)
+                    catch (Exception)
                     {
-                        McpLog.Warn($"[MaterialOps] Failed to parse color for property '{propName}': {ex.Message}");
+                        McpLog.Warn("[MaterialOps] Failed to parse color property.");
                     }
                 }
             }
@@ -108,9 +108,9 @@ namespace MCPForUnity.Editor.Helpers
                     Color newColor = ParseColor(colorArr, serializer);
                     modified |= ApplyStructuredColor(mat, propName, newColor, colorArr, serializer);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    McpLog.Warn($"[MaterialOps] Failed to parse color array: {ex.Message}");
+                    McpLog.Warn("[MaterialOps] Failed to parse color array.");
                 }
             }
 
@@ -137,9 +137,9 @@ namespace MCPForUnity.Editor.Helpers
                                 modified |= TrySetShaderProperty(mat, propName, floatProps["value"], serializer);
                         }
                     }
-                    catch (Exception ex)
+                    catch (Exception)
                     {
-                        McpLog.Warn($"[MaterialOps] Failed to set float property '{propName}': {ex.Message}");
+                        McpLog.Warn("[MaterialOps] Failed to set float property.");
                     }
                 }
             }
@@ -297,9 +297,9 @@ namespace MCPForUnity.Editor.Helpers
                 apply();
                 return true;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                McpLog.Warn($"[MaterialOps] Failed to set property '{propertyName}': {ex.Message}");
+                McpLog.Warn("[MaterialOps] Failed to set shader property.");
                 return false;
             }
         }
@@ -403,9 +403,9 @@ namespace MCPForUnity.Editor.Helpers
                         return false;
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                McpLog.Warn($"[MaterialOps] Failed to convert property '{propertyName}': {ex.Message}");
+                McpLog.Warn("[MaterialOps] Failed to convert shader property.");
                 return false;
             }
         }
@@ -453,9 +453,9 @@ namespace MCPForUnity.Editor.Helpers
             {
                 return token.ToObject<Color>(serializer);
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                McpLog.Warn($"[MaterialOps] Failed to parse color from token: {ex.Message}");
+                McpLog.Warn("[MaterialOps] Failed to parse color value.");
                 throw;
             }
         }

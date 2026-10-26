@@ -37,7 +37,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void SetProperty_ArrayForFloat_ReturnsError()
         {
             // Expect the error log that will be generated
-            LogAssert.Expect(LogType.Error, new Regex("Error converting token to System.Single"));
+            LogAssert.Expect(LogType.Error, new Regex(@"\[PropertyConversion\] Property value conversion failed\."));
 
             var audioSource = testGameObject.AddComponent<AudioSource>();
 

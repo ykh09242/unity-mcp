@@ -28,7 +28,7 @@ namespace MCPForUnity.Editor.Helpers
             {
                 if (targetType.IsValueType && Nullable.GetUnderlyingType(targetType) == null)
                 {
-                    McpLog.Warn($"[PropertyConversion] Cannot assign null to non-nullable value type {targetType.Name}. Returning default value.");
+                    McpLog.Warn("[PropertyConversion] Cannot assign null to a non-nullable value type. Returning default value.");
                     return Activator.CreateInstance(targetType);
                 }
                 return null;
@@ -46,9 +46,9 @@ namespace MCPForUnity.Editor.Helpers
                 // Do not report it as an unexpected Unity execution failure.
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                McpLog.Error($"Error converting token to {targetType.FullName}: {ex.Message}\nToken: {token.ToString(Formatting.None)}");
+                McpLog.Error("[PropertyConversion] Property value conversion failed.");
                 throw;
             }
         }
@@ -138,7 +138,7 @@ namespace MCPForUnity.Editor.Helpers
 
             if (loadedAsset == null)
             {
-                McpLog.Warn($"[PropertyConversion] Could not load asset of type {targetType.Name} from path: {assetPath}");
+                McpLog.Warn("[PropertyConversion] Could not load the requested asset.");
             }
 
             return loadedAsset;
