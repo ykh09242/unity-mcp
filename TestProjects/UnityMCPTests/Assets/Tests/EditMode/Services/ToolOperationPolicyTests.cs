@@ -11,6 +11,8 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
         [TestCase("find_gameobjects", "{}", "SharedRead")]
         [TestCase("query_physics", "{\"action\":\"raycast\"}", "SharedRead")]
         [TestCase("apply_physics_force", "{\"action\":\"raycast\"}", "Exclusive")]
+        [TestCase("capture_ui_snapshot", "{\"readOnlyHint\":true}", "Exclusive")]
+        [TestCase("inspect_menu_item", "{}", "Exclusive")]
         [TestCase("get_unknown_future_tool", "{\"readOnlyHint\":true}", "Exclusive")]
         [TestCase("manage_reference_graph", "{\"action\":\"query\"}", "Exclusive")]
         [TestCase("execute_menu_item_observed", "{\"action\":\"inspect\"}", "Exclusive")]

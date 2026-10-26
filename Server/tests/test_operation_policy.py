@@ -205,3 +205,21 @@ def test_truthy_client_metadata_is_not_an_identity_witness(trusted):
     policy = resolve_operation_policy("ping", {}, native=True, trusted_builtin=trusted)
     # Then
     assert policy.mode == OperationMode.EXCLUSIVE
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_snapshot_builtin_identity_does_not_prove_target_getters_are_safe(native):
+    # Given: UguiSnapshotCapture reads custom text/color getters and IsInteractable.
+    # When: discovery hints and handler identity cannot attest those bound objects.
+    policy = resolve_operation_policy(
+        "capture_ui_snapshot", {}, native=native, trusted_builtin=True
+    )
+    # Then
+    assert policy.mode == OperationMode.EXCLUSIVE
+
+
+def test_menu_inspection_is_not_a_reviewed_shared_read():
+    # Given / When: availability inspection is distinct from a plain metadata page.
+    policy = resolve_operation_policy("inspect_menu_item", {}, native=True)
+    # Then
+    assert policy.mode == OperationMode.EXCLUSIVE

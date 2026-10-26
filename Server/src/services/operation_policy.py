@@ -59,6 +59,10 @@ COMMAND: Final = OperationLifetime.COMMAND
 TRACKED_JOB: Final = OperationLifetime.TRACKED_JOB
 TRIGGER_ONLY: Final = OperationLifetime.TRIGGER_ONLY
 
+# capture_ui_snapshot is deliberately excluded: UguiSnapshotCapture reads custom
+# text/color getters and Selectable.IsInteractable; trusted handler identity does
+# not prove bound-object callbacks safe. Menu inspection is conservative too:
+# Menu.GetEnabled may depend on user menu validation, so it is not a reviewed read.
 # These are effects reviews, not another tool/action inventory. Alias admission and
 # generated native partitions come from the existing canonical capability catalog.
 POLICY_RULES: Final = (
@@ -99,7 +103,6 @@ POLICY_RULES: Final = (
             "get_sha",
             "manage_script_capabilities",
             "validate_script",
-            "capture_ui_snapshot",
             "debug_request_context",
         )
     ),
@@ -112,7 +115,6 @@ POLICY_RULES: Final = (
             "get_layers",
             "get_prefab_stage",
             "get_menu_items",
-            "inspect_menu_item",
         )
     ),
     PolicyRule("find_gameobjects", (), SHARED_READ, public_refresh=True),
