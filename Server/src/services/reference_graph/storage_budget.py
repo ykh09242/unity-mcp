@@ -101,7 +101,7 @@ def file_lock(path: Path) -> Iterator[None]:
         while True:
             try:
                 if os.name == "nt":
-                    import msvcrt
+                    import msvcrt  # pylint: disable=import-error  # Windows-only standard library.
 
                     msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
                 else:
