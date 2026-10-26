@@ -1,6 +1,7 @@
 """Durable admission and shared snapshot evidence preserve existing graph work."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 import sqlite3
 import time
 
@@ -202,7 +203,7 @@ def test_full_store_rolls_back_without_losing_previous_manual_evidence(
     reopened = GraphStore.open(tmp_path, store.scope)
     assert reopened.declarations()[0]["edge"]["target"] == "old"
     assert GraphQueries(reopened).diff(saved, saved)["changes"] == []
-    with sqlite3.connect(store.path) as db:
+    with closing(sqlite3.connect(store.path)) as db:
         assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
