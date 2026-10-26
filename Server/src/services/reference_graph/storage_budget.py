@@ -133,12 +133,15 @@ def _reservation(capacity: int) -> int:
 class StorageBudget:
     """A scope's monotonically reserved capacity; existing saved work is never evicted."""
 
-    def __init__(self, path: Path, principal: str):
+    def __init__(self, path: Path, principal: str, *, existing_bytes: int = 0):
         self.path = path
         self.owner = _hash((principal,))
         self.policy = StoragePolicy.environment()
         self.capacity = 0
-        self.capacity = self._reserve(self.policy.initial_bytes, admitting=True)
+        self.reserved = 0
+        self.capacity, self.reserved = self._reserve(
+            self.policy.initial_bytes, admitting=True, existing_bytes=existing_bytes
+        )
 
     @contextmanager
     def _ledger(self) -> Iterator[sqlite3.Connection]:
@@ -199,7 +202,9 @@ class StorageBudget:
                     raise ValueError("Unsupported reference graph budget ledger; preserve it")
                 yield db
 
-    def _reserve(self, requested: int, *, admitting: bool = False) -> int:
+    def _reserve(
+        self, requested: int, *, admitting: bool = False, existing_bytes: int = 0
+    ) -> tuple[int, int]:
         with self._ledger() as db, db:
             row = db.execute(
                 "SELECT owner,capacity,reserved FROM scopes WHERE name=?", (self.path.name,)
@@ -209,6 +214,7 @@ class StorageBudget:
             existing = row is None and self.path.exists()
             sizes = file_sizes(self.path) if existing else {}
             db.execute("BEGIN IMMEDIATE")
+            recovered = False
             if row is not None:
                 if row[0] not in ("", self.owner):
                     raise ValueError("Reference graph budget identity does not match")
@@ -216,19 +222,31 @@ class StorageBudget:
                     db.execute(
                         "UPDATE scopes SET owner=? WHERE name=?", (self.owner, self.path.name)
                     )
-                if admitting or requested <= row[1]:
-                    return row[1]
+                if existing_bytes > row[1]:
+                    # Trusted SQLite page counts can exceed a legacy inventory's
+                    # main-file size after WAL recovery. Preserve and charge that
+                    # existing work even when it exceeds newly configured limits.
+                    requested = existing_bytes + self.policy.initial_bytes
+                    recovered = True
+                elif admitting or requested <= row[1]:
+                    return row[1], row[2]
             if existing:
-                requested = max(requested, sizes[""] + self.policy.initial_bytes)
+                requested = max(
+                    requested, max(sizes[""], existing_bytes) + self.policy.initial_bytes
+                )
             count, total = db.execute(
                 "SELECT count(*),coalesce(sum(reserved),0) FROM scopes"
             ).fetchone()
             user_count, user_total = db.execute(
                 "SELECT count(*),coalesce(sum(reserved),0) FROM scopes WHERE owner=?", (self.owner,)
             ).fetchone()
-            reserved = _reservation(requested)
+            reserved = max(
+                _reservation(requested),
+                row[2] if row else 0,
+                sum(sizes.values()) + MIB if existing else 0,
+            )
             growth = reserved - (row[2] if row else 0)
-            if not existing and (
+            if not (existing or recovered) and (
                 requested > self.policy.scope_bytes
                 or (
                     row is None
@@ -244,7 +262,7 @@ class StorageBudget:
                 "INSERT INTO scopes VALUES (?,?,?,?) ON CONFLICT(name) DO UPDATE SET capacity=excluded.capacity,reserved=excluded.reserved",
                 (self.path.name, self.owner, requested, reserved),
             )
-            return requested
+            return requested, reserved
 
     def grow(self) -> None:
         requested = min(self.policy.scope_bytes, self.capacity * 2)
@@ -252,7 +270,7 @@ class StorageBudget:
             raise StorageBudgetError(
                 "Reference graph main-file budget exhausted; delete unneeded snapshots or ask the operator to raise the budget"
             )
-        self.capacity = self._reserve(requested)
+        self.capacity, self.reserved = self._reserve(requested)
 
     @contextmanager
     def writer(self, connection: sqlite3.Connection) -> Iterator["WriteMeter"]:
@@ -260,7 +278,9 @@ class StorageBudget:
             page_size = connection.execute("PRAGMA page_size").fetchone()[0]
             pages = connection.execute("PRAGMA page_count").fetchone()[0]
             if pages * page_size > self.capacity:
-                self.capacity = self._reserve(self.capacity, admitting=True)
+                self.capacity, self.reserved = self._reserve(
+                    self.capacity, admitting=True, existing_bytes=pages * page_size
+                )
             if pages * page_size > self.capacity * 3 // 4:
                 try:
                     self.grow()

@@ -8,7 +8,7 @@ import time
 
 from services.reference_graph.store import _hash
 from services.reference_graph import snapshot_storage
-from services.reference_graph.storage_budget import file_sizes, _reservation
+from services.reference_graph.storage_budget import file_sizes
 
 
 CONFIG_FIELDS = {
@@ -145,7 +145,7 @@ def overview(entry):
             "staging_rows": staging,
             "physical_bytes": sum(file_sizes(store.path).values()),
             "main_capacity_bytes": store._budget.capacity,
-            "reserved_bytes": _reservation(store._budget.capacity),
+            "reserved_bytes": store._budget.reserved,
             "budget_enforcement": "hard_scope_admission_and_main_pages_cooperative_sidecars",
         },
         "memory": {
@@ -195,6 +195,9 @@ def cleanup(workspace, *, before, limit=100):
                     "SELECT 1 FROM graph_snapshot_refs WHERE backing=? AND snapshot<>? LIMIT 1",
                     (backing, identity),
                 ).fetchone():
+                    # A sole partial alias can still own a formerly ready backing.
+                    # Retire reuse atomically before the first bounded edge deletion.
+                    snapshot_storage.retire(db, backing)
                     tables.append(("graph_snapshot_edges", "snapshot", backing))
             for table, column, value in tables:
                 changed = db.execute(

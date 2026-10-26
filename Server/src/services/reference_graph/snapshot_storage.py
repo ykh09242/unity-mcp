@@ -117,13 +117,18 @@ def replay(connection: sqlite3.Connection, result: dict) -> dict:
     return result
 
 
+def retire(connection: sqlite3.Connection, shared: str) -> None:
+    """Stop advertising backing before any of its evidence is reclaimed."""
+    connection.execute("DELETE FROM graph_snapshot_versions WHERE backing=?", (shared,))
+    connection.execute("DELETE FROM graph_snapshot_contents WHERE backing=?", (shared,))
+
+
 def discard(connection: sqlite3.Connection, identity: str) -> bool:
     shared = backing(connection, identity)
     connection.execute("DELETE FROM graph_snapshot_refs WHERE snapshot=?", (identity,))
     if not connection.execute(
         "SELECT 1 FROM graph_snapshot_refs WHERE backing=? LIMIT 1", (shared,)
     ).fetchone():
-        connection.execute("DELETE FROM graph_snapshot_versions WHERE backing=?", (shared,))
-        connection.execute("DELETE FROM graph_snapshot_contents WHERE backing=?", (shared,))
+        retire(connection, shared)
         connection.execute("DELETE FROM graph_snapshot_edges WHERE snapshot=?", (shared,))
     return connection.execute("DELETE FROM graph_snapshots WHERE id=?", (identity,)).rowcount > 0

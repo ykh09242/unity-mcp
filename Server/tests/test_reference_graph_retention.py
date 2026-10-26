@@ -2,11 +2,15 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import sqlite3
+import time
 
 import pytest
 
 from services.reference_graph.queries import GraphQueries
 from services.reference_graph.store import Edge, GraphScope, GraphStore
+from services.reference_graph.workspace import GraphWorkspace
+from services.reference_graph.operations import cleanup
+from services.reference_graph import snapshot_storage
 
 
 def capture(queries, name="saved", limit=100):
@@ -63,6 +67,87 @@ def test_concurrent_captures_merge_backing_and_last_alias_reclaims_rows(tmp_path
     queries.delete_snapshot(second["snapshot"]["id"])
     with store._connect() as db:
         assert db.execute("SELECT count(*) FROM graph_snapshot_edges").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("change_revision", [False, True])
+def test_cleanup_retires_partial_alias_before_new_capture_reuses_backing(tmp_path, change_revision):
+    # Given a partial alias that becomes the sole owner of a formerly ready backing.
+    store = GraphStore.open(tmp_path, GraphScope("user", "editor", "project"))
+    workspace = GraphWorkspace(store)
+    for index in range(3):
+        store.put_declaration(str(index), "owner", Edge(str(index), "declared"), expected_version=0)
+    queries = workspace.queries()
+    original = capture(queries)
+    partial = queries.snapshot(name="partial", limit=1)["snapshot"]["id"]
+    queries.delete_snapshot(original)
+    queries.abandon(partial)
+
+    # When bounded cleanup removes one edge, then both reuse paths stop advertising it.
+    result = cleanup(workspace, before=time.time() + 1, limit=1)
+    assert result["more"] and result["query_scratch_rows_removed"] == 1
+    with store._connect() as db:
+        assert (
+            db.execute(
+                "SELECT count(*) FROM graph_snapshot_edges WHERE snapshot=?", (original,)
+            ).fetchone()[0]
+            == 2
+        )
+        assert not db.execute(
+            "SELECT 1 FROM graph_snapshot_versions WHERE backing=?", (original,)
+        ).fetchone()
+        assert not db.execute(
+            "SELECT 1 FROM graph_snapshot_contents WHERE backing=?", (original,)
+        ).fetchone()
+
+    # Restart and optionally bypass the version index while retaining identical content.
+    workspace = GraphWorkspace(GraphStore.open(tmp_path, store.scope))
+    store, queries = workspace.store, workspace.queries()
+    if change_revision:
+        store.put_declaration("0", "owner", Edge("0", "declared"), expected_version=1)
+    saved = capture(queries, "new")
+    with store._connect() as db:
+        shared = snapshot_storage.backing(db, saved)
+        assert shared != original
+        assert (
+            db.execute(
+                "SELECT count(*) FROM graph_snapshot_edges WHERE snapshot=?", (shared,)
+            ).fetchone()[0]
+            == 3
+        )
+    while cleanup(workspace, before=time.time() + 1, limit=1)["more"]:
+        pass
+
+    # Remaining cleanup cannot destroy the new ready snapshot or its retry page.
+    page = queries.snapshot(name="retry", limit=2)
+    cursor = page["next_cursor"]
+    completed = queries.snapshot(name="retry", limit=2, cursor=cursor)
+    reopened = GraphQueries(GraphStore.open(tmp_path, store.scope))
+    assert reopened.snapshot(name="retry", limit=2, cursor=cursor) == completed
+    assert reopened.diff(saved, completed["snapshot"]["id"])["changes"] == []
+
+
+def test_cleanup_partial_alias_preserves_other_ready_alias_and_reuse(tmp_path):
+    # Given another saved alias that still owns all immutable backing evidence.
+    store = GraphStore.open(tmp_path, GraphScope("user", "editor", "project"))
+    workspace = GraphWorkspace(store)
+    for index in range(3):
+        store.put_declaration(str(index), "owner", Edge(str(index), "declared"), expected_version=0)
+    queries = workspace.queries()
+    original = capture(queries)
+    saved = capture(queries, "saved")
+    partial = queries.snapshot(name="partial", limit=1)["snapshot"]["id"]
+    queries.delete_snapshot(original)
+    queries.abandon(partial)
+
+    # When the partial alias is reclaimed, ready evidence remains reusable after restart.
+    while cleanup(workspace, before=time.time() + 1, limit=1)["more"]:
+        pass
+    reopened = GraphQueries(GraphStore.open(tmp_path, store.scope))
+    fresh = capture(reopened, "fresh")
+    with store._connect() as db:
+        assert snapshot_storage.backing(db, fresh) == snapshot_storage.backing(db, saved)
+        assert db.execute("SELECT count(*) FROM graph_snapshot_edges").fetchone()[0] == 3
+    assert reopened.diff(saved, fresh)["changes"] == []
 
 
 def test_scope_admission_survives_restart_and_concurrent_identity_rotation(tmp_path, monkeypatch):

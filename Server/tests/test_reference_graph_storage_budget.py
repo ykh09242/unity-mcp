@@ -4,14 +4,19 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import subprocess
 import sys
+from threading import Lock
+from types import SimpleNamespace
 
 import pytest
 
 from services.reference_graph.queries import GraphQueries
+from services.reference_graph.operations import overview
 from services.reference_graph.store import Edge, GraphScope, GraphStore
+from services.reference_graph.workspace import GraphWorkspace
 from services.reference_graph.storage_budget import StorageBudgetError
 from services.reference_graph.storage_budget import WriteMeter
 from services.reference_graph import storage_budget
@@ -91,6 +96,104 @@ def test_unknown_ledger_is_preserved_and_linked_ledger_is_rejected(tmp_path):
     with pytest.raises(ValueError, match="regular"):
         GraphStore.open(linked_root, GraphScope("user", "editor", "project"))
     assert ledger.read_bytes() == before
+
+
+@pytest.mark.parametrize("pressure", ["root", "principal"])
+@pytest.mark.parametrize("legacy_write", ["grow", "rewrite"])
+def test_legacy_wal_recovery_preserves_capacity_and_reservation_high_water(
+    tmp_path, monkeypatch, pressure, legacy_write
+):
+    # Given a legitimate graph copied without a ledger, as before storage admission existed.
+    monkeypatch.setenv("UNITY_MCP_REFERENCE_GRAPH_STORAGE_RESERVATION_BYTES", str(256 * 1024))
+    scope = GraphScope("legacy-user", "editor", "project")
+    seed = GraphStore.open(tmp_path / "seed", scope)
+    seed.put_declaration("saved", "owner", Edge("target", "declared"), expected_version=0)
+    saved = GraphQueries(seed).snapshot()["snapshot"]["id"]
+    state = tmp_path / "legacy"
+    state.mkdir()
+    path = state / seed.path.name
+    shutil.copyfile(seed.path, path)
+    script = """
+import os, sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.execute('PRAGMA journal_mode=WAL')
+db.execute('PRAGMA wal_autocheckpoint=0')
+db.execute('CREATE TABLE legacy_payload(data BLOB)')
+if sys.argv[2] == 'grow':
+    db.execute('INSERT INTO legacy_payload VALUES (zeroblob(8388608))')
+    db.commit()
+else:
+    db.execute('INSERT INTO legacy_payload VALUES (?)', (b'a' * 300000,))
+    db.commit()
+    for index in range(64):
+        db.execute('UPDATE legacy_payload SET data=?', (bytes([index]) * 300000,))
+        db.commit()
+os._exit(23)
+"""
+    child = subprocess.run(
+        [sys.executable, "-c", script, str(path), legacy_write],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert child.returncode == 23, child.stderr
+    assert Path(str(path) + "-wal").stat().st_size > 8 * 1024 * 1024
+
+    # Another scope inventories the crashed file without opening its unknown contents.
+    GraphStore.open(state, GraphScope("inventory-user", "editor", "project"))
+
+    def reservation():
+        with closing(sqlite3.connect(state / ".storage.sqlite")) as db:
+            return db.execute(
+                "SELECT capacity,reserved FROM scopes WHERE name=?", (path.name,)
+            ).fetchone()
+
+    before = reservation()
+    initial = storage_budget._reservation(256 * 1024)
+    if pressure == "root":
+        limit = storage_budget.LEDGER_ALLOWANCE + before[1] + 2 * initial - 1
+        monkeypatch.setenv("UNITY_MCP_REFERENCE_GRAPH_STORAGE_MAX_BYTES", str(limit))
+        extra = GraphScope("another-user", "extra", "project")
+    else:
+        monkeypatch.setenv(
+            "UNITY_MCP_REFERENCE_GRAPH_STORAGE_MAX_USER_BYTES", str(before[1] + initial - 1)
+        )
+        extra = GraphScope(scope.user_id, "extra", "project")
+
+    # Recovery observes logical pages in the WAL before admitting this existing scope.
+    recovered = GraphStore.open(state, scope)
+    with recovered._connect() as db:
+        logical_bytes = (
+            db.execute("PRAGMA page_count").fetchone()[0]
+            * db.execute("PRAGMA page_size").fetchone()[0]
+        )
+    admitted = reservation()
+    assert admitted[0] >= logical_bytes
+    assert admitted[1] >= before[1]
+    assert admitted[1] >= storage_budget._reservation(admitted[0])
+
+    # A tiny write and clean checkpoint cannot release the previous high-water charge.
+    recovered.put_declaration("saved", "owner", Edge("target", "declared"), expected_version=1)
+    assert reservation()[1] >= admitted[1]
+    with pytest.raises(StorageBudgetError):
+        GraphStore.open(state, extra)
+    assert not (state / (extra.key + ".sqlite")).exists()
+    if pressure == "principal":
+        GraphStore.open(state, GraphScope("another-user", "extra", "project"))
+    reopened = GraphStore.open(state, scope)
+    assert reopened.query("owner")["edges"][0]["target"] == "target"
+    assert GraphQueries(reopened).diff(saved, saved)["changes"] == []
+    with reopened._connect() as db:
+        expected = 8388608 if legacy_write == "grow" else 300000
+        assert db.execute("SELECT length(data) FROM legacy_payload").fetchone()[0] == expected
+        assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    entry = SimpleNamespace(
+        workspace=GraphWorkspace(reopened),
+        engine=SimpleNamespace(_catalog_cache=None, _analysis_cache=None, _gate=Lock()),
+        watching=False,
+        active_requests=0,
+    )
+    assert overview(entry)["storage"]["reserved_bytes"] == reservation()[1]
 
 
 def test_byte_reservations_apply_to_user_and_root_before_creating_files(tmp_path, monkeypatch):
