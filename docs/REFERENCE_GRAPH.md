@@ -19,8 +19,10 @@ supported unsaved Addressables catalog changes update their evidence. Unchanged
 scripts are not loaded or parsed again. External sources are checked for file
 state and current access; changed files are reanalyzed. `sync` with
 `{"force":true}` in `options` also rehashes external inputs whose timestamps were
-preserved. There is no asset-count, file-size, graph-size, or whole-job deadline.
-Page sizes and journal retention bound individual operations, not total work.
+preserved. Collection uses ample operator-configured work budgets and durable,
+paged progress. Large jobs can resume across attempts; page sizes and journal
+retention are separate from collection and storage admission. See
+[operator budgets](#operator-budgets) before provisioning unusually large projects.
 
 ## Query and inspect uncertainty
 
@@ -190,6 +192,91 @@ State uses `%LOCALAPPDATA%/unity-mcp/reference-graphs` on Windows,
 Operators may set an absolute `UNITY_MCP_REFERENCE_GRAPH_DIR`. Hashed scope names
 avoid raw user/project IDs in filenames; the stored scope is verified on open.
 No graph files are generated inside project `Assets` folders.
+
+## Operator budgets
+
+Configure these values in the **server startup environment**, then restart the
+server. Tool requests and plugin identities cannot raise them. Collection and
+storage budgets are independent; raising one does not grant capacity in the other.
+
+### Collection attempts
+
+Collection settings accept positive signed 64-bit integers. The deadline covers
+all collection/analysis phases of one attempt, including collector waits.
+
+| Environment variable | Default | Scope |
+| --- | ---: | --- |
+| `UNITY_MCP_REFERENCE_GRAPH_MAX_PAGES` | 1,000,000 | Collector requests per attempt |
+| `UNITY_MCP_REFERENCE_GRAPH_MAX_ITEMS` | 50,000,000 | Collected items per attempt |
+| `UNITY_MCP_REFERENCE_GRAPH_MAX_BYTES` | 68,719,476,736 (64 GiB) | Serialized response bytes; decoded source bytes also have this aggregate ceiling |
+| `UNITY_MCP_REFERENCE_GRAPH_MAX_SECONDS` | 86,400 (24 hours) | Whole attempt |
+| `UNITY_MCP_REFERENCE_GRAPH_MAX_SOURCE_BYTES` | 134,217,728 (128 MiB) | One source document |
+| `UNITY_MCP_REFERENCE_GRAPH_MAX_DEPENDENCY_ITEMS` | 1,000,000 | Dependencies of one asset |
+
+Collector pages must advance with stable snapshot/revision identity. Exhaustion
+returns a recoverable `CollectionBudgetExceeded` error naming the setting.
+Partial census checkpoints remain resumable; malformed census snapshots restart
+a complete census. Incomplete dependency/source streams never publish a partial
+replacement or mark the asset clean: previous evidence remains available and
+stale. Retry, narrow the requested work, or have the operator provision larger
+budgets and restart. A failed or partial scan is not current evidence.
+
+### Durable state
+
+Every upgraded server sharing a state directory must use the same configuration.
+Storage settings accept positive integers; the initial main reservation, capped
+by the per-scope maximum, must allow at least 64 KiB.
+
+| Environment variable | Default | Scope |
+| --- | ---: | --- |
+| `UNITY_MCP_REFERENCE_GRAPH_STORAGE_MAX_SCOPES` | 1,024 | Durable scope reservations per directory |
+| `UNITY_MCP_REFERENCE_GRAPH_STORAGE_MAX_USER_SCOPES` | 128 | Reservations per authenticated principal |
+| `UNITY_MCP_REFERENCE_GRAPH_STORAGE_MAX_BYTES` | 274,877,906,944 (256 GiB) | Directory reservation budget, including ledger allowance |
+| `UNITY_MCP_REFERENCE_GRAPH_STORAGE_MAX_USER_BYTES` | 68,719,476,736 (64 GiB) | Reservation budget per principal |
+| `UNITY_MCP_REFERENCE_GRAPH_STORAGE_MAX_SCOPE_BYTES` | 8,589,934,592 (8 GiB) | Newly reserved SQLite main-file capacity per scope |
+| `UNITY_MCP_REFERENCE_GRAPH_STORAGE_RESERVATION_BYTES` | 8,388,608 (8 MiB) | Initial main-file reservation, grown geometrically |
+
+Each scope accounts for six times its reserved main capacity plus 1 MiB of
+sidecar/lock headroom; the directory ledger accounts for another 33 MiB. This is
+admission accounting, not preallocated disk. Count limits bind first at the
+default initial reservation. There is no graph-node-count limit.
+
+Scope admission and SQLite main-page limits are enforced across cooperating
+processes. WAL/journal/SHM usage is sampled before writes, during SQLite VM work,
+and around commit. Normal cache spilling remains enabled. A pinned reader may
+delay checkpoints and cause write backpressure: let readers finish, then retry.
+SQLite instructions and commit flushes can overshoot between samples. Provision a
+filesystem/volume quota for a hard physical storage boundary. This does not bound
+SQLite TEMP files, process RSS, older binaries or other applications.
+
+New full-graph snapshots with identical evidence share immutable backing,
+including last-page retry payloads, while preserving independent names and IDs.
+Deleting one alias keeps evidence used by another; deleting the last releases
+SQLite pages for reuse. Existing snapshots and mutation-incident evidence keep
+their original semantics. Explicit cleanup releases abandoned query scratch and
+staging, without deleting ready history. There is no automatic vacuum or eviction
+of saved snapshots, authored declarations, grants or rules.
+
+Reservations survive cancellation, process exit and restart. Crashed admission
+can leave an unused reservation. Deleting history or lowering limits does not
+automatically shrink reservations; existing databases and saved work are
+preserved, including databases above a newly lowered limit. Main-page exhaustion
+rolls back the operation; a response may report a larger admitted reservation and
+ask for retry. No operation body or uncertain mutation is automatically replayed.
+Basic reads remain available, but exploration that writes durable scratch may
+still require capacity.
+
+### Recovering capacity
+
+Explicitly delete unneeded snapshots to reuse pages, or raise the applicable
+budgets and restart cooperating servers. To reclaim scope reservations through
+archival, stop **every graph server using the directory** and back up the complete
+directory first. Archive selected scope databases, their sidecars and scope-lock
+files outside the state directory, then archive `.storage.sqlite` and its
+sidecars. Restart to inventory the remaining SQLite files conservatively. Preserve
+the root `.storage.lock` inode; never remove or move live lock or ledger files.
+Preserve unknown files and user-authored data. A storage error is not permission
+to delete saved work.
 
 See the measured [storage comparison](development/reference-graph-storage.md),
 [analysis coverage and timings](development/reference-graph-analysis.md), and

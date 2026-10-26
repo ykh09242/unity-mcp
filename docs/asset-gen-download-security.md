@@ -72,3 +72,88 @@ precedence and do not read or upload the local path.
 `AssetDownloadTests` exercises the policy and redirect/DNS boundary without provider
 credentials. Before release, also run the provider flows in
 [the manual verification checklist](asset-gen-manual-verification.md) with a licensed Editor.
+
+## Metadata and local-copy admission
+
+Encoded download limits and path policy remain in force. Before publication and
+again before explicit image import, generated PNG/JPEG results pass bounded
+metadata inspection. Archive admission inspects every allowed extracted texture,
+even if the selected model does not reference it. glTF/GLB metadata and embedded
+images pass the same work checks before the installed importer receives them.
+These readers inspect headers, framing, offsets, dimensions, precision and
+frames/pages/layers without decoding pixels.
+
+| Image work limit | Default | Operator setting |
+| --- | ---: | --- |
+| Estimated work per image | 2 GiB | `MCPFORUNITY_ASSETGEN_IMAGE_WORK_GIB` |
+| Estimated work per operation | 8 GiB | `MCPFORUNITY_ASSETGEN_IMAGE_TOTAL_GIB` |
+| Maximum side | 32,768 pixels | Fixed admission limit |
+| Frames/pages/layers | 4,096 | Fixed admission limit |
+
+Set the two work variables to integer GiB values from 1 to 1024 in the Editor's
+startup environment and restart the Editor. Invalid values retain the defaults;
+provider responses and tool arguments cannot raise the limits. Estimates charge
+two buffers with at least RGBA8 per pixel and account for higher source precision,
+channels, mip levels, faces and layers where applicable. Normal RGBA8 4K, 8K and
+16K images fit the per-image default; higher-precision/HDR assets or multiple
+large textures may need an operator increase or a smaller/split asset. TIFF work
+includes full padded tile grids and volume, sample precision, planar layout and
+applicable YCbCr padding; a tiny canvas does not make a large working tile cheap.
+Oversized rows-per-strip values are clamped to actual image height.
+
+Metadata support covers PNG/APNG; baseline, extended sequential and progressive
+JPEG; WebP with counted animation; BMP; TGA/RLE; Radiance RGBE/XYZE HDR; flat
+single-part scanline/tiled EXR including mip/ripmap work; classic TIFF/BigTIFF
+including bounded SubIFDs/pages; KTX1/KTX2; DDS; and self-contained Basis.
+Generated WebP output remains unsupported. HDR requires Y-major orientation
+(`+/-Y` followed by `+/-X`). Deep/multipart EXR, hierarchical/lossless/multi-picture
+JPEG, BMP embedded JPEG/PNG compression, unknown header/pixel formats and Basis
+external global codebooks are explicitly refused. Export a supported,
+self-contained format when admission refuses a variant.
+
+Admission does not certify compressed-pixel codec validity or guarantee peak
+memory inside Unity or an optional importer. Opaque FBX embedded media is not
+parsed by this estimator. Native import can still allocate memory or perform
+synchronous work beyond these estimates.
+
+### JSON metadata
+
+All six provider adapters, both remote model catalogs, local glTF and Tripo GLB
+apply structural admission before materializing a complete `JToken` graph.
+Existing encoded-byte limits remain separate, including the 64 MiB model JSON
+ceiling. JSON must contain one object; duplicate properties and unsupported
+non-JSON syntax are rejected.
+
+| Profile | Tokens | Total properties | Items per container | Depth |
+| --- | ---: | ---: | ---: | ---: |
+| Provider response | 262,144 | 65,536 | 65,536 | 64 |
+| Model metadata | 2,000,000 | 1,000,000 | 1,000,000 | 64 |
+
+Tripo's narrower response depth of 16 remains effective. Operators may set
+`MCPFORUNITY_ASSETGEN_MODEL_JSON_TOKENS` to 10,000 through 16,000,000 before
+starting the Editor. The model property and per-container item ceilings each
+become half that token value; depth remains 64. Invalid values retain defaults.
+This only provisions model metadata, not provider response authority or arbitrary
+input bytes. Admitted model metadata still materializes in memory.
+
+### Local model copies and recovery
+
+Local FBX/ZIP copies enforce the 8 GiB artifact limit and use the same per-project,
+per-Editor-process transient disk ledger and free-space headroom as downloads.
+OBJ/glTF bundles reserve planned copy bytes in that ledger. Defaults are 32 GiB
+of aggregate transient reservations and 1 GiB of disk headroom; set
+`MCPFORUNITY_ASSETGEN_TRANSIENT_BUDGET_GIB` and
+`MCPFORUNITY_ASSETGEN_DISK_HEADROOM_GIB` to integer GiB values from 1 to 1024 in
+the Editor startup environment to provision a larger workload. These reservations
+are not disk preallocation or coordination across separate Editor processes.
+
+Copies stream into newly created owned files, check cancellation and actual
+length, and verify planned metadata/texture hashes. Contained glTF resource paths
+may normalize harmless dot/empty segments such as `./model.bin`; literal/encoded
+roots, parent traversal and remote resources remain refused. Failed owned files
+are removed; reservation credit is retained when cleanup cannot remove them.
+User source files and pre-existing files are preserved. Completed retained
+imports become ordinary project files, release transient credit, and continue to
+consume filesystem free space. A crash can leave owned staging files: inspect
+and recover them explicitly instead of deleting unknown files automatically.
+The ledger cannot prevent another program from consuming disk concurrently.
