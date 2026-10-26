@@ -259,6 +259,8 @@ class Editor:
         self.compiling = False
         self.snapshot = None
         self.fail_offset = None
+        self.ignore_files = {}
+        self.ignore_revision = 0
 
     def add(self, number, path, text=None, keys=None):
         guid = f"{number:032x}"
@@ -287,6 +289,43 @@ class Editor:
                 "epoch": self.epoch,
                 "revision": len(self.events),
                 "compiling": self.compiling,
+                "ignore_state": "available",
+                "ignore_revision": self.ignore_revision,
+            }
+        if action == "ignore_rules":
+            entries = [
+                {
+                    "path": path,
+                    "fingerprint": hashlib.sha256(content).hexdigest(),
+                    "size_bytes": len(content),
+                }
+                for path, content in sorted(
+                    self.ignore_files.items(), key=lambda item: item[0].encode("utf-16-be")
+                )
+            ]
+            offset = params.get("offset", 0)
+            end = min(offset + params.get("page_size", 256), len(entries))
+            return {
+                "files": entries[offset:end],
+                "snapshot": "ignore-" + str(self.ignore_revision),
+                "epoch": self.epoch,
+                "revision": len(self.events),
+                "ignore_revision": self.ignore_revision,
+                "ignore_state": "available",
+                "next_offset": end if end < len(entries) else None,
+            }
+        if action == "ignore_source":
+            content = self.ignore_files[params["path"]]
+            offset = params["offset"]
+            end = min(offset + 11, len(content))
+            return {
+                "path": params["path"],
+                "fingerprint": hashlib.sha256(content).hexdigest(),
+                "bytes_base64": base64.b64encode(content[offset:end]).decode(),
+                "next_offset": end if end < len(content) else None,
+                "snapshot": "ignore-" + str(self.ignore_revision),
+                "epoch": self.epoch,
+                "ignore_revision": self.ignore_revision,
             }
         if action == "inventory":
             if self.snapshot is None:
@@ -513,7 +552,7 @@ async def test_add_edit_wrapper_move_delete_and_idle_do_not_reread_unchanged_sou
     assert {edge["target"] for edge in store.query(caller)["edges"]} == {first}
     editor.calls.clear()
     assert await engine.reconcile()
-    assert {call[0] for call in editor.calls} == {"status", "changes"}
+    assert {call[0] for call in editor.calls} == {"status", "changes", "ignore_rules"}
     editor.sources[wrapper[6:]] = (
         b'using UnityEngine; class Loader { public static Object Load() { return Resources.Load("Two"); } }'
     )
@@ -1131,8 +1170,8 @@ async def test_aggregate_page_budget_preserves_census_checkpoint_and_resumes(set
     _, workspace, editor, _ = setup
     for number in range(8):
         editor.add(number, f"Assets/{number}.asset")
-    engine = Reconciler(workspace, editor, allowed, limits=CollectionLimits(max_pages=3))
-    with pytest.raises(CollectionBudgetExceeded, match="max_pages=3"):
+    engine = Reconciler(workspace, editor, allowed, limits=CollectionLimits(max_pages=4))
+    with pytest.raises(CollectionBudgetExceeded, match="max_pages=4"):
         await engine.reconcile()
     assert workspace.counts()["assets"] == 4
     assert workspace.progress()["census"]["offset"] == 4

@@ -28,6 +28,7 @@ async def test_cleanup_reclaims_obsolete_scratch_but_preserves_resumable_work(se
     service, ctx = setup
     try:
         entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
         workspace = entry.workspace
         store = workspace.store
         for index in range(10):
@@ -81,6 +82,7 @@ async def test_cleanup_reclaims_undelivered_first_page_after_validation_failure(
     service, ctx = setup
     try:
         entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
         workspace = entry.workspace
         for index in range(4):
             workspace.store.put_declaration(
@@ -126,7 +128,21 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", False)
 
     async def send(instance, params):
-        return {"instance_id": instance, "project_id": "project", "epoch": "epoch", "revision": 0}
+        result = {
+            "instance_id": instance,
+            "project_id": "project",
+            "epoch": "epoch",
+            "revision": 0,
+            "ignore_state": "available",
+            "ignore_revision": 0,
+        }
+        if params["action"] == "ignore_rules":
+            result.update(snapshot="ignore", files=[], next_offset=None)
+        elif params["action"] == "inventory":
+            result.update(snapshot="inventory", assets=[], next_offset=None)
+        elif params["action"] == "changes":
+            result.update(requires_census=False, changes=[], next_after=0, has_more=False)
+        return result
 
     service = ReferenceGraphService(tmp_path / "graphs", send=send)
     monkeypatch.setattr(service, "start", lambda *_, **__: None)
@@ -208,6 +224,7 @@ async def test_cleanup_preserves_active_jobs_and_authored_history(setup):
     service, ctx = setup
     try:
         entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
         workspace = entry.workspace
         store = workspace.store
         store.put_declaration("kept", "a", Edge("b", "manual"), expected_version=0)
@@ -262,6 +279,7 @@ async def test_retry_preserves_failure_eligibility_and_recovery_invalidation(set
     service, ctx = setup
     try:
         entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
         workspace = entry.workspace
         assert workspace.acquire("worker")
         asset = {
@@ -314,6 +332,7 @@ async def test_large_completed_scratch_is_resumable_and_configuration_survives_r
             {"kind": "rule", "id": "keep", "expected_version": 0, "config": {"enabled": False}},
         )
         entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
         query = entry.workspace.queries().impact("missing")
         with entry.workspace.store._connect(write=True) as db:
             db.executemany(
@@ -481,6 +500,7 @@ async def test_editor_explorer_routes_preserve_paging_and_scope(setup):
     setattr(request.state, AUTHENTICATED_LOCAL_STATE, True)
     try:
         entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
         for index in range(61):
             entry.workspace.store.put_declaration(
                 str(index), "a", Edge(f"b-{index}", "manual"), expected_version=0
@@ -522,6 +542,7 @@ async def test_failed_continuation_remains_replayable_and_ready_snapshot_survive
     service, ctx = setup
     try:
         entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
         entry.watching = True
         workspace = entry.workspace
         for index in range(5):
@@ -560,6 +581,7 @@ async def test_cancelled_first_page_waits_for_producer_then_retires_scratch(setu
     task = None
     try:
         entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
         entry.watching = True
         workspace = entry.workspace
         for index in range(3):
@@ -607,6 +629,7 @@ async def test_cleanup_rolls_back_partial_reclamation(setup, monkeypatch):
     service, ctx = setup
     try:
         entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
         workspace = entry.workspace
         store = workspace.store
         for index in range(3):

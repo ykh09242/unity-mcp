@@ -43,6 +43,7 @@ dependencies = [
  "typing-extensions>=4.16.0",
  "pillow>=13.0.0,<14",
  "pyyaml>=6.0.3",
+ "pathspec==1.1.1",
 ]
 
 [project.optional-dependencies]

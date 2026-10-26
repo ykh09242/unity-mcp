@@ -20,7 +20,9 @@ _SELECT = """SELECT e.*,o.state,n.present,n.path AS target_path,src.path AS sour
  LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider
  LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider
  LEFT JOIN nodes n ON n.id=e.target LEFT JOIN nodes src ON src.id=e.owner
- WHERE s.enabled=1 AND """
+ WHERE s.enabled=1 AND (SELECT ready FROM graph_admission WHERE id=1)=1
+ AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.owner OR x.id=e.target)
+ AND """
 
 
 class GraphQueries:
@@ -224,6 +226,18 @@ class GraphQueries:
         if max_depth is not None and (type(max_depth) is not int or max_depth < 1):
             raise ValueError("max_depth must be positive or omitted for all reachable nodes")
         with self.store._connect(write=True) as connection:
+            if connection.execute(
+                "SELECT 1 FROM graph_excluded_nodes WHERE id=? OR id=?", (node, target)
+            ).fetchone():
+                return {
+                    "revision": self._revision(connection),
+                    "edges": [],
+                    "nodes": [],
+                    "next_cursor": None,
+                    "excluded": True,
+                    "reason": "excluded_by_collection_policy",
+                    "sources": self._sources(connection),
+                }
             job, replay, created = self._job(
                 connection,
                 "path" if target is not None else "impact",
@@ -416,6 +430,13 @@ class GraphQueries:
         if row is None:
             raise ValueError("Snapshot is not ready or does not belong to this scope")
         result = dict(row)
+        admission = connection.execute(
+            "SELECT revision,ready FROM graph_admission WHERE id=1"
+        ).fetchone()
+        if not admission[1] or result["revision"] < admission[0]:
+            raise RevisionConflict(
+                "Historical graph collection policy changed; excluded evidence requires a new snapshot"
+            )
         result["sources"] = json.loads(result["sources"])
         current = self._sources(connection)
         if any(current.get(provider) != version for provider, version in result["sources"].items()):
@@ -454,7 +475,7 @@ class GraphQueries:
                 (old_backing, last, new_backing, last, limit + 1, old_backing, new_backing),
             ).fetchall()
             more = len(rows) > limit
-            changes, access = [], set()
+            changes, access, manual_nodes = [], set(), set()
             for row in rows[:limit]:
                 previous = json.loads(row["previous"]) if row["previous"] else None
                 current = (
@@ -470,6 +491,13 @@ class GraphQueries:
                     (edge["provider"], edge["source_path"])
                     for edge in (previous, current)
                     if edge is not None and edge["provider"].startswith("external:")
+                )
+                manual_nodes.update(
+                    node
+                    for edge in (previous, current)
+                    if edge is not None and edge["provider"] == "manual"
+                    for node in (edge["owner"], edge["target"])
+                    if node.startswith("external:")
                 )
                 access.update(
                     (edge["provider"], path)
@@ -500,6 +528,7 @@ class GraphQueries:
                 "after": new,
                 "changes": changes,
                 "_history_access": sorted(access),
+                "_history_nodes": sorted(manual_nodes),
                 "sources": {**old["sources"], **new["sources"]},
                 "historical": True,
                 "compared": min(limit, len(rows)),

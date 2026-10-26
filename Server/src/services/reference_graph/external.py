@@ -21,6 +21,7 @@ import threading
 
 from services.reference_graph.analysis import Analysis, Catalog
 from services.reference_graph.store import Edge, check_owned_path
+from services.reference_graph.ignore import GitIgnoreRules
 
 _CSV_LIMIT_LOCK = threading.Lock()
 
@@ -90,7 +91,9 @@ class Document:
 
 
 class ExternalSource:
-    def __init__(self, config: dict):
+    def __init__(
+        self, config: dict, *, respect_gitignore: bool = True, exclude: list[str] | None = None
+    ):
         root = config.get("root")
         if not isinstance(root, str) or not Path(root).is_absolute():
             raise ValueError("External source requires an absolute local root")
@@ -98,6 +101,10 @@ class ExternalSource:
         self.include = self._patterns(config.get("include"))
         self.include_paths = tuple(config["include"])
         self.exclude = self._patterns(config.get("exclude", []), allow_empty=True)
+        self.exclude.extend(_pattern(pattern) for pattern in (exclude or []))
+        self.respect_gitignore = respect_gitignore
+        self._ignore = GitIgnoreRules([])
+        self._ignore_checked: set[str] = set()
         self.mappings = validate_mappings(config.get("mappings", []))
         self.adapter = config.get("adapter", {"name": "json-csv", "version": 1})
         if (
@@ -109,6 +116,63 @@ class ExternalSource:
         if type(self.git_revision) is not bool:
             raise ValueError("git_revision must be boolean")
         self.check_access()
+
+    def _ignore_directory(self, directory: str) -> None:
+        """Read only rule files within this grant; cache missing candidates for this scan."""
+        if not self.respect_gitignore or directory in self._ignore_checked:
+            return
+        relative = (directory + "/" if directory else "") + ".gitignore"
+        path = check_owned_path(self.root.joinpath(*relative.split("/")))
+        try:
+            before = path.stat()
+        except FileNotFoundError:
+            self._ignore_checked.add(directory)
+            return
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise PermissionError(
+                "Ignore rules must be unlinked regular files within the source grant"
+            )
+        from services.reference_graph.collection_protocol import CollectionBudget, CollectionLimits
+
+        budget = CollectionBudget(CollectionLimits.from_environment())
+        raw = bytearray()
+        descriptor = os.open(
+            path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        )
+        with os.fdopen(descriptor, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            while chunk := stream.read(65536):
+                budget.source(len(chunk), len(raw))
+                raw.extend(chunk)
+            after = os.fstat(stream.fileno())
+        current = check_owned_path(path).stat()
+        identity = lambda value: (
+            value.st_dev,
+            value.st_ino,
+            value.st_size,
+            value.st_mtime_ns,
+            value.st_nlink,
+        )
+        if (
+            identity(before) != identity(opened)
+            or identity(opened) != identity(after)
+            or identity(after) != identity(current)
+            or before.st_ctime_ns != current.st_ctime_ns
+        ):
+            raise PermissionError("Ignore rule file changed while reading")
+        self._ignore.add(relative, raw.decode("utf-8-sig"))
+        self._ignore_checked.add(directory)
+
+    def _ignored(self, relative: str, *, directory: bool = False) -> bool:
+        if not self.respect_gitignore:
+            return False
+        parts = relative.split("/")
+        for depth in range(len(parts)):
+            parent = "/".join(parts[:depth])
+            if parent and self._ignore.ignored(parent, directory=True):
+                return True
+            self._ignore_directory(parent)
+        return self._ignore.ignored(relative, directory=directory)
 
     def _git_lines(self, relative: str) -> Iterator[str]:
         """Read only explicitly opted-in, in-root Git identity metadata."""
@@ -207,6 +271,7 @@ class ExternalSource:
             Path(relative).suffix.lower() in (".json", ".csv")
             and any(pattern.fullmatch(relative) for pattern in self.include)
             and not any(pattern.fullmatch(relative) for pattern in self.exclude)
+            and not self._ignored(relative)
         )
 
     def files(self) -> Iterator[str]:
@@ -228,6 +293,8 @@ class ExternalSource:
                 ):
                     continue
                 info = entry.stat(follow_symlinks=False)
+                if self._ignored(relative, directory=stat.S_ISDIR(info.st_mode)):
+                    continue
                 linked = stat.S_ISLNK(info.st_mode) or getattr(
                     info, "st_file_attributes", 0
                 ) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
@@ -431,7 +498,7 @@ def analyze_document(relative: str, text: str, catalog: Catalog, mappings: list[
             targets, reason, subobject = catalog.resolve_detail(
                 mapping["scheme"], key, mapping.get("mode", "single")
             )
-            if reason:
+            if reason and reason != "excluded":
                 result.unresolved.append(
                     {"field": field_name, "line": line, "reason": reason, "key_redacted": True}
                 )

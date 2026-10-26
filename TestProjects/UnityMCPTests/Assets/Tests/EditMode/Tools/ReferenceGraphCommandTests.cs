@@ -58,6 +58,23 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(Call(new JObject { ["action"] = "status", ["expected_instance_id"] = JValue.CreateNull() }).Value<bool>("success"), Is.False);
         }
 
+        [TestCase("ignore_rules")]
+        [TestCase("ignore_source")]
+        public void IgnoreEvidenceRequiresIdentityAndRejectsFilesystemAuthority(string action)
+        {
+            var request = new JObject { ["action"] = action };
+            Assert.AreEqual("reference_scope_changed", Call(request).Value<string>("error"));
+            request["root"] = "outside";
+            Assert.IsFalse(Call(request).Value<bool>("success"));
+        }
+
+        [TestCase("true")]
+        [TestCase(1)]
+        public void IgnoreValidationRequiresAnExactBoolean(object value)
+        {
+            Assert.IsFalse(Call(new JObject { ["action"] = "ignore_rules", ["validate"] = JToken.FromObject(value) }).Value<bool>("success"));
+        }
+
         [Test]
         public void CompilationPagesRequireIdentityRevisionAndTypedPathArray()
         {

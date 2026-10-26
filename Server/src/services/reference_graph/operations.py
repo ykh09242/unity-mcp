@@ -14,7 +14,7 @@ from services.reference_graph.storage_budget import file_sizes
 CONFIG_FIELDS = {
     "rule": {"call", "argument", "scheme", "mode", "prefix", "suffix", "enabled"},
     "source": {"root", "include", "exclude", "mappings", "git_revision", "adapter"},
-    "policy": {"exclude"},
+    "policy": {"exclude", "respect_gitignore"},
 }
 
 
@@ -74,7 +74,10 @@ def export_config(workspace, *, kind, after="", limit=100):
                     {
                         "id": "policy",
                         "version": policy["version"],
-                        "config": {"exclude": policy["exclude"]},
+                        "config": {
+                            "exclude": policy["exclude"],
+                            "respect_gitignore": policy.get("respect_gitignore", True),
+                        },
                     }
                 ]
             )

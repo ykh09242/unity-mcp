@@ -42,6 +42,7 @@ from services.reference_graph.collection_protocol import (
     text,
 )
 from services.reference_graph.external import ExternalSource, analyze_document
+from services.reference_graph.ignore import rule_directory
 from services.reference_graph.store import Edge, Observation, RevisionConflict, _hash, _json
 from services.reference_graph.workspace import GraphWorkspace
 
@@ -128,6 +129,27 @@ class Reconciler:
         self._analysis_cache = None
         self.store.clear_summaries()
 
+    async def validate_ignore(self) -> bool:
+        """Validate a warm native snapshot without rereading assets or external documents."""
+        if not (await drained_thread(self.workspace.policy))["respect_gitignore"]:
+            return True
+        known = await drained_thread(self.workspace.ignore_status)
+        if not known.get("snapshot"):
+            return False
+        try:
+            page = await self._collector(
+                "ignore_rules", snapshot=known["snapshot"], offset=0, page_size=1, validate=True
+            )
+            if page.get("ignore_state") == "available" and all(
+                page.get(key) == known.get(key) for key in ("snapshot", "epoch", "ignore_revision")
+            ):
+                return True
+        except (OSError, ValueError, RuntimeError):
+            # Changed/expired proofs force normal acquisition; never an allow-all policy.
+            pass
+        await drained_thread(self.workspace.invalidate_ignore)
+        return False
+
     async def _phase(self, phase: str, **values) -> None:
         self.progress.update(phase=phase, **values)
         await drained_thread(self.workspace.set_progress, self.worker, self.progress)
@@ -188,6 +210,8 @@ class Reconciler:
         if any(status.get(key) for key in ("compiling", "importing", "compilation_failed")):
             await self._phase("waiting_for_editor")
             return False
+        ignore_snapshot = await self._ignore_rules(status)
+        self.progress["editor"] = status
         await drained_thread(self.workspace.ensure_analysis_version, self.worker, ANALYSIS_VERSION)
         compilation_context = status.get("compilation_context")
         if not self.progress.get("initialized") or self.progress.get("census"):
@@ -197,7 +221,32 @@ class Reconciler:
         await self._assets()
         await self._analysis()
         await self._external(force=force_external)
+        if ignore_snapshot is not None:
+            validated = False
+            try:
+                verified = await self.collect(
+                    "ignore_rules", snapshot=ignore_snapshot, offset=0, page_size=1, validate=True
+                )
+                if (
+                    verified.get("ignore_state") != "available"
+                    or verified.get("snapshot") != ignore_snapshot
+                    or (verified.get("epoch"), verified.get("ignore_revision"))
+                    != (self.progress["ignore_epoch"], self.progress["ignore_revision"])
+                ):
+                    raise RevisionConflict("Ignore rules changed before reconciliation publication")
+                validated = True
+            finally:
+                if not validated:
+                    await drained_thread(self.workspace.invalidate_ignore)
         status = await self.collect("status")
+        if ignore_snapshot is not None and (
+            status.get("ignore_state") != "available"
+            or (status.get("epoch"), status.get("ignore_revision"))
+            != (self.progress["ignore_epoch"], self.progress["ignore_revision"])
+        ):
+            await drained_thread(self.workspace.block_admission)
+            raise RevisionConflict("Ignore rules changed before graph publication")
+        await drained_thread(self.workspace.finish_admission, self.worker)
         providers = await drained_thread(self.workspace.provider_status)
         caught_up = (
             status["epoch"] == self.progress.get("epoch")
@@ -220,6 +269,103 @@ class Reconciler:
             "idle" if caught_up else "changes_pending", editor=status, completed_at=time.time()
         )
         return caught_up
+
+    async def _ignore_rules(self, status: dict) -> str | None:
+        """Read only collector-admitted rule files and verify the complete byte stream."""
+        if not (await drained_thread(self.workspace.policy))["respect_gitignore"]:
+            return None
+        if status.get("ignore_state") not in {"available", "unavailable"}:
+            await drained_thread(self.workspace.block_admission)
+            raise RevisionConflict(
+                "Project ignore rules are unavailable; graph admission is incomplete"
+            )
+        known = await drained_thread(self.workspace.ignore_status)
+        if status.get("ignore_state") == "unavailable":
+            await drained_thread(self.workspace.block_admission)
+            known = {}
+        identity = (
+            text(status.get("epoch"), "epoch"),
+            integer(status.get("ignore_revision"), "ignore_revision"),
+        )
+        if identity == (known.get("epoch"), known.get("ignore_revision")):
+            self.progress.update(ignore_epoch=identity[0], ignore_revision=identity[1])
+            # Validation must still recheck missing/present candidates at the end.
+            return known.get("snapshot")
+        await drained_thread(self.workspace.block_admission)
+        files, offset, snapshot, last = [], 0, None, b""
+        while True:
+            page = await self.collect(
+                "ignore_rules",
+                offset=offset,
+                snapshot=snapshot,
+                page_size=256,
+                validate=offset == 0,
+            )
+            if page.get("ignore_state") != "available":
+                raise RevisionConflict("Project ignore rule snapshot is unavailable")
+            token = text(page.get("snapshot"), "snapshot")
+            observed = (
+                text(page.get("epoch"), "epoch"),
+                integer(page.get("ignore_revision"), "ignore_revision"),
+            )
+            if snapshot is not None and (token != snapshot or observed != identity):
+                raise RevisionConflict("Ignore rule snapshot changed between pages")
+            identity, snapshot = observed, token
+            entries = rows(page, "files", 256)
+            following = continuation(page, offset, len(entries))
+            self._budget.admit_items(len(entries))
+            for entry in entries:
+                path = text(entry.get("path"), "ignore path")
+                rule_directory(path)
+                ordinal = path.encode("utf-16-be")
+                if ordinal <= last:
+                    raise RevisionConflict("Ignore rule files must have unique ordered paths")
+                last = ordinal
+                fingerprint = text(entry.get("fingerprint"), "fingerprint")
+                expected_size = integer(entry.get("size_bytes"), "size_bytes")
+                content, position = bytearray(), 0
+                while True:
+                    chunk = await self.collect(
+                        "ignore_source",
+                        snapshot=snapshot,
+                        path=path,
+                        offset=position,
+                        fingerprint=fingerprint,
+                    )
+                    if (
+                        chunk.get("snapshot") != snapshot
+                        or chunk.get("path") != path
+                        or chunk.get("fingerprint") != fingerprint
+                        or (chunk.get("epoch"), chunk.get("ignore_revision")) != identity
+                    ):
+                        raise RevisionConflict("Ignore rule bytes changed during collection")
+                    size = decoded_size(chunk.get("bytes_base64"))
+                    next_position = continuation(chunk, position, size)
+                    self._budget.source(size, len(content))
+                    content.extend(base64.b64decode(chunk["bytes_base64"], validate=True))
+                    if next_position is None:
+                        break
+                    position = next_position
+                if (
+                    len(content) != expected_size
+                    or hashlib.sha256(content).hexdigest() != fingerprint
+                ):
+                    raise RevisionConflict("Ignore rule content fingerprint or size changed")
+                files.append((path, content.decode("utf-8-sig")))
+            if following is None:
+                break
+            offset = following
+        changed = await drained_thread(
+            self.workspace.set_ignore_rules,
+            self.worker,
+            files,
+            {"epoch": identity[0], "ignore_revision": identity[1], "snapshot": snapshot},
+        )
+        if changed:
+            self.clear_caches()
+        self.progress = await drained_thread(self.workspace.progress)
+        self.progress.update(ignore_epoch=identity[0], ignore_revision=identity[1])
+        return snapshot
 
     async def _release(self, heartbeat: asyncio.Task | None) -> None:
         if heartbeat is not None:
@@ -763,7 +909,12 @@ class Reconciler:
         require_source: Callable[[], None],
     ) -> tuple[int, dict]:
         self._check_source(source, require_source)
-        adapter = ExternalSource(source["config"])
+        policy = self.workspace.policy()
+        adapter = ExternalSource(
+            source["config"],
+            respect_gitignore=policy["respect_gitignore"],
+            exclude=policy["exclude"],
+        )
         repository = adapter.repository_revision()
         provider, seen = source["provider"], uuid.uuid4().hex
         previous = self.workspace.external_inputs(provider)
@@ -773,7 +924,7 @@ class Reconciler:
         provenance_updates = []
         for path in adapter.files():
             self._check_source(source, require_source)
-            old = previous.get(path)
+            old = previous.pop(path, None)
             owner = provider + ":" + _hash(path)
             fingerprint = old["fingerprint"] if old else "unavailable"
             stamp = ""
@@ -857,6 +1008,11 @@ class Reconciler:
             self.workspace.record_external_many(self.worker, pending)
         if provenance_updates:
             self.workspace.refresh_external_provenance(self.worker, source, provenance_updates)
+        hidden = [
+            (row["owner"], path) for path, row in previous.items() if not adapter.admitted(path)
+        ]
+        if hidden:
+            self.workspace.hide_external(self.worker, hidden)
         self.workspace.finish_external(self.worker, provider, seen)
         return failures, repository
 

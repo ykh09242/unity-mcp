@@ -9,7 +9,6 @@ import time
 import uuid
 
 from services.reference_graph.queries import GraphQueries
-from services.reference_graph.external import _pattern
 from services.reference_graph.store import Edge, Observation, RevisionConflict, _json
 
 
@@ -31,6 +30,9 @@ class RuntimeObservations:
                 ):
                     connection.execute(sql)
                 connection.execute("INSERT INTO graph_runtime_schema VALUES (1)")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS graph_runtime_blocked_handles(session TEXT NOT NULL,handle TEXT NOT NULL,PRIMARY KEY(session,handle))"
+            )
 
     @staticmethod
     def _session(connection, identity):
@@ -86,9 +88,8 @@ class RuntimeObservations:
                 "coverage": "explicit_instrumentation; historical_runtime_observations; not_unused_or_leak_proof",
             }
 
-    def admitted(self, row, patterns=None):
-        if patterns is None:
-            patterns = [_pattern(pattern) for pattern in self.workspace.policy()["exclude"]]
+    def admitted(self, row, admission=None, catalog=None):
+        admission = admission or self.workspace.admission()
         for key in ("owner_path", "target_path"):
             path = row.get(key, "")
             if path and (
@@ -96,9 +97,15 @@ class RuntimeObservations:
                 or not path.startswith(("Assets/", "Packages/"))
                 or "\\" in path
                 or any(not part or part.startswith(".") for part in path.split("/"))
-                or any(pattern.fullmatch(path) for pattern in patterns)
+                or not admission(path)
             ):
                 return False
+        if (
+            row.get("key")
+            and catalog is not None
+            and catalog.resolve_detail(row.get("scheme", ""), row["key"])[1] == "excluded"
+        ):
+            return False
         return True
 
     def ingest(self, identity, after, page):
@@ -129,8 +136,8 @@ class RuntimeObservations:
                 raise RevisionConflict("Runtime ingestion cursor changed")
             provider = "runtime:" + identity
             accepted, sequence = session["accepted"], session["sequence"]
-            policy = self.workspace._state(connection, "policy", {"exclude": []})
-            patterns = [_pattern(pattern) for pattern in policy["exclude"]]
+            admission = self.workspace._admission(connection)
+            catalog = self.workspace.key_admission()
             for row in events:
                 if (
                     not isinstance(row, dict)
@@ -152,8 +159,28 @@ class RuntimeObservations:
                     )
                 ):
                     raise ValueError("Runtime observation fields must be strings")
-                if not self.admitted(row, patterns):
+                handle = row.get("handle", "")
+                if (
+                    row["kind"] == "release"
+                    and handle
+                    and connection.execute(
+                        "SELECT 1 FROM graph_runtime_blocked_handles WHERE session=? AND handle=?",
+                        (identity, handle),
+                    ).fetchone()
+                ):
                     continue
+                if not self.admitted(row, admission, catalog):
+                    if handle:
+                        connection.execute(
+                            "INSERT OR IGNORE INTO graph_runtime_blocked_handles VALUES (?,?)",
+                            (identity, handle),
+                        )
+                    continue
+                if row["kind"] == "acquire" and handle:
+                    connection.execute(
+                        "DELETE FROM graph_runtime_blocked_handles WHERE session=? AND handle=?",
+                        (identity, handle),
+                    )
                 inserted = connection.execute(
                     "INSERT OR IGNORE INTO graph_runtime_events VALUES (?,?,?)",
                     (identity, row["sequence"], _json(row)),
@@ -261,9 +288,10 @@ class RuntimeObservations:
                     (identity, after, limit + 1),
                 )
             ]
-        patterns = [_pattern(pattern) for pattern in self.workspace.policy()["exclude"]]
+        admission = self.workspace.admission()
+        catalog = self.workspace.key_admission()
         for row in rows:
-            if not self.admitted(row, patterns):
+            if not self.admitted(row, admission, catalog):
                 raise RevisionConflict(
                     "Runtime observation is excluded by the current collection policy"
                 )
@@ -285,9 +313,9 @@ class RuntimeObservations:
                     (identity, after, limit + 1),
                 )
             ]
-        patterns = [_pattern(pattern) for pattern in self.workspace.policy()["exclude"]]
+        admission = self.workspace.admission()
         for row in rows:
-            if not self.admitted(row, patterns):
+            if not self.admitted(row, admission):
                 raise RevisionConflict(
                     "Runtime handle is excluded by the current collection policy"
                 )
@@ -309,7 +337,11 @@ class RuntimeObservations:
             )
             for table in ("edges", "observations", "evidence_context", "sources"):
                 connection.execute(f"DELETE FROM {table} WHERE provider=?", (provider,))
-            for table in ("graph_runtime_events", "graph_runtime_handles"):
+            for table in (
+                "graph_runtime_events",
+                "graph_runtime_handles",
+                "graph_runtime_blocked_handles",
+            ):
                 connection.execute(f"DELETE FROM {table} WHERE session=?", (identity,))
             connection.execute("DELETE FROM graph_runtime_sessions WHERE id=?", (identity,))
             self.store._bump(connection)

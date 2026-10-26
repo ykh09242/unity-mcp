@@ -37,7 +37,7 @@ from services.registry import mcp_for_unity_tool
         "Source config: {root,include,exclude?,mappings?,git_revision?,adapter?}; "
         "adapter defaults to {name:'json-csv',version:1}; mapping {field,scheme,prefix?,suffix?,values?}. "
         "Rule config: {call,argument,scheme,mode?,prefix?,suffix?}; {enabled:false} disables a rule. "
-        "Policy config: {exclude:[relative patterns]}; there are no application-specific exclusions. "
+        "Policy config: {exclude:[relative patterns],respect_gitignore?:true}; root and nested .gitignore rules apply by default, independently of Git tracked state. "
         "sync {force:true} rehashes external inputs. rebuild retains authored declarations and grants. "
         "Normal domain reload retains scope; a new Editor process has a separate graph."
         " Mutation batches: begin_mutation {paths} captures incident evidence before writes; "
