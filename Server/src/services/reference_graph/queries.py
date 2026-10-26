@@ -12,6 +12,7 @@ import time
 import uuid
 
 from services.reference_graph.store import GraphStore, RevisionConflict, _hash, _json
+from services.reference_graph import snapshot_storage
 
 
 _SELECT = """SELECT e.*,o.state,n.present,n.path AS target_path,src.path AS source_path,
@@ -48,6 +49,7 @@ class GraphQueries:
                     "ALTER TABLE graph_queries ADD COLUMN abandoned INTEGER NOT NULL DEFAULT 0"
                 )
                 connection.execute("UPDATE graph_queries_schema SET version=2")
+            snapshot_storage.initialize(connection)
 
     @staticmethod
     def _page_size(limit: int) -> None:
@@ -133,7 +135,10 @@ class GraphQueries:
         if row["revision"] != revision:
             raise RevisionConflict("Graph changed during exploration; start a new query")
         if sequence == row["sequence"] - 1 and row["result"] is not None:
-            return dict(row), json.loads(row["result"]), False
+            result = json.loads(row["result"])
+            if kind == "snapshot":
+                result = snapshot_storage.replay(connection, result)
+            return dict(row), result, False
         if sequence != row["sequence"] or row["finished"]:
             raise RevisionConflict("Query continuation has already advanced")
         return dict(row), None, False
@@ -148,9 +153,16 @@ class GraphQueries:
             if more
             else None,
         }
+        persisted = result
+        if job["kind"] == "snapshot":
+            persisted = {
+                **{key: value for key, value in result.items() if key != "edges"},
+                "_snapshot_after": job["last"],
+                "_snapshot_count": len(result["edges"]),
+            }
         connection.execute(
             "UPDATE graph_queries SET sequence=?,last=?,result=?,finished=?,used=? WHERE id=?",
-            (next_sequence, last, _json(result), int(not more), time.time(), job["id"]),
+            (next_sequence, last, _json(persisted), int(not more), time.time(), job["id"]),
         )
         if not more:
             # Retain only the last response for a lost-response retry. The large
@@ -360,19 +372,27 @@ class GraphQueries:
                         time.time(),
                     ),
                 )
+                snapshot_storage.begin(
+                    connection,
+                    job["id"],
+                    snapshot_storage.SnapshotVersion(
+                        job["revision"],
+                        self._sources(connection),
+                        connection.execute("PRAGMA schema_version").fetchone()[0],
+                    ),
+                )
             rows = connection.execute(
                 _SELECT + "e.id>? ORDER BY e.id LIMIT ?", (job["last"], limit + 1)
             ).fetchall()
             more = len(rows) > limit
             edges = [self._evidence(row) for row in rows[:limit]]
-            connection.executemany(
-                "INSERT INTO graph_snapshot_edges VALUES (?,?,?)",
-                ((job["id"], row["id"], _json(row)) for row in edges),
-            )
+            snapshot_storage.append(connection, job["id"], edges)
             connection.execute(
                 "UPDATE graph_snapshots SET captured=captured+?,state=? WHERE id=?",
                 (len(edges), "capturing" if more else "ready", job["id"]),
             )
+            if not more:
+                snapshot_storage.finish(connection, job["id"])
             snapshot = dict(
                 connection.execute(
                     "SELECT * FROM graph_snapshots WHERE id=?", (job["id"],)
@@ -418,6 +438,8 @@ class GraphQueries:
             last = position["last"]
         with self.store._connect() as connection:
             old, new = self._snapshot(connection, before), self._snapshot(connection, after)
+            old_backing = snapshot_storage.backing(connection, before)
+            new_backing = snapshot_storage.backing(connection, after)
             # Page candidate IDs before comparing payloads. Filtering unchanged
             # rows first would scan a whole identical snapshot in one request.
             rows = connection.execute(
@@ -429,7 +451,7 @@ class GraphQueries:
  LEFT JOIN graph_snapshot_edges a ON a.snapshot=? AND a.id=ids.id
  LEFT JOIN graph_snapshot_edges b ON b.snapshot=? AND b.id=ids.id
  ORDER BY ids.id""",
-                (before, last, after, last, limit + 1, before, after),
+                (old_backing, last, new_backing, last, limit + 1, old_backing, new_backing),
             ).fetchall()
             more = len(rows) > limit
             changes, access = [], set()
@@ -500,8 +522,7 @@ class GraphQueries:
                 "SELECT state FROM graph_snapshots WHERE id=?", (identity,)
             ).fetchone()
             if row is not None and row[0] != "ready":
-                connection.execute("DELETE FROM graph_snapshot_edges WHERE snapshot=?", (identity,))
-                connection.execute("DELETE FROM graph_snapshots WHERE id=?", (identity,))
+                snapshot_storage.discard(connection, identity)
             return self._release(connection, identity)
 
     def abandon(self, identity: str) -> None:
@@ -512,8 +533,4 @@ class GraphQueries:
     def delete_snapshot(self, identity: str) -> bool:
         with self.store._connect(write=True) as connection:
             self._release(connection, identity)
-            connection.execute("DELETE FROM graph_snapshot_edges WHERE snapshot=?", (identity,))
-            return (
-                connection.execute("DELETE FROM graph_snapshots WHERE id=?", (identity,)).rowcount
-                > 0
-            )
+            return snapshot_storage.discard(connection, identity)
