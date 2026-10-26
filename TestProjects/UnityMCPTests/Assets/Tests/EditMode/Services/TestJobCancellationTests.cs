@@ -91,8 +91,67 @@ namespace MCPForUnityTests.Editor.Services
             Call("ObserveFinal", Guid);
             Assert.IsFalse(Released, "A final event cannot reentrantly admit another run.");
             Call("Tick");
+            Assert.IsFalse(Released, "A direct status tick cannot release native ownership.");
+            Call("NoteEditorUpdate");
+            Call("TickFromEditorUpdate");
             Assert.IsTrue(Released);
             Assert.AreEqual(1, calls);
+        }
+
+        [Test]
+        public void CachedDiagnosticsDistinguishIdleNativeSnapshotFromDeferredCleanupTurn()
+        {
+            Create();
+            Action deferred = null;
+            control.GetType().GetField("defer", Members).SetValue(control, new Action<Action>(action => deferred = action));
+            Call("BindGuid", Guid);
+            Call("NoteEditorUpdate");
+            Call("ObserveFinal", Guid);
+            snapshot = Native(false);
+            now = 11;
+            Call("NoteEditorUpdate");
+            Call("Tick");
+            var diagnostics = (JObject)Call("Diagnostics");
+            Assert.IsFalse(Released, "An idle snapshot and elapsed update do not replace the deferred turn witness.");
+            Assert.AreEqual(1, (int)diagnostics["editor_updates_since_final"]);
+            Assert.AreEqual(0, (int)diagnostics["registered_count"]);
+            Assert.AreEqual(0, (int)diagnostics["active_count"]);
+            Assert.AreEqual(0, (int)diagnostics["serialized_active_count"]);
+            Assert.IsFalse((bool)diagnostics["global_active"]);
+            Assert.IsFalse((bool)diagnostics["deferred_turn_seen"]);
+            Assert.NotNull(deferred);
+            deferred();
+            Call("Tick");
+            Assert.IsFalse(Released, "A deferred witness alone cannot turn a direct poll into cleanup completion.");
+            Call("NoteEditorUpdate");
+            Call("TickFromEditorUpdate");
+            Assert.IsTrue(Released);
+        }
+
+        [Test]
+        public void RestoredFinalWitnessNeedsALaterMonitorUpdateAndIdleSnapshot()
+        {
+            Create();
+            Call("BindGuid", Guid);
+            Call("ObserveFinal", Guid);
+            var saved = (JObject)State.DeepClone();
+            var oldFactory = NativeTestRunControl.FactoryOverride;
+            try
+            {
+                NativeTestRunControl.FactoryOverride = (id, timeout) => new NativeTestRunControl(id, timeout, () => 11, () => Native(false), _ => true);
+                using var restored = NativeTestRunControl.Restore(Job, saved);
+                Assert.NotNull(restored);
+                restored.Tick();
+                Assert.IsFalse(restored.Released, "A restored final callback cannot make a direct poll release native ownership.");
+                restored.NoteEditorUpdate();
+                restored.TickFromEditorUpdate();
+                Assert.IsTrue(restored.Released);
+                Assert.IsTrue((bool)restored.Diagnostics()["restored_after_reload"]);
+            }
+            finally
+            {
+                NativeTestRunControl.FactoryOverride = oldFactory;
+            }
         }
 
         [Test]
@@ -242,7 +301,8 @@ namespace MCPForUnityTests.Editor.Services
                     return;
                 var field = typeof(TestRunnerApi).GetField("runProgressChanged", BindingFlags.NonPublic | BindingFlags.Static);
                 object original = field.GetValue(null);
-                using (var actual = NativeTestRunControl.Create(Job, 0))
+                NativeTestRunControl actual = NativeTestRunControl.Create(Job, 0);
+                using (actual)
                 {
                     Assert.NotNull(actual);
                     actual.BindGuid(Guid);
@@ -256,7 +316,12 @@ namespace MCPForUnityTests.Editor.Services
                     ((Action<object>)bridge.GetType().GetField("Handler", Members).GetValue(bridge))(progress);
                     Assert.IsTrue((bool)actual.State["final_witness"]);
                     Assert.IsFalse(actual.Released);
+                    Assert.NotNull(typeof(NativeTestRunControl).GetField("scheduledTurn", Members).GetValue(actual));
                 }
+                Assert.IsNull(
+                    typeof(NativeTestRunControl).GetField("scheduledTurn", Members).GetValue(actual),
+                    "Disposing the control unsubscribes its unused update witness."
+                );
                 Assert.AreSame(original, field.GetValue(null), "Never replace the framework event.");
             }
             finally
@@ -573,6 +638,8 @@ namespace MCPForUnityTests.Editor.Services
                 view = Native(false);
                 job.Control.ObserveFinal(Guid);
                 typeof(TestJobManager).GetMethod("TickNativeControls", Members).Invoke(null, null);
+                Assert.IsTrue(TestJobManager.NativeAdmissionBlocked, "A public cancellation tick cannot settle native ownership.");
+                typeof(TestJobManager).GetMethod("OnNativeControlEditorUpdate", Members).Invoke(null, null);
                 Assert.AreEqual(TestJobStatus.Cancelled, job.Status, "An authoritative canceled result does not depend on the API receipt bool.");
                 Assert.AreEqual("cancelled", job.CompletionKind);
                 Assert.AreEqual("Canceled", job.RetainedSummary.ResultState);
@@ -605,6 +672,8 @@ namespace MCPForUnityTests.Editor.Services
                 view = Native(false);
                 restored.Control.ObserveFinal(Guid);
                 typeof(TestJobManager).GetMethod("TickNativeControls", Members).Invoke(null, null);
+                Assert.IsTrue(TestJobManager.NativeAdmissionBlocked, "A direct status tick cannot settle restored ownership.");
+                typeof(TestJobManager).GetMethod("OnNativeControlEditorUpdate", Members).Invoke(null, null);
                 Assert.AreEqual(TestJobStatus.Succeeded, restored.Status, "Retained authoritative success must win a racing accepted stop.");
                 Assert.AreEqual("completed", restored.CompletionKind);
                 Assert.AreEqual("Passed", restored.RetainedSummary.ResultState);
@@ -792,7 +861,7 @@ namespace MCPForUnityTests.Editor.Services
                     job.Control?.Dispose();
                 if (!monitor)
                     EditorApplication.update -= (EditorApplication.CallbackFunction)
-                        Delegate.CreateDelegate(typeof(EditorApplication.CallbackFunction), type.GetMethod("TickNativeControls", Members));
+                        Delegate.CreateDelegate(typeof(EditorApplication.CallbackFunction), type.GetMethod("OnNativeControlEditorUpdate", Members));
                 type.GetField("_controlMonitor", Members).SetValue(null, monitor);
                 NativeTestRunControl.DisableForTests = disabled;
                 NativeTestRunControl.FactoryOverride = factory;

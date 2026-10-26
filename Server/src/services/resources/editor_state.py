@@ -111,6 +111,7 @@ class EditorStateLastRun(BaseModel):
 
 class EditorStateTests(BaseModel):
     is_running: bool | None = None
+    native_control_unreleased: bool | None = None
     mode: str | None = None
     current_job_id: str | None = None
     started_unix_ms: int | None = None
@@ -261,6 +262,8 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
         blocking.append("domain_reload")
     if tests.get("is_running") is True:
         blocking.append("running_tests")
+    if tests.get("native_control_unreleased") is True:
+        blocking.append("native_test_cleanup")
     if refresh.get("is_refresh_in_progress") is True:
         blocking.append("asset_refresh")
     if assets.get("is_updating") is True:

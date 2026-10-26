@@ -73,6 +73,8 @@ POLICY_RULES: Final = (
             "get_editor_state",
             "get_compile_job",
             "get_test_job",
+            "view_test_results",
+            "export_test_job",
             "get_tool_states",
             "cancel_test_job",
             "wait_for_operation",

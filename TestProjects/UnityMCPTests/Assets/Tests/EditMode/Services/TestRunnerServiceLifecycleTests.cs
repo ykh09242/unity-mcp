@@ -179,6 +179,9 @@ namespace MCPForUnityTests.Editor.Services
                 };
                 control.ObserveFinal(nativeGuid);
                 typeof(TestJobManager).GetMethod("TickNativeControls", StaticPrivate).Invoke(null, null);
+                Assert.IsFalse(original.IsCompleted, "A direct poll must retain the caller until an Editor monitor update.");
+                Assert.IsTrue(TestJobManager.NativeAdmissionBlocked);
+                typeof(TestJobManager).GetMethod("OnNativeControlEditorUpdate", StaticPrivate).Invoke(null, null);
                 Assert.AreSame(
                     original,
                     await Task.WhenAny(original, Task.Delay(1000)),
@@ -295,6 +298,11 @@ namespace MCPForUnityTests.Editor.Services
             control.ObserveFinal(guid);
             Assert.IsTrue(TestJobManager.NativeAdmissionBlocked, "The final callback cannot admit a replacement reentrantly.");
             control.Tick();
+            TestRunnerNoThrottle.RestoreAfterRun();
+            Assert.IsTrue(TestJobManager.NativeAdmissionBlocked, "Direct ticks cannot release native resources.");
+            Assert.AreEqual(0, TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4));
+            control.NoteEditorUpdate();
+            control.TickFromEditorUpdate();
             TestRunnerNoThrottle.RestoreAfterRun();
             Assert.IsFalse(TestJobManager.NativeAdmissionBlocked);
             Assert.AreEqual(_idleTime, TestRunnerNoThrottle.ReadPreference("ApplicationIdleTime", 4));

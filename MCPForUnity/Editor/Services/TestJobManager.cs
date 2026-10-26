@@ -574,7 +574,7 @@ namespace MCPForUnity.Editor.Services
             if (!_controlMonitor)
             {
                 _controlMonitor = true;
-                EditorApplication.update += TickNativeControls;
+                EditorApplication.update += OnNativeControlEditorUpdate;
             }
         }
 
@@ -634,7 +634,17 @@ namespace MCPForUnity.Editor.Services
             };
         }
 
-        private static void TickNativeControls()
+        private static void OnNativeControlEditorUpdate()
+        {
+            foreach (var job in Jobs.Values.ToArray())
+                if (job.Control != null && !job.Control.Released)
+                    job.Control.NoteEditorUpdate();
+            TickNativeControlsCore(fromEditorUpdate: true);
+        }
+
+        private static void TickNativeControls() => TickNativeControlsCore(fromEditorUpdate: false);
+
+        private static void TickNativeControlsCore(bool fromEditorUpdate)
         {
             foreach (var job in Jobs.Values.ToArray())
             {
@@ -642,7 +652,12 @@ namespace MCPForUnity.Editor.Services
                 if (control == null || (bool?)control.State["settled"] == true)
                     continue;
                 if (!control.Released)
-                    control.Tick();
+                {
+                    if (fromEditorUpdate)
+                        control.TickFromEditorUpdate();
+                    else
+                        control.Tick();
+                }
                 if (!control.Released)
                     continue;
                 if (control.Requested && job.Status == TestJobStatus.Running)
@@ -682,7 +697,7 @@ namespace MCPForUnity.Editor.Services
             }
             if (!NativeAdmissionBlocked && _controlMonitor)
             {
-                EditorApplication.update -= TickNativeControls;
+                EditorApplication.update -= OnNativeControlEditorUpdate;
                 _controlMonitor = false;
                 TestRunnerNoThrottle.RestoreAfterRun();
             }
@@ -1069,6 +1084,8 @@ namespace MCPForUnity.Editor.Services
                 error = job.Error,
                 result = resultPayload,
                 native_control = job.NativeControl,
+                native_cleanup_diagnostics = job.Control?.Diagnostics(),
+                no_throttle_diagnostics = TestRunnerNoThrottle.Diagnostics(),
                 result_truncated_count = (int?)job.ResultArtifact?["truncated_result_count"] ?? 0,
                 completion_kind = job.CompletionKind,
                 result_availability = job.ResultAvailability ?? (job.Result == null ? "legacy_unavailable" : "available"),

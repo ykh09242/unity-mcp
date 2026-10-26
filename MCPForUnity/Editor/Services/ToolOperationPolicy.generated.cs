@@ -89,6 +89,8 @@ namespace MCPForUnity.Editor.Services
             { "get_editor_state\n0", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
             { "get_compile_job\n0", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
             { "get_test_job\n0", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
+            { "view_test_results\n0", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
+            { "export_test_job\n0", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
             { "get_tool_states\n0", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
             { "cancel_test_job\n0", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },
             { "wait_for_operation\n0", new ToolOperationPolicy(ToolOperationMode.Control, ToolOperationLifetime.Command, "reviewed_control") },

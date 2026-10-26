@@ -27,10 +27,22 @@ namespace MCPForUnityTests.Editor.Services
             {
                 jobs.Add(id, job);
                 Assert.IsTrue(TestJobManager.NativeAdmissionBlocked);
+                var snapshot = (JObject)
+                    typeof(EditorStateCache)
+                        .GetMethod("BuildSnapshot", BindingFlags.Static | BindingFlags.NonPublic)
+                        .Invoke(null, new object[] { "native-control-test" });
+                Assert.IsTrue((bool)snapshot["tests"]["native_control_unreleased"]);
+                if ((bool)snapshot["tests"]["is_running"] == false)
+                    Assert.AreEqual("native_test_cleanup", (string)snapshot["activity"]["phase"]);
                 control.State["termination"] = "unknown";
                 Assert.IsTrue(TestJobManager.NativeRecoveryRequired);
                 control.AbortBeforeExecute();
                 Assert.IsTrue(jobs[id].Control.Released);
+                snapshot = (JObject)
+                    typeof(EditorStateCache)
+                        .GetMethod("BuildSnapshot", BindingFlags.Static | BindingFlags.NonPublic)
+                        .Invoke(null, new object[] { "native-control-released-test" });
+                Assert.IsFalse((bool)snapshot["tests"]["native_control_unreleased"]);
             }
             finally
             {

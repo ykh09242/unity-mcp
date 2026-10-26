@@ -21,6 +21,7 @@ namespace MCPForUnity.Editor.Services
         private readonly Action<string, int> write;
         private readonly Action refresh;
         private bool refreshed;
+        internal bool? LastAcquireSuppressed { get; private set; }
 
         internal EditorPreferenceLease(
             string root,
@@ -129,6 +130,7 @@ namespace MCPForUnity.Editor.Services
                     FinishApply(record);
                 else if (!record.Suppressed)
                     RefreshOnce();
+                LastAcquireSuppressed = record.Suppressed;
                 return;
             }
             if (record == null)
@@ -147,6 +149,8 @@ namespace MCPForUnity.Editor.Services
                 else
                     RefreshOnce();
             }
+            if (acquire)
+                LastAcquireSuppressed = record.Suppressed;
         }
 
         private void FinishApply(Record record)

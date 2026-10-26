@@ -379,6 +379,40 @@ class TestJobDiagnostics(BaseModel):
     recommended_actions: list[str]
 
 
+class NativeCleanupDiagnostics(BaseModel):
+    """Cached scalar observations; no UTF reflection runs while serializing a poll."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True, strict=True)
+
+    editor_update_count: int | None = Field(default=None, ge=0, le=2**63 - 1)
+    editor_updates_since_final: int | None = Field(default=None, ge=0, le=2**63 - 1)
+    last_editor_update_uptime: float | None = Field(default=None, ge=0, le=1e12)
+    tick_count: int | None = Field(default=None, ge=0, le=2**63 - 1)
+    ticks_since_final: int | None = Field(default=None, ge=0, le=2**63 - 1)
+    final_witness_uptime: float | None = Field(default=None, ge=0, le=1e12)
+    deferred_turn_seen: bool | None = None
+    last_snapshot_uptime: float | None = Field(default=None, ge=0, le=1e12)
+    registered_count: int | None = Field(default=None, ge=0, le=32)
+    active_count: int | None = Field(default=None, ge=0, le=32)
+    serialized_active_count: int | None = Field(default=None, ge=0, le=32)
+    global_active: bool | None = None
+    last_snapshot_error: str | None = Field(default=None, max_length=128)
+    restored_after_reload: bool | None = None
+
+
+class NoThrottleDiagnostics(BaseModel):
+    """Cached preference ownership observations, separate from public job completion."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True, strict=True)
+
+    test_run_active: bool | None = None
+    settings_captured: bool | None = None
+    maintenance_subscribed: bool | None = None
+    last_acquire_uptime: float | None = Field(default=None, ge=0, le=1e12)
+    last_acquire_succeeded: bool | None = None
+    last_acquire_suppressed: bool | None = None
+
+
 class GetTestJobData(BaseModel):
     job_id: str
     status: str
@@ -395,6 +429,12 @@ class GetTestJobData(BaseModel):
     result_availability: str | None = None
     result_page: dict[str, Any] | None = None
     native_control: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    native_cleanup_diagnostics: NativeCleanupDiagnostics | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    no_throttle_diagnostics: NoThrottleDiagnostics | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 
