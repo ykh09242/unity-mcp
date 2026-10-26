@@ -37,6 +37,25 @@ class CompileDiagnostic(BaseModel):
         return self
 
 
+class CompileCoordination(BaseModel):
+    """Bounded native ownership diagnostics, independent of compilation outcome."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    scope: Literal["owned_request_pipeline_events"]
+    phase: Literal[
+        "no_owned_reservation",
+        "pending",
+        "started",
+        "finished",
+        "recovery_required",
+        "other_owned_reservation",
+    ]
+    reason: Literal["native_job_active", "recovery_required"] | None
+    retryable: bool
+    recovery_action: Literal["inspect_native_work_then_restart_editor"] | None
+    completion_requires: Literal["matching_pipeline_finish_and_editor_quiescence"]
+
+
 class CompileJob(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     schema_version: Literal["unity-mcp/compile_job@1"]
@@ -58,6 +77,7 @@ class CompileJob(BaseModel):
     diagnostics_truncated: bool = False
     omitted_diagnostics: int = Field(default=0, ge=0, le=2000000)
     collection_complete: bool = False
+    native_coordination: CompileCoordination | None = None
 
     @model_validator(mode="after")
     def truthful_outcome(self):
