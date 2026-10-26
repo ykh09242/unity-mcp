@@ -13,6 +13,17 @@ namespace MCPForUnityTests.EditMode.Tools
     {
         private GameObject _root;
 
+        private sealed class CapabilityBackend : IInputSimulationBackend
+        {
+            public bool Available { get; set; }
+            public string UnavailableReason => null;
+            public object Status => null;
+
+            public object Apply(InputSimulationRequest request) => throw new InvalidOperationException("A status query must not dispatch input.");
+
+            public void ReleaseAll() => throw new InvalidOperationException("A status query must not release input.");
+        }
+
         [TearDown]
         public void TearDown()
         {
@@ -52,6 +63,36 @@ namespace MCPForUnityTests.EditMode.Tools
 #if ENABLE_LEGACY_INPUT_MANAGER && ENABLE_INPUT_SYSTEM
             Assert.That(data.Value<string>("active_input_handling"), Is.EqualTo("Both"));
 #endif
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void LegacyReplayOptionsRemainDiscoverableWithoutChangingBackendCapabilities(bool backendAvailable)
+        {
+            IInputSimulationBackend previous = ManageInput.InputBackend;
+            ManageInput.InputBackend = new CapabilityBackend { Available = backendAvailable };
+            try
+            {
+                var result = (SuccessResponse)ManageInput.HandleCommand(new JObject { ["action"] = "status" });
+                var data = JObject.FromObject(result.Data);
+                Assert.That(data.Value<bool>("legacy_raw_input"), Is.False);
+                Assert.That(data.Value<bool>("input_system"), Is.EqualTo(backendAvailable));
+                foreach (string capability in new[] { "keyboard", "mouse", "touch", "gamepad", "wheel" })
+                    Assert.That(data.Value<bool>(capability), Is.EqualTo(backendAvailable), capability);
+                string reason = data.Value<string>("legacy_raw_input_unavailable_reason");
+                Assert.That(reason, Does.Contain("UnityEngine.Input"));
+                Assert.That(reason, Does.Contain("ui_click or scenario click_ui"));
+                Assert.That(reason, Does.Contain("Input System Package/Both handling and an Input System consumer"));
+                Assert.That(reason, Does.Contain("changing handling alone does not redirect"));
+                Assert.That(reason, Does.Contain("explicit project-code integration"));
+                Assert.That(reason, Does.Contain("MCP provides no legacy raw adapter"));
+                Assert.That(reason, Does.Contain("does not change input settings or send OS input"));
+                Assert.That(data["raw_input_unavailable_reason"].Type == JTokenType.Null, Is.EqualTo(backendAvailable));
+            }
+            finally
+            {
+                ManageInput.InputBackend = previous;
+            }
         }
 
         [TestCase("ui_click")]

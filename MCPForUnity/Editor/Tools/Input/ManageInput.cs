@@ -109,6 +109,7 @@ namespace MCPForUnity.Editor.Tools.Input
                     multi_touch = InputBackend?.Available ?? false,
                     max_touch_contacts = 10,
                     legacy_raw_input = false,
+                    legacy_raw_input_unavailable_reason = LegacyInputScenarioRecordingBackend.RawReplayUnavailableReason,
                     legacy_input_observation = LegacyInputObservationAvailable,
                     legacy_input_observation_unavailable_reason = LegacyInputObservationUnavailableReason,
                     input_observation = (PlayScenarioRecordingService.InputBackend as IPlayScenarioInputRecordingCapabilities)?.Capabilities,
@@ -124,7 +125,7 @@ namespace MCPForUnity.Editor.Tools.Input
         public static string RawInputUnavailableReason =>
             LegacyInputObservationAvailable
                 ? LegacyInputScenarioRecordingBackend.RawReplayUnavailableReason
-                : "Raw input replay requires an enabled com.unity.inputsystem (1.7+) backend and an Input System consumer. ui_click dispatches uGUI events independently. UnityEngine.Input cannot be injected through public APIs.";
+                : "Raw virtual-device replay requires an enabled com.unity.inputsystem 1.7+ backend, Input System Package/Both handling and an Input System consumer. Changing handling alone does not redirect UnityEngine.Input. Use ui_click or scenario click_ui for uGUI targets; a project-defined input adapter requires explicit project-code integration. MCP does not change input settings or send OS input.";
 
         public static bool LegacyInputObservationAvailable =>
 #if ENABLE_LEGACY_INPUT_MANAGER && !ENABLE_INPUT_SYSTEM
