@@ -398,10 +398,6 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (!found)
                 return new ErrorResponse($"Effect '{effectName}' not found on this Volume.");
 
-            ownershipError = GraphicsMutationGuard.Validate(componentToRemove);
-            if (ownershipError != null)
-                return ownershipError;
-
             var removeMethod = GraphicsHelpers.VolumeProfileType.GetMethod("Remove", new[] { typeof(Type) });
             if (removeMethod == null)
                 return new ErrorResponse("Could not find VolumeProfile.Remove method.");
@@ -415,8 +411,14 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 && AssetDatabase.IsSubAsset(componentToRemove)
                 && string.Equals(AssetDatabase.GetAssetPath(profileOwner), AssetDatabase.GetAssetPath(componentToRemove), StringComparison.Ordinal);
             if (ownsComponent)
+            {
+                ownershipError = GraphicsMutationGuard.Validate(componentToRemove);
+                if (ownershipError != null)
+                    return ownershipError;
                 Undo.RegisterCompleteObjectUndo(profileOwner, "Remove Volume Effect");
+            }
 
+            // Borrowed components are only unlinked; destruction below requires the same asset owner.
             removeMethod.Invoke(profile, new object[] { effectType });
 
             if (

@@ -272,6 +272,55 @@ namespace MCPForUnityTests.Editor.Tools
             CollectionAssert.AreEqual(bytes, File.ReadAllBytes(Full(path)));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void EditableProfileCanUnlinkBorrowedPackageEffectWithoutChangingItsOwner(bool transient)
+        {
+            // Given a package-owned Bloom borrowed by an editable persistent or transient profile.
+            RequireVolumes();
+            var borrowed = Track(ScriptableObject.CreateInstance(GraphicsHelpers.VolumeProfileType));
+            string path = PathFor(true, "BorrowedProfile.asset");
+            AssetDatabase.CreateAsset(borrowed, path);
+            Object bloom = AddBloom(borrowed);
+            var profile = Track(ScriptableObject.CreateInstance(GraphicsHelpers.VolumeProfileType));
+            if (!transient)
+                AssetDatabase.CreateAsset(profile, PathFor(false, "Profile.asset"));
+            Components(profile).Add(bloom);
+            Component volume = NewVolume(profile);
+            AssetDatabase.SaveAssetIfDirty(borrowed);
+            string originalProfile = EditorJsonUtility.ToJson(borrowed);
+            string originalEffect = EditorJsonUtility.ToJson(bloom);
+            byte[] bytes = File.ReadAllBytes(Full(path));
+            byte[] metadata = File.ReadAllBytes(Full(path) + ".meta");
+            int profileDirty = EditorUtility.GetDirtyCount(borrowed);
+            int effectDirty = EditorUtility.GetDirtyCount(bloom);
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(bloom, out string guid, out long localId));
+
+            // When removing only the reference from the target profile.
+            JObject result = Send(
+                "volume_remove_effect",
+                new JObject { ["target"] = volume.gameObject.GetInstanceIDCompat().ToString(), ["effect"] = "Bloom" }
+            );
+
+            // Then the reference is unlinked while the borrowed component and owner are preserved.
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.IsEmpty(Components(profile));
+            Assert.AreEqual(1, Components(borrowed).Count);
+            Assert.AreSame(bloom, Components(borrowed)[0]);
+            Assert.IsTrue(AssetDatabase.Contains(bloom));
+            Assert.IsTrue(AssetDatabase.IsSubAsset(bloom));
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(bloom));
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(bloom, out string actualGuid, out long actualLocalId));
+            Assert.AreEqual(guid, actualGuid);
+            Assert.AreEqual(localId, actualLocalId);
+            Assert.AreEqual(originalProfile, EditorJsonUtility.ToJson(borrowed));
+            Assert.AreEqual(originalEffect, EditorJsonUtility.ToJson(bloom));
+            Assert.AreEqual(profileDirty, EditorUtility.GetDirtyCount(borrowed));
+            Assert.AreEqual(effectDirty, EditorUtility.GetDirtyCount(bloom));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(Full(path)));
+            CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Full(path) + ".meta"));
+        }
+
         [TestCase("feature_add", false)]
         [TestCase("feature_add", true)]
         [TestCase("feature_remove", false)]
