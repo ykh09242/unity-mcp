@@ -103,10 +103,19 @@ namespace MCPForUnity.Editor.Tools
 
         public static object HandleCommand(JObject @params)
         {
+            // Includes old jobs, registries and native exceptions that predate input validation.
+            return PackageSourceSecurity.RedactResponse(HandleCommandCore(@params));
+        }
+
+        private static object HandleCommandCore(JObject @params)
+        {
             if (@params == null)
                 return new ErrorResponse("Parameters cannot be null.");
 
             var p = new ToolParams(@params);
+            foreach (string key in new[] { "package", "url", "query" })
+                if (PackageSourceSecurity.HasCredentials(p.Get(key)))
+                    return new ErrorResponse("Package sources must not contain credentials or unsupported URL queries. Use external Git/UPM authentication.");
 
             var actionResult = p.GetRequired("action");
             if (!actionResult.IsSuccess)
@@ -924,7 +933,10 @@ namespace MCPForUnity.Editor.Tools
         {
             return Uri.TryCreate(url, UriKind.Absolute, out var uri)
                 && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
-                && !string.IsNullOrEmpty(uri.Host);
+                && !string.IsNullOrEmpty(uri.Host)
+                && string.IsNullOrEmpty(uri.UserInfo)
+                && string.IsNullOrEmpty(uri.Query)
+                && string.IsNullOrEmpty(uri.Fragment);
         }
 
         private static void RegisterCompletionCallback(string jobId, Request request)
@@ -1012,6 +1024,8 @@ namespace MCPForUnity.Editor.Tools
         {
             if (string.IsNullOrWhiteSpace(package))
                 return (false, "Package identifier cannot be empty.", null);
+            if (PackageSourceSecurity.HasCredentials(package))
+                return (false, "Package sources must not contain credentials or unsupported URL queries.", null);
 
             // Git URLs — allow but warn
             if (
@@ -1020,6 +1034,7 @@ namespace MCPForUnity.Editor.Tools
                 || package.StartsWith("git://", StringComparison.OrdinalIgnoreCase)
                 || package.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase)
                 || package.EndsWith(".git", StringComparison.OrdinalIgnoreCase)
+                || Regex.IsMatch(package, @"^[^\s:@/]+@[^\s:/]+:[^\s]+$")
             )
             {
                 return (true, $"Installing from git URL. Ensure this is a trusted source — git packages execute code on import.", package);

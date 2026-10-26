@@ -195,11 +195,11 @@ namespace MCPForUnity.Editor.Services
                             JobId = pj.job_id,
                             Status = ParseStatus(pj.status),
                             Operation = pj.operation,
-                            Package = pj.package_,
+                            Package = PackageSourceSecurity.ForStorage(pj.package_),
                             StartedUnixMs = pj.started_unix_ms,
                             FinishedUnixMs = pj.finished_unix_ms,
                             LastUpdateUnixMs = pj.last_update_unix_ms,
-                            Error = pj.error,
+                            Error = PackageSourceSecurity.Redact(pj.error),
                             ResultVersion = pj.result_version,
                             ResultName = pj.result_name,
                             RecoveryReason = pj.recovery_reason,
@@ -221,7 +221,7 @@ namespace MCPForUnity.Editor.Services
             }
             catch (Exception ex)
             {
-                McpLog.Warn($"[PackageJobManager] Failed to restore SessionState: {ex.Message}");
+                McpLog.Warn($"[PackageJobManager] Failed to restore SessionState: {PackageSourceSecurity.Redact(ex.Message)}");
             }
             finally
             {
@@ -306,7 +306,7 @@ namespace MCPForUnity.Editor.Services
             catch (Exception ex)
             {
                 MarkRecoveryUnknown(job, nowMs, "registration_unavailable");
-                McpLog.Warn($"[PackageJobManager] Recovery check failed for job {job.JobId}: {ex.Message}");
+                McpLog.Warn($"[PackageJobManager] Recovery check failed for job {job.JobId}: {PackageSourceSecurity.Redact(ex.Message)}");
             }
         }
 
@@ -377,11 +377,11 @@ namespace MCPForUnity.Editor.Services
                             job_id = j.JobId,
                             status = j.Status.ToString().ToLowerInvariant(),
                             operation = j.Operation,
-                            package_ = j.Package,
+                            package_ = PackageSourceSecurity.ForStorage(j.Package),
                             started_unix_ms = j.StartedUnixMs,
                             finished_unix_ms = j.FinishedUnixMs,
                             last_update_unix_ms = j.LastUpdateUnixMs,
-                            error = j.Error,
+                            error = PackageSourceSecurity.Redact(j.Error),
                             result_version = j.ResultVersion,
                             result_name = j.ResultName,
                             recovery_reason = j.RecoveryReason,
@@ -397,7 +397,7 @@ namespace MCPForUnity.Editor.Services
             }
             catch (Exception ex)
             {
-                McpLog.Warn($"[PackageJobManager] Failed to persist SessionState: {ex.Message}");
+                McpLog.Warn($"[PackageJobManager] Failed to persist SessionState: {PackageSourceSecurity.Redact(ex.Message)}");
                 return false;
             }
             finally
@@ -519,7 +519,7 @@ namespace MCPForUnity.Editor.Services
                 JobId = jobId,
                 Status = PackageJobStatus.Running,
                 Operation = operation,
-                Package = package,
+                Package = PackageSourceSecurity.ForStorage(package),
                 StartedUnixMs = started,
                 FinishedUnixMs = null,
                 LastUpdateUnixMs = started,
@@ -547,7 +547,7 @@ namespace MCPForUnity.Editor.Services
                 job.Status = success ? PackageJobStatus.Succeeded : PackageJobStatus.Failed;
                 job.FinishedUnixMs = now;
                 job.LastUpdateUnixMs = now;
-                job.Error = error;
+                job.Error = PackageSourceSecurity.Redact(error);
                 job.RecoveryReason = null;
                 job.ResultVersion = version;
                 job.ResultName = name;
@@ -581,7 +581,7 @@ namespace MCPForUnity.Editor.Services
             if (job == null)
                 return null;
             // Activity evidence is copyable. Omit raw source identifiers and native errors,
-            // which may embed credentials; the existing status API keeps its full contract.
+            // which may embed credentials; status also redacts legacy diagnostics.
             return new
             {
                 job_id = job.JobId,
@@ -617,11 +617,11 @@ namespace MCPForUnity.Editor.Services
                 job_id = job.JobId,
                 status = job.Status.ToString().ToLowerInvariant(),
                 operation = job.Operation,
-                package_ = job.Package,
+                package_ = PackageSourceSecurity.Redact(job.Package),
                 started_unix_ms = job.StartedUnixMs,
                 finished_unix_ms = job.FinishedUnixMs,
                 last_update_unix_ms = job.LastUpdateUnixMs,
-                error = job.Error,
+                error = PackageSourceSecurity.Redact(job.Error),
                 result_version = job.ResultVersion,
                 result_name = job.ResultName,
             };
