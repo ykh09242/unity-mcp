@@ -130,6 +130,7 @@ class ReceiptRecord:
     result_expires_at: float | None
     attempts: tuple[ReceiptAttempt, ...]
     attempt_count: int
+    wall_clock_high_water: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,6 +280,7 @@ class ExecutionReceiptStore:
         self._clock_origin: tuple[float, float] | None = None
         self._last_monotonic: float | None = None
         self._last_wall = 0.0
+        self._recovered_logical_floor = 0.0
         self._poisoned = False
         self._closed = False
         self._records: dict[str, ReceiptRecord] = {}
@@ -292,7 +294,13 @@ class ExecutionReceiptStore:
                 record = self._decode(raw, receipt_id)
                 self._records[receipt_id] = record
                 self._sizes[receipt_id] = len(raw)
-                self._last_wall = max(self._last_wall, record.updated_at)
+                wall_floor = record.wall_clock_high_water
+                self._last_wall = max(
+                    self._last_wall, record.updated_at if wall_floor is None else wall_floor
+                )
+                self._recovered_logical_floor = max(
+                    self._recovered_logical_floor, record.updated_at
+                )
                 key = self._key(record)
                 if key is not None:
                     if key in self._keys:
@@ -414,7 +422,10 @@ class ExecutionReceiptStore:
                     self._last_monotonic is not None and monotonic < self._last_monotonic
                 ):
                     raise ValueError("clock moved backward")
-                origin = self._clock_origin or (float(wall), float(monotonic))
+                origin = self._clock_origin or (
+                    max(float(wall), self._recovered_logical_floor),
+                    float(monotonic),
+                )
                 now = origin[0] + (monotonic - origin[1])
                 if not math.isfinite(now):
                     raise ValueError("invalid elapsed clock")
@@ -426,6 +437,11 @@ class ExecutionReceiptStore:
             self._last_wall = float(wall)
             self._last_monotonic = float(monotonic)
             return float(now)
+
+    def _wall_high_water(self) -> float:
+        """Snapshot validated raw wall time without holding this lock during I/O."""
+        with self._clock_lock:
+            return self._last_wall
 
     @staticmethod
     def _key(record: ReceiptRecord) -> tuple[str, str, str] | None:
@@ -464,7 +480,7 @@ class ExecutionReceiptStore:
     def _encode(record: ReceiptRecord) -> bytes:
         if (
             type(record.schema_version) is not int
-            or record.schema_version != 2
+            or record.schema_version not in {2, 3}
             or type(record.policy_version) is not int
             or record.policy_version != 1
             or not HEX_ID.fullmatch(record.receipt_id)
@@ -495,6 +511,16 @@ class ExecutionReceiptStore:
             or len(record.attempts) != min(record.attempt_count, MAX_ATTEMPTS)
         ):
             raise ReceiptInvalid("invalid_receipt_record")
+        wall_floor = record.wall_clock_high_water
+        if (record.schema_version == 2 and wall_floor is not None) or (
+            record.schema_version == 3
+            and (
+                type(wall_floor) not in (int, float)
+                or not math.isfinite(wall_floor)
+                or wall_floor < 0
+            )
+        ):
+            raise ReceiptInvalid("invalid_receipt_record")
         times = record.created_at, record.updated_at, record.expires_at
         if (
             any(type(value) not in (float, int) or not math.isfinite(value) for value in times)
@@ -514,9 +540,12 @@ class ExecutionReceiptStore:
         for attempt in record.attempts:
             ExecutionReceiptStore._validate_attempt(attempt)
         ExecutionReceiptStore._validate_result_metadata(record)
-        raw = json.dumps(
-            asdict(record), ensure_ascii=True, separators=(",", ":"), allow_nan=False
-        ).encode("ascii")
+        data = asdict(record)
+        if record.schema_version == 2:
+            data.pop("wall_clock_high_water")
+        raw = json.dumps(data, ensure_ascii=True, separators=(",", ":"), allow_nan=False).encode(
+            "ascii"
+        )
         if len(raw) > METADATA_BYTES:
             raise ReceiptInvalid("receipt_metadata_limit")
         return raw
@@ -595,6 +624,7 @@ class ExecutionReceiptStore:
             raise ReceiptInvalid("invalid_receipt_result_metadata")
 
     def _commit(self, record: ReceiptRecord) -> None:
+        record = replace(record, schema_version=3, wall_clock_high_water=self._wall_high_water())
         raw = self._encode(record)
         extra_stage = 0 if record.receipt_id in self._owned_ids() else METADATA_BYTES
         if self.charged_metadata_bytes + extra_stage > METADATA_QUOTA:
@@ -756,7 +786,7 @@ class ExecutionReceiptStore:
                 raise ReceiptCapacity("receipt_capacity")
             receipt_id, token = uuid4().hex, uuid4().hex
             record = ReceiptRecord(
-                2,
+                3,
                 1,
                 self.store_id,
                 receipt_id,
@@ -781,6 +811,7 @@ class ExecutionReceiptStore:
                 None,
                 (),
                 0,
+                self._wall_high_water(),
             )
             self._encode(record)
             self._sizes[receipt_id] = 0
