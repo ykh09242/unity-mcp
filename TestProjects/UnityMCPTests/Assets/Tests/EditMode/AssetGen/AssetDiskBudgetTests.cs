@@ -32,6 +32,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             PreparedArtifact.DeleteStageOverrideForTests = null;
             Assert.Zero(AssetDiskBudget.ReservedBytesForTests(project));
             AssetDiskBudget.FreeBytesForTests = null;
+            AssetDiskBudget.ProbeFreeBytesForTests = null;
             AssetDiskBudget.AggregateBytesForTests = null;
             AssetDiskBudget.HeadroomBytesForTests = null;
             Directory.Delete(project, true);
@@ -85,6 +86,63 @@ namespace MCPForUnityTests.Editor.AssetGen
             extracted.RecordWritten(8);
             free = 1; // A separate process consumed the remaining headroom.
             Assert.Throws<IOException>(() => extracted.Increase(1));
+        }
+
+        [Test]
+        public void FreeSpaceProbeUsesTheExistingProjectDirectoryRatherThanItsFilesystemRoot()
+        {
+            string nestedProject = Path.Combine(project, "mounted", "Project");
+            Directory.CreateDirectory(nestedProject);
+            string observed = null;
+            AssetDiskBudget.FreeBytesForTests = null;
+            AssetDiskBudget.ProbeFreeBytesForTests = path =>
+            {
+                observed = path;
+                return 1000;
+            };
+            using (var lease = AssetDiskBudget.ReserveDownloadAsync(nestedProject, 1, CancellationToken.None).GetAwaiter().GetResult())
+            {
+                Assert.AreNotEqual(Path.GetPathRoot(nestedProject), observed);
+                Assert.AreEqual(Path.GetFullPath(nestedProject), observed.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            }
+            Assert.Zero(AssetDiskBudget.ReservedBytesForTests(nestedProject));
+        }
+
+        [Test]
+        public void MissingOutputFolderProbesItsNearestExistingDirectory()
+        {
+            string mountedFolder = Path.Combine(project, "mounted");
+            Directory.CreateDirectory(mountedFolder);
+            string output = Path.Combine(mountedFolder, "NewOutput", "Model");
+            string observed = null;
+            AssetDiskBudget.FreeBytesForTests = null;
+            AssetDiskBudget.ProbeFreeBytesForTests = path =>
+            {
+                observed = path;
+                return 1000;
+            };
+            using (var lease = AssetDiskBudget.ReserveExtraction(output, 1, CancellationToken.None))
+                Assert.AreEqual(Path.GetFullPath(mountedFolder), observed.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            Assert.Zero(AssetDiskBudget.ReservedBytesForTests(output));
+        }
+
+        [Test]
+        public void FailedPlatformCapacityQueryDoesNotReserveBytes()
+        {
+            AssetDiskBudget.FreeBytesForTests = null;
+            AssetDiskBudget.ProbeFreeBytesForTests = _ => throw new IOException("capacity unavailable");
+            Assert.ThrowsAsync<IOException>(async () => await AssetDiskBudget.ReserveDownloadAsync(project, 1, CancellationToken.None));
+            Assert.Zero(AssetDiskBudget.ReservedBytesForTests(project));
+        }
+
+        [Test]
+        public void ExistingProjectCanUseTheActualPlatformCapacityProbe()
+        {
+            AssetDiskBudget.FreeBytesForTests = null;
+            AssetDiskBudget.ProbeFreeBytesForTests = null;
+            AssetDiskBudget.HeadroomBytesForTests = 0;
+            using var lease = AssetDiskBudget.ReserveDownloadAsync(project, 1, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(1, AssetDiskBudget.ReservedBytesForTests(project));
         }
 
         [Test]

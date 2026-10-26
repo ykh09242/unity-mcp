@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -25,6 +26,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
         private static readonly SemaphoreSlim ExtractionSlots = new(1, 1);
 
         internal static Func<string, long> FreeBytesForTests = null;
+        internal static Func<string, long> ProbeFreeBytesForTests = null;
         internal static long? AggregateBytesForTests = null;
         internal static long? HeadroomBytesForTests = null;
 
@@ -50,7 +52,50 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
             return long.TryParse(text, out long gib) && gib >= 1 && gib <= 1024 ? gib * 1024 * 1024 * 1024 : fallback;
         }
 
-        private static long FreeBytes(string project) => FreeBytesForTests?.Invoke(project) ?? new DriveInfo(Path.GetPathRoot(project)).AvailableFreeSpace;
+        // DriveInfo(Path.GetPathRoot(path)) probes / on Unix even when the project is
+        // mounted elsewhere. On Windows DriveInfo also resolves mounted folders to the
+        // parent drive and rejects UNC paths, so query the actual existing directory.
+        private static long FreeBytes(string project)
+        {
+            if (FreeBytesForTests != null)
+                return FreeBytesForTests(project);
+            string directory = ExistingDirectory(project);
+            string probe = Path.DirectorySeparatorChar == '\\' ? WithTrailingSeparator(directory) : directory;
+            if (ProbeFreeBytesForTests != null)
+                return ProbeFreeBytesForTests(probe);
+            if (Path.DirectorySeparatorChar != '\\')
+                return new DriveInfo(probe).AvailableFreeSpace;
+            if (!GetDiskFreeSpaceEx(probe, out ulong available, IntPtr.Zero, IntPtr.Zero))
+                throw new IOException($"Unable to inspect project disk capacity (Windows error {Marshal.GetLastWin32Error()}).");
+            return available > long.MaxValue ? long.MaxValue : (long)available;
+        }
+
+        private static string ExistingDirectory(string path)
+        {
+            string current = Path.GetFullPath(path);
+            while (true)
+            {
+                try
+                {
+                    if ((File.GetAttributes(current) & FileAttributes.Directory) == 0)
+                        throw new IOException("The asset project path is not a directory.");
+                    return current;
+                }
+                catch (FileNotFoundException) { }
+                catch (DirectoryNotFoundException) { }
+                string parent = Path.GetDirectoryName(current);
+                if (string.IsNullOrEmpty(parent) || parent == current)
+                    throw new IOException("Unable to find an existing directory for the asset disk capacity check.");
+                current = parent;
+            }
+        }
+
+        private static string WithTrailingSeparator(string path) =>
+            path.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) ? path : path + Path.DirectorySeparatorChar;
+
+        [DllImport("kernel32.dll", EntryPoint = "GetDiskFreeSpaceExW", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetDiskFreeSpaceEx(string directoryName, out ulong available, IntPtr totalBytes, IntPtr totalFreeBytes);
 
         internal static bool FileIsGone(string path)
         {
