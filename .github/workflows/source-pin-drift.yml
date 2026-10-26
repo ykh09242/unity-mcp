@@ -9,8 +9,10 @@ on:
       - manifest.json
       - release-source-inputs.json
       - tools/check_source_pin_drift.py
+      - tools/prepare_source_pin_history.py
       - tools/check_release_evidence.py
       - tools/tests/test_check_source_pin_drift.py
+      - tools/tests/test_prepare_source_pin_history.py
       - .github/workflows/source-pin-drift.yml
   pull_request:
     branches: [beta, main]
@@ -20,8 +22,10 @@ on:
       - manifest.json
       - release-source-inputs.json
       - tools/check_source_pin_drift.py
+      - tools/prepare_source_pin_history.py
       - tools/check_release_evidence.py
       - tools/tests/test_check_source_pin_drift.py
+      - tools/tests/test_prepare_source_pin_history.py
       - .github/workflows/source-pin-drift.yml
   workflow_dispatch:
     inputs:
@@ -43,8 +47,14 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Prepare immutable pinned history
+        id: history
+        env:
+          CHECK_REVISION: ${{ github.sha }}
+        run: python3 tools/prepare_source_pin_history.py --revision "$CHECK_REVISION"
       - name: Compare committed server inputs
         id: drift
+        if: always() && steps.history.outcome != 'skipped'
         env:
           CHECK_REVISION: ${{ github.sha }}
           BASELINE_REVISION: ${{ github.event.pull_request.base.sha || github.event.before }}

@@ -42,3 +42,27 @@ The JSON report distinguishes `current`, `stale` and `unavailable`. It compares 
 Ordinary server changes report stale pins as an advisory and exit zero; they may merge before the final reviewed pin refresh. `--require-current` makes stale inputs fail with exit one. Supplying `--baseline` automatically enforces that same rule when the selected source pin changes, so a refresh cannot silently leave additional server changes behind. Invalid/inconsistent metadata or unavailable local history fails with exit two, including in advisory mode. Provide full history and repair metadata before retrying; this tool never fetches missing objects. Output includes at most 100 relative paths but always compares and counts every changed input.
 
 The `Immutable server source` workflow runs on relevant beta pushes and pull requests with full history, read-only permissions, a JSON artifact and a check summary. It validates package, manifest and generated source-input agreement, then applies the baseline rule above. This reports drift without requiring a new launcher pin for every intermediate server PR. It does not publish packages or claim that the selected server commit passed tests. Before a release, run strict mode and inspect CI for the chosen immutable server commit; before merging a pin refresh, verify its archive startup and applicable PR CI. Existing release evidence checks remain separate.
+
+Full checkout history includes commits reachable from fetched refs. A source pin can
+refer to an earlier work-unit commit whose branch was later squash-merged and deleted;
+that commit may be absent even with `fetch-depth: 0`. Before the offline comparison,
+the workflow explicitly runs a separate network preparation step:
+
+```sh
+python tools/prepare_source_pin_history.py --revision <checked-commit>
+```
+
+This helper first validates the committed package, manifest and generated source-input
+agreement using the same metadata rules as the checker. An available local commit
+needs no network. A missing pin is fetched by its validated full SHA only from the fixed
+public fork `https://github.com/ykh09242/unity-mcp.git`, with a 60-second timeout and
+depth one. The helper does not follow metadata-supplied URLs or configured remotes,
+prompt for credentials, fetch tags/submodules, update branch refs or overwrite
+`FETCH_HEAD`. It verifies the fetched object is exactly the requested commit.
+
+Invalid metadata, an existing non-commit object, a failed/timed-out fetch or a still
+missing object fails preparation with exit two and sanitized diagnostics. The workflow
+still runs the offline checker to preserve its `unavailable` report on preparation
+failure. Neither helper converts unavailable history into a passing freshness result.
+`check_source_pin_drift.py` remains offline and read-only; local authoring and release
+checks continue to require their selected commits to be available locally.
