@@ -71,7 +71,7 @@ def test_shipped_topology_trusts_only_the_fixed_proxy_and_overwrites_client_meta
     assert proxy_ip in ip_network(
         compose["networks"]["remote_backend"]["ipam"]["config"][0]["subnet"]
     )
-    assert backend["networks"] == ["remote_backend"]
+    assert set(backend["networks"]) == {"remote_backend"}
     assert "ports" not in backend
     caddy = (root / "Server/deploy/Caddyfile.remote").read_text(encoding="utf-8")
     directives = {line.strip() for line in caddy.splitlines() if not line.lstrip().startswith("#")}
@@ -79,3 +79,35 @@ def test_shipped_topology_trusts_only_the_fixed_proxy_and_overwrites_client_meta
     assert "header_up X-Forwarded-For {remote_host}" in directives
     assert "header_up -Forwarded" in directives
     assert "header_up -X-Real-IP" in directives
+
+
+@pytest.mark.parametrize(
+    "attachment_order",
+    [("unity-mcp-server", "proxy"), ("proxy", "unity-mcp-server")],
+)
+def test_shipped_network_addresses_do_not_collide_in_either_attachment_order(attachment_order):
+    """Model first-free endpoint allocation; this does not launch Docker."""
+    root = Path(__file__).resolve().parents[3]
+    compose = yaml.safe_load((root / "docker-compose.remote.yml").read_text(encoding="utf-8"))
+    network_config = compose["networks"]["remote_backend"]["ipam"]["config"][0]
+    subnet = ip_network(network_config["subnet"])
+    # The gateway occupies the first host unless an explicit gateway is configured.
+    gateway = ip_address(network_config.get("gateway", str(next(subnet.hosts()))))
+    allocated = {gateway: "bridge gateway"}
+    assert "unity-mcp-server" in compose["services"]["proxy"]["depends_on"]
+    for service_name in attachment_order:
+        networks = compose["services"][service_name]["networks"]
+        attachment = {} if isinstance(networks, list) else networks["remote_backend"]
+        configured = attachment.get("ipv4_address")
+        address = (
+            ip_address(configured)
+            if configured
+            else next(candidate for candidate in subnet.hosts() if candidate not in allocated)
+        )
+        assert address in subnet
+        assert address not in (subnet.network_address, subnet.broadcast_address)
+        assert address not in allocated, (
+            f"{service_name} address {address} collides with {allocated.get(address)} "
+            f"when services attach in order {attachment_order}"
+        )
+        allocated[address] = service_name

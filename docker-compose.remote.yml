@@ -20,7 +20,10 @@ services:
       UNITY_MCP_API_KEY_SERVICE_TOKEN: "${UNITY_MCP_API_KEY_SERVICE_TOKEN:-}"
       UNITY_MCP_SKIP_STARTUP_CONNECT: "1"
     networks:
-      - remote_backend
+      remote_backend:
+        # Reserve a distinct endpoint before Caddy starts; dynamic allocation
+        # could otherwise claim Caddy's trusted .2 address.
+        ipv4_address: 172.30.0.3
     command: ["--transport", "http", "--http-host", "0.0.0.0", "--http-port", "8080", "--project-scoped-tools"]
 
   proxy:
@@ -43,8 +46,8 @@ services:
 
 networks:
   remote_backend:
-    # Keep this bridge exclusive to these services. Change the CIDR and trusted
-    # proxy address together if this subnet conflicts with an existing network.
+    # Keep this bridge exclusive to these services. Change the subnet, both
+    # service addresses, and trusted proxy CIDR together on a network conflict.
     ipam:
       config:
         - subnet: 172.30.0.0/29

@@ -109,7 +109,7 @@ export UNITY_MCP_API_KEY_LOGIN_URL=https://app.example.com/api-keys
 docker compose -f docker-compose.remote.yml up -d --build
 ```
 
-Run this Compose file on its own; combining it with the local `docker-compose.yml` would publish the backend port. Only Caddy publishes ports in the remote example. The backend uses a dedicated Compose bridge for proxy requests and outbound HTTPS for key validation. Caddy has the fixed address `172.30.0.2`, and the backend trusts only `172.30.0.2/32`. Keep other services off this bridge. If `172.30.0.0/29` conflicts with another network, change the subnet, Caddy address, and trusted proxy CIDR together. See Docker's [static address configuration](https://docs.docker.com/reference/compose-file/services/#ipv4_address-ipv6_address).
+Run this Compose file on its own; combining it with the local `docker-compose.yml` would publish the backend port. Only Caddy publishes ports in the remote example. The backend uses a dedicated Compose bridge for proxy requests and outbound HTTPS for key validation. Caddy has the fixed address `172.30.0.2`, and the backend uses the distinct fixed address `172.30.0.3` so its earlier startup cannot claim Caddy's address. The backend trusts only `172.30.0.2/32`. Keep other services off this bridge. If `172.30.0.0/29` conflicts with another network, change the subnet, both service addresses, and trusted proxy CIDR together. See Docker's [static address configuration](https://docs.docker.com/reference/compose-file/services/#ipv4_address-ipv6_address).
 
 ### Trusted client address and authentication admission
 
