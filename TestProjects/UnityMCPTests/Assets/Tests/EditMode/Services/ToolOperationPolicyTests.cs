@@ -7,6 +7,7 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
     public class ToolOperationPolicyTests
     {
         [TestCase("ping", "{}", "Control")]
+        [TestCase("manage_packages", "{\"action\":\"ping\"}", "Control")]
         [TestCase("get_selection", "{}", "SharedRead")]
         [TestCase("find_gameobjects", "{}", "SharedRead")]
         [TestCase("query_physics", "{\"action\":\"raycast\"}", "SharedRead")]

@@ -79,7 +79,9 @@ POLICY_RULES: Final = (
         )
     ),
     PolicyRule("manage_build", ("status", "cancel"), CONTROL, public=True),
-    PolicyRule("manage_packages", ("status",), CONTROL, public=True),
+    # Ping captures registered metadata, readiness and cached ownership diagnostics;
+    # it must remain reachable during recovery and never starts a Client request.
+    PolicyRule("manage_packages", ("status", "ping"), CONTROL, public=True),
     PolicyRule(
         "manage_editor", ("get_play_mode_job", "cancel_play_mode_job"), CONTROL, public=True
     ),
@@ -148,7 +150,7 @@ POLICY_RULES: Final = (
         "manage_ugui", ("diagnose_projection", "diagnose_device_profiles"), SHARED_READ, public=True
     ),
     PolicyRule(
-        "manage_packages", ("get_package_info", "list_registries", "ping"), SHARED_READ, public=True
+        "manage_packages", ("get_package_info", "list_registries"), SHARED_READ, public=True
     ),
     PolicyRule(
         "manage_packages",

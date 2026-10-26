@@ -248,3 +248,13 @@ def test_missing_null_empty_and_nonstring_actions_have_distinct_contracts(name, 
     assert missing.mode.value == missing_mode
     assert null == missing
     assert all(policy.mode == OperationMode.EXCLUSIVE for policy in malformed)
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_package_recovery_diagnostics_remain_control_while_request_owner_is_blocked(native):
+    # Given: package ping reads cached ownership/readiness and never starts a Client request.
+    # When
+    policy = resolve_operation_policy("manage_packages", {"action": "ping"}, native=native)
+    # Then
+    assert policy.mode == OperationMode.CONTROL
+    assert policy.lifetime == OperationLifetime.COMMAND
