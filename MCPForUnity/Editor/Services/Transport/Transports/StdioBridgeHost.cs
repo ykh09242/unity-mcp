@@ -31,6 +31,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         public CancellationToken OwnerCancellation;
         public CancellationToken ConnectionCancellation;
         public string RequestNonce;
+
+        // Active connections awaiting this exact identified attempt's result; no progress subscription or lease ownership.
+        public int IdentifiedResponseWaiters;
         public StdioFrameBudget.Lease InputReservation;
         public CommandPhaseTiming Timing;
         public CommandProgressBuffer Progress;
@@ -996,6 +999,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             CommandPhaseTiming timing = null;
             QueuedCommand owned = null;
+            QueuedCommand observed = null;
             InboundFrame frame = null;
             CancellationTokenRegistration cancelQueued = default;
             using var stopProgress = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
@@ -1071,6 +1075,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         var disposition = FindBrokerResendTarget(commandText, client, requestNonce, out QueuedCommand inFlight);
                         if (disposition == BrokerRequestDisposition.ExistingRequest)
                         {
+                            observed = inFlight;
+                            Interlocked.Increment(ref observed.IdentifiedResponseWaiters);
                             pending = inFlight.Tcs;
                             timing?.ExecutionDone();
                             McpLog.Info("Suppressed repeated identified stdio command; awaiting its in-flight result.", always: false);
@@ -1182,6 +1188,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             finally
             {
+                if (observed != null)
+                    Interlocked.Decrement(ref observed.IdentifiedResponseWaiters);
                 frame?.Dispose();
                 cancelQueued.Dispose();
                 owned?.Progress?.Close();
@@ -1544,9 +1552,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         return;
 
                     canceledCommandIds.Clear();
+                    bool hasExecuting = false;
                     foreach (var item in commandQueue)
                     {
-                        if (!item.Value.IsExecuting && item.Value.OwnerCancellation.IsCancellationRequested)
+                        if (item.Value.IsExecuting)
+                            hasExecuting = true;
+                        else if (item.Value.OwnerCancellation.IsCancellationRequested)
                             canceledCommandIds.Add(item.Key);
                     }
                     foreach (var id in canceledCommandIds)
@@ -1565,7 +1576,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         return;
                     }
 
-                    bool hasExecuting = commandQueue.Values.Any(command => command.IsExecuting);
                     foreach (var kvp in commandQueue)
                     {
                         var queued = kvp.Value;

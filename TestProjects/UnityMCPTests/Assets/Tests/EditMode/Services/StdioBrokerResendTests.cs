@@ -13,7 +13,6 @@ using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
-using UnityEngine;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -151,7 +150,6 @@ namespace MCPForUnityTests.Editor.Services
             var release = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
             var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var settled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var suppressed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             using var handlers = new ProgressHandlerScope();
             using var enabled = NativeProgressProbe.EnableTools("batch_execute");
             handlers.Set(
@@ -204,12 +202,6 @@ namespace MCPForUnityTests.Editor.Services
                 secondId = Guid.NewGuid().ToString("D");
             TcpClient first = null,
                 second = null;
-            Application.LogCallback onLog = (message, _stack, _kind) =>
-            {
-                if (message.Contains("Suppressed repeated identified stdio command; awaiting its in-flight result."))
-                    suppressed.TrySetResult(true);
-            };
-            Application.logMessageReceivedThreaded += onLog;
             try
             {
                 var connectFirst = host.Track(
@@ -265,8 +257,9 @@ namespace MCPForUnityTests.Editor.Services
                     })
                 );
                 await NativeProgressProbe.AwaitOwned(sendSecond);
-                // This real host warning is the suppression checkpoint; a count-only sleep is not proof.
-                await NativeProgressProbe.AwaitOwned(suppressed.Task);
+                // This owned state changes only after validated in-flight result association,
+                // independently of global diagnostic settings or incoming socket-buffer timing.
+                await AwaitIdentifiedResponseWaiters(before, 1);
                 var after = FindProgressQueued(original);
                 Assert.AreSame(before, after);
                 Assert.AreSame(originalOwner, after.Owner);
@@ -287,10 +280,10 @@ namespace MCPForUnityTests.Editor.Services
                 var response = JObject.Parse(Encoding.UTF8.GetString(body));
                 Assert.AreEqual("started", response.SelectToken("native_arbitration.disposition").Value<string>());
                 Assert.AreEqual("success", response.SelectToken("payload.status").Value<string>());
+                await AwaitIdentifiedResponseWaiters(before, 0);
             }
             finally
             {
-                Application.logMessageReceivedThreaded -= onLog;
                 release.TrySetResult(new { done = true });
                 if (entered.Task.IsCompleted)
                     await NativeProgressProbe.AwaitOwned(settled.Task);
@@ -300,6 +293,18 @@ namespace MCPForUnityTests.Editor.Services
             }
             Assert.AreEqual(1, firstCalls);
             Assert.AreEqual(1, secondCalls);
+        }
+
+        private static async Task AwaitIdentifiedResponseWaiters(QueuedCommand command, int expected)
+        {
+            var deadline = System.Diagnostics.Stopwatch.StartNew();
+            while (Volatile.Read(ref command.IdentifiedResponseWaiters) != expected && deadline.ElapsedMilliseconds < 5000)
+                await Task.Delay(10);
+            Assert.AreEqual(
+                expected,
+                Volatile.Read(ref command.IdentifiedResponseWaiters),
+                "The exact identified attempt's result waiter must be observed and then retired."
+            );
         }
 
         internal static QueuedCommand FindProgressQueued(string business)
