@@ -54,6 +54,14 @@ from transport.legacy.stdio_auth import (
     authenticate_stdio_session,
 )
 from transport.legacy.stdio_credentials import read_stdio_token
+from transport.native_arbitration import (
+    CAPABILITY as ARBITRATION_CAPABILITY,
+    NativeArbitrationRequest,
+    NativeArbitrationProtocolError,
+    NativeNotStarted,
+    decode_native_reply,
+    valid_generation,
+)
 
 
 logger = logging.getLogger("mcp-for-unity-server")
@@ -337,7 +345,7 @@ class UnityConnection:
                             StdioAuthentication(
                                 self.auth_token_provider or read_stdio_token, handshake_deadline
                             ),
-                            capabilities=(CAPABILITY,),
+                            capabilities=(CAPABILITY, ARBITRATION_CAPABILITY),
                         )
                         self._check_deadline(handshake_deadline)
                         self.authenticated_session = session
@@ -830,7 +838,15 @@ class UnityConnection:
                             project_hash=receipt_project,
                         )
                     # Build payload
-                    if command_type == "ping":
+                    session = self.authenticated_session
+                    arbitration = (
+                        NativeArbitrationRequest.create(session.arbitration_generation)
+                        if session is not None
+                        and ARBITRATION_CAPABILITY in session.capabilities
+                        and valid_generation(session.arbitration_generation)
+                        else None
+                    )
+                    if command_type == "ping" and arbitration is None:
                         payload = b"ping"
                     else:
                         payload = json.dumps(
@@ -838,6 +854,11 @@ class UnityConnection:
                                 "type": command_type,
                                 "params": params,
                                 "server_info": RUNNING_SERVER.command_metadata(),
+                                **(
+                                    {"arbitration": arbitration.to_wire()}
+                                    if arbitration is not None
+                                    else {}
+                                ),
                             }
                         ).encode("utf-8")
 
@@ -924,10 +945,19 @@ class UnityConnection:
                         self.sock.settimeout(restore_timeout)
 
                     # Parse
+                    resp = _decode_unity_response(response_data)
+                    if not isinstance(resp, dict):
+                        raise _UnityProtocolError("Unity response must be a JSON object")
+                    reply = decode_native_reply(resp, arbitration)
+                    response_received = True
+                    if reply.not_started:
+                        raise NativeNotStarted(
+                            reply,
+                            transport_generation=self.session_generation,
+                            params=json.loads(payload)["params"],
+                        )
+                    resp = reply.payload
                     if command_type == "ping":
-                        resp = _decode_unity_response(response_data)
-                        if not isinstance(resp, dict):
-                            raise _UnityProtocolError("Unity response must be a JSON object")
                         response_received = True
                         if receipt is not None:
                             receipt.observe(
@@ -946,9 +976,6 @@ class UnityConnection:
                             return {"message": "pong"}
                         raise Exception("Ping unsuccessful")
 
-                    resp = _decode_unity_response(response_data)
-                    if not isinstance(resp, dict):
-                        raise _UnityProtocolError("Unity response must be a JSON object")
                     response_received = True
                     if receipt is not None:
                         receipt.observe(
@@ -972,7 +999,13 @@ class UnityConnection:
                         # Unity answered: an application error is not a reconnect signal.
                         raise
                     protocol_error = command_sent and isinstance(
-                        e, (_UnityProtocolError, json.JSONDecodeError, UnicodeDecodeError)
+                        e,
+                        (
+                            _UnityProtocolError,
+                            NativeArbitrationProtocolError,
+                            json.JSONDecodeError,
+                            UnicodeDecodeError,
+                        ),
                     )
                     if not isinstance(e, (OSError, ConnectionError)) and not protocol_error:
                         raise
@@ -1728,17 +1761,41 @@ def send_command_with_retry(
     Uses config.reload_retry_ms and config.reload_max_retries by default. Preserves the
     structured failure if retries are exhausted.
     """
+    deadline = _command_deadline(command_type, params)
+    connection = None
+    expected_generation = None
     try:
-        response, _ = _send_command_with_retry(
-            command_type,
-            params,
-            instance_id=instance_id,
-            max_retries=max_retries,
-            retry_ms=retry_ms,
-            retry_on_reload=retry_on_reload,
-            **({"_progress": _progress} if _progress is not None else {}),
-        )
-        return response
+        while True:
+            try:
+                response, _ = _send_command_with_retry(
+                    command_type,
+                    params,
+                    instance_id=instance_id,
+                    max_retries=max_retries,
+                    retry_ms=retry_ms,
+                    retry_on_reload=retry_on_reload,
+                    _deadline=deadline,
+                    **({"_connection": connection} if connection is not None else {}),
+                    **(
+                        {"_expected_generation": expected_generation}
+                        if expected_generation is not None
+                        else {}
+                    ),
+                    **({"_progress": _progress} if _progress is not None else {}),
+                )
+                return response
+            except NativeNotStarted as refusal:
+                if not refusal.reply.retryable or command_type == "batch_execute":
+                    return refusal.reply.payload
+                connection = get_unity_connection(instance_id) if connection is None else connection
+                expected_generation = refusal.transport_generation
+                params = refusal.params
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError("Unity command deadline expired before dispatch") from None
+                # send_command has released the exact transaction lock.
+                time.sleep(
+                    min(0.1, max(0.0, deadline - time.monotonic())) if deadline is not None else 0.1
+                )
     finally:
         if _progress is not None:
             with contextlib.suppress(Exception):
@@ -1752,7 +1809,17 @@ def _command_deadline(command_type: str, params: dict[str, Any]) -> float | None
         total_timeout = blender_command_timeout(params) + SERVER_RESPONSE_GRACE
     elif (requested := requested_command_timeout(params)) is not None:
         total_timeout = max(total_timeout, requested + SERVER_RESPONSE_GRACE)
-    return time.monotonic() + total_timeout if total_timeout > 0 else None
+    deadline = time.monotonic() + total_timeout if total_timeout > 0 else None
+    from services.registry.operation_context import active_operation
+
+    owner = active_operation()
+    if owner is not None and owner.request.expires_at is not None:
+        deadline = (
+            min(deadline, owner.request.expires_at)
+            if deadline is not None
+            else owner.request.expires_at
+        )
+    return deadline
 
 
 def _send_command_with_retry(
@@ -1982,6 +2049,108 @@ async def _async_send_command_response(
     _catalog_capture=None,
     _progress: ProgressSink | None = None,
 ) -> dict[str, Any] | MCPResponse:
+    """Own one selected instance while exact pre-handler refusals wait off-wire."""
+    import asyncio  # noqa: ANYIO_OK -- existing connection admission uses asyncio.
+    from services.operation_policy import resolve_operation_policy
+    from services.registry.operation_invocation import (
+        admission_for,
+        operation_session,
+        is_observational_continuation,
+    )
+    from services.registry.operation_target import capture_stdio_target
+
+    if config.http_remote_hosted:
+        return MCPResponse(
+            success=False, error="Legacy Unity connections are disabled in remote-hosted mode"
+        )
+    policy_deadline = _command_deadline(command_type, params)
+    deadline = (
+        min(policy_deadline, _deadline)
+        if policy_deadline is not None and _deadline is not None
+        else _deadline
+        if _deadline is not None
+        else policy_deadline
+    )
+    try:
+        owner_pool = _resync_pool.get()
+        if owner_pool is not None and owner_pool._retired:
+            raise asyncio.CancelledError
+        selection = submit_owned_executor(
+            asyncio.get_running_loop(),
+            None,
+            owner_pool.get_connection if owner_pool is not None else get_unity_connection,
+            instance_id,
+        )
+        if owner_pool is not None:
+            owner_pool._resync_workers.add(selection)
+            selection.add_done_callback(owner_pool._resync_workers.discard)
+        selection.add_done_callback(_consume_async_exception)
+        async with asyncio.timeout_at(deadline):
+            connection = await asyncio.shield(selection)
+        target = capture_stdio_target(connection)
+        policy = resolve_operation_policy(
+            command_type, params, native=True, trusted_builtin=_catalog_guard is None
+        )
+        async with operation_session(
+            admission_for(
+                target,
+                policy.mode,
+                expires_at=deadline,
+                observational_continuation=is_observational_continuation(command_type, params),
+            )
+        ):
+            while True:
+                try:
+                    return await _async_send_command_attempt(
+                        command_type,
+                        params,
+                        instance_id=instance_id,
+                        loop=loop,
+                        max_retries=max_retries,
+                        retry_ms=retry_ms,
+                        retry_on_reload=retry_on_reload,
+                        _deadline=deadline,
+                        _expected_generation=_expected_generation,
+                        _catalog_guard=_catalog_guard,
+                        _catalog_capture=_catalog_capture,
+                        _progress=_progress,
+                        _connection=connection,
+                    )
+                except NativeNotStarted as refusal:
+                    if not refusal.reply.retryable or command_type == "batch_execute":
+                        return refusal.reply.payload
+                    params = refusal.params
+                    _expected_generation = refusal.transport_generation
+                    # The completed callback releases the connection gate before
+                    # this wait. A status/cancel caller can now own the sole wire.
+                    async with asyncio.timeout_at(deadline):
+                        await asyncio.sleep(0.1)
+    except TimeoutError:
+        return MCPResponse(
+            success=False,
+            error="Unity command deadline expired before dispatch",
+            data={"reason": "command_deadline_exceeded", "dispatch": "not_dispatched"},
+        )
+    except Exception as error:
+        return MCPResponse(success=False, error=str(error))
+
+
+async def _async_send_command_attempt(
+    command_type: str,
+    params: dict[str, Any],
+    *,
+    instance_id: str | None = None,
+    loop=None,
+    max_retries: int | None = None,
+    retry_ms: int | None = None,
+    retry_on_reload: bool = True,
+    _deadline: float | None = None,
+    _expected_generation: str | None = None,
+    _catalog_guard=None,
+    _catalog_capture=None,
+    _progress: ProgressSink | None = None,
+    _connection: UnityConnection | None = None,
+) -> dict[str, Any] | MCPResponse:
     """Admit one blocking command worker per actual connection and event loop.
 
     Selection and admission share the command deadline. Cancellation before
@@ -2031,14 +2200,14 @@ async def _async_send_command_response(
                 future.add_done_callback(resync_pool._resync_workers.discard)
             return future
 
-        selection = submit(
-            resync_pool.get_connection if resync_pool is not None else get_unity_connection,
-            instance_id,
-        )
-        selection.add_done_callback(_consume_async_exception)
-        if deadline is None:
-            conn = await asyncio.shield(selection)
+        if _connection is not None:
+            conn = _connection
         else:
+            selection = submit(
+                resync_pool.get_connection if resync_pool is not None else get_unity_connection,
+                instance_id,
+            )
+            selection.add_done_callback(_consume_async_exception)
             try:
                 async with asyncio.timeout_at(deadline):
                     conn = await asyncio.shield(selection)
@@ -2148,6 +2317,8 @@ async def _async_send_command_response(
             )
 
         return result
+    except NativeNotStarted:
+        raise
     except Exception as e:
         return MCPResponse(success=False, error=str(e))
     finally:
