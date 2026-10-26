@@ -289,7 +289,8 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 AssetDatabase.CreateFolder(assetRoot, "Nested");
                 profile = NewProfile(path);
-                AssetDatabase.SaveAssets();
+                // Flush only this fixture, without saving unrelated global pipeline settings.
+                AssetDatabase.SaveAssetIfDirty(profile);
                 bytes = File.ReadAllBytes(FullPath(path));
                 guid = AssetDatabase.AssetPathToGUID(path);
             }

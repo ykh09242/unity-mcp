@@ -53,6 +53,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     if (!GraphicsHelpers.VolumeProfileType.IsInstanceOfType(existing))
                         return new ErrorResponse($"Asset at '{profilePath}' is not a VolumeProfile.");
+                    var ownershipError = GraphicsMutationGuard.Validate(existing);
+                    if (ownershipError != null)
+                        return ownershipError;
                     profile = existing;
                 }
                 else if (System.IO.File.Exists(AssetPathUtility.GetFullAssetPath(profilePath)))
@@ -125,6 +128,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     if (profile == null)
                         return new ErrorResponse("Could not create VolumeProfile.");
                 }
+
+                var profileOwnershipError = GraphicsMutationGuard.Validate(profile);
+                if (profileOwnershipError != null)
+                    return profileOwnershipError;
 
                 // Assign profile (sharedProfile is a public field, handled by SetProperty's field fallback)
                 SetProperty(volumeComp, "sharedProfile", profile);
@@ -209,6 +216,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var volume = GraphicsHelpers.FindVolume(@params);
             if (volume == null)
                 return new ErrorResponse("Volume not found. Specify 'target' (name or instance ID).");
+            var ownershipError = GraphicsMutationGuard.Validate(volume);
+            if (ownershipError != null)
+                return ownershipError;
 
             var effectType = GraphicsHelpers.ResolveVolumeComponentType(effectName);
             if (effectType == null)
@@ -220,6 +230,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var profile = GetProperty(volume, "sharedProfile");
             if (profile == null)
                 return new ErrorResponse("Volume has no profile assigned.");
+            ownershipError = GraphicsMutationGuard.Validate(profile);
+            if (ownershipError != null)
+                return ownershipError;
 
             // Check if effect already exists
             var components = GetProperty(profile, "components") as System.Collections.IList;
@@ -267,10 +280,16 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var volume = GraphicsHelpers.FindVolume(@params);
             if (volume == null)
                 return new ErrorResponse("Volume not found. Specify 'target'.");
+            var ownershipError = GraphicsMutationGuard.Validate(volume);
+            if (ownershipError != null)
+                return ownershipError;
 
             var profile = GetProperty(volume, "sharedProfile");
             if (profile == null)
                 return new ErrorResponse("Volume has no profile assigned.");
+            ownershipError = GraphicsMutationGuard.Validate(profile);
+            if (ownershipError != null)
+                return ownershipError;
 
             var effectType = GraphicsHelpers.ResolveVolumeComponentType(effectName);
             if (effectType == null)
@@ -293,6 +312,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             if (targetComponent == null)
                 return new ErrorResponse($"Effect '{effectName}' not found on this Volume. Use volume_add_effect first.");
+
+            ownershipError = GraphicsMutationGuard.Validate(targetComponent);
+            if (ownershipError != null)
+                return ownershipError;
 
             // Set parameters
             var parameters = p.GetRaw("parameters") as JObject;
@@ -341,6 +364,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var volume = GraphicsHelpers.FindVolume(@params);
             if (volume == null)
                 return new ErrorResponse("Volume not found.");
+            var ownershipError = GraphicsMutationGuard.Validate(volume);
+            if (ownershipError != null)
+                return ownershipError;
 
             var effectType = GraphicsHelpers.ResolveVolumeComponentType(effectName);
             if (effectType == null)
@@ -349,6 +375,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var profile = GetProperty(volume, "sharedProfile");
             if (profile == null)
                 return new ErrorResponse("Volume has no profile.");
+            ownershipError = GraphicsMutationGuard.Validate(profile);
+            if (ownershipError != null)
+                return ownershipError;
 
             // Check if effect exists before removing
             bool found = false;
@@ -374,22 +403,22 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 return new ErrorResponse("Could not find VolumeProfile.Remove method.");
 
             var profileOwner = profile as UnityEngine.Object;
-            bool ownsComponent =
-                profileOwner != null
-                && componentToRemove != null
-                && AssetDatabase.Contains(profileOwner)
-                && AssetDatabase.Contains(componentToRemove)
-                && AssetDatabase.IsSubAsset(componentToRemove)
-                && string.Equals(AssetDatabase.GetAssetPath(profileOwner), AssetDatabase.GetAssetPath(componentToRemove), StringComparison.Ordinal);
+            bool ownsComponent = OwnsUnsharedPersistentEffect(profileOwner, componentToRemove);
             if (ownsComponent)
+            {
+                ownershipError = GraphicsMutationGuard.Validate(componentToRemove);
+                if (ownershipError != null)
+                    return ownershipError;
                 Undo.RegisterCompleteObjectUndo(profileOwner, "Remove Volume Effect");
+            }
 
+            // Borrowed components are only unlinked; destruction below requires the same asset owner.
             removeMethod.Invoke(profile, new object[] { effectType });
 
             if (
                 ownsComponent
                 && GetProperty(profile, "components") is System.Collections.IList remainingComponents
-                && !remainingComponents.Cast<object>().Any(component => ReferenceEquals(component, componentToRemove))
+                && !remainingComponents.Cast<object>().Any(component => component is UnityEngine.Object obj && obj == componentToRemove)
             )
                 Undo.DestroyObjectImmediate(componentToRemove);
 
@@ -403,6 +432,52 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 message = $"Removed '{effectName}' from Volume.",
                 data = new { effect = effectName },
             };
+        }
+
+        private static bool OwnsUnsharedPersistentEffect(UnityEngine.Object profile, UnityEngine.Object component)
+        {
+            if (profile == null || component == null || !AssetDatabase.Contains(profile) || !AssetDatabase.Contains(component))
+                return false;
+            string path = AssetDatabase.GetAssetPath(profile);
+            if (string.IsNullOrEmpty(path) || !string.Equals(path, AssetDatabase.GetAssetPath(component), StringComparison.Ordinal))
+                return false;
+            if (
+                !AssetDatabase.TryGetGUIDAndLocalFileIdentifier(profile, out string profileGuid, out long profileId)
+                || !AssetDatabase.TryGetGUIDAndLocalFileIdentifier(component, out string componentGuid, out long componentId)
+                || string.IsNullOrEmpty(profileGuid)
+                || !string.Equals(profileGuid, componentGuid, StringComparison.Ordinal)
+                || profileId == 0
+                || componentId == 0
+                || profileId == componentId
+            )
+                return false;
+            var main = AssetDatabase.LoadMainAssetAtPath(path);
+            if (
+                main == null
+                || main == component
+                || !AssetDatabase.TryGetGUIDAndLocalFileIdentifier(main, out string mainGuid, out long mainId)
+                || !string.Equals(mainGuid, componentGuid, StringComparison.Ordinal)
+                || mainId == componentId
+            )
+                return false;
+
+            // Core effects use HideInHierarchy, which IsSubAsset can exclude. Prove membership
+            // in the same persistent file instead; never destroy an external borrowed component.
+            var assets = AssetDatabase.LoadAllAssetsAtPath(path);
+            if (!assets.Any(asset => asset == profile) || !assets.Any(asset => asset == component))
+                return false;
+            // Multiple profiles may share one file. Preserve a child still used by a sibling.
+            foreach (var asset in assets)
+            {
+                if (
+                    asset != profile
+                    && GraphicsHelpers.VolumeProfileType.IsInstanceOfType(asset)
+                    && GetProperty(asset, "components") is System.Collections.IList siblings
+                    && siblings.Cast<object>().Any(value => value is UnityEngine.Object obj && obj == component)
+                )
+                    return false;
+            }
+            return true;
         }
 
         // === volume_get_info ===
@@ -431,6 +506,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var volume = GraphicsHelpers.FindVolume(@params);
             if (volume == null)
                 return new ErrorResponse("Volume not found.");
+            var ownershipError = GraphicsMutationGuard.Validate(volume);
+            if (ownershipError != null)
+                return ownershipError;
 
             // Unpack "properties" dict into top-level params so callers can use either style
             var propsDict = p.GetRaw("properties") as JObject;
@@ -544,6 +622,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 AssetDatabase.CreateAsset(profile, path);
                 if (!AssetDatabase.Contains(profile) || AssetDatabase.GetAssetPath(profile) != path)
                     return new ErrorResponse($"Failed to create VolumeProfile asset at '{path}'.");
+                var ownershipError = GraphicsMutationGuard.Validate(profile, requirePersistent: true);
+                if (ownershipError != null)
+                    return ownershipError;
                 AssetDatabase.SaveAssetIfDirty(profile);
                 folders.Complete();
 
@@ -568,6 +649,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             try
             {
+                if (GraphicsMutationGuard.Validate(profileObj, requirePersistent: true) != null)
+                    throw new InvalidOperationException("Create an editable VolumeProfile copy under Assets and assign it before adding effects.");
                 AssetDatabase.AddObjectToAsset(componentObj, profileObj);
                 if (!AssetDatabase.Contains(componentObj) || AssetDatabase.GetAssetPath(componentObj) != AssetDatabase.GetAssetPath(profileObj))
                     throw new InvalidOperationException("Failed to persist the added Volume effect in its profile asset.");
@@ -727,6 +810,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
         internal static bool SetVolumeParameter(object component, string fieldName, JToken value)
         {
             if (component == null || string.IsNullOrEmpty(fieldName))
+                return false;
+
+            if (component is UnityEngine.Object && GraphicsMutationGuard.Validate(component) != null)
                 return false;
 
             var field = component.GetType().GetField(fieldName, BindingFlags.Public | BindingFlags.Instance);
