@@ -635,6 +635,9 @@ async def test_cleanup_rolls_back_partial_reclamation(setup, monkeypatch):
                 ).fetchone()[0]
                 == 1
             )
-        assert cleanup(workspace, before=time.time() + 1, limit=1)["obsolete_queries_removed"] == 1
+        # The edge and its backing reference are separate bounded cleanup rows.
+        first = cleanup(workspace, before=time.time() + 1, limit=1)
+        second = cleanup(workspace, before=time.time() + 1, limit=1)
+        assert first["obsolete_queries_removed"] + second["obsolete_queries_removed"] == 1
     finally:
         await service.aclose()

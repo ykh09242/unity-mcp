@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
@@ -123,14 +123,31 @@ class GraphStore:
         return cls(Path(root) / (scope.key + ".sqlite"), scope)
 
     def __init__(self, path: Path, scope: GraphScope):
+        from services.reference_graph.storage_budget import StorageBudget
+
         if not isinstance(scope, GraphScope):
             raise ValueError("A resolved graph identity is required")
         self.scope = scope
+        self._budget: StorageBudget | None = None
         self._summaries = {}
         self._summary_lock = threading.Lock()
         self.path = check_owned_path(Path(path))
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         check_owned_path(self.path)
+        existing_bytes = 0
+        if self.path.exists() and self.path.stat().st_size:
+            with self._connect() as connection:
+                self._validate_identity(connection)
+                # A recovered WAL can hold logical pages beyond the main file.
+                existing_bytes = (
+                    connection.execute("PRAGMA page_count").fetchone()[0]
+                    * connection.execute("PRAGMA page_size").fetchone()[0]
+                )
+        elif not self.path.exists() and any(
+            Path(str(self.path) + suffix).exists() for suffix in ("-wal", "-shm", "-journal")
+        ):
+            raise ValueError("Preserve orphaned reference graph sidecars before opening this scope")
+        self._budget = StorageBudget(self.path, scope.user_id, existing_bytes=existing_bytes)
         if not self.path.exists():
             try:
                 descriptor = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -139,6 +156,23 @@ class GraphStore:
             else:
                 os.close(descriptor)
         self._initialize()
+
+    def _validate_identity(self, connection: sqlite3.Connection) -> bool:
+        application = connection.execute("PRAGMA application_id").fetchone()[0]
+        tables = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if application != self.APPLICATION_ID:
+            if application or tables:
+                raise ValueError("This database is not owned by the reference graph")
+            return False
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version not in (1, self.SCHEMA_VERSION):
+            raise ValueError("Unsupported reference graph schema; preserve the database")
+        if connection.execute("SELECT scope FROM graph_meta").fetchone()[0] != self.scope.key:
+            raise ValueError("Reference graph identity does not match")
+        return version == self.SCHEMA_VERSION and "evidence_context" in tables
 
     @contextmanager
     def _connect(
@@ -162,16 +196,63 @@ class GraphStore:
         try:
             connection.execute("PRAGMA synchronous=FULL")
             connection.execute("PRAGMA cache_size=-8192")
-            connection.execute("BEGIN IMMEDIATE" if write else "BEGIN")
-            yield connection
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
+            budget = self._budget
+            if write and budget is None:
+                raise RuntimeError("Graph writes require completed storage admission")
+            with budget.writer(connection) if write else nullcontext() as meter:
+                connection.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+                schema = (
+                    connection.execute("PRAGMA schema_version").fetchone()[0]
+                    if meter is not None and meter.reader_pressure
+                    else None
+                )
+                try:
+                    yield connection
+                    if meter is not None:
+                        meter.check(
+                            bool(connection.total_changes)
+                            or (
+                                schema is not None
+                                and connection.execute("PRAGMA schema_version").fetchone()[0]
+                                != schema
+                            )
+                        )
+                    connection.commit()
+                    if meter is not None and budget is not None:
+                        # Commit can flush cached pages after the final guard.
+                        # Observe that soft-limit overshoot without reporting a
+                        # committed operation as a failed/rolled-back mutation.
+                        meter.sample()
+                except BaseException as error:
+                    # A callback must never interrupt rollback or error recovery.
+                    connection.set_progress_handler(None, 0)
+                    connection.rollback()
+                    if meter is not None:
+                        from services.reference_graph.storage_budget import StorageBudgetError
+
+                        if meter.exceeded or meter.stat_error is not None:
+                            meter.check(False)
+                        if (
+                            isinstance(error, sqlite3.DatabaseError)
+                            and (getattr(error, "sqlite_errorcode", 0) & 0xFF)
+                            == sqlite3.SQLITE_FULL
+                        ):
+                            budget.grow()
+                            raise StorageBudgetError(
+                                "Reference graph main-file budget reservation increased; retry the rolled-back operation"
+                            ) from error
+                    raise
         finally:
             connection.close()
 
     def _initialize(self) -> None:
+        # Reopening a current store must not manufacture a header write or need
+        # additional capacity merely to query legitimate saved work.
+        with self._connect() as connection:
+            current = self._validate_identity(connection)
+        if current:
+            self._ensure_wal()
+            return
         with self._connect(write=True) as connection:
             application = connection.execute("PRAGMA application_id").fetchone()[0]
             tables = connection.execute(

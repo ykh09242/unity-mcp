@@ -7,6 +7,8 @@ import math
 import time
 
 from services.reference_graph.store import _hash
+from services.reference_graph import snapshot_storage
+from services.reference_graph.storage_budget import file_sizes
 
 
 CONFIG_FIELDS = {
@@ -141,6 +143,10 @@ def overview(entry):
             "reusable_bytes": page_size * free,
             "includes_wal": False,
             "staging_rows": staging,
+            "physical_bytes": sum(file_sizes(store.path).values()),
+            "main_capacity_bytes": store._budget.capacity,
+            "reserved_bytes": store._budget.reserved,
+            "budget_enforcement": "hard_scope_admission_and_main_pages_cooperative_sidecars",
         },
         "memory": {
             "measurement": "cache_presence_only",
@@ -153,7 +159,7 @@ def overview(entry):
             "watching": entry.watching,
             "active_requests": entry.active_requests,
         },
-        "retention": "No automatic history deletion. Explicit cleanup removes completed, obsolete and undelivered query scratch and abandoned staging; ready snapshots, receipts, captures and authored configuration remain.",
+        "retention": "Saved history and authored configuration are never automatically deleted. Unchanged full-graph snapshots share evidence; explicit cleanup releases query scratch and abandoned staging. Operator storage budgets refuse new scopes or writes when exhausted; sidecar sampling is cooperative, not a filesystem quota.",
     }
 
 
@@ -176,29 +182,48 @@ def cleanup(workspace, *, before, limit=100):
         )
         removed, obsolete, scratch, budget = 0, 0, 0, limit
         for identity, finished in rows:
-            tables = [("graph_query_nodes", "job"), ("graph_query_queue", "job")]
+            tables = [
+                ("graph_query_nodes", "job", identity),
+                ("graph_query_queue", "job", identity),
+            ]
             partial_snapshot = db.execute(
                 "SELECT 1 FROM graph_snapshots WHERE id=? AND state<>'ready'", (identity,)
             ).fetchone()
             if partial_snapshot:
-                tables.append(("graph_snapshot_edges", "snapshot"))
-            for table, column in tables:
+                backing = snapshot_storage.backing(db, identity)
+                if not db.execute(
+                    "SELECT 1 FROM graph_snapshot_refs WHERE backing=? AND snapshot<>? LIMIT 1",
+                    (backing, identity),
+                ).fetchone():
+                    # A sole partial alias can still own a formerly ready backing.
+                    # Retire reuse atomically before the first bounded edge deletion.
+                    snapshot_storage.retire(db, backing)
+                    tables.append(("graph_snapshot_edges", "snapshot", backing))
+            for table, column, value in tables:
                 changed = db.execute(
                     f"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {column}=? LIMIT ?)",
-                    (identity, budget),
+                    (value, budget),
                 ).rowcount
                 scratch += changed
                 budget -= changed
             if any(
-                db.execute(
-                    f"SELECT 1 FROM {table} WHERE {column}=? LIMIT 1", (identity,)
-                ).fetchone()
-                for table, column in tables
+                db.execute(f"SELECT 1 FROM {table} WHERE {column}=? LIMIT 1", (value,)).fetchone()
+                for table, column, value in tables
             ):
                 break
+            if (
+                partial_snapshot
+                and db.execute(
+                    "SELECT 1 FROM graph_snapshot_refs WHERE snapshot=?", (identity,)
+                ).fetchone()
+            ):
+                if not budget:
+                    break
+                scratch += 1
+                budget -= 1
             db.execute("DELETE FROM graph_queries WHERE id=?", (identity,))
             if partial_snapshot:
-                db.execute("DELETE FROM graph_snapshots WHERE id=?", (identity,))
+                snapshot_storage.discard(db, identity)
             removed += int(bool(finished))
             obsolete += int(not finished)
             if not budget:
