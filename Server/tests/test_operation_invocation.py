@@ -4,6 +4,8 @@ import asyncio  # noqa: ANYIO_OK -- deterministic held-signal admission tests.
 from types import SimpleNamespace
 
 import pytest
+from pydantic import MISSING, Field
+from typing_extensions import sentinel
 
 from services.operation_policy import OperationMode
 from services.registry import operation_invocation as mod
@@ -164,3 +166,35 @@ async def test_reload_allows_only_exact_observational_continuations(name, params
             with pytest.raises(mod.OperationScopeChanged):
                 async with mod.operation_session(request):
                     pytest.fail("Dependent operation crossed the immutable generation fence")
+
+
+_OMITTED_MARKER = object()
+_MARKER_DEFAULT = Field(default_factory=lambda: _OMITTED_MARKER)
+_UNRELATED_SENTINEL = sentinel("UNRELATED")
+
+
+@pytest.mark.parametrize(
+    "default,value,omitted",
+    [
+        pytest.param(MISSING, MISSING, True, id="pydantic-missing-default"),
+        pytest.param(None, MISSING, False, id="missing-is-not-the-default"),
+        pytest.param(_OMITTED_MARKER, _OMITTED_MARKER, True, id="object-default"),
+        pytest.param(_MARKER_DEFAULT, _MARKER_DEFAULT, True, id="field-info-default"),
+        pytest.param(_MARKER_DEFAULT, _OMITTED_MARKER, True, id="factory-marker"),
+        pytest.param(_MARKER_DEFAULT, object(), False, id="unrelated-object"),
+        pytest.param(_UNRELATED_SENTINEL, _UNRELATED_SENTINEL, False, id="unknown-sentinel"),
+        pytest.param(None, None, False, id="null-default"),
+        pytest.param(False, False, False, id="false-default"),
+        pytest.param(0, 0, False, id="zero-default"),
+        pytest.param("active", "active", False, id="string-default"),
+    ],
+)
+def test_omitted_defaults_recognize_only_owned_internal_markers(default, value, omitted):
+    assert mod._omitted_default(default, value) is omitted
+
+
+def test_omitted_default_does_not_evaluate_a_factory():
+    def forbidden_factory():
+        pytest.fail("Omission inspection must not invoke default factories")
+
+    assert mod._omitted_default(Field(default_factory=forbidden_factory), object()) is False

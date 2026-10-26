@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import ParamSpec, TypeVar, get_args
 
+from pydantic import MISSING
 from pydantic_core import to_jsonable_python
 from pydantic.fields import FieldInfo
 
@@ -163,7 +164,9 @@ def operation_payload_charge(params: dict[str, JsonValue]) -> int | None:
 
 def _omitted_default(default, value) -> bool:
     """Recognize exact internal markers without evaluating a default factory."""
-    if value is default and (type(value) is object or isinstance(value, FieldInfo)):
+    if value is default and (
+        value is MISSING or type(value) is object or isinstance(value, FieldInfo)
+    ):
         return True
     if type(value) is not object or not isinstance(default, FieldInfo):
         return False
