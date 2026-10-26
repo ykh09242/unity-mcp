@@ -916,18 +916,21 @@ class TestTelemetryConfigPrecedence:
     Pattern: config file -> env variable override
     """
 
-    def test_telemetry_config_enabled_from_server_config(self):
-        """Verify telemetry enabled flag comes from ServerConfig."""
+    @pytest.mark.parametrize("enabled", [False, True])
+    @pytest.mark.parametrize("endpoint", ["", "https://custom.endpoint.com/telemetry"])
+    def test_telemetry_config_enabled_from_server_config(self, enabled, endpoint):
+        """Verify the typed config flag and explicit destination both gate telemetry."""
         with patch("core.telemetry.import_module") as mock_import:
-            mock_config = MagicMock()
-            mock_config.telemetry_enabled = False
+            mock_config = ServerConfig(telemetry_enabled=enabled, telemetry_endpoint=endpoint)
             mock_module = MagicMock()
             mock_module.config = mock_config
             mock_import.return_value = mock_module
 
-            config = TelemetryConfig()
+            with patch("core.telemetry.TelemetryConfig._is_disabled", return_value=False):
+                config = TelemetryConfig()
 
-            assert config.enabled is False
+            assert config.enabled is (enabled and bool(endpoint))
+            assert config.endpoint == endpoint
 
     def test_telemetry_config_disabled_via_env_opt_out(self):
         """Verify telemetry can be disabled via environment variables.
