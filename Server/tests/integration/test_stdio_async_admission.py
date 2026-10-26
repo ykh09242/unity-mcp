@@ -313,17 +313,25 @@ async def test_executor_queued_command_aborts_before_dispatch(environment, monke
 
 
 @pytest.mark.asyncio
-async def test_inflight_deadline_preserves_unknown_outcome_and_does_not_replay(
+async def test_dispatched_response_timeout_preserves_unknown_outcome_and_does_not_replay(
     environment, monkeypatch
 ):
     _, sockets = environment
-    monkeypatch.setattr(config, "command_total_timeout", 0.03)
+    main = sockets["Main@deadbeef"]
+
+    def expire_response(_count, flags=0):
+        if flags:
+            raise BlockingIOError()
+        assert main.sent.is_set(), "The response timeout must follow actual payload dispatch"
+        raise socket.timeout("controlled dispatched response timeout")
+
+    monkeypatch.setattr(main, "recv", expire_response)
     result = await request("unknown")
     assert result.success is False
     assert result.data["reason"] == "outcome_unknown"
     assert result.hint == "inspect_state_before_retry"
-    assert sockets["Main@deadbeef"].tags == ["unknown"]
-    assert sockets["Main@deadbeef"].closed is True
+    assert main.tags == ["unknown"]
+    assert main.closed is True
 
 
 def test_connection_reused_across_loops_does_not_retain_closed_loops(environment):
