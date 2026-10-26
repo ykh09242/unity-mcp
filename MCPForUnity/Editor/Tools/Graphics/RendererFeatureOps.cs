@@ -264,6 +264,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 }
             }
 
+            string cleanupErrorType = null;
             // Keep borrowed or still-referenced subassets attached to their original owner.
             // Destroy through Undo while still persistent so Undo restores the subasset identity too.
             if (
@@ -275,13 +276,46 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 var disposableFeature = feature as IDisposable;
                 Undo.DestroyObjectImmediate(feature);
-                disposableFeature?.Dispose();
+                cleanupErrorType = DisposeRemovedFeatureResources(disposableFeature);
             }
 
             EditorUtility.SetDirty(rendererData as UnityEngine.Object);
             AssetDatabase.SaveAssetIfDirty(rendererData as UnityEngine.Object);
 
+            if (cleanupErrorType != null)
+                return new
+                {
+                    success = true,
+                    message = $"Removed renderer feature '{featureName}' at index {targetIndex}, but runtime resource cleanup failed.",
+                    data = new { removed = true, cleanupSucceeded = false },
+                    warnings = new[]
+                    {
+                        new
+                        {
+                            code = "renderer_feature_cleanup_failed",
+                            message = "The feature was removed and saved, but its Dispose method failed. Runtime resources may remain allocated.",
+                            exceptionType = cleanupErrorType,
+                        },
+                    },
+                };
+
             return new { success = true, message = $"Removed renderer feature '{featureName}' at index {targetIndex}." };
+        }
+
+        private static string DisposeRemovedFeatureResources(IDisposable feature)
+        {
+            try
+            {
+                feature?.Dispose();
+                return null;
+            }
+            catch (Exception exception)
+            {
+                // The owned subasset has already been removed. A third-party cleanup failure must
+                // not turn that completed mutation into a retryable error or skip saving the owner.
+                // Return only the exception type; messages/stacks may disclose local asset paths.
+                return exception.GetType().Name;
+            }
         }
 
         // === feature_configure ===

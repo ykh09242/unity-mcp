@@ -111,7 +111,7 @@ namespace MCPForUnityTests.Editor.Tools
                 var owner = Track(new Mesh());
                 AssetDatabase.CreateAsset(owner, path);
                 AssetDatabase.AddObjectToAsset(material, owner);
-                Assert.IsTrue(AssetDatabase.IsSubAsset(material));
+                material = PersistSubAsset(owner, material);
             }
             else
                 AssetDatabase.CreateAsset(material, path);
@@ -140,17 +140,27 @@ namespace MCPForUnityTests.Editor.Tools
             var material = Track(new Material(RequireShader()));
             string path = PathFor(true, "Referenced.mat");
             AssetDatabase.CreateAsset(material, path);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            material = AssetDatabase.LoadAssetAtPath<Material>(path);
+            Assert.IsNotNull(material);
             string resolved = AssetDatabase.GUIDToAssetPath(AssetDatabase.AssetPathToGUID(path));
             Assert.AreEqual(path, resolved);
             byte[] bytes = File.ReadAllBytes(Full(path));
+            byte[] metadata = File.ReadAllBytes(Full(path) + ".meta");
             int dirty = EditorUtility.GetDirtyCount(material);
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(material, out string guid, out long localId));
 
             // When assigning a package reference to the scene's environment settings.
             JObject result = Send("skybox_set_material", new JObject { ["material"] = resolved });
 
             // Then borrowing is allowed and the package material itself remains unchanged.
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-            Assert.AreSame(material, RenderSettings.skybox);
+            Assert.IsTrue(material == RenderSettings.skybox, "The same native material must remain assigned.");
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(RenderSettings.skybox, out string actualGuid, out long actualLocalId));
+            Assert.AreEqual(guid, actualGuid);
+            Assert.AreEqual(localId, actualLocalId);
+            Assert.AreEqual(path, AssetDatabase.GetAssetPath(RenderSettings.skybox));
+            CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Full(path) + ".meta"));
             Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(material));
             CollectionAssert.AreEqual(bytes, File.ReadAllBytes(Full(path)));
         }
@@ -161,10 +171,10 @@ namespace MCPForUnityTests.Editor.Tools
         {
             // Given an active pipeline in a writable package or the project's Assets.
             Type type = RequireType("UniversalRenderPipelineAsset");
-            var pipeline = (RenderPipelineAsset)Track(ScriptableObject.CreateInstance(type));
-            string path = PathFor(package, "Pipeline.asset");
-            AssetDatabase.CreateAsset(pipeline, path);
-            UsePipeline(pipeline);
+            var renderer = Track(ScriptableObject.CreateInstance(RequireType("UniversalRendererData")));
+            AssetDatabase.CreateAsset(renderer, PathFor(false, "Renderer.asset"));
+            var pipeline = NewPipeline(renderer, package);
+            string path = AssetDatabase.GetAssetPath(pipeline);
             byte[] bytes = File.ReadAllBytes(Full(path));
             var property = type.GetProperty("renderScale");
             Assert.IsNotNull(property);
@@ -306,7 +316,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsEmpty(Components(profile));
             Assert.AreEqual(1, Components(borrowed).Count);
-            Assert.AreSame(bloom, Components(borrowed)[0]);
+            Assert.IsTrue(bloom == (Object)Components(borrowed)[0], "Unlinking must preserve the borrowed native component.");
             Assert.IsTrue(AssetDatabase.Contains(bloom));
             Assert.IsTrue(AssetDatabase.IsSubAsset(bloom));
             Assert.AreEqual(path, AssetDatabase.GetAssetPath(bloom));
@@ -478,6 +488,105 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ToolAddedFeatureRemovalReportsActualCleanupOutcome(bool initialize)
+        {
+            ScriptableObject renderer = NewRenderer(false);
+            string path = AssetDatabase.GetAssetPath(renderer);
+            byte[] metadata = File.ReadAllBytes(Full(path) + ".meta");
+            JObject added = Send("feature_add", new JObject { ["type"] = "FullScreenPassRendererFeature" });
+            Assert.IsTrue(added.Value<bool>("success"), added.ToString());
+            JObject survivorAdded = Send("feature_add", new JObject { ["type"] = "RenderObjects", ["name"] = "Unrelated feature" });
+            Assert.IsTrue(survivorAdded.Value<bool>("success"), survivorAdded.ToString());
+            var features = (IList)renderer.GetType().GetProperty("rendererFeatures").GetValue(renderer);
+            Assert.AreEqual(2, features.Count);
+            var survivor = (Object)features[1];
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(survivor, out string survivorGuid, out long survivorLocalId));
+            string survivorJson = EditorJsonUtility.ToJson(survivor);
+            var feature = (Object)features[0];
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(feature, out string guid, out long localId));
+            // The native pass is an oracle only: production never depends on URP private fields.
+            var passField = feature.GetType().GetField("m_FullScreenPass", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            Assert.IsNotNull(passField);
+            if (initialize)
+            {
+                if (passField.GetValue(feature) == null)
+                    feature.GetType().GetMethod("Create").Invoke(feature, null);
+                Assert.IsNotNull(passField.GetValue(feature));
+            }
+            else
+            {
+                Assert.IsNull(RenderPipelineManager.currentPipeline, "Exercise editing a configured renderer without a live pipeline.");
+                Assert.IsNull(passField.GetValue(feature), "The tool-added feature must exercise URP's uninitialized cleanup path.");
+            }
+
+            JObject removed = Send("feature_remove", new JObject { ["index"] = 0 });
+
+            Assert.IsTrue(removed.Value<bool>("success"), removed.ToString());
+            features = (IList)renderer.GetType().GetProperty("rendererFeatures").GetValue(renderer);
+            Assert.AreEqual(1, features.Count);
+            Assert.IsTrue(survivor == (Object)features[0]);
+            Assert.AreEqual(survivorJson, EditorJsonUtility.ToJson(survivor));
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(survivor, out string actualSurvivorGuid, out long actualSurvivorLocalId));
+            Assert.AreEqual(survivorGuid, actualSurvivorGuid);
+            Assert.AreEqual(survivorLocalId, actualSurvivorLocalId);
+            Assert.IsTrue(feature == null, "The owned native feature must be destroyed.");
+            Assert.IsFalse(EditorUtility.IsDirty(renderer), "The modified owner must be saved even if Dispose fails.");
+            using (var serialized = new SerializedObject(renderer))
+            {
+                Assert.AreEqual(1, serialized.FindProperty("m_RendererFeatures").arraySize);
+                Assert.AreEqual(1, serialized.FindProperty("m_RendererFeatureMap").arraySize);
+                Assert.AreEqual(survivorLocalId, serialized.FindProperty("m_RendererFeatureMap").GetArrayElementAtIndex(0).longValue);
+            }
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            foreach (Object asset in AssetDatabase.LoadAllAssetsAtPath(path))
+            {
+                Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out string actualGuid, out long actualLocalId));
+                Assert.IsFalse(actualGuid == guid && actualLocalId == localId, "The removed identity must not remain on disk.");
+            }
+            CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Full(path) + ".meta"));
+            if (initialize)
+                Assert.IsNull(removed["warnings"]);
+            else
+            {
+                Assert.IsTrue(removed["data"].Value<bool>("removed"));
+                Assert.IsFalse(removed["data"].Value<bool>("cleanupSucceeded"));
+                Assert.AreEqual("renderer_feature_cleanup_failed", removed["warnings"][0].Value<string>("code"));
+                Assert.AreEqual(nameof(NullReferenceException), removed["warnings"][0].Value<string>("exceptionType"));
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RemovedFeatureCleanupRunsOnceAndReportsOnlyExceptionType(bool throws)
+        {
+            var target = new FeatureCleanupProbe { Throws = throws };
+            var unrelated = new FeatureCleanupProbe();
+            var dispose = typeof(RendererFeatureOps).GetMethod(
+                "DisposeRemovedFeatureResources",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic
+            );
+            Assert.IsNotNull(dispose);
+            object result = dispose.Invoke(null, new object[] { target });
+            Assert.AreEqual(1, target.DisposeCalls);
+            Assert.AreEqual(0, unrelated.DisposeCalls);
+            Assert.AreEqual(throws ? nameof(InvalidOperationException) : null, result);
+        }
+
+        private sealed class FeatureCleanupProbe : IDisposable
+        {
+            internal bool Throws;
+            internal int DisposeCalls;
+
+            public void Dispose()
+            {
+                DisposeCalls++;
+                if (Throws)
+                    throw new InvalidOperationException("Private asset path must not appear in the cleanup response.");
+            }
+        }
+
         private T Track<T>(T obj)
             where T : Object
         {
@@ -529,15 +638,49 @@ namespace MCPForUnityTests.Editor.Tools
                 GraphicsHelpers.VolumeProfileType.GetMethod("Add", new[] { typeof(Type), typeof(bool) }).Invoke(profile, new object[] { type, true });
             Track(effect);
             AssetDatabase.AddObjectToAsset(effect, profile);
-            return effect;
+            return PersistSubAsset(profile, effect);
+        }
+
+        private static T PersistSubAsset<T>(Object owner, T child)
+            where T : Object
+        {
+            string path = AssetDatabase.GetAssetPath(owner);
+            // NativeFormatImporter may otherwise choose a different main asset by type priority.
+            AssetDatabase.SetMainObject(owner, path);
+            EditorUtility.SetDirty(owner);
+            EditorUtility.SetDirty(child);
+            AssetDatabase.SaveAssetIfDirty(owner);
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(child, out string guid, out long localId));
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            Assert.IsTrue(owner == AssetDatabase.LoadMainAssetAtPath(path));
+            foreach (Object candidate in AssetDatabase.LoadAllAssetsAtPath(path))
+            {
+                if (
+                    candidate is T typed
+                    && AssetDatabase.TryGetGUIDAndLocalFileIdentifier(candidate, out string actualGuid, out long actualLocalId)
+                    && actualGuid == guid
+                    && actualLocalId == localId
+                )
+                {
+                    Assert.IsTrue(AssetDatabase.IsSubAsset(typed));
+                    return typed;
+                }
+            }
+            Assert.Fail("The imported child must retain its persistent GUID and local file ID.");
+            return null;
         }
 
         private ScriptableObject NewRenderer(bool package)
         {
             var renderer = Track(ScriptableObject.CreateInstance(RequireType("UniversalRendererData")));
             AssetDatabase.CreateAsset(renderer, PathFor(package, "Renderer.asset"));
+            NewPipeline(renderer, false);
+            return renderer;
+        }
+
+        private RenderPipelineAsset NewPipeline(ScriptableObject renderer, bool package)
+        {
             var pipeline = (RenderPipelineAsset)Track(ScriptableObject.CreateInstance(RequireType("UniversalRenderPipelineAsset")));
-            AssetDatabase.CreateAsset(pipeline, PathFor(false, "Pipeline.asset"));
             using (var serialized = new SerializedObject(pipeline))
             {
                 var list = serialized.FindProperty("m_RendererDataList");
@@ -546,8 +689,9 @@ namespace MCPForUnityTests.Editor.Tools
                 serialized.FindProperty("m_DefaultRendererIndex").intValue = 0;
                 serialized.ApplyModifiedPropertiesWithoutUndo();
             }
+            AssetDatabase.CreateAsset(pipeline, PathFor(package, "Pipeline.asset"));
             UsePipeline(pipeline);
-            return renderer;
+            return pipeline;
         }
 
         private Object AddFeature(Object renderer)
