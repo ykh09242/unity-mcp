@@ -4,6 +4,7 @@ from tests.timing import watchdog_timeout
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -21,6 +22,45 @@ from websockets.exceptions import InvalidStatus
 from websockets.sync.client import connect
 
 from core.local_auth import LOCAL_AUTH_HEADER
+
+
+def _startup_failure_message(
+    reason: str,
+    command: list[str],
+    exit_code: int | None,
+    log_path: Path,
+    token_path: Path,
+    token: str,
+) -> str:
+    """Preserve bounded owned child output in existing pytest/JUnit failure reports."""
+    limit = 8192
+    try:
+        with log_path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            offset = max(0, stream.tell() - limit)
+            stream.seek(offset)
+            raw = stream.read(limit)
+        # Discard a cut first line so a credential fragment cannot escape redaction.
+        if offset:
+            raw = raw.partition(b"\n")[2]
+        tail = "\n".join(raw.decode("utf-8", errors="replace").splitlines()[-60:])
+    except OSError as error:
+        tail = f"<child log unavailable: {type(error).__name__}>"
+    try:
+        with token_path.open(encoding="utf-8") as stream:
+            published_token = stream.read(256).strip()
+    except OSError:
+        published_token = ""
+    message = (
+        f"{reason}; exit_code={exit_code}; command={json.dumps(command)}; log={log_path}\n"
+        f"Sanitized child stdout/stderr tail (at most {limit} bytes / 60 lines):\n{tail or '<empty>'}"
+    )
+    for credential in (token, published_token):
+        if credential:
+            message = message.replace(credential, "[REDACTED]")
+    # A child may remove its token file on exit before the parent ever reads it.
+    # The production launch uses token_urlsafe(32), yielding 43 URL-safe characters.
+    return re.sub(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])", "[REDACTED]", message)
 
 
 @contextmanager
@@ -56,21 +96,24 @@ def local_server_process(
         if validation_url is not None
         else []
     )
-    with (tmp_path / "server.log").open("w", encoding="utf-8") as log:
+    command = [
+        sys.executable,
+        "-m",
+        module,
+        "--transport",
+        "http",
+        "--http-host",
+        "127.0.0.1",
+        "--http-port",
+        str(port),
+        "--project-scoped-tools",
+        *remote_args,
+    ]
+    log_path = tmp_path / "server.log"
+    token = ""
+    with log_path.open("w", encoding="utf-8") as log:
         with subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                module,
-                "--transport",
-                "http",
-                "--http-host",
-                "127.0.0.1",
-                "--http-port",
-                str(port),
-                "--project-scoped-tools",
-                *remote_args,
-            ],
+            command,
             cwd=Path(__file__).resolve().parents[2],
             env=env,
             stdout=log,
@@ -81,7 +124,18 @@ def local_server_process(
                 with httpx.Client(timeout=0.5, trust_env=False) as client:
                     deadline = time.monotonic() + watchdog_timeout(20)
                     while time.monotonic() < deadline:
-                        assert process.poll() is None, "Local server exited before readiness"
+                        exit_code = process.poll()
+                        if exit_code is not None:
+                            raise AssertionError(
+                                _startup_failure_message(
+                                    "Local server exited before readiness",
+                                    command,
+                                    exit_code,
+                                    log_path,
+                                    token_path,
+                                    token,
+                                )
+                            )
                         try:
                             token = ""
                             if validation_url is None:
@@ -106,16 +160,34 @@ def local_server_process(
                                     )
                                 )
                             ):
-                                assert process.poll() is None, (
-                                    "Local server exited before readiness"
-                                )
+                                exit_code = process.poll()
+                                if exit_code is not None:
+                                    raise AssertionError(
+                                        _startup_failure_message(
+                                            "Local server exited before readiness",
+                                            command,
+                                            exit_code,
+                                            log_path,
+                                            token_path,
+                                            token,
+                                        )
+                                    )
                                 break
                         except httpx.TransportError:
                             pass
                         # Bounded external-process readiness polling, not a race delay.
                         time.sleep(0.05)
                     else:
-                        pytest.fail("Local server did not become ready")
+                        pytest.fail(
+                            _startup_failure_message(
+                                "Local server did not become ready",
+                                command,
+                                process.poll(),
+                                log_path,
+                                token_path,
+                                token,
+                            )
+                        )
                 yield url, port, token
             finally:
                 process.terminate()
@@ -309,3 +381,99 @@ def test_remote_readiness_does_not_require_a_local_launch_token(tmp_path, contro
         assert [request.url.path for request in state.requests] == ["/health"]
     process.terminate.assert_called_once()
     process.wait.assert_called_once()
+
+
+def test_startup_exit_preserves_bounded_child_output_without_launch_credential(
+    tmp_path, monkeypatch
+):
+    # Given: an actual owned child writes both streams and exits before readiness.
+    fixture_module = tmp_path / "owned_startup_exit.py"
+    fixture_module.write_text(
+        "import os,sys\n"
+        "from pathlib import Path\n"
+        "token='Q'*43\n"
+        "path=Path(os.environ['UNITY_MCP_LOCAL_AUTH_TOKEN_FILE'])\n"
+        "path.write_text(token,encoding='utf-8')\n"
+        "print('discarded-prefix-'+('x'*20000),flush=True)\n"
+        "print('owned stdout marker',flush=True)\n"
+        "print('owned stderr marker '+token,file=sys.stderr,flush=True)\n"
+        "print('RuntimeError: owned startup failure',file=sys.stderr,flush=True)\n"
+        "path.unlink()\n"
+        "raise SystemExit(3)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    original_popen = subprocess.Popen
+    launched = []
+
+    def capture_child(*args, **kwargs):
+        process = original_popen(*args, **kwargs)
+        launched.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", capture_child)
+    # When
+    with pytest.raises(AssertionError, match="exited before readiness") as error:
+        with local_server_process(tmp_path, module="owned_startup_exit"):
+            pytest.fail("An exited fixture child yielded readiness")
+    # Then: one attempt, original exit code, both streams and useful exception survive.
+    message = str(error.value)
+    assert len(launched) == 1
+    assert launched[0].returncode == 3
+    assert "exit_code=3" in message
+    assert "owned_startup_exit" in message
+    assert "owned stdout marker" in message
+    assert "owned stderr marker" in message
+    assert "RuntimeError: owned startup failure" in message
+    assert "[REDACTED]" in message
+    assert "Q" * 43 not in message
+    assert "discarded-prefix" not in message
+    assert len(message) < 10000
+    assert not (tmp_path / "launch-token").exists()
+
+
+def test_startup_log_tail_bounds_lines_and_redacts_cached_and_published_tokens(tmp_path):
+    # Given: both an earlier cached credential and a newly published owned token.
+    log_path, token_path = tmp_path / "server.log", tmp_path / "launch-token"
+    token_path.write_text("published-fixture-token", encoding="utf-8")
+    log_path.write_text(
+        "\n".join(f"row-{index}" for index in range(500))
+        + "\ncached-fixture-token\npublished-fixture-token\n",
+        encoding="utf-8",
+    )
+    # When
+    message = _startup_failure_message(
+        "Local server did not become ready",
+        ["python", "-m", "main"],
+        None,
+        log_path,
+        token_path,
+        "cached-fixture-token",
+    )
+    # Then
+    tail = message.split("lines):\n", 1)[1]
+    assert len(tail.splitlines()) == 60
+    assert "row-440\n" not in tail
+    assert "row-499\n" in tail
+    assert message.count("[REDACTED]") == 2
+    assert "cached-fixture-token" not in message
+    assert "published-fixture-token" not in message
+
+
+def test_startup_byte_tail_drops_the_partial_credential_line(tmp_path):
+    # Given: the byte boundary falls inside a known credential, with fewer than 60 lines.
+    credential = "owned-prefix-" + "s" * 300 + "-private-credential-suffix"
+    log_path = tmp_path / "server.log"
+    log_path.write_text(credential + "\n" + "x" * 8000 + "\nowned-tail\n", encoding="utf-8")
+    # When
+    message = _startup_failure_message(
+        "Local server exited before readiness",
+        ["python"],
+        3,
+        log_path,
+        tmp_path / "removed-token",
+        credential,
+    )
+    # Then: exact-token replacement alone could not redact the surviving suffix.
+    assert "private-credential-suffix" not in message
+    assert "owned-tail" in message
