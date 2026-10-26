@@ -2,12 +2,14 @@
 
 from tests.timing import watchdog_timeout
 
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 _OUTPUT_TAIL_LIMIT = 4096
+_HTTP_WORKERS = 4
 
 
 def _output_tail(output: bytes | str | None) -> str:
@@ -18,18 +20,47 @@ def _output_tail(output: bytes | str | None) -> str:
     return output[-_OUTPUT_TAIL_LIMIT:]
 
 
-def _failure_message(reason: str, stdout: bytes | str | None, stderr: bytes | str | None) -> str:
-    return f"{reason}\nstdout tail:\n{_output_tail(stdout)}\nstderr tail:\n{_output_tail(stderr)}"
+def _worker_progress(directory: Path) -> str:
+    rows = []
+    for worker in range(_HTTP_WORKERS):
+        name = f"gw{worker}"
+        try:
+            with (directory / f"{name}.json").open(encoding="utf-8") as stream:
+                raw = stream.read(8193)
+            if len(raw) > 8192:
+                raise ValueError("Oversized worker phase record")
+            state = json.loads(raw)
+            phase, nodeid = state["phase"], state["nodeid"]
+            if not isinstance(phase, str) or not isinstance(nodeid, str):
+                raise ValueError("Invalid worker phase record")
+            suffix = "..." if len(nodeid) > 1024 else ""
+            rows.append(f"{name}: {phase[:80]}: {nodeid[:1024]}{suffix}")
+        except FileNotFoundError:
+            rows.append(f"{name}: no phase recorded")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            rows.append(f"{name}: phase unavailable ({type(error).__name__})")
+    return "\n".join(rows)
+
+
+def _failure_message(
+    reason: str, stdout: bytes | str | None, stderr: bytes | str | None, progress_dir: Path
+) -> str:
+    return (
+        f"{reason}\nworker phases:\n{_worker_progress(progress_dir)}"
+        f"\nstdout tail:\n{_output_tail(stdout)}\nstderr tail:\n{_output_tail(stderr)}"
+    )
 
 
 def test_local_http_security_regressions(tmp_path, pytestconfig):
     server_root = Path(__file__).resolve().parents[1]
+    progress_dir = tmp_path / "http-progress"
     env = {
         **os.environ,
         "UNITY_MCP_RUN_HTTP_TESTS": "1",
         "DISABLE_TELEMETRY": "1",
         "UNITY_MCP_SKIP_STARTUP_CONNECT": "1",
         "UNITY_MCP_LOG_DIR": str(tmp_path / "logs"),
+        "UNITY_MCP_HTTP_TEST_PROGRESS_DIR": str(progress_dir),
     }
     report_args = []
     if xmlpath := pytestconfig.getoption("xmlpath", default=None):
@@ -43,7 +74,7 @@ def test_local_http_security_regressions(tmp_path, pytestconfig):
                 "pytest",
                 "tests/http",
                 "-n",
-                "4",
+                str(_HTTP_WORKERS),
                 "--dist=loadfile",
                 "--max-worker-restart=0",
                 "-vv",
@@ -72,6 +103,7 @@ def test_local_http_security_regressions(tmp_path, pytestconfig):
                 f"HTTP test subprocess timed out after {error.timeout:g}s",
                 error.output,
                 error.stderr,
+                progress_dir,
             )
         ) from error
     if result.returncode != 0:
@@ -80,5 +112,6 @@ def test_local_http_security_regressions(tmp_path, pytestconfig):
                 f"HTTP test subprocess exited with status {result.returncode}",
                 result.stdout,
                 result.stderr,
+                progress_dir,
             )
         )
