@@ -16,7 +16,12 @@ from .test_helpers import DummyContext
 @pytest.mark.parametrize("compile_mode", ["none", "request"])
 @pytest.mark.parametrize(
     "busy_polls,stale,expected_success,expected_polls",
-    [(1, False, True, 2), (1, True, True, 2), (None, False, False, 1200), (0, True, True, 1)],
+    [
+        (1, False, True, 2),
+        (1, True, False, 1200),
+        (None, False, False, 1200),
+        (0, True, False, 1200),
+    ],
 )
 async def test_refresh_waits_for_canonical_asset_refresh(
     monkeypatch, busy_polls, stale, expected_success, expected_polls, compile_mode
@@ -90,3 +95,73 @@ async def test_refresh_waits_for_canonical_asset_refresh(
             assert compilation["outcome"] == "unknown"
             assert compilation["attribution"] == "unconfirmed"
             assert refreshes == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_pending_scan_uses_one_deadline_and_never_replays(monkeypatch):
+    instance = "ReadinessFixture@12345678"
+    ctx = DummyContext()
+    await ctx.set_state("unity_instance", instance)
+    scanner = ExternalChangesScanner()
+    scanner._states[instance] = ExternalChangesState(dirty=True)
+    monkeypatch.setattr(refresh_module, "external_changes_scanner", scanner)
+    monkeypatch.setattr(editor_state, "external_changes_scanner", scanner)
+    monkeypatch.setattr(refresh_module, "_in_pytest", lambda: False)
+    monkeypatch.setattr(editor_state, "_now_unix_ms", lambda: 10_000)
+    monkeypatch.setattr(
+        editor_state, "_local_project_root", lambda _: asyncio.sleep(0, result=None)
+    )
+    elapsed = 0.0
+    polls = 0
+    refreshes = 0
+
+    async def advance(seconds):
+        nonlocal elapsed
+        elapsed += seconds
+
+    async def pending(_):
+        return {
+            "external_changes_dirty": True,
+            "external_changes_scan_complete": False,
+            "external_changes_scan_limited": False,
+            "external_changes_scan_in_progress": True,
+        }
+
+    async def transport(send, target, command, params, **kwargs):
+        nonlocal elapsed, polls, refreshes
+        assert target == instance
+        if command == "refresh_unity":
+            refreshes += 1
+            assert kwargs == {"retry_on_reload": False}
+            assert params["wait_for_ready"] is False
+            elapsed += 0.4
+            return {
+                "success": True,
+                "message": "Refresh requested",
+                "data": {"refresh_triggered": True},
+            }
+        assert command == "get_editor_state"
+        polls += 1
+        return {
+            "success": True,
+            "data": {
+                "observed_at_unix_ms": 10_000,
+                "unity": {"instance_id": instance},
+                "assets": {"refresh": {"is_refresh_in_progress": False}},
+            },
+        }
+
+    monkeypatch.setattr(scanner, "update_and_get_async", pending)
+    monkeypatch.setattr(refresh_module, "time", SimpleNamespace(monotonic=lambda: elapsed))
+    monkeypatch.setattr(
+        refresh_module, "asyncio", SimpleNamespace(sleep=advance, wait_for=asyncio.wait_for)
+    )
+    monkeypatch.setattr(refresh_module.unity_transport, "send_with_unity_instance", transport)
+
+    response = await refresh_module.refresh_unity(ctx, wait_for_ready=True, timeout_seconds=1.0)
+    assert response.success is False
+    assert response.data == {"timeout": True, "wait_seconds": 1.0}
+    assert refreshes == 1
+    assert polls > 1
+    assert elapsed == 1.0
+    assert scanner._states[instance].dirty is True
