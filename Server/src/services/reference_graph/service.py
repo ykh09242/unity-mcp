@@ -563,12 +563,15 @@ class ReferenceGraphService:
 
     @staticmethod
     def _operator_grant(scope: GraphScope, configuration: dict) -> None:
-        if not scope.user_id.startswith("remote:"):
-            return
-        # Remote filesystem paths belong to the server. Only its operator can
-        # authorize a principal's roots; a client's source tool cannot do so.
-        grants = json.loads(os.environ.get("UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS", "{}"))
-        allowed = grants.get(scope.user_id[7:], []) if isinstance(grants, dict) else []
+        # Filesystem authority belongs to the server operator, including local
+        # transports. Tool-authored source configuration never grants a root.
+        if scope.user_id.startswith("remote:"):
+            grants = json.loads(os.environ.get("UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS", "{}"))
+            allowed = grants.get(scope.user_id[7:], []) if isinstance(grants, dict) else []
+        elif scope.user_id.startswith("local:"):
+            allowed = json.loads(os.environ.get("UNITY_MCP_REFERENCE_GRAPH_LOCAL_ROOTS", "[]"))
+        else:
+            allowed = []
         if not isinstance(allowed, list):
             raise PermissionError("No operator-authorized external root")
         candidate = configuration.get("root")

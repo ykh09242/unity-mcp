@@ -34,6 +34,8 @@ def test_json_pointer_mapping_and_csv_columns_keep_evidence():
     assert result.edges[0].target == "asset:" + "a" * 32
     assert result.edges[0].evidence == "/items/0/icon"
     assert result.unresolved[0]["reason"] == "key_not_found"
+    assert "GameData/absent" not in json.dumps(result.unresolved)
+    assert result.unresolved[0]["key_redacted"] is True
     csv = analyze_document(
         "settings.csv",
         "name,icon\nmenu,GameData/icon\n",

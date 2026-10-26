@@ -387,6 +387,8 @@ async def test_watcher_survives_malformed_csv_and_recovers_on_next_wake(setup, t
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "http_remote_hosted", False)
+    # The server operator explicitly approves this test's synthetic data tree.
+    monkeypatch.setenv("UNITY_MCP_REFERENCE_GRAPH_LOCAL_ROOTS", json.dumps([str(tmp_path)]))
     sender = Sender()
     service = ReferenceGraphService(tmp_path / "graphs", send=sender)
     return service, sender, Context(service)
@@ -646,22 +648,120 @@ def test_remote_external_roots_require_operator_grant_before_any_adapter_probe(
         ReferenceGraphService._grant(scope, {"root": str(root.parent), "include": ["*.json"]})
 
 
+def test_local_external_roots_require_server_approval_before_adapter_probe(tmp_path, monkeypatch):
+    # Given a local client, no server-approved roots and a caller-chosen host path.
+    scope = GraphScope("local:owner", "editor", "project")
+    monkeypatch.delenv("UNITY_MCP_REFERENCE_GRAPH_LOCAL_ROOTS", raising=False)
+    monkeypatch.setattr(
+        ExternalSource, "__init__", lambda *_: pytest.fail("Unapproved root reached adapter")
+    )
+    # When the client attempts to register that source, then deny before any probe.
+    with pytest.raises(PermissionError, match="authorization"):
+        ReferenceGraphService._grant(scope, {"root": str(tmp_path), "include": ["*.json"]})
+
+
+def test_local_external_roots_accept_only_approved_descendants(tmp_path, monkeypatch):
+    # Given an operator-approved local root and a separate remote principal grant.
+    root = tmp_path / "approved"
+    child = root / "data"
+    child.mkdir(parents=True)
+    scope = GraphScope("local:owner", "editor", "project")
+    monkeypatch.setenv("UNITY_MCP_REFERENCE_GRAPH_LOCAL_ROOTS", json.dumps([str(root)]))
+    monkeypatch.setenv(
+        "UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS", json.dumps({"alice": [str(tmp_path)]})
+    )
+    # When local access is checked, then approval covers descendants but no ancestor.
+    assert ReferenceGraphService._grant(scope, {"root": str(child), "include": ["*.json"]})
+    with pytest.raises(PermissionError):
+        ReferenceGraphService._grant(scope, {"root": str(tmp_path), "include": ["*.json"]})
+    # Local approval must not authorize any remote principal.
+    with pytest.raises(PermissionError):
+        ReferenceGraphService._grant(
+            GraphScope("remote:bob", "editor", "project"),
+            {"root": str(child), "include": ["*.json"]},
+        )
+
+
+@pytest.mark.parametrize("value", ['{"root":[]}', '"*"', '["relative"]', "null", "invalid"])
+def test_invalid_local_root_approval_fails_closed(tmp_path, monkeypatch, value):
+    # Given malformed or unusable server approval, no tool input may broaden it.
+    monkeypatch.setenv("UNITY_MCP_REFERENCE_GRAPH_LOCAL_ROOTS", value)
+    # When a local caller requests a root, then fail closed.
+    with pytest.raises((PermissionError, ValueError)):
+        ReferenceGraphService._grant(
+            GraphScope("local:owner", "editor", "project"),
+            {"root": str(tmp_path), "include": ["*.json"]},
+        )
+
+
 @pytest.mark.asyncio
-async def test_cached_external_results_recheck_file_access_and_operator_revocation(
+async def test_local_tool_cannot_persist_source_without_server_approval(
     setup, tmp_path, monkeypatch
+):
+    # Given an authenticated local tool caller and no operator-approved roots.
+    service, _, ctx = setup
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    monkeypatch.delenv("UNITY_MCP_REFERENCE_GRAPH_LOCAL_ROOTS")
+    # When the caller selects a host root, then no source configuration is saved.
+    with pytest.raises(PermissionError):
+        await service.execute(
+            ctx,
+            "set_source",
+            {
+                "id": "host",
+                "expected_version": 0,
+                "config": {"root": str(tmp_path), "include": ["*.json"]},
+            },
+        )
+    sources = (await service.execute(ctx, "sources", {}))["data"]["sources"]
+    assert not any(source["provider"].startswith("external:") for source in sources)
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replacement", ["editor", "user"])
+async def test_process_root_approval_does_not_share_sources_between_scopes(
+    setup, tmp_path, monkeypatch, replacement
+):
+    # Given one scope with a configured source under this server's approved root.
+    service, sender, ctx = setup
+    await external_fixture(service, sender, ctx, tmp_path / "settings", monkeypatch)
+    # When the server resolves a different Editor and local principal, then its
+    # source configuration and generated evidence remain private to the old scope.
+    if replacement == "editor":
+        sender.identity = "replacement"
+    else:
+        monkeypatch.setattr(
+            "services.reference_graph.service.local_user", lambda: "local:another-user"
+        )
+    response = await service.execute(ctx, "sources", {})
+    assert not any(
+        source["provider"].startswith("external:") for source in response["data"]["sources"]
+    )
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remote", [False, True])
+async def test_cached_external_results_recheck_file_access_and_operator_revocation(
+    setup, tmp_path, monkeypatch, remote
 ):
     service, _, ctx = setup
     monkeypatch.setattr(service, "start", lambda *_, **__: None)
-    monkeypatch.setattr(config, "http_remote_hosted", True)
-    lease = CredentialLease(Authority(), object(), "alice", LEGACY_GRANTS)
+    monkeypatch.setattr(config, "http_remote_hosted", remote)
+    lease = CredentialLease(Authority(), object(), "alice", LEGACY_GRANTS) if remote else None
     root = tmp_path / "settings"
     root.mkdir()
     path = root / "a.json"
     path.write_text('{"key":"asset"}')
     grant = {"root": str(root), "include": ["*.json"]}
-    monkeypatch.setenv(
-        "UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS", json.dumps({"alice": [str(root)]})
+    setting = (
+        "UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS"
+        if remote
+        else "UNITY_MCP_REFERENCE_GRAPH_LOCAL_ROOTS"
     )
+    approval = json.dumps({"alice": [str(root)]} if remote else [str(root)])
+    monkeypatch.setenv(setting, approval)
     with bind_credential_lease(lease):
         entry, _ = await service.resolve(ctx, "status")
         workspace = entry.workspace
@@ -718,12 +818,10 @@ async def test_cached_external_results_recheck_file_access_and_operator_revocati
         assert not response["data"]["graph_status"]["current"]
         assert not response["data"]["graph_status"]["queue_idle"]
         monkeypatch.setattr(service, "_validate_external", validate)
-        monkeypatch.delenv("UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS")
+        monkeypatch.delenv(setting)
         with pytest.raises(PermissionError):
             await service.execute(ctx, "query", {"node": "target", "direction": "incoming"})
-        monkeypatch.setenv(
-            "UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS", json.dumps({"alice": [str(root)]})
-        )
+        monkeypatch.setenv(setting, approval)
         path.unlink()
         with pytest.raises(FileNotFoundError):
             await service.execute(ctx, "query", {"node": "target", "direction": "incoming"})

@@ -3,6 +3,7 @@
 from tests.timing import watchdog_timeout
 
 import asyncio
+import json
 import sqlite3
 from types import SimpleNamespace
 
@@ -443,6 +444,7 @@ async def test_receipt_metadata_still_refuses_a_changed_external_source_grant(
     service_graph, monkeypatch, tmp_path
 ):
     # Given: a valid source participates in the before snapshot.
+    monkeypatch.setenv("UNITY_MCP_REFERENCE_GRAPH_LOCAL_ROOTS", json.dumps([str(tmp_path)]))
     service, _, ctx, entry = service_graph
     store = entry.workspace.store
     store.set_source(

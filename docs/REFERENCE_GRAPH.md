@@ -104,13 +104,37 @@ a changed grant atomically removes old generated edges, diagnostics and file cac
 Workers from the previous grant cannot republish them. Configuration files are
 never modified, executed, or copied into the Unity project.
 
-For a remotely hosted MCP server, paths refer to **the server filesystem**. Its
-operator must authorize roots per authenticated user using
-`UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS`, a JSON object mapping user IDs to arrays
-of absolute directories. A remote tool call cannot grant itself arbitrary server
-filesystem access. Normal local stdio/local authenticated HTTP usage does not need
-this operator setting. Credential and current-file access are checked again before
-returning cached external evidence.
+Paths refer to **the server filesystem**, including local transports. The server
+operator must approve readable roots outside tool input before enabling a source:
+
+- Local stdio and local authenticated HTTP use
+  `UNITY_MCP_REFERENCE_GRAPH_LOCAL_ROOTS`, a JSON array of absolute directories.
+  For example, set its value to `["/absolute/path/to/settings-repository"]` in the
+  MCP server's startup environment. This approval applies to authenticated local
+  sessions served by that process, under its OS account.
+- Remotely hosted servers continue to use
+  `UNITY_MCP_REFERENCE_GRAPH_EXTERNAL_ROOTS`, a JSON object mapping exact
+  authenticated user IDs to arrays of absolute directories. Local approval never
+  authorizes a remote user.
+
+Roots default to no access. A source may select an approved directory or its
+descendant, subject to the same linked-path and current-access checks. The
+collector supplies an opaque project identity, not a trusted server filesystem
+root, so the server cannot automatically approve project-contained directories.
+Source configurations, evidence and cursors remain isolated by user, Editor and
+project; process-level root approval does not copy another scope's sources.
+
+**Migration:** existing local external sources now require explicit startup
+approval. Review the directories you intend to expose, configure only those roots,
+and restart the MCP server after changing its startup environment. Stored source
+configuration alone grants no filesystem authority. Root approval, credentials
+and current-file access are checked again during collection and before returning
+cached external evidence, so a removed approval cannot authorize stale reads.
+Disable a source with `enabled:false` to revoke its graph grant independently.
+
+Unresolved external mapping diagnostics retain field, line and reason while
+omitting the unknown value (`key_redacted:true`), including diagnostics stored by
+older versions. Resolved asset links retain their normal keys and provenance.
 
 ## Authored declarations, wrappers, and exclusions
 

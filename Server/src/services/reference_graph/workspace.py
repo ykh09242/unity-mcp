@@ -853,6 +853,15 @@ class GraphWorkspace:
                 "SELECT i.provider,i.payload FROM graph_issues i JOIN sources s USING(provider) WHERE i.owner=? AND s.enabled=1 ORDER BY i.provider,i.ordinal LIMIT ? OFFSET ?",
                 (owner, limit + 1, offset),
             ).fetchall()
+            issues = []
+            for provider, payload in rows[:limit]:
+                issue = json.loads(payload)
+                # Old databases can still contain raw unknown external values.
+                # Redact at delivery without discarding resolved graph edges.
+                if provider.startswith("external:") and "key" in issue:
+                    issue.pop("key")
+                    issue["key_redacted"] = True
+                issues.append({"provider": provider, **issue})
             return {
                 "revision": connection.execute("SELECT revision FROM graph_meta").fetchone()[0],
                 "coverage": [
@@ -868,7 +877,7 @@ class GraphWorkspace:
                         "SELECT state,version,error FROM graph_addressables WHERE owner=?", (owner,)
                     )
                 ],
-                "issues": [{"provider": row[0], **json.loads(row[1])} for row in rows[:limit]],
+                "issues": issues,
                 "next_offset": offset + limit if len(rows) > limit else None,
             }
 
