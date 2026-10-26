@@ -71,16 +71,24 @@ guards; split large edits into reviewed chunks.
 Localization revision digests now use streamed, versioned composition. Refresh
 an old observation before submitting a revision-guarded localization mutation.
 
+Automatic reference graphs have separate operator-owned collection-attempt and
+durable-state budgets. Paging does not remove these limits; saved work is
+preserved on exhaustion. See [graph limits and recovery](../REFERENCE_GRAPH.md#operator-budgets).
+
 ## Images, artifacts and builds
 
 | Area | Capacity and memory behavior |
 | --- | --- |
-| Textures/captures | Texture dimensions up to 8,192, 512 MiB encoded input. Captures allow 64 Mi pixels/frame, 128 shots and 8 Gi rendered pixels/batch. Contact sheets and retained thumbnails remain bounded independently. Actual device and encoder support still applies. |
+| Textures/captures | Texture dimensions up to 8,192, 512 MiB encoded input. Single captures allow 64 Mi pixels/frame and 8,192 pixels/side after supersampling; orbit captures allow 128 shots. Tool-owned batch cameras render at output tile resolution with 33,554,432 rendered pixels/batch. Retained tiles and contact sheets each have a separate 33,554,432-pixel budget; sheets also respect the side limit. Actual device and encoder support still applies. |
 | Recording | Explicit duration up to 3,600 seconds, 60 fps and 4,096-pixel dimensions, with a 20-trillion source/encoded pixel-frame budget. Defaults are unchanged; frames are encoded incrementally. |
 | Provider downloads | 8 GiB/artifact, 1-hour download deadline and 2-hour asynchronous job lifetime. Downloads use an owned project-contained temporary file, 64 KiB buffers and incremental hashing. Cancellation, failure and reload release temporary ownership. |
 | Archives/model bundles | ZIP: 16,384 entries, 8 GiB per file/total, 200:1 expansion ratio and 16 MiB directory metadata. Model bundles: 8,192 files, 65,536 references, 16 GiB combined bytes, 64 MiB JSON, 16 MiB/MTL, 128 MiB aggregate metadata and 256 KiB text lines. Candidate list: 1,024. |
 | Build cleanup/Player inventory | Cleanup: 250,000 entries and 120 seconds. Player payload: 16,384 files, 32,768 directories and 128 GiB, fingerprinted by streaming; inventory 32 MiB, outer manifest 96 MiB including repeated inventory representations. |
 | Profiler | Snapshot file admission 8 GiB; selected-column reads 64 MiB/column and 128 MiB total, with 1 million native rows. Live aggregates default to 250,000 objects and allow 1 million explicitly, with 256 roots/4 million visits/4,096 types. |
+
+Asset-generation image metadata, JSON structure and local model copies also
+pass independent admission checks. See [asset admission and local-copy contracts](../asset-gen-download-security.md#metadata-and-local-copy-admission)
+for defaults, Editor-process overrides and format limitations.
 
 Large files are not automatically loaded into same-sized byte arrays. However,
 image decoding still requires pixel memory, and final asset publication/import
