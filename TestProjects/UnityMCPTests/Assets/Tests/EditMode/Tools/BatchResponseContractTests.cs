@@ -33,6 +33,86 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public async Task FinalParentGuardRejectsFirstChildWhenBatchConsentIsDisabled()
+        {
+            const string child = "__batch_consent_first";
+            using var handlers = new MCPForUnityTests.Editor.Services.ProgressHandlerScope();
+            int dispatches = 0;
+            handlers.Set(
+                child,
+                new HandlerInfo(
+                    child,
+                    _ =>
+                    {
+                        dispatches++;
+                        return new SuccessResponse("settled");
+                    },
+                    null
+                )
+            );
+            MCPServiceLocator.ToolDiscovery.SetToolEnabled("batch_execute", false);
+
+            // Exercise the handler's independent dispatch guard; dispatcher admission is tested separately.
+            var response = JObject.FromObject(await BatchExecute.HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = child }) }));
+
+            Assert.AreEqual(0, dispatches);
+            Assert.IsFalse(response.Value<bool>("success"));
+            Assert.AreEqual(0, response.SelectToken("data.attemptedCount").Value<int>());
+            Assert.AreEqual(1, response.SelectToken("data.notRunCount").Value<int>());
+            Assert.AreEqual("not_started", (string)response.SelectToken("data.executionStatus"));
+            Assert.AreEqual("not_run", (string)response.SelectToken("data.outcomes[0].state"));
+            Assert.AreEqual("batch_disabled", (string)response.SelectToken("data.outcomes[0].reason"));
+        }
+
+        [Test]
+        public async Task ParentRevocationKeepsSettledPrefixAndNeverDispatchesSuffix()
+        {
+            const string first = "__batch_consent_prefix",
+                second = "__batch_consent_suffix";
+            using var handlers = new MCPForUnityTests.Editor.Services.ProgressHandlerScope();
+            int prefixDispatches = 0,
+                suffixDispatches = 0;
+            handlers.Set(
+                first,
+                new HandlerInfo(
+                    first,
+                    _ =>
+                    {
+                        prefixDispatches++;
+                        MCPServiceLocator.ToolDiscovery.SetToolEnabled("batch_execute", false);
+                        return new SuccessResponse("committed");
+                    },
+                    null
+                )
+            );
+            handlers.Set(
+                second,
+                new HandlerInfo(
+                    second,
+                    _ =>
+                    {
+                        suffixDispatches++;
+                        return new SuccessResponse("must not run");
+                    },
+                    null
+                )
+            );
+
+            var response = JObject.FromObject(
+                await BatchExecute.HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = first }, new JObject { ["tool"] = second }) })
+            );
+
+            Assert.AreEqual(1, prefixDispatches);
+            Assert.AreEqual(0, suffixDispatches);
+            Assert.AreEqual(1, response.SelectToken("data.attemptedCount").Value<int>());
+            Assert.AreEqual(1, response.SelectToken("data.notRunCount").Value<int>());
+            Assert.AreEqual("partial", (string)response.SelectToken("data.executionStatus"));
+            Assert.AreEqual("succeeded", (string)response.SelectToken("data.outcomes[0].state"));
+            Assert.AreEqual("batch_disabled", (string)response.SelectToken("data.outcomes[1].reason"));
+            Assert.IsFalse(response.SelectToken("data.rollbackPerformed").Value<bool>());
+        }
+
+        [Test]
         public void LargeConfiguredBatchPreservesEveryIndexedOutcome()
         {
             const string key = EditorPrefKeys.BatchExecuteMaxCommands;
