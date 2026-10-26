@@ -99,6 +99,8 @@ namespace MCPForUnity.Editor.Tools
 
             bool refreshTriggered = false;
             bool compileRequested = false;
+            bool refreshCycleObserved = false;
+            string compilationTrigger = null;
             string reservationGeneration = null;
             int compileCountBefore = EditorStateCache.CompileCount;
 
@@ -115,6 +117,12 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                if (compileId != null)
+                    reservationGeneration = Reservation.Reserve(
+                        compileId,
+                        EditorApplication.timeSinceStartup + Remaining().TotalSeconds,
+                        refreshing: !string.Equals(scope, "scripts", StringComparison.OrdinalIgnoreCase)
+                    );
                 // Best-effort semantics: if_dirty currently behaves like force unless future dirty signals are added.
                 bool shouldRefresh =
                     string.Equals(mode, "force", StringComparison.OrdinalIgnoreCase) || string.Equals(mode, "if_dirty", StringComparison.OrdinalIgnoreCase);
@@ -135,11 +143,20 @@ namespace MCPForUnity.Editor.Tools
 
                 if (string.Equals(compile, "request", StringComparison.OrdinalIgnoreCase))
                 {
-                    reservationGeneration = Reservation.Reserve(compileId, EditorApplication.timeSinceStartup + Remaining().TotalSeconds);
-                    Ledger.ExplicitRequest(compileId);
-                    RequestCompilation();
-                    compileRequested = true;
-                    Ledger.Dispatched(compileId);
+                    refreshCycleObserved = Reservation.CompleteRefreshDecision(reservationGeneration);
+                    if (refreshCycleObserved)
+                    {
+                        compilationTrigger = "refresh";
+                        Ledger.AdoptOwnedRefreshCycle(compileId);
+                    }
+                    else
+                    {
+                        Ledger.ExplicitRequest(compileId);
+                        RequestCompilation();
+                        compileRequested = true;
+                        compilationTrigger = "request";
+                        Ledger.Dispatched(compileId);
+                    }
                 }
 
                 if (string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase) && !refreshTriggered)
@@ -154,7 +171,10 @@ namespace MCPForUnity.Editor.Tools
             catch (Exception ex)
             {
                 if (reservationGeneration != null && !compileRequested)
+                {
                     Reservation.AbortBeforeStart(reservationGeneration);
+                    Reservation.CompleteRefreshDecision(reservationGeneration);
+                }
                 if (compileId != null)
                     Ledger.Reject(compileId);
                 return new ErrorResponse($"refresh_failed: {ex.Message}", new { compilation = compileId == null ? null : Ledger.Query(compileId) });
@@ -177,10 +197,10 @@ namespace MCPForUnity.Editor.Tools
             // next tick, but a full grace when it never does. A caller who opted out
             // of waiting gets the immediate return and the poll hint.
             //
-            // compile_started is null when nothing was waited for (no compile
-            // requested, or wait_for_ready=false), so "not observed" never reads as
-            // "did not start".
-            bool? compileStarted = null;
+            // An actual cycle observed during this owned refresh is already a start.
+            // Otherwise compile_started stays null unless an explicit start was waited
+            // for, so "not observed" never reads as "did not start".
+            bool? compileStarted = refreshCycleObserved ? true : null;
             if (compileRequested && waitForReady)
             {
                 compileStarted = await WaitForCompilationToStartAsync(compileCountBefore, Remaining()).ConfigureAwait(true);
@@ -192,7 +212,7 @@ namespace MCPForUnity.Editor.Tools
             // When compilation is requested, return immediately and let client poll editor_state.
             // Earlier Unity versions retain the original behavior.
 #if UNITY_6000_0_OR_NEWER
-            bool shouldWaitForReady = waitForReady && !compileRequested;
+            bool shouldWaitForReady = waitForReady && !compileRequested && !refreshCycleObserved;
 #else
             bool shouldWaitForReady = waitForReady;
 #endif
@@ -231,6 +251,8 @@ namespace MCPForUnity.Editor.Tools
                     compilation = compileId == null ? null : Ledger.Query(compileId),
                     refresh_triggered = refreshTriggered,
                     compile_requested = compileRequested,
+                    compilation_trigger = compilationTrigger,
+                    compilation_goal_satisfied = refreshCycleObserved,
                     compile_started = compileStarted,
                     native_coordination = compileId == null ? null : CompilationJobTracker.CoordinationStatus(compileId),
                     resulting_state = resultingState,

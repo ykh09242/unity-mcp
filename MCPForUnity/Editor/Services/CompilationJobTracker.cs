@@ -120,6 +120,21 @@ namespace MCPForUnity.Editor.Services
             Save();
         }
 
+        internal void AdoptOwnedRefreshCycle(string id)
+        {
+            var request = Find(id);
+            if (request == null || request.Phase != "refreshing" || request.Candidates.Count == 0)
+                throw new InvalidOperationException("No pipeline start was observed during the owned refresh.");
+            // The caller observed a cycle during its synchronous refresh and did not
+            // issue a second void trigger. Keep the existing observational schema.
+            request.ExplicitGeneration = request.Candidates[0];
+            if (request.Reason == "refresh_phase_cycle")
+                request.Reason = "";
+            request.Phase = "awaiting_explicit_start";
+            CloseFinished(request);
+            Save();
+        }
+
         internal void Reject(string id)
         {
             var request = Find(id);
@@ -629,6 +644,17 @@ namespace MCPForUnity.Editor.Services
         private const string ReservationKey = "MCPForUnity.CompileJobs.NativeReservationV1";
         internal static readonly CompilationLedger Ledger = Create();
         internal static readonly OwnedCompilationReservation Reservation = CreateReservation();
+
+        static CompilationJobTracker()
+        {
+            EditorApplication.update += ObserveNativeQuiescence;
+        }
+
+        private static void ObserveNativeQuiescence()
+        {
+            if (Reservation.AwaitingQuiescence)
+                Reservation.ObserveQuiescence(!EditorApplication.isCompiling && !EditorApplication.isUpdating && !EditorStateCache.IsDomainReloadPending);
+        }
 
         private static OwnedCompilationReservation CreateReservation()
         {

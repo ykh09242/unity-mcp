@@ -18,6 +18,7 @@ namespace MCPForUnityTests.Editor.Services
             owner.Finished(new object());
             Assert.AreEqual("native_job_active", owner.Blocker(20));
             owner.Finished(context);
+            Quiesce(owner);
             Assert.IsNull(owner.Blocker(200));
             Assert.IsFalse(owner.AbortBeforeStart(generation));
         }
@@ -45,6 +46,7 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsFalse(owner.AbortBeforeStart(second));
             Assert.AreEqual("native_job_active", owner.Blocker(10));
             owner.Finished(context);
+            Quiesce(owner);
             Assert.IsNull(owner.Blocker(10));
         }
 
@@ -56,12 +58,14 @@ namespace MCPForUnityTests.Editor.Services
             object oldContext = new object();
             owner.Started(oldContext);
             owner.Finished(oldContext);
+            Quiesce(owner);
             owner.Reserve("compile-two", 100);
             object currentContext = new object();
             owner.Started(currentContext);
             owner.Finished(oldContext);
             Assert.AreEqual("native_job_active", owner.Blocker(1));
             owner.Finished(currentContext);
+            Quiesce(owner);
             Assert.IsNull(owner.Blocker(1));
         }
 
@@ -93,18 +97,60 @@ namespace MCPForUnityTests.Editor.Services
             owner.Started(context);
             Assert.AreEqual("recovery_required", owner.Blocker(100));
             owner.Finished(context);
+            Quiesce(owner);
             Assert.IsNull(owner.Blocker(101));
         }
 
         [Test]
-        public void SuccessfulFinishBeforeReloadLeavesNoPendingReservation()
+        public void SuccessfulFinishBeforeReloadRetainsWitnessUntilNativeQuiescence()
         {
             var owner = new OwnedCompilationReservation();
             owner.Reserve("compile-one", 100);
             object context = new object();
             owner.Started(context);
             owner.Finished(context);
-            Assert.IsNull(new OwnedCompilationReservation(owner.State).Blocker(1));
+            var restored = new OwnedCompilationReservation(owner.State);
+            Assert.AreEqual("native_job_active", restored.Blocker(1));
+            restored.ObserveQuiescence(false);
+            Assert.AreEqual("native_job_active", restored.Blocker(1));
+            restored.ObserveQuiescence(true);
+            Assert.IsNull(restored.Blocker(1));
+        }
+
+        [Test]
+        public void RefreshFinishCannotReleaseBeforeTheOwnedTriggerDecision()
+        {
+            var owner = new OwnedCompilationReservation();
+            string generation = owner.Reserve("compile-one", 100, refreshing: true);
+            object context = new object();
+            owner.Started(context);
+            owner.Finished(context);
+            Quiesce(owner);
+            Assert.AreEqual("native_job_active", owner.Blocker(1));
+            Assert.IsTrue(owner.CompleteRefreshDecision(generation));
+            owner.ObserveQuiescence(true);
+            Assert.AreEqual("native_job_active", owner.Blocker(1), "Pipeline Finished alone cannot admit inside its callback turn.");
+            owner.ObserveQuiescence(false);
+            Assert.AreEqual("native_job_active", owner.Blocker(1), "Raw compile/import/reload activity still owns resources.");
+            owner.ObserveQuiescence(true);
+            Assert.IsNull(owner.Blocker(1));
+        }
+
+        [Test]
+        public void ZeroEventRefreshFallsThroughToPendingExplicitRequest()
+        {
+            var owner = new OwnedCompilationReservation();
+            string generation = owner.Reserve("compile-one", 100, refreshing: true);
+            Assert.IsFalse(owner.CompleteRefreshDecision(generation));
+            Quiesce(owner);
+            Assert.AreEqual("native_job_active", owner.Blocker(1));
+            Assert.IsTrue(owner.AbortBeforeStart(generation));
+        }
+
+        private static void Quiesce(OwnedCompilationReservation owner)
+        {
+            owner.ObserveQuiescence(true);
+            owner.ObserveQuiescence(true);
         }
     }
 }

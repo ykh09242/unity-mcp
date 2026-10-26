@@ -14,8 +14,11 @@ namespace MCPForUnity.Editor.Tools
             if (token?.Type != JTokenType.String || !CompilationLedger.ValidId(token.Value<string>()))
                 return new ErrorResponse("compile_id must contain 32 lowercase hexadecimal characters.");
             var evidence = CompilationJobTracker.Ledger.Query(token.Value<string>());
-            evidence["native_coordination"] = JObject.FromObject(CompilationJobTracker.CoordinationStatus(token.Value<string>()));
-            return new SuccessResponse("Compilation request evidence.", evidence);
+            var response = JObject.FromObject(new SuccessResponse("Compilation request evidence.", evidence));
+            // Older servers strictly validate data as compile_job@1. Keep diagnostics
+            // outside that ledger so a new native peer preserves their compiler result.
+            response["native_coordination"] = JObject.FromObject(CompilationJobTracker.CoordinationStatus(token.Value<string>()));
+            return response;
         }
     }
 }

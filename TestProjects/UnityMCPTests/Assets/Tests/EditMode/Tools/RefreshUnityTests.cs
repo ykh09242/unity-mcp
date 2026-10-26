@@ -14,6 +14,94 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class RefreshUnityTests
     {
+        [TestCase("all", false, false)]
+        [TestCase("all", true, false)]
+        [TestCase("assets", false, false)]
+        [TestCase("assets", true, false)]
+        [TestCase("all", false, true)]
+        [TestCase("all", true, true)]
+        public void OwnedRefreshCycleIsTrackedWithoutIssuingARedundantVoidRequest(string scope, bool finishesInsideRefresh, bool refreshThrows)
+        {
+            var running = typeof(TestRunStatus).GetField("_isRunning", BindingFlags.NonPublic | BindingFlags.Static);
+            object previousRun = running.GetValue(null);
+            var request = RefreshUnity.RequestCompilation;
+            var refresh = RefreshUnity.RefreshAssets;
+            var compiling = RefreshUnity.IsCompiling;
+            var ledger = RefreshUnity.LedgerOverride;
+            var reservation = RefreshUnity.ReservationOverride;
+            var owner = new OwnedCompilationReservation();
+            var tracked = new CompilationLedger("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "C:/fixture", _ => { });
+            const string id = "11111111111111111111111111111111";
+            object context = new object();
+            try
+            {
+                running.SetValue(null, false);
+                RefreshUnity.LedgerOverride = tracked;
+                RefreshUnity.ReservationOverride = owner;
+                RefreshUnity.IsCompiling = () => false;
+                RefreshUnity.RequestCompilation = () =>
+                    Assert.Fail("The already observed owned refresh cycle must satisfy this goal without a second void trigger.");
+                RefreshUnity.RefreshAssets = _ =>
+                {
+                    Assert.AreEqual("native_job_active", owner.Blocker(EditorApplication.timeSinceStartup));
+                    owner.Started(context);
+                    tracked.Started(context);
+                    if (finishesInsideRefresh)
+                    {
+                        owner.Finished(context);
+                        tracked.Finished(context);
+                        owner.ObserveQuiescence(true);
+                        owner.ObserveQuiescence(true);
+                        Assert.IsNotNull(owner.State, "Early finish must not retire before the explicit-trigger decision.");
+                    }
+                    if (refreshThrows)
+                        throw new InvalidOperationException("controlled refresh failure after native start");
+                };
+                var response = ToJObject(
+                    RefreshUnity
+                        .HandleCommand(
+                            new JObject
+                            {
+                                ["scope"] = scope,
+                                ["compile"] = "request",
+                                ["compile_id"] = id,
+                            }
+                        )
+                        .GetAwaiter()
+                        .GetResult()
+                );
+                Assert.AreEqual(!refreshThrows, (bool)response["success"]);
+                if (!refreshThrows)
+                {
+                    Assert.IsFalse((bool)response["data"]["compile_requested"]);
+                    Assert.AreEqual("refresh", (string)response["data"]["compilation_trigger"]);
+                    Assert.IsTrue((bool)response["data"]["compilation_goal_satisfied"]);
+                    Assert.IsTrue((bool)response["data"]["compile_started"]);
+                    Assert.AreEqual(id, (string)response["data"]["compilation"]["compile_id"]);
+                    Assert.AreEqual(finishesInsideRefresh ? "finished" : "running", (string)response["data"]["compilation"]["state"]);
+                }
+                Assert.IsNotNull(owner.State, "A public return/failure cannot retire native ownership before quiescence.");
+                if (!finishesInsideRefresh)
+                {
+                    owner.Finished(context);
+                    tracked.Finished(context);
+                }
+                owner.ObserveQuiescence(true);
+                Assert.IsNotNull(owner.State);
+                owner.ObserveQuiescence(true);
+                Assert.IsNull(owner.State);
+            }
+            finally
+            {
+                RefreshUnity.RequestCompilation = request;
+                RefreshUnity.RefreshAssets = refresh;
+                RefreshUnity.IsCompiling = compiling;
+                RefreshUnity.LedgerOverride = ledger;
+                RefreshUnity.ReservationOverride = reservation;
+                running.SetValue(null, previousRun);
+            }
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void ExplicitCompileReservesBeforeTriggerAndPreStartThrowReleases(bool fail)

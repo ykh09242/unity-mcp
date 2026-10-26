@@ -24,9 +24,17 @@ Status and cancellation remain available through the reviewed control commands.
   no per-invocation completion handle for this API; an up-to-date Resolve can emit no
   package registration event. Actual compilation/import flags still apply.
 - An owned `refresh_unity` compilation request reserves before the call that queues
-  compilation. Its matching pipeline start/finish events, including a finish with no
-  compiled assemblies, retire that reservation. Actual Editor compilation/import and
-  reload state remain barriers independently. A missing event at the existing caller
+  compilation, including its synchronous asset refresh. If that owned refresh itself
+  produces an observed pipeline start, its cycle satisfies the compilation goal and
+  the tool skips a redundant void compilation request. The response distinguishes
+  `compilation_trigger: refresh`, `compilation_goal_satisfied: true` and
+  `compile_requested: false`; clients still inspect the returned compile job for
+  completion and diagnostics. This observes a cycle, not a source revision verdict.
+  A zero-event refresh falls through to the explicit compilation request.
+  Matching pipeline start/finish events, including a finish with no compiled assemblies,
+  retain ownership until the refresh decision has settled and later Editor updates
+  observe raw compilation/import/reload quiescence. A known finish witness survives
+  reload; an unfinished context does not. A missing event at the existing caller
   observation deadline becomes `recovery_required`, never a fabricated release. A
   lost event context across reload also requires recovery. Synchronous refresh without
   an explicit compilation request does not leave a speculative pending reservation.
