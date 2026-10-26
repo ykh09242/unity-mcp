@@ -27,6 +27,8 @@ import uuid
 
 import tomllib
 
+from core.endpoint_logging import endpoint_for_log, protect_httpx_endpoint_logs
+
 try:
     import httpx
 
@@ -265,12 +267,12 @@ class TelemetryConfig:
         else:
             self.endpoint = default_ep
         self.enabled = cfg_enabled and bool(self.endpoint) and not self._is_disabled()
-        try:
-            logger.info(
-                f"Telemetry configured: endpoint={self.endpoint} (default={default_ep}), timeout_env={os.environ.get('UNITY_MCP_TELEMETRY_TIMEOUT') or '<unset>'}"
-            )
-        except Exception:
-            pass
+        protect_httpx_endpoint_logs()
+        logger.info(
+            "Telemetry configured: endpoint=%s (default=%s)",
+            endpoint_for_log(self.endpoint) if self.endpoint else "<unset>",
+            endpoint_for_log(default_ep) if default_ep else "<unset>",
+        )
 
         # Local storage for UUID and milestones
         self.data_dir = self._get_data_directory()
@@ -324,19 +326,27 @@ class TelemetryConfig:
         try:
             parsed = urlparse(candidate)
             if parsed.scheme not in ("https", "http"):
-                raise ValueError(f"Unsupported scheme: {parsed.scheme}")
+                raise ValueError("Unsupported endpoint scheme")
             # Basic sanity: require network location and path
-            if not parsed.netloc:
-                raise ValueError("Missing netloc in endpoint")
+            if (
+                not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.fragment
+                or parsed.port == 0
+                or any(char.isspace() or ord(char) < 32 for char in candidate)
+                or "\\" in candidate
+            ):
+                raise ValueError("Invalid endpoint authority or URL components")
             # Reject localhost/loopback endpoints in production to avoid accidental local overrides
             host = parsed.hostname or ""
             if host in ("localhost", "127.0.0.1", "::1"):
                 raise ValueError("Localhost endpoints are not allowed for telemetry")
             return candidate
-        except Exception as e:
+        except ValueError:
             logger.debug(
-                f"Invalid telemetry endpoint '{candidate}', using default. Error: {e}",
-                exc_info=True,
+                "Invalid telemetry endpoint %s, using default",
+                endpoint_for_log(candidate),
             )
             return fallback
 
@@ -467,7 +477,7 @@ class TelemetryCollector:
                             )
                         self._send_telemetry(rec)
                     except Exception:
-                        logger.debug("Telemetry worker send failed", exc_info=True)
+                        logger.debug("Telemetry worker send failed")
                     finally:
                         with contextlib.suppress(Exception):
                             self._queue.task_done()
@@ -547,11 +557,11 @@ class TelemetryCollector:
                         else:
                             logger.warning(f"Telemetry failed (urllib): HTTP {resp.getcode()}")
                 except urllib.error.URLError as ue:
-                    logger.warning(f"Telemetry send failed (urllib): {ue}")
+                    logger.warning("Telemetry send failed (urllib): %s", type(ue).__name__)
 
         except Exception as e:
             # Never let telemetry errors interfere with app functionality
-            logger.debug(f"Telemetry send failed: {e}")
+            logger.debug("Telemetry send failed: %s", type(e).__name__)
 
 
 # Global telemetry instance
