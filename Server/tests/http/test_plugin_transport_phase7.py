@@ -12,15 +12,16 @@ from threading import Event
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
+from services.operation_policy import OperationMode, resolve_operation_policy
 from transport.large_result_assembler import CHUNK_PAYLOAD_BYTES, MAGIC
 from transport.plugin_hub import PluginHub
 from transport.result_gzip import GZIP_WORKING_BYTES
 from test_plugin_transport_architecture import (
-    barrier,
     begin,
     client,
     payload_and_frames,
     register,
+    requester_call,
     start_command,
 )
 
@@ -40,6 +41,28 @@ def receive(client, wire):
     if message["type"] == "websocket.close":
         raise WebSocketDisconnect(message.get("code", 1000), message.get("reason", ""))
     return json.loads(message["text"])
+
+
+def barrier(client, wire, session_id):
+    """Observe frame processing with a reviewed control while owned work is pending."""
+    assert (
+        resolve_operation_policy("get_editor_state", {}, native=True).mode == OperationMode.CONTROL
+    )
+
+    async def execute():
+        session = await PluginHub._registry.get_session(session_id)
+        assert session is not None
+        return await requester_call(
+            client, session.user_id, PluginHub.send_command, session_id, "get_editor_state", {}
+        )
+
+    task = client.portal.start_task_soon(execute)
+    command = receive(client, wire)
+    assert command["type"] == "execute"
+    assert command["name"] == "get_editor_state"
+    assert command["params"] == {}
+    wire.send_json({"type": "command_result", "id": command["id"], "result": {"success": True}})
+    assert task.result(timeout=watchdog_timeout()) == {"success": True}
 
 
 def compressed(command_id):
