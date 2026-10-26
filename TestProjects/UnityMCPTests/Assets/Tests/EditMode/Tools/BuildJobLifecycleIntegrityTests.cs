@@ -200,6 +200,46 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void BatchDoesNotAdvancePastAPublicTerminalChildUntilItsOwnedCallbackSettles()
+        {
+            var batch = new BatchJob("local-owned-child") { State = BuildJobState.Building };
+            BuildJob first = Child();
+            BuildJob second = Child();
+            batch.Children.Add(first);
+            batch.Children.Add(second);
+            int prepared = 0;
+            try
+            {
+                BuildRunner.ScheduleNextBatchBuild(
+                    batch,
+                    index =>
+                    {
+                        prepared++;
+                        BuildJob child = batch.Children[index];
+                        BuildRunner.ScheduleBuild(child, new BuildPlayerOptions());
+                        child.State = BuildJobState.Cancelled;
+                        return child;
+                    }
+                );
+                CaptureCallbacks();
+                // Invoke only the watcher first, deliberately withholding the native
+                // callback. A cancelled public status must not schedule child two.
+                var watcher = CurrentCallbacks().Single(callback => ownedCallbacks.Contains(callback) && callback.Method.Name.Contains("WaitForCompletion"));
+                watcher();
+                Assert.AreEqual(1, prepared);
+                Assert.IsTrue(BuildRunner.HasNativeOwner);
+                AdvanceOwnedCallbacks();
+                Assert.AreEqual(2, prepared);
+                AdvanceOwnedCallbacks();
+                Assert.IsFalse(BuildRunner.HasNativeOwner);
+            }
+            finally
+            {
+                CaptureCallbacks();
+            }
+        }
+
+        [Test]
         public void CreatorExceptionFailsChildAndCompletesWithoutBuildCallbacks()
         {
             var batch = new BatchJob("local-batch") { State = BuildJobState.Building };

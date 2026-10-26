@@ -338,6 +338,10 @@ namespace MCPForUnity.Editor.Tools.Build
 
             void WaitForCompletion()
             {
+                // Public terminal state and elapsed time cannot advance a batch past
+                // a child whose scheduled/native callback still owns cleanup.
+                if (NativeOwners.Contains(child.JobId))
+                    return;
                 if (DateTime.UtcNow - watchStart > maxWait)
                 {
                     EditorApplication.update -= WaitForCompletion;
