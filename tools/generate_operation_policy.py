@@ -37,7 +37,7 @@ def render() -> str:
     rules = []
     for rule in POLICY_RULES:
         for action in rule.actions or (None,):
-            key = rule.command + "\n" + (action or "")
+            key = rule.command + "\n" + ("0" if action is None else "1" + action)
             reason = (
                 "reviewed_control"
                 if rule.mode.value == "control"
@@ -159,7 +159,7 @@ namespace MCPForUnity.Editor.Services
             }
             if (commandName == "manage_editor" && action == "stop")
                 return Exclusive("play_transition", ToolOperationLifetime.TriggerOnly);
-            return Rules.TryGetValue(commandName + "\n" + (action ?? ""), out var policy) ? policy : Exclusive("unreviewed_operation");
+            return Rules.TryGetValue(commandName + "\n" + (action == null ? "0" : "1" + action), out var policy) ? policy : Exclusive("unreviewed_operation");
         }
     }
 }

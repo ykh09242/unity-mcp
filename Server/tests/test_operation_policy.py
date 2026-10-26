@@ -223,3 +223,28 @@ def test_menu_inspection_is_not_a_reviewed_shared_read():
     policy = resolve_operation_policy("inspect_menu_item", {}, native=True)
     # Then
     assert policy.mode == OperationMode.EXCLUSIVE
+
+
+@pytest.mark.parametrize(
+    "name,missing_mode",
+    [
+        ("ping", "control"),
+        ("get_selection", "shared_read"),
+        ("find_gameobjects", "shared_read"),
+        ("manage_build", "exclusive"),
+        ("query_physics", "exclusive"),
+        ("manage_ugui", "exclusive"),
+    ],
+)
+def test_missing_null_empty_and_nonstring_actions_have_distinct_contracts(name, missing_mode):
+    # Given / When
+    missing = resolve_operation_policy(name, {}, native=True)
+    null = resolve_operation_policy(name, {"action": None}, native=True)
+    malformed = [
+        resolve_operation_policy(name, {"action": value}, native=True)
+        for value in ("", False, 0, [], {})
+    ]
+    # Then
+    assert missing.mode.value == missing_mode
+    assert null == missing
+    assert all(policy.mode == OperationMode.EXCLUSIVE for policy in malformed)

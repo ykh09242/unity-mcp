@@ -57,5 +57,24 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
             // Then
             Assert.That(policy.Lifetime.ToString(), Is.EqualTo(expected));
         }
+
+        [TestCase("ping", "Control")]
+        [TestCase("get_selection", "SharedRead")]
+        [TestCase("find_gameobjects", "SharedRead")]
+        [TestCase("manage_build", "Exclusive")]
+        [TestCase("query_physics", "Exclusive")]
+        [TestCase("manage_ugui", "Exclusive")]
+        public void MissingNullEmptyAndNonstringActionsHaveDistinctContracts(string command, string missingMode)
+        {
+            // Given / When
+            var missing = ToolOperationPolicy.Resolve(command, new JObject(), true);
+            var explicitNull = ToolOperationPolicy.Resolve(command, new JObject { ["action"] = JValue.CreateNull() }, true);
+            // Then
+            Assert.That(missing.Mode.ToString(), Is.EqualTo(missingMode));
+            Assert.That(explicitNull.Mode, Is.EqualTo(missing.Mode));
+            Assert.That(explicitNull.Lifetime, Is.EqualTo(missing.Lifetime));
+            foreach (var action in new JToken[] { new JValue(""), new JValue(false), new JValue(0), new JArray(), new JObject() })
+                Assert.That(ToolOperationPolicy.Resolve(command, new JObject { ["action"] = action }, true).Mode, Is.EqualTo(ToolOperationMode.Exclusive));
+        }
     }
 }
