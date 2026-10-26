@@ -146,6 +146,33 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         [Test]
+        public void UnixMountSelectionUsesComponentBoundariesAndLongestMatch()
+        {
+            string[] mounts = { "/", "/mnt/data", "/mnt/data/models" };
+            Assert.AreEqual(0, AssetDiskBudget.SelectUnixDriveIndex("/mnt/database/Project", mounts));
+            Assert.AreEqual(0, AssetDiskBudget.SelectUnixDriveIndex("/mnt/data2/Project", mounts));
+            Assert.AreEqual(1, AssetDiskBudget.SelectUnixDriveIndex("/mnt/data/Project", mounts));
+            Assert.AreEqual(2, AssetDiskBudget.SelectUnixDriveIndex("/mnt/data/models/Project", mounts));
+            Assert.AreEqual(2, AssetDiskBudget.SelectUnixDriveIndex("/mnt/data/models", mounts));
+        }
+
+        [Test]
+        public void UnixMountSelectionKeepsCaseDistinctPathsOnTheirActualMount()
+        {
+            string[] mounts = { "/", "/mnt/data" };
+            Assert.AreEqual(0, AssetDiskBudget.SelectUnixDriveIndex("/mnt/DATA/Project", mounts));
+            Assert.AreEqual(1, AssetDiskBudget.SelectUnixDriveIndex("/mnt/data/Project", mounts));
+        }
+
+        [Test]
+        public void MacMountSelectionRejectsAmbiguousNoncanonicalCasing()
+        {
+            string[] mounts = { "/", "/Volumes/Data" };
+            Assert.Throws<IOException>(() => AssetDiskBudget.SelectUnixDriveIndex("/Volumes/data/Project", mounts, isMacOS: true));
+            Assert.AreEqual(1, AssetDiskBudget.SelectUnixDriveIndex("/Volumes/Data/Project", mounts, isMacOS: true));
+        }
+
+        [Test]
         public void ThirdTransferWaitsAndCancellationDoesNotConsumeAQuotaSlot()
         {
             using var first = AssetDiskBudget.ReserveDownloadAsync(project, 0, CancellationToken.None).GetAwaiter().GetResult();

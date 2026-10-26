@@ -64,7 +64,16 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
             if (ProbeFreeBytesForTests != null)
                 return ProbeFreeBytesForTests(probe);
             if (Path.DirectorySeparatorChar != '\\')
-                return new DriveInfo(probe).AvailableFreeSpace;
+            {
+                // Unity Mono's DriveInfo(string) accepts an arbitrary path but maps it to
+                // a mount with a case-insensitive prefix check that ignores path boundaries.
+                // Select a listed drive ourselves, then query that DriveInfo object directly.
+                DriveInfo[] drives = DriveInfo.GetDrives();
+                string[] mounts = new string[drives.Length];
+                for (int i = 0; i < drives.Length; i++)
+                    mounts[i] = drives[i].Name;
+                return drives[SelectUnixDriveIndex(probe, mounts, RuntimeInformation.IsOSPlatform(OSPlatform.OSX))].AvailableFreeSpace;
+            }
             if (!GetDiskFreeSpaceEx(probe, out ulong available, IntPtr.Zero, IntPtr.Zero))
                 throw new IOException($"Unable to inspect project disk capacity (Windows error {Marshal.GetLastWin32Error()}).");
             return available > long.MaxValue ? long.MaxValue : (long)available;
@@ -92,6 +101,41 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
 
         private static string WithTrailingSeparator(string path) =>
             path.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) ? path : path + Path.DirectorySeparatorChar;
+
+        internal static int SelectUnixDriveIndex(string directory, string[] mountNames, bool isMacOS = false)
+        {
+            int best = -1;
+            int length = -1;
+            int caseOnlyLength = -1;
+            for (int i = 0; i < mountNames.Length; i++)
+            {
+                string mount = mountNames[i];
+                if (string.IsNullOrEmpty(mount) || mount[0] != '/')
+                    continue;
+                mount = mount.TrimEnd('/');
+                if (mount.Length == 0)
+                    mount = "/";
+                if (ContainsUnixPath(directory, mount, StringComparison.Ordinal) && mount.Length > length)
+                {
+                    best = i;
+                    length = mount.Length;
+                }
+                else if (isMacOS && ContainsUnixPath(directory, mount, StringComparison.OrdinalIgnoreCase))
+                    caseOnlyLength = Math.Max(caseOnlyLength, mount.Length);
+            }
+            if (best < 0)
+                throw new IOException("Unable to identify the project filesystem for the asset disk capacity check.");
+            if (isMacOS && caseOnlyLength > length)
+                throw new IOException(
+                    "Project path casing differs from a mounted filesystem. Open the project using its canonical mount path before generating assets."
+                );
+            return best;
+        }
+
+        private static bool ContainsUnixPath(string directory, string mount, StringComparison comparison) =>
+            string.Equals(directory, mount, comparison)
+            || (mount == "/" && directory.StartsWith("/", comparison))
+            || (directory.Length > mount.Length && directory.StartsWith(mount, comparison) && directory[mount.Length] == '/');
 
         [DllImport("kernel32.dll", EntryPoint = "GetDiskFreeSpaceExW", CharSet = CharSet.Unicode, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
