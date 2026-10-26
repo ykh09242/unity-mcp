@@ -370,6 +370,122 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void CubePrefabRootEditPreservesNativeMeshAndMaterialReferences()
+        {
+            var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            cube.transform.SetParent(root.transform, false);
+            string path = folder + "/Cube.prefab";
+            PrefabUtility.SaveAsPrefabAsset(root, path);
+            var source = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            Mesh mesh = source.GetComponentInChildren<MeshFilter>().sharedMesh;
+            Material material = source.GetComponentInChildren<MeshRenderer>().sharedMaterial;
+            byte[] before = System.IO.File.ReadAllBytes(path);
+            string token = PreviewRootScale(path);
+            CollectionAssert.AreEqual(before, System.IO.File.ReadAllBytes(path), "Preview must not save the source.");
+            var result = Prefab(new JObject { ["action"] = "apply_preview", ["preview_id"] = token });
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            source = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            Assert.AreEqual(new Vector3(1.25f, 1, 1), source.transform.localScale);
+            Assert.AreSame(mesh, source.GetComponentInChildren<MeshFilter>().sharedMesh);
+            Assert.AreSame(material, source.GetComponentInChildren<MeshRenderer>().sharedMaterial);
+        }
+
+        [Test]
+        public void MeshPrefabRootEditPreservesSharedAssetBytesIdentitiesAndAssetInventory()
+        {
+            var assets = CreateMeshPrefab();
+            string meshId = AssetIdentity(assets.mesh),
+                materialId = AssetIdentity(assets.material);
+            string[] assetPaths = { assets.meshPath, assets.meshPath + ".meta", assets.materialPath, assets.materialPath + ".meta" };
+            var before = assetPaths.ToDictionary(path => path, System.IO.File.ReadAllBytes);
+            string[] inventory = AssetDatabase.FindAssets("", new[] { folder }).OrderBy(guid => guid, StringComparer.Ordinal).ToArray();
+            string token = PreviewRootScale(assets.prefabPath);
+            var result = Prefab(new JObject { ["action"] = "apply_preview", ["preview_id"] = token });
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            var source = AssetDatabase.LoadAssetAtPath<GameObject>(assets.prefabPath);
+            Assert.AreEqual(new Vector3(1.25f, 1, 1), source.transform.localScale);
+            Assert.AreSame(assets.mesh, source.GetComponent<MeshFilter>().sharedMesh);
+            Assert.AreSame(assets.material, source.GetComponent<MeshRenderer>().sharedMaterial);
+            Assert.AreSame(assets.mesh, source.transform.Find("SharedBorrower").GetComponent<MeshFilter>().sharedMesh);
+            Assert.AreSame(assets.material, source.transform.Find("SharedBorrower").GetComponent<MeshRenderer>().sharedMaterial);
+            Assert.AreEqual(meshId, AssetIdentity(source.GetComponent<MeshFilter>().sharedMesh));
+            Assert.AreEqual(materialId, AssetIdentity(source.GetComponent<MeshRenderer>().sharedMaterial));
+            foreach (string path in assetPaths)
+                CollectionAssert.AreEqual(before[path], System.IO.File.ReadAllBytes(path), path);
+            CollectionAssert.AreEqual(inventory, AssetDatabase.FindAssets("", new[] { folder }).OrderBy(guid => guid, StringComparer.Ordinal).ToArray());
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void MeshOrMaterialDependencyWriterRejectsPrefabRootEdit(bool editMaterial)
+        {
+            var assets = CreateMeshPrefab();
+            string token = PreviewRootScale(assets.prefabPath);
+            if (editMaterial)
+            {
+                assets.material.color = Color.red;
+                EditorUtility.SetDirty(assets.material);
+            }
+            else
+            {
+                assets.mesh.vertices = new[] { Vector3.zero, Vector3.right * 2, Vector3.up };
+                EditorUtility.SetDirty(assets.mesh);
+            }
+            AssetDatabase.SaveAssets();
+            byte[] prefabBefore = System.IO.File.ReadAllBytes(assets.prefabPath);
+            var result = Prefab(new JObject { ["action"] = "apply_preview", ["preview_id"] = token });
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("drifted", result.Value<string>("error"));
+            CollectionAssert.AreEqual(prefabBefore, System.IO.File.ReadAllBytes(assets.prefabPath));
+            Assert.AreEqual(Vector3.one, AssetDatabase.LoadAssetAtPath<GameObject>(assets.prefabPath).transform.localScale);
+        }
+
+        private string PreviewRootScale(string path) =>
+            Token(
+                Prefab(
+                    new JObject
+                    {
+                        ["action"] = "preview_modify_contents",
+                        ["prefabPath"] = path,
+                        ["scale"] = new JArray(1.25, 1, 1),
+                    }
+                )
+            );
+
+        private (Mesh mesh, Material material, string meshPath, string materialPath, string prefabPath) CreateMeshPrefab()
+        {
+            var mesh = new Mesh
+            {
+                name = "SharedMesh",
+                vertices = new[] { Vector3.zero, Vector3.right, Vector3.up },
+                triangles = new[] { 0, 1, 2 },
+            };
+            string meshPath = folder + "/SharedMesh.asset";
+            AssetDatabase.CreateAsset(mesh, meshPath);
+            var shader = Shader.Find("Sprites/Default");
+            Assert.IsNotNull(shader, "The native fixture requires an installed built-in Sprite shader.");
+            var material = new Material(shader) { name = "SharedMaterial" };
+            string materialPath = folder + "/SharedMaterial.mat";
+            AssetDatabase.CreateAsset(material, materialPath);
+            root.AddComponent<MeshFilter>().sharedMesh = mesh;
+            root.AddComponent<MeshRenderer>().sharedMaterial = material;
+            var borrower = new GameObject("SharedBorrower");
+            borrower.transform.SetParent(root.transform, false);
+            borrower.AddComponent<MeshFilter>().sharedMesh = mesh;
+            borrower.AddComponent<MeshRenderer>().sharedMaterial = material;
+            string prefabPath = folder + "/Mesh.prefab";
+            PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+            return (mesh, material, meshPath, materialPath, prefabPath);
+        }
+
+        private static string AssetIdentity(Object value)
+        {
+            Assert.IsNotNull(value);
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(value, out string guid, out long localId));
+            return guid + ":" + localId;
+        }
+
+        [Test]
         public void PrefabDependencyWriterAfterPreview_RejectsRootEdit()
         {
             var material = new TestPhysicsMaterial("Original");

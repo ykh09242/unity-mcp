@@ -16,6 +16,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
     // A compare-before-save plan for bounded native root fields, not an asset transaction.
     internal static class PrefabSourcePlans
     {
+        // Preserved unchanged through isolated load/save; these are not scene-edit property codecs.
+        private static readonly HashSet<Type> PreservedSourceTypes = new HashSet<Type> { typeof(MeshFilter), typeof(MeshRenderer) };
         private const double Lifetime = 600;
         private const long MaxBytes = 256L * 1024 * 1024;
         private static readonly Dictionary<string, Plan> Previews = new Dictionary<string, Plan>(StringComparer.Ordinal);
@@ -235,7 +237,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     var component = components[index];
                     if (component == null)
                         throw SourceRestriction(root, node, "<missing script>", "missing component script at component index " + index);
-                    if (!SceneEditValues.Types.Values.Contains(component.GetType()))
+                    if (!SceneEditValues.Types.Values.Contains(component.GetType()) && !PreservedSourceTypes.Contains(component.GetType()))
                         throw SourceRestriction(
                             root,
                             node,
