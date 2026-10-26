@@ -1288,7 +1288,7 @@ async def test_budget_deadline_cancels_slow_collection_and_records_recoverable_e
 @pytest.mark.asyncio
 @pytest.mark.parametrize("repeat_cancel", [False, True])
 async def test_attempt_deadline_retains_lease_until_collector_cleanup_finishes(
-    setup, repeat_cancel
+    setup, repeat_cancel, monkeypatch
 ):
     from services.reference_graph.collection_protocol import (
         CollectionBudgetExceeded,
@@ -1297,9 +1297,21 @@ async def test_attempt_deadline_retains_lease_until_collector_cleanup_finishes(
 
     _, workspace, editor, _ = setup
     closing, release = asyncio.Event(), asyncio.Event()
+    real_timeout, deadline = asyncio.timeout, None
+
+    def capture_timeout(delay):
+        nonlocal deadline
+        deadline = real_timeout(delay)
+        return deadline
+
+    monkeypatch.setattr(asyncio, "timeout", capture_timeout)
 
     async def collect(action, **params):
         if action == "inventory":
+            # Expire the real attempt scope only once the owned operation starts;
+            # slow SQLite/fixture setup must not consume this test's trigger.
+            assert deadline is not None
+            deadline.reschedule(asyncio.get_running_loop().time())
             try:
                 await asyncio.Event().wait()
             finally:
@@ -1307,7 +1319,7 @@ async def test_attempt_deadline_retains_lease_until_collector_cleanup_finishes(
                 await release.wait()
         return await editor(action, **params)
 
-    engine = Reconciler(workspace, collect, allowed, limits=CollectionLimits(max_seconds=1))
+    engine = Reconciler(workspace, collect, allowed, limits=CollectionLimits())
     attempt = asyncio.create_task(engine.reconcile())
     try:
         await asyncio.wait_for(closing.wait(), watchdog_timeout())
