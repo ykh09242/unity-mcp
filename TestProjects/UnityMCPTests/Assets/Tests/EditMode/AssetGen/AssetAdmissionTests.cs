@@ -15,6 +15,71 @@ namespace MCPForUnityTests.Editor.AssetGen
     [Parallelizable(ParallelScope.None)]
     public class AssetAdmissionTests
     {
+        // Complete 1x1 RGB baseline JPEG, encoded from an owned red pixel with System.Drawing.
+        internal static byte[] OnePixelJpeg() =>
+            Convert.FromBase64String(
+                "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/"
+                    + "2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/"
+                    + "8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2Jy"
+                    + "ggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLD"
+                    + "xMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3"
+                    + "AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6"
+                    + "goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z"
+            );
+
+        [Test]
+        public void Jpeg_CompleteFixturePasses_AndTruncatedSegmentFails()
+        {
+            var admission = new ImageAdmission();
+            Inspect(admission, OnePixelJpeg(), ".jpg");
+            Assert.AreEqual(8, admission.WorkBytes);
+            var error = Assert.Throws<InvalidDataException>(() => Inspect(new ImageAdmission(), new byte[] { 255, 216, 255, 224, 0, 16 }, ".jpg"));
+            StringAssert.Contains("exceeds file length", error.Message);
+        }
+
+        [Test]
+        public void ImagePath_DirectoryRejectedWithoutRemovingIt()
+        {
+            string directory = Path.Combine(Path.GetTempPath(), "asset-admission-" + Guid.NewGuid().ToString("N") + ".png");
+            Directory.CreateDirectory(directory);
+            try
+            {
+                var error = Assert.Throws<InvalidDataException>(() => new ImageAdmission().File(directory));
+                StringAssert.Contains("image path is a directory", error.Message);
+                Assert.IsTrue(Directory.Exists(directory));
+            }
+            finally
+            {
+                Directory.Delete(directory);
+            }
+        }
+
+        [Test]
+        public void CatalogMetadataPagesAndDetailsFitProviderAdmission()
+        {
+            int seen = 0;
+            string cursor = null;
+            do
+            {
+                string url = "https://api.fal.ai/v1/models?category=text-to-audio&limit=100" + (cursor == null ? "" : "&cursor=" + cursor);
+                using var response = FalModelCatalogTests.PagedCatalogResponse(new HttpRequestSpec { Url = url }, 201);
+                var page = BoundedJson.ParseObject(response.Text);
+                var models = (Newtonsoft.Json.Linq.JArray)page["models"];
+                Assert.AreEqual(Math.Min(100, 201 - seen), models.Count);
+                Assert.IsTrue(models.All(model => model["openapi"] == null));
+                seen += models.Count;
+                cursor = (string)page["next_cursor"];
+                Assert.AreEqual(seen < 201, (bool)page["has_more"]);
+            } while (cursor != null);
+            Assert.AreEqual(201, seen);
+            using var details = FalModelCatalogTests.PagedCatalogResponse(
+                new HttpRequestSpec { Url = "https://api.fal.ai/v1/models?endpoint_id=test%2Fmusic-0000&expand=openapi-3.0&limit=5" },
+                201
+            );
+            var expanded = BoundedJson.ParseObject(details.Text);
+            Assert.IsNotNull(expanded["models"][0]["openapi"]);
+        }
+
         private static byte[] Png(int width, int height, byte depth = 8, int frames = 1)
         {
             using var stream = new MemoryStream();

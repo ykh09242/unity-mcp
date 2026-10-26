@@ -38,6 +38,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
 
         internal void File(string path, CancellationToken token = default)
         {
+            if (Directory.Exists(path))
+                throw Bad("image path is a directory; provide an image file");
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             Inspect(stream, stream.Length, Path.GetExtension(path), null, token);
         }

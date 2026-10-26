@@ -300,7 +300,25 @@ namespace MCPForUnityTests.Editor.AssetGen
         [TestCase(false), TestCase(true)]
         public void ImageResult_JpegBytesUseJpgExtension_ForDownloadedAndInlineResults(bool inline)
         {
-            byte[] jpeg = { 255, 216, 255, 224, 0, 16 };
+            CheckJpegResult(inline, false);
+        }
+
+        [TestCase(false), TestCase(true)]
+        public void ImageResult_TruncatedJpegNeverReachesImport(bool inline)
+        {
+            CheckJpegResult(inline, true);
+        }
+
+        private void CheckJpegResult(bool inline, bool truncated)
+        {
+            byte[] jpeg = truncated ? new byte[] { 255, 216, 255, 224, 0, 16 } : AssetAdmissionTests.OnePixelJpeg();
+            bool imported = false;
+            AssetGenJobManager.ImportOverrideForTests = (job, path) =>
+            {
+                imported = true;
+                job.AssetPath = path;
+                return job;
+            };
             string env = "MCPFORUNITY_OPENROUTER_API_KEY";
             string old = Environment.GetEnvironmentVariable(env);
             Environment.SetEnvironmentVariable(env, "test-key");
@@ -333,7 +351,20 @@ namespace MCPForUnityTests.Editor.AssetGen
                     }
                 );
                 Pump(job.JobId);
+                if (truncated)
+                {
+                    Assert.AreEqual(AssetGenJobState.Failed, job.State);
+                    StringAssert.Contains("exceeds file length", job.Error);
+                    Assert.IsFalse(imported, "Malformed metadata must be rejected before Unity import.");
+                    Assert.IsNull(job.AssetPath);
+                    Assert.IsNull(job.AssetGuid);
+                    string folder = AssetGenPaths.ToAbsolute(TestFolder);
+                    if (Directory.Exists(folder))
+                        Assert.IsEmpty(Directory.GetFiles(folder, "*.jpg", SearchOption.AllDirectories));
+                    return;
+                }
                 Assert.AreEqual(AssetGenJobState.Done, job.State, job.Error);
+                Assert.IsTrue(imported);
                 StringAssert.EndsWith(".jpg", job.AssetPath);
                 Assert.AreEqual("jpg", job.Format);
             }
