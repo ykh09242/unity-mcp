@@ -25,6 +25,8 @@ Load only the reference needed for the request. The live tool schema wins over a
 3. Apply the requested change with the narrowest suitable tool. A missing optional package is a capability limit, not permission to install it. Enabling a tool group or executing code does not bypass authorization.
 4. Verify the resulting state. For scripts, wait for compilation and inspect diagnostics. For visual work, inspect an image when capture is available. For jobs, poll the returned job ID and distinguish completion from success.
 
+Independent observations may run concurrently after their inputs and Editor target are fixed. Supported connections coordinate same-instance work automatically; keep create/edit/verify dependencies ordered. See [concurrent calls](references/workflows.md#concurrent-calls-and-coordination) for guarantees and limits.
+
 Do not create a fresh scene, switch Play mode, save unrelated scenes or reset project settings simply to satisfy a template.
 
 ## Boundaries That Matter

@@ -2,6 +2,14 @@
 
 Choose the recipe relevant to the request. The JSON envelopes describe a logical tool and its arguments; invoke the corresponding exposed client tool rather than treating these as a separate API. Replace example names/paths/IDs with inspected targets.
 
+## Concurrent Calls And Coordination
+
+Parallelize independent reads whose inputs and Editor target are already known. Keep dependencies ordered: inspect before choosing a target, wait for creation before using its returned ID, and verify a mutation after it settles. A read-looking name or discovery hint does not establish concurrency safety; supported connections classify the actual operation, including preflight and callback effects. Unknown/custom handlers are conservative.
+
+The server coordinates whole invocations for one instance, with local writer fairness; compatible native packages enforce exclusion across separate client/server processes. These are different guarantees, not a global distributed FIFO. Different Editors remain independent. Unity API work stays on the main thread. Reviewed status/cancel requests remain available where the Editor can respond; a synchronous native call or an occupied legacy transaction can delay them.
+
+Pending jobs can retain barriers through native cleanup after an initial response, public terminal result or cancellation acknowledgement. Follow job identity and returned coordination diagnostics. Additive coordination evidence can accompany a result without changing that result's success semantics. `recovery_required` needs inspection and the returned recovery guidance; it is not permission to replay uncertain work. Never retry a whole batch or mutation because a contender was blocked: earlier children may have executed. Automatic coordination preserves authorization, consent and the bound target.
+
 ## Objects And Scenes
 
 Find the target rather than replacing the whole scene:
