@@ -54,7 +54,7 @@ resolved as a package dependency for UPM waits; server connections remain indepe
 of window lifetime.
 :::
 
-Unity package **2.1.0** selects Python server **2.1.0** through its installed
+Unity package **2.1.1** selects Python server **2.1.1** through its installed
 `mcpServerSource` pin and retains the **Python 3.11+** requirement introduced in 1.1.4.
 Install a supported interpreter with `uv python install 3.11`, clear unintended
 server source overrides, and regenerate existing stdio client configurations
