@@ -14,6 +14,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
     {
         private static readonly ArtifactPreparationQueue Workers = new();
         internal const int BackgroundThreshold = 256 * 1024;
+        internal static Action<string> DeleteStageOverrideForTests = null;
         private readonly string root;
         private string path;
         private FileStream stream;
@@ -182,7 +183,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 {
                     try
                     {
-                        File.Delete(SafePathUtility.ResolveWithinRoot(root, path));
+                        string stage = SafePathUtility.ResolveWithinRoot(root, path);
+                        if (DeleteStageOverrideForTests == null)
+                            File.Delete(stage);
+                        else
+                            DeleteStageOverrideForTests(stage);
                     }
                     catch (IOException) { }
                     catch (UnauthorizedAccessException) { }
@@ -192,10 +197,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 {
                     lease?.Dispose();
                     lease = null;
+                    path = null;
                 }
                 else
                     lease?.CompleteTransfer();
-                path = null;
             }
         }
     }

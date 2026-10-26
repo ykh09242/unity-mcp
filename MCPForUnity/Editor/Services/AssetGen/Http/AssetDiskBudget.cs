@@ -44,18 +44,6 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
             return trimmed.Length == 0 ? full : trimmed;
         }
 
-        internal static string ProjectForExtraction(string destination)
-        {
-            string current = ProjectKey(destination);
-            for (string parent = Path.GetDirectoryName(current); parent != null; parent = Path.GetDirectoryName(current))
-            {
-                if (string.Equals(Path.GetFileName(current), "Assets", StringComparison.OrdinalIgnoreCase))
-                    return parent;
-                current = parent;
-            }
-            return ProjectKey(destination);
-        }
-
         private static long Setting(string name, long fallback)
         {
             string text = Environment.GetEnvironmentVariable(name);

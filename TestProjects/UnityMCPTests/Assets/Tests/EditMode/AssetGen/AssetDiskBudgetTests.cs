@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.IO.Compression;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.AssetGen;
@@ -28,6 +29,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         [TearDown]
         public void TearDown()
         {
+            PreparedArtifact.DeleteStageOverrideForTests = null;
             Assert.Zero(AssetDiskBudget.ReservedBytesForTests(project));
             AssetDiskBudget.FreeBytesForTests = null;
             AssetDiskBudget.AggregateBytesForTests = null;
@@ -100,10 +102,16 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         [Test]
-        public void ExtractionUnderAssetsSharesTheProjectLedger()
+        public void NestedAssetsFolderCannotSplitStageAndExtractionBudget()
         {
-            string destination = Path.Combine(project, "Assets", "Generated", "Model");
-            Assert.AreEqual(Path.GetFullPath(project), AssetDiskBudget.ProjectForExtraction(destination));
+            using var input = new MemoryStream(new byte[12]);
+            using var artifact = DownloadedArtifact.ReadAsync(input, 12, 12, project, CancellationToken.None).GetAwaiter().GetResult();
+            string zip = Path.Combine(project, "archive.zip");
+            CreateZip(zip, "model.obj", new byte[9]);
+            string destination = Path.Combine(project, "Assets", "Generated", "Assets", "Model");
+            Assert.Throws<IOException>(() => SafeZipExtractor.ExtractToWithInspection(zip, destination, null, null, null, project));
+            Assert.IsFalse(File.Exists(Path.Combine(destination, "model.obj")));
+            Assert.AreEqual(12, AssetDiskBudget.ReservedBytesForTests(project));
         }
 
         [Test]
@@ -125,6 +133,32 @@ namespace MCPForUnityTests.Editor.AssetGen
             var prepared = PreparedArtifact.CreateAsync(input, project, "model", "meshy", "obj", "obj", CancellationToken.None).GetAwaiter().GetResult();
             Assert.AreEqual(12, AssetDiskBudget.ReservedBytesForTests(project));
             prepared.Dispose();
+            Assert.Zero(AssetDiskBudget.ReservedBytesForTests(project));
+        }
+
+        [Test]
+        public void RepeatedDisposeAfterFailedStageDeletionRetainsCreditUntilCleanupSucceeds()
+        {
+            var prepared = PreparedArtifact
+                .CreateAsync(new HttpResult { Body = new byte[12] }, project, "model", "meshy", "obj", "obj", CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            string stage = (string)typeof(PreparedArtifact).GetField("path", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(prepared);
+            Assert.IsTrue(File.Exists(stage));
+            try
+            {
+                PreparedArtifact.DeleteStageOverrideForTests = _ => { };
+                prepared.Dispose();
+                prepared.Dispose();
+                Assert.IsTrue(File.Exists(stage));
+                Assert.AreEqual(12, AssetDiskBudget.ReservedBytesForTests(project));
+            }
+            finally
+            {
+                PreparedArtifact.DeleteStageOverrideForTests = null;
+                prepared.Dispose();
+            }
+            Assert.IsFalse(File.Exists(stage));
             Assert.Zero(AssetDiskBudget.ReservedBytesForTests(project));
         }
 
@@ -151,7 +185,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             string zip = Path.Combine(project, "archive.zip");
             CreateZip(zip, "model.obj", new byte[9]);
             string destination = Path.Combine(project, "Assets", "Generated");
-            Assert.Throws<IOException>(() => SafeZipExtractor.ExtractTo(zip, destination));
+            Assert.Throws<IOException>(() => SafeZipExtractor.ExtractToWithInspection(zip, destination, null, null, null, project));
             Assert.IsFalse(File.Exists(Path.Combine(destination, "model.obj")));
             Assert.AreEqual(12, AssetDiskBudget.ReservedBytesForTests(project));
         }
@@ -169,7 +203,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                     output.WriteByte(1);
             }
             string destination = Path.Combine(project, "Assets", "Generated");
-            Assert.Throws<IOException>(() => SafeZipExtractor.ExtractTo(zip, destination));
+            Assert.Throws<IOException>(() => SafeZipExtractor.ExtractToWithInspection(zip, destination, null, null, null, project));
             Assert.IsFalse(File.Exists(Path.Combine(destination, "model.obj")));
             Assert.Zero(AssetDiskBudget.ReservedBytesForTests(project));
         }

@@ -34,12 +34,15 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             Action<string> ensureDirectory = null
         ) => ExtractTo(zipPath, destDir, allowedExtensions, cancellationToken, MaxEntries, MaxEntryBytes, MaxTotalBytes, MaxCompressionRatio, ensureDirectory);
 
+        // Production callers supply the trusted Unity project root. A nested folder named
+        // Assets must never redirect expansion reservations to a different ledger key.
         internal static void ExtractToWithInspection(
             string zipPath,
             string destDir,
             ISet<string> allowedExtensions,
             Action<ZipArchive> inspectArchive,
-            Action<string> ensureDirectory
+            Action<string> ensureDirectory,
+            string projectRoot
         ) =>
             ExtractTo(
                 zipPath,
@@ -51,7 +54,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 MaxTotalBytes,
                 MaxCompressionRatio,
                 ensureDirectory,
-                inspectArchive
+                inspectArchive,
+                projectRoot
             );
 
         internal static void ExtractTo(
@@ -64,7 +68,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             long maxTotalBytes,
             int maxRatio,
             Action<string> ensureDirectory = null,
-            Action<ZipArchive> inspectArchive = null
+            Action<ZipArchive> inspectArchive = null,
+            string projectRoot = null
         )
         {
             if (string.IsNullOrEmpty(zipPath))
@@ -74,6 +79,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
 
             cancellationToken.ThrowIfCancellationRequested();
             string destFull = Path.GetFullPath(destDir);
+            string budgetRoot = destFull;
+            if (projectRoot != null)
+            {
+                if (!Path.IsPathRooted(projectRoot))
+                    throw new ArgumentException("An absolute project root is required for project extraction.", nameof(projectRoot));
+                budgetRoot = Path.GetFullPath(projectRoot);
+                SafePathUtility.ResolveWithinRoot(Path.Combine(budgetRoot, "Assets"), destFull);
+            }
             string prefix = destFull.EndsWith(Path.DirectorySeparatorChar.ToString()) ? destFull : destFull + Path.DirectorySeparatorChar;
 
             using (FileStream fs = File.OpenRead(zipPath))
@@ -100,11 +113,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                         declaredWritable += entry.Length;
                 }
                 inspectArchive?.Invoke(archive); // Same bounded archive; selection can reject before any extracted file is written.
-                AssetDiskBudget.Lease reservation = AssetDiskBudget.ReserveExtraction(
-                    AssetDiskBudget.ProjectForExtraction(destFull),
-                    declaredWritable,
-                    cancellationToken
-                );
+                AssetDiskBudget.Lease reservation = AssetDiskBudget.ReserveExtraction(budgetRoot, declaredWritable, cancellationToken);
                 long totalWritten = 0;
                 byte[] buffer = null;
                 var createdFiles = new List<string>();
