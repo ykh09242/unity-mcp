@@ -180,12 +180,18 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
         from services.tools import get_unity_instance_from_context
 
         instance = await get_unity_instance_from_context(ctx)
-        user = await ctx.get_state("user_id") if config.http_remote_hosted else None
+        user = None
+        if config.http_remote_hosted:
+            from services.credential_lease import require_credential_lease
+
+            user = (await require_credential_lease()).user_id
         target = await capture_target(instance, user_id=user)
         if target is None:
             # Unselected/unavailable instances keep their existing selection
             # refusal path. Native admission still applies if a target is resolved.
             return await call()
+        if target.authorize_public is not None:
+            await target.authorize_public(name, params)
         charge = response_size(
             params,
             max_bytes=32 * 1024 * 1024,
@@ -202,6 +208,8 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
         try:
             async with operation_session(request):
                 await authorize_remote_operation(name, params, ctx=ctx)
+                if target.authorize_public is not None:
+                    await target.authorize_public(name, params)
                 await validate_enabled()
                 if not target.is_current():
                     raise OperationScopeChanged()

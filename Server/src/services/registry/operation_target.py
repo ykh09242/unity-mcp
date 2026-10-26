@@ -1,11 +1,12 @@
 """Capture bounded invocation fences without retaining requests or credentials."""
 
 from dataclasses import dataclass, field
-from collections.abc import Callable
+from collections.abc import Callable, Awaitable
 
 from core.config import config
 from services.registry.operation_scheduler import OperationScope
 from transport.native_arbitration import CAPABILITY, valid_generation
+from services.operation_permissions import JsonValue
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +14,9 @@ class OperationTarget:
     scope: OperationScope
     is_current: Callable[[], bool] = field(repr=False, compare=False)
     negotiated: bool = False
+    authorize_public: Callable[[str, dict[str, JsonValue]], Awaitable[None]] | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 async def capture_target(
@@ -110,8 +114,20 @@ async def capture_http_target(session_id: str, *, hub=None) -> OperationTarget |
             and getattr(socket.state, "user_id", None) == session.user_id
         )
 
+    async def authorize(name: str, params: dict[str, JsonValue]) -> None:
+        from services.credential_lease import require_credential_lease, CredentialLeaseError
+        from services.operation_permissions import authorize_operation
+
+        requester = await require_credential_lease()
+        authority = hub._socket_lease(socket)
+        if authority is None or authority.user_id != requester.user_id:
+            raise CredentialLeaseError()
+        await authority.check()
+        authorize_operation(authority.permissions, name, params)
+
     return OperationTarget(
         scope,
         current,
         hub._supports(socket, CAPABILITY) and valid_generation(native),
+        authorize if config.http_remote_hosted else None,
     )
