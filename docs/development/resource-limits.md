@@ -16,6 +16,19 @@ the machine's RAM, GPU memory or disk.
 | Command arguments | 32 MiB encoded, 1 million JSON nodes, depth 64, with a separate 256 MiB retained estimate. Pending retained budgets are 256 MiB/session, 512 MiB/user and 1 GiB globally. |
 | Results | 64 MiB encoded, 1 million nodes, depth 64, with a separate 512 MiB retained estimate. Retained result budgets are 1 GiB/session, 1.5 GiB/user and 2 GiB globally. Envelopes and duplicate text/structured representations also consume the applicable response budget. |
 | Legacy and Blender | Legacy framed results allow 128 MiB including framing/envelope overhead. Blender socket responses allow 64 MiB and preserve an explicit wait up to 24 hours. Connect probes stay short. |
+| Native local TCP connections | Up to 64 authenticated clients, 16 simultaneous authentications and 128 commands. A new client does not evict an existing authenticated connection. |
+
+Native local TCP input frames retain the 128 MiB maximum. Before allocating a
+body, the host reserves five times its declared UTF-8 size for input buffering
+and text retention. Frames larger than 8 KiB share a 1280 MiB FIFO budget;
+frames at most 8 KiB use a separate 8 MiB FIFO budget so large inputs cannot
+consume all small status/cancellation ingress. Request size grants no execution
+authority. Original frame I/O deadlines cover admission waits.
+
+Input reservations survive transport restarts and remain owned until actual
+command settlement, including cancellation. Idle headers reserve no body bytes.
+These weighted budgets are not preallocations or upper bounds on parsed JSON
+graphs, plugin/output allocations or total process memory.
 
 The optional durable test-wait journal retains a 256 MiB physical quota, including
 atomic replacement reservations. It admits one worst-case 64 MiB active result;
