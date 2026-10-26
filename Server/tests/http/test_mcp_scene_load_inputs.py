@@ -3,6 +3,7 @@
 from tests.timing import watchdog_timeout
 
 from contextlib import asynccontextmanager
+import asyncio
 import copy
 import json
 import secrets
@@ -19,6 +20,7 @@ from core.local_auth import LOCAL_AUTH_HEADER
 from services.api_key_service import ApiKeyService, ValidationResult
 from tests.http.test_mcp_catalog_subscription_limits import PluginStream
 from tests.http.test_mcp_protocol_wire import _body, _headers
+from transport.command_budget import http_request_budget
 from transport.plugin_hub import PluginHub
 
 
@@ -872,23 +874,41 @@ async def test_actual_sdk_sealed_question_and_envelope_fit_the_reserved_budget(f
 async def test_accepted_postdispatch_deadline_is_unknown_and_never_retries(
     flow_server, monkeypatch
 ):
-    # Given: an ordinary short command budget and a native load whose reply is held.
+    # Given: a native load whose reply is held until its request deadline expires.
     original = PluginHub._command_timeouts
+    request_budget = None
+
+    def command_timeouts(cls, name, args):
+        nonlocal request_budget
+        if name == "manage_scene":
+            request_budget = http_request_budget.get() or request_budget
+            return watchdog_timeout(), watchdog_timeout()
+        return original(name, args)
+
     monkeypatch.setattr(
         PluginHub,
         "_command_timeouts",
-        classmethod(
-            lambda cls, name, args: (0.2, 0.2) if name == "manage_scene" else original(name, args)
-        ),
+        classmethod(command_timeouts),
     )
     async with connected(flow_server) as (_, client, peer, _):
         first = (await request(client)).json()["result"]
         peer.hold_load = True
+
+        class DispatchDeadline(asyncio.Event):
+            def set(self):
+                super().set()
+                assert request_budget is not None
+                deadline = asyncio.get_running_loop().time()
+                request_budget.budget.expires_at = deadline
+                request_budget.scope.reschedule(deadline)
+
+        peer.dispatched = DispatchDeadline()
         try:
-            # When: the accepted native command is dispatched before its reply deadline.
-            response = await request(
-                client, state=first["requestState"], answer=accepted(), request_id="timeout"
-            )
+            # When: the peer receives the accepted command, expire that request's clock.
+            with anyio.fail_after(watchdog_timeout()):
+                response = await request(
+                    client, state=first["requestState"], answer=accepted(), request_id="timeout"
+                )
             result = response.json()["result"]["structuredContent"]
             assert peer.dispatched.is_set()
             # Then: the ordinary uncertainty is truthful; later input replay cannot resend.
