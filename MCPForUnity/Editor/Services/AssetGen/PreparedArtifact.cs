@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.AssetGen.Http;
+using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
 using MCPForUnity.Runtime.Helpers;
 
@@ -87,7 +88,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 result.Length = source.Length;
                 if (result.Length <= 0 || result.Length > AssetDownloadTransport.MaxDownloadBytes)
                     throw new IOException("Provider artifact exceeds the 8 GiB limit or has changed length.");
-                result.Extension = DetectExtension(source, kind, provider, extension, declaredExtension);
+                result.Extension = DetectExtension(source, kind, provider, extension, declaredExtension, token);
                 string directory = SafePathUtility.ResolveWithinRoot(root, "Temp/McpAssetPublication");
                 Directory.CreateDirectory(directory);
                 result.path = SafePathUtility.ResolveWithinRoot(root, Path.Combine(directory, Guid.NewGuid().ToString("N") + ".part"));
@@ -127,7 +128,14 @@ namespace MCPForUnity.Editor.Services.AssetGen
             }
         }
 
-        internal static string DetectExtension(Stream input, string kind, string provider, string extension, string declaredExtension)
+        internal static string DetectExtension(
+            Stream input,
+            string kind,
+            string provider,
+            string extension,
+            string declaredExtension,
+            CancellationToken token = default
+        )
         {
             input.Position = 0;
             var header = new byte[(int)Math.Min(16, input.Length)];
@@ -148,11 +156,18 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 string actual = ImageResultFormat.FromBytes(header);
                 if (actual == "webp")
                     throw new IOException("Provider returned WebP, which this Unity image importer does not support. Choose a PNG/JPEG model.");
-                if (actual != null)
-                    ext = actual;
+                if (actual == null)
+                    throw new IOException("Provider image does not contain a supported PNG/JPEG signature.");
+                ext = actual;
+                new ImageAdmission().Inspect(input, input.Length, ext, token: token);
             }
             if (kind == "model" && string.Equals(provider, "tripo", StringComparison.OrdinalIgnoreCase))
                 ext = TripoAdapter.ValidateModelStream(input, declaredExtension);
+            if (kind == "model" && (ext == "glb" || ext == "gltf"))
+            {
+                input.Position = 0;
+                ModelMetadataAdmission.Inspect(input, input.Length, "." + ext, new ImageAdmission(), cancellationToken: token);
+            }
             input.Position = 0;
             return ext;
         }

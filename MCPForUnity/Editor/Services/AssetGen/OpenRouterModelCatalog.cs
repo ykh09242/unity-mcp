@@ -292,7 +292,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             var result = await (TransportOverrideForTests ?? new UnityWebRequestTransport()).SendAsync(new HttpRequestSpec { Method = "GET", Url = url }, ct);
             if (result == null || result.Status < 200 || result.Status >= 300)
                 throw new InvalidOperationException($"OpenRouter catalog request failed (HTTP {result?.Status}). Previous catalog retained.");
-            return JObject.Parse(ProviderHttp.BodyText(result));
+            return BoundedJson.ParseObject(ProviderHttp.BodyText(result));
         }
 
         private static void Load()

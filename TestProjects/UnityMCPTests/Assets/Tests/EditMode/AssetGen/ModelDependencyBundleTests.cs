@@ -386,7 +386,10 @@ namespace MCPForUnityTests.Editor.AssetGen
 
         private string PlannerBundle()
         {
-            Write("Textures/texture.png", new byte[] { 1, 2, 3, 4 });
+            Write(
+                "Textures/texture.png",
+                Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==")
+            );
             Mtl("Textures/texture.png");
             return Obj();
         }
@@ -477,12 +480,13 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void EmbeddedData_IsCountedWithoutCreatingSidecarFiles()
         {
-            JObject document = TriangleDocument("data:application/octet-stream;base64,AQIDBA==", "data:image/png;base64,AQIDBA==");
+            byte[] png = Png(Color.white);
+            JObject document = TriangleDocument("data:application/octet-stream;base64,AQIDBA==", "data:image/png;base64," + Convert.ToBase64String(png));
             string source = Write("embedded.gltf", document.ToString(Formatting.None));
-            var limits = new BundleLimits { MaxBytes = new FileInfo(source).Length + 8 };
+            var limits = new BundleLimits { MaxBytes = new FileInfo(source).Length + 4 + png.Length };
             BundlePlan plan = ModelDependencyBundle.Plan(source, limits);
             Assert.AreEqual(1, plan.Entries.Count);
-            Assert.AreEqual(8, plan.EmbeddedBytes);
+            Assert.AreEqual(4 + png.Length, plan.EmbeddedBytes);
             limits.MaxBytes--;
             Assert.AreEqual(
                 "dependency_limit_exceeded",
@@ -599,7 +603,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         [Test]
-        public void CopyFailure_RetainsOnlyActualPartialEvidenceAndOriginalFiles()
+        public void CopyFailure_RollsBackOwnedCopiesAndPreservesOriginalFiles()
         {
             string source = PlannerBundle();
             BundlePlan plan = ModelDependencyBundle.Plan(source);
@@ -617,10 +621,10 @@ namespace MCPForUnityTests.Editor.AssetGen
                 )
             );
             Assert.AreEqual("dependency_stage_failed", (string)error.Evidence["error_code"]);
-            Assert.AreEqual("partial", (string)error.Evidence["stage"]);
-            Assert.AreEqual(1, (int)error.Evidence["staged_file_count"]);
-            Assert.AreEqual(new FileInfo(sourceRoot + "/model.mtl").Length, (long)error.Evidence["staged_bytes"]);
-            Assert.IsTrue(File.Exists(outputRoot + "/copy/model.mtl"));
+            Assert.AreEqual("rolled_back", (string)error.Evidence["stage"]);
+            Assert.AreEqual(0, (int)error.Evidence["staged_file_count"]);
+            Assert.AreEqual(0, (long)error.Evidence["staged_bytes"]);
+            Assert.IsFalse(File.Exists(outputRoot + "/copy/model.mtl"));
             Assert.IsFalse(File.Exists(outputRoot + "/copy/model.obj"));
             Assert.IsNull(error.Evidence["main_asset_path"]);
             for (int i = 0; i < plan.Entries.Count; i++)
@@ -637,7 +641,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             File.WriteAllText(library, changed, new UTF8Encoding(false));
             BundleImportException error = Assert.Throws<BundleImportException>(() => ModelDependencyBundle.Stage(plan, outputRoot, "copy"));
             Assert.AreEqual("dependency_source_changed", (string)error.Evidence["error_code"]);
-            Assert.AreEqual("partial", (string)error.Evidence["stage"]);
+            Assert.AreEqual("rolled_back", (string)error.Evidence["stage"]);
             Assert.AreEqual(0, (int)error.Evidence["staged_file_count"]);
             Assert.AreEqual(changed, File.ReadAllText(library), "a rejected operation must not roll back the caller's source change");
             Assert.IsFalse(File.Exists(outputRoot + "/copy/model.obj"));

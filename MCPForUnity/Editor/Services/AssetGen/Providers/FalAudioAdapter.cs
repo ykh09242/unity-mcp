@@ -152,9 +152,9 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
             {
                 try
                 {
-                    json = JObject.Parse(text);
+                    json = BoundedJson.ParseObject(text);
                 }
-                catch { /* non-JSON */ }
+                catch (Newtonsoft.Json.JsonException) { /* non-JSON */ }
             }
 
             bool ok = res?.Ok == true;

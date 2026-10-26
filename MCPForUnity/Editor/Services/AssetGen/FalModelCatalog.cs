@@ -345,14 +345,14 @@ namespace MCPForUnity.Editor.Services.AssetGen
             // missing edit endpoints are an expected negative discovery result, not an outage.
             if (allowMissing && response?.Status == 404)
             {
-                var missing = JObject.Parse(ProviderHttp.BodyText(response));
+                var missing = BoundedJson.ParseObject(ProviderHttp.BodyText(response));
                 if ((string)missing["error"]?["type"] == "not_found")
                     return new JObject { ["models"] = new JArray(), ["has_more"] = false };
             }
             // Do not persist provider error bodies or credentials.
             if (response == null || response.Status < 200 || response.Status >= 300)
                 throw new InvalidOperationException($"Model catalog request failed (HTTP {response?.Status}). Previous catalog retained.");
-            var json = JObject.Parse(ProviderHttp.BodyText(response));
+            var json = BoundedJson.ParseObject(ProviderHttp.BodyText(response));
             if (!(json["models"] is JArray))
                 throw new InvalidOperationException("Invalid model catalog response. Previous catalog retained.");
             return json;

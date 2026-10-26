@@ -126,9 +126,8 @@ namespace MCPForUnityTests.Editor.AssetGen
                     byte[] small = new byte[shape.smallKiB * 1024];
                     new System.Random(1701).NextBytes(large);
                     new System.Random(1702).NextBytes(small);
-                    byte[] signature = { 137, 80, 78, 71, 13, 10, 26, 10 };
-                    Buffer.BlockCopy(signature, 0, large, 0, signature.Length);
-                    Buffer.BlockCopy(signature, 0, small, 0, signature.Length);
+                    // Measures byte scheduling/copying without inventing malformed image headers.
+                    // No native importer runs; opaque FBX payloads exercise the artifact worker queue.
                     string Hash(byte[] value)
                     {
                         using var sha = SHA256.Create();
@@ -155,7 +154,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                                     : previous.AcquireAsync(body.Length, CancellationToken.None)
                             ).ConfigureAwait(false);
                             double started = clock.Elapsed.TotalMilliseconds;
-                            using var output = await Task.Run(() => create(input, root, "image", "fal", "png", "png", CancellationToken.None))
+                            using var output = await Task.Run(() => create(input, root, "model", "fal", "fbx", "fbx", CancellationToken.None))
                                 .ConfigureAwait(false);
                             Assert.AreEqual(body.Length, output.Length);
                             Assert.AreEqual(isLarge ? largeHash : smallHash, output.Hash);
