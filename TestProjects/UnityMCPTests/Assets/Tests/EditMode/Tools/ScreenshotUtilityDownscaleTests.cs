@@ -1,7 +1,16 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Threading;
+using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.Cameras;
 using MCPForUnity.Runtime.Helpers;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.Rendering;
+using Object = UnityEngine.Object;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -12,6 +21,7 @@ namespace MCPForUnityTests.Editor.Tools
     /// out while the on-disk PNG stayed correct (issue #1328).
     /// </summary>
     [TestFixture]
+    [Parallelizable(ParallelScope.None)]
     public class ScreenshotUtilityDownscaleTests
     {
         [Test]
@@ -65,6 +75,439 @@ namespace MCPForUnityTests.Editor.Tools
                 if (actual != null)
                     Object.DestroyImmediate(actual);
                 Object.DestroyImmediate(owner);
+            }
+        }
+
+        [TestCase(192, 96, 64)]
+        [TestCase(2560, 1440, 160)]
+        [TestCase(2048, 1024, 2048)]
+        public void OwnedBatchRendersOnlyOutputPixelsAndPreservesFramingAndColors(int width, int height, int maxResolution)
+        {
+            var owner = new GameObject("OwnedBatchMeasurement");
+            var camera = owner.AddComponent<Camera>();
+            camera.enabled = false;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.cullingMask = 0;
+            camera.backgroundColor = new Color(0.12f, 0.3f, 0.75f, 0.5f);
+            camera.aspect = 1.7f;
+            camera.fieldOfView = 47f;
+            var projection = Matrix4x4.Perspective(43f, 1.7f, 0.2f, 123f);
+            projection.m02 = 0.1f;
+            camera.projectionMatrix = projection;
+            var originalTarget = RenderTexture.GetTemporary(width, height, 24);
+            camera.targetTexture = originalTarget;
+            var priorActive = RenderTexture.active;
+            Texture2D expected = null,
+                actual = null;
+            int observedWidth = 0,
+                observedHeight = 0;
+            Matrix4x4 observedProjection = default;
+            void Observe(Camera rendering)
+            {
+                if (rendering != camera)
+                    return;
+                observedWidth = rendering.targetTexture.width;
+                observedHeight = rendering.targetTexture.height;
+                observedProjection = rendering.projectionMatrix;
+            }
+            Camera.onPreRender += Observe;
+            try
+            {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                expected = ScreenshotUtility.RenderCameraToTexture(camera, maxResolution);
+                long baselineBytes = GC.GetAllocatedBytesForCurrentThread() - before;
+                double baselineMs = timer.Elapsed.TotalMilliseconds;
+                Assert.AreEqual(width, observedWidth);
+                Assert.AreEqual(height, observedHeight);
+                var budget = new ScreenshotUtility.CaptureBatchBudget();
+                timer.Restart();
+                before = GC.GetAllocatedBytesForCurrentThread();
+                actual = ScreenshotUtility.RenderOwnedCameraTileToTexture(camera, maxResolution, budget);
+                long batchBytes = GC.GetAllocatedBytesForCurrentThread() - before;
+                double batchMs = timer.Elapsed.TotalMilliseconds;
+                Assert.AreEqual(actual.width, observedWidth);
+                Assert.AreEqual(actual.height, observedHeight);
+                Assert.AreEqual((long)actual.width * actual.height, budget.RenderedPixels);
+                Assert.AreEqual(expected.width, actual.width);
+                Assert.AreEqual(expected.height, actual.height);
+                Assert.AreEqual(projection, observedProjection);
+                Assert.AreEqual(projection, camera.projectionMatrix);
+                Assert.AreEqual(1.7f, camera.aspect);
+                Assert.AreEqual(47f, camera.fieldOfView);
+                Assert.AreSame(originalTarget, camera.targetTexture);
+                Assert.AreSame(priorActive, RenderTexture.active);
+                var wanted = expected.GetPixels32();
+                var got = actual.GetPixels32();
+                int maxDelta = 0;
+                for (int i = 0; i < wanted.Length; i++)
+                {
+                    maxDelta = Math.Max(maxDelta, Math.Abs(wanted[i].r - got[i].r));
+                    maxDelta = Math.Max(maxDelta, Math.Abs(wanted[i].g - got[i].g));
+                    maxDelta = Math.Max(maxDelta, Math.Abs(wanted[i].b - got[i].b));
+                    maxDelta = Math.Max(maxDelta, Math.Abs(wanted[i].a - got[i].a));
+                }
+                Assert.LessOrEqual(maxDelta, 2, "Solid-color output must retain the existing color-space behavior.");
+                byte[] png = actual.EncodeToPNG();
+                Assert.AreEqual(actual.width, (png[16] << 24) | (png[17] << 16) | (png[18] << 8) | png[19]);
+                Assert.AreEqual(actual.height, (png[20] << 24) | (png[21] << 16) | (png[22] << 8) | png[23]);
+                string evidence = Path.Combine(
+                    Path.GetDirectoryName(Application.dataPath),
+                    "Library",
+                    "MCPForUnity",
+                    "CaptureBudgetTests",
+                    Guid.NewGuid().ToString("N")
+                );
+                Directory.CreateDirectory(evidence);
+                string baselinePath = Path.Combine(evidence, "baseline.png");
+                string batchPath = Path.Combine(evidence, "batch.png");
+                File.WriteAllBytes(baselinePath, expected.EncodeToPNG());
+                File.WriteAllBytes(batchPath, png);
+                using var sha = SHA256.Create();
+                var measurement = new JObject
+                {
+                    ["source_width"] = width,
+                    ["source_height"] = height,
+                    ["render_width"] = observedWidth,
+                    ["render_height"] = observedHeight,
+                    ["tile_width"] = actual.width,
+                    ["tile_height"] = actual.height,
+                    ["png_width"] = actual.width,
+                    ["png_height"] = actual.height,
+                    ["full_render_pixels"] = (long)width * height,
+                    ["batch_render_pixels"] = budget.RenderedPixels,
+                    ["baseline_ms"] = baselineMs,
+                    ["batch_ms"] = batchMs,
+                    ["baseline_managed_bytes"] = baselineBytes,
+                    ["batch_managed_bytes"] = batchBytes,
+                    ["max_color_delta"] = maxDelta,
+                    ["graphics_type"] = SystemInfo.graphicsDeviceType.ToString(),
+                    ["baseline_png"] = baselinePath,
+                    ["batch_png"] = batchPath,
+                    ["batch_sha256"] = BitConverter.ToString(sha.ComputeHash(png)).Replace("-", "").ToLowerInvariant(),
+                };
+                // Retained solely as native QA evidence; the runner may remove this exact nonce directory after review.
+                File.WriteAllText(Path.Combine(evidence, "measurement.json"), measurement.ToString());
+                TestContext.WriteLine("CAPTURE_BUDGET_MEASUREMENT " + measurement.ToString(Newtonsoft.Json.Formatting.None));
+            }
+            finally
+            {
+                Camera.onPreRender -= Observe;
+                camera.targetTexture = null;
+                RenderTexture.active = priorActive;
+                RenderTexture.ReleaseTemporary(originalTarget);
+                if (expected != null)
+                    Object.DestroyImmediate(expected);
+                if (actual != null)
+                    Object.DestroyImmediate(actual);
+                Object.DestroyImmediate(owner);
+            }
+        }
+
+        [Test]
+        public void OwnedBatchPreservesAsymmetricGeometryFramingAtOutputResolution()
+        {
+            var scene = UnityEditor.SceneManagement.EditorSceneManager.NewPreviewScene();
+            var owner = new GameObject("OwnedBatchGeometryCamera");
+            UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(owner, scene);
+            var camera = owner.AddComponent<Camera>();
+            camera.scene = scene;
+            camera.enabled = false;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = new Color(0.04f, 0.06f, 0.1f, 1f);
+            camera.cullingMask = 1 << 31;
+            camera.aspect = 1.7f;
+            var projection = Matrix4x4.Perspective(43f, 1.7f, 0.2f, 123f);
+            projection.m02 = 0.12f;
+            projection.m12 = -0.07f;
+            camera.projectionMatrix = projection;
+            var priorActive = RenderTexture.active;
+            var target = RenderTexture.GetTemporary(513, 289, 24);
+            camera.targetTexture = target;
+            var meshes = new System.Collections.Generic.List<Mesh>();
+            var materials = new System.Collections.Generic.List<Material>();
+            Texture2D baseline = null,
+                batch = null;
+            void AddGeometry(string name, Vector3 position, Color color, bool triangle)
+            {
+                Shader shader = Shader.Find("Unlit/Color") ?? Shader.Find("Sprites/Default");
+                Assert.IsNotNull(shader, "The native fixture requires an existing built-in unlit shader.");
+                var shape = new GameObject(name);
+                UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(shape, scene);
+                shape.layer = 31;
+                shape.transform.position = position;
+                var mesh = new Mesh { name = name + "Mesh" };
+                meshes.Add(mesh);
+                mesh.vertices = triangle
+                    ? new[] { new Vector3(-0.55f, -0.4f, 0), new Vector3(-0.25f, 0.55f, 0), new Vector3(0.5f, -0.2f, 0) }
+                    : new[] { new Vector3(-0.3f, -0.45f, 0), new Vector3(-0.3f, 0.35f, 0), new Vector3(0.4f, 0.35f, 0), new Vector3(0.4f, -0.45f, 0) };
+                mesh.triangles = triangle ? new[] { 0, 1, 2, 2, 1, 0 } : new[] { 0, 1, 2, 0, 2, 3, 2, 1, 0, 3, 2, 0 };
+                mesh.RecalculateBounds();
+                shape.AddComponent<MeshFilter>().sharedMesh = mesh;
+                var material = new Material(shader) { color = color };
+                materials.Add(material);
+                shape.AddComponent<MeshRenderer>().sharedMaterial = material;
+            }
+            (Vector2 center, RectInt bounds, int count) Silhouette(Texture2D image, bool red)
+            {
+                var pixels = image.GetPixels32();
+                int minX = image.width,
+                    minY = image.height,
+                    maxX = -1,
+                    maxY = -1,
+                    count = 0;
+                double sumX = 0,
+                    sumY = 0;
+                for (int i = 0; i < pixels.Length; i++)
+                {
+                    Color32 color = pixels[i];
+                    bool selected = red ? color.r > 140 && color.g < 80 && color.b < 80 : color.g > 140 && color.r < 80 && color.b < 80;
+                    if (!selected)
+                        continue;
+                    int x = i % image.width,
+                        y = i / image.width;
+                    minX = Math.Min(minX, x);
+                    minY = Math.Min(minY, y);
+                    maxX = Math.Max(maxX, x);
+                    maxY = Math.Max(maxY, y);
+                    sumX += x;
+                    sumY += y;
+                    count++;
+                }
+                Assert.Greater(count, 12, "Each asymmetric foreground shape must be visible.");
+                return (new Vector2((float)(sumX / count), (float)(sumY / count)), new RectInt(minX, minY, maxX - minX + 1, maxY - minY + 1), count);
+            }
+            try
+            {
+                AddGeometry("OwnedRedTriangle", new Vector3(-0.8f, 0.35f, 4f), Color.red, true);
+                AddGeometry("OwnedGreenQuad", new Vector3(0.65f, -0.3f, 3.5f), Color.green, false);
+                baseline = ScreenshotUtility.RenderCameraToTexture(camera, 96);
+                batch = ScreenshotUtility.RenderOwnedCameraTileToTexture(camera, 96, new ScreenshotUtility.CaptureBatchBudget());
+                Assert.AreEqual(baseline.width, batch.width);
+                Assert.AreEqual(baseline.height, batch.height);
+                var metrics = new JObject();
+                foreach (bool red in new[] { true, false })
+                {
+                    var expected = Silhouette(baseline, red);
+                    var actual = Silhouette(batch, red);
+                    float centroidDistance = Vector2.Distance(expected.center, actual.center);
+                    Assert.LessOrEqual(centroidDistance, 0.75f, "Framing must preserve each foreground centroid within one output pixel.");
+                    Assert.LessOrEqual(Math.Abs(expected.bounds.xMin - actual.bounds.xMin), 1);
+                    Assert.LessOrEqual(Math.Abs(expected.bounds.yMin - actual.bounds.yMin), 1);
+                    Assert.LessOrEqual(Math.Abs(expected.bounds.xMax - actual.bounds.xMax), 1);
+                    Assert.LessOrEqual(Math.Abs(expected.bounds.yMax - actual.bounds.yMax), 1);
+                    Assert.LessOrEqual(Math.Abs(expected.count - actual.count), Math.Max(12, expected.count * 0.15));
+                    metrics[red ? "red_triangle" : "green_quad"] = new JObject
+                    {
+                        ["centroid_distance"] = centroidDistance,
+                        ["baseline_pixels"] = expected.count,
+                        ["batch_pixels"] = actual.count,
+                        ["baseline_bounds"] = expected.bounds.ToString(),
+                        ["batch_bounds"] = actual.bounds.ToString(),
+                    };
+                }
+                Assert.AreSame(target, camera.targetTexture);
+                Assert.AreSame(priorActive, RenderTexture.active);
+                Assert.AreEqual(projection, camera.projectionMatrix);
+                string evidence = Path.Combine(
+                    Path.GetDirectoryName(Application.dataPath),
+                    "Library",
+                    "MCPForUnity",
+                    "CaptureBudgetTests",
+                    Guid.NewGuid().ToString("N")
+                );
+                Directory.CreateDirectory(evidence);
+                string baselinePath = Path.Combine(evidence, "geometry-baseline.png");
+                string batchPath = Path.Combine(evidence, "geometry-batch.png");
+                File.WriteAllBytes(baselinePath, baseline.EncodeToPNG());
+                byte[] png = batch.EncodeToPNG();
+                File.WriteAllBytes(batchPath, png);
+                using var sha = SHA256.Create();
+                metrics["baseline_png"] = baselinePath;
+                metrics["batch_png"] = batchPath;
+                metrics["batch_sha256"] = BitConverter.ToString(sha.ComputeHash(png)).Replace("-", "").ToLowerInvariant();
+                metrics["graphics_type"] = SystemInfo.graphicsDeviceType.ToString();
+                File.WriteAllText(Path.Combine(evidence, "geometry.json"), metrics.ToString());
+                TestContext.WriteLine("CAPTURE_BUDGET_GEOMETRY " + metrics.ToString(Newtonsoft.Json.Formatting.None));
+            }
+            finally
+            {
+                camera.targetTexture = null;
+                RenderTexture.active = priorActive;
+                RenderTexture.ReleaseTemporary(target);
+                if (baseline != null)
+                    Object.DestroyImmediate(baseline);
+                if (batch != null)
+                    Object.DestroyImmediate(batch);
+                UnityEditor.SceneManagement.EditorSceneManager.ClosePreviewScene(scene);
+                foreach (var material in materials)
+                    Object.DestroyImmediate(material);
+                foreach (var mesh in meshes)
+                    Object.DestroyImmediate(mesh);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void PublicOrdinaryBatchReturnsDecodableContactSheet(bool surround)
+        {
+            var command = new JObject
+            {
+                ["action"] = "screenshot",
+                ["batch"] = surround ? "surround" : "orbit",
+                ["viewTarget"] = new JArray(0, 0, 0),
+                ["maxResolution"] = 32,
+                ["orbitAngles"] = 2,
+                ["orbitElevations"] = new JArray(0),
+            };
+            var response = JObject.FromObject(ManageScene.HandleCommand(command));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var data = response["data"];
+            Assert.AreEqual(surround ? 6 : 2, ((JArray)data["shots"]).Count);
+            var decoded = new Texture2D(1, 1);
+            try
+            {
+                Assert.IsTrue(decoded.LoadImage(Convert.FromBase64String(data.Value<string>("imageBase64"))));
+                Assert.AreEqual(data.Value<int>("imageWidth"), decoded.width);
+                Assert.AreEqual(data.Value<int>("imageHeight"), decoded.height);
+            }
+            finally
+            {
+                Object.DestroyImmediate(decoded);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void OwnedBatchRestoresTargetsAndReleasesReadbackOnCancellationOrTargetDrift(bool cancelAfterRender)
+        {
+            var owner = new GameObject("OwnedBatchFailure");
+            var camera = owner.AddComponent<Camera>();
+            camera.enabled = false;
+            camera.cullingMask = 0;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            var originalTarget = RenderTexture.GetTemporary(192, 96, 24);
+            camera.targetTexture = originalTarget;
+            var projection = camera.projectionMatrix;
+            var priorActive = RenderTexture.active;
+            using var cancel = new CancellationTokenSource();
+            var budget = new ScreenshotUtility.CaptureBatchBudget(cancel.Token);
+            var before = Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceID()).ToArray();
+            void Change(Camera rendering)
+            {
+                if (rendering != camera)
+                    return;
+                if (cancelAfterRender)
+                    cancel.Cancel();
+                else
+                    rendering.targetTexture = originalTarget;
+            }
+            Camera.onPostRender += Change;
+            try
+            {
+                if (cancelAfterRender)
+                    Assert.Throws<OperationCanceledException>(() => ScreenshotUtility.RenderOwnedCameraTileToTexture(camera, 64, budget));
+                else
+                    Assert.Throws<InvalidOperationException>(() => ScreenshotUtility.RenderOwnedCameraTileToTexture(camera, 64, budget));
+                Assert.AreSame(originalTarget, camera.targetTexture);
+                Assert.AreSame(priorActive, RenderTexture.active);
+                Assert.AreEqual(projection, camera.projectionMatrix);
+                CollectionAssert.AreEquivalent(before, Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceID()).ToArray());
+            }
+            finally
+            {
+                Camera.onPostRender -= Change;
+                camera.targetTexture = null;
+                RenderTexture.active = priorActive;
+                RenderTexture.ReleaseTemporary(originalTarget);
+                Object.DestroyImmediate(owner);
+            }
+        }
+
+        [Test]
+        public void GenericCameraBudgetRejectsActualFullRenderBeforeAllocation()
+        {
+            var owner = new GameObject("OwnedBudgetRefusal");
+            var camera = owner.AddComponent<Camera>();
+            camera.enabled = false;
+            var target = RenderTexture.GetTemporary(64, 32, 24);
+            camera.targetTexture = target;
+            var budget = new ScreenshotUtility.CaptureBatchBudget();
+            budget.AdmitFrame(8192, 4096, 1, 1);
+            int renders = 0;
+            void Observe(Camera rendering)
+            {
+                if (rendering == camera)
+                    renders++;
+            }
+            Camera.onPreRender += Observe;
+            var textures = Resources.FindObjectsOfTypeAll<RenderTexture>().Select(t => t.GetInstanceID()).ToArray();
+            try
+            {
+                Assert.Throws<ArgumentException>(() => ScreenshotUtility.RenderCameraToTexture(camera, 16, budget));
+                Assert.AreEqual(0, renders);
+                Assert.AreSame(target, camera.targetTexture);
+                CollectionAssert.AreEquivalent(textures, Resources.FindObjectsOfTypeAll<RenderTexture>().Select(t => t.GetInstanceID()).ToArray());
+            }
+            finally
+            {
+                Camera.onPreRender -= Observe;
+                camera.targetTexture = null;
+                RenderTexture.ReleaseTemporary(target);
+                Object.DestroyImmediate(owner);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void PublicBatchCancellationStopsAfterOneRenderAndDestroysOwnedCamera(bool cameraTool)
+        {
+            using var cancel = new CancellationTokenSource();
+            var textures = Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceID()).ToArray();
+            int renders = 0;
+            Camera persistent = Camera.main;
+            string persistentState = persistent != null ? UnityEditor.EditorJsonUtility.ToJson(persistent) : null;
+            Matrix4x4 persistentProjection = persistent != null ? persistent.projectionMatrix : default;
+            void Cancel(Camera camera)
+            {
+                if (!camera.name.StartsWith("__MCP_", StringComparison.Ordinal))
+                    return;
+                renders++;
+                cancel.Cancel();
+            }
+            Camera.onPostRender += Cancel;
+            try
+            {
+                var command = new JObject
+                {
+                    ["action"] = cameraTool ? "screenshot_multiview" : "screenshot",
+                    ["batch"] = "orbit",
+                    ["viewTarget"] = new JArray(0, 0, 0),
+                    ["maxResolution"] = 32,
+                };
+                Assert.Throws<OperationCanceledException>(() =>
+                {
+                    if (cameraTool)
+                        ManageCamera.HandleCommand(command, cancel.Token);
+                    else
+                        ManageScene.HandleCommand(command, cancel.Token);
+                });
+                Assert.AreEqual(1, renders);
+                if (persistent != null)
+                {
+                    Assert.AreEqual(persistentState, UnityEditor.EditorJsonUtility.ToJson(persistent));
+                    Assert.AreEqual(persistentProjection, persistent.projectionMatrix);
+                }
+                Assert.IsFalse(
+                    Resources
+                        .FindObjectsOfTypeAll<Camera>()
+                        .Any(c => c.name == "__MCP_OrbitCapture_Temp_Camera__" || c.name == "__MCP_MultiAngle_Temp_Camera__")
+                );
+                CollectionAssert.AreEquivalent(textures, Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceID()).ToArray());
+            }
+            finally
+            {
+                Camera.onPostRender -= Cancel;
             }
         }
 

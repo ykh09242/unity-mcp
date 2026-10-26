@@ -61,9 +61,41 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.DoesNotThrow(() => ScreenshotUtility.ValidateBatchCapture(7680, 4320, 36, 320));
             var budget = new ScreenshotUtility.CaptureBatchBudget();
             for (int index = 0; index < 36; index++)
-                Assert.DoesNotThrow(() => budget.AdmitFrame(7680, 4320, 320, 180));
+                Assert.DoesNotThrow(() => budget.AdmitFrame(320, 180, 320, 180));
             Type type = typeof(MCPForUnity.Editor.Tools.ManageEditor).Assembly.GetType("MCPForUnity.Editor.Helpers.GameViewSizeControl", true);
             type.GetMethod("ValidateFixedSize", StaticPrivate).Invoke(null, new object[] { 7680, 4320 });
+        }
+
+        [Test]
+        public void BatchAdmissionUsesOutputWorkAndRejectsExcessBeforeRendering()
+        {
+            Assert.DoesNotThrow(() => ScreenshotUtility.ValidateBatchCapture(8192, 8192, 128, 320));
+            Assert.Throws<ArgumentException>(() => ScreenshotUtility.ValidateBatchCapture(8192, 8192, 128, 8192));
+            Assert.AreEqual(32L * 1024 * 1024, ScreenshotUtility.MaxBatchRenderedPixels);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ActualFrameDimensionsCannotExceedRemainingBatchBudget(bool retained)
+        {
+            var budget = new ScreenshotUtility.CaptureBatchBudget();
+            for (int i = 0; i < 2; i++)
+                budget.AdmitFrame(retained ? 1 : 4096, retained ? 1 : 4096, retained ? 4096 : 1, retained ? 4096 : 1);
+            Assert.Throws<ArgumentException>(() => budget.AdmitFrame(retained ? 1 : 4096, retained ? 1 : 4096, retained ? 4096 : 1, retained ? 4096 : 1));
+            Assert.AreEqual(2, budget.Shots, "Rejected work must not consume the budget.");
+            Assert.AreEqual(32L * 1024 * 1024, retained ? budget.RetainedPixels : budget.RenderedPixels);
+        }
+
+        [Test]
+        public void CanceledBudgetRefusesTheFirstFrameWithoutConsumingWork()
+        {
+            using var cancel = new CancellationTokenSource();
+            var budget = new ScreenshotUtility.CaptureBatchBudget(cancel.Token);
+            cancel.Cancel();
+            Assert.Throws<OperationCanceledException>(() => budget.AdmitFrame(1, 1, 1, 1));
+            Assert.AreEqual(0, budget.Shots);
+            Assert.AreEqual(0, budget.RenderedPixels);
+            Assert.AreEqual(0, budget.RetainedPixels);
         }
 
         [Test]

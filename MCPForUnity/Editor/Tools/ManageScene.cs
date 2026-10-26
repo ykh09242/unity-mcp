@@ -504,10 +504,10 @@ namespace MCPForUnity.Editor.Tools
             return result as Task<object> ?? Task.FromResult(result);
         }
 
-        public static object ExecuteMultiviewScreenshot(int maxResolution = 480)
+        public static object ExecuteMultiviewScreenshot(int maxResolution = 480, CancellationToken cancellationToken = default)
         {
             var cmd = new SceneCommand { maxResolution = maxResolution };
-            return CaptureSurroundBatch(cmd);
+            return CaptureSurroundBatch(cmd, cancellationToken);
         }
 
         private static object CreateScene(string fullPath, string relativePath)
@@ -730,9 +730,9 @@ namespace MCPForUnity.Editor.Tools
                 if (!string.IsNullOrEmpty(cmd.batch))
                 {
                     if (cmd.batch.Equals("surround", StringComparison.OrdinalIgnoreCase))
-                        return CaptureSurroundBatch(cmd);
+                        return CaptureSurroundBatch(cmd, cancellationToken);
                     if (cmd.batch.Equals("orbit", StringComparison.OrdinalIgnoreCase))
-                        return CaptureOrbitBatch(cmd);
+                        return CaptureOrbitBatch(cmd, cancellationToken);
                     return new ErrorResponse($"Unknown batch mode: '{cmd.batch}'. Valid modes: 'surround', 'orbit'.");
                 }
 
@@ -900,6 +900,10 @@ namespace MCPForUnity.Editor.Tools
                         captureSource = "game_view",
                     }
                 );
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception e)
             {
@@ -1118,10 +1122,11 @@ namespace MCPForUnity.Editor.Tools
         /// Captures screenshots from 6 angles around scene bounds (or a view_target) for AI scene understanding.
         /// Does NOT save to disk — returns all images as inline base64 PNGs. Always uses camera-based capture.
         /// </summary>
-        private static object CaptureSurroundBatch(SceneCommand cmd)
+        private static object CaptureSurroundBatch(SceneCommand cmd, CancellationToken cancellationToken = default)
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int maxRes = cmd.maxResolution ?? 480;
                 ScreenshotUtility.ValidateBatchCapture(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), 6, maxRes);
 
@@ -1210,7 +1215,7 @@ namespace MCPForUnity.Editor.Tools
                 SceneView.RepaintAll();
 
                 var tiles = new List<Texture2D>();
-                var captureBudget = new ScreenshotUtility.CaptureBatchBudget();
+                var captureBudget = new ScreenshotUtility.CaptureBatchBudget(cancellationToken);
                 var tileLabels = new List<string>();
                 var shotMeta = new List<object>();
                 try
@@ -1221,12 +1226,13 @@ namespace MCPForUnity.Editor.Tools
                         tempCam.transform.position = pos;
                         tempCam.transform.LookAt(center);
 
-                        Texture2D tile = ScreenshotUtility.RenderCameraToTexture(tempCam, maxRes, captureBudget);
+                        Texture2D tile = ScreenshotUtility.RenderOwnedCameraTileToTexture(tempCam, maxRes, captureBudget);
                         tiles.Add(tile);
                         tileLabels.Add(label);
                         shotMeta.Add(new Dictionary<string, object> { { "angle", label }, { "position", new[] { pos.x, pos.y, pos.z } } });
                     }
 
+                    captureBudget.ThrowIfCancellationRequested();
                     var (compositeB64, compW, compH) = ScreenshotUtility.ComposeContactSheet(tiles, tileLabels);
 
                     return new SuccessResponse(
@@ -1249,6 +1255,10 @@ namespace MCPForUnity.Editor.Tools
                     UnityEngine.Object.DestroyImmediate(tempGo);
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception e)
             {
                 return new ErrorResponse($"Error capturing batch screenshots: {e.Message}");
@@ -1260,10 +1270,11 @@ namespace MCPForUnity.Editor.Tools
         /// Supports custom azimuth count, elevation angles, distance, and FOV.
         /// Returns a single composite contact-sheet image (imageBase64) plus per-shot metadata (no files saved to disk).
         /// </summary>
-        private static object CaptureOrbitBatch(SceneCommand cmd)
+        private static object CaptureOrbitBatch(SceneCommand cmd, CancellationToken cancellationToken = default)
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int maxRes = cmd.maxResolution ?? 480;
                 int azimuthCount = cmd.orbitAngles ?? 8;
                 if (azimuthCount < 1 || azimuthCount > 36)
@@ -1352,7 +1363,7 @@ namespace MCPForUnity.Editor.Tools
                 SceneView.RepaintAll();
 
                 var tiles = new List<Texture2D>();
-                var captureBudget = new ScreenshotUtility.CaptureBatchBudget();
+                var captureBudget = new ScreenshotUtility.CaptureBatchBudget(cancellationToken);
                 var tileLabels = new List<string>();
                 var shotMeta = new List<object>();
                 try
@@ -1385,7 +1396,7 @@ namespace MCPForUnity.Editor.Tools
                                 : "level";
                             string angleLabel = $"{dirLabel}_{elevLabel}";
 
-                            Texture2D tile = ScreenshotUtility.RenderCameraToTexture(tempCam, maxRes, captureBudget);
+                            Texture2D tile = ScreenshotUtility.RenderOwnedCameraTileToTexture(tempCam, maxRes, captureBudget);
                             tiles.Add(tile);
                             tileLabels.Add(angleLabel);
                             shotMeta.Add(
@@ -1401,6 +1412,7 @@ namespace MCPForUnity.Editor.Tools
                     }
 
                     // Compose all tiles into a single contact-sheet grid image
+                    captureBudget.ThrowIfCancellationRequested();
                     var (compositeB64, compW, compH) = ScreenshotUtility.ComposeContactSheet(tiles, tileLabels);
 
                     return new SuccessResponse(
@@ -1425,6 +1437,10 @@ namespace MCPForUnity.Editor.Tools
                     ScreenshotUtility.ReleaseCaptureTiles(tiles);
                     UnityEngine.Object.DestroyImmediate(tempGo);
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception e)
             {

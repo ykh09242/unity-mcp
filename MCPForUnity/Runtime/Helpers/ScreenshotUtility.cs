@@ -90,7 +90,7 @@ namespace MCPForUnity.Runtime.Helpers
         public const int MaxSuperSize = 4;
         public const int MaxBatchShots = 128;
         public const int MaxOrbitElevations = 16;
-        public const long MaxBatchRenderedPixels = 8L * 1024 * 1024 * 1024;
+        public const long MaxBatchRenderedPixels = 32L * 1024 * 1024;
         public const long MaxRetainedTilePixels = 32L * 1024 * 1024;
         public const long MaxContactSheetPixels = 32L * 1024 * 1024;
 
@@ -155,9 +155,10 @@ namespace MCPForUnity.Runtime.Helpers
             ValidateFrameDimensions(width, height);
             if (shots < 1 || shots > MaxBatchShots)
                 throw new ArgumentException($"Batch capture must contain between 1 and {MaxBatchShots} shots.");
-            if ((long)width * height > MaxBatchRenderedPixels / shots)
-                throw new ArgumentException("Batch capture exceeds the aggregate rendered pixel budget.");
             GetTileDimensions(width, height, maxResolution, out int tileWidth, out int tileHeight);
+            // Owned batch cameras render directly at the retained tile resolution.
+            if ((long)tileWidth * tileHeight > MaxBatchRenderedPixels / shots)
+                throw new ArgumentException("Batch capture exceeds the aggregate rendered pixel budget.");
             GetContactSheetDimensions(tileWidth, tileHeight, shots, 4, out _, out _);
         }
 
@@ -166,10 +167,23 @@ namespace MCPForUnity.Runtime.Helpers
             private long renderedPixels,
                 retainedPixels;
             private int shots;
+            private readonly CancellationToken cancellationToken;
+
+            public CaptureBatchBudget(CancellationToken cancellationToken = default)
+            {
+                this.cancellationToken = cancellationToken;
+            }
+
+            public long RenderedPixels => renderedPixels;
+            public long RetainedPixels => retainedPixels;
+            public int Shots => shots;
+
+            public void ThrowIfCancellationRequested() => cancellationToken.ThrowIfCancellationRequested();
 
             // Account actual per-frame dimensions in case a render callback changes the viewport.
             public void AdmitFrame(int width, int height, int tileWidth, int tileHeight)
             {
+                ThrowIfCancellationRequested();
                 ValidateFrameDimensions(width, height);
                 ValidateFrameDimensions(tileWidth, tileHeight);
                 long framePixels = (long)width * height,
@@ -548,6 +562,24 @@ namespace MCPForUnity.Runtime.Helpers
         /// </summary>
         public static Texture2D RenderCameraToTexture(Camera camera, int maxResolution = 640, CaptureBatchBudget budget = null)
         {
+            return RenderCameraToTextureCore(camera, maxResolution, budget, false);
+        }
+
+        /// <summary>
+        /// Renders a disposable, tool-owned batch camera directly at its output tile resolution.
+        /// The caller must destroy this camera after the batch: restoring its projection matrix
+        /// preserves the value, but Unity does not expose whether projection was automatic.
+        /// Persistent/user cameras must use RenderCameraToTexture instead.
+        /// </summary>
+        public static Texture2D RenderOwnedCameraTileToTexture(Camera camera, int maxResolution, CaptureBatchBudget budget)
+        {
+            if (budget == null)
+                throw new ArgumentNullException(nameof(budget));
+            return RenderCameraToTextureCore(camera, maxResolution, budget, true);
+        }
+
+        private static Texture2D RenderCameraToTextureCore(Camera camera, int maxResolution, CaptureBatchBudget budget, bool renderTile)
+        {
             if (camera == null)
                 throw new ArgumentNullException(nameof(camera));
 
@@ -555,20 +587,30 @@ namespace MCPForUnity.Runtime.Helpers
             int height = Mathf.Max(1, camera.pixelHeight > 0 ? camera.pixelHeight : Screen.height);
             ValidateFrameDimensions(width, height);
             GetTileDimensions(width, height, maxResolution, out int tileWidth, out int tileHeight);
-            budget?.AdmitFrame(width, height, tileWidth, tileHeight);
+            int renderWidth = renderTile ? tileWidth : width;
+            int renderHeight = renderTile ? tileHeight : height;
+            budget?.AdmitFrame(renderWidth, renderHeight, tileWidth, tileHeight);
 
             RenderTexture prevRT = camera.targetTexture;
             RenderTexture prevActive = RenderTexture.active;
-            var rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32);
+            Matrix4x4 projection = renderTile ? camera.projectionMatrix : default;
+            // Admission and cancellation precede the first native allocation.
+            var rt = RenderTexture.GetTemporary(renderWidth, renderHeight, 24, RenderTextureFormat.ARGB32);
             RenderTexture reduced = null;
             Texture2D tex = null;
             try
             {
                 camera.targetTexture = rt;
+                if (renderTile)
+                    camera.projectionMatrix = projection; // Preserve framing despite integer tile-aspect rounding.
+                budget?.ThrowIfCancellationRequested();
                 camera.Render();
+                budget?.ThrowIfCancellationRequested();
+                if (budget != null && (camera.targetTexture != rt || rt.width != renderWidth || rt.height != renderHeight))
+                    throw new InvalidOperationException("Capture render target changed during rendering.");
 
                 RenderTexture readback = rt;
-                if (tileWidth != width || tileHeight != height)
+                if (tileWidth != renderWidth || tileHeight != renderHeight)
                 {
                     // Preserve the previous sRGB CPU-texture downscale semantics, but
                     // keep the full-resolution image on the GPU until it is reduced.
@@ -588,6 +630,8 @@ namespace MCPForUnity.Runtime.Helpers
             finally
             {
                 camera.targetTexture = prevRT;
+                if (renderTile)
+                    camera.projectionMatrix = projection;
                 RenderTexture.active = prevActive;
                 if (reduced != null)
                     RenderTexture.ReleaseTemporary(reduced);
