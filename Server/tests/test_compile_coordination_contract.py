@@ -21,7 +21,7 @@ NATIVE_IDLE = {
 
 
 def native_evidence(outcome):
-    """Match GetCompileJob's ledger plus CoordinationStatus response shape."""
+    """Match the unchanged native compile ledger consumed by older servers."""
     return {
         "schema_version": "unity-mcp/compile_job@1",
         "compile_id": COMPILE_ID,
@@ -51,7 +51,6 @@ def native_evidence(outcome):
             if outcome == "failed"
             else []
         ),
-        "native_coordination": copy.deepcopy(NATIVE_IDLE),
     }
 
 
@@ -70,7 +69,11 @@ async def test_sdk_preserves_native_compiler_evidence_with_coordination(
         commands.append(command)
         assert instance == "CompileFixture@one"
         assert params == {"compile_id": COMPILE_ID}
-        return {"success": True, "data": native_evidence(outcome)}
+        return {
+            "success": True,
+            "data": native_evidence(outcome),
+            "native_coordination": copy.deepcopy(NATIVE_IDLE),
+        }
 
     monkeypatch.setattr(status, "get_unity_instance_from_context", selected)
     monkeypatch.setattr(status.unity_transport, "send_with_unity_instance", send)
@@ -95,7 +98,7 @@ async def test_sdk_preserves_native_compiler_evidence_with_coordination(
 def test_coordination_is_diagnostic_and_cannot_certify_compiler_success(phase):
     job = native_evidence("success")
     job.update(outcome="unknown", attribution="unconfirmed", collection_complete=False)
-    coordination = job["native_coordination"]
+    coordination = job["native_coordination"] = copy.deepcopy(NATIVE_IDLE)
     coordination.update(
         phase=phase,
         reason="recovery_required" if phase == "recovery_required" else "native_job_active",
@@ -114,7 +117,6 @@ def test_coordination_is_diagnostic_and_cannot_certify_compiler_success(phase):
 
 def test_old_peer_without_coordination_still_preserves_outcome():
     job = native_evidence("success")
-    del job["native_coordination"]
     result = status.parse_compile_job(job, COMPILE_ID)
     assert result["outcome"] == "success"
     assert result.get("native_coordination") is None
@@ -132,6 +134,7 @@ def test_old_peer_without_coordination_still_preserves_outcome():
 )
 def test_malformed_coordination_is_not_accepted_as_evidence(field, value):
     job = native_evidence("success")
+    job["native_coordination"] = copy.deepcopy(NATIVE_IDLE)
     job["native_coordination"][field] = value
     result = status.parse_compile_job(job, COMPILE_ID)
     assert result["outcome"] == "unknown"
@@ -140,7 +143,25 @@ def test_malformed_coordination_is_not_accepted_as_evidence(field, value):
 
 def test_valid_coordination_does_not_weaken_ledger_evidence_validation():
     job = native_evidence("success")
+    job["native_coordination"] = copy.deepcopy(NATIVE_IDLE)
     job["collection_complete"] = False
     result = status.parse_compile_job(job, COMPILE_ID)
     assert result["outcome"] == "unknown"
     assert result["reason"] == "tracking_unsupported"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("coordination", [{"retryable": "true"}, "unexpected", None])
+async def test_optional_sibling_diagnostics_cannot_erase_valid_evidence(monkeypatch, coordination):
+    async def send(*args, **kwargs):
+        return {
+            "success": True,
+            "data": native_evidence("failed"),
+            "native_coordination": coordination,
+        }
+
+    monkeypatch.setattr(status.unity_transport, "send_with_unity_instance", send)
+    result = await status.read_compile_job("CompileFixture@one", COMPILE_ID)
+    assert result["outcome"] == "failed"
+    assert result["error_count"] == 1
+    assert result["native_coordination"] is None

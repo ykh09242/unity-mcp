@@ -145,7 +145,20 @@ async def read_compile_job(instance: str | None, compile_id: str) -> dict:
     value = response.model_dump() if isinstance(response, MCPResponse) else response
     if not isinstance(value, dict) or value.get("success") is not True:
         return unknown_compile_job(compile_id, "tracking_unsupported")
-    return parse_compile_job(value.get("data"), compile_id)
+    result = parse_compile_job(value.get("data"), compile_id)
+    # New peers keep diagnostics outside the strict ledger contract so older
+    # servers can still read compiler outcomes. Invalid optional diagnostics do
+    # not invalidate otherwise complete evidence or establish native completion.
+    coordination = value.get("native_coordination")
+    if coordination is not None:
+        try:
+            diagnostics = CompileCoordination.model_validate(coordination).model_dump()
+        except ValidationError:
+            return result
+        candidate = {**result, "native_coordination": diagnostics}
+        if len(json.dumps(candidate, ensure_ascii=False).encode("utf-8")) <= 65536:
+            return candidate
+    return result
 
 
 @mcp_for_unity_tool(
