@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,6 +11,7 @@ using MCPForUnity.Editor.Services.Transport.Transports;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -22,12 +24,51 @@ namespace MCPForUnityTests.Editor.Services
         private TransportCommandOperation active;
         private int calls;
         private SynchronizationContext originalContext;
+        private BatchPumpContext batchPump;
+        private CancellationTokenSource batchLifetime;
+
+        private sealed class BatchPumpContext : SynchronizationContext
+        {
+            private readonly Queue<(SendOrPostCallback Callback, object State)> callbacks = new();
+
+            public override void Post(SendOrPostCallback callback, object state)
+            {
+                lock (callbacks)
+                    callbacks.Enqueue((callback, state));
+            }
+
+            internal void Drain()
+            {
+                while (true)
+                {
+                    (SendOrPostCallback Callback, object State) next;
+                    lock (callbacks)
+                    {
+                        if (callbacks.Count == 0)
+                            return;
+                        next = callbacks.Dequeue();
+                    }
+                    var previousContext = Current;
+                    SetSynchronizationContext(this);
+                    try
+                    {
+                        next.Callback(next.State);
+                    }
+                    finally
+                    {
+                        SetSynchronizationContext(previousContext);
+                    }
+                }
+            }
+        }
 
         [SetUp]
         public void SetUp()
         {
             active = null;
             calls = 0;
+            batchPump = null;
+            batchLifetime = null;
             originalContext = SynchronizationContext.Current;
             SynchronizationContext.SetSynchronizationContext(null);
             CommandRegistry.Initialize();
@@ -50,8 +91,15 @@ namespace MCPForUnityTests.Editor.Services
         {
             try
             {
+                batchLifetime?.Cancel();
                 held.TrySetResult(new { settled = true });
-                Assert.IsTrue(active == null || active.Completion.Wait(TimeSpan.FromSeconds(5)));
+                var cleanup = System.Diagnostics.Stopwatch.StartNew();
+                while (active != null && !active.Completion.IsCompleted && cleanup.Elapsed < TimeSpan.FromSeconds(5))
+                {
+                    batchPump?.Drain();
+                    Thread.Yield();
+                }
+                Assert.IsTrue(active == null || active.Completion.IsCompleted, "Every owned handler must settle before the next fixture.");
             }
             finally
             {
@@ -59,6 +107,7 @@ namespace MCPForUnityTests.Editor.Services
                     handlers.Remove(Name);
                 else
                     handlers[Name] = previous;
+                batchLifetime?.Dispose();
                 SynchronizationContext.SetSynchronizationContext(originalContext);
             }
         }
@@ -116,10 +165,13 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual("started", (string)asyncWire["native_arbitration"]["disposition"]);
         }
 
-        [Test]
-        public async Task LaterBatchChildRechecksOwnedReservationWithoutReplayingEarlierChild()
+        [UnityTest]
+        public IEnumerator LaterBatchChildRechecksOwnedReservationWithoutReplayingEarlierChild()
         {
-            SynchronizationContext.SetSynchronizationContext(originalContext);
+            var previousContext = SynchronizationContext.Current;
+            batchPump = new BatchPumpContext();
+            batchLifetime = new CancellationTokenSource();
+            var firstSettled = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
             using var consent = new ScopedConsentTestState("batch_execute");
             using var registrations = new ProgressHandlerScope();
             const string second = "__arbitration_batch_second";
@@ -138,7 +190,7 @@ namespace MCPForUnityTests.Editor.Services
                             Guid.NewGuid().ToString("N"),
                             UnityEditor.EditorApplication.timeSinceStartup + 1000
                         );
-                        return new { pending = true };
+                        return firstSettled.Task;
                     },
                     null
                 )
@@ -157,6 +209,7 @@ namespace MCPForUnityTests.Editor.Services
             );
             try
             {
+                SynchronizationContext.SetSynchronizationContext(batchPump);
                 active = TransportCommandDispatcher.ExecuteCommandAsync(
                     new Command
                     {
@@ -167,10 +220,21 @@ namespace MCPForUnityTests.Editor.Services
                             ["commands"] = new JArray(new JObject { ["tool"] = Name }, new JObject { ["tool"] = second }, new JObject { ["tool"] = second }),
                         },
                     },
-                    CancellationToken.None
+                    batchLifetime.Token
                 );
-                var wire = JObject.Parse((await active.Response).ToJson());
-                await active.Completion;
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                Assert.AreEqual(1, firstCalls);
+                Assert.IsFalse(active.Response.IsCompleted, "The batch must retain its parent lease across the first child's held async completion.");
+                yield return null;
+                firstSettled.SetResult(new { pending = true });
+                var deadline = System.Diagnostics.Stopwatch.StartNew();
+                while ((!active.Response.IsCompleted || !active.Completion.IsCompleted) && deadline.Elapsed < TimeSpan.FromSeconds(10))
+                {
+                    batchPump.Drain();
+                    yield return null;
+                }
+                Assert.IsTrue(active.Response.IsCompleted && active.Completion.IsCompleted, "The owned main-thread continuation pump must settle the batch.");
+                var wire = JObject.Parse(active.Response.GetAwaiter().GetResult().ToJson());
                 var data = wire["payload"]["result"]["data"];
                 Assert.AreEqual("started", (string)wire["native_arbitration"]["disposition"]);
                 Assert.AreEqual(1, firstCalls);
@@ -183,8 +247,11 @@ namespace MCPForUnityTests.Editor.Services
             }
             finally
             {
+                batchLifetime.Cancel();
+                firstSettled.TrySetResult(new { pending = true });
                 if (generation != null)
                     Assert.IsTrue(CompilationJobTracker.Reservation.AbortBeforeStart(generation));
+                SynchronizationContext.SetSynchronizationContext(previousContext);
             }
         }
 
