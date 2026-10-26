@@ -3,21 +3,30 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Threading;
+using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Import;
 using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.AssetGen
 {
+    [Parallelizable(ParallelScope.None)]
     public class ArchiveLimitSecurityTests
     {
         private string root;
 
         [SetUp]
-        public void SetUp() => root = Path.Combine(Path.GetTempPath(), "mcp-zip-security-" + Guid.NewGuid().ToString("N"));
+        public void SetUp()
+        {
+            root = Path.Combine(Path.GetTempPath(), "mcp-zip-security-" + Guid.NewGuid().ToString("N"));
+            // Metadata fixtures do not allocate their advertised payloads. Keep free-disk
+            // admission deterministic while exercising the archive's declared-size policy.
+            AssetDiskBudget.FreeBytesForTests = _ => 64L * 1024 * 1024 * 1024;
+        }
 
         [TearDown]
         public void TearDown()
         {
+            AssetDiskBudget.FreeBytesForTests = null;
             if (Directory.Exists(root))
                 Directory.Delete(root, true);
         }
@@ -60,21 +69,18 @@ namespace MCPForUnityTests.Editor.AssetGen
 
         [TestCase(false)]
         [TestCase(true)]
-        public void DefaultPerEntryBudget_Accepts512MiBAndRejectsNextByte(bool exceeds)
+        public void LargeEntryMetadataIsAdmittedBeyondTheFormer512MiBCeiling(bool exceeds)
         {
             string zip = MakeDeclaredSizeZip(512u * 1024 * 1024 + (exceeds ? 1u : 0u));
             string output = Path.Combine(root, "out");
             var allowed = new HashSet<string> { ".obj" };
-            if (exceeds)
-                Assert.Throws<IOException>(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
-            else
-                Assert.DoesNotThrow(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
+            Assert.DoesNotThrow(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
             Assert.IsFalse(Directory.Exists(output), "metadata tests must not open payloads or create output");
         }
 
         [TestCase(false)]
         [TestCase(true)]
-        public void DefaultTotalBudget_Accepts2GiBAndRejectsNextByte(bool exceeds)
+        public void LargeArchiveMetadataIsAdmittedBeyondTheFormer2GiBCeiling(bool exceeds)
         {
             // Entries stay within the former per-entry budget, so the aggregate gate is isolated.
             var sizes = new List<uint>();
@@ -85,11 +91,23 @@ namespace MCPForUnityTests.Editor.AssetGen
             string zip = MakeDeclaredSizeZip(sizes.ToArray());
             string output = Path.Combine(root, "out");
             var allowed = new HashSet<string> { ".obj" };
+            Assert.DoesNotThrow(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
+            Assert.IsFalse(Directory.Exists(output), "aggregate arithmetic must not allocate the declared payloads");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void EightGiBArchiveCeilingRejectsNextByteWithoutAllocatingPayloads(bool exceeds)
+        {
+            string zip = MakeDeclaredSizeZip(3u * 1024 * 1024 * 1024, 3u * 1024 * 1024 * 1024, 2u * 1024 * 1024 * 1024, exceeds ? 1u : 0u);
+            string output = Path.Combine(root, "out");
+            var allowed = new HashSet<string> { ".obj" };
             if (exceeds)
                 Assert.Throws<IOException>(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
             else
                 Assert.DoesNotThrow(() => SafeZipExtractor.ExtractTo(zip, output, allowed));
-            Assert.IsFalse(Directory.Exists(output), "aggregate arithmetic must not allocate the declared payloads");
+            Assert.IsFalse(Directory.Exists(output));
+            Assert.Zero(AssetDiskBudget.ReservedBytesForTests(output));
         }
 
         [Test]

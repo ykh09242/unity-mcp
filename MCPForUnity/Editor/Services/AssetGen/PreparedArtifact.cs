@@ -17,6 +17,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         private readonly string root;
         private string path;
         private FileStream stream;
+        private AssetDiskBudget.Lease lease;
         internal string Extension { get; private set; }
         internal string Hash { get; private set; }
         internal long Length { get; private set; }
@@ -36,10 +37,14 @@ namespace MCPForUnity.Editor.Services.AssetGen
             using (input)
             {
                 long bytes = input.DownloadedFile?.Length ?? input.Body?.LongLength ?? long.MaxValue;
+                if (bytes <= 0 || bytes > AssetDownloadTransport.MaxDownloadBytes)
+                    throw new IOException("Provider artifact exceeds the 8 GiB limit or has changed length.");
                 using (await Workers.AcquireAsync(bytes, token).ConfigureAwait(false))
                 {
+                    AssetDiskBudget.Lease reservation = await AssetDiskBudget.ReserveDownloadAsync(root, bytes, token).ConfigureAwait(false);
                     // Do not pass cancellation to Task.Run: the delegate owns cleanup even if canceled before dispatch.
-                    return await Task.Run(() => Create(input, root, kind, provider, extension, declaredExtension, token)).ConfigureAwait(false);
+                    return await Task.Run(() => CreateReserved(input, root, kind, provider, extension, declaredExtension, reservation, token))
+                        .ConfigureAwait(false);
                 }
             }
         }
@@ -54,7 +59,25 @@ namespace MCPForUnity.Editor.Services.AssetGen
             CancellationToken token
         )
         {
-            var result = new PreparedArtifact(root);
+            long bytes = input.DownloadedFile?.Length ?? input.Body?.LongLength ?? long.MaxValue;
+            if (bytes <= 0 || bytes > AssetDownloadTransport.MaxDownloadBytes)
+                throw new IOException("Provider artifact exceeds the 8 GiB limit or has changed length.");
+            AssetDiskBudget.Lease reservation = AssetDiskBudget.ReserveDownloadAsync(root, bytes, token).GetAwaiter().GetResult();
+            return CreateReserved(input, root, kind, provider, extension, declaredExtension, reservation, token);
+        }
+
+        private static PreparedArtifact CreateReserved(
+            HttpResult input,
+            string root,
+            string kind,
+            string provider,
+            string extension,
+            string declaredExtension,
+            AssetDiskBudget.Lease reservation,
+            CancellationToken token
+        )
+        {
+            var result = new PreparedArtifact(root) { lease = reservation };
             try
             {
                 token.ThrowIfCancellationRequested();
@@ -83,6 +106,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     if (read > result.Length - copied)
                         throw new IOException("Provider artifact changed length during preparation.");
                     result.stream.Write(buffer, 0, read);
+                    reservation.RecordWritten(read);
                     sha?.TransformBlock(buffer, 0, read, null, 0);
                     copied += read;
                 }
@@ -92,6 +116,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 result.Hash = ownedHash ?? BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
                 result.stream.Flush();
                 token.ThrowIfCancellationRequested();
+                reservation.CompleteTransfer();
                 return result;
             }
             catch
@@ -140,21 +165,38 @@ namespace MCPForUnity.Editor.Services.AssetGen
             // The staging directory is on the project volume. Move never replaces a competing output.
             File.Move(path, destination);
             path = null; // Published output belongs to the checkpoint, including on later failure.
+            lease?.Dispose();
+            lease = null;
         }
 
         public void Dispose()
         {
-            stream?.Dispose();
-            stream = null;
-            if (path == null)
-                return;
             try
             {
-                File.Delete(SafePathUtility.ResolveWithinRoot(root, path));
+                stream?.Dispose();
             }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-            path = null;
+            finally
+            {
+                stream = null;
+                if (path != null)
+                {
+                    try
+                    {
+                        File.Delete(SafePathUtility.ResolveWithinRoot(root, path));
+                    }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                    catch (InvalidOperationException) { }
+                }
+                if (AssetDiskBudget.FileIsGone(path))
+                {
+                    lease?.Dispose();
+                    lease = null;
+                }
+                else
+                    lease?.CompleteTransfer();
+                path = null;
+            }
         }
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Threading;
+using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Runtime.Helpers;
 
 namespace MCPForUnity.Editor.Services.AssetGen.Import
@@ -81,6 +82,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 if (archive.Entries.Count > maxEntries)
                     throw new IOException("Archive exceeds the entry count limit.");
                 long declaredTotal = 0;
+                long declaredWritable = 0;
                 // Validate all advertised sizes before creating any output files.
                 foreach (ZipArchiveEntry entry in archive.Entries)
                 {
@@ -90,11 +92,23 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     if (entry.Length > Math.Max(1L, entry.CompressedLength) * maxRatio)
                         throw new IOException("Archive exceeds the compression ratio limit.");
                     declaredTotal += entry.Length;
+                    if (
+                        allowedExtensions == null
+                        || allowedExtensions.Count == 0
+                        || allowedExtensions.Contains(Path.GetExtension(entry.Name).ToLowerInvariant())
+                    )
+                        declaredWritable += entry.Length;
                 }
                 inspectArchive?.Invoke(archive); // Same bounded archive; selection can reject before any extracted file is written.
+                AssetDiskBudget.Lease reservation = AssetDiskBudget.ReserveExtraction(
+                    AssetDiskBudget.ProjectForExtraction(destFull),
+                    declaredWritable,
+                    cancellationToken
+                );
                 long totalWritten = 0;
                 byte[] buffer = null;
                 var createdFiles = new List<string>();
+                bool completed = false;
                 // Asset imports share their outer folder scope, including explicit directory entries.
                 Action<string> prepareDirectory = ensureDirectory ?? (path => Directory.CreateDirectory(path));
                 try
@@ -149,6 +163,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                                 if (count > maxEntryBytes - entryWritten || count > maxTotalBytes - totalWritten || count > entry.Length - entryWritten)
                                     throw new IOException("Archive exceeds the actual uncompressed size limit.");
                                 dst.Write(buffer, 0, count);
+                                reservation.RecordWritten(count);
                                 entryWritten += count;
                                 totalWritten += count;
                             }
@@ -156,12 +171,26 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                                 throw new IOException("Archive entry size does not match its metadata.");
                         }
                     }
+                    completed = true; // Extracted files now belong to the caller's project asset scope.
                 }
                 catch
                 {
                     foreach (string created in createdFiles)
-                        File.Delete(created);
+                    {
+                        try
+                        {
+                            File.Delete(created);
+                        }
+                        catch { /* keep reservation if an output survives cleanup */ }
+                    }
                     throw;
+                }
+                finally
+                {
+                    if (completed || createdFiles.TrueForAll(AssetDiskBudget.FileIsGone))
+                        reservation.Dispose();
+                    else
+                        reservation.CompleteTransfer();
                 }
             }
         }
