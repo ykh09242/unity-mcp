@@ -18,7 +18,11 @@ class _Config:
         return self.xmlpath if self.xmlpath is not None else default
 
 
-def test_wrapper_preserves_child_command_and_success(tmp_path, monkeypatch):
+@pytest.mark.parametrize(("scale", "expected_timeout"), [("1", 900), ("2", 1800)])
+def test_wrapper_preserves_child_command_and_success(
+    tmp_path, monkeypatch, scale, expected_timeout
+):
+    monkeypatch.setenv("UNITY_MCP_TEST_TIMEOUT_SCALE", scale)
     observed = {}
 
     def completed(args, **kwargs):
@@ -44,7 +48,7 @@ def test_wrapper_preserves_child_command_and_success(tmp_path, monkeypatch):
     assert kwargs["env"]["UNITY_MCP_LOG_DIR"] == str(tmp_path / "logs")
     assert kwargs["capture_output"] is True
     assert kwargs["text"] is True
-    assert kwargs["timeout"] == 900
+    assert kwargs["timeout"] == expected_timeout
 
 
 @pytest.mark.parametrize(
@@ -60,15 +64,17 @@ def test_wrapper_preserves_child_command_and_success(tmp_path, monkeypatch):
 def test_wrapper_timeout_reports_bounded_child_progress(
     tmp_path, monkeypatch, stdout, stderr, expected
 ):
-    def timed_out(args, **kwargs):  # noqa: ARG001
-        raise subprocess.TimeoutExpired(args, timeout=900, output=stdout, stderr=stderr)
+    def timed_out(args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            args, timeout=kwargs["timeout"], output=stdout, stderr=stderr
+        )
 
     monkeypatch.setattr(wrapper.subprocess, "run", timed_out)
     with pytest.raises(AssertionError) as raised:
         wrapper.test_local_http_security_regressions(tmp_path, _Config())
 
     message = str(raised.value)
-    assert "900" in message
+    assert f"{wrapper.watchdog_timeout(900):g}s" in message
     assert expected in message
     assert "stdout" in message
     assert "stderr" in message
