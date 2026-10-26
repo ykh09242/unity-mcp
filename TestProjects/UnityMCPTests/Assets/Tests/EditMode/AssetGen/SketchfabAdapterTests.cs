@@ -14,6 +14,7 @@ namespace MCPForUnityTests.Editor.AssetGen
     public class SketchfabAdapterTests
     {
         private const string ModelUid = "49d97ca2fbf34f85b6c88ae8ebc7514f";
+
         private static HttpResult Json(string json, int status = 200) =>
             new HttpResult
             {
@@ -76,7 +77,9 @@ namespace MCPForUnityTests.Editor.AssetGen
             var http = new FakeHttpTransport { Handler = _ => Json("{\"usdz\":{\"url\":\"https://x/y.usdz\"}}") };
             var adapter = new SketchfabAdapter();
 
-            Assert.Throws<System.Exception>(() => adapter.ResolveDownloadUrlAsync(ModelUid, "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult());
+            Assert.Throws<System.Exception>(() =>
+                adapter.ResolveDownloadUrlAsync(ModelUid, "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult()
+            );
         }
 
         [Test]
@@ -99,7 +102,9 @@ namespace MCPForUnityTests.Editor.AssetGen
             var http = new FakeHttpTransport { Handler = _ => Json("{}") };
             var adapter = new SketchfabAdapter();
             Assert.Throws<System.ArgumentException>(() => adapter.PreviewAsync(uid, "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult());
-            Assert.Throws<System.ArgumentException>(() => adapter.ResolveDownloadUrlAsync(uid, "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult());
+            Assert.Throws<System.ArgumentException>(() =>
+                adapter.ResolveDownloadUrlAsync(uid, "sfk_secret", http, CancellationToken.None).GetAwaiter().GetResult()
+            );
             Assert.IsEmpty(http.RecordedRequests);
         }
 
