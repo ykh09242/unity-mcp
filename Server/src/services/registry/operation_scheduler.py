@@ -67,7 +67,14 @@ class _WorkerPin:
         with self._lock:
             owner, self._owner = self._owner, None
         if owner is not None:
-            owner._loop.call_soon_threadsafe(owner._unpin)
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is owner._loop:
+                owner._unpin()
+            else:
+                owner._loop.call_soon_threadsafe(owner._unpin)
 
 
 class OperationLease:

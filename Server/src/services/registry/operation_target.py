@@ -17,6 +17,10 @@ class OperationTarget:
     authorize_public: Callable[[str, dict[str, JsonValue]], Awaitable[None]] | None = field(
         default=None, repr=False, compare=False
     )
+    transport_generation: str | None = None
+    public_available: Callable[[tuple[str, ...], object | None], Awaitable[bool]] | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 async def capture_target(
@@ -83,7 +87,19 @@ def capture_stdio_target(connection) -> OperationTarget:
     negotiated = (
         session is not None and CAPABILITY in session.capabilities and valid_generation(native)
     )
-    return OperationTarget(scope, current, negotiated)
+
+    async def available(names: tuple[str, ...], server: object | None) -> bool:
+        from services.custom_tool_service import CustomToolService
+
+        service = CustomToolService._instance
+        if service is None or service._mcp is not server:
+            return True
+        catalog = service.get_stdio_availability(scope.instance, generation)
+        return catalog is None or any(name in catalog for name in names)
+
+    return OperationTarget(
+        scope, current, negotiated, transport_generation=generation, public_available=available
+    )
 
 
 async def capture_http_target(session_id: str, *, hub=None) -> OperationTarget | None:
@@ -125,9 +141,19 @@ async def capture_http_target(session_id: str, *, hub=None) -> OperationTarget |
         await authority.check()
         authorize_operation(authority.permissions, name, params)
 
+    async def available(names: tuple[str, ...], _server: object | None) -> bool:
+        fresh = await registry.get_session(session_id)
+        return (
+            current()
+            and fresh is session
+            and (not fresh.tools_known or any(name in fresh.tools for name in names))
+        )
+
     return OperationTarget(
         scope,
         current,
         hub._supports(socket, CAPABILITY) and valid_generation(native),
         authorize if config.http_remote_hosted else None,
+        generation,
+        available,
     )

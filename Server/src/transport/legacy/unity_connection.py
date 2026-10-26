@@ -704,6 +704,7 @@ class UnityConnection:
         deadline: float | None = None,
         _expected_generation: str | None = None,
         _catalog_guard=None,
+        _operation_guard=None,
         _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
         """Send a command with retry/backoff and port rediscovery. Pings only when requested.
@@ -789,6 +790,15 @@ class UnityConnection:
                     # Discard stale sockets left over from a previous domain reload
                     # so we reconnect instead of writing to a dead connection.
                     self._ensure_live_connection()
+                    if _operation_guard is not None and not _operation_guard():
+                        return MCPResponse(
+                            success=False,
+                            error="operation_target_changed",
+                            data={
+                                "reason": "operation_target_changed",
+                                "dispatch": "not_dispatched",
+                            },
+                        ).model_dump()
                     if _expected_generation is not None and (
                         not self.sock or self.session_generation != _expected_generation
                     ):
@@ -811,6 +821,15 @@ class UnityConnection:
                         time.time() - t_conn_start,
                         command_type,
                     )
+                    if _operation_guard is not None and not _operation_guard():
+                        return MCPResponse(
+                            success=False,
+                            error="operation_target_changed",
+                            data={
+                                "reason": "operation_target_changed",
+                                "dispatch": "not_dispatched",
+                            },
+                        ).model_dump()
 
                     # Linearize catalog admission after liveness/reconnect,
                     # while this exact connection owns the existing I/O lock.
@@ -1819,6 +1838,9 @@ def _command_deadline(command_type: str, params: dict[str, Any]) -> float | None
             if deadline is not None
             else owner.request.expires_at
         )
+    receipt = execution_owner.get()
+    if receipt is not None:
+        deadline = min(deadline, receipt.expires_at) if deadline is not None else receipt.expires_at
     return deadline
 
 
@@ -1834,6 +1856,7 @@ def _send_command_with_retry(
     _deadline: float | None = None,
     _expected_generation: str | None = None,
     _catalog_guard=None,
+    _operation_guard=None,
     _progress: ProgressSink | None = None,
 ) -> tuple[dict[str, Any] | MCPResponse, UnityConnection]:
     """Retain dispatch provenance for async completion without another lookup.
@@ -1877,6 +1900,7 @@ def _send_command_with_retry(
             else {}
         ),
         **({"_catalog_guard": _catalog_guard} if _catalog_guard is not None else {}),
+        **({"_operation_guard": _operation_guard} if _operation_guard is not None else {}),
         **({"_progress": _progress} if _progress is not None else {}),
     )
     retries = 0
@@ -1933,6 +1957,12 @@ def _send_command_with_retry(
             command_type,
             params,
             deadline=deadline,
+            **({"_operation_guard": _operation_guard} if _operation_guard is not None else {}),
+            **(
+                {"_expected_generation": _expected_generation}
+                if _expected_generation is not None
+                else {}
+            ),
             **({"_progress": _progress} if _progress is not None else {}),
         )
         reason = _extract_response_reason(response)
@@ -2056,6 +2086,7 @@ async def _async_send_command_response(
         admission_for,
         operation_session,
         is_observational_continuation,
+        operation_payload_charge,
     )
     from services.registry.operation_target import capture_stdio_target
 
@@ -2088,15 +2119,24 @@ async def _async_send_command_response(
         async with asyncio.timeout_at(deadline):
             connection = await asyncio.shield(selection)
         target = capture_stdio_target(connection)
+        operation_guard = target.is_current if connection.session_generation is not None else None
         policy = resolve_operation_policy(
             command_type, params, native=True, trusted_builtin=_catalog_guard is None
         )
+        charge = operation_payload_charge(params)
+        if charge is None:
+            return MCPResponse(
+                success=False,
+                error="operation_payload_limit",
+                data={"reason": "operation_payload_limit", "dispatch": "not_dispatched"},
+            )
         async with operation_session(
             admission_for(
                 target,
                 policy.mode,
                 expires_at=deadline,
                 observational_continuation=is_observational_continuation(command_type, params),
+                retained_bytes=charge,
             )
         ):
             while True:
@@ -2115,6 +2155,7 @@ async def _async_send_command_response(
                         _catalog_capture=_catalog_capture,
                         _progress=_progress,
                         _connection=connection,
+                        _operation_guard=operation_guard,
                     )
                 except NativeNotStarted as refusal:
                     if not refusal.reply.retryable or command_type == "batch_execute":
@@ -2150,6 +2191,7 @@ async def _async_send_command_attempt(
     _catalog_capture=None,
     _progress: ProgressSink | None = None,
     _connection: UnityConnection | None = None,
+    _operation_guard=None,
 ) -> dict[str, Any] | MCPResponse:
     """Admit one blocking command worker per actual connection and event loop.
 
@@ -2255,6 +2297,11 @@ async def _async_send_command_attempt(
                         else {}
                     ),
                     **({"_catalog_guard": _catalog_guard} if _catalog_guard is not None else {}),
+                    **(
+                        {"_operation_guard": _operation_guard}
+                        if _operation_guard is not None
+                        else {}
+                    ),
                     **({"_progress": _progress} if _progress is not None else {}),
                 )
 

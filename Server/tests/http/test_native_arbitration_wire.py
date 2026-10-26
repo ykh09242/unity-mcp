@@ -1,12 +1,16 @@
 """Negotiated transport provenance through the actual WebSocket endpoint."""
 
 from functools import partial
+import asyncio
 
 import pytest
 
 from tests.http.test_plugin_hub_lifecycle import isolated_hub, wire_client  # noqa: F401
 from tests.timing import watchdog_timeout
 from transport.plugin_hub import PluginHub
+from services.registry.operation_context import scheduler
+from services.registry.operation_scheduler import OperationAdmission
+from services.registry.operation_target import capture_http_target
 
 GENERATION = "b" * 32
 
@@ -92,3 +96,46 @@ def test_old_peer_retains_original_result_and_receives_no_binding(wire_client):
         payload = {"native_arbitration": {"disposition": "not_started", "retryable": True}}
         socket.send_json({"type": "command_result", "id": command["id"], "result": payload})
         assert future.result(watchdog_timeout()) == payload
+
+
+def test_direct_http_queue_charges_payload_before_retention(wire_client):
+    with wire_client.websocket_connect("/hub/plugin") as socket:
+        ack = register(socket)
+
+        async def prepare():
+            target = await capture_http_target(ack["session_id"])
+            value = scheduler()
+            previous = value._max_retained_bytes
+            value._max_retained_bytes = 64
+            return target, value, previous, asyncio.Event(), asyncio.Event()
+
+        target, owner, previous, started, release = wire_client.portal.call(prepare)
+
+        async def hold():
+            async with owner.session(
+                OperationAdmission(target.scope, "exclusive", target.is_current)
+            ):
+                started.set()
+                await release.wait()
+
+        holder = wire_client.portal.start_task_soon(hold)
+        wire_client.portal.call(started.wait)
+        try:
+            future = wire_client.portal.start_task_soon(
+                partial(
+                    PluginHub.send_command,
+                    ack["session_id"],
+                    "custom_unknown",
+                    {"text": "x" * 10000},
+                )
+            )
+            assert future.result(watchdog_timeout())["data"] == {
+                "reason": "operation_capacity",
+                "dispatch": "not_dispatched",
+            }
+            assert wire_client.portal.call(owner.snapshot)["waiting"] == 0
+            assert wire_client.portal.call(owner.snapshot)["retained_bytes"] == 0
+        finally:
+            wire_client.portal.call(release.set)
+            holder.result(watchdog_timeout())
+            owner._max_retained_bytes = previous

@@ -3,12 +3,14 @@
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from functools import wraps
+import asyncio  # noqa: ANYIO_OK -- share the existing public request budget.
 import inspect
 import logging
 from pathlib import Path
 from typing import ParamSpec, TypeVar
 
 from pydantic_core import to_jsonable_python
+from pydantic.fields import FieldInfo
 
 from core.config import config
 from models.response_limits import response_size
@@ -124,6 +126,29 @@ def trusted_tool(function: Callable, name: str) -> bool:
     return False
 
 
+def operation_payload_charge(params: dict[str, JsonValue]) -> int | None:
+    """Use the existing command structure/byte ceilings before queue retention."""
+    return response_size(
+        params,
+        max_bytes=32 * 1024 * 1024,
+        max_depth=64,
+        max_nodes=1_000_000,
+        max_retained=256 * 1024 * 1024,
+    )
+
+
+def _omitted_default(default, value) -> bool:
+    """Recognize exact internal markers without evaluating a default factory."""
+    if value is default and (type(value) is object or isinstance(value, FieldInfo)):
+        return True
+    if type(value) is not object or not isinstance(default, FieldInfo):
+        return False
+    factory = default.default_factory
+    return inspect.isfunction(factory) and any(
+        factory.__globals__.get(name) is value for name in factory.__code__.co_names
+    )
+
+
 def _deadline(name: str, params: dict[str, JsonValue]) -> float | None:
     from transport.command_budget import http_request_budget
     from transport.legacy.unity_connection import _command_deadline
@@ -159,7 +184,11 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
         # Validated API inputs are JSON-compatible models/scalars. Context is
         # never put in policy input, queue accounting, diagnostics or workers.
         params = to_jsonable_python(
-            {key: value for key, value in bound.arguments.items() if key != "ctx"}
+            {
+                key: value
+                for key, value in bound.arguments.items()
+                if key != "ctx" and not _omitted_default(signature.parameters[key].default, value)
+            }
         )
         await authorize_remote_operation(name, params, ctx=ctx)
 
@@ -179,38 +208,40 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
             return await call()
         from services.tools import get_unity_instance_from_context
 
+        expires_at = _deadline(name, params)
         instance = await get_unity_instance_from_context(ctx)
         user = None
         if config.http_remote_hosted:
             from services.credential_lease import require_credential_lease
 
             user = (await require_credential_lease()).user_id
-        target = await capture_target(instance, user_id=user)
+        async with asyncio.timeout_at(expires_at):
+            target = await capture_target(instance, user_id=user)
         if target is None:
             # Unselected/unavailable instances keep their existing selection
             # refusal path. Native admission still applies if a target is resolved.
             return await call()
         if target.authorize_public is not None:
             await target.authorize_public(name, params)
-        charge = response_size(
-            params,
-            max_bytes=32 * 1024 * 1024,
-            max_depth=64,
-            max_nodes=1_000_000,
-            max_retained=256 * 1024 * 1024,
-        )
+        if target.public_available is not None and not await target.public_available(
+            (name, unity_target), getattr(ctx, "fastmcp", None)
+        ):
+            return _refusal("operation_tool_unavailable")
+        charge = operation_payload_charge(params)
         if charge is None:
             return _refusal("operation_payload_limit")
         policy = resolve_operation_policy(name, params, trusted_builtin=trusted)
-        request = admission_for(
-            target, policy.mode, expires_at=_deadline(name, params), retained_bytes=charge
-        )
+        request = admission_for(target, policy.mode, expires_at=expires_at, retained_bytes=charge)
         try:
             async with operation_session(request):
                 await authorize_remote_operation(name, params, ctx=ctx)
                 if target.authorize_public is not None:
                     await target.authorize_public(name, params)
                 await validate_enabled()
+                if target.public_available is not None and not await target.public_available(
+                    (name, unity_target), getattr(ctx, "fastmcp", None)
+                ):
+                    return _refusal("operation_tool_unavailable")
                 if not target.is_current():
                     raise OperationScopeChanged()
                 return await call()

@@ -1310,20 +1310,41 @@ class PluginHub(WebSocketEndpoint):
         _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
         phase_diagnostics.step(command_type, "admission")
-        result = await cls._send_command_response(
-            session_id,
-            command_type,
-            params,
-            _budget=_budget,
-            _expected_read=_expected_read,
-            **(
-                {"_expected_generation": _expected_generation}
-                if _expected_generation is not None
-                else {}
-            ),
-            _catalog_guard=_catalog_guard,
-            **({"_progress": _progress} if _progress is not None else {}),
+        from services.registry.operation_scheduler import (
+            OperationCapacityError,
+            OperationScopeChanged,
         )
+
+        try:
+            result = await cls._send_command_response(
+                session_id,
+                command_type,
+                params,
+                _budget=_budget,
+                _expected_read=_expected_read,
+                _expected_generation=_expected_generation,
+                _catalog_guard=_catalog_guard,
+                _progress=_progress,
+            )
+        except (OperationCapacityError, OperationScopeChanged) as error:
+            result = MCPResponse(
+                success=False,
+                error=str(error),
+                data={"reason": str(error), "dispatch": "not_dispatched"},
+            ).model_dump()
+        except (CredentialLeaseError, OperationPermissionError) as error:
+            reason = (
+                "auth_required" if isinstance(error, CredentialLeaseError) else "permission_denied"
+            )
+            result = MCPResponse(
+                success=False, error=reason, data={"reason": reason, "dispatch": "not_dispatched"}
+            ).model_dump()
+        except TimeoutError:
+            result = MCPResponse(
+                success=False,
+                error="Unity command deadline expired before dispatch",
+                data={"reason": "command_deadline_exceeded", "dispatch": "not_dispatched"},
+            ).model_dump()
         phase_diagnostics.step(command_type, "return")
         observe_native_result(result)
         return result
@@ -1341,12 +1362,53 @@ class PluginHub(WebSocketEndpoint):
         _catalog_guard=None,
         _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
+        from services.registry.operation_context import active_operation
+
+        budget = _budget or _CommandBudget(
+            asyncio.get_running_loop().time() + cls._command_timeouts(command_type, params)[1]
+        )
+        owner = active_operation()
+        if owner is not None and owner.request.expires_at is not None:
+            budget.expires_at = min(budget.expires_at, owner.request.expires_at)
+        budget.phase = "admission"
+        receipt = execution_owner.get()
+        if receipt is not None:
+            budget.expires_at = min(budget.expires_at, receipt.expires_at)
+        try:
+            async with asyncio.timeout_at(budget.expires_at):
+                return await cls._admit_command_response(
+                    session_id,
+                    command_type,
+                    params,
+                    _budget=budget,
+                    _expected_read=_expected_read,
+                    _expected_generation=_expected_generation,
+                    _catalog_guard=_catalog_guard,
+                    _progress=_progress,
+                )
+        except TimeoutError:
+            return budget.timeout_response(command_type)
+
+    @classmethod
+    async def _admit_command_response(
+        cls,
+        session_id: str,
+        command_type: str,
+        params: dict[str, Any],
+        *,
+        _budget: _CommandBudget | None = None,
+        _expected_read: _ConnectionReadIdentity | None = None,
+        _expected_generation: str | None = None,
+        _catalog_guard=None,
+        _progress: ProgressSink | None = None,
+    ) -> dict[str, Any]:
         from services.operation_policy import resolve_operation_policy
         from services.registry.operation_context import active_operation
         from services.registry.operation_invocation import (
             admission_for,
             operation_session,
             is_observational_continuation,
+            operation_payload_charge,
         )
         from services.registry.operation_target import capture_http_target
 
@@ -1368,6 +1430,8 @@ class PluginHub(WebSocketEndpoint):
                 _catalog_guard=_catalog_guard,
                 _progress=_progress,
             )
+        if _expected_generation is None:
+            _expected_generation = target.transport_generation
         if config.http_remote_hosted:
             requester = await require_credential_lease()
             socket = cls._connections.get(session_id)
@@ -1386,12 +1450,20 @@ class PluginHub(WebSocketEndpoint):
         policy = resolve_operation_policy(
             command_type, params, native=True, trusted_builtin=_catalog_guard is None
         )
+        charge = operation_payload_charge(params)
+        if charge is None:
+            return MCPResponse(
+                success=False,
+                error="operation_payload_limit",
+                data={"reason": "operation_payload_limit", "dispatch": "not_dispatched"},
+            ).model_dump()
         async with operation_session(
             admission_for(
                 target,
                 policy.mode,
                 expires_at=budget.expires_at,
                 observational_continuation=is_observational_continuation(command_type, params),
+                retained_bytes=charge,
             )
         ):
             return await cls._send_command_response_admitted(
