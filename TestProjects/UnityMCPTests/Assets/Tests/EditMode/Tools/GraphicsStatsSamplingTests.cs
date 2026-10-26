@@ -16,6 +16,35 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class GraphicsStatsSamplingTests
     {
+        private readonly Dictionary<string, (bool Present, bool Enabled)> registryPreferences = new();
+
+        [SetUp]
+        public void EnableOwnedRegistryTargets()
+        {
+            registryPreferences.Clear();
+            foreach (
+                string key in new[]
+                {
+                    MCPForUnity.Editor.Constants.EditorPrefKeys.ToolEnabledPrefix + "manage_graphics",
+                    MCPForUnity.Editor.Constants.EditorPrefKeys.ResourceEnabledPrefix + "get_rendering_stats",
+                }
+            )
+            {
+                registryPreferences[key] = (UnityEditor.EditorPrefs.HasKey(key), UnityEditor.EditorPrefs.GetBool(key, false));
+                UnityEditor.EditorPrefs.SetBool(key, true);
+            }
+        }
+
+        [TearDown]
+        public void RestoreRegistryTargets()
+        {
+            foreach (var entry in registryPreferences)
+                if (entry.Value.Present)
+                    UnityEditor.EditorPrefs.SetBool(entry.Key, entry.Value.Enabled);
+                else
+                    UnityEditor.EditorPrefs.DeleteKey(entry.Key);
+        }
+
         private static Type Stats => typeof(ManageGraphics).Assembly.GetType("MCPForUnity.Editor.Tools.Graphics.RenderingStatsOps", true);
 
         [UnityTest]

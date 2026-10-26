@@ -341,7 +341,8 @@ namespace MCPForUnity.Editor.Tools
         {
             if (!_handlers.TryGetValue(commandName, out var handler) || !IsCurrentAlias(handler))
                 return false;
-            return (handler.AliasOwner ?? handler).HasTrustedRegistration;
+            var owner = handler.AliasOwner ?? handler;
+            return owner.HasTrustedRegistration && ToolOperationIdentity.IsCanonicalHandler(owner.CommandName, owner.SourceType);
         }
 
         internal static bool IsTrustedBatchHandler(string commandName) =>
@@ -352,6 +353,21 @@ namespace MCPForUnity.Editor.Tools
 
         internal static string GetAdmissionName(string commandName) =>
             _handlers.TryGetValue(commandName, out var handler) && handler.AliasOwner != null && IsCurrentAlias(handler) ? "batch_execute" : commandName;
+
+        internal static void RequireAvailable(string commandName)
+        {
+            // Discovery intentionally hides tool metadata off-thread. Treating that null as
+            // an unlisted custom handler would turn a stored delegate into an availability bypass.
+            if (!ToolConsentThread.IsMainThread)
+                throw new InvalidOperationException("Commands must execute on the Unity Editor main thread.");
+            string admissionName = GetAdmissionName(commandName);
+            var resource = MCPServiceLocator.ResourceDiscovery.GetResourceMetadata(admissionName);
+            if (resource != null && !MCPServiceLocator.ResourceDiscovery.IsResourceEnabled(admissionName))
+                throw new InvalidOperationException($"Resource '{commandName}' is disabled in the Unity Editor.");
+            var tool = MCPServiceLocator.ToolDiscovery.GetToolMetadata(admissionName);
+            if (tool != null && !MCPServiceLocator.ToolDiscovery.IsToolEnabled(admissionName))
+                throw new InvalidOperationException($"Tool '{commandName}' is disabled in the Unity Editor.");
+        }
 
         internal static string GetBatchTargetIdentity(string name)
         {
@@ -401,7 +417,13 @@ namespace MCPForUnity.Editor.Tools
                 throw new InvalidOperationException($"Command '{commandName}' is asynchronous and must be executed via ExecuteCommand");
             }
 
-            return handlerInfo.SyncHandler;
+            return parameters =>
+            {
+                // A retained delegate must observe later disablement or consent revocation.
+                GetHandlerInfo(commandName);
+                RequireAvailable(commandName);
+                return handlerInfo.SyncHandler(parameters);
+            };
         }
 
         /// <summary>
@@ -438,6 +460,7 @@ namespace MCPForUnity.Editor.Tools
         {
             cancellationToken.ThrowIfCancellationRequested();
             var handlerInfo = GetHandlerInfo(commandName);
+            RequireAvailable(commandName);
 
             if (handlerInfo.IsAsync)
             {
@@ -483,6 +506,7 @@ namespace MCPForUnity.Editor.Tools
         {
             cancellationToken.ThrowIfCancellationRequested();
             GetHandlerInfo(commandName);
+            RequireAvailable(commandName);
             bool trustedBuiltIn = IsTrustedBuiltInHandler(commandName);
             var policy = ToolOperationPolicy.Resolve(commandName, @params, trustedBuiltIn);
             if (

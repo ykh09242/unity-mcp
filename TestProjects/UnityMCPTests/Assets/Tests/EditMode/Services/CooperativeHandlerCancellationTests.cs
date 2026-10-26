@@ -23,6 +23,10 @@ namespace MCPForUnityTests.Editor.Services
             var handlers = (IDictionary)typeof(CommandRegistry).GetField("_handlers", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
             var previous = handlers[name];
             using var lifetime = new CancellationTokenSource();
+            string enabledKey = MCPForUnity.Editor.Constants.EditorPrefKeys.ToolEnabledPrefix + name;
+            bool hadPreference = UnityEditor.EditorPrefs.HasKey(enabledKey);
+            bool previousEnabled = UnityEditor.EditorPrefs.GetBool(enabledKey, false);
+            UnityEditor.EditorPrefs.SetBool(enabledKey, true);
             try
             {
                 Assert.AreEqual(1, CommandRegistry.RegisterCommandTypes(new[] { typeof(SignatureProbe) }, false));
@@ -32,6 +36,10 @@ namespace MCPForUnityTests.Editor.Services
             }
             finally
             {
+                if (hadPreference)
+                    UnityEditor.EditorPrefs.SetBool(enabledKey, previousEnabled);
+                else
+                    UnityEditor.EditorPrefs.DeleteKey(enabledKey);
                 if (previous == null)
                     handlers.Remove(name);
                 else

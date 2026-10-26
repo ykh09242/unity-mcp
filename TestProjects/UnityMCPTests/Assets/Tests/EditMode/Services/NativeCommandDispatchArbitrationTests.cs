@@ -203,6 +203,124 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void CanonicalResourceAndGeneratedAliasesKeepTheirRegisteredIdentity()
+        {
+            Assert.IsTrue(CommandRegistry.IsTrustedBuiltInHandler("get_selection"));
+            Assert.IsTrue(CommandRegistry.IsTrustedBuiltInHandler("query_physics"));
+            Assert.IsTrue(CommandRegistry.IsTrustedBuiltInHandler("batch_execute"));
+            Assert.IsTrue(CommandRegistry.IsTrustedBuiltInHandler("batch_validate"));
+            Assert.IsTrue(CommandRegistry.IsTrustedBuiltInHandler("batch_apply_preview"));
+            Assert.IsFalse(CommandRegistry.IsTrustedBuiltInHandler(Name));
+        }
+
+        [Test]
+        public void SameAssemblyRegisteredMethodCannotImpersonateAnotherCanonicalOwner()
+        {
+            const string command = "get_selection";
+            object original = handlers[command];
+            var source = typeof(GetCompileJob);
+            var method = CommandRegistry.GetCommandMethod(source);
+            var handler = new HandlerInfo(command, (Func<JObject, object>)Delegate.CreateDelegate(typeof(Func<JObject, object>), method), null);
+            handler.BindRegistration(source, method);
+            Assert.AreSame(typeof(CommandRegistry).Assembly, source.Assembly);
+            Assert.IsTrue(handler.HasTrustedRegistration, "Assembly membership and a sealed real method alone do not establish canonical ownership.");
+            handlers[command] = handler;
+            try
+            {
+                Assert.IsFalse(CommandRegistry.IsTrustedBuiltInHandler(command));
+                Assert.AreEqual(
+                    ToolOperationMode.Exclusive,
+                    ToolOperationPolicy.Resolve(command, new JObject(), CommandRegistry.IsTrustedBuiltInHandler(command)).Mode
+                );
+            }
+            finally
+            {
+                if (original == null)
+                    handlers.Remove(command);
+                else
+                    handlers[command] = original;
+            }
+        }
+
+        [Test]
+        public void RevokedNativeToolCannotBeDelegatedThroughAnyRegistryEntryPoint()
+        {
+            const string command = "execute_code";
+            using var consent = new ScopedConsentTestState(command);
+            object original = handlers[command];
+            int invoked = 0;
+            handlers[command] = new HandlerInfo(
+                command,
+                _ =>
+                {
+                    invoked++;
+                    return new { done = true };
+                },
+                null
+            );
+            try
+            {
+                var retained = CommandRegistry.GetHandler(command);
+                Assert.IsTrue(consent.Service.Revoke(command).DeniedInCurrentDomain);
+                Assert.IsFalse(MCPServiceLocator.ToolDiscovery.IsToolEnabled(command));
+                Assert.That(Assert.Throws<InvalidOperationException>(() => retained(new JObject())).Message, Does.Contain("disabled"));
+                Assert.That(
+                    Assert
+                        .Throws<InvalidOperationException>(() => CommandRegistry.ExecuteCommand(command, new JObject(), new TaskCompletionSource<string>()))
+                        .Message,
+                    Does.Contain("disabled")
+                );
+                Assert.That(
+                    Assert.Throws<InvalidOperationException>(() => CommandRegistry.InvokeCommandAsync(command, new JObject(), CancellationToken.None)).Message,
+                    Does.Contain("disabled")
+                );
+                Assert.AreEqual(0, invoked, "A custom handler cannot compose a disabled native handler through the registry.");
+            }
+            finally
+            {
+                if (original == null)
+                    handlers.Remove(command);
+                else
+                    handlers[command] = original;
+            }
+        }
+
+        [Test]
+        public void RetainedDelegateFailsClosedOnWorkerBeforeDiscoveryCanHideDisabledTool()
+        {
+            const string command = "execute_code";
+            using var consent = new ScopedConsentTestState(command);
+            object original = handlers[command];
+            int invoked = 0;
+            handlers[command] = new HandlerInfo(
+                command,
+                _ =>
+                {
+                    Interlocked.Increment(ref invoked);
+                    return null;
+                },
+                null
+            );
+            try
+            {
+                var retained = CommandRegistry.GetHandler(command);
+                Assert.IsNotNull(MCPServiceLocator.ToolDiscovery.GetToolMetadata(command));
+                MCPServiceLocator.ResourceDiscovery.DiscoverAllResources();
+                Assert.IsTrue(consent.Service.Revoke(command).DeniedInCurrentDomain);
+                var error = Task.Run(() => Assert.Throws<InvalidOperationException>(() => retained(new JObject()))).GetAwaiter().GetResult();
+                Assert.That(error.Message, Does.Contain("main thread"));
+                Assert.AreEqual(0, invoked);
+            }
+            finally
+            {
+                if (original == null)
+                    handlers.Remove(command);
+                else
+                    handlers[command] = original;
+            }
+        }
+
+        [Test]
         public void StaleGenerationNeverDispatchesAndSourceTypeAloneNeverGrantsReadTrust()
         {
             var binding = Binding();
