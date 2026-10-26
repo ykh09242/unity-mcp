@@ -33,6 +33,7 @@ namespace MCPForUnity.Editor.Services
         private bool restoredAfterReload;
         private bool laterTurn;
         private bool disposed;
+        private EditorApplication.CallbackFunction scheduledTurn;
         private Action<Action> defer = action => action();
         internal Func<bool> Persist;
         internal JObject State { get; private set; }
@@ -117,12 +118,7 @@ namespace MCPForUnity.Editor.Services
                     TestRunnerApi.CancelTestRun
                 );
                 control.binding = native;
-                control.defer = callback =>
-                    EditorApplication.delayCall += () =>
-                    {
-                        if (!control.disposed)
-                            callback();
-                    };
+                control.defer = control.ScheduleLaterEditorUpdate;
                 control.State["editor_session"] = Session();
                 native.Subscribe(control.ObserveFinal);
                 return control;
@@ -153,6 +149,7 @@ namespace MCPForUnity.Editor.Services
             if ((bool?)state["final_witness"] == true)
             {
                 control.finalTick = 0;
+                control.finalEditorUpdates = 0;
                 control.defer(() => control.laterTurn = true);
             }
             return control;
@@ -390,7 +387,7 @@ namespace MCPForUnity.Editor.Services
 
         internal void ObserveFinal(string guid)
         {
-            if (disposed || Released || NativeGuid == null || guid != NativeGuid)
+            if (disposed || Released || (bool?)State["final_witness"] == true || NativeGuid == null || guid != NativeGuid)
                 return;
             State["final_witness"] = true;
             State["termination"] = "cleanup_pending";
@@ -405,6 +402,23 @@ namespace MCPForUnity.Editor.Services
             }
             laterTurn = false;
             defer(() => laterTurn = true);
+        }
+
+        private void ScheduleLaterEditorUpdate(Action callback)
+        {
+            if (scheduledTurn != null)
+                EditorApplication.update -= scheduledTurn;
+            EditorApplication.CallbackFunction scheduled = null;
+            scheduled = () =>
+            {
+                EditorApplication.update -= scheduled;
+                if (scheduledTurn == scheduled)
+                    scheduledTurn = null;
+                if (!disposed)
+                    callback();
+            };
+            scheduledTurn = scheduled;
+            EditorApplication.update += scheduled;
         }
 
         // All values are cached from the existing monitor. Status reads never probe UTF.
@@ -469,7 +483,11 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        internal void Tick()
+        internal void Tick() => TickCore(fromEditorUpdate: false);
+
+        internal void TickFromEditorUpdate() => TickCore(fromEditorUpdate: true);
+
+        private void TickCore(bool fromEditorUpdate)
         {
             if (disposed || Released)
                 return;
@@ -501,7 +519,7 @@ namespace MCPForUnity.Editor.Services
                     State["termination"] = "unknown";
                     return;
                 }
-                if (idle && (bool?)State["final_witness"] == true && laterTurn && tick > finalTick)
+                if (idle && (bool?)State["final_witness"] == true && laterTurn && fromEditorUpdate && editorUpdates > finalEditorUpdates && tick > finalTick)
                 {
                     State["released"] = true;
                     State["termination"] = "confirmed";
@@ -528,6 +546,11 @@ namespace MCPForUnity.Editor.Services
             if (disposed)
                 return;
             disposed = true;
+            if (scheduledTurn != null)
+            {
+                EditorApplication.update -= scheduledTurn;
+                scheduledTurn = null;
+            }
             binding?.Dispose();
         }
 

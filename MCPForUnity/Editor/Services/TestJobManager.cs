@@ -639,10 +639,12 @@ namespace MCPForUnity.Editor.Services
             foreach (var job in Jobs.Values.ToArray())
                 if (job.Control != null && !job.Control.Released)
                     job.Control.NoteEditorUpdate();
-            TickNativeControls();
+            TickNativeControlsCore(fromEditorUpdate: true);
         }
 
-        private static void TickNativeControls()
+        private static void TickNativeControls() => TickNativeControlsCore(fromEditorUpdate: false);
+
+        private static void TickNativeControlsCore(bool fromEditorUpdate)
         {
             foreach (var job in Jobs.Values.ToArray())
             {
@@ -650,7 +652,12 @@ namespace MCPForUnity.Editor.Services
                 if (control == null || (bool?)control.State["settled"] == true)
                     continue;
                 if (!control.Released)
-                    control.Tick();
+                {
+                    if (fromEditorUpdate)
+                        control.TickFromEditorUpdate();
+                    else
+                        control.Tick();
+                }
                 if (!control.Released)
                     continue;
                 if (control.Requested && job.Status == TestJobStatus.Running)
