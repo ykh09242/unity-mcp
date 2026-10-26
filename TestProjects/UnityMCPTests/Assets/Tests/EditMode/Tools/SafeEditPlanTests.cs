@@ -396,24 +396,67 @@ namespace MCPForUnityTests.Editor.Tools
             var assets = CreateMeshPrefab();
             string meshId = AssetIdentity(assets.mesh),
                 materialId = AssetIdentity(assets.material);
+            var expected = new JObject
+            {
+                ["root_mesh"] = new JObject { ["identity"] = meshId, ["path"] = assets.meshPath },
+                ["root_material"] = new JObject { ["identity"] = materialId, ["path"] = assets.materialPath },
+                ["borrower_mesh"] = new JObject { ["identity"] = meshId, ["path"] = assets.meshPath },
+                ["borrower_material"] = new JObject { ["identity"] = materialId, ["path"] = assets.materialPath },
+            };
+            var source = AssetDatabase.LoadAssetAtPath<GameObject>(assets.prefabPath);
+            var referencesBefore = SharedAssetReferences(source, assets.material, "before_preview");
+            Assert.IsTrue(JToken.DeepEquals(expected, referencesBefore), referencesBefore.ToString());
             string[] assetPaths = { assets.meshPath, assets.meshPath + ".meta", assets.materialPath, assets.materialPath + ".meta" };
             var before = assetPaths.ToDictionary(path => path, System.IO.File.ReadAllBytes);
             string[] inventory = AssetDatabase.FindAssets("", new[] { folder }).OrderBy(guid => guid, StringComparer.Ordinal).ToArray();
             string token = PreviewRootScale(assets.prefabPath);
             var result = Prefab(new JObject { ["action"] = "apply_preview", ["preview_id"] = token });
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-            var source = AssetDatabase.LoadAssetAtPath<GameObject>(assets.prefabPath);
+            source = AssetDatabase.LoadAssetAtPath<GameObject>(assets.prefabPath);
+            var referencesAfter = SharedAssetReferences(source, assets.material, "after_apply");
             Assert.AreEqual(new Vector3(1.25f, 1, 1), source.transform.localScale);
-            Assert.AreSame(assets.mesh, source.GetComponent<MeshFilter>().sharedMesh);
-            Assert.AreSame(assets.material, source.GetComponent<MeshRenderer>().sharedMaterial);
-            Assert.AreSame(assets.mesh, source.transform.Find("SharedBorrower").GetComponent<MeshFilter>().sharedMesh);
-            Assert.AreSame(assets.material, source.transform.Find("SharedBorrower").GetComponent<MeshRenderer>().sharedMaterial);
-            Assert.AreEqual(meshId, AssetIdentity(source.GetComponent<MeshFilter>().sharedMesh));
-            Assert.AreEqual(materialId, AssetIdentity(source.GetComponent<MeshRenderer>().sharedMaterial));
             foreach (string path in assetPaths)
                 CollectionAssert.AreEqual(before[path], System.IO.File.ReadAllBytes(path), path);
             CollectionAssert.AreEqual(inventory, AssetDatabase.FindAssets("", new[] { folder }).OrderBy(guid => guid, StringComparer.Ordinal).ToArray());
+            Assert.IsTrue(JToken.DeepEquals(expected, referencesAfter), referencesAfter.ToString());
+            var borrower = source.transform.Find("SharedBorrower");
+            Assert.IsTrue(
+                source.GetComponent<MeshFilter>().sharedMesh == borrower.GetComponent<MeshFilter>().sharedMesh,
+                "Both consumers must share the native mesh."
+            );
+            Assert.IsTrue(
+                source.GetComponent<MeshRenderer>().sharedMaterial == borrower.GetComponent<MeshRenderer>().sharedMaterial,
+                "Both consumers must share the native material."
+            );
         }
+
+        private static JObject SharedAssetReferences(GameObject source, Material originalMaterial, string phase)
+        {
+            var borrower = source.transform.Find("SharedBorrower");
+            var material = source.GetComponent<MeshRenderer>().sharedMaterial;
+            var references = new JObject
+            {
+                ["root_mesh"] = SharedAssetReference(source.GetComponent<MeshFilter>().sharedMesh),
+                ["root_material"] = SharedAssetReference(material),
+                ["borrower_mesh"] = SharedAssetReference(borrower.GetComponent<MeshFilter>().sharedMesh),
+                ["borrower_material"] = SharedAssetReference(borrower.GetComponent<MeshRenderer>().sharedMaterial),
+            };
+            // Import can replace managed wrappers. Record that separately from persistent reference identity.
+            TestContext.WriteLine(
+                "PREFAB_SHARED_REFERENCES:"
+                    + new JObject
+                    {
+                        ["phase"] = phase,
+                        ["original_material_same_managed"] = object.ReferenceEquals(originalMaterial, material),
+                        ["original_material_same_native"] = originalMaterial == material,
+                        ["references"] = references.DeepClone(),
+                    }.ToString(Newtonsoft.Json.Formatting.None)
+            );
+            return references;
+        }
+
+        private static JObject SharedAssetReference(Object value) =>
+            new JObject { ["identity"] = AssetIdentity(value), ["path"] = AssetDatabase.GetAssetPath(value) };
 
         [TestCase(false)]
         [TestCase(true)]
