@@ -397,11 +397,11 @@ namespace MCPForUnity.Editor.Tools
                 .FirstOrDefault(t => t != null);
         }
 
-        private static Type NativeTmp() =>
+        private static Type NativeTmp(string name = "TMPro.TextMeshProUGUI") =>
             AppDomain
                 .CurrentDomain.GetAssemblies()
                 .Where(a => a.GetName().Name == "Unity.TextMeshPro")
-                .Select(a => a.GetType("TMPro.TextMeshProUGUI", false))
+                .Select(a => a.GetType(name, false))
                 .FirstOrDefault(t => t != null);
 
         private static bool ReadNativeTmp(Component component, Type nativeType, string member)
@@ -549,6 +549,7 @@ namespace MCPForUnity.Editor.Tools
                 stack.Push((canvas.transform, null, 0));
                 var scalerType = Builtin("UnityEngine.UI.CanvasScaler");
                 var tmpType = NativeTmp();
+                var tmpInputType = NativeTmp("TMPro.TMP_InputField");
                 Component scaler = null;
                 bool unsupported = false,
                     targetFound = false;
@@ -594,7 +595,8 @@ namespace MCPForUnity.Editor.Tools
                         unsupported = true;
                         break;
                     }
-                    Component fixedText = null;
+                    Component fixedText = null,
+                        fixedInput = null;
                     bool fitsText = false;
                     foreach (var component in components)
                     {
@@ -610,6 +612,12 @@ namespace MCPForUnity.Editor.Tools
                         {
                             // No TMP clone, text parsing, preferred-size getter, font lookup or callback.
                             fixedText = component;
+                            continue;
+                        }
+                        if (type == tmpInputType)
+                        {
+                            // Input preferred metrics delegate to TMP text; never clone or query them.
+                            fixedInput = component;
                             continue;
                         }
                         if (builtin && PreviewNames.Contains(name))
@@ -669,6 +677,11 @@ namespace MCPForUnity.Editor.Tools
                                 RecordUnsupported(component, source, b);
                             }
                         }
+                    }
+                    if (fixedInput != null && ((Behaviour)fixedInput).isActiveAndEnabled && (fitsText || item.parent?.ConsumesChildTextMetrics == true))
+                    {
+                        unsupported = true;
+                        RecordUnsupported(fixedInput, source, b);
                     }
                     if (fixedText != null)
                     {
