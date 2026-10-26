@@ -107,7 +107,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             var component = testGameObject.AddComponent<NullableUnityValueProbe>();
             component.vector3 = new Vector3(7, 8, 9);
-            LogAssert.Expect(LogType.Error, new Regex("Error converting token to System.Nullable"));
+            LogAssert.Expect(LogType.Error, new Regex(@"\[PropertyConversion\] Property value conversion failed\."));
             Assert.IsFalse(SetNullableValue("vector3", JToken.Parse(input)).Value<bool>("success"));
             Assert.AreEqual(new Vector3(7, 8, 9), component.vector3.Value);
         }
@@ -153,7 +153,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void ManageComponents_SetProperty_ArrayForFloatProperty_DoesNotCrashDispatcher()
         {
             // Expect the error log that will be generated
-            LogAssert.Expect(LogType.Error, new Regex("Error converting token to System.Single"));
+            LogAssert.Expect(LogType.Error, new Regex(@"\[PropertyConversion\] Property value conversion failed\."));
 
             // Add AudioSource component
             var audioSource = testGameObject.AddComponent<AudioSource>();
@@ -196,7 +196,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void ManageComponents_MultipleSetPropertyFailures_DispatcherStaysResponsive()
         {
             // Expect the error log for the invalid string conversion
-            LogAssert.Expect(LogType.Error, new Regex("Error converting token to System.Single"));
+            LogAssert.Expect(LogType.Error, new Regex(@"\[PropertyConversion\] Property value conversion failed\."));
 
             var audioSource = testGameObject.AddComponent<AudioSource>();
 

@@ -39,9 +39,9 @@ namespace MCPForUnity.Editor.Helpers
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                McpLog.Warn($"[VectorParsing] Failed to parse Vector3 from '{token}': {ex.Message}");
+                McpLog.Warn("[VectorParsing] Failed to parse Vector3 value.");
             }
 
             return null;
@@ -83,9 +83,9 @@ namespace MCPForUnity.Editor.Helpers
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                McpLog.Warn($"[VectorParsing] Failed to parse Vector2 from '{token}': {ex.Message}");
+                McpLog.Warn("[VectorParsing] Failed to parse Vector2 value.");
             }
 
             return null;
@@ -119,9 +119,9 @@ namespace MCPForUnity.Editor.Helpers
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Debug.LogWarning($"[VectorParsing] Failed to parse Vector4 from '{token}': {ex.Message}");
+                McpLog.Warn("[VectorParsing] Failed to parse Vector4 value.");
             }
 
             return null;
@@ -187,9 +187,9 @@ namespace MCPForUnity.Editor.Helpers
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                McpLog.Warn($"[VectorParsing] Failed to parse Quaternion from '{token}': {ex.Message}");
+                McpLog.Warn("[VectorParsing] Failed to parse Quaternion value.");
             }
 
             return null;
@@ -242,9 +242,9 @@ namespace MCPForUnity.Editor.Helpers
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                McpLog.Warn($"[VectorParsing] Failed to parse Color from '{token}': {ex.Message}");
+                McpLog.Warn("[VectorParsing] Failed to parse Color value.");
             }
 
             return null;
@@ -349,9 +349,9 @@ namespace MCPForUnity.Editor.Helpers
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                McpLog.Warn($"[VectorParsing] Failed to parse Gradient from '{token}': {ex.Message}");
+                McpLog.Warn("[VectorParsing] Failed to parse Gradient value.");
             }
 
             return null;
@@ -447,9 +447,9 @@ namespace MCPForUnity.Editor.Helpers
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                McpLog.Warn($"[VectorParsing] Failed to parse AnimationCurve from '{token}': {ex.Message}");
+                McpLog.Warn("[VectorParsing] Failed to parse AnimationCurve value.");
             }
 
             return null;
@@ -691,9 +691,9 @@ namespace MCPForUnity.Editor.Helpers
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                McpLog.Warn($"[VectorParsing] Failed to parse Rect from '{token}': {ex.Message}");
+                McpLog.Warn("[VectorParsing] Failed to parse Rect value.");
             }
 
             return null;
@@ -722,9 +722,9 @@ namespace MCPForUnity.Editor.Helpers
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                McpLog.Warn($"[VectorParsing] Failed to parse Bounds from '{token}': {ex.Message}");
+                McpLog.Warn("[VectorParsing] Failed to parse Bounds value.");
             }
 
             return null;
