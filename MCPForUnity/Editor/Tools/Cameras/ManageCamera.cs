@@ -126,6 +126,10 @@ namespace MCPForUnity.Editor.Tools.Cameras
                         );
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 McpLog.Error($"[ManageCamera] Action '{action}' failed: {ex}");
