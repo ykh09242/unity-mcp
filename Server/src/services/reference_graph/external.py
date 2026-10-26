@@ -433,7 +433,7 @@ def analyze_document(relative: str, text: str, catalog: Catalog, mappings: list[
             )
             if reason:
                 result.unresolved.append(
-                    {"field": field_name, "line": line, "reason": reason, "key": key}
+                    {"field": field_name, "line": line, "reason": reason, "key_redacted": True}
                 )
             result.edges.extend(
                 Edge(

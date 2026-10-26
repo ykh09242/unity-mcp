@@ -33,6 +33,35 @@ def row(guid="a" * 32, path="Assets/Resources/Fixture.prefab"):
     }
 
 
+def test_legacy_external_diagnostics_redact_raw_keys_without_changing_native_issues(workspace):
+    # Given old persisted external diagnostics and ordinary native diagnostics.
+    with workspace.store._connect(write=True) as connection:
+        connection.execute(
+            "INSERT INTO sources(provider,config,version,enabled) VALUES (?,?,?,?)",
+            ("external:settings", "{}", 1, 1),
+        )
+        connection.executemany(
+            "INSERT INTO graph_issues VALUES (?,?,?,?)",
+            [
+                (
+                    "owner",
+                    "external:settings",
+                    0,
+                    '{"reason":"key_not_found","key":"private-scalar"}',
+                ),
+                ("owner", "code", 0, '{"reason":"key_not_found","key":"native-key"}'),
+            ],
+        )
+    # When diagnostics are delivered, then only the external raw key is redacted.
+    issues = {issue["provider"]: issue for issue in workspace.diagnostics("owner")["issues"]}
+    assert issues["external:settings"] == {
+        "provider": "external:settings",
+        "reason": "key_not_found",
+        "key_redacted": True,
+    }
+    assert issues["code"]["key"] == "native-key"
+
+
 def test_document_state_hydrates_from_observation_after_schema5(workspace):
     generation = workspace.observe("worker", Observation("owner", "code", "hash"))
     with workspace.store._connect(write=True) as connection:

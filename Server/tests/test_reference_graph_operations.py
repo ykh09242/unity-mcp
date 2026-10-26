@@ -142,7 +142,7 @@ def setup(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_config_pages_cas_reauthorization_and_isolation(setup, tmp_path):
+async def test_config_pages_cas_reauthorization_and_isolation(setup, tmp_path, monkeypatch):
     service, ctx = setup
     try:
         for index in range(3):
@@ -181,6 +181,10 @@ async def test_config_pages_cas_reauthorization_and_isolation(setup, tmp_path):
         }
         with pytest.raises(ValueError, match="reauthoriz"):
             await service.execute(ctx, "import_config", source)
+        monkeypatch.delenv("UNITY_MCP_REFERENCE_GRAPH_LOCAL_ROOTS", raising=False)
+        with pytest.raises(PermissionError):
+            await service.execute(ctx, "import_config", {**source, "reauthorize": True})
+        monkeypatch.setenv("UNITY_MCP_REFERENCE_GRAPH_LOCAL_ROOTS", json.dumps([str(root)]))
         await service.execute(ctx, "import_config", {**source, "reauthorize": True})
         entry, _ = await service.resolve(ctx, "status")
         entry.workspace.set_source(
