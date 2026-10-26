@@ -39,7 +39,8 @@ def test_build_settings_and_status_at_actual_sdk_boundary():
         definition=ToolDefinitionModel(name="manage_build",requires_polling=True,poll_action="status",max_poll_seconds=600)
         service.register_global_tools([definition])
         assert "manage_build" not in service._global_tools  # Existing built-in remains untouched.
-        service._register_project_tools("fixture-project",[definition])
+        polling_fixture=definition.model_copy(update={"name":"fixture_build"})
+        service._register_project_tools("fixture-project",[definition,polling_fixture])
         execute.get_unity_instance_from_context=instance
         execute.resolve_project_id_for_unity_instance=lambda instance:"fixture-project"
         poll.send_with_unity_instance=send
@@ -62,7 +63,12 @@ def test_build_settings_and_status_at_actual_sdk_boundary():
                         elif state=="absent": assert response["success"] is False and response["error"]=="No job found"
                         else: assert "_mcp_status" not in response and response["data"]["result"]==state
                     before=len(sent)
-                    result=await client.call_tool("execute_custom_tool",{"tool_name":"manage_build","parameters":{"action":"batch","targets":["windows64","linux64"]}})
+                    rejected=await client.call_tool("execute_custom_tool",{"tool_name":"manage_build","parameters":{"action":"batch","targets":["windows64","linux64"]}},raise_on_error=False)
+                    assert rejected.structured_content["success"] is False
+                    assert rejected.structured_content["code"]=="builtin_tool_requires_canonical_route"
+                    assert rejected.structured_content["data"]["dispatched"] is False
+                    assert len(sent)==before
+                    result=await client.call_tool("execute_custom_tool",{"tool_name":"fixture_build","parameters":{"action":"batch","targets":["windows64","linux64"]}})
                     assert result.structured_content["data"]=={"job_id":"batch-new","result":"succeeded","completed":2}
                     assert sent[before:]==[{"action":"batch","targets":["windows64","linux64"]},{"action":"status","targets":["windows64","linux64"],"job_id":"batch-new"}]
             print("real SDK build settings/status contracts passed")

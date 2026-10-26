@@ -197,7 +197,8 @@ service = CustomToolService(server)
 definition = ToolDefinitionModel(name='manage_packages', requires_polling=True, poll_action='status')
 service.register_global_tools([definition])
 assert 'manage_packages' not in service._global_tools
-service._register_project_tools('fixture', [definition], project_hash='fixture')
+polling_fixture = definition.model_copy(update={'name': 'fixture_packages'})
+service._register_project_tools('fixture', [definition, polling_fixture], project_hash='fixture')
 native_failed_status = json.loads("""{
   "success": true,
   "message": "Job fixture-failed-job failed (add 'com.fixture.tool'): controlled native package failure",
@@ -250,6 +251,12 @@ async def main():
             check('manage_packages' in discovered and 'execute_custom_tool' in discovered,
                   'actual registry/builtin preserved ' + mode)
             print('FULL_SCHEMA', mode, json.dumps(discovered['manage_packages'].inputSchema, sort_keys=True))
+            rejected, sent = await invoke(client, 'execute_custom_tool',
+                {'tool_name': 'manage_packages', 'parameters': {'action': 'list_packages'}}, mode)
+            check(rejected.structured_content.get('success') is False
+                  and rejected.structured_content.get('code') == 'builtin_tool_requires_canonical_route'
+                  and rejected.structured_content.get('data', {}).get('dispatched') is False
+                  and not sent, 'builtin custom route rejected without native effects')
             for payload, expected in cases:
                 for failed, wrapped in ((False, False), (True, True)):
                     response = {'success': not failed, 'message': 'Controlled package diagnostic',
@@ -285,11 +292,11 @@ async def main():
                         final.update(_mcp_status='error', error='Controlled UPM failure')
                     replies = [initial, intermediate, final]
                     result, sent = await invoke(client, 'execute_custom_tool',
-                                                {'tool_name': 'manage_packages', 'parameters': original}, mode)
+                                                {'tool_name': 'fixture_packages', 'parameters': original}, mode)
                     expected_poll = {**original, 'action': 'status', 'job_id': 'package-owned'}
-                    check(sent == [('Project@fixture', 'manage_packages', original),
-                                   ('Project@fixture', 'manage_packages', expected_poll),
-                                   ('Project@fixture', 'manage_packages', expected_poll)], 'returned jobID status polling')
+                    check(sent == [('Project@fixture', 'fixture_packages', original),
+                                   ('Project@fixture', 'fixture_packages', expected_poll),
+                                   ('Project@fixture', 'fixture_packages', expected_poll)], 'returned jobID status polling')
                     check(result.structured_content['success'] is final['success']
                           and result.structured_content['data'] == final['data']
                           and result.structured_content.get('error') == final.get('error'), 'polling terminal fidelity')
@@ -299,9 +306,9 @@ async def main():
             replies = [initial, native_failed_status]
             original = {'action': 'add_package', 'package': 'com.fixture.tool'}
             result, sent = await invoke(client, 'execute_custom_tool',
-                                        {'tool_name': 'manage_packages', 'parameters': original}, mode)
-            check(sent == [('Project@fixture', 'manage_packages', original),
-                           ('Project@fixture', 'manage_packages',
+                                        {'tool_name': 'fixture_packages', 'parameters': original}, mode)
+            check(sent == [('Project@fixture', 'fixture_packages', original),
+                           ('Project@fixture', 'fixture_packages',
                             {**original, 'action': 'status', 'job_id': 'fixture-failed-job'})],
                   'native failed status returned ID adoption')
             check(result.structured_content['success'] is True

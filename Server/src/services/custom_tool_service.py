@@ -379,7 +379,7 @@ class CustomToolService:
         omit_nulls: bool = False,
         _expected_contract: str | None = None,
     ) -> MCPResponse:
-        from services.operation_permissions import authorize_remote_operation
+        from services.operation_permissions import _NATIVE_COMMANDS, authorize_remote_operation
 
         await authorize_remote_operation(tool_name, params or {}, custom=True)
         params = params or {}
@@ -389,7 +389,21 @@ class CustomToolService:
                 success=False, message="Authenticated user required for custom tools"
             )
 
+        captured_catalog = self._definition_catalog(project_id, tool_name, user_id)
         definition = await self.get_tool_definition(project_id, tool_name, user_id=user_id)
+        # Catalogs retain native rows for availability evidence. They cannot grant
+        # a second API around a built-in's validation, selection or consent checks.
+        # Read the canonical registry after the metadata await, not from the row's
+        # claimed origin or a cached publication-time classification.
+        reserved = self._get_builtin_tool_names() | _BACKEND_ONLY_TOOL_NAMES | _NATIVE_COMMANDS
+        if tool_name.strip().casefold() in {name.casefold() for name in reserved}:
+            reason = "builtin_tool_requires_canonical_route"
+            return MCPResponse(
+                success=False,
+                code=reason,
+                message="Built-in tools must use their canonical public tool or resource API.",
+                data={"reason": reason, "dispatched": False},
+            )
         if definition is None:
             return MCPResponse(
                 success=False,
@@ -399,6 +413,8 @@ class CustomToolService:
         if _expected_contract is not None and self._wire_contract(definition) != _expected_contract:
             return custom_catalog_changed("custom_tool_schema_changed")
         catalog = self._definition_catalog(project_id, tool_name, user_id)
+        if captured_catalog is not None and catalog is not captured_catalog:
+            return custom_catalog_changed()
         if catalog is not None and catalog.tools.get(tool_name) != definition:
             return custom_catalog_changed()
         guard = (

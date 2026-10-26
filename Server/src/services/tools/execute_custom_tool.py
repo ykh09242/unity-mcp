@@ -19,7 +19,10 @@ from services.tools import get_unity_instance_from_context
     name="execute_custom_tool",
     unity_target=None,
     group=None,
-    description="Execute a project-scoped custom tool registered by Unity.",
+    description=(
+        "Execute a project-scoped custom tool registered by Unity. "
+        "Built-in tools and internal native aliases require their canonical public API."
+    ),
     annotations=ToolAnnotations(
         title="Execute Custom Tool",
         destructiveHint=True,

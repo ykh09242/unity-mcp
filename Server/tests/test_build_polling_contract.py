@@ -41,7 +41,7 @@ async def test_initial_batch_response_job_id_targets_status_until_terminal(
         "get_tool_definition",
         AsyncMock(
             return_value=ToolDefinitionModel(
-                name="manage_build", requires_polling=True, poll_action="status"
+                name="fixture_build", requires_polling=True, poll_action="status"
             )
         ),
     )
@@ -70,7 +70,7 @@ async def test_initial_batch_response_job_id_targets_status_until_terminal(
     monkeypatch.setattr(module, "send_with_unity_instance", send)
     original = {"action": "batch", "targets": ["windows64", "linux64"], **caller}
     result = await service.execute_tool(
-        "project", "manage_build", "Project@hash", original, user_id="user-a"
+        "project", "fixture_build", "Project@hash", original, user_id="user-a"
     )
     assert len(sent) == 3
     assert result.data == final["data"]
