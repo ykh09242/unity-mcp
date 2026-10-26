@@ -12,7 +12,7 @@ description: "Execute a project-scoped custom tool registered by Unity."
 
 ## Description
 
-Execute a project-scoped custom tool registered by Unity.
+Execute a project-scoped custom tool registered by Unity. Built-in tools and internal native aliases require their canonical public API.
 
 ## Parameters
 
