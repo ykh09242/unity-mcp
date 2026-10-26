@@ -33,6 +33,12 @@ pin it and update this document and the runner together.
 `.gitattributes` sets text line endings for script/config extensions (LF, except Windows
 batch files). It does not format source. Do not renormalize unrelated files as part of an
 ordinary task. Generated files and third-party files keep their own source of truth.
+The retained Asset Store Tools C# and JSON blobs under
+`TestProjects/AssetStoreUploads/Packages/com.unity.asset-store-tools/` are explicitly
+excluded from normalization. They contain upstream CRLF bytes; applying authored LF
+rules causes a fresh worktree to report false modifications. Unity `.meta` files retain
+their existing conversion rules. See [Windows worktrees](WORKTREES.md) for long-path
+setup and preservation checks before cleanup.
 
 ### Compact C# catches
 
