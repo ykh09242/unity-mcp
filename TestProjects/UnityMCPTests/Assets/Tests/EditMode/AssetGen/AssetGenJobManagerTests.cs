@@ -115,7 +115,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 ModelGenRequest request = Req();
                 request.TargetSize = target;
                 AssetGenJob job = marketplace
-                    ? AssetGenJobManager.StartMarketplaceImport("owned-model", target, "owned-target", TestFolder)
+                    ? AssetGenJobManager.StartMarketplaceImport("49d97ca2fbf34f85b6c88ae8ebc7514f", target, "owned-target", TestFolder)
                     : AssetGenJobManager.StartModelGeneration(request);
                 Assert.AreEqual(target, job.TargetSize);
                 Assert.IsEmpty(_fake.RecordedRequests, "Creating the job must not call a real provider or dispatch before its controlled pump.");
@@ -178,8 +178,8 @@ namespace MCPForUnityTests.Editor.AssetGen
                 var method = typeof(AssetGenJobManager).GetMethod(nameof(AssetGenJobManager.StartMarketplaceImport));
                 object[] args =
                     method.GetParameters().Length == 5
-                        ? new object[] { "owned-archive", 0f, "archive", TestFolder, "main/model.obj" }
-                        : new object[] { "owned-archive", 0f, "archive", TestFolder };
+                        ? new object[] { "0123456789abcdef0123456789abcdef", 0f, "archive", TestFolder, "main/model.obj" }
+                        : new object[] { "0123456789abcdef0123456789abcdef", 0f, "archive", TestFolder };
                 var result = (AssetGenJob)method.Invoke(null, args);
                 Pump(result.JobId);
                 Assert.AreEqual("main/model.obj", observed, result.State + ": " + result.Error);
@@ -211,8 +211,8 @@ namespace MCPForUnityTests.Editor.AssetGen
                 var method = typeof(AssetGenJobManager).GetMethod(nameof(AssetGenJobManager.StartMarketplaceImport));
                 object[] args =
                     method.GetParameters().Length == 5
-                        ? new object[] { "owned-archive", 0f, "archive", TestFolder, selector }
-                        : new object[] { "owned-archive", 0f, "archive", TestFolder };
+                        ? new object[] { "0123456789abcdef0123456789abcdef", 0f, "archive", TestFolder, selector }
+                        : new object[] { "0123456789abcdef0123456789abcdef", 0f, "archive", TestFolder };
                 Assert.Throws<System.Reflection.TargetInvocationException>(() => method.Invoke(null, args));
                 Assert.IsEmpty(AssetGenJobManager.RecentJobs());
                 Assert.IsEmpty(_fake.RecordedRequests);

@@ -554,10 +554,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
 
         public static AssetGenJob StartMarketplaceImport(string uid, float targetSize, string name, string outputFolder, string archiveModelPath = null)
         {
+            if (!SketchfabAdapter.TryNormalizeModelUid(uid, out string canonicalUid))
+                throw new ArgumentException("'uid' must be a 32-character hexadecimal Sketchfab model ID.", nameof(uid));
+            uid = canonicalUid;
             EnsureCapacity();
             archiveModelPath = ModelArchiveSelection.NormalizeSelector(archiveModelPath);
-            if (string.IsNullOrEmpty(uid))
-                throw new ArgumentException("uid required");
             outputFolder = AssetGenPaths.ResolveOutputFolder(outputFolder, "Sketchfab");
             var adapter = AssetGenProviders.Marketplace("sketchfab"); // throws NotSupported if unimplemented
             var job = NewJob("marketplace", "sketchfab", "import");
@@ -1042,6 +1043,12 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 return;
             }
             // Local saved recovery must never touch credentials, catalog or adapter construction.
+            if (r.Job.Kind == "marketplace")
+            {
+                if (!SketchfabAdapter.TryNormalizeModelUid(cp.MarketplaceUid, out string canonicalUid))
+                    throw new RecoveryAbort("checkpoint_invalid");
+                cp.MarketplaceUid = canonicalUid;
+            }
             if (!SecureKeyStore.Current.TryGet(r.Job.Provider, out string key) || string.IsNullOrEmpty(key))
                 throw new RecoveryAbort("reconnect_key_unavailable");
             Admit(r);

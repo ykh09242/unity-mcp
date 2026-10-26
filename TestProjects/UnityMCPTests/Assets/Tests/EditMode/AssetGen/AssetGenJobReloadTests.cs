@@ -416,7 +416,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void NonfiniteTarget_CannotBecomeAResumableFiniteDefault(float target, bool marketplace)
         {
             AssetGenJob job = marketplace
-                ? AssetGenJobManager.StartMarketplaceImport("owned-marketplace", target, "owned", output)
+                ? AssetGenJobManager.StartMarketplaceImport("49d97ca2fbf34f85b6c88ae8ebc7514f", target, "owned", output)
                 : AssetGenJobManager.StartModelGeneration(
                     new ModelGenRequest
                     {
@@ -572,11 +572,12 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void MarketplaceReload_ResolvesSameUidByGetAndKeepsArchiveSelectorWithoutSignedUrl()
         {
+            const string uid = "0123456789abcdef0123456789abcdef";
             var cp = Checkpoint(provider: "sketchfab", kind: "marketplace");
             cp.Extension = "zip";
             cp.Subfolder = "Sketchfab";
             cp.Receipt = null;
-            cp.MarketplaceUid = "owned-marketplace";
+            cp.MarketplaceUid = uid;
             AssetGenJob job = Inject(cp);
             job.ArchiveModelPath = "nested/main.obj";
             SessionState.SetString(Prefix + job.JobId, AssetGenJobCheckpoint.Project(job, cp).ToString(Formatting.None));
@@ -585,16 +586,37 @@ namespace MCPForUnityTests.Editor.AssetGen
             http.Handler = request =>
             {
                 Assert.AreEqual("GET", request.Method);
-                Assert.AreEqual("https://api.sketchfab.com/v3/models/owned-marketplace/download", request.Url);
+                Assert.AreEqual("https://api.sketchfab.com/v3/models/" + uid + "/download", request.Url);
                 return Json(new JObject { ["gltf"] = new JObject { ["url"] = signed } });
             };
             Pump(job.JobId, 3);
             AssetGenJob restored = AssetGenJobManager.GetJob(job.JobId);
             Assert.AreEqual(AssetGenJobState.Running, restored.State, restored.Error);
             Assert.AreEqual("nested/main.obj", restored.ArchiveModelPath);
-            Assert.AreEqual("owned-marketplace", restored.ProviderTaskId);
+            Assert.AreEqual(uid, restored.ProviderTaskId);
             Assert.AreEqual(1, http.RecordedRequests.Count);
             StringAssert.DoesNotContain("GEN06_SIGNED_MARKER", SessionState.GetString(Prefix + job.JobId, ""));
+        }
+
+        [TestCase("owned-marketplace")]
+        [TestCase("gggggggggggggggggggggggggggggggg")]
+        [TestCase("0123456789abcdef0123456789abcde")]
+        [TestCase("0123456789abcdef0123456789abcdef0")]
+        public void MarketplaceReload_NonCanonicalUidNeverReadsKeyOrRequests(string uid)
+        {
+            // These IDs pass the journal's general SafeId grammar, so rejection
+            // must come from the provider-specific recovery guard after restore.
+            var cp = Checkpoint(provider: "sketchfab", kind: "marketplace");
+            cp.Extension = "zip";
+            cp.Subfolder = "Sketchfab";
+            cp.Receipt = null;
+            cp.MarketplaceUid = uid;
+            AssetGenJob job = Inject(cp);
+            Pump(job.JobId, 3);
+            Assert.AreEqual(AssetGenJobState.Failed, job.State);
+            Assert.AreEqual("checkpoint_invalid", job.RecoveryCode);
+            Assert.AreEqual(0, keys.Reads);
+            Assert.IsEmpty(http.RecordedRequests);
         }
 
         private void CreateOwnedFolder()

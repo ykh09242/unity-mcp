@@ -19,6 +19,7 @@ namespace MCPForUnityTests.Editor.AssetGen
     /// </summary>
     public class ImportModelHandlerTests
     {
+        private const string ModelUid = "49d97ca2fbf34f85b6c88ae8ebc7514f";
         private string _dir;
         private EncryptedFileKeyStore _store;
 
@@ -91,6 +92,20 @@ namespace MCPForUnityTests.Editor.AssetGen
             StringAssert.Contains("No API key", (string)resp["error"]);
         }
 
+        [TestCase("preview")]
+        [TestCase("import")]
+        public void InvalidUid_IsRejectedBeforeKeyAccessAndTransport(string action)
+        {
+            var fake = new FakeHttpTransport { Handler = _ => Json("{\"private\":true}") };
+            ImportModel.TransportOverrideForTests = fake;
+            AssetGenJobManager.TransportOverrideForTests = fake;
+            JObject response = Call(new JObject { ["action"] = action, ["uid"] = "../me" });
+            Assert.AreEqual(false, (bool)response["success"]);
+            StringAssert.Contains("uid", (string)response["error"]);
+            StringAssert.DoesNotContain("No API key", (string)response["error"]);
+            Assert.IsEmpty(fake.RecordedRequests);
+        }
+
         [Test]
         public void Import_WithKey_ReturnsPendingJobId()
         {
@@ -105,7 +120,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 new JObject
                 {
                     ["action"] = "import",
-                    ["uid"] = "u1",
+                    ["uid"] = ModelUid,
                     ["name"] = "castle",
                 }
             );
@@ -126,7 +141,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 new JObject
                 {
                     ["action"] = "import",
-                    ["uid"] = "owned-model",
+                    ["uid"] = ModelUid,
                     ["outputFolder"] = "Assets/Generated/__assetgen_jobtest",
                     ["archiveModelPath"] = "nested\\model.obj",
                 }
