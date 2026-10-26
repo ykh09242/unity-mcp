@@ -30,6 +30,40 @@ namespace MCPForUnity.Editor.Tools
         private static readonly Dictionary<string, object> CompletedQueryResults = new();
         private static readonly Queue<string> CompletedQueryOrder = new();
         private const int MaxCompletedQueries = 10;
+        private const string MutationOwnerKey = "MCPForUnity.Packages.NativeMutationV1";
+        private const string QueryOwnerKey = "MCPForUnity.Packages.NativeQueryV1";
+        internal static bool HasNativeMutation => PendingRequests.Count != 0;
+        internal static bool HasNativeQuery => PendingListRequests.Count != 0 || PendingSearchRequests.Count != 0;
+        internal static bool MutationRecoveryRequired => !HasNativeMutation && SessionState.GetBool(MutationOwnerKey, false);
+        internal static bool QueryRecoveryRequired => !HasNativeQuery && SessionState.GetBool(QueryOwnerKey, false);
+
+        private static void PersistNativeRequests()
+        {
+            SessionState.SetBool(MutationOwnerKey, HasNativeMutation);
+            SessionState.SetBool(QueryOwnerKey, HasNativeQuery);
+        }
+
+        private static void CaptureNativeReloadState()
+        {
+            bool Unfinished(Request request)
+            {
+                try
+                {
+                    return !request.IsCompleted;
+                }
+                catch
+                {
+                    return true;
+                }
+            }
+            // IsCompleted proves native request quiescence on both success and failure. A
+            // lost handle, desired package state, or void Resolve acknowledgement cannot.
+            SessionState.SetBool(MutationOwnerKey, MutationRecoveryRequired || PendingRequests.Values.Any(Unfinished));
+            SessionState.SetBool(
+                QueryOwnerKey,
+                QueryRecoveryRequired || PendingListRequests.Values.Any(Unfinished) || PendingSearchRequests.Values.Any(Unfinished)
+            );
+        }
 
         internal static Action ResolveInvoker = () => Client.Resolve();
         internal static Func<JArray> ResolveSnapshotReader = ReadRegisteredResolveSnapshot;
@@ -42,6 +76,8 @@ namespace MCPForUnity.Editor.Tools
         [InitializeOnLoadMethod]
         private static void SubscribePackageObservations()
         {
+            AssemblyReloadEvents.beforeAssemblyReload -= CaptureNativeReloadState;
+            AssemblyReloadEvents.beforeAssemblyReload += CaptureNativeReloadState;
             Events.registeringPackages -= OnPackagesRegistering;
             Events.registeringPackages += OnPackagesRegistering;
             Events.registeredPackages -= OnPackagesRegistered;
@@ -134,6 +170,7 @@ namespace MCPForUnity.Editor.Tools
                 var request = Client.Add(package);
                 string jobId = PackageJobManager.StartJob("add", package);
                 PendingRequests[jobId] = request;
+                PersistNativeRequests();
 
                 RegisterCompletionCallback(jobId, request);
 
@@ -191,6 +228,7 @@ namespace MCPForUnity.Editor.Tools
                 var request = Client.Remove(package);
                 string jobId = PackageJobManager.StartJob("remove", package);
                 PendingRequests[jobId] = request;
+                PersistNativeRequests();
 
                 RegisterCompletionCallback(jobId, request);
 
@@ -298,6 +336,7 @@ namespace MCPForUnity.Editor.Tools
                 var request = Client.List();
                 string jobId = Guid.NewGuid().ToString("N");
                 PendingListRequests[jobId] = request;
+                PersistNativeRequests();
 
                 // Try immediate completion for fast responses
                 if (request.IsCompleted)
@@ -376,6 +415,7 @@ namespace MCPForUnity.Editor.Tools
                 var request = Client.Search(queryResult.Value);
                 string jobId = Guid.NewGuid().ToString("N");
                 PendingSearchRequests[jobId] = request;
+                PersistNativeRequests();
 
                 if (request.IsCompleted)
                     return CheckSearchRequest(jobId, request);
@@ -653,6 +693,7 @@ namespace MCPForUnity.Editor.Tools
                 var request = Client.Embed(packageResult.Value);
                 string jobId = PackageJobManager.StartJob("embed", packageResult.Value);
                 PendingRequests[jobId] = request;
+                PersistNativeRequests();
 
                 RegisterCompletionCallback(jobId, request);
 
@@ -830,6 +871,18 @@ namespace MCPForUnity.Editor.Tools
                     installed_package_count = observations["installed_snapshot"]?["count"],
                     is_compiling = observations["readiness"]?["is_compiling"],
                     is_updating = observations["readiness"]?["is_updating"],
+                    native_coordination = new
+                    {
+                        tracked_mutation_active = HasNativeMutation,
+                        tracked_query_active = HasNativeQuery,
+                        recovery_required = MutationRecoveryRequired || QueryRecoveryRequired,
+                        recovery_scope = MutationRecoveryRequired ? "editor"
+                        : QueryRecoveryRequired ? "upm_client"
+                        : "none",
+                        recovery_action = MutationRecoveryRequired || QueryRecoveryRequired ? "inspect_native_work_then_restart_editor" : null,
+                        resolve_lifetime = "trigger_only",
+                        resolve_native_lifetime_supported = false,
+                    },
                     observations,
                 }
             );
@@ -850,6 +903,7 @@ namespace MCPForUnity.Editor.Tools
             response["data"] = data;
             PendingListRequests.Remove(jobId);
             PendingSearchRequests.Remove(jobId);
+            PersistNativeRequests();
             CompletedQueryResults[jobId] = response;
             CompletedQueryOrder.Enqueue(jobId);
             while (CompletedQueryOrder.Count > MaxCompletedQueries)
@@ -875,6 +929,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static void RegisterCompletionCallback(string jobId, Request request)
         {
+            PersistNativeRequests();
             void CheckCompletion()
             {
                 if (!PendingRequests.ContainsKey(jobId) && !PendingListRequests.ContainsKey(jobId) && !PendingSearchRequests.ContainsKey(jobId))
@@ -901,6 +956,7 @@ namespace MCPForUnity.Editor.Tools
         private static void FinalizeRequest(string jobId, Request request)
         {
             PendingRequests.Remove(jobId);
+            PersistNativeRequests();
 
             if (request.Status == StatusCode.Failure)
             {

@@ -50,6 +50,7 @@ namespace MCPForUnity.Editor.Services
         }
 
         internal static bool HasRetiredRun => !string.IsNullOrEmpty(SessionState.GetString(RetiredRunSessionKey, string.Empty));
+        internal static bool HasOwnedNativeRun => _activeRunOwner != null || HasRetiredRun;
 
         internal static void ThrowIfRetiredRunPending()
         {

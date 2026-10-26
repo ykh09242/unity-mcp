@@ -14,6 +14,43 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class RefreshUnityTests
     {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ExplicitCompileReservesBeforeTriggerAndPreStartThrowReleases(bool fail)
+        {
+            var running = typeof(TestRunStatus).GetField("_isRunning", BindingFlags.NonPublic | BindingFlags.Static);
+            object previousRun = running.GetValue(null);
+            var request = RefreshUnity.RequestCompilation;
+            var compiling = RefreshUnity.IsCompiling;
+            var ledger = RefreshUnity.LedgerOverride;
+            var reservation = RefreshUnity.ReservationOverride;
+            var owner = new OwnedCompilationReservation();
+            try
+            {
+                running.SetValue(null, false);
+                RefreshUnity.LedgerOverride = new CompilationLedger("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "C:/fixture", _ => { });
+                RefreshUnity.ReservationOverride = owner;
+                RefreshUnity.IsCompiling = () => false;
+                RefreshUnity.RequestCompilation = () =>
+                {
+                    Assert.AreEqual("native_job_active", owner.Blocker(EditorApplication.timeSinceStartup));
+                    if (fail)
+                        throw new InvalidOperationException("controlled pre-start failure");
+                };
+                var response = ToJObject(RefreshUnity.HandleCommand(new JObject { ["scope"] = "scripts", ["compile"] = "request" }).GetAwaiter().GetResult());
+                Assert.AreEqual(!fail, (bool)response["success"]);
+                Assert.AreEqual(fail ? null : "native_job_active", owner.Blocker(EditorApplication.timeSinceStartup));
+            }
+            finally
+            {
+                RefreshUnity.RequestCompilation = request;
+                RefreshUnity.IsCompiling = compiling;
+                RefreshUnity.LedgerOverride = ledger;
+                RefreshUnity.ReservationOverride = reservation;
+                running.SetValue(null, previousRun);
+            }
+        }
+
         [TestCase("force")]
         [TestCase("if_dirty")]
         public void BusyCompilationLeavesPendingSourcesForAnExplicitRefreshAfterIdle(string mode)
@@ -25,6 +62,7 @@ namespace MCPForUnityTests.Editor.Tools
             var refresh = RefreshUnity.RefreshAssets;
             var request = RefreshUnity.RequestCompilation;
             var ledger = RefreshUnity.LedgerOverride;
+            var reservation = RefreshUnity.ReservationOverride;
             bool pendingSource = true;
             bool pipelineBusy = true;
             int imports = 0,
@@ -39,6 +77,7 @@ namespace MCPForUnityTests.Editor.Tools
                 RefreshUnity.RequestCompilation = () => requests++;
                 RefreshUnity.IsCompiling = () => pipelineBusy;
                 RefreshUnity.LedgerOverride = new CompilationLedger("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "C:/fixture", _ => { });
+                RefreshUnity.ReservationOverride = new OwnedCompilationReservation();
                 running.SetValue(null, false);
                 var parameters = new JObject
                 {
@@ -81,6 +120,7 @@ namespace MCPForUnityTests.Editor.Tools
                 RefreshUnity.RefreshAssets = refresh;
                 RefreshUnity.RequestCompilation = request;
                 RefreshUnity.LedgerOverride = ledger;
+                RefreshUnity.ReservationOverride = reservation;
                 RefreshUnity.IsCompiling = compiling;
                 running.SetValue(null, previousRun);
             }

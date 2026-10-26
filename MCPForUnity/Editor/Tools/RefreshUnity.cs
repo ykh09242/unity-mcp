@@ -21,7 +21,9 @@ namespace MCPForUnity.Editor.Tools
         internal static Action RequestCompilation = CompilationPipeline.RequestScriptCompilation;
         internal static Func<bool> IsCompiling = EditorStateCache.GetActualIsCompiling;
         internal static CompilationLedger LedgerOverride;
+        internal static OwnedCompilationReservation ReservationOverride;
         private static CompilationLedger Ledger => LedgerOverride ?? CompilationJobTracker.Ledger;
+        private static OwnedCompilationReservation Reservation => ReservationOverride ?? CompilationJobTracker.Reservation;
 
         private static string ReadOption(JObject parameters, string name, string defaultValue, params string[] allowedValues)
         {
@@ -97,6 +99,7 @@ namespace MCPForUnity.Editor.Tools
 
             bool refreshTriggered = false;
             bool compileRequested = false;
+            string reservationGeneration = null;
             int compileCountBefore = EditorStateCache.CompileCount;
 
             if (compileId != null && !Ledger.Begin(compileId))
@@ -132,10 +135,11 @@ namespace MCPForUnity.Editor.Tools
 
                 if (string.Equals(compile, "request", StringComparison.OrdinalIgnoreCase))
                 {
+                    reservationGeneration = Reservation.Reserve(compileId, EditorApplication.timeSinceStartup + Remaining().TotalSeconds);
                     Ledger.ExplicitRequest(compileId);
                     RequestCompilation();
-                    Ledger.Dispatched(compileId);
                     compileRequested = true;
+                    Ledger.Dispatched(compileId);
                 }
 
                 if (string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase) && !refreshTriggered)
@@ -149,6 +153,8 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception ex)
             {
+                if (reservationGeneration != null && !compileRequested)
+                    Reservation.AbortBeforeStart(reservationGeneration);
                 if (compileId != null)
                     Ledger.Reject(compileId);
                 return new ErrorResponse($"refresh_failed: {ex.Message}", new { compilation = compileId == null ? null : Ledger.Query(compileId) });
@@ -226,6 +232,7 @@ namespace MCPForUnity.Editor.Tools
                     refresh_triggered = refreshTriggered,
                     compile_requested = compileRequested,
                     compile_started = compileStarted,
+                    native_coordination = compileId == null ? null : CompilationJobTracker.CoordinationStatus(compileId),
                     resulting_state = resultingState,
                     hint = shouldWaitForReady
                         ? "Unity refresh completed; editor should be ready."

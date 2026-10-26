@@ -13,12 +13,29 @@ namespace MCPForUnity.Editor.Tools.Build
 {
     public static class BuildRunner
     {
+        private const string NativeOwnerKey = "MCPForUnity.Build.NativeOwnerV1";
+        private static readonly HashSet<string> NativeOwners = new();
+        internal static bool HasNativeOwner => NativeOwners.Count != 0;
+        internal static bool NativeRecoveryRequired => !HasNativeOwner && SessionState.GetBool(NativeOwnerKey, false);
+
+        private static void ReserveNative(string id)
+        {
+            NativeOwners.Add(id);
+            SessionState.SetBool(NativeOwnerKey, true);
+        }
+
+        private static void ReleaseNative(string id)
+        {
+            NativeOwners.Remove(id);
+            SessionState.SetBool(NativeOwnerKey, HasNativeOwner);
+        }
+
         public static object ScheduleBuild(BuildJob job, BuildPlayerOptions options, Action beforeBuild = null)
         {
             job.State = BuildJobState.Pending;
             BuildJobStore.AddBuildJob(job);
-
-            ScheduleOnNextUpdate(() => RunBuildCore(job, () => BuildPipeline.BuildPlayer(options), beforeBuild));
+            ReserveNative(job.JobId);
+            ScheduleOwnedBuild(job, () => BuildPipeline.BuildPlayer(options), beforeBuild);
 
             return new PendingResponse(
                 $"Build scheduled for {job.Target}. Polling for completion...",
@@ -32,8 +49,8 @@ namespace MCPForUnity.Editor.Tools.Build
         {
             job.State = BuildJobState.Pending;
             BuildJobStore.AddBuildJob(job);
-
-            ScheduleOnNextUpdate(() => RunBuildCore(job, () => BuildPipeline.BuildPlayer(options)));
+            ReserveNative(job.JobId);
+            ScheduleOwnedBuild(job, () => BuildPipeline.BuildPlayer(options));
 
             return new PendingResponse(
                 $"Profile build scheduled for {job.Target}. Polling for completion...",
@@ -159,6 +176,29 @@ namespace MCPForUnity.Editor.Tools.Build
             return opts;
         }
 
+        private static void ScheduleOwnedBuild(BuildJob job, Func<BuildReport> buildFunc, Action beforeBuild = null)
+        {
+            try
+            {
+                ScheduleOnNextUpdate(() =>
+                {
+                    try
+                    {
+                        RunBuildCore(job, buildFunc, beforeBuild);
+                    }
+                    finally
+                    {
+                        ReleaseNative(job.JobId);
+                    }
+                });
+            }
+            catch
+            {
+                ReleaseNative(job.JobId);
+                throw;
+            }
+        }
+
         private static void RunBuildCore(BuildJob job, Func<BuildReport> buildFunc, Action beforeBuild = null)
         {
             if (job.State != BuildJobState.Pending)
@@ -223,6 +263,22 @@ namespace MCPForUnity.Editor.Tools.Build
 
         public static void ScheduleNextBatchBuild(BatchJob batch, Func<int, BuildJob> createChildBuild)
         {
+            ReserveNative(batch.JobId);
+            try
+            {
+                ScheduleNextBatchBuildCore(batch, createChildBuild);
+            }
+            catch
+            {
+                // No continuation was installed. Separately scheduled children retain
+                // their own reservation until their actual callback settles.
+                ReleaseNative(batch.JobId);
+                throw;
+            }
+        }
+
+        private static void ScheduleNextBatchBuildCore(BatchJob batch, Func<int, BuildJob> createChildBuild)
+        {
             batch.CurrentIndex++;
             BuildReportStore.Observe(batch);
 
@@ -233,7 +289,14 @@ namespace MCPForUnity.Editor.Tools.Build
                     batch.Children[i].State = BuildJobState.Skipped;
                     BuildReportStore.Complete(batch.Children[i]);
                 }
-                BuildReportStore.Complete(batch);
+                try
+                {
+                    BuildReportStore.Complete(batch);
+                }
+                finally
+                {
+                    ReleaseNative(batch.JobId);
+                }
                 return;
             }
 
@@ -241,7 +304,14 @@ namespace MCPForUnity.Editor.Tools.Build
             {
                 bool anyFailed = batch.Children.Any(c => c.State == BuildJobState.Failed);
                 batch.State = anyFailed ? BuildJobState.Failed : BuildJobState.Succeeded;
-                BuildReportStore.Complete(batch);
+                try
+                {
+                    BuildReportStore.Complete(batch);
+                }
+                finally
+                {
+                    ReleaseNative(batch.JobId);
+                }
                 return;
             }
 

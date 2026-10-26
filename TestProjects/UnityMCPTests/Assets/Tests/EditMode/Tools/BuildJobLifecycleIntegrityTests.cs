@@ -18,6 +18,9 @@ namespace MCPForUnityTests.EditMode.Tools
         private readonly Dictionary<string, BatchJob> originalBatches = new Dictionary<string, BatchJob>();
         private BuildJob originalLastCompleted;
         private bool capturedStore;
+        private bool originalNativeOwner;
+        private static HashSet<string> NativeOwners =>
+            (HashSet<string>)typeof(BuildRunner).GetField("NativeOwners", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
 
         private static Dictionary<string, BuildJob> Jobs =>
             (Dictionary<string, BuildJob>)typeof(BuildJobStore).GetField("_buildJobs", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
@@ -43,6 +46,8 @@ namespace MCPForUnityTests.EditMode.Tools
                 originalCallbacks.Add(callback);
             if (
                 BuildPipeline.isBuildingPlayer
+                || BuildRunner.HasNativeOwner
+                || BuildRunner.NativeRecoveryRequired
                 || originalCallbacks.Any(IsRunnerCallback)
                 || Jobs.Values.Any(job => job.State == BuildJobState.Pending || job.State == BuildJobState.Building)
                 || Batches.Values.Any(batch => batch.State == BuildJobState.Pending || batch.State == BuildJobState.Building)
@@ -55,6 +60,7 @@ namespace MCPForUnityTests.EditMode.Tools
                 originalBatches.Add(pair.Key, pair.Value);
             originalLastCompleted = BuildJobStore.LastCompletedJob;
             capturedStore = true;
+            originalNativeOwner = SessionState.GetBool("MCPForUnity.Build.NativeOwnerV1", false);
             Jobs.Clear();
             Batches.Clear();
             LastCompleted.SetValue(null, null);
@@ -73,6 +79,8 @@ namespace MCPForUnityTests.EditMode.Tools
             {
                 if (capturedStore)
                 {
+                    NativeOwners.Clear();
+                    SessionState.SetBool("MCPForUnity.Build.NativeOwnerV1", originalNativeOwner);
                     Jobs.Clear();
                     Batches.Clear();
                     foreach (var pair in originalJobs)
@@ -172,6 +180,26 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void ScheduledBuildIsOwnedBeforeUpdateAndPublicCancellationDoesNotReleaseIt()
+        {
+            BuildJob job = Child();
+            try
+            {
+                BuildRunner.ScheduleBuild(job, new BuildPlayerOptions());
+                Assert.IsTrue(BuildRunner.HasNativeOwner);
+                job.State = BuildJobState.Cancelled;
+                Assert.IsTrue(BuildRunner.HasNativeOwner, "A public outcome cannot release a queued native callback.");
+                AdvanceOwnedCallbacks();
+                Assert.IsFalse(BuildRunner.HasNativeOwner);
+                Assert.IsFalse(BuildRunner.NativeRecoveryRequired);
+            }
+            finally
+            {
+                CaptureCallbacks();
+            }
+        }
+
+        [Test]
         public void CreatorExceptionFailsChildAndCompletesWithoutBuildCallbacks()
         {
             var batch = new BatchJob("local-batch") { State = BuildJobState.Building };
@@ -192,8 +220,10 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsTrue(child.CompletedAt.HasValue);
             Assert.AreEqual("controlled preparation failure", child.ErrorMessage);
             Assert.AreSame(child, BuildJobStore.LastCompletedJob);
+            Assert.IsTrue(BuildRunner.HasNativeOwner, "The batch owns the gap before the next scheduled child.");
             AdvanceOwnedCallbacks();
             Assert.AreEqual(BuildJobState.Failed, batch.State);
+            Assert.IsFalse(BuildRunner.HasNativeOwner);
             Assert.IsFalse(CurrentCallbacks().Any(ownedCallbacks.Contains));
             JObject status = JObject.FromObject(child.ToStatusResponse());
             Assert.IsNull(status["duration_seconds"]);

@@ -598,6 +598,8 @@ namespace MCPForUnity.Editor.Services
         internal static bool ControlOwnsCallback(string id) => ControlFor(id)?.AcceptsCallback() ?? true;
 
         internal static bool NativeAdmissionBlocked => Jobs.Values.Any(job => job.Control != null && !job.Control.Released);
+        internal static bool NativeRecoveryRequired =>
+            Jobs.Values.Any(job => job.Control != null && !job.Control.Released && (string)job.Control.State["termination"] == "unknown");
 
         internal static bool OtherNativeAdmissionBlocked(string admittedJobId) =>
             Jobs.Values.Any(job =>

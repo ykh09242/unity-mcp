@@ -20,6 +20,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private static long _nextPoll;
         private static PlayScenarioSuiteEditorProjection _editorProjection = new PlayScenarioSuiteEditorProjection();
         internal static int ActiveSubscriptionCount => _attached ? 3 : 0;
+        internal static bool IsBusy => _runner != null && (_runner.Running || !_finalized);
         private static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         private static PlayScenarioSuiteStore Store => new PlayScenarioSuiteStore(Path.GetDirectoryName(Application.dataPath));
 
