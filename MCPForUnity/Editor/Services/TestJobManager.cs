@@ -574,7 +574,7 @@ namespace MCPForUnity.Editor.Services
             if (!_controlMonitor)
             {
                 _controlMonitor = true;
-                EditorApplication.update += TickNativeControls;
+                EditorApplication.update += OnNativeControlEditorUpdate;
             }
         }
 
@@ -634,6 +634,14 @@ namespace MCPForUnity.Editor.Services
             };
         }
 
+        private static void OnNativeControlEditorUpdate()
+        {
+            foreach (var job in Jobs.Values.ToArray())
+                if (job.Control != null && !job.Control.Released)
+                    job.Control.NoteEditorUpdate();
+            TickNativeControls();
+        }
+
         private static void TickNativeControls()
         {
             foreach (var job in Jobs.Values.ToArray())
@@ -682,7 +690,7 @@ namespace MCPForUnity.Editor.Services
             }
             if (!NativeAdmissionBlocked && _controlMonitor)
             {
-                EditorApplication.update -= TickNativeControls;
+                EditorApplication.update -= OnNativeControlEditorUpdate;
                 _controlMonitor = false;
                 TestRunnerNoThrottle.RestoreAfterRun();
             }
@@ -1069,6 +1077,8 @@ namespace MCPForUnity.Editor.Services
                 error = job.Error,
                 result = resultPayload,
                 native_control = job.NativeControl,
+                native_cleanup_diagnostics = job.Control?.Diagnostics(),
+                no_throttle_diagnostics = TestRunnerNoThrottle.Diagnostics(),
                 result_truncated_count = (int?)job.ResultArtifact?["truncated_result_count"] ?? 0,
                 completion_kind = job.CompletionKind,
                 result_availability = job.ResultAvailability ?? (job.Result == null ? "legacy_unavailable" : "available"),

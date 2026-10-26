@@ -96,6 +96,33 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void CachedDiagnosticsDistinguishIdleNativeSnapshotFromDeferredCleanupTurn()
+        {
+            Create();
+            Action deferred = null;
+            control.GetType().GetField("defer", Members).SetValue(control, new Action<Action>(action => deferred = action));
+            Call("BindGuid", Guid);
+            Call("NoteEditorUpdate");
+            Call("ObserveFinal", Guid);
+            snapshot = Native(false);
+            now = 11;
+            Call("NoteEditorUpdate");
+            Call("Tick");
+            var diagnostics = (JObject)Call("Diagnostics");
+            Assert.IsFalse(Released, "An idle snapshot and elapsed update do not replace the deferred turn witness.");
+            Assert.AreEqual(1, (int)diagnostics["editor_updates_since_final"]);
+            Assert.AreEqual(0, (int)diagnostics["registered_count"]);
+            Assert.AreEqual(0, (int)diagnostics["active_count"]);
+            Assert.AreEqual(0, (int)diagnostics["serialized_active_count"]);
+            Assert.IsFalse((bool)diagnostics["global_active"]);
+            Assert.IsFalse((bool)diagnostics["deferred_turn_seen"]);
+            Assert.NotNull(deferred);
+            deferred();
+            Call("Tick");
+            Assert.IsTrue(Released);
+        }
+
+        [Test]
         public void MissingOrForeignFinalEventNeverInventsTermination()
         {
             Create();

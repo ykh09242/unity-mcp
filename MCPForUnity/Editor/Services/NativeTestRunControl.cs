@@ -20,6 +20,17 @@ namespace MCPForUnity.Editor.Services
         private Binding binding;
         private long tick;
         private long finalTick = -1;
+        private long editorUpdates;
+        private long finalEditorUpdates = -1;
+        private double? finalWitnessUptime;
+        private double? lastEditorUpdateUptime;
+        private double? lastSnapshotUptime;
+        private int? registeredCount;
+        private int? activeCount;
+        private int? serializedActiveCount;
+        private bool? globalActive;
+        private string lastSnapshotError;
+        private bool restoredAfterReload;
         private bool laterTurn;
         private bool disposed;
         private Action<Action> defer = action => action();
@@ -136,6 +147,7 @@ namespace MCPForUnity.Editor.Services
                 return control;
             }
             control.State = (JObject)state.DeepClone();
+            control.restoredAfterReload = true;
             if (FactoryOverride == null && (string)state["editor_session"] != Session())
                 control.State["observation_lost"] = true;
             if ((bool?)state["final_witness"] == true)
@@ -383,6 +395,8 @@ namespace MCPForUnity.Editor.Services
             State["final_witness"] = true;
             State["termination"] = "cleanup_pending";
             finalTick = tick;
+            finalEditorUpdates = editorUpdates;
+            finalWitnessUptime = clock();
             if (!Save())
             {
                 State["final_witness"] = false;
@@ -391,6 +405,32 @@ namespace MCPForUnity.Editor.Services
             }
             laterTurn = false;
             defer(() => laterTurn = true);
+        }
+
+        // All values are cached from the existing monitor. Status reads never probe UTF.
+        internal JObject Diagnostics() =>
+            new JObject
+            {
+                ["editor_update_count"] = editorUpdates,
+                ["editor_updates_since_final"] = finalEditorUpdates < 0 ? JValue.CreateNull() : editorUpdates - finalEditorUpdates,
+                ["last_editor_update_uptime"] = lastEditorUpdateUptime.HasValue ? new JValue(lastEditorUpdateUptime.Value) : JValue.CreateNull(),
+                ["tick_count"] = tick,
+                ["ticks_since_final"] = finalTick < 0 ? JValue.CreateNull() : tick - finalTick,
+                ["final_witness_uptime"] = finalWitnessUptime.HasValue ? new JValue(finalWitnessUptime.Value) : JValue.CreateNull(),
+                ["deferred_turn_seen"] = laterTurn,
+                ["last_snapshot_uptime"] = lastSnapshotUptime.HasValue ? new JValue(lastSnapshotUptime.Value) : JValue.CreateNull(),
+                ["registered_count"] = registeredCount.HasValue ? new JValue(registeredCount.Value) : JValue.CreateNull(),
+                ["active_count"] = activeCount.HasValue ? new JValue(activeCount.Value) : JValue.CreateNull(),
+                ["serialized_active_count"] = serializedActiveCount.HasValue ? new JValue(serializedActiveCount.Value) : JValue.CreateNull(),
+                ["global_active"] = globalActive.HasValue ? new JValue(globalActive.Value) : JValue.CreateNull(),
+                ["last_snapshot_error"] = lastSnapshotError == null ? JValue.CreateNull() : new JValue(lastSnapshotError),
+                ["restored_after_reload"] = restoredAfterReload,
+            };
+
+        internal void NoteEditorUpdate()
+        {
+            editorUpdates++;
+            lastEditorUpdateUptime = clock();
         }
 
         private JObject View()
@@ -446,6 +486,12 @@ namespace MCPForUnity.Editor.Services
             try
             {
                 JObject value = View();
+                lastSnapshotUptime = clock();
+                registeredCount = ((JArray)value["registered"]).Count;
+                activeCount = ((JArray)value["active"]).Count;
+                serializedActiveCount = ((JArray)value["serialized_active"]).Count;
+                globalActive = (bool)value["global_active"];
+                lastSnapshotError = null;
                 bool foreign = new[] { "registered", "active", "serialized_active" }.Any(key => ((JArray)value[key]).Any(id => (string)id != NativeGuid));
                 if (foreign)
                     State["ambiguous"] = true;
@@ -466,8 +512,13 @@ namespace MCPForUnity.Editor.Services
                     }
                 }
             }
-            catch
+            catch (Exception error)
             {
+                lastSnapshotError = error.GetType().Name;
+                registeredCount = null;
+                activeCount = null;
+                serializedActiveCount = null;
+                globalActive = null;
                 State["termination"] = "unknown";
             }
         }

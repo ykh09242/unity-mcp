@@ -64,6 +64,54 @@ async def test_exclusive_invocation_fences_next_tools_preflight(boundary):
 
 
 @pytest.mark.asyncio
+async def test_completed_result_wrappers_bypass_held_writer_while_console_waits(boundary):
+    entered, release = asyncio.Event(), asyncio.Event()
+    effects = []
+
+    async def held_writer(ctx):
+        entered.set()
+        await release.wait()
+
+    async def waiting_writer(ctx):
+        effects.append("waiting_writer")
+
+    async def view(ctx, job_id):
+        effects.append(("view", job_id))
+
+    async def export(ctx, job_id, format="json"):
+        effects.append(("export", job_id, format))
+
+    async def console(ctx, action="get"):
+        effects.append("console")
+
+    held = asyncio.create_task(
+        mod.wrap_tool(held_writer, "create_script", "manage_script")(Context())
+    )
+    await await_signal(entered, "held production writer")
+    queued = asyncio.create_task(
+        mod.wrap_tool(waiting_writer, "create_script", "manage_script")(Context())
+    )
+    blocked_console = asyncio.create_task(
+        mod.wrap_tool(console, "read_console", "read_console")(Context())
+    )
+    try:
+        await asyncio.gather(
+            mod.wrap_tool(view, "view_test_results", "get_test_job")(Context(), job_id="completed"),
+            mod.wrap_tool(export, "export_test_job", "export_test_job")(
+                Context(), job_id="completed"
+            ),
+        )
+        assert ("view", "completed") in effects
+        assert ("export", "completed", "json") in effects
+        assert "waiting_writer" not in effects
+        assert "console" not in effects
+    finally:
+        release.set()
+        await asyncio.gather(held, queued, blocked_console)
+    assert scheduler().snapshot()["instances"] == 0
+
+
+@pytest.mark.asyncio
 async def test_unauthorized_writer_never_fences_an_authorized_reader(boundary):
     async def read(ctx):
         return "read"

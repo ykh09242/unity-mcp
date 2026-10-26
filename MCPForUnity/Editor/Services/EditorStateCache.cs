@@ -77,6 +77,7 @@ namespace MCPForUnity.Editor.Services
         private static bool _lastTrackedIsChanging;
         private static bool _lastTrackedIsUpdating;
         private static bool _lastTrackedTestsRunning;
+        private static bool _lastTrackedNativeControlUnreleased;
         private static string _lastTrackedTestsMode;
         private static string _lastTrackedTestJobId;
         private static long? _lastTrackedTestStartedMs;
@@ -251,6 +252,9 @@ namespace MCPForUnity.Editor.Services
             [JsonProperty("is_running")]
             public bool? IsRunning { get; set; }
 
+            [JsonProperty("native_control_unreleased")]
+            public bool NativeControlUnreleased { get; set; }
+
             [JsonProperty("mode")]
             public string Mode { get; set; }
 
@@ -385,6 +389,7 @@ namespace MCPForUnity.Editor.Services
             bool isChanging = IsPlayModeTransition;
             bool isUpdating = EditorApplication.isUpdating;
             bool testsRunning = TestRunStatus.IsRunning;
+            bool nativeControlUnreleased = TestJobManager.NativeAdmissionBlocked;
             string testsMode = TestRunStatus.Mode?.ToString();
             string testJobId = TestJobManager.CurrentJobId;
             int batchLimit = Tools.BatchExecute.GetMaxCommandsPerBatch();
@@ -393,6 +398,10 @@ namespace MCPForUnity.Editor.Services
             if (testsRunning)
             {
                 activityPhase = "running_tests";
+            }
+            else if (nativeControlUnreleased)
+            {
+                activityPhase = "native_test_cleanup";
             }
             else if (isCompiling)
             {
@@ -421,6 +430,7 @@ namespace MCPForUnity.Editor.Services
                 || _lastTrackedIsChanging != isChanging
                 || _lastTrackedIsUpdating != isUpdating
                 || _lastTrackedTestsRunning != testsRunning
+                || _lastTrackedNativeControlUnreleased != nativeControlUnreleased
                 || _lastTrackedTestsMode != testsMode
                 || _lastTrackedTestJobId != testJobId
                 || _lastTrackedTestStartedMs != TestRunStatus.StartedUnixMs
@@ -578,6 +588,7 @@ namespace MCPForUnity.Editor.Services
             string sceneGuid = !string.IsNullOrEmpty(scenePath) ? AssetDatabase.AssetPathToGUID(scenePath) : null;
 
             bool testsRunning = TestRunStatus.IsRunning;
+            bool nativeControlUnreleased = TestJobManager.NativeAdmissionBlocked;
             var testsMode = TestRunStatus.Mode?.ToString();
             string currentJobId = TestJobManager.CurrentJobId;
             bool isFocused = InternalEditorUtility.isApplicationActive;
@@ -586,6 +597,10 @@ namespace MCPForUnity.Editor.Services
             if (testsRunning)
             {
                 activityPhase = "running_tests";
+            }
+            else if (nativeControlUnreleased)
+            {
+                activityPhase = "native_test_cleanup";
             }
             else if (isCompiling)
             {
@@ -669,6 +684,7 @@ namespace MCPForUnity.Editor.Services
                 Tests = new EditorStateTests
                 {
                     IsRunning = testsRunning,
+                    NativeControlUnreleased = nativeControlUnreleased,
                     Mode = testsMode,
                     CurrentJobId = string.IsNullOrEmpty(currentJobId) ? null : currentJobId,
                     StartedUnixMs = TestRunStatus.StartedUnixMs,
@@ -697,6 +713,7 @@ namespace MCPForUnity.Editor.Services
             _lastTrackedIsChanging = snapshot.Editor.PlayMode.IsChanging == true;
             _lastTrackedIsUpdating = snapshot.Assets.IsUpdating == true;
             _lastTrackedTestsRunning = testsRunning;
+            _lastTrackedNativeControlUnreleased = nativeControlUnreleased;
             _lastTrackedTestsMode = testsMode;
             _lastTrackedTestJobId = currentJobId;
             _lastTrackedTestStartedMs = TestRunStatus.StartedUnixMs;

@@ -42,6 +42,20 @@ namespace MCPForUnity.Editor.Services
         private static bool maintaining;
         private static bool warned;
         private static double nextMaintenance;
+        private static double? lastAcquireUptime;
+        private static bool? lastAcquireSucceeded;
+        private static bool? lastAcquireSuppressed;
+
+        internal static object Diagnostics() =>
+            new
+            {
+                test_run_active = IsTestRunActive(),
+                settings_captured = AreSettingsCaptured(),
+                maintenance_subscribed = maintaining,
+                last_acquire_uptime = lastAcquireUptime,
+                last_acquire_succeeded = lastAcquireSucceeded,
+                last_acquire_suppressed = lastAcquireSuppressed,
+            };
 
         // SessionState keys to persist across domain reload
         private const string SessionKey_TestRunActive = "TestRunnerNoThrottle_TestRunActive";
@@ -270,8 +284,17 @@ namespace MCPForUnity.Editor.Services
             int idle = ReadPreference(ApplicationIdleTimeKey, 4);
             int mode = ReadPreference(InteractionModeKey, 0);
             bool captured = AreSettingsCaptured();
-            if (!TryLease(current => current.Acquire(captured ? GetPrevIdleTime() : (int?)null, captured ? GetPrevInteractionMode() : (int?)null)))
+            lastAcquireUptime = EditorApplication.timeSinceStartup;
+            lastAcquireSucceeded = TryLease(current =>
+            {
+                current.Acquire(captured ? GetPrevIdleTime() : (int?)null, captured ? GetPrevInteractionMode() : (int?)null);
+                lastAcquireSuppressed = current.LastAcquireSuppressed;
+            });
+            if (lastAcquireSucceeded != true)
+            {
+                lastAcquireSuppressed = null;
                 return;
+            }
             if (!captured)
             {
                 SetPrevIdleTime(idle);

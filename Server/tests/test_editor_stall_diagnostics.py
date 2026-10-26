@@ -67,6 +67,28 @@ def test_fresh_idle_editor_does_not_get_stall_advice(monkeypatch):
     assert result["advice"]["ready_for_tools"] is True
 
 
+def test_completed_test_result_still_reports_unreleased_native_cleanup(monkeypatch):
+    monkeypatch.setattr(editor_state, "_now_unix_ms", lambda: 100_000)
+    result = editor_state._enrich_advice_and_staleness(
+        {
+            "observed_at_unix_ms": 100_000,
+            "activity": {"phase": "native_test_cleanup", "since_unix_ms": 99_000},
+            "tests": {"is_running": False, "native_control_unreleased": True},
+        }
+    )
+    assert result["advice"]["ready_for_tools"] is False
+    assert result["advice"]["blocking_reasons"] == ["native_test_cleanup"]
+    assert result["advice"]["recommended_next_action"] == "retry_later"
+
+
+def test_older_editor_without_native_control_signal_keeps_existing_readiness(monkeypatch):
+    monkeypatch.setattr(editor_state, "_now_unix_ms", lambda: 100_000)
+    result = editor_state._enrich_advice_and_staleness(
+        {"observed_at_unix_ms": 100_000, "tests": {"is_running": False}}
+    )
+    assert result["advice"]["ready_for_tools"] is True
+
+
 @pytest.mark.asyncio
 async def test_preflight_does_not_refresh_an_unresponsive_editor(monkeypatch):
     # Given canonical state that calls for manual inspection, not another import.

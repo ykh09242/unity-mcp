@@ -54,6 +54,8 @@ def test_registered_override_cannot_inherit_builtin_mode(name, params):
         ("get_editor_state", {}),
         ("get_compile_job", {}),
         ("get_test_job", {}),
+        ("view_test_results", {}),
+        ("export_test_job", {"job_id": "completed", "format": "json"}),
         ("cancel_test_job", {}),
         ("manage_build", {"action": "status"}),
         ("manage_build", {"action": "cancel"}),
@@ -65,6 +67,13 @@ def test_reviewed_status_and_cancellation_bypass_ordinary_work(name, params):
     # Then
     assert policy.mode == OperationMode.CONTROL
     assert policy.lifetime == OperationLifetime.COMMAND
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_console_get_stays_exclusive_during_native_test_cleanup(native):
+    # Console reads temporarily alter global Console flags and filter text.
+    policy = resolve_operation_policy("read_console", {"action": "get"}, native=native)
+    assert policy.mode == OperationMode.EXCLUSIVE
 
 
 @pytest.mark.parametrize("name", ["query_physics", "manage_physics"])
