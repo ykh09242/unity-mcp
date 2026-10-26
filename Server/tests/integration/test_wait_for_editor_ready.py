@@ -261,11 +261,9 @@ def test_model_reloading_rejection_requires_exact_no_execution_marker(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("response_type", ["dict", "model"])
 @pytest.mark.parametrize("second_rejected", [False, True])
-async def test_reload_recovery_retries_once_and_preserves_last_response(
+async def test_local_preflight_reload_retries_once_and_preserves_last_response(
     monkeypatch,
-    response_type,
     second_rejected,
 ):
     from unittest.mock import AsyncMock
@@ -278,7 +276,7 @@ async def test_reload_recovery_retries_once_and_preserves_last_response(
         "hint": "retry",
         "data": {"reason": "reloading", "retry_after_ms": 500},
     }
-    first = MCPResponse(**refused) if response_type == "model" else refused
+    first = MCPResponse(**refused)
     second = first if second_rejected else {"success": True, "data": {"created": "Canvas"}}
     send = AsyncMock(side_effect=[first, second])
     ready = AsyncMock(return_value=(True, 0.0))
@@ -298,6 +296,40 @@ async def test_reload_recovery_retries_once_and_preserves_last_response(
     assert send.await_count == 2
     assert ready.await_count == 2
     assert all(call.kwargs == {"retry_on_reload": False} for call in send.await_args_list)
+    verify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handler_reload_hint_waits_without_replaying_mutation(monkeypatch):
+    from unittest.mock import AsyncMock
+    from services.tools import refresh_unity as mod
+
+    response = {
+        "success": False,
+        "error": "Unity is reloading; please retry",
+        "hint": "retry",
+        "data": {"reason": "reloading", "retry_after_ms": 500},
+    }
+    send = AsyncMock(return_value=response)
+    ready = AsyncMock(return_value=(True, 0.0))
+    verify = AsyncMock()
+    monkeypatch.setattr(mod.unity_transport, "send_with_unity_instance", send)
+    monkeypatch.setattr(mod, "wait_for_editor_ready", ready)
+    ctx = DummyContext()
+
+    result = await mod.send_mutation(
+        ctx,
+        "Safe@sixsafe",
+        "manage_ugui",
+        {"action": "create"},
+        verify_after_disconnect=verify,
+    )
+
+    # Handler data can require readiness recovery but cannot prove zero dispatch.
+    assert result is response
+    send.assert_awaited_once()
+    assert send.await_args.kwargs == {"retry_on_reload": False}
+    ready.assert_awaited_once_with(ctx)
     verify.assert_not_awaited()
 
 
@@ -386,8 +418,9 @@ async def test_send_mutation_returns_success_directly(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_send_mutation_retries_on_reloading_rejection(monkeypatch):
-    """Reloading rejection triggers one retry after wait."""
+async def test_send_mutation_retries_on_local_preflight_reloading_rejection(monkeypatch):
+    """A typed local preflight refusal permits one retry after readiness."""
+    from models import MCPResponse
     from services.tools import refresh_unity as mod
 
     call_count = 0
@@ -396,7 +429,7 @@ async def test_send_mutation_retries_on_reloading_rejection(monkeypatch):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return {"success": False, "data": {"reason": "reloading"}, "hint": "retry"}
+            return MCPResponse(success=False, data={"reason": "reloading"}, hint="retry")
         return {"success": True, "data": {"retried": True}}
 
     monkeypatch.setattr(mod.unity_transport, "send_with_unity_instance", fake_send)
@@ -483,7 +516,8 @@ async def test_send_mutation_returns_selection_failure_without_readiness_wait(mo
 
 @pytest.mark.asyncio
 async def test_send_mutation_keeps_initial_reload_wait_when_retry_requires_selection(monkeypatch):
-    # Given: a safe reload rejection is followed by a selection refusal before replay.
+    # Given: a typed local preflight refusal is followed by a selection refusal.
+    from models import MCPResponse
     from services.tools import refresh_unity as mod
     from unittest.mock import AsyncMock
 
@@ -494,7 +528,7 @@ async def test_send_mutation_keeps_initial_reload_wait_when_retry_requires_selec
     }
     send = AsyncMock(
         side_effect=[
-            {"success": False, "hint": "retry", "data": {"reason": "reloading"}},
+            MCPResponse(success=False, hint="retry", data={"reason": "reloading"}),
             response,
         ]
     )

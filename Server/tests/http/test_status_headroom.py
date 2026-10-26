@@ -18,15 +18,26 @@ from tests.http.test_project_capabilities import (
     read_capabilities,
 )
 from core.config import config
+from services.operation_policy import OperationMode, resolve_operation_policy
 from tests.remote_credentials import remote_credentials
 from transport.models import CommandResultMessage
 from transport.unity_instance_middleware import UnityInstanceMiddleware
 from transport.plugin_hub import PluginHub
 
 
+def retained_command(index):
+    # Keep the first Exclusive command held. Additional reviewed Controls can
+    # actually reach the same session's transport quota without bypassing policy.
+    command = "manage_scene" if index == 0 else "get_editor_state"
+    params = {"name": str(index)}
+    expected = OperationMode.EXCLUSIVE if index == 0 else OperationMode.CONTROL
+    assert resolve_operation_policy(command, params, native=True).mode == expected
+    return command, params
+
+
 @asynccontextmanager
-async def pending_mutations(hub, count=2, session_id="session", *, auth=None, user=None):
-    """Retain actual admitted commands while their controlled peer withholds results."""
+async def pending_commands(hub, count=2, session_id="session", *, auth=None, user=None):
+    """Retain real Exclusive/Control commands while their owned peer withholds results."""
     sent = anyio.Event()
     original_send = hub.websocket.send_json
     execute_count = 0
@@ -42,14 +53,15 @@ async def pending_mutations(hub, count=2, session_id="session", *, auth=None, us
     hub.websocket.send_json = hold
 
     async def dispatch(index):
+        command, params = retained_command(index)
         if auth is None:
-            return await PluginHub.send_command(session_id, "manage_scene", {"name": str(index)})
+            return await PluginHub.send_command(session_id, command, params)
         return await auth.call(
             f"requester:{user}",
             PluginHub.send_command,
             session_id,
-            "manage_scene",
-            {"name": str(index)},
+            command,
+            params,
         )
 
     tasks = [asyncio.create_task(dispatch(i)) for i in range(count)]
@@ -77,7 +89,7 @@ async def test_saturated_sdk_read_explains_unobserved_native_sources(
     monkeypatch.setattr(PluginHub, ceiling, 2)
     async with Client(capability_server(), mode=mode) as client:
         await client.call_tool("select_fixture")
-        async with pending_mutations(command_hub) as mutations:
+        async with pending_commands(command_hub) as mutations:
             pending = dict(PluginHub._pending)
             sends = list(command_hub.sent)
             with anyio.fail_after(watchdog_timeout()):
@@ -118,14 +130,12 @@ def accounting():
 async def test_real_payload_saturation_preserves_all_command_accounting(
     command_hub, monkeypatch, ceiling
 ):
-    charge = sum(
-        PluginHub._command_payload_size("manage_scene", {"name": str(index)}) for index in range(2)
-    )
+    charge = sum(PluginHub._command_payload_size(*retained_command(index)) for index in range(2))
     assert charge > 0
     monkeypatch.setattr(PluginHub, ceiling, charge)
     async with Client(capability_server()) as client:
         await client.call_tool("select_fixture")
-        async with pending_mutations(command_hub):
+        async with pending_commands(command_hub):
             assert sum(entry["payload_bytes"] for entry in PluginHub._pending.values()) == charge
             before, sends = accounting(), list(command_hub.sent)
             data = await read_capabilities(client)
@@ -160,7 +170,7 @@ async def test_repeated_reads_ignore_ready_cache_and_preserve_admitted_send_orde
     ] is True
     async with Client(capability_server()) as client:
         await client.call_tool("select_fixture")
-        async with pending_mutations(command_hub) as mutations:
+        async with pending_commands(command_hub) as mutations:
             before, sends = accounting(), list(command_hub.sent)
             assert [message["params"]["name"] for message in sends] == ["0", "1"]
             for _ in range(4):
@@ -186,7 +196,7 @@ async def test_repeated_reads_ignore_ready_cache_and_preserve_admitted_send_orde
                 )
                 assert (await mutations[index])["success"] is True
             assert PluginHub._pending == {}
-            async with pending_mutations(command_hub, count=1) as recovered:
+            async with pending_commands(command_hub, count=1) as recovered:
                 message = command_hub.sent[-1]
                 assert message["type"] == "execute"
                 assert message["id"] not in {entry["id"] for entry in sends}
@@ -210,7 +220,7 @@ async def test_saturated_status_lock_wait_uses_original_deadline(
     lock = PluginHub._lock if lock_name == "hub" else command_hub.registry._lock
     async with Client(capability_server()) as client:
         await client.call_tool("select_fixture")
-        async with pending_mutations(command_hub) as mutations:
+        async with pending_commands(command_hub) as mutations:
             before, sends = accounting(), list(command_hub.sent)
             async with lock:
                 # Completion while this lock remains held proves deadline expiry.
@@ -239,7 +249,7 @@ async def test_canceling_status_wait_does_not_cancel_mutations(command_hub, monk
     monkeypatch.setattr(PluginHub, "get_capability_snapshot", observed)
     async with Client(capability_server()) as client:
         await client.call_tool("select_fixture")
-        async with pending_mutations(command_hub) as mutations:
+        async with pending_commands(command_hub) as mutations:
             before, sends = accounting(), list(command_hub.sent)
             lock = PluginHub._lock
             assert lock is not None
@@ -324,11 +334,11 @@ async def test_saturated_sdk_counts_are_owned_by_authenticated_tenant_and_curren
         a2 = await tenant_socket(command_hub, "alice-other", "alice", auth, "other")
         b = await tenant_socket(command_hub, "bob-main", "bob", auth)
         async with (
-            pending_mutations(a, 1, "alice-main", auth=auth, user="alice"),
-            pending_mutations(a2, 1, "alice-other", auth=auth, user="alice"),
+            pending_commands(a, 1, "alice-main", auth=auth, user="alice"),
+            pending_commands(a2, 1, "alice-other", auth=auth, user="alice"),
         ):
             # Alice's full user quota does not prevent Bob's separate first admission.
-            async with pending_mutations(b, 1, "bob-main", auth=auth, user="bob"):
+            async with pending_commands(b, 1, "bob-main", auth=auth, user="bob"):
                 before, sends = accounting(), list(command_hub.sent)
                 async with (
                     Client(tenant_server(monkeypatch, "alice", auth)) as alice,

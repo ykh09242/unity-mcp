@@ -10,7 +10,7 @@ import pytest
 
 
 SETUP = r"""
-import asyncio, gc, sys, weakref
+import asyncio, gc, inspect, sys, weakref
 from typing import Literal
 sys.path.insert(0, "src")
 from fastmcp import Client, FastMCP
@@ -120,8 +120,17 @@ def test_registry_keeps_original_declaration_and_servers_get_distinct_wrappers(t
             assert registry.get_registered_tools()[0]["func"] is lifetime_probe
             first, second = [await server.get_tool("lifetime_probe") for server in servers]
             assert first.fn is not second.fn
-            assert first.fn.__wrapped__.__wrapped__ is lifetime_probe
-            assert second.fn.__wrapped__.__wrapped__ is lifetime_probe
+            chains = []
+            for component in (first, second):
+                assert inspect.unwrap(component.fn) is lifetime_probe
+                chain = []
+                wrapped = component.fn
+                while wrapped is not lifetime_probe:
+                    assert wrapped not in chain
+                    chain.append(wrapped)
+                    wrapped = wrapped.__wrapped__
+                chains.append(chain)
+            assert set(chains[0]).isdisjoint(chains[1])
         asyncio.run(scenario())
         """,
         tmp_path,

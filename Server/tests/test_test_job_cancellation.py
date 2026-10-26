@@ -135,7 +135,7 @@ def test_cancel_catalog_and_selected_tenant_enforcement_in_production_middleware
                     for sid, owner in (("owned", "alice"), ("foreign", "bob")):
                         await registry.register(sid, sid, sid + "-hash", "test", user_id=owner if hosted else None)
                         await registry.register_tools_for_session(sid, [ToolDefinitionModel(name="cancel_test_job")])
-                        PluginHub._connections[sid] = SimpleNamespace(state=SimpleNamespace(user_id=owner,
+                        PluginHub._connections[sid] = SimpleNamespace(state=SimpleNamespace(user_id=owner if hosted else None,
                             plugin_generation=sid + "-generation", plugin_registered=True, plugin_session_id=sid),
                             client_state=WebSocketState.CONNECTED, application_state=WebSocketState.CONNECTED,
                             close=AsyncMock())
@@ -160,7 +160,7 @@ def test_cancel_catalog_and_selected_tenant_enforcement_in_production_middleware
                         async with Client(app, mode=protocol) as client:
                             assert "cancel_test_job" in {t.name for t in await client.list_tools()}
                             reply = await client.call_tool("cancel_test_job", {"job_id": "a" * 32, "unity_instance": "owned@owned-hash"})
-                            assert json.loads(reply.content[0].text)["success"] is True
+                            assert json.loads(reply.content[0].text)["success"] is True, reply
                             assert calls == [("owned", "cancel_test_job", "alice" if hosted else None)]
                             if hosted:
                                 try:

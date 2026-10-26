@@ -88,6 +88,13 @@ operator settings. Values are seconds, finite, with invalid values using default
 
 Recovery wait overrides allow up to one day and zero disables that recovery wait.
 An enclosing request deadline still wins. Explicit `max_retries` remains honored.
+Registered public mutation lifecycles declare their existing readiness policy before
+waiting for instance admission. Queue time consumes that policy from the original
+public invocation entry; ordinary native commands retain their separate transport
+limits. Read-only and preview routes do not inherit a mutation's readiness policy.
+Explicit whole-operation limits, parent deadlines and execution receipt deadlines
+remain hard ceilings. Functional aliases use the policy of the callback they actually
+invoke; custom replacements do not gain a longer budget by borrowing a built-in name.
 Fast read-only probes keep their two-second attempt budget and retry advice; a
 larger recovery setting does not turn a probe into a long-running mutation.
 The authentication window is separately bounded and does not extend credential

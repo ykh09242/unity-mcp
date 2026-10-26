@@ -60,7 +60,9 @@ class _ReadFlight(Generic[T]):
         # accounting without retaining that loop through the registry.
         self._cleanup = finalize(self, _release_snapshot, self.accounting, self.detached_copies)
         self.references = 1
-        self.task = asyncio.create_task(self._fetch(factory, copy_preparer))
+        from services.registry.operation_context import operation_task
+
+        self.task = operation_task(self._fetch(factory, copy_preparer))
 
     async def _fetch(
         self,

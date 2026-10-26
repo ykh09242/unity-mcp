@@ -88,6 +88,7 @@ def environment(monkeypatch):
         lambda *args, **kwargs: pytest.fail("unexpected reconnect in fake socket fixture"),
     )
     pool = uc.UnityConnectionPool()
+    monkeypatch.setattr(uc, "_unity_connection_pool", pool)
     pool._default_instance_id = "Main@deadbeef"
     sockets = {}
     for index, identity in enumerate(("Main@deadbeef", "Other@cafebabe")):

@@ -3,6 +3,7 @@
 from tests.timing import await_signal, watchdog_timeout
 
 import asyncio
+from datetime import datetime, timezone
 import gc
 import weakref
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from services.custom_tool_service import CustomToolService
 from transport.charge_ledger import ChargeLedger
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
+from transport.plugin_registry import PluginSession
 
 
 class TrackedPayload(str):
@@ -28,11 +30,20 @@ class TrackedPayload(str):
 
 @pytest.fixture
 def polling(monkeypatch):
+    now = datetime.now(timezone.utc)
+    session = PluginSession(
+        session_id="session",
+        project_name="Project",
+        project_hash="hash",
+        unity_version="test",
+        registered_at=now,
+        connected_at=now,
+        user_id="alice",
+    )
+
     class OwnedHub(PluginHub):
         _lock = asyncio.Lock()
-        _registry = SimpleNamespace(
-            get_session=AsyncMock(return_value=SimpleNamespace(user_id="alice"))
-        )
+        _registry = SimpleNamespace(get_session=AsyncMock(return_value=session))
         _connections = {}
         _pending = {}
         _retained_results = ChargeLedger()
@@ -41,7 +52,7 @@ def polling(monkeypatch):
 
     endpoint = OwnedHub.__new__(OwnedHub)
     websocket = SimpleNamespace(
-        state=SimpleNamespace(plugin_generation="owned"),
+        state=SimpleNamespace(plugin_generation="owned", user_id="alice"),
         client_state=WebSocketState.CONNECTED,
         application_state=WebSocketState.CONNECTED,
     )

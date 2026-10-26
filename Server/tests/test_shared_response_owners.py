@@ -3,6 +3,7 @@
 import asyncio
 import importlib
 from copy import deepcopy
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,8 @@ from services.tools.shared_tool_reads import SharedToolReads
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
 from transport.charge_ledger import ChargeLedger
+from transport.plugin_registry import PluginSession
+from tests.timing import await_signal
 
 RESULT = {"success": True, "data": {"status": "succeeded", "tests": [{"name": "owned-test"}]}}
 
@@ -20,16 +23,28 @@ RESULT = {"success": True, "data": {"status": "succeeded", "tests": [{"name": "o
 def peer(monkeypatch):
     sent = asyncio.Event()
     messages = []
+    now = datetime.now(timezone.utc)
+    selected = PluginSession(
+        session_id="owned-session",
+        project_name="Owned",
+        project_hash="owned",
+        unity_version="test",
+        registered_at=now,
+        connected_at=now,
+        user_id="owned-user",
+    )
 
     async def send_json(message):
         messages.append(message)
         sent.set()
 
     async def session(session_id):
-        return SimpleNamespace(user_id="owned-user")
+        assert session_id == selected.session_id
+        return selected
 
     websocket = SimpleNamespace(
-        state=SimpleNamespace(plugin_generation="owned-generation"), send_json=send_json
+        state=SimpleNamespace(plugin_generation="owned-generation", user_id="owned-user"),
+        send_json=send_json,
     )
     monkeypatch.setattr(PluginHub, "_registry", SimpleNamespace(get_session=session))
     monkeypatch.setattr(PluginHub, "_lock", asyncio.Lock())
@@ -41,7 +56,7 @@ def peer(monkeypatch):
     handler = PluginHub({"type": "websocket"}, None, None)
 
     async def deliver():
-        await sent.wait()
+        await await_signal(sent, "owned Hub command dispatched")
         await handler._handle_command_result(
             websocket, CommandResultMessage(id=messages[-1]["id"], result=RESULT)
         )
@@ -73,7 +88,7 @@ async def test_cancelled_first_owner_cannot_receive_late_shared_reservation(peer
     reads = SharedToolReads[dict](freshness_s=2)
     first_owner, second_owner = ResponseOwner(), ResponseOwner()
     first = asyncio.create_task(wait(reads, first_owner))
-    await peer.sent.wait()
+    await await_signal(peer.sent, "first shared command dispatched")
     second = asyncio.create_task(wait(reads, second_owner))
     await asyncio.sleep(0.02)
     first.cancel()
@@ -94,12 +109,12 @@ async def test_first_delivery_keeps_shared_snapshot_and_second_copy_charged(peer
     first_owner, second_owner = ResponseOwner(), ResponseOwner()
     accepted, release = asyncio.Event(), asyncio.Event()
     first = asyncio.create_task(wait(reads, first_owner))
-    await peer.sent.wait()
+    await await_signal(peer.sent, "first shared command dispatched")
     second = asyncio.create_task(wait(reads, second_owner, accepted, release))
     await asyncio.sleep(0.02)
     await peer.deliver()
     assert (await first)["success"]
-    await accepted.wait()
+    await await_signal(accepted, "shared response adopted")
     assert len(PluginHub._retained_results) == 3
     first_owner.release()
     assert len(PluginHub._retained_results) == 2
@@ -134,11 +149,11 @@ async def test_fanout_reserves_before_copy_and_refuses_capacity_without_second_r
     )
     accepted, release = asyncio.Event(), asyncio.Event()
     first = asyncio.create_task(wait(reads, first_owner, accepted, release))
-    await peer.sent.wait()
+    await await_signal(peer.sent, "first shared command dispatched")
     second = asyncio.create_task(wait(reads, second_owner))
     await asyncio.sleep(0.02)
     await peer.deliver()
-    await accepted.wait()
+    await await_signal(accepted, "first response adopted")
     with pytest.raises(RuntimeError, match="result_capacity"):
         await second
     assert len(peer.messages) == 1
@@ -173,7 +188,7 @@ async def test_expired_snapshot_releases_its_charge_without_releasing_delayed_co
             second = asyncio.create_task(
                 read.fetch(lambda: PluginHub.send_command("owned-session", "get_test_job", {}))
             )
-            await peer.sent.wait()
+            await await_signal(peer.sent, "fresh snapshot command dispatched")
             # Expiry releases the shared source, retaining the first HTTP copy.
             assert len(PluginHub._retained_results) == 1
             await peer.deliver()
@@ -254,15 +269,15 @@ async def test_replacement_keeps_old_snapshot_until_suspended_fetch_reserves_cop
 
     async with reads.session("owned-job") as read:
         first = asyncio.create_task(fetch(read, owners[0]))
-        await peer.sent.wait()
+        await await_signal(peer.sent, "initial snapshot command dispatched")
         late = asyncio.create_task(fetch(read, owners[1]), name="late-fetch")
         await asyncio.sleep(0.02)
         await peer.deliver()
         await first
-        await paused.wait()
+        await await_signal(paused, "late fetch paused")
         peer.sent.clear()
         fresh = asyncio.create_task(fetch(read, owners[2]))
-        await peer.sent.wait()
+        await await_signal(peer.sent, "replacement snapshot command dispatched")
         # The replaced shared source remains charged for the suspended reader.
         assert len(PluginHub._retained_results) == 2
         await peer.deliver()
@@ -290,7 +305,7 @@ async def test_large_shared_hub_copies_keep_source_charged(peer, monkeypatch):
     owners = [ResponseOwner(), ResponseOwner()]
     try:
         tasks = [asyncio.create_task(wait(reads, owner)) for owner in owners]
-        await peer.sent.wait()
+        await await_signal(peer.sent, "large shared command dispatched")
         await peer.deliver()
         outputs = await asyncio.gather(*tasks, return_exceptions=True)
         assert outputs == [value, value]

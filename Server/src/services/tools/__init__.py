@@ -13,6 +13,7 @@ from utils.module_discovery import discover_modules
 from services.registry import get_registered_tools, TOOL_GROUPS
 from services.registry.action_contracts import ACTION_RULES, action_input_schema
 from services.registry.routing_schema import with_unity_instance
+from services.registry.operation_invocation import wrap_tool
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -67,7 +68,8 @@ def register_all_tools(mcp: FastMCP, *, project_scoped_tools: bool = True):
         # Apply decorators: logging -> telemetry -> mcp.tool
         # Note: Parameter normalization (camelCase -> snake_case) is handled by
         # ParamNormalizerMiddleware before FastMCP validation
-        wrapped = log_execution(tool_name, "Tool")(func)
+        admitted = wrap_tool(func, tool_name, tool_info.get("unity_target"))
+        wrapped = log_execution(tool_name, "Tool")(admitted)
         wrapped = telemetry_tool(tool_name)(wrapped)
         # Keep the global declaration unchanged: each server owns its decorators.
         factory = FunctionTool if tool_name in ACTION_RULES else Tool

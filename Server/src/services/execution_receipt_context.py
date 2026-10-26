@@ -67,26 +67,39 @@ def submit_owned_executor(loop, executor, function: Callable[..., T], *args) -> 
     receipt handle in a fresh worker Context. Opted-out execution retains its
     existing executor behavior.
     """
+    from services.registry.operation_context import capture_operation_worker, current_operation
+
     owner = execution_owner.get()
-    if owner is None:
+    if owner is None and current_operation.get() is None:
         return loop.run_in_executor(executor, function, *args)
-    pin = owner.acquire_worker()
     # Existing executor callers had no request Context. Restore only the opaque
     # ownership handle; never copy HTTP request/header or SDK session material.
     context = Context()
-    context.run(execution_owner.set, owner)
+    operation_pin = capture_operation_worker(context)
+    pin = None
     try:
+        pin = owner.acquire_worker() if owner is not None else None
+        if owner is not None:
+            context.run(execution_owner.set, owner)
         future = loop.run_in_executor(executor, context.run, function, *args)
     except BaseException:
-        pin.close()
+        if pin is not None:
+            pin.close()
+        if operation_pin is not None:
+            operation_pin.close()
         raise
-    future.add_done_callback(lambda _: pin.close())
+    if pin is not None:
+        future.add_done_callback(lambda _: pin.close())
+    if operation_pin is not None:
+        future.add_done_callback(lambda _: operation_pin.close())
     return future
 
 
 async def owned_to_thread(function: Callable[..., T], /, *args, **kwargs) -> T:
     """Preserve to_thread context and retain ownership after waiter cancellation."""
-    if execution_owner.get() is None:
+    from services.registry.operation_context import current_operation
+
+    if execution_owner.get() is None and current_operation.get() is None:
         return await asyncio.to_thread(function, *args, **kwargs)
     future = submit_owned_executor(
         asyncio.get_running_loop(), None, lambda: function(*args, **kwargs)

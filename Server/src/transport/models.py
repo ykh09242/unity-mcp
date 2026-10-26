@@ -37,6 +37,9 @@ class RegisteredMessage(BaseModel):
     type: str = "registered"
     session_id: str
     capabilities: list[PluginCapability] = Field(default_factory=list, max_length=16)
+    arbitration_generation: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{32}$", exclude_if=lambda value: value is None
+    )
 
 
 class CommandProgressRequest(BaseModel):
@@ -83,6 +86,7 @@ class RegisterMessage(BaseModel):
     unity_version: str = Field(default="Unknown", max_length=64)
     project_path: str | None = Field(default=None, max_length=4096)
     capabilities: list[PluginCapability] = Field(default_factory=list, max_length=16)
+    arbitration_generation: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
 
     @field_validator("project_name", "project_hash")
     @classmethod

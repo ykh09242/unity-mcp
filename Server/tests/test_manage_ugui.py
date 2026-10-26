@@ -660,7 +660,10 @@ async def test_recovers_legacy_status_file_rejection_before_sending_mutation(
             pass
 
     connection = legacy.UnityConnection(port=9001, instance_id="Safe@sixsafe")
-    pool = SimpleNamespace(get_connection=Mock(return_value=connection))
+    pool = legacy.UnityConnectionPool()
+    pool._connections[connection.instance_id] = connection
+    monkeypatch.setattr(pool, "get_connection", Mock(return_value=connection))
+    monkeypatch.setattr(legacy, "_unity_connection_pool", pool)
 
     def connect(*args, **kwargs):
         connection.sock = FakeSocket()

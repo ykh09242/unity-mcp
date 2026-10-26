@@ -14,6 +14,7 @@ from transport.legacy import unity_connection as uc
 @pytest.fixture
 def pool_connection(monkeypatch):
     pool = uc.UnityConnectionPool()
+    monkeypatch.setattr(uc, "_unity_connection_pool", pool)
     target = SimpleNamespace(id="Main@deadbeef", port=6400)
     monkeypatch.setattr(pool, "resolve_instance", lambda _: target)
     monkeypatch.setattr(uc.UnityConnection, "connect", lambda _: True)
@@ -185,6 +186,7 @@ async def test_retired_pool_cannot_publish_catalog(pool_connection, monkeypatch)
 @pytest.mark.asyncio
 async def test_retirement_seals_stale_connection_without_closing_running_io(monkeypatch):
     pool = uc.UnityConnectionPool()
+    monkeypatch.setattr(uc, "_unity_connection_pool", pool)
     conn = uc.UnityConnection(port=6400, instance_id="Main@deadbeef")
     pool._connections[conn.instance_id] = conn
     loop = asyncio.get_running_loop()

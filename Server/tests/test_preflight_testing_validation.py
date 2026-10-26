@@ -99,7 +99,7 @@ async def test_reload_rejection_then_invalid_mutation_skips_second_wait(editor_b
     state.return_value = {"success": True, "data": {"advice": {"ready_for_tools": True}}}
     rejected = {"success": False, "error": "Invalid script edit parameters"}
     send.side_effect = [
-        {"success": False, "hint": "retry", "data": {"reason": "reloading"}},
+        MCPResponse(success=False, hint="retry", data={"reason": "reloading"}),
         rejected,
     ]
     response = await refresh_unity.send_mutation(ctx, "Selected@fixture", "manage_script", {})

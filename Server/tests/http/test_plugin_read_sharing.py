@@ -40,7 +40,8 @@ class Peer:
             plugin_session_id=session,
             plugin_generation=generation,
             user_id=user,
-            plugin_features=frozenset(),
+            plugin_features=frozenset({"native_arbitration_v1"}),
+            plugin_arbitration_generation="b" * 32,
         )
         setattr(self.state, AUTHENTICATED_LEASE_STATE, plugin_lease)
         self.requester_lease = requester_lease
@@ -72,6 +73,15 @@ class Peer:
                 else {"success": True, "data": {"value": 7}}
             )
         hub = PluginHub({"type": "websocket"}, None, None)
+        if "arbitration" in command:
+            result = {
+                "native_arbitration": {
+                    **command["arbitration"],
+                    "disposition": "started",
+                    "retryable": False,
+                },
+                "payload": result,
+            }
         await hub._handle_command_result(
             self, CommandResultMessage(id=command["id"], result=result)
         )
@@ -165,12 +175,14 @@ async def test_concurrent_readiness_is_one_ping_and_next_request_is_fresh(peer):
     probes = [value for value in peer.sent if value["name"] == "ping"]
     for probe in probes:
         await peer.reply(probe)
-    await yield_callers()
-    for command in peer.sent[len(probes) :]:
+    # read_console remains conservative Exclusive. Readiness is shared before
+    # admission; settle each command before the next writer can own the instance.
+    for _ in callers:
+        command = await peer.next_command()
         await peer.reply(command)
     results = await asyncio.gather(*callers)
     # Then: command fanout is preserved, but readiness itself is shared.
-    assert all(result["success"] for result in results)
+    assert all(result["success"] for result in results), results
     assert peer.counts() == {"ping": 1, "read_console": 6}
     fresh = asyncio.create_task(read(peer))
     await yield_callers()
@@ -181,6 +193,37 @@ async def test_concurrent_readiness_is_one_ping_and_next_request_is_fresh(peer):
     await peer.reply(peer.sent[-1])
     assert (await fresh)["success"]
     assert peer.counts() == {"ping": 2, "read_console": 7}
+
+
+@pytest.mark.asyncio
+async def test_old_native_keeps_same_instance_read_commands_sequenced(peer):
+    peer.state.plugin_features = frozenset()
+    peer.state.plugin_arbitration_generation = None
+    first = asyncio.create_task(read(peer, "get_selection", retry_on_reload=False))
+    command = await peer.next_command()
+    assert "arbitration" not in command
+    second = asyncio.create_task(read(peer, "get_selection", retry_on_reload=False))
+    await yield_callers()
+    assert peer.counts() == {"get_selection": 1}
+    await peer.reply(command)
+    following = await peer.next_command()
+    assert "arbitration" not in following
+    await peer.reply(following)
+    assert all(value["success"] for value in await asyncio.gather(first, second))
+    assert peer.counts() == {"get_selection": 2}
+
+
+@pytest.mark.asyncio
+async def test_negotiated_audited_native_reads_overlap_without_serial_predecessor(peer):
+    callers = [
+        asyncio.create_task(read(peer, "get_selection", retry_on_reload=False)) for _ in range(2)
+    ]
+    commands = [await peer.next_command(), await peer.next_command()]
+    assert all("arbitration" in command for command in commands)
+    for command in commands:
+        await peer.reply(command)
+    assert all(value["success"] for value in await asyncio.gather(*callers))
+    assert peer.counts() == {"get_selection": 2}
 
 
 @pytest.mark.asyncio
@@ -378,8 +421,8 @@ async def test_unverified_identity_keeps_readiness_private(peer, invalid):
     probes = [await peer.next_command(), await peer.next_command()]
     for probe in probes:
         await peer.reply(probe)
-    commands = [await peer.next_command(), await peer.next_command()]
-    for command in commands:
+    for _ in callers:
+        command = await peer.next_command()
         await peer.reply(command)
     # Then: lack of a verified identity never shares their state.
     assert all(result["success"] for result in await asyncio.gather(*callers))

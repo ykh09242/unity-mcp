@@ -3,6 +3,7 @@
 from tests.timing import await_signal
 
 import asyncio
+from datetime import datetime, timezone
 import copy
 import gc
 import importlib
@@ -27,12 +28,24 @@ from models.unity_response import normalize_unity_response
 from transport.charge_ledger import ChargeLedger
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
+from transport.plugin_registry import PluginSession
 
 module = importlib.import_module("services.tools.batch_execute")
 
 
 @pytest_asyncio.fixture
 async def settings(monkeypatch):
+    now = datetime.now(timezone.utc)
+    session = PluginSession(
+        session_id="session",
+        project_name="Selected",
+        project_hash="fixture",
+        unity_version="test",
+        registered_at=now,
+        connected_at=now,
+        user_id="alice",
+    )
+
     state = SimpleNamespace(
         copies=[],
         refs=[],
@@ -58,9 +71,7 @@ async def settings(monkeypatch):
 
     class OwnedHub(PluginHub):
         _lock = asyncio.Lock()
-        _registry = SimpleNamespace(
-            get_session=AsyncMock(return_value=SimpleNamespace(user_id="alice"))
-        )
+        _registry = SimpleNamespace(get_session=AsyncMock(return_value=session))
         _connections = {}
         _pending = {}
         _retained_results = ChargeLedger()
@@ -70,7 +81,7 @@ async def settings(monkeypatch):
     state.hub = OwnedHub
     endpoint = OwnedHub.__new__(OwnedHub)
     socket = SimpleNamespace(
-        state=SimpleNamespace(plugin_generation="owned"),
+        state=SimpleNamespace(plugin_generation="owned", user_id="alice"),
         client_state=WebSocketState.CONNECTED,
         application_state=WebSocketState.CONNECTED,
     )

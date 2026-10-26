@@ -104,10 +104,11 @@ def test_stdio_reload_does_not_exhaust_old_retry_count_or_twenty_second_cap(tmp_
         """
 config.command_total_timeout = 900
 os.environ["UNITY_MCP_RELOAD_MAX_WAIT_S"] = "600"
+from models import MCPResponse
 class ReloadingConnection:
     def send_command(self, *_args, **_kwargs):
         if clock.now < 45:
-            return {"success": False, "hint": "retry", "data": {"reason": "reloading"}}
+            return MCPResponse(success=False, hint="retry", data={"reason": "reloading"})
         return {"success": True}
 module.get_unity_connection = lambda _instance: ReloadingConnection()
 module.time.sleep = lambda seconds: clock.advance(seconds, None)

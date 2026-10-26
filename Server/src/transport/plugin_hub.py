@@ -98,6 +98,15 @@ from services.credential_lease import (
 )
 from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
+from services.registry.operation_context import operation_task
+from transport.native_arbitration import (
+    CAPABILITY as ARBITRATION_CAPABILITY,
+    NativeArbitrationRequest,
+    NativeNotStarted,
+    decode_native_reply,
+    valid_generation,
+    may_retry_wire_attempt,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -277,6 +286,7 @@ class PluginHub(WebSocketEndpoint):
             TOOL_SETTINGS_CAPABILITY,
             PROGRESS_CAPABILITY,
             phase_diagnostics.CAPABILITY,
+            ARBITRATION_CAPABILITY,
         }
     )
     _editor_states: ClassVar[EditorStateStore] = EditorStateStore()
@@ -579,6 +589,36 @@ class PluginHub(WebSocketEndpoint):
             hint="retry",
             data={"reason": "command_capacity", "retry_after_ms": 250},
         ).model_dump()
+
+    @classmethod
+    def _pending_usage(cls, session_id, user_id):
+        user_count = session_count = total_bytes = user_bytes = session_bytes = 0
+        for entry in cls._pending.values():
+            size = entry.get("payload_bytes", 0)
+            total_bytes += size
+            if entry.get("user_id") == user_id:
+                user_count += 1
+                user_bytes += size
+            if entry.get("session_id") == session_id:
+                session_count += 1
+                session_bytes += size
+        return user_count, session_count, total_bytes, user_bytes, session_bytes
+
+    @classmethod
+    def _pending_capacity_error(cls, session_id, user_id):
+        users, sessions, total_bytes, user_bytes, session_bytes = cls._pending_usage(
+            session_id, user_id
+        )
+        if (
+            len(cls._pending) >= cls.MAX_PENDING_COMMANDS
+            or users >= cls.MAX_PENDING_PER_USER
+            or sessions >= cls.MAX_PENDING_PER_SESSION
+            or total_bytes >= cls.MAX_PENDING_PAYLOAD_BYTES
+            or user_bytes >= cls.MAX_PENDING_PAYLOAD_BYTES_PER_USER
+            or session_bytes >= cls.MAX_PENDING_PAYLOAD_BYTES_PER_SESSION
+        ):
+            return cls._command_capacity_response()
+        return None
 
     @classmethod
     def configure(
@@ -1301,26 +1341,186 @@ class PluginHub(WebSocketEndpoint):
         _progress: ProgressSink | None = None,
     ) -> dict[str, Any]:
         phase_diagnostics.step(command_type, "admission")
-        result = await cls._send_command_response(
-            session_id,
-            command_type,
-            params,
-            _budget=_budget,
-            _expected_read=_expected_read,
-            **(
-                {"_expected_generation": _expected_generation}
-                if _expected_generation is not None
-                else {}
-            ),
-            _catalog_guard=_catalog_guard,
-            **({"_progress": _progress} if _progress is not None else {}),
+        from services.registry.operation_scheduler import (
+            OperationCapacityError,
+            OperationScopeChanged,
         )
+
+        try:
+            result = await cls._send_command_response(
+                session_id,
+                command_type,
+                params,
+                _budget=_budget,
+                _expected_read=_expected_read,
+                _expected_generation=_expected_generation,
+                _catalog_guard=_catalog_guard,
+                _progress=_progress,
+            )
+        except (OperationCapacityError, OperationScopeChanged) as error:
+            result = MCPResponse(
+                success=False,
+                error=str(error),
+                data={"reason": str(error), "dispatch": "not_dispatched"},
+            ).model_dump()
+        except (CredentialLeaseError, OperationPermissionError) as error:
+            reason = (
+                "auth_required" if isinstance(error, CredentialLeaseError) else "permission_denied"
+            )
+            result = MCPResponse(
+                success=False, error=reason, data={"reason": reason, "dispatch": "not_dispatched"}
+            ).model_dump()
+        except TimeoutError:
+            result = MCPResponse(
+                success=False,
+                error="Unity command deadline expired before dispatch",
+                data={"reason": "command_deadline_exceeded", "dispatch": "not_dispatched"},
+            ).model_dump()
         phase_diagnostics.step(command_type, "return")
         observe_native_result(result)
         return result
 
     @classmethod
     async def _send_command_response(
+        cls,
+        session_id: str,
+        command_type: str,
+        params: dict[str, Any],
+        *,
+        _budget: _CommandBudget | None = None,
+        _expected_read: _ConnectionReadIdentity | None = None,
+        _expected_generation: str | None = None,
+        _catalog_guard=None,
+        _progress: ProgressSink | None = None,
+    ) -> dict[str, Any]:
+        from services.registry.operation_context import active_operation
+
+        budget = _budget or _CommandBudget(
+            asyncio.get_running_loop().time() + cls._command_timeouts(command_type, params)[1]
+        )
+        owner = active_operation()
+        if owner is not None and owner.request.expires_at is not None:
+            budget.expires_at = min(budget.expires_at, owner.request.expires_at)
+        budget.phase = "admission"
+        receipt = execution_owner.get()
+        if receipt is not None:
+            budget.expires_at = min(budget.expires_at, receipt.expires_at)
+        try:
+            async with asyncio.timeout_at(budget.expires_at):
+                return await cls._admit_command_response(
+                    session_id,
+                    command_type,
+                    params,
+                    _budget=budget,
+                    _expected_read=_expected_read,
+                    _expected_generation=_expected_generation,
+                    _catalog_guard=_catalog_guard,
+                    _progress=_progress,
+                )
+        except TimeoutError:
+            return budget.timeout_response(command_type)
+
+    @classmethod
+    async def _admit_command_response(
+        cls,
+        session_id: str,
+        command_type: str,
+        params: dict[str, Any],
+        *,
+        _budget: _CommandBudget | None = None,
+        _expected_read: _ConnectionReadIdentity | None = None,
+        _expected_generation: str | None = None,
+        _catalog_guard=None,
+        _progress: ProgressSink | None = None,
+    ) -> dict[str, Any]:
+        from services.operation_policy import resolve_operation_policy
+        from services.registry.operation_context import active_operation
+        from services.registry.operation_invocation import (
+            admission_for,
+            operation_session,
+            is_observational_continuation,
+        )
+        from services.registry.operation_target import capture_http_target
+
+        budget = _budget or _CommandBudget(
+            asyncio.get_running_loop().time() + cls._command_timeouts(command_type, params)[1]
+        )
+        owner = active_operation()
+        if owner is not None and owner.request.expires_at is not None:
+            budget.expires_at = min(budget.expires_at, owner.request.expires_at)
+        target = await capture_http_target(session_id, hub=cls)
+        if target is None:
+            return await cls._send_command_response_admitted(
+                session_id,
+                command_type,
+                params,
+                _budget=budget,
+                _expected_read=_expected_read,
+                _expected_generation=_expected_generation,
+                _catalog_guard=_catalog_guard,
+                _progress=_progress,
+            )
+        if _expected_generation is None:
+            _expected_generation = target.transport_generation
+        requester = None
+        socket = cls._connections.get(session_id)
+        if config.http_remote_hosted:
+            requester = await require_credential_lease()
+            socket = cls._connections.get(session_id)
+            authority = cls._socket_lease(socket) if socket is not None else None
+            if authority is None or authority.user_id != requester.user_id:
+                raise CredentialLeaseError()
+            for credential in (requester, authority):
+                await credential.check()
+                authorize_operation(
+                    credential.permissions,
+                    command_type,
+                    params,
+                    custom=_catalog_guard is not None,
+                    native=True,
+                )
+        if cls._lock is not None:
+            async with cls._authorized_socket_lock(socket, cls._lock, requester):
+                user = (
+                    target.scope.principal.removeprefix("remote:")
+                    if target.scope.principal.startswith("remote:")
+                    else None
+                )
+                capacity = cls._pending_capacity_error(session_id, user)
+                if capacity is not None:
+                    return capacity
+        policy = resolve_operation_policy(
+            command_type, params, native=True, trusted_builtin=_catalog_guard is None
+        )
+        charge = cls._command_payload_size(command_type, params)
+        if charge is None:
+            return MCPResponse(
+                success=False,
+                error="Unity command payload exceeds supported size or structure",
+                data={"reason": "command_payload_limit", "dispatch": "not_dispatched"},
+            ).model_dump()
+        async with operation_session(
+            admission_for(
+                target,
+                policy.mode,
+                expires_at=budget.expires_at,
+                observational_continuation=is_observational_continuation(command_type, params),
+                retained_bytes=charge,
+            )
+        ):
+            return await cls._send_command_response_admitted(
+                session_id,
+                command_type,
+                params,
+                _budget=budget,
+                _expected_read=_expected_read,
+                _expected_generation=_expected_generation,
+                _catalog_guard=_catalog_guard,
+                _progress=_progress,
+            )
+
+    @classmethod
+    async def _send_command_response_admitted(
         cls,
         session_id: str,
         command_type: str,
@@ -1345,21 +1545,32 @@ class PluginHub(WebSocketEndpoint):
         lease = await require_credential_lease() if config.http_remote_hosted else None
         try:
             async with lease.own() if lease is not None else nullcontext():
-                async with asyncio.timeout_at(budget.expires_at):
-                    return await cls._send_command(
-                        session_id,
-                        command_type,
-                        params,
-                        budget,
-                        _expected_read=_expected_read,
-                        **(
-                            {"_expected_generation": _expected_generation}
-                            if _expected_generation is not None
-                            else {}
-                        ),
-                        _catalog_guard=_catalog_guard,
-                        **({"_progress": _progress} if _progress is not None else {}),
-                    )
+                while True:
+                    try:
+                        return await cls._send_command(
+                            session_id,
+                            command_type,
+                            params,
+                            budget,
+                            _expected_read=_expected_read,
+                            **(
+                                {"_expected_generation": _expected_generation}
+                                if _expected_generation is not None
+                                else {}
+                            ),
+                            _catalog_guard=_catalog_guard,
+                            **({"_progress": _progress} if _progress is not None else {}),
+                        )
+                    except NativeNotStarted as refusal:
+                        # Only an exact transport-owned pre-handler receipt
+                        # can clear this attempt's dispatch uncertainty.
+                        budget.dispatched = False
+                        if not may_retry_wire_attempt(command_type, refusal.reply):
+                            return refusal.reply.payload
+                        params = refusal.params
+                        _expected_generation = refusal.transport_generation
+                        budget.phase = "native_admission"
+                        await asyncio.sleep(min(0.1, budget.remaining()))
         except OperationPermissionError:
             if budget.dispatched:
                 return command_outcome_unknown(
@@ -1461,16 +1672,9 @@ class PluginHub(WebSocketEndpoint):
                     )
             # _pending is the single source of accounting: every existing pop on
             # result/cancel/timeout/disconnect/eviction/shutdown returns capacity.
-            user_count = session_count = total_bytes = user_bytes = session_bytes = 0
-            for entry in cls._pending.values():
-                entry_bytes = entry.get("payload_bytes", 0)
-                total_bytes += entry_bytes
-                if entry.get("user_id") == user_id:
-                    user_count += 1
-                    user_bytes += entry_bytes
-                if entry["session_id"] == session_id:
-                    session_count += 1
-                    session_bytes += entry_bytes
+            user_count, session_count, total_bytes, user_bytes, session_bytes = cls._pending_usage(
+                session_id, user_id
+            )
             if (
                 len(cls._pending) >= cls.MAX_PENDING_COMMANDS
                 or user_count >= cls.MAX_PENDING_PER_USER
@@ -1503,6 +1707,13 @@ class PluginHub(WebSocketEndpoint):
                 raise RuntimeError(f"Duplicate command id generated: {command_id}")
             future: asyncio.Future = asyncio.get_running_loop().create_future()
             result_ledger = cls._retained_results
+            arbitration_generation = getattr(websocket.state, "plugin_arbitration_generation", None)
+            arbitration = (
+                NativeArbitrationRequest.create(arbitration_generation)
+                if cls._supports(websocket, ARBITRATION_CAPABILITY)
+                and valid_generation(arbitration_generation)
+                else None
+            )
             cls._pending[command_id] = {
                 "future": future,
                 "session_id": session_id,
@@ -1513,6 +1724,7 @@ class PluginHub(WebSocketEndpoint):
                 "receipt_owner": execution_owner.get(),
                 # Keep only the admitted scalar deadline, not its request/dispatch graph.
                 "result_deadline": budget.expires_at,
+                "arbitration": arbitration,
             }
             generation = getattr(websocket.state, "plugin_generation", None)
 
@@ -1528,6 +1740,9 @@ class PluginHub(WebSocketEndpoint):
             # Admission, serialization and all earlier phases spend this same budget.
             # Omit only the optional envelope field; preserve nested null values.
             payload = msg.model_dump(exclude={"progress"})
+            if arbitration is not None:
+                payload["arbitration"] = arbitration.to_wire()
+                cls._pending[command_id]["arbitration_params"] = payload["params"]
             diagnostic = phase_diagnostics.request(
                 command_type, cls._supports(websocket, phase_diagnostics.CAPABILITY)
             )
@@ -1709,7 +1924,7 @@ class PluginHub(WebSocketEndpoint):
                 receipt = execution_owner.get()
                 receipt_pin = receipt.acquire_worker() if receipt is not None else None
                 try:
-                    send_task = asyncio.create_task(authorized_send())
+                    send_task = operation_task(authorized_send())
                 except BaseException:
                     if receipt_pin is not None:
                         receipt_pin.close()
@@ -1738,6 +1953,8 @@ class PluginHub(WebSocketEndpoint):
                     if lease is not None:
                         await lease.check()
                 return result
+            except NativeNotStarted:
+                raise
             except OperationPermissionError:
                 # Admission may differ after canonical serialization. A refusal
                 # before dispatch must not manufacture an unknown outcome or
@@ -2114,6 +2331,12 @@ class PluginHub(WebSocketEndpoint):
             websocket.state.plugin_command_epoch = 0
             websocket.state.plugin_state_read_epoch = 0
             accepted = cls.CAPABILITIES.intersection(payload.capabilities)
+            native_generation = payload.arbitration_generation
+            if ARBITRATION_CAPABILITY in accepted and not valid_generation(native_generation):
+                accepted = accepted - {ARBITRATION_CAPABILITY}
+            websocket.state.plugin_arbitration_generation = (
+                native_generation if ARBITRATION_CAPABILITY in accepted else None
+            )
             if LARGE_RESULT_CAPABILITY not in accepted:
                 accepted = accepted - {COMPRESSION_CAPABILITY}
             if "editor_state_v1" in accepted:
@@ -2132,7 +2355,11 @@ class PluginHub(WebSocketEndpoint):
             cls._ping_tasks[session_id] = ping_task
 
         try:
-            response = RegisteredMessage(session_id=session_id, capabilities=sorted(accepted))
+            response = RegisteredMessage(
+                session_id=session_id,
+                capabilities=sorted(accepted),
+                arbitration_generation=websocket.state.plugin_arbitration_generation,
+            )
             await websocket.send_json(response.model_dump())
         finally:
             # Eviction owns closure even if the replacement's ACK fails or is cancelled.
@@ -2601,6 +2828,24 @@ class PluginHub(WebSocketEndpoint):
                 return
             future = entry.get("future")
             if future and not future.done():
+                try:
+                    reply = decode_native_reply(result, entry.get("arbitration"))
+                except ValueError:
+                    future.set_exception(RuntimeError("invalid_native_arbitration_response"))
+                    return
+                except RuntimeError as error:
+                    future.set_exception(error)
+                    return
+                if reply.not_started:
+                    future.set_exception(
+                        NativeNotStarted(
+                            reply,
+                            transport_generation=getattr(websocket.state, "plugin_generation", ""),
+                            params=entry["arbitration_params"],
+                        )
+                    )
+                    return
+                result = reply.payload
                 charge = response_size(
                     result,
                     max_bytes=cls.MAX_RESULT_BYTES,
