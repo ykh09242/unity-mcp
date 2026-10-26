@@ -794,6 +794,180 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(State(), Is.EqualTo(before));
         }
 
+        [Test]
+        public void FixedNativeTmpInputHasNumericalFindingsWithoutChangingSource()
+        {
+            CreateTmpInputTarget();
+            string before = State();
+            var request = Request(Virtual(800, 600, 160), Virtual(1200, 800, 320));
+            request["minimum_touch_target_mm"] = 7;
+            var data = Call(request);
+            Assert.That(data["status"].Value<string>(), Is.EqualTo("complete"), data.ToString());
+            Assert.That(data["unsupported_component"].Type, Is.EqualTo(JTokenType.Null));
+            Assert.That(Node(data, 0)["pixel_bounds"].Values<float>(), Is.EqualTo(new[] { 376f, 276f, 48f, 48f }));
+            Assert.That(Node(data, 1)["pixel_bounds"].Values<float>(), Is.EqualTo(new[] { 576f, 376f, 48f, 48f }));
+            Assert.That(Node(data, 0)["width_mm"].Value<double>(), Is.EqualTo(7.62).Within(0.00001));
+            Assert.That(Node(data, 1)["width_mm"].Value<double>(), Is.EqualTo(3.81).Within(0.00001));
+            Assert.That(Node(data, 0)["touch_target"].Value<string>(), Is.EqualTo("meets_caller_threshold"));
+            Assert.That(Node(data, 1)["touch_target"].Value<string>(), Is.EqualTo("below_caller_threshold"));
+            Assert.That(State(), Is.EqualTo(before));
+        }
+
+        [TestCase("horizontalFit")]
+        [TestCase("verticalFit")]
+        public void NativeTmpInputContentFitterRemainsUnknown(string axis)
+        {
+            CreateTmpInputTarget();
+            var fitter = target.AddComponent(Ui("ContentSizeFitter"));
+            SetEnum(fitter, axis, "PreferredSize");
+            AssertTmpInputUnsupported(Call(Request(Virtual(800, 600, 160))));
+        }
+
+        [TestCase("HorizontalLayoutGroup", true, false)]
+        [TestCase("HorizontalLayoutGroup", false, true)]
+        [TestCase("VerticalLayoutGroup", true, false)]
+        [TestCase("VerticalLayoutGroup", false, true)]
+        public void NativeTmpInputParentDrivenAxisRemainsUnknown(string kind, bool width, bool height)
+        {
+            CreateTmpInputTarget();
+            var group = root.AddComponent(Ui(kind));
+            Set(group, "childControlWidth", width);
+            Set(group, "childControlHeight", height);
+            AssertTmpInputUnsupported(Call(Request(Virtual(800, 600, 160))));
+        }
+
+        [TestCase("HorizontalLayoutGroup")]
+        [TestCase("VerticalLayoutGroup")]
+        [TestCase("GridLayoutGroup")]
+        public void NativeTmpInputNonConsumingLayoutMatchesNativeRectangle(string kind)
+        {
+            CreateTmpInputTarget();
+            var group = root.AddComponent(Ui(kind));
+            if (kind == "GridLayoutGroup")
+                Set(group, "cellSize", new Vector2(64, 32));
+            else
+            {
+                Set(group, "childControlWidth", false);
+                Set(group, "childControlHeight", false);
+                Set(group, "childForceExpandWidth", false);
+                Set(group, "childForceExpandHeight", false);
+            }
+            Rebuild((RectTransform)root.transform);
+            Vector2 expected = ((RectTransform)target.transform).rect.size;
+            string before = State();
+            var data = Call(Request(Virtual(800, 600, 160)));
+            Assert.That(data["status"].Value<string>(), Is.EqualTo("complete"), data.ToString());
+            Assert.That(Node(data, 0)["pixel_bounds"][2].Value<float>(), Is.EqualTo(expected.x).Within(0.001));
+            Assert.That(Node(data, 0)["pixel_bounds"][3].Value<float>(), Is.EqualTo(expected.y).Within(0.001));
+            Assert.That(State(), Is.EqualTo(before));
+        }
+
+        [Test]
+        public void NativeTmpInputCallbacksAndTextPreprocessorAreNotInvoked()
+        {
+#if MCP_UI14_TMP_WITNESS
+            var input = (TMPro.TMP_InputField)CreateTmpInputTarget();
+            int callbacks = 0;
+            input.onValueChanged.AddListener(_ => callbacks++);
+            input.onSelect.AddListener(_ => callbacks++);
+            input.onValidateInput = (_, __, character) =>
+            {
+                callbacks++;
+                return character;
+            };
+            var witness = new Ui14ArmedTextPreprocessor();
+            input.textComponent.textPreprocessor = witness;
+            string before = State();
+            var font = input.textComponent.font;
+            string fontBefore = font == null ? null : EditorJsonUtility.ToJson(font);
+            var data = Call(Request(Virtual(800, 600, 160)));
+            Assert.That(data["status"].Value<string>(), Is.EqualTo("complete"), data.ToString());
+            Assert.That(callbacks, Is.Zero);
+            Assert.That(witness.Calls, Is.Zero);
+            Assert.That(font == null ? null : EditorJsonUtility.ToJson(font), Is.EqualTo(fontBefore));
+            Assert.That(State(), Is.EqualTo(before));
+#else
+            Assert.Ignore("Mandatory TMP input callback witness requires MCP_UI14_TMP_WITNESS and the installed TMP reference.");
+#endif
+        }
+
+        [Test]
+        public void CustomTmpInputMetricsAreNotAdmittedOrInvoked()
+        {
+#if MCP_UI14_TMP_WITNESS
+            var input = (Ui211ArmedTmpInputOverride)CreateTmpInputTarget(typeof(Ui211ArmedTmpInputOverride));
+            input.Armed = true;
+            try
+            {
+                string before = State();
+                var data = Call(Request(Virtual(800, 600, 160)));
+                Assert.That(data["status"].Value<string>(), Is.EqualTo("partial"));
+                Assert.That(data["unsupported_component"]["component_type"].Value<string>(), Is.EqualTo(typeof(Ui211ArmedTmpInputOverride).FullName));
+                Assert.That(input.Calls, Is.Zero);
+                Assert.That(Node(data, 0)["safe_area_relation"].Value<string>(), Is.EqualTo("unknown"));
+                Assert.That(State(), Is.EqualTo(before));
+            }
+            finally
+            {
+                input.Armed = false;
+            }
+#else
+            Assert.Ignore("Mandatory TMP input override witness requires MCP_UI14_TMP_WITNESS and the installed TMP reference.");
+#endif
+        }
+
+        [Test]
+        public void FixedNativeTmpInputStillObeysSharedBudget()
+        {
+            CreateTmpInputTarget();
+            for (int i = 0; i < 120; i++)
+            {
+                var child = new GameObject("BoundedInput_" + i, typeof(RectTransform));
+                child.transform.SetParent(target.transform, false);
+            }
+            var request = Request(Virtual(800, 600, 160), Virtual(1200, 800, 320));
+            request["max_evaluations"] = 64;
+            string before = State();
+            var data = Call(request);
+            Assert.That(data["status"].Value<string>(), Is.EqualTo("partial"));
+            Assert.That(data["budget"]["evaluations"].Value<int>(), Is.LessThanOrEqualTo(64));
+            Assert.That(data["budget"]["reasons"].Values<string>(), Does.Contain("max_evaluations"));
+            Assert.That(State(), Is.EqualTo(before));
+        }
+
+        private Component CreateTmpInputTarget(Type inputType = null)
+        {
+            inputType = inputType ?? UnityTypeResolver.ResolveComponent("TMPro.TMP_InputField");
+            var textType = UnityTypeResolver.ResolveComponent("TMPro.TextMeshProUGUI");
+            if (inputType == null || textType == null)
+                Assert.Ignore("Optional TMP input is unavailable; this is not a passing native input geometry check.");
+            var area = new GameObject("TextArea", typeof(RectTransform));
+            area.transform.SetParent(target.transform, false);
+            var viewport = (RectTransform)area.transform;
+            viewport.anchorMin = Vector2.zero;
+            viewport.anchorMax = Vector2.one;
+            viewport.sizeDelta = Vector2.zero;
+            area.AddComponent(Ui("RectMask2D"));
+            var textObject = new GameObject("Text", typeof(RectTransform));
+            textObject.transform.SetParent(viewport, false);
+            var text = textObject.AddComponent(textType);
+            Set(text, "autoSizeTextContainer", false);
+            Set(text, "raycastTarget", false);
+            var input = target.AddComponent(inputType);
+            Set(input, "textViewport", viewport);
+            Set(input, "textComponent", text);
+            return input;
+        }
+
+        private void AssertTmpInputUnsupported(JObject data)
+        {
+            Assert.That(data["profiles"][0]["status"].Value<string>(), Is.EqualTo("partial"), data.ToString());
+            Assert.That(data["profiles"][0]["reasons"].Values<string>(), Does.Contain("unsupported_layout_provider"));
+            Assert.That(data["unsupported_component"]["component_type"].Value<string>(), Is.EqualTo("TMPro.TMP_InputField"));
+            Assert.That(Node(data, 0)["safe_area_relation"].Value<string>(), Is.EqualTo("unknown"));
+            Assert.That(Node(data, 0)["touch_target"].Value<string>(), Is.EqualTo("unknown"));
+        }
+
         private Component CreateTmpTarget()
         {
             var type = UnityTypeResolver.ResolveComponent("TMPro.TextMeshProUGUI");
@@ -891,6 +1065,27 @@ namespace MCPForUnityTests.EditMode.Tools
     }
 
 #if MCP_UI14_TMP_WITNESS
+    public sealed class Ui211ArmedTmpInputOverride : TMPro.TMP_InputField
+    {
+        [NonSerialized]
+        public bool Armed;
+
+        [NonSerialized]
+        public int Calls;
+        public override float preferredWidth
+        {
+            get
+            {
+                if (Armed)
+                {
+                    Calls++;
+                    throw new InvalidOperationException("Custom TMP input metrics executed");
+                }
+                return base.preferredWidth;
+            }
+        }
+    }
+
     public sealed class Ui14ArmedTextPreprocessor : TMPro.ITextPreprocessor
     {
         public int Calls;
