@@ -33,9 +33,13 @@ async def test_polls_until_ready(monkeypatch):
         call_count += 1
         if call_count < 3:
             return {
-                "data": {"advice": {"ready_for_tools": False, "blocking_reasons": ["compiling"]}}
+                "success": True,
+                "data": {"advice": {"ready_for_tools": False, "blocking_reasons": ["compiling"]}},
             }
-        return {"data": {"advice": {"ready_for_tools": True, "blocking_reasons": []}}}
+        return {
+            "success": True,
+            "data": {"advice": {"ready_for_tools": True, "blocking_reasons": []}},
+        }
 
     monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", fake_get_editor_state)
 
@@ -47,6 +51,56 @@ async def test_polls_until_ready(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_pending_external_scan_waits_for_canonical_ready(monkeypatch):
+    from services.tools import refresh_unity as mod
+
+    monkeypatch.setattr(mod, "_in_pytest", lambda: False)
+    polls = 0
+
+    async def fake_get_editor_state(ctx):
+        nonlocal polls
+        polls += 1
+        return {
+            "success": True,
+            "data": {
+                "advice": {
+                    "ready_for_tools": polls == 3,
+                    "blocking_reasons": [] if polls == 3 else ["external_changes_scan_pending"],
+                }
+            },
+        }
+
+    monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", fake_get_editor_state)
+
+    ready, elapsed = await mod.wait_for_editor_ready(DummyContext(), timeout_s=2.0)
+    assert ready is True
+    assert polls == 3
+    assert elapsed >= 0.5
+
+
+@pytest.mark.asyncio
+async def test_unsuccessful_state_cannot_confirm_readiness(monkeypatch):
+    from services.tools import refresh_unity as mod
+
+    monkeypatch.setattr(mod, "_in_pytest", lambda: False)
+    polls = 0
+
+    async def fake_get_editor_state(ctx):
+        nonlocal polls
+        polls += 1
+        return {
+            "success": polls == 2,
+            "data": {"advice": {"ready_for_tools": True, "blocking_reasons": []}},
+        }
+
+    monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", fake_get_editor_state)
+
+    ready, _ = await mod.wait_for_editor_ready(DummyContext(), timeout_s=2.0)
+    assert ready is True
+    assert polls == 2
+
+
+@pytest.mark.asyncio
 async def test_timeout_returns_false(monkeypatch):
     """When editor never becomes ready, returns (False, ~timeout)."""
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
@@ -54,7 +108,10 @@ async def test_timeout_returns_false(monkeypatch):
     from services.tools import refresh_unity as mod
 
     async def fake_get_editor_state(ctx):
-        return {"data": {"advice": {"ready_for_tools": False, "blocking_reasons": ["compiling"]}}}
+        return {
+            "success": True,
+            "data": {"advice": {"ready_for_tools": False, "blocking_reasons": ["compiling"]}},
+        }
 
     monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", fake_get_editor_state)
 
@@ -65,22 +122,24 @@ async def test_timeout_returns_false(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stale_only_treated_as_ready(monkeypatch):
-    """If the only blocking reason is stale_status, consider ready."""
+async def test_stale_only_cannot_confirm_canonical_readiness(monkeypatch):
+    """A stale authoritative observation cannot confirm canonical readiness."""
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
     from services.tools import refresh_unity as mod
 
     async def fake_get_editor_state(ctx):
         return {
-            "data": {"advice": {"ready_for_tools": False, "blocking_reasons": ["stale_status"]}}
+            "success": True,
+            "data": {"advice": {"ready_for_tools": False, "blocking_reasons": ["stale_status"]}},
         }
 
     monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", fake_get_editor_state)
 
     ctx = DummyContext()
-    ready, elapsed = await mod.wait_for_editor_ready(ctx, timeout_s=5.0)
-    assert ready is True
+    ready, elapsed = await mod.wait_for_editor_ready(ctx, timeout_s=0.05)
+    assert ready is False
+    assert elapsed >= 0.05
 
 
 @pytest.mark.asyncio
@@ -122,7 +181,7 @@ async def test_state_ready_after_deadline_is_not_accepted(monkeypatch):
 
     async def delayed_state(ctx):
         now[0] = 2.0
-        return {"data": {"advice": {"ready_for_tools": True}}}
+        return {"success": True, "data": {"advice": {"ready_for_tools": True}}}
 
     monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", delayed_state)
     # When: readiness is requested with a one-second deadline.
@@ -197,7 +256,10 @@ async def test_exception_during_poll_keeps_trying(monkeypatch):
         call_count += 1
         if call_count < 3:
             raise ConnectionError("Unity disconnected")
-        return {"data": {"advice": {"ready_for_tools": True, "blocking_reasons": []}}}
+        return {
+            "success": True,
+            "data": {"advice": {"ready_for_tools": True, "blocking_reasons": []}},
+        }
 
     monkeypatch.setattr(mod.editor_state, "get_editor_state_authoritative", fake_get_editor_state)
 

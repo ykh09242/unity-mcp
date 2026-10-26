@@ -172,7 +172,7 @@ async def test_default_mutation_readiness_survives_slow_reload(monkeypatch, over
 
     async def ready(_ctx):
         now[0] = delay
-        return {"data": {"advice": {"ready_for_tools": True}}}
+        return {"success": True, "data": {"advice": {"ready_for_tools": True}}}
 
     monkeypatch.setattr(refresh.editor_state, "get_editor_state_authoritative", ready)
     assert await refresh.wait_for_editor_ready(None) == (True, delay)
