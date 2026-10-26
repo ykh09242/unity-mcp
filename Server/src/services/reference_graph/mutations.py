@@ -47,6 +47,8 @@ class MutationReceipts:
                 not isinstance(path, str)
                 or not path.startswith(("Assets/", "Packages/"))
                 or "\\" in path
+                or ":" in path
+                or any(ord(character) < 32 for character in path)
                 or any(not part or part.startswith(".") for part in path.split("/"))
             ):
                 raise ValueError("Mutation targets require admitted, relative asset paths")
