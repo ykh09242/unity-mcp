@@ -572,11 +572,12 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void MarketplaceReload_ResolvesSameUidByGetAndKeepsArchiveSelectorWithoutSignedUrl()
         {
+            const string uid = "0123456789abcdef0123456789abcdef";
             var cp = Checkpoint(provider: "sketchfab", kind: "marketplace");
             cp.Extension = "zip";
             cp.Subfolder = "Sketchfab";
             cp.Receipt = null;
-            cp.MarketplaceUid = "owned-marketplace";
+            cp.MarketplaceUid = uid;
             AssetGenJob job = Inject(cp);
             job.ArchiveModelPath = "nested/main.obj";
             SessionState.SetString(Prefix + job.JobId, AssetGenJobCheckpoint.Project(job, cp).ToString(Formatting.None));
@@ -585,16 +586,35 @@ namespace MCPForUnityTests.Editor.AssetGen
             http.Handler = request =>
             {
                 Assert.AreEqual("GET", request.Method);
-                Assert.AreEqual("https://api.sketchfab.com/v3/models/owned-marketplace/download", request.Url);
+                Assert.AreEqual("https://api.sketchfab.com/v3/models/" + uid + "/download", request.Url);
                 return Json(new JObject { ["gltf"] = new JObject { ["url"] = signed } });
             };
             Pump(job.JobId, 3);
             AssetGenJob restored = AssetGenJobManager.GetJob(job.JobId);
             Assert.AreEqual(AssetGenJobState.Running, restored.State, restored.Error);
             Assert.AreEqual("nested/main.obj", restored.ArchiveModelPath);
-            Assert.AreEqual("owned-marketplace", restored.ProviderTaskId);
+            Assert.AreEqual(uid, restored.ProviderTaskId);
             Assert.AreEqual(1, http.RecordedRequests.Count);
             StringAssert.DoesNotContain("GEN06_SIGNED_MARKER", SessionState.GetString(Prefix + job.JobId, ""));
+        }
+
+        [TestCase("../me")]
+        [TestCase("%2e%2e%2fme")]
+        [TestCase("0123456789abcdef0123456789abcde ")]
+        [TestCase("0123456789abcdef0123456789abcde\n")]
+        public void MarketplaceReload_InvalidUidNeverReadsKeyOrRequests(string uid)
+        {
+            var cp = Checkpoint(provider: "sketchfab", kind: "marketplace");
+            cp.Extension = "zip";
+            cp.Subfolder = "Sketchfab";
+            cp.Receipt = null;
+            cp.MarketplaceUid = uid;
+            AssetGenJob job = Inject(cp);
+            Pump(job.JobId, 3);
+            Assert.AreEqual(AssetGenJobState.Failed, job.State);
+            Assert.AreEqual("checkpoint_invalid", job.RecoveryCode);
+            Assert.AreEqual(0, keys.Reads);
+            Assert.IsEmpty(http.RecordedRequests);
         }
 
         private void CreateOwnedFolder()
