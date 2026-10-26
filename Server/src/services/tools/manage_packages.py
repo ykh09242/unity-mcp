@@ -77,7 +77,7 @@ async def _send_packages_command(
     group="core",
     description=(
         "Manage Unity packages: query, install, remove, embed, and configure registries.\n\n"
-        "Sources must use external Git/UPM authentication; "
+        "Mutations require edit+run. Sources must use external Git/UPM authentication; "
         "embedded credentials and URL queries other than Git ?path= are rejected.\n\n"
         "QUERY (read-only):\n"
         "- list_packages: List all installed packages\n"

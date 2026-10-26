@@ -67,6 +67,23 @@ Blender update checking require `run` because their native handlers start
 background refresh or subprocess work. Asset-generation status remains a read
 of the existing job record.
 
+All `manage_packages` mutations (add, remove, embed, resolve and registry changes)
+require `edit` and `run`: Unity may import, re-resolve or compile package code.
+Queries/status remain reads. Explicit Editor consent remains necessary separately.
+Package inputs reject HTTP(S) userinfo, SSH passwords and arbitrary URL queries;
+credential-free SSH/scp Git references and Git `?path=` selectors remain supported.
+Use Git/UPM's external authentication. Responses redact all URL userinfo, queries
+and fragments, including legacy jobs, registry records and native errors.
+
+`animator_set_parameter` retains automatic Play/Edit behavior and requires `edit`
+and `run`, because Edit mode persists controller defaults. Set the top-level
+`runtime_only` Boolean to `true` for a `run`-only operation: the native handler
+checks actual Play mode and refuses Edit mode before changes. Nested properties
+and caller mode claims cannot lower this policy. Defaults can only be written to
+writable, physically contained AnimatorController assets under `Assets/`;
+package controllers and transient controllers are rejected.
+The CLI exposes this as `animation animator set-parameter ... --runtime-only`.
+
 Public refresh with `wait_for_ready` enabled (the default) additionally requires
 `read` for its promised ready observation. Dispatch-only refresh can use
 `edit` and `run` without `read`. Scene validation with a repair flag additionally

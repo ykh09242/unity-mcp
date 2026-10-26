@@ -82,6 +82,11 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new { success = false, message = "'parameterName' is required" };
 
             bool isPlaying = Application.isPlaying;
+            JToken runtimeOnlyToken = @params["runtimeOnly"];
+            if (runtimeOnlyToken != null && runtimeOnlyToken.Type != JTokenType.Boolean)
+                return new { success = false, message = "'runtime_only' must be a Boolean." };
+            if (runtimeOnlyToken?.Value<bool>() == true && !isPlaying)
+                return new { success = false, message = "runtime_only requires Play mode; controller defaults were not changed." };
             AnimatorController controller = null;
             AnimatorControllerParameter[] allParams = null;
             AnimatorControllerParameter found = null;
@@ -202,6 +207,13 @@ namespace MCPForUnity.Editor.Tools.Animation
                     success = true,
                     message = $"Trigger '{paramName}' noted (triggers are runtime-only, no default to set)" + AnimatorResolver.ResolvedSuffix(go, animator),
                 };
+
+            string controllerPath = AssetDatabase.GetAssetPath(controller);
+            if (string.IsNullOrEmpty(controllerPath))
+                return new { success = false, message = "Parameter defaults require a writable AnimatorController asset under Assets/." };
+            AssetPathUtility.GetContainedAssetPath(controllerPath);
+            if (!AssetDatabase.IsOpenForEdit(controllerPath) || new System.IO.FileInfo(AssetPathUtility.GetFullAssetPath(controllerPath)).IsReadOnly)
+                return new { success = false, message = "AnimatorController is not writable." };
 
             Undo.RecordObject(controller, $"Set Parameter Default {paramName}");
             string valueDescription;

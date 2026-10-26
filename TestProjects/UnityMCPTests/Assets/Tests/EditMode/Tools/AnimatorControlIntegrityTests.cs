@@ -306,6 +306,64 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(controller));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RuntimeOnlyRefusesEditModeBeforeChangingDefaults(bool encodedProperties)
+        {
+            // Given an Edit-mode controller and a native-enforced runtime-only request.
+            var request = Request("Speed", "float");
+            request["runtime_only"] = true;
+            request["properties"] = encodedProperties ? (JToken)new JValue("{\"runtime_only\":false}") : new JObject { ["runtimeOnly"] = false };
+            request["value"] = 99f;
+            // When admission reaches Animator control, then all persisted state remains unchanged.
+            AssertRejectedUnchanged(request);
+        }
+
+        [Test]
+        public void TransientControllerDefaultsAreRejectedBeforeMutation()
+        {
+            // Given a controller outside the writable Assets ownership boundary.
+            var transient = new AnimatorController();
+            transient.parameters = controller.parameters;
+            animator.runtimeAnimatorController = transient;
+            string before = EditorJsonUtility.ToJson(transient);
+            int dirty = EditorUtility.GetDirtyCount(transient);
+            try
+            {
+                var request = Request("Speed", "float");
+                request["value"] = 99f;
+                // When changing defaults, then no transient state or Undo dirtying occurs.
+                Assert.IsFalse(Call(request).Value<bool>("success"));
+                Assert.AreEqual(before, EditorJsonUtility.ToJson(transient));
+                Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(transient));
+            }
+            finally
+            {
+                animator.runtimeAnimatorController = controller;
+                UnityEngine.Object.DestroyImmediate(transient);
+            }
+        }
+
+        [Test]
+        public void ReadOnlyControllerDefaultsAreRejectedBeforeMutation()
+        {
+            // Given a controller file owned by this test but marked read-only.
+            string path = MCPForUnity.Editor.Helpers.AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(controller));
+            var original = System.IO.File.GetAttributes(path);
+            try
+            {
+                System.IO.File.SetAttributes(path, original | System.IO.FileAttributes.ReadOnly);
+                var request = Request("Speed", "float");
+                request["value"] = 99f;
+                // When changing defaults, then values, identity and dirty state are preserved.
+                AssertRejectedUnchanged(request);
+            }
+            finally
+            {
+                System.IO.File.SetAttributes(path, original);
+            }
+        }
+
         [Test]
         public void OverrideControllerEditingRemainsUnsupported()
         {
