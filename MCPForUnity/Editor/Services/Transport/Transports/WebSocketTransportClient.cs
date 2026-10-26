@@ -1286,7 +1286,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             // registry handler publishes that name. Its identity is therefore audited here.
             bool ping = string.Equals(command.type, "ping", StringComparison.OrdinalIgnoreCase);
             return ToolOperationPolicy
-                    .Resolve(ping ? "ping" : command.type, command.@params, ping || CommandRegistry.IsTrustedBuiltInHandler(command.type))
+                    .Resolve(ping ? "ping" : command.type, command.@params ?? new JObject(), ping || CommandRegistry.IsTrustedBuiltInHandler(command.type))
                     .Mode != ToolOperationMode.Exclusive;
         }
 
