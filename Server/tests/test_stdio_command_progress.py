@@ -203,6 +203,7 @@ def environment(monkeypatch):
     # No user status/discovery read is needed for a wholly owned explicit endpoint.
     monkeypatch.setattr(uc, "read_status_file", lambda *_: None)
     pool = uc.UnityConnectionPool()
+    monkeypatch.setattr(uc, "_unity_connection_pool", pool)
     pool._default_instance_id = IDENTITY
     pool._last_full_scan = time.time()
     monkeypatch.setattr(uc, "get_unity_connection_pool", lambda: pool)

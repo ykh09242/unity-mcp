@@ -155,6 +155,7 @@ async def probe(settings: dict, control_root: Path, mode: str) -> None:
         changes.enter_context(patch.object(config, "http_remote_hosted", False))
         changes.enter_context(patch.object(config, "transport_mode", "stdio"))
         changes.enter_context(patch.object(uc, "read_status_file", lambda *_: None))
+        changes.enter_context(patch.object(uc, "_unity_connection_pool", pool))
         changes.enter_context(patch.object(uc, "get_unity_connection_pool", lambda: pool))
         try:
             assert await asyncio.wait_for(asyncio.to_thread(connection.connect), 3)
