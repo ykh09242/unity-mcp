@@ -14,6 +14,7 @@ namespace MCPForUnity.Editor.Services
             { "asset_reference_diagnostics", "MCPForUnity.Editor.Tools.Capabilities.AssetReferenceDiagnostics" },
             { "batch_execute", "MCPForUnity.Editor.Tools.BatchExecute" },
             { "cancel_test_job", "MCPForUnity.Editor.Tools.CancelTestJob" },
+            { "export_test_job", "MCPForUnity.Editor.Tools.ExportTestJob" },
             { "find_gameobjects", "MCPForUnity.Editor.Tools.FindGameObjects" },
             { "gameobject_placement", "MCPForUnity.Editor.Tools.Capabilities.GameobjectPlacement" },
             { "get_active_tool", "MCPForUnity.Editor.Resources.Editor.ActiveTool" },

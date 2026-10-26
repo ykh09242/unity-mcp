@@ -9,6 +9,7 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
     {
         [TestCase("get_selection", "MCPForUnity.Editor.Resources.Editor.Selection")]
         [TestCase("get_editor_state", "MCPForUnity.Editor.Resources.Editor.EditorState")]
+        [TestCase("export_test_job", "MCPForUnity.Editor.Tools.ExportTestJob")]
         [TestCase("manage_packages", "MCPForUnity.Editor.Tools.ManagePackages")]
         [TestCase("manage_script", "MCPForUnity.Editor.Tools.ManageScript")]
         [TestCase("query_physics", "MCPForUnity.Editor.Tools.Capabilities.QueryPhysics")]
@@ -23,6 +24,7 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
 
         [TestCase("get_selection")]
         [TestCase("get_editor_state")]
+        [TestCase("export_test_job")]
         [TestCase("query_physics")]
         [TestCase("batch_execute")]
         public void AnotherTypeInTheRealPackageAssemblyDoesNotInheritTrustedEffects(string command)

@@ -27,6 +27,16 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void CompletedResultExportUsesItsExactRegisteredControlOwner()
+        {
+            bool trusted = CommandRegistry.IsTrustedBuiltInHandler("export_test_job");
+            Assert.IsTrue(trusted);
+            var policy = ToolOperationPolicy.Resolve("export_test_job", new JObject { ["job_id"] = "completed", ["format"] = "json" }, trusted);
+            Assert.AreEqual(ToolOperationMode.Control, policy.Mode);
+            Assert.AreEqual(ToolOperationLifetime.Command, policy.Lifetime);
+        }
+
+        [Test]
         public void GetHandler_ThrowsException_ForUnknownCommand()
         {
             var unknown = "nonexistent_command_that_should_not_exist";
