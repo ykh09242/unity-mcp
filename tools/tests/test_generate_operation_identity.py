@@ -20,6 +20,7 @@ def test_canonical_resource_and_generated_partition_owners_are_exact():
     assert owners["query_physics"] == "MCPForUnity.Editor.Tools.Capabilities.QueryPhysics"
     assert owners["manage_physics"] == "MCPForUnity.Editor.Tools.Physics.ManagePhysics"
     assert owners["batch_execute"] == "MCPForUnity.Editor.Tools.BatchExecute"
+    assert owners["manage_script"] == "MCPForUnity.Editor.Tools.ManageScript"
     assert "execute_code" not in owners
     assert "capture_ui_snapshot" not in owners
 

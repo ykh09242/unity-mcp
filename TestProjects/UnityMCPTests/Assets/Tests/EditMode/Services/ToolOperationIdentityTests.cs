@@ -10,6 +10,7 @@ namespace MCPForUnity.Editor.Tests.EditMode.Services
         [TestCase("get_selection", "MCPForUnity.Editor.Resources.Editor.Selection")]
         [TestCase("get_editor_state", "MCPForUnity.Editor.Resources.Editor.EditorState")]
         [TestCase("manage_packages", "MCPForUnity.Editor.Tools.ManagePackages")]
+        [TestCase("manage_script", "MCPForUnity.Editor.Tools.ManageScript")]
         [TestCase("query_physics", "MCPForUnity.Editor.Tools.Capabilities.QueryPhysics")]
         [TestCase("batch_execute", "MCPForUnity.Editor.Tools.BatchExecute")]
         public void OnlyTheCanonicalTypeFromThePackageAssemblyIsAccepted(string command, string owner)

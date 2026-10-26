@@ -129,6 +129,14 @@ namespace MCPForUnity.Editor.Services
                 return Exclusive("arbitrary_execution");
             if (commandName == "batch_execute" || commandName == "batch_validate" || commandName == "batch_apply_preview")
                 return Exclusive("batch_envelope");
+            if (commandName == "manage_script" && action == "validate")
+            {
+                var level = parameters["level"];
+                if (level != null && (level.Type != JTokenType.String
+                    || !string.Equals((string)level, "basic", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals((string)level, "standard", StringComparison.OrdinalIgnoreCase)))
+                    return Exclusive("unreviewed_validation_level");
+            }
             if (commandName == "manage_ugui" && action == "diagnose_raycast")
             {
                 var allow = parameters["allow_custom_filters"];

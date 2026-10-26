@@ -36,6 +36,7 @@ namespace MCPForUnity.Editor.Services
             { "manage_play_scenario", "MCPForUnity.Editor.Tools.ManagePlayScenario" },
             { "manage_profiler", "MCPForUnity.Editor.Tools.Profiler.ManageProfiler" },
             { "manage_scene", "MCPForUnity.Editor.Tools.ManageScene" },
+            { "manage_script", "MCPForUnity.Editor.Tools.ManageScript" },
             { "manage_ugui", "MCPForUnity.Editor.Tools.ManageUGUI" },
             { "manage_ui", "MCPForUnity.Editor.Tools.ManageUI" },
             { "query_physics", "MCPForUnity.Editor.Tools.Capabilities.QueryPhysics" },
