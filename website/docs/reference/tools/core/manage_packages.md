@@ -14,6 +14,8 @@ description: "Manage Unity packages: query, install, remove, embed, and configur
 
 Manage Unity packages: query, install, remove, embed, and configure registries.
 
+Mutations require edit+run. Sources must use external Git/UPM authentication; embedded credentials and URL queries other than Git ?path= are rejected.
+
 QUERY (read-only):
 - list_packages: List all installed packages
 - search_packages: Search Unity registry by keyword
