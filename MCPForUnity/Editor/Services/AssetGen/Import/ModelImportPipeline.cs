@@ -111,6 +111,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
         private static AssetGenJob ImportModelFile(AssetGenJob job, string rel, string ext, bool autoNormalize, bool importAsset = true)
         {
             RecordSavedFile(job, rel);
+            ModelMetadataAdmission.File(AssetGenPaths.ToAbsolute(rel));
             if (importAsset)
                 AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
             RecordSavedFile(job, rel);
@@ -275,6 +276,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     archive =>
                     {
                         selected = ModelArchiveSelection.Select(archive, ArchiveAllowedExtensions, job.ArchiveModelPath, evidence);
+                        ArchiveAssetAdmission.Validate(archive, ArchiveAllowedExtensions);
                         selectionComplete = true;
                     },
                     directory => folders.EnsureFolder(AssetGenPaths.ToProjectRelative(directory)),

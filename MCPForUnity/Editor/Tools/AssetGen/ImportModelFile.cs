@@ -1,11 +1,14 @@
 using System;
 using System.IO;
+using System.Threading;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services.AssetGen;
+using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Import;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
+using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools.AssetGen
 {
@@ -159,25 +162,38 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             return AssetGenPaths.ToAbsolute(relative);
         }
 
-        private static string StageUnderAssets(string srcAbs, string baseName, string ext, string outputFolder)
+        internal static string StageUnderAssets(string srcAbs, string baseName, string ext, string outputFolder, CancellationToken cancellationToken = default)
         {
             string root = AssetGenPaths.ResolveOutputFolder(outputFolder, "Imported");
 
+            long length = new FileInfo(srcAbs).Length;
+            if (length <= 0 || length > AssetDownloadTransport.MaxDownloadBytes)
+                throw new IOException("Local model exceeds the 8 GiB artifact limit or is empty.");
             using var folders = new AssetFolderScope();
+            using var copying = new LocalAssetCopy(Path.GetDirectoryName(Application.dataPath), length, cancellationToken);
             folders.EnsureFolder(root);
 
             string safe = SanitizeName(baseName);
             string fileName = safe + ext;
             string abs = AssetGenPaths.ToAbsolute(root.TrimEnd('/') + "/" + fileName);
             int n = 1;
-            while (File.Exists(abs))
+            while (
+                File.Exists(abs)
+                || Directory.Exists(abs)
+                || File.Exists(abs + ".meta")
+                || Directory.Exists(abs + ".meta")
+                || !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(AssetGenPaths.ToProjectRelative(abs), AssetPathToGUIDOptions.OnlyExistingAssets))
+            )
             {
+                if (n > 1000)
+                    throw new IOException("Could not allocate a fresh local asset destination within the collision limit.");
                 fileName = safe + "_" + n++ + ext;
                 abs = AssetGenPaths.ToAbsolute(root.TrimEnd('/') + "/" + fileName);
             }
 
-            File.Copy(AssetGenPaths.ToAbsolute(srcAbs), AssetGenPaths.ToAbsolute(abs));
+            copying.Copy(AssetGenPaths.ToAbsolute(srcAbs), AssetGenPaths.ToAbsolute(abs), length);
             folders.Complete();
+            copying.Complete();
             return (root.TrimEnd('/') + "/" + fileName).Replace('\\', '/');
         }
 

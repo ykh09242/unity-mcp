@@ -530,7 +530,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             ImageImportPipeline.ImportInto(job, path, true, true, true);
 
             Assert.AreEqual(AssetGenJobState.Failed, job.State);
-            StringAssert.Contains("TextureImporter", job.Error);
+            StringAssert.Contains("image path is a directory", job.Error);
             Assert.IsNull(job.AssetPath);
             Assert.IsNull(job.AssetGuid);
             Assert.IsTrue(Directory.Exists(AssetGenPaths.ToAbsolute(path)));

@@ -240,7 +240,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                         string json = new UTF8Encoding(false, true).GetString(ReadExactly((int)length));
                         if (!IsStrictJson(json))
                             throw new InvalidDataException(error);
-                        JObject document = JObject.Parse(json, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
+                        JObject document = BoundedJson.ParseObject(json, BoundedJson.ModelLimits());
                         if (
                             (string)document["asset"]?["version"] != "2.0"
                             || (document["asset"]?["minVersion"] != null && (string)document["asset"]["minVersion"] != "2.0")
@@ -476,11 +476,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 string text = ProviderHttp.BodyText(result);
                 if (string.IsNullOrEmpty(text) || Encoding.UTF8.GetByteCount(text) > MaxEnvelopeBytes)
                     throw new InvalidDataException("Tripo " + phase + " returned an invalid response.");
-                using var source = new StringReader(text);
-                using var reader = new JsonTextReader(source) { MaxDepth = 16, DateParseHandling = DateParseHandling.None };
-                json = JObject.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
-                if (reader.Read())
-                    throw new InvalidDataException("Tripo " + phase + " returned an invalid response.");
+                json = BoundedJson.ParseObject(text, new BoundedJson.Limits { MaxDepth = 16, MaxCharacters = MaxEnvelopeBytes });
             }
             catch (Exception error) when (error is JsonException || error is DecoderFallbackException)
             {

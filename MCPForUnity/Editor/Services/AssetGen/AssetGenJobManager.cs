@@ -1438,7 +1438,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             if (!input.CanSeek || length <= 0 || length > AssetDownloadTransport.MaxDownloadBytes || input.Length != length)
                 throw new IOException("Provider artifact exceeds the 8 GiB limit or has changed length.");
-            string ext = PreparedArtifact.DetectExtension(input, r.Job.Kind, r.Job.Provider, r.Ext, r.OverrideExt);
+            string ext = PreparedArtifact.DetectExtension(input, r.Job.Kind, r.Job.Provider, r.Ext, r.OverrideExt, r.Cts.Token);
             if (r.Job.Kind == "image" || r.Job.Provider == "tripo")
                 r.Job.Format = ext;
             return WriteValidatedFile(r, input, length, hash, ext);

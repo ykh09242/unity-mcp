@@ -29,6 +29,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 if (!AssetGenJobManager.IsAllowedResultExtension("image", Path.GetExtension(rel)))
                     return Fail(job, "Refusing to import a non-image file type.");
 
+                new ImageAdmission().File(AssetGenPaths.ToAbsolute(rel));
+
                 if (!ImportFingerprintCache.IsUnchanged(rel, out string fingerprint))
                     AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceSynchronousImport);
 

@@ -3,12 +3,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
+using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
+using UnityEngine;
 
 namespace MCPForUnity.Editor.Services.AssetGen.Import
 {
@@ -140,6 +143,16 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 }
                 else
                     throw Error(plan, "unsupported_dependency_form", "Dependency inspection supports local OBJ, glTF and core GLB resources only.");
+                var imageAdmission = new ImageAdmission();
+                foreach (BundleEntry entry in plan.Entries)
+                    if (ImageAdmission.IsImage(Path.GetExtension(entry.RelativePath)))
+                    {
+                        using var imageStream = new FileStream(entry.AbsolutePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                        imageAdmission.Inspect(imageStream, imageStream.Length, Path.GetExtension(entry.RelativePath));
+                        imageStream.Position = 0;
+                        entry.MetadataHash = HashBounded(plan, imageStream, entry);
+                    }
+                ModelMetadataAdmission.File(source, imageAdmission, externalImagesAlreadyAdmitted: true);
                 return plan;
             }
             catch (BundleImportException)
@@ -149,6 +162,11 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             catch (JsonReaderException e) when (e.Message.IndexOf("MaxDepth", StringComparison.Ordinal) >= 0)
             {
                 throw Error(plan, "dependency_limit_exceeded", "glTF JSON exceeds the nesting limit.");
+            }
+            catch (InvalidDataException e)
+                when (e.Message.IndexOf("budget", StringComparison.Ordinal) >= 0 || e.Message.IndexOf("limit", StringComparison.Ordinal) >= 0)
+            {
+                throw Error(plan, "dependency_limit_exceeded", e.Message);
             }
             catch (Exception e)
             {
@@ -331,11 +349,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                         throw Error(plan, "dependency_source_changed", "Model metadata changed while being inspected.");
                     offset += count;
                 }
-                using var text = new StringReader(Utf8.GetString(json));
-                using var jsonReader = new JsonTextReader(text) { MaxDepth = plan.Limits.MaxJsonDepth, DateParseHandling = DateParseHandling.None };
-                document = JObject.Load(jsonReader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
-                if (jsonReader.Read())
-                    throw Error(plan, "unsupported_dependency_form", "Unexpected content after glTF metadata.");
+                document = BoundedJson.ParseObject(Utf8.GetString(json), BoundedJson.ModelLimits(plan.Limits.MaxJsonDepth));
                 stream.Position = 0;
                 main.MetadataHash = HashBounded(plan, stream, main);
             }
@@ -542,10 +556,16 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 throw Error(plan, "unsupported_dependency_form", "Unsupported model/material statement: " + keyword, location);
         }
 
-        internal static BundleStageResult Stage(BundlePlan plan, string outputFolder, string requestedName, Action<int, string> beforeCopy = null)
+        internal static BundleStageResult Stage(
+            BundlePlan plan,
+            string outputFolder,
+            string requestedName,
+            Action<int, string> beforeCopy = null,
+            CancellationToken cancellationToken = default
+        )
         {
             var result = new BundleStageResult { Evidence = (JObject)plan.Evidence.DeepClone() };
-            var created = new List<string>();
+            LocalAssetCopy copying = null;
             try
             {
                 string root = AssetGenPaths.ResolveOutputFolder(outputFolder, "Imported").TrimEnd('/');
@@ -583,6 +603,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 foreach (BundleEntry entry in plan.Entries)
                     AssetGenPaths.ToAbsolute(bundle ? selected + "/" + entry.RelativePath : selected);
                 using var folders = new AssetFolderScope();
+                using var copyScope = new LocalAssetCopy(Path.GetDirectoryName(Application.dataPath), plan.Bytes, cancellationToken);
+                copying = copyScope;
                 folders.EnsureFolder(root);
                 if (bundle)
                 {
@@ -590,7 +612,6 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     result.BundleRoot = selected;
                     result.Evidence["root_path"] = selected;
                 }
-                byte[] buffer = null;
                 for (int ordinal = 0; ordinal < plan.Entries.Count; ordinal++)
                 {
                     int index = (ordinal + 1) % plan.Entries.Count; // main last
@@ -619,58 +640,61 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                             result.Evidence,
                             entry.RelativePath
                         );
-                    using var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read);
-                    using var output = new FileStream(absolute, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-                    created.Add(destination);
                     result.Evidence["stage"] = "partial";
                     if (index == 0)
                     {
                         result.MainAssetPath = destination;
                         result.Evidence["main_asset_path"] = destination;
                     }
-                    using var hash = SHA256.Create();
-                    buffer ??= new byte[81920];
-                    long written = 0;
-                    int count;
-                    while ((count = input.Read(buffer, 0, buffer.Length)) != 0)
+                    try
                     {
-                        long total = (long)result.Evidence["staged_bytes"];
-                        if (count > entry.Length - written || count > plan.Limits.MaxBytes - plan.EmbeddedBytes - total)
-                            throw new BundleImportException(
-                                "dependency_source_changed",
-                                "Source grew beyond its planned byte budget.",
-                                result.Evidence,
-                                entry.RelativePath
-                            );
-                        output.Write(buffer, 0, count);
-                        hash.TransformBlock(buffer, 0, count, buffer, 0);
-                        written += count;
-                        result.Evidence["staged_bytes"] = total + count;
+                        copying.Copy(
+                            source,
+                            absolute,
+                            entry.Length,
+                            entry.MetadataHash,
+                            count => result.Evidence["staged_bytes"] = (long)result.Evidence["staged_bytes"] + count
+                        );
                     }
-                    hash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-                    if (written != entry.Length || entry.MetadataHash != null && !HashesEqual(entry.MetadataHash, hash.Hash))
+                    catch (IOException e)
+                    {
                         throw new BundleImportException(
-                            "dependency_source_changed",
-                            "Model metadata changed after dependency inspection.",
+                            e.Message.StartsWith("Local asset", StringComparison.Ordinal) || e.Message.StartsWith("Local model", StringComparison.Ordinal)
+                                ? "dependency_source_changed"
+                                : "dependency_stage_failed",
+                            e.Message,
                             result.Evidence,
                             entry.RelativePath
                         );
+                    }
                     result.Evidence["staged_file_count"] = (int)result.Evidence["staged_file_count"] + 1;
                 }
                 result.Evidence["stage"] = "staged";
                 folders.Complete();
+                copying.Complete();
                 return result;
             }
             catch (Exception e)
             {
                 long actualBytes = 0;
-                foreach (string path in created)
-                    try
+                bool cleaned = true;
+                if (copying != null)
+                    foreach (string path in copying.CreatedFiles)
                     {
-                        actualBytes += new FileInfo(AssetGenPaths.ToAbsolute(path)).Length;
+                        cleaned &= AssetDiskBudget.FileIsGone(path);
+                        try
+                        {
+                            actualBytes += new FileInfo(path).Length;
+                        }
+                        catch { /* preserve the original failure */ }
                     }
-                    catch { /* preserve the original failure */ }
                 result.Evidence["staged_bytes"] = actualBytes;
+                if (cleaned && (string)result.Evidence["stage"] == "partial")
+                {
+                    result.Evidence["stage"] = "rolled_back";
+                    result.Evidence["staged_file_count"] = 0;
+                    result.Evidence.Remove("main_asset_path");
+                }
                 string code = e is BundleImportException failure ? (string)failure.Evidence["error_code"] : "dependency_stage_failed";
                 string reference = e is BundleImportException known ? (string)known.Evidence["reference"] : null;
                 throw new BundleImportException(code, "Dependency staging failed: " + e.Message, result.Evidence, reference);
@@ -694,16 +718,6 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 throw Error(plan, "dependency_source_changed", "Model changed while being inspected.", entry.RelativePath);
             hash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
             return hash.Hash;
-        }
-
-        private static bool HashesEqual(byte[] left, byte[] right)
-        {
-            if (left.Length != right.Length)
-                return false;
-            for (int i = 0; i < left.Length; i++)
-                if (left[i] != right[i])
-                    return false;
-            return true;
         }
     }
 }

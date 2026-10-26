@@ -509,7 +509,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             root.Add(new VisualElement { name = "assetgen-providers-container" });
             var section = new McpAssetGenSection(root);
             Assert.AreEqual("test/music-retired", AssetGenPrefs.GetSelectedModel("audio", "fal"));
-            Assert.IsTrue(root.Query<DropdownField>().ToList().Any(dropdown => dropdown.value?.Contains("Saved model unavailable") == true));
+            StringAssert.Contains("Saved model unavailable: test/music-retired", root.Q<Label>("model-current-audio-fal").text);
             Assert.IsFalse(
                 root.Query<Label>(className: "validation-description")
                     .ToList()
@@ -557,11 +557,12 @@ namespace MCPForUnityTests.Editor.AssetGen
             var root = new VisualElement();
             root.Add(new VisualElement { name = "assetgen-providers-container" });
             new McpAssetGenSection(root);
-            // Keyed rows: tripo, meshy, sketchfab, fal (2D) and openrouter. fal 3D and audio reuse the 2D fal key.
+            // Each provider owns one credential row; media sections reuse its key and enablement.
             Assert.AreEqual(5, root.Query<TextField>().ToList().Count(field => field.isPasswordField));
-            Assert.AreEqual(5, root.Query<Toggle>().ToList().Count(toggle => toggle.label == "Enabled"));
+            Assert.AreEqual(5, root.Q("provider-credentials").Query<Toggle>().ToList().Count(toggle => toggle.text == "Enabled"));
             Assert.IsTrue(root.Query<Label>().ToList().Any(label => label.text == "fal (3D)"));
-            var sketchfab = root.Query<Label>().ToList().Single(label => label.text == "Sketchfab").parent.parent;
+            var sketchfab = root.Q("provider-model-model-sketchfab");
+            Assert.IsNotNull(sketchfab);
             Assert.IsEmpty(sketchfab.Query<DropdownField>().ToList());
             Assert.IsFalse(sketchfab.Query<Label>().ToList().Any(label => label.text.StartsWith("No models found")));
         }
@@ -576,7 +577,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             var section = new McpAssetGenSection(root);
             Serve();
             var verify = typeof(McpAssetGenSection).GetMethod("VerifySelection", BindingFlags.NonPublic | BindingFlags.Instance);
-            ((Task)verify.Invoke(section, new object[] { AssetGenModelCatalog.Find(Music), new Label() })).GetAwaiter().GetResult();
+            ((Task)verify.Invoke(section, new object[] { AssetGenModelCatalog.Find(Music) })).GetAwaiter().GetResult();
             typeof(McpAssetGenSection)
                 .GetMethod("RebuildModelControls", BindingFlags.NonPublic | BindingFlags.Instance)
                 .Invoke(section, new object[] { null, null });
@@ -1013,12 +1014,43 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void LargeCache_AboveTheOldTwoMegabyteLimit_StillLoadsAfterReload()
         {
-            Serve(Enumerable.Range(0, 4000).Select(i => Endpoint("test/music-" + i.ToString("D4"))).ToArray());
-            Assert.IsTrue(Refresh());
+            http.Handler = request => PagedCatalogResponse(request, 4000);
+            Assert.IsTrue(Refresh(), FalModelCatalog.LastError("audio"));
+            Assert.AreEqual(40, http.RecordedRequests.Count(request => request.Url.Contains("category=text-to-audio")));
             Assert.Greater(new FileInfo(FalModelCatalog.CachePathOverrideForTests).Length, 2 * 1024 * 1024);
             FalModelCatalog.ReloadCacheForTests();
             Assert.AreEqual("cache", FalModelCatalog.Source("audio"));
             Assert.AreEqual(4000, AssetGenModelCatalog.ForProvider("fal", "audio").Count);
+        }
+
+        internal static HttpResult PagedCatalogResponse(HttpRequestSpec request, int total)
+        {
+            var query = new Uri(request.Url).Query.TrimStart('?').Split('&').Select(pair => pair.Split(new[] { '=' }, 2)).ToLookup(pair => pair[0]);
+            if (query.Contains("endpoint_id"))
+            {
+                Assert.AreEqual("5", query["limit"].Single()[1]);
+                return Models(query["endpoint_id"].Select(pair => Endpoint(Uri.UnescapeDataString(pair[1]))).ToArray());
+            }
+            Assert.AreEqual("100", query["limit"].Single()[1]);
+            int offset = query.Contains("cursor") ? int.Parse(query["cursor"].Single()[1]) : 0;
+            int count = Math.Min(100, total - offset);
+            // Discovery returns metadata pages; expanded schemas are requested only for small detail batches.
+            var models = Enumerable
+                .Range(offset, count)
+                .Select(index =>
+                {
+                    var model = Endpoint("test/music-" + index.ToString("D4"));
+                    model.Remove("openapi");
+                    return model;
+                });
+            return Json(
+                new JObject
+                {
+                    ["models"] = new JArray(models),
+                    ["has_more"] = offset + count < total,
+                    ["next_cursor"] = offset + count < total ? (offset + count).ToString() : null,
+                }
+            );
         }
 
         [UnityTest]
