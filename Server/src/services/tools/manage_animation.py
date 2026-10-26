@@ -140,6 +140,8 @@ def _round_trip_error(action: str, properties: dict[str, JsonValue] | None) -> s
         "controller_* (create AnimatorControllers, add states/transitions/parameters), "
         "clip_* (create clips, add keyframe curves, assign to GameObjects). "
         "Action-specific parameters go in `properties` (keys match ManageAnimation.cs). "
+        "animator_set_parameter defaults to automatic Play/Edit behavior and requires edit+run; "
+        "top-level runtime_only=true requires run and refuses Edit mode without writing defaults. "
         "Round trips: clip_get_curves lists binding_id/kind/path/property/type; clip_get_curve returns "
         "paged full float keys (tangents, weights, tangent modes) or exact asset object-reference keys "
         "{guid,file_id}. clip_replace_curve replaces one existing binding with 1-1024 ordered keys; "
@@ -176,6 +178,10 @@ async def manage_animation(
     properties: Annotated[
         dict[str, Any] | str | None,
         "Action-specific parameters (dict or JSON object string).",
+    ] = None,
+    runtime_only: Annotated[
+        bool | None,
+        "For animator_set_parameter, refuse Edit mode instead of changing controller defaults.",
     ] = None,
 ) -> dict[str, Any]:
     """Unified animation management tool."""
@@ -216,6 +222,8 @@ async def manage_animation(
     unity_instance = await get_unity_instance_from_context(ctx)
 
     params_dict: dict[str, Any] = {"action": action_normalized}
+    if runtime_only is not None:
+        params_dict["runtime_only"] = runtime_only
     if properties is not None:
         params_dict["properties"] = properties
     if target is not None:

@@ -111,6 +111,9 @@ class TestManagePackagesToolValidation:
             "https://",
             "http://localhost:invalid",
             "http://localhost:65536",
+            "https://token@registry.example.test/",
+            "https://user:password@registry.example.test/",
+            "https://registry.example.test/?token=secret",
         ],
     )
     def test_invalid_registry_url_rejected_before_unity(self, url):
@@ -137,7 +140,6 @@ class TestManagePackagesToolValidation:
         [
             "https://registry.example.test",
             "http://localhost:4873",
-            "http://registry/packages?channel=stable",
             "http://127.0.0.1:4873",
             "http://[::1]:4873",
             "HTTPS://registry.example.test/npm/",

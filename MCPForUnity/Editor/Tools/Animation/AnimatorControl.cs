@@ -18,6 +18,16 @@ namespace MCPForUnity.Editor.Tools.Animation
             return token?.ToString();
         }
 
+        private static T ReadOptionalScalar<T>(JObject parameters, string key, T fallback)
+        {
+            JToken token = parameters[key];
+            if (token == null)
+                return fallback;
+            if (token.Type == JTokenType.Null)
+                throw new ArgumentException($"'{key}' cannot be null; omit it to use the default.");
+            return token.ReadScalar<T>();
+        }
+
         public static object Play(JObject @params)
         {
             var go = ObjectResolver.ResolveGameObject(@params["target"], @params["searchMethod"]?.ToString());
@@ -32,7 +42,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(stateName))
                 return new { success = false, message = "'stateName' is required" };
 
-            int layer = @params["layer"]?.ReadScalar<int?>() ?? -1;
+            int layer = ReadOptionalScalar(@params, "layer", -1);
             if (layer < -1 || (layer >= 0 && layer >= animator.layerCount))
                 return new { success = false, message = $"Layer index {layer} is out of range. Use -1 or a valid Animator layer index." };
 
@@ -56,8 +66,8 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (string.IsNullOrEmpty(stateName))
                 return new { success = false, message = "'stateName' is required" };
 
-            float duration = @params["duration"]?.ReadScalar<float?>() ?? 0.25f;
-            int layer = @params["layer"]?.ReadScalar<int?>() ?? -1;
+            float duration = ReadOptionalScalar(@params, "duration", 0.25f);
+            int layer = ReadOptionalScalar(@params, "layer", -1);
             if (layer < -1 || (layer >= 0 && layer >= animator.layerCount))
                 return new { success = false, message = $"Layer index {layer} is out of range. Use -1 or a valid Animator layer index." };
 
@@ -82,6 +92,11 @@ namespace MCPForUnity.Editor.Tools.Animation
                 return new { success = false, message = "'parameterName' is required" };
 
             bool isPlaying = Application.isPlaying;
+            JToken runtimeOnlyToken = @params["runtimeOnly"];
+            if (runtimeOnlyToken != null && runtimeOnlyToken.Type != JTokenType.Boolean)
+                return new { success = false, message = "'runtime_only' must be a Boolean." };
+            if (runtimeOnlyToken?.Value<bool>() == true && !isPlaying)
+                return new { success = false, message = "runtime_only requires Play mode; controller defaults were not changed." };
             AnimatorController controller = null;
             AnimatorControllerParameter[] allParams = null;
             AnimatorControllerParameter found = null;
@@ -159,20 +174,19 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (requestedType != found.type)
                 return new { success = false, message = $"Parameter '{paramName}' has type '{found.type}', not '{paramType}'." };
 
-            JToken valueToken = @params["value"];
             float fVal = 0f;
             int iVal = 0;
             bool bVal = false;
             switch (paramType)
             {
                 case "float":
-                    fVal = valueToken?.ReadScalar<float?>() ?? 0f;
+                    fVal = ReadOptionalScalar(@params, "value", 0f);
                     break;
                 case "int":
-                    iVal = valueToken?.ReadScalar<int?>() ?? 0;
+                    iVal = ReadOptionalScalar(@params, "value", 0);
                     break;
                 case "bool":
-                    bVal = valueToken?.ReadScalar<bool?>() ?? false;
+                    bVal = ReadOptionalScalar(@params, "value", false);
                     break;
             }
 
@@ -202,6 +216,13 @@ namespace MCPForUnity.Editor.Tools.Animation
                     success = true,
                     message = $"Trigger '{paramName}' noted (triggers are runtime-only, no default to set)" + AnimatorResolver.ResolvedSuffix(go, animator),
                 };
+
+            string controllerPath = AssetDatabase.GetAssetPath(controller);
+            if (string.IsNullOrEmpty(controllerPath))
+                return new { success = false, message = "Parameter defaults require a writable AnimatorController asset under Assets/." };
+            AssetPathUtility.GetContainedAssetPath(controllerPath);
+            if (!AssetDatabase.IsOpenForEdit(controllerPath) || new System.IO.FileInfo(AssetPathUtility.GetFullAssetPath(controllerPath)).IsReadOnly)
+                return new { success = false, message = "AnimatorController is not writable." };
 
             Undo.RecordObject(controller, $"Set Parameter Default {paramName}");
             string valueDescription;
@@ -240,7 +261,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (animator == null)
                 return AnimatorResolver.NotResolvedError(go, animatorCandidates);
 
-            float speed = @params["speed"]?.ReadScalar<float?>() ?? 1f;
+            float speed = ReadOptionalScalar(@params, "speed", 1f);
 
             Undo.RecordObject(animator, "Set Animator Speed");
             animator.speed = speed;
@@ -258,7 +279,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (animator == null)
                 return AnimatorResolver.NotResolvedError(go, animatorCandidates);
 
-            bool enabled = @params["enabled"]?.ReadScalar<bool?>() ?? true;
+            bool enabled = ReadOptionalScalar(@params, "enabled", true);
 
             Undo.RecordObject(animator, "Set Animator Enabled");
             animator.enabled = enabled;

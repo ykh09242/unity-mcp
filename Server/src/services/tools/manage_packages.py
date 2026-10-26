@@ -1,5 +1,6 @@
 from typing import Annotated, Any, Optional
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
+import re
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -34,9 +35,31 @@ def _is_valid_registry_url(url: str) -> bool:
             parsed.scheme in {"http", "https"}
             and bool(parsed.hostname)
             and not any(char.isspace() for char in parsed.hostname)
+            and parsed.username is None
+            and not parsed.query
+            and not parsed.fragment
         )
     except ValueError:
         return False
+
+
+def _has_source_credentials(value: str) -> bool:
+    """Accept only credential-free Git sources and UPM's package path query."""
+    source = value[4:] if value.lower().startswith("git+") else value
+    if "://" not in source:
+        return bool(re.match(r"^[^\s/]*:[^\s/]*@[^\s/]+:", source))
+    try:
+        parsed = urlsplit(source)
+        _ = parsed.port
+        if not parsed.scheme or not parsed.netloc:
+            return True
+        if parsed.username is not None and (
+            parsed.scheme != "ssh" or parsed.password is not None or ":" in unquote(parsed.username)
+        ):
+            return True
+        return bool(parsed.query and not re.fullmatch(r"path=[^&#]*", parsed.query, re.I))
+    except ValueError:
+        return True
 
 
 async def _send_packages_command(
@@ -54,6 +77,8 @@ async def _send_packages_command(
     group="core",
     description=(
         "Manage Unity packages: query, install, remove, embed, and configure registries.\n\n"
+        "Mutations require edit+run. Sources must use external Git/UPM authentication; "
+        "embedded credentials and URL queries other than Git ?path= are rejected.\n\n"
         "QUERY (read-only):\n"
         "- list_packages: List all installed packages\n"
         "- search_packages: Search Unity registry by keyword\n"
@@ -92,6 +117,11 @@ async def manage_packages(
     scopes: Annotated[Optional[list[str]], "Registry scopes for add_registry."] = None,
 ) -> dict[str, Any]:
     action_lower = action.lower()
+    if any(_has_source_credentials(value) for value in (package, url, query) if value is not None):
+        return {
+            "success": False,
+            "message": "Package sources must not contain credentials or unsupported URL queries. Use external Git/UPM authentication.",
+        }
     if action_lower not in ALL_ACTIONS:
         return {
             "success": False,

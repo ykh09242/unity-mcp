@@ -114,6 +114,7 @@ Set an Animator parameter. Examples: unity-mcp animation animator set-parameter 
 | value | text | required | nargs=1 | — | — |  |
 | --type / -t | choice: float, int, bool, trigger | optional | nargs=1 | — | — | Parameter type (auto-detected if omitted). |
 | --search-method | choice: by_id, by_name, by_path | optional | nargs=1 | — | — |  |
+| --runtime-only | boolean | optional | nargs=1, flag | — | — | Require Play mode; refuse persistent controller defaults (run-only authority). |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp animation animator set-speed`

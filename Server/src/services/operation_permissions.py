@@ -467,6 +467,23 @@ def required_permissions(
     if actions is None or not isinstance(action, str):
         raise OperationPermissionError()
     action = action.strip().lower()
+    if name == "manage_packages" and action in _ACTIONS[name][Permission.EDIT]:
+        # Every mutation can resolve/import package code or trigger compilation.
+        return CUSTOM_GRANTS
+    if name == "manage_animation" and action == "animator_set_parameter":
+        # Only this explicit top-level flag reduces authority. Native execution
+        # refuses Edit mode for it rather than trusting a client's mode claim.
+        runtime_only = params.get("runtime_only", False)
+        if type(runtime_only) is not bool:
+            raise OperationPermissionError()
+        if runtime_only:
+            if any(
+                key.replace("_", "").lower() == "runtimeonly" and value is not True
+                for key, value in params.items()
+            ):
+                raise OperationPermissionError()
+            return frozenset({Permission.RUN})
+        return CUSTOM_GRANTS
     if name == "manage_reference_graph" and action in _ACTIONS[name][Permission.EDIT]:
         return frozenset({Permission.READ, Permission.EDIT})
     if (

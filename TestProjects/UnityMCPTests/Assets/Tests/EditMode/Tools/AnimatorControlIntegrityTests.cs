@@ -1,6 +1,5 @@
 using System;
 using System.Linq;
-using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Tools.Animation;
 using MCPForUnity.Runtime.Helpers;
@@ -10,7 +9,6 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
-using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Tools
 {
@@ -69,7 +67,8 @@ namespace MCPForUnityTests.Editor.Tools
                     defaultFloat = 42,
                 },
             };
-            AssetDatabase.SaveAssets();
+            EditorUtility.SetDirty(controller);
+            AssetDatabase.SaveAssetIfDirty(controller);
             Assert.IsTrue(EditorUtility.IsPersistent(controller));
             ownedObject = new GameObject("McpAnimatorControlIntegrity_" + Guid.NewGuid().ToString("N"));
             animator = ownedObject.AddComponent<Animator>();
@@ -124,13 +123,15 @@ namespace MCPForUnityTests.Editor.Tools
                 })
             );
 
-        private void AssertRejectedUnchanged(JObject request)
+        private void AssertRejectedUnchanged(JObject request, string expectedDiagnostic = null)
         {
             var before = Snapshot();
             string guid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(controller));
             int dirtyCount = EditorUtility.GetDirtyCount(controller);
             var result = Call(request);
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            if (expectedDiagnostic != null)
+                StringAssert.Contains(expectedDiagnostic, result.Value<string>("error"));
             Assert.IsTrue(JToken.DeepEquals(before, Snapshot()), "All parameter definitions/default slots must survive rejection.");
             Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(controller));
             Assert.AreSame(controller, AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(controller)));
@@ -162,7 +163,8 @@ namespace MCPForUnityTests.Editor.Tools
                         }
                     )
                     .ToArray();
-                AssetDatabase.SaveAssets();
+                EditorUtility.SetDirty(controller);
+                AssetDatabase.SaveAssetIfDirty(controller);
             }
             var request = Request("Unrelated");
             request["parameter_name"] = token;
@@ -246,12 +248,13 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("Count", "int", false)]
         [TestCase("Enabled", "bool", false)]
         [TestCase("Speed", "float", true)]
+        [TestCase("Count", "int", true)]
+        [TestCase("Enabled", "bool", true)]
         public void MalformedOrNullValuePreservesDefaults(string parameter, string type, bool nullValue)
         {
             var request = Request(parameter, type);
             request["value"] = nullValue ? JValue.CreateNull() : new JValue("bad");
-            LogAssert.Expect(LogType.Error, new Regex("\\[ManageAnimation\\] Action 'animator_set_parameter' failed:"));
-            AssertRejectedUnchanged(request);
+            AssertRejectedUnchanged(request, "'value'");
         }
 
         [Test]
@@ -304,6 +307,64 @@ namespace MCPForUnityTests.Editor.Tools
             StringAssert.Contains("runtime-only", result.Value<string>("message"));
             Assert.IsTrue(JToken.DeepEquals(before, Snapshot()));
             Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(controller));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RuntimeOnlyRefusesEditModeBeforeChangingDefaults(bool encodedProperties)
+        {
+            // Given an Edit-mode controller and a native-enforced runtime-only request.
+            var request = Request("Speed", "float");
+            request["runtime_only"] = true;
+            request["properties"] = encodedProperties ? (JToken)new JValue("{\"runtime_only\":false}") : new JObject { ["runtimeOnly"] = false };
+            request["value"] = 99f;
+            // When admission reaches Animator control, then all persisted state remains unchanged.
+            AssertRejectedUnchanged(request);
+        }
+
+        [Test]
+        public void TransientControllerDefaultsAreRejectedBeforeMutation()
+        {
+            // Given a controller outside the writable Assets ownership boundary.
+            var transient = new AnimatorController();
+            transient.parameters = controller.parameters;
+            animator.runtimeAnimatorController = transient;
+            string before = EditorJsonUtility.ToJson(transient);
+            int dirty = EditorUtility.GetDirtyCount(transient);
+            try
+            {
+                var request = Request("Speed", "float");
+                request["value"] = 99f;
+                // When changing defaults, then no transient state or Undo dirtying occurs.
+                Assert.IsFalse(Call(request).Value<bool>("success"));
+                Assert.AreEqual(before, EditorJsonUtility.ToJson(transient));
+                Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(transient));
+            }
+            finally
+            {
+                animator.runtimeAnimatorController = controller;
+                UnityEngine.Object.DestroyImmediate(transient);
+            }
+        }
+
+        [Test]
+        public void ReadOnlyControllerDefaultsAreRejectedBeforeMutation()
+        {
+            // Given a controller file owned by this test but marked read-only.
+            string path = MCPForUnity.Editor.Helpers.AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(controller));
+            var original = System.IO.File.GetAttributes(path);
+            try
+            {
+                System.IO.File.SetAttributes(path, original | System.IO.FileAttributes.ReadOnly);
+                var request = Request("Speed", "float");
+                request["value"] = 99f;
+                // When changing defaults, then values, identity and dirty state are preserved.
+                AssertRejectedUnchanged(request);
+            }
+            finally
+            {
+                System.IO.File.SetAttributes(path, original);
+            }
         }
 
         [Test]
@@ -368,6 +429,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("duration", false)]
         [TestCase("duration", true)]
         [TestCase("layer", false)]
+        [TestCase("layer", true)]
         public void MalformedCrossfadeInputPreservesOwnedObjects(string field, bool nullValue)
         {
             var before = Snapshot();
@@ -380,11 +442,37 @@ namespace MCPForUnityTests.Editor.Tools
                 ["state_name"] = "Base Layer.Idle",
                 [field] = nullValue ? JValue.CreateNull() : new JValue("bad"),
             };
-            LogAssert.Expect(LogType.Error, new Regex("\\[ManageAnimation\\] Action 'animator_crossfade' failed:"));
-            Assert.IsFalse(Call(request).Value<bool>("success"));
+            var response = Call(request);
+            Assert.IsFalse(response.Value<bool>("success"));
+            StringAssert.Contains("'" + field + "'", response.Value<string>("error"));
             Assert.IsTrue(JToken.DeepEquals(before, Snapshot()));
             Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(controller));
             Assert.IsFalse(animator.enabled);
+        }
+
+        [TestCase("animator_set_speed", "speed", false)]
+        [TestCase("animator_set_speed", "speed", true)]
+        [TestCase("animator_set_enabled", "enabled", false)]
+        [TestCase("animator_set_enabled", "enabled", true)]
+        [TestCase("animator_play", "layer", false)]
+        [TestCase("animator_play", "layer", true)]
+        public void InvalidOptionalControlScalarPreservesOwnedObjects(string action, string field, bool nullValue)
+        {
+            // Given an invalid explicit scalar on an owned Animator.
+            var request = new JObject
+            {
+                ["action"] = action,
+                ["target"] = ownedObject.GetInstanceIDCompat(),
+                ["search_method"] = "by_id",
+                ["state_name"] = "Base Layer.Idle",
+                [field] = nullValue ? JValue.CreateNull() : new JValue("bad"),
+            };
+            string before = EditorJsonUtility.ToJson(animator);
+            int dirty = EditorUtility.GetDirtyCount(animator);
+            // When validation runs, then rejection occurs before control or Undo changes.
+            AssertRejectedUnchanged(request, "'" + field + "'");
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(animator));
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(animator));
         }
     }
 }

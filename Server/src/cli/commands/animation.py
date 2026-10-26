@@ -12,7 +12,15 @@ from cli.utils.parsers import parse_json_list_or_exit, parse_json_dict_or_exit, 
 from cli.utils.constants import SEARCH_METHOD_CHOICE_BASIC
 
 
-_TOP_LEVEL_KEYS = {"action", "target", "searchMethod", "clipPath", "controllerPath", "properties"}
+_TOP_LEVEL_KEYS = {
+    "action",
+    "target",
+    "searchMethod",
+    "clipPath",
+    "controllerPath",
+    "properties",
+    "runtime_only",
+}
 
 
 def _normalize_params(params: dict[str, Any]) -> dict[str, Any]:
@@ -156,6 +164,11 @@ def animator_crossfade(
     help="Parameter type (auto-detected if omitted).",
 )
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_BASIC, default=None)
+@click.option(
+    "--runtime-only",
+    is_flag=True,
+    help="Require Play mode; refuse persistent controller defaults (run-only authority).",
+)
 @handle_unity_errors
 def animator_set_parameter(
     target: str,
@@ -163,6 +176,7 @@ def animator_set_parameter(
     value: str,
     param_type: Optional[str],
     search_method: Optional[str],
+    runtime_only: bool,
 ):
     """Set an Animator parameter.
 
@@ -181,6 +195,8 @@ def animator_set_parameter(
     }
     if param_type:
         params["parameterType"] = param_type
+    if runtime_only:
+        params["runtime_only"] = True
     if search_method:
         params["searchMethod"] = search_method
 
