@@ -392,7 +392,7 @@ namespace MCPForUnityTests.Editor.Tools
             var priorActive = RenderTexture.active;
             using var cancel = new CancellationTokenSource();
             var budget = new ScreenshotUtility.CaptureBatchBudget(cancel.Token);
-            var before = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceID()).ToArray();
+            var before = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceIDCompat()).ToArray();
             void Change(Camera rendering)
             {
                 if (rendering != camera)
@@ -412,7 +412,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.AreSame(originalTarget, camera.targetTexture);
                 Assert.AreSame(priorActive, RenderTexture.active);
                 Assert.AreEqual(projection, camera.projectionMatrix);
-                CollectionAssert.AreEquivalent(before, UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceID()).ToArray());
+                CollectionAssert.AreEquivalent(before, UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceIDCompat()).ToArray());
             }
             finally
             {
@@ -441,13 +441,16 @@ namespace MCPForUnityTests.Editor.Tools
                     renders++;
             }
             Camera.onPreRender += Observe;
-            var textures = UnityEngine.Resources.FindObjectsOfTypeAll<RenderTexture>().Select(t => t.GetInstanceID()).ToArray();
+            var textures = UnityEngine.Resources.FindObjectsOfTypeAll<RenderTexture>().Select(t => t.GetInstanceIDCompat()).ToArray();
             try
             {
                 Assert.Throws<ArgumentException>(() => ScreenshotUtility.RenderCameraToTexture(camera, 16, budget));
                 Assert.AreEqual(0, renders);
                 Assert.AreSame(target, camera.targetTexture);
-                CollectionAssert.AreEquivalent(textures, UnityEngine.Resources.FindObjectsOfTypeAll<RenderTexture>().Select(t => t.GetInstanceID()).ToArray());
+                CollectionAssert.AreEquivalent(
+                    textures,
+                    UnityEngine.Resources.FindObjectsOfTypeAll<RenderTexture>().Select(t => t.GetInstanceIDCompat()).ToArray()
+                );
             }
             finally
             {
@@ -463,7 +466,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void PublicBatchCancellationStopsAfterOneRenderAndDestroysOwnedCamera(bool cameraTool)
         {
             using var cancel = new CancellationTokenSource();
-            var textures = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceID()).ToArray();
+            var textures = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceIDCompat()).ToArray();
             int renders = 0;
             Camera persistent = Camera.main;
             string persistentState = persistent != null ? UnityEditor.EditorJsonUtility.ToJson(persistent) : null;
@@ -503,7 +506,10 @@ namespace MCPForUnityTests.Editor.Tools
                         .Resources.FindObjectsOfTypeAll<Camera>()
                         .Any(c => c.name == "__MCP_OrbitCapture_Temp_Camera__" || c.name == "__MCP_MultiAngle_Temp_Camera__")
                 );
-                CollectionAssert.AreEquivalent(textures, UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceID()).ToArray());
+                CollectionAssert.AreEquivalent(
+                    textures,
+                    UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Select(t => t.GetInstanceIDCompat()).ToArray()
+                );
             }
             finally
             {
