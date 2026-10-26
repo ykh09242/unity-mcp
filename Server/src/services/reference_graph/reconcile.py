@@ -28,6 +28,19 @@ from services.reference_graph.analysis import (
     parse_csharp,
     serialized_references,
 )
+from services.reference_graph.collection_protocol import (
+    CollectionBudget,
+    CollectionBudgetExceeded,
+    CollectionLimits,
+    boolean,
+    change_page,
+    continuation,
+    decoded_size,
+    integer,
+    ordered_guids,
+    rows,
+    text,
+)
 from services.reference_graph.external import ExternalSource, analyze_document
 from services.reference_graph.store import Edge, Observation, RevisionConflict, _hash, _json
 from services.reference_graph.workspace import GraphWorkspace
@@ -71,10 +84,14 @@ class Reconciler:
         check: Callable[[], Awaitable[None]],
         check_now: Callable[[], None] = lambda: None,
         authorize_source: Callable[[dict], None] = lambda _: None,
+        *,
+        limits: CollectionLimits | None = None,
     ):
         self.workspace = workspace
         self.store = workspace.store
-        self.collect = collect
+        self._collector = collect
+        self.limits = limits or CollectionLimits.from_environment()
+        self._budget = CollectionBudget(self.limits)
         self.check = check
         self.check_now = check_now
         self.authorize_source = authorize_source
@@ -85,6 +102,25 @@ class Reconciler:
         self._catalog_cache: tuple[int, Catalog] | None = None
         self._analysis_cache = None
         self._analysis_used = 0.0
+
+    async def collect(self, action: str, **params) -> dict:
+        self._budget.request()
+        pending = asyncio.ensure_future(self._collector(action, **params))
+        try:
+            page = await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            # Cancel the native request once, then retain capacity until its cleanup
+            # finishes. Repeated owner cancellation cannot interrupt that cleanup.
+            pending.cancel()
+            await drained_task(asyncio.gather(pending, return_exceptions=True))
+            raise
+        if not isinstance(page, dict):
+            raise RevisionConflict("Collector response must be an object")
+        self._budget.response(page)
+        if action == "status":
+            text(page.get("epoch"), "epoch")
+            integer(page.get("revision"), "revision")
+        return page
 
     def clear_caches(self) -> None:
         """Call only while this reconciler is idle; durable facts remain intact."""
@@ -113,6 +149,7 @@ class Reconciler:
         # A checked query joins this scope's watcher without running a second
         # reconciliation using the same durable worker identity.
         async with self._gate:
+            self._budget = CollectionBudget(self.limits)
             return await self._reconcile(force_external=force_external)
 
     async def _reconcile(self, *, force_external: bool) -> bool:
@@ -124,45 +161,14 @@ class Reconciler:
                 return False
             heartbeat = asyncio.create_task(self._heartbeat(asyncio.current_task()))
             self.progress = await drained_thread(self.workspace.progress)
-            status = await self.collect("status")
-            await self._phase("checking", editor=status, error=None)
-            if any(status.get(key) for key in ("compiling", "importing", "compilation_failed")):
-                await self._phase("waiting_for_editor")
-                return False
-            await drained_thread(
-                self.workspace.ensure_analysis_version, self.worker, ANALYSIS_VERSION
-            )
-            compilation_context = status.get("compilation_context")
-            if not self.progress.get("initialized") or self.progress.get("census"):
-                await self._census(status, force=True)
-            await self._changes()
-            await self._compilation(compilation_context)
-            await self._assets()
-            await self._analysis()
-            await self._external(force=force_external)
-            status = await self.collect("status")
-            providers = await drained_thread(self.workspace.provider_status)
-            caught_up = (
-                status["epoch"] == self.progress.get("epoch")
-                and status.get("compilation_context") == compilation_context
-                and status["revision"] == self.progress.get("after")
-                and not self.progress.get("external_errors")
-                and not providers["addressables"]["errors"]
-                and (await drained_thread(self.store.status))["queue_idle"]
-                and not any(
-                    status.get(key)
-                    for key in (
-                        "compiling",
-                        "importing",
-                        "compilation_failed",
-                        "addressables_event_error",
-                    )
-                )
-            )
-            await self._phase(
-                "idle" if caught_up else "changes_pending", editor=status, completed_at=time.time()
-            )
-            return caught_up
+            deadline = asyncio.timeout(self._budget.remaining())
+            try:
+                async with deadline:
+                    return await self._run_reconcile(force_external=force_external)
+            except TimeoutError as error:
+                if not deadline.expired():
+                    raise
+                raise CollectionBudgetExceeded("max_seconds", self.limits.max_seconds) from error
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -176,6 +182,45 @@ class Reconciler:
             # owner. Neither can interrupt heartbeat/thread/DB lease cleanup.
             await drained_task(asyncio.create_task(self._release(heartbeat)))
 
+    async def _run_reconcile(self, *, force_external: bool) -> bool:
+        status = await self.collect("status")
+        await self._phase("checking", editor=status, error=None)
+        if any(status.get(key) for key in ("compiling", "importing", "compilation_failed")):
+            await self._phase("waiting_for_editor")
+            return False
+        await drained_thread(self.workspace.ensure_analysis_version, self.worker, ANALYSIS_VERSION)
+        compilation_context = status.get("compilation_context")
+        if not self.progress.get("initialized") or self.progress.get("census"):
+            await self._census(status, force=True)
+        await self._changes()
+        await self._compilation(compilation_context)
+        await self._assets()
+        await self._analysis()
+        await self._external(force=force_external)
+        status = await self.collect("status")
+        providers = await drained_thread(self.workspace.provider_status)
+        caught_up = (
+            status["epoch"] == self.progress.get("epoch")
+            and status.get("compilation_context") == compilation_context
+            and status["revision"] == self.progress.get("after")
+            and not self.progress.get("external_errors")
+            and not providers["addressables"]["errors"]
+            and (await drained_thread(self.store.status))["queue_idle"]
+            and not any(
+                status.get(key)
+                for key in (
+                    "compiling",
+                    "importing",
+                    "compilation_failed",
+                    "addressables_event_error",
+                )
+            )
+        )
+        await self._phase(
+            "idle" if caught_up else "changes_pending", editor=status, completed_at=time.time()
+        )
+        return caught_up
+
     async def _release(self, heartbeat: asyncio.Task | None) -> None:
         if heartbeat is not None:
             if not heartbeat.cancelling():
@@ -184,7 +229,11 @@ class Reconciler:
         await drained_thread(self.workspace.release, self.worker)
 
     async def _census(self, status: dict, *, force: bool) -> None:
-        census = self.progress.get("census") or {
+        census = self.progress.get("census")
+        if census and not {"epoch", "revision", "last_guid"} <= census.keys():
+            # Older checkpoints lack the identity fence; replay a complete census.
+            census = None
+        census = census or {
             "seen": uuid.uuid4().hex,
             "offset": 0,
             "force": force,
@@ -200,11 +249,37 @@ class Reconciler:
                     snapshot=census.get("snapshot"),
                     page_size=256,
                 )
+                assets = rows(page, "assets", 256)
+                following = continuation(page, census["offset"], len(assets), scanned=256)
+                snapshot = text(page.get("snapshot"), "snapshot")
+                epoch = text(page.get("epoch"), "epoch")
+                revision = integer(page.get("revision"), "revision")
+                if census.get("snapshot") is not None and (
+                    snapshot != census["snapshot"]
+                    or epoch != census.get("epoch", epoch)
+                    or revision != census.get("revision", revision)
+                ):
+                    raise RevisionConflict("Inventory snapshot changed during collection")
+                if any(not isinstance(row, dict) for row in assets):
+                    raise RevisionConflict("Collector inventory assets must be objects")
+                last_guid = ordered_guids(
+                    (row.get("guid") for row in assets), census.get("last_guid", "")
+                )
+                self._budget.admit_items(len(assets))
+            except CollectionBudgetExceeded:
+                # A finite attempt can resume its durable census after provisioning.
+                raise
             except Exception:
                 # An expired native snapshot must restart, never skip a page.
                 await self._phase("census", census=None, initialized=False)
                 raise
-            census.update(snapshot=page["snapshot"], offset=page["next_offset"] or 0)
+            census.update(
+                snapshot=snapshot,
+                offset=following or 0,
+                epoch=epoch,
+                revision=revision,
+                last_guid=last_guid,
+            )
             self.progress.update(
                 census=census,
                 epoch=page["epoch"],
@@ -232,11 +307,15 @@ class Reconciler:
             page = await self.collect(
                 "changes", epoch=self.progress["epoch"], after=self.progress["after"], page_size=256
             )
-            if page["requires_census"]:
+            if boolean(page.get("requires_census"), "requires_census"):
                 await self._census(await self.collect("status"), force=True)
                 continue
+            changes, following, more = change_page(
+                page, self.progress["after"], maximum=256, epoch=self.progress["epoch"]
+            )
+            self._budget.admit_items(len(changes))
             catalog = False
-            for change in page["changes"]:
+            for change in changes:
                 if change.get("kind") == "addressables_catalog":
                     catalog |= change["revision"] > self.progress.get("catalog_through", -1)
                     continue
@@ -248,6 +327,7 @@ class Reconciler:
                 else:
                     asset = await self.collect("asset", path=path)
                     if asset.get("present"):
+                        self._budget.admit_items(1)
                         await drained_thread(
                             self.workspace.record_page, self.worker, [asset], self.progress, "event"
                         )
@@ -255,11 +335,11 @@ class Reconciler:
                         # Folder moves/imports can affect descendants not listed individually.
                         await drained_thread(self.workspace.remove_path, self.worker, path)
                         catalog |= change["revision"] > self.progress.get("catalog_through", -1)
-            await self._phase("changes", after=page["next_after"])
+            await self._phase("changes", after=following)
             if catalog:
                 await self._census(await self.collect("status"), force=False)
                 continue
-            if not page["has_more"]:
+            if not more:
                 return
 
     async def _assets(self) -> None:
@@ -287,7 +367,8 @@ class Reconciler:
                 await self.check()
                 paths = [item["path"] for item in candidates]
                 page = await self.collect("compilation", paths=paths, revision=context["revision"])
-                bindings = page.get("bindings", [])
+                bindings = rows(page, "bindings", len(paths))
+                self._budget.admit_items(len(bindings))
                 if (
                     page.get("revision") != context["revision"]
                     or [row.get("path") for row in bindings] != paths
@@ -317,15 +398,23 @@ class Reconciler:
             page = await self.collect(
                 "dependencies", guid=guid, offset=offset, snapshot=snapshot, page_size=1000
             )
-            if not page.get("present"):
+            if not boolean(page.get("present"), "present"):
                 await drained_thread(self.workspace.remove_path, self.worker, asset["path"])
                 return
 
             if fingerprint is not None and fingerprint != page["fingerprint"]:
                 raise RevisionConflict("Dependencies changed while reading")
-            fingerprint, snapshot = page["fingerprint"], page["snapshot"]
-            targets.extend(page["targets"])
-            offset = page["next_offset"]
+            next_snapshot = text(page.get("snapshot"), "snapshot")
+            if snapshot is not None and next_snapshot != snapshot:
+                raise RevisionConflict("Dependency snapshot changed during collection")
+            page_targets = rows(page, "targets", 1000)
+            following = continuation(page, offset, len(page_targets))
+            ordered_guids(page_targets, targets[-1] if targets else "")
+            self._budget.dependencies(len(targets) + len(page_targets))
+            self._budget.admit_items(len(page_targets))
+            fingerprint, snapshot = text(page.get("fingerprint"), "fingerprint"), next_snapshot
+            targets.extend(page_targets)
+            offset = following
             if offset is None:
                 generation = await drained_thread(
                     self.workspace.observe,
@@ -361,7 +450,12 @@ class Reconciler:
             page = await self.collect(
                 "source", guid=asset["guid"], offset=offset, fingerprint=fingerprint
             )
-            if page["source_format"] == "binary":
+            source_format = page.get("source_format")
+            if source_format not in {asset["source_format"], "binary"}:
+                raise RevisionConflict("Collector source format changed during collection")
+            if source_format == "binary":
+                if offset:
+                    raise RevisionConflict("Source became binary during collection")
                 payload = {
                     "coverage": page["coverage"],
                     "edges": [],
@@ -372,7 +466,7 @@ class Reconciler:
                 break
             if fingerprint is not None and fingerprint != page["fingerprint"]:
                 raise RevisionConflict("Source changed while reading")
-            fingerprint = page["fingerprint"]
+            fingerprint = text(page.get("fingerprint"), "fingerprint")
             if offset == 0:
                 context = page.get("compilation_context")
                 expected = self.progress.get("editor", {}).get("compilation_context")
@@ -382,8 +476,11 @@ class Reconciler:
                     and asset["source_format"] == "csharp"
                 ):
                     raise RevisionConflict("Compilation context changed while collecting")
+            size = decoded_size(page.get("bytes_base64"))
+            following = continuation(page, offset, size)
+            self._budget.source(size, len(content))
             content.extend(base64.b64decode(page["bytes_base64"], validate=True))
-            offset = page["next_offset"]
+            offset = following
             if offset is None:
                 format_, payload, fingerprint = await drained_thread(
                     self._parse, asset, content, context
@@ -769,6 +866,7 @@ class Reconciler:
         self.authorize_source(source["config"])
 
     def _check_thread(self) -> None:
+        self._budget.remaining()
         if self.stopped.is_set():
             raise RuntimeError("Reference reconciliation stopped")
         self.check_now()

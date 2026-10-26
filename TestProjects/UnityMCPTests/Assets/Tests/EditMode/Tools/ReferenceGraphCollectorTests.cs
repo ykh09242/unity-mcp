@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -48,6 +49,72 @@ namespace MCPForUnityTests.EditMode.Tools
             File.WriteAllText(path, value);
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
             return path;
+        }
+
+        [TestCase("Packages/com.example/C:/Windows/win.ini")]
+        [TestCase("Packages/com.example/C:Windows/win.ini")]
+        [TestCase("Packages/com.example/file.asset:stream")]
+        [TestCase("Assets/file.asset:stream")]
+        [TestCase("Packages/com.example/../outside")]
+        [TestCase("Packages/com.example//outside")]
+        [TestCase("Packages/com.example/\\\\host\\share")]
+        [TestCase("asset:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+        public void MutationProbeRejectsEscapingLogicalPathsBeforeResolution(string path)
+        {
+            var error = Assert.Throws<TargetInvocationException>(() => Call("probe", "paths", new[] { path }));
+            Assert.IsInstanceOf<ArgumentException>(error.InnerException);
+        }
+
+        [Test]
+        public void RegisteredPackageResolutionKeepsItsExactPlainRoot()
+        {
+            var type = typeof(ManageAsset).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphCollector");
+            var resolve = type.GetMethod("ResolveRegisteredPackagePath", BindingFlags.NonPublic | BindingFlags.Static);
+            string physicalRoot = Path.GetFullPath(root);
+            string resolved = (string)resolve.Invoke(null, new object[] { "Packages/com.example/Runtime/File.asset", "Packages/com.example", physicalRoot });
+            Assert.AreEqual(Path.Combine(physicalRoot, "Runtime", "File.asset"), resolved);
+            Assert.AreEqual(physicalRoot, resolve.Invoke(null, new object[] { "Packages/com.example", "Packages/com.example", physicalRoot }));
+            foreach (string path in new[] { "Packages/com.example-other/File.asset", "Packages/com.example/C:/outside", "Packages/com.example/../outside" })
+            {
+                var error = Assert.Throws<TargetInvocationException>(() => resolve.Invoke(null, new object[] { path, "Packages/com.example", physicalRoot }));
+                Assert.IsInstanceOf<ArgumentException>(error.InnerException);
+            }
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool CreateSymbolicLinkW(string link, string target, int flags);
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int symlink(string target, string link);
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RegisteredPackageResolutionRejectsLinkedRootsAndDescendants(bool linkedRoot)
+        {
+            var type = typeof(ManageAsset).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphCollector");
+            var resolve = type.GetMethod("ResolveRegisteredPackagePath", BindingFlags.NonPublic | BindingFlags.Static);
+            string physicalRoot = Path.GetFullPath(root);
+            string target = Path.Combine(physicalRoot, "plain");
+            string link = Path.Combine(physicalRoot, "linked");
+            Directory.CreateDirectory(target);
+            bool created = Application.platform == RuntimePlatform.WindowsEditor ? CreateSymbolicLinkW(link, target, 3) : symlink(target, link) == 0;
+            try
+            {
+                if (!created)
+                    Assert.Ignore("Symlink creation unavailable: " + Marshal.GetLastWin32Error());
+                string path = "Packages/com.example/" + (linkedRoot ? "File.asset" : "linked/File.asset");
+                var error = Assert.Throws<TargetInvocationException>(() =>
+                    resolve.Invoke(null, new object[] { path, "Packages/com.example", linkedRoot ? link : physicalRoot })
+                );
+                Assert.IsInstanceOf<InvalidOperationException>(error.InnerException);
+            }
+            finally
+            {
+                if (created)
+                    Directory.Delete(link);
+                Directory.Delete(target);
+            }
         }
 
         [Test]

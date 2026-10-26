@@ -9,6 +9,7 @@ using System.Reflection;
 using System.Threading;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -56,6 +57,8 @@ namespace MCPForUnity.Editor.Tools
             if (
                 string.IsNullOrEmpty(path)
                 || path.Contains('\\')
+                || path.Contains(':')
+                || path.Any(char.IsControl)
                 || !(path.StartsWith("Assets/", StringComparison.Ordinal) || path.StartsWith("Packages/", StringComparison.Ordinal))
             )
                 return false;
@@ -463,21 +466,32 @@ namespace MCPForUnity.Editor.Tools
         {
             if (!Admitted(path))
                 throw new ArgumentException("Source path must belong to the admitted project.");
-            string resolved;
             if (path.StartsWith("Packages/", StringComparison.Ordinal))
             {
                 var package = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(path);
                 if (package == null)
                     throw new ArgumentException("Package source cannot be resolved.");
-                resolved = Path.Combine(package.resolvedPath, path.Substring(("Packages/" + package.name + "/").Length));
+                return ResolveRegisteredPackagePath(path, package.assetPath, package.resolvedPath);
             }
-            else
-            {
-                if (!ProjectIdentityUtility.TryGetConsentProjectRoot(out string root))
-                    throw new InvalidOperationException("The current Editor project root is unavailable.");
-                resolved = Path.Combine(root, path);
-            }
-            return GuardedFileSystem.CheckPath(resolved);
+            return AssetPathUtility.GetFullAssetPath(path);
+        }
+
+        internal static string ResolveRegisteredPackagePath(string path, string assetRoot, string physicalRoot)
+        {
+            if (
+                !Admitted(path)
+                || string.IsNullOrEmpty(assetRoot)
+                || !assetRoot.StartsWith("Packages/", StringComparison.Ordinal)
+                || assetRoot.Split('/').Length != 2
+                || string.IsNullOrEmpty(physicalRoot)
+                || (!path.Equals(assetRoot, StringComparison.Ordinal) && !path.StartsWith(assetRoot + "/", StringComparison.Ordinal))
+            )
+                throw new ArgumentException("A path inside the exact registered package is required.");
+            string root = GuardedFileSystem.CheckPath(physicalRoot);
+            string remainder = path.Length == assetRoot.Length ? "." : path.Substring(assetRoot.Length + 1);
+            if (Path.IsPathRooted(remainder))
+                throw new ArgumentException("Package sources require a relative path.");
+            return SafePathUtility.ResolveWithinRoot(root, remainder);
         }
 
         private static string FileStamp(string path)

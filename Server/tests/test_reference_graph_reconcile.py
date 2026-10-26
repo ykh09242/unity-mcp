@@ -290,7 +290,7 @@ class Editor:
             }
         if action == "inventory":
             if self.snapshot is None:
-                self.snapshot = (list(self.assets), len(self.events))
+                self.snapshot = (sorted(self.assets), len(self.events))
             offset = params["offset"]
             if offset == self.fail_offset:
                 raise OSError("interrupted page")
@@ -309,6 +309,8 @@ class Editor:
             after = rows[-1]["revision"] if rows else len(self.events)
             return {
                 "requires_census": params["epoch"] != self.epoch,
+                "epoch": self.epoch,
+                "revision": len(self.events),
                 "changes": rows,
                 "next_after": after,
                 "has_more": after < len(self.events),
@@ -975,3 +977,506 @@ async def test_external_decode_failure_does_not_skip_later_files(setup, tmp_path
     assert not await engine.reconcile()
     assert len(store.query(target, direction="incoming")["edges"]) == 1
     assert store.status()["errors"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("offset", [0, -1, True, 1.0, "2", 2**63, 257])
+async def test_inventory_rejects_invalid_continuation_before_recording(setup, offset):
+    _, workspace, editor, _ = setup
+    editor.add(1, "Assets/One.asset")
+
+    async def collect(action, **params):
+        if len(editor.calls) > 20:
+            raise AssertionError("Collector exceeded the bounded malicious fixture")
+        page = await editor(action, **params)
+        if action == "inventory":
+            page["next_offset"] = offset
+        return page
+
+    engine = Reconciler(workspace, collect, allowed)
+    with pytest.raises(RevisionConflict):
+        await asyncio.wait_for(engine.reconcile(), watchdog_timeout())
+    assert workspace.counts()["assets"] == 0
+    assert not workspace.progress().get("initialized")
+    assert workspace.acquire("replacement")
+    workspace.release("replacement")
+
+
+@pytest.mark.asyncio
+async def test_inventory_rejects_overlapping_guid_pages_without_finishing_census(setup):
+    _, workspace, editor, _ = setup
+    editor.add(1, "Assets/One.asset")
+    editor.add(2, "Assets/Two.asset")
+    editor.add(3, "Assets/Three.asset")
+
+    async def collect(action, **params):
+        if len(editor.calls) > 20:
+            raise AssertionError("Collector exceeded the bounded malicious fixture")
+        page = await editor(action, **params)
+        if action == "inventory" and params["offset"]:
+            page["assets"] = [editor.assets[f"{1:032x}"]]
+        return page
+
+    with pytest.raises(RevisionConflict):
+        await Reconciler(workspace, collect, allowed).reconcile()
+    assert workspace.counts()["assets"] == 2
+    assert not workspace.progress().get("initialized")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_offset", [0, -1, True, "1", 2, 2**63])
+async def test_dependency_stream_rejects_nonprogress_and_inexact_offsets(setup, next_offset):
+    store, workspace, editor, _ = setup
+    owner = editor.add(1, "Assets/Owner.asset")
+
+    async def collect(action, **params):
+        if len(editor.calls) > 20:
+            raise AssertionError("Collector exceeded the bounded malicious fixture")
+        page = await editor(action, **params)
+        if action == "dependencies":
+            page.update(targets=[f"{2:032x}"], next_offset=next_offset)
+        return page
+
+    with pytest.raises(RevisionConflict):
+        await asyncio.wait_for(
+            Reconciler(workspace, collect, allowed).reconcile(), watchdog_timeout()
+        )
+    assert not store.query(owner)["edges"]
+    assert workspace.dirty_assets()
+
+
+@pytest.mark.asyncio
+async def test_dependency_stream_rejects_overlap_without_publishing_partial_edges(setup):
+    store, workspace, editor, _ = setup
+    owner = editor.add(1, "Assets/Owner.asset")
+
+    async def collect(action, **params):
+        if len(editor.calls) > 20:
+            raise AssertionError("Collector exceeded the bounded malicious fixture")
+        page = await editor(action, **params)
+        if action == "dependencies":
+            page.update(targets=[f"{2:032x}"], next_offset=params["offset"] + 1)
+        return page
+
+    with pytest.raises(RevisionConflict):
+        await asyncio.wait_for(
+            Reconciler(workspace, collect, allowed).reconcile(), watchdog_timeout()
+        )
+    assert not store.query(owner)["edges"]
+    assert workspace.dirty_assets()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_offset", [0, -1, True, "37", 38, 2**63])
+async def test_source_rejects_invalid_byte_continuations_before_decode(
+    setup, monkeypatch, next_offset
+):
+    _, workspace, editor, _ = setup
+    owner = editor.add(1, "Assets/Owner.cs", "class Owner {}")
+    decoded = False
+    original_decode = base64.b64decode
+
+    def decode(*args, **kwargs):
+        nonlocal decoded
+        decoded = True
+        return original_decode(*args, **kwargs)
+
+    async def collect(action, **params):
+        if len(editor.calls) > 20:
+            raise AssertionError("Collector exceeded the bounded malicious fixture")
+        page = await editor(action, **params)
+        if action == "source":
+            page["next_offset"] = next_offset
+        return page
+
+    monkeypatch.setattr(base64, "b64decode", decode)
+    with pytest.raises(RevisionConflict):
+        await asyncio.wait_for(
+            Reconciler(workspace, collect, allowed).reconcile(), watchdog_timeout()
+        )
+    assert not decoded
+    assert not workspace.documents([owner])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "has_more,next_after", [(True, 0), ("false", 0), (1, 0), (True, True), (True, 2**63)]
+)
+async def test_changes_rejects_nonprogress_and_adversarial_types(setup, has_more, next_after):
+    _, workspace, editor, engine = setup
+    assert await engine.reconcile()
+
+    async def collect(action, **params):
+        if len(editor.calls) > 20:
+            raise AssertionError("Collector exceeded the bounded malicious fixture")
+        page = await editor(action, **params)
+        if action == "changes":
+            page.update(has_more=has_more, next_after=next_after)
+        return page
+
+    with pytest.raises(RevisionConflict):
+        await asyncio.wait_for(
+            Reconciler(workspace, collect, allowed).reconcile(), watchdog_timeout()
+        )
+    assert workspace.progress()["phase"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_aggregate_page_budget_preserves_census_checkpoint_and_resumes(setup):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    _, workspace, editor, _ = setup
+    for number in range(8):
+        editor.add(number, f"Assets/{number}.asset")
+    engine = Reconciler(workspace, editor, allowed, limits=CollectionLimits(max_pages=3))
+    with pytest.raises(CollectionBudgetExceeded, match="max_pages=3"):
+        await engine.reconcile()
+    assert workspace.counts()["assets"] == 4
+    assert workspace.progress()["census"]["offset"] == 4
+    assert workspace.progress()["phase"] == "error"
+    assert not workspace.progress().get("initialized")
+    assert workspace.acquire("replacement")
+    workspace.release("replacement")
+    assert await Reconciler(workspace, editor, allowed).reconcile()
+    assert workspace.counts()["assets"] == 8
+    assert workspace.progress()["phase"] == "idle"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", ["max_items", "max_bytes"])
+async def test_aggregate_inventory_budgets_reject_before_database_write(setup, limit):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    _, workspace, editor, _ = setup
+    for number in range(2):
+        editor.add(number, f"Assets/{number}.asset")
+    limits = CollectionLimits(**{limit: 1 if limit == "max_items" else 250})
+    with pytest.raises(CollectionBudgetExceeded, match=limit):
+        await Reconciler(workspace, editor, allowed, limits=limits).reconcile()
+    assert workspace.counts()["assets"] == 0
+    assert not workspace.progress().get("initialized")
+
+
+@pytest.mark.asyncio
+async def test_source_memory_budget_rejects_before_decoding_or_saving(setup, monkeypatch):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    _, workspace, editor, _ = setup
+    owner = editor.add(1, "Assets/Owner.cs", "class Owner {}")
+    monkeypatch.setattr(
+        base64, "b64decode", lambda *args, **kwargs: pytest.fail("Decoded over budget")
+    )
+    engine = Reconciler(workspace, editor, allowed, limits=CollectionLimits(max_source_bytes=10))
+    with pytest.raises(CollectionBudgetExceeded, match="max_source_bytes=10"):
+        await engine.reconcile()
+    assert not workspace.documents([owner])
+    assert workspace.dirty_assets()
+    assert workspace.progress()["phase"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_dependency_memory_budget_keeps_previous_edges_and_dirty_state(setup):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    store, workspace, editor, _ = setup
+    owner = editor.add(1, "Assets/Owner.asset")
+    growing = False
+
+    async def collect(action, **params):
+        page = await editor(action, **params)
+        if action == "dependencies":
+            offset = params["offset"]
+            page.update(
+                targets=[f"{offset + 2 if growing else 9:032x}"],
+                next_offset=offset + 1 if growing else None,
+            )
+        return page
+
+    assert await Reconciler(workspace, collect, allowed).reconcile()
+    assert {row["target"] for row in store.query(owner)["edges"]} == {"asset:" + f"{9:032x}"}
+    growing = True
+    editor.event("Assets/Owner.asset")
+    engine = Reconciler(
+        workspace, collect, allowed, limits=CollectionLimits(max_dependency_items=2)
+    )
+    with pytest.raises(CollectionBudgetExceeded, match="max_dependency_items=2"):
+        await engine.reconcile()
+    remaining = store.query(owner)["edges"]
+    assert {row["target"] for row in remaining} == {"asset:" + f"{9:032x}"}
+    assert all(row["stale"] for row in remaining)
+    assert workspace.dirty_assets()
+    assert sum(action == "dependencies" for action, _ in editor.calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_many_valid_dependency_pages_keep_all_edges(setup):
+    store, workspace, editor, _ = setup
+    owner = editor.add(1, "Assets/Owner.asset")
+    count = 2048
+
+    async def collect(action, **params):
+        page = await editor(action, **params)
+        if action == "dependencies":
+            offset = params["offset"]
+            page.update(
+                targets=[f"{offset + 2:032x}"],
+                next_offset=offset + 1 if offset + 1 < count else None,
+            )
+        return page
+
+    engine = Reconciler(workspace, collect, allowed)
+    assert await engine.reconcile()
+    with store._connect() as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM edges WHERE owner=?", (owner,)).fetchone()[0]
+            == count
+        )
+    assert sum(action == "dependencies" for action, _ in editor.calls) == count
+
+
+@pytest.mark.asyncio
+async def test_many_valid_source_pages_keep_the_complete_document(setup):
+    _, workspace, editor, _ = setup
+    content = "// source page\n" * 2048 + "class CompleteSource {}"
+    owner = editor.add(1, "Assets/Owner.cs", content)
+    engine = Reconciler(workspace, editor, allowed)
+    assert await engine.reconcile()
+    assert len(workspace.documents([owner])) == 1
+    assert sum(action == "source" for action, _ in editor.calls) > 512
+
+
+@pytest.mark.asyncio
+async def test_budget_deadline_cancels_slow_collection_and_records_recoverable_error(setup):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    _, workspace, editor, _ = setup
+    cancelled = asyncio.Event()
+
+    async def collect(action, **params):
+        if action == "inventory":
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+        return await editor(action, **params)
+
+    engine = Reconciler(workspace, collect, allowed, limits=CollectionLimits(max_seconds=1))
+    with pytest.raises(CollectionBudgetExceeded, match="max_seconds=1"):
+        await engine.reconcile()
+    assert cancelled.is_set()
+    assert workspace.progress()["phase"] == "error"
+    assert not workspace.progress().get("initialized")
+    assert workspace.acquire("replacement")
+    workspace.release("replacement")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repeat_cancel", [False, True])
+async def test_attempt_deadline_retains_lease_until_collector_cleanup_finishes(
+    setup, repeat_cancel, monkeypatch
+):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    _, workspace, editor, _ = setup
+    closing, release = asyncio.Event(), asyncio.Event()
+    real_timeout, deadline = asyncio.timeout, None
+
+    def capture_timeout(delay):
+        nonlocal deadline
+        deadline = real_timeout(delay)
+        return deadline
+
+    monkeypatch.setattr(asyncio, "timeout", capture_timeout)
+
+    async def collect(action, **params):
+        if action == "inventory":
+            # Expire the real attempt scope only once the owned operation starts;
+            # slow SQLite/fixture setup must not consume this test's trigger.
+            assert deadline is not None
+            deadline.reschedule(asyncio.get_running_loop().time())
+            try:
+                await asyncio.Event().wait()
+            finally:
+                closing.set()
+                await release.wait()
+        return await editor(action, **params)
+
+    engine = Reconciler(workspace, collect, allowed, limits=CollectionLimits())
+    attempt = asyncio.create_task(engine.reconcile())
+    try:
+        await asyncio.wait_for(closing.wait(), watchdog_timeout())
+        if repeat_cancel:
+            attempt.cancel()
+            await asyncio.sleep(0)
+            attempt.cancel()
+            await asyncio.sleep(0)
+        assert not attempt.done()
+        assert not workspace.acquire("replacement")
+    finally:
+        release.set()
+        result = await asyncio.gather(attempt, return_exceptions=True)
+    assert isinstance(
+        result[0], asyncio.CancelledError if repeat_cancel else CollectionBudgetExceeded
+    )
+    assert workspace.acquire("replacement")
+    workspace.release("replacement")
+    assert workspace.progress()["phase"] != "idle"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("following", [1, 2])
+async def test_inventory_rejects_decreasing_and_fixed_positive_offsets(setup, following):
+    _, workspace, editor, _ = setup
+    for number in range(3):
+        editor.add(number, f"Assets/{number}.asset")
+
+    async def collect(action, **params):
+        page = await editor(action, **params)
+        if action == "inventory" and params["offset"]:
+            page["next_offset"] = following
+        return page
+
+    with pytest.raises(RevisionConflict):
+        await Reconciler(workspace, collect, allowed).reconcile()
+    assert workspace.counts()["assets"] == 2
+    assert not workspace.progress().get("initialized")
+
+
+@pytest.mark.asyncio
+async def test_missing_source_continuation_is_rejected_before_document_publication(setup):
+    _, workspace, editor, _ = setup
+    owner = editor.add(1, "Assets/Owner.cs", "class Owner {}")
+
+    async def collect(action, **params):
+        page = await editor(action, **params)
+        if action == "source":
+            page.pop("next_offset")
+        return page
+
+    with pytest.raises(RevisionConflict, match="explicit next_offset"):
+        await Reconciler(workspace, collect, allowed).reconcile()
+    assert not workspace.documents([owner])
+
+
+@pytest.mark.asyncio
+async def test_transport_timeout_is_not_mislabeled_as_whole_attempt_budget(setup):
+    _, workspace, _, _ = setup
+
+    async def collect(*args, **kwargs):
+        raise TimeoutError("Individual collector request expired")
+
+    with pytest.raises(TimeoutError, match="Individual collector request expired"):
+        await Reconciler(workspace, collect, allowed).reconcile()
+    assert "max_seconds" not in workspace.progress()["error"]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "max_pages",
+        "max_items",
+        "max_bytes",
+        "max_seconds",
+        "max_source_bytes",
+        "max_dependency_items",
+    ],
+)
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "1.5", str(2**63)])
+def test_collection_operator_limits_reject_unbounded_or_invalid_settings(monkeypatch, name, value):
+    from services.reference_graph.collection_protocol import CollectionLimits, ENV_PREFIX
+
+    monkeypatch.setenv(ENV_PREFIX + name.upper(), value)
+    with pytest.raises(ValueError):
+        CollectionLimits.from_environment()
+
+
+def test_collection_operator_can_provision_larger_limits(monkeypatch):
+    from services.reference_graph.collection_protocol import CollectionLimits, ENV_PREFIX
+
+    monkeypatch.setenv(ENV_PREFIX + "MAX_SOURCE_BYTES", str(1024**3))
+    monkeypatch.setenv(ENV_PREFIX + "MAX_SECONDS", str(7 * 24 * 3600))
+    limits = CollectionLimits.from_environment()
+    assert limits.max_source_bytes == 1024**3
+    assert limits.max_seconds == 7 * 24 * 3600
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "patch", [{"epoch": "replacement"}, {"revision": True}, {"revision": 10, "has_more": False}]
+)
+async def test_change_pages_reject_epoch_revision_and_completion_mismatch(setup, patch):
+    _, workspace, editor, engine = setup
+    assert await engine.reconcile()
+
+    async def collect(action, **params):
+        page = await editor(action, **params)
+        if action == "changes":
+            page.update(patch)
+        return page
+
+    with pytest.raises(RevisionConflict):
+        await Reconciler(workspace, collect, allowed).reconcile()
+    assert workspace.progress()["phase"] == "error"
+
+
+def test_collection_offset_overflow_is_rejected_without_allocation():
+    from services.reference_graph.collection_protocol import continuation, MAX_OFFSET
+
+    with pytest.raises(RevisionConflict, match="overflowed"):
+        continuation({"next_offset": None}, MAX_OFFSET, 1)
+
+
+@pytest.mark.asyncio
+async def test_folder_only_inventory_can_advance_across_many_empty_pages(setup):
+    _, workspace, editor, _ = setup
+    count = 513
+
+    async def collect(action, **params):
+        page = await editor(action, **params)
+        if action == "inventory":
+            following = params["offset"] + params["page_size"]
+            page.update(next_offset=following if following < count * 256 else None)
+        return page
+
+    assert await Reconciler(workspace, collect, allowed).reconcile()
+    assert workspace.counts()["assets"] == 0
+    assert sum(action == "inventory" for action, _ in editor.calls) == count
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "patch", [{"snapshot": "replacement"}, {"epoch": "replacement"}, {"revision": 42}]
+)
+async def test_inventory_rejects_changed_snapshot_identity_before_recording(setup, patch):
+    _, workspace, editor, _ = setup
+    for number in range(3):
+        editor.add(number, f"Assets/{number}.asset")
+
+    async def collect(action, **params):
+        page = await editor(action, **params)
+        if action == "inventory" and params["offset"]:
+            page.update(patch)
+        return page
+
+    with pytest.raises(RevisionConflict, match="snapshot changed"):
+        await Reconciler(workspace, collect, allowed).reconcile()
+    assert workspace.counts()["assets"] == 2
+    assert not workspace.progress().get("initialized")

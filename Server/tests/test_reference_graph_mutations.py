@@ -779,3 +779,39 @@ async def test_changeset_lookup_failure_reports_missing_tracking(service_graph, 
     assert calls == ["get_change_set", "apply_change_set"]
     assert response["success"] is True
     assert response["data"].get("reference_graph", {}).get("state") == "unavailable", response
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "Packages/com.example/C:/Windows/win.ini",
+        "Packages/com.example/C:Windows/win.ini",
+        "Packages/com.example/file.asset:stream",
+        "Assets/file.asset:stream",
+        "Packages/com.example/../outside",
+        "Packages/com.example//outside",
+        "Packages/com.example/\\\\host\\share",
+        "C:/Assets/file.asset",
+        "//host/share/Assets/file.asset",
+        "asset:" + GUID,
+    ],
+)
+def test_mutation_paths_reject_filesystem_roots_and_alternate_streams(path):
+    with pytest.raises(ValueError, match="relative asset paths"):
+        MutationReceipts.paths([path])
+
+
+def test_mutation_paths_preserve_project_relative_assets_and_registered_package_references():
+    MutationReceipts.paths(["Assets/Receipt.asset", "Packages/com.example/Runtime/Receipt.asset"])
+
+
+@pytest.mark.asyncio
+async def test_mutation_probe_rejects_escape_before_native_collection():
+    from services.reference_graph.mutation_service import probe as collect_probe
+
+    class Entry:
+        async def collect(self, *args, **kwargs):
+            pytest.fail("Invalid path reached the native collector")
+
+    with pytest.raises(ValueError, match="relative asset paths"):
+        await collect_probe(Entry(), ["Packages/com.example/C:/Windows/win.ini"])

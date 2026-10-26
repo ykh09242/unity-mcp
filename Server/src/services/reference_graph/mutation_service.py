@@ -6,6 +6,7 @@ import asyncio
 import math
 import time
 
+from services.reference_graph.collection_protocol import boolean, change_page
 from services.reference_graph.mutations import MutationReceipts
 from services.reference_graph.reconcile import drained_thread
 from services.reference_graph.store import RevisionConflict
@@ -59,14 +60,15 @@ async def step(entry, receipts, identity):
             page = await entry.collect(
                 "changes", epoch=position["epoch"], after=position["after"], page_size=1000
             )
-            if page.get("requires_census"):
+            if boolean(page.get("requires_census"), "requires_census"):
                 return receipt, "journal_changed"
-            if page["next_after"] <= position["after"]:
-                raise RevisionConflict("Import journal did not advance")
-            await drained_thread(
-                receipts.events, identity, page["changes"], page["epoch"], page["next_after"]
+            changes, following, _ = change_page(
+                page, position["after"], maximum=1000, epoch=position["epoch"]
             )
-            position = {"epoch": page["epoch"], "after": page["next_after"]}
+            if following <= position["after"]:
+                raise RevisionConflict("Import journal did not advance")
+            await drained_thread(receipts.events, identity, changes, page["epoch"], following)
+            position = {"epoch": page["epoch"], "after": following}
             await entry.check()
             if position["after"] < editor["revision"]:
                 return await drained_thread(receipts.read, identity), "reading_imports"
