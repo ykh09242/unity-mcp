@@ -10,6 +10,7 @@ from transport.unity_instance_middleware import (
     get_unity_instance_middleware,
 )
 from services.api_key_service import ApiKeyService
+from core.endpoint_logging import endpoint_for_log
 from transport.legacy.unity_connection import get_unity_connection_pool, UnityConnectionPool
 from services.tools import register_all_tools
 from core.telemetry import (
@@ -1136,7 +1137,7 @@ def create_mcp_server(
         )
         logger.info(
             "Initialized API key authentication service (validation URL: %s, TTL: %.0fs)",
-            config.api_key_validation_url,
+            endpoint_for_log(config.api_key_validation_url),
             config.api_key_cache_ttl,
         )
 

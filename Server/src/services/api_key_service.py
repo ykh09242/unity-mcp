@@ -17,6 +17,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from core.endpoint_logging import protect_httpx_endpoint_logs
+
 logger = logging.getLogger("mcp-for-unity-server")
 
 
@@ -144,6 +146,7 @@ class ApiKeyService:
         self._key_leases: dict[str, object] = {}
         self._lease_owners = 0
         self._validation_url = validation_url
+        protect_httpx_endpoint_logs()
         self._cache_ttl = cache_ttl
         self._service_token_header = service_token_header
         self._service_token = service_token
@@ -522,14 +525,14 @@ class ApiKeyService:
                     logger.debug(
                         "API key validation request error for key %s: %s, retrying...",
                         redacted_key,
-                        exc,
+                        type(exc).__name__,
                     )
                     await asyncio.sleep(0.1 * (attempt + 1))
                     continue
                 logger.warning(
                     "API key validation request error for key %s: %s",
                     redacted_key,
-                    exc,
+                    type(exc).__name__,
                 )
                 return ValidationResult(
                     valid=False,
@@ -540,7 +543,7 @@ class ApiKeyService:
                 logger.error(
                     "Unexpected error validating API key %s: %s",
                     redacted_key,
-                    exc,
+                    type(exc).__name__,
                 )
                 return ValidationResult(
                     valid=False,
