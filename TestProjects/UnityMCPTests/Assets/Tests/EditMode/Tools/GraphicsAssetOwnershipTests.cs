@@ -331,6 +331,86 @@ namespace MCPForUnityTests.Editor.Tools
             CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Full(path) + ".meta"));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void HiddenEffectRemovalDestroysOnlyUnsharedOwnedChild(bool sharedInSameFile)
+        {
+            RequireVolumes();
+            var profile = Track(ScriptableObject.CreateInstance(GraphicsHelpers.VolumeProfileType));
+            string path = PathFor(false, "Profile.asset");
+            AssetDatabase.CreateAsset(profile, path);
+            Object bloom = AddBloom(profile);
+            Object survivor = AddVolumeEffect(profile, "ColorAdjustments");
+            Object sibling = null;
+            if (sharedInSameFile)
+            {
+                sibling = Track(ScriptableObject.CreateInstance(GraphicsHelpers.VolumeProfileType));
+                Components(sibling).Add(bloom);
+                AssetDatabase.AddObjectToAsset(sibling, profile);
+                sibling = PersistSubAsset(profile, sibling);
+            }
+            Component volume = NewVolume(profile);
+            Assert.IsTrue((bloom.hideFlags & HideFlags.HideInHierarchy) != 0, "Exercise Core's real hidden effect lifetime.");
+            AssertPersistentChild(profile, bloom);
+            AssertPersistentChild(profile, survivor);
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(profile, out string profileGuid, out long profileId));
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(bloom, out string guid, out long bloomId));
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(survivor, out _, out long survivorId));
+            string survivorJson = EditorJsonUtility.ToJson(survivor);
+            string siblingJson = sibling != null ? EditorJsonUtility.ToJson(sibling) : null;
+            string bloomJson = EditorJsonUtility.ToJson(bloom);
+            byte[] bytes = File.ReadAllBytes(Full(path));
+            byte[] metadata = File.ReadAllBytes(Full(path) + ".meta");
+
+            JObject result = Send(
+                "volume_remove_effect",
+                new JObject { ["target"] = volume.gameObject.GetInstanceIDCompat().ToString(), ["effect"] = "Bloom" }
+            );
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(1, Components(profile).Count);
+            Assert.IsTrue(survivor == (Object)Components(profile)[0]);
+            Assert.AreEqual(sharedInSameFile, bloom != null, "Only an unshared owned native component may be destroyed.");
+            Assert.AreEqual(survivorJson, EditorJsonUtility.ToJson(survivor));
+            if (sharedInSameFile)
+            {
+                Assert.AreEqual(siblingJson, EditorJsonUtility.ToJson(sibling));
+                Assert.AreEqual(bloomJson, EditorJsonUtility.ToJson(bloom));
+                Assert.IsTrue(bloom == (Object)Components(sibling)[0]);
+            }
+            AssetDatabase.SaveAssetIfDirty(profile);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(profile, out string actualProfileGuid, out long actualProfileId));
+            Assert.AreEqual(profileGuid, actualProfileGuid);
+            Assert.AreEqual(profileId, actualProfileId);
+            AssertPersistentChild(profile, survivor);
+            if (sharedInSameFile)
+            {
+                AssertPersistentChild(profile, bloom);
+                Assert.AreEqual(siblingJson, EditorJsonUtility.ToJson(sibling));
+                Assert.IsTrue(bloom == (Object)Components(sibling)[0]);
+            }
+            CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Full(path) + ".meta"));
+            CollectionAssert.AreNotEqual(bytes, File.ReadAllBytes(Full(path)), "The removal must be persisted in the owner file.");
+            int bloomMatches = 0;
+            int survivorMatches = 0;
+            foreach (Object asset in AssetDatabase.LoadAllAssetsAtPath(path))
+            {
+                Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out string actualGuid, out long actualId));
+                Assert.AreEqual(guid, actualGuid);
+                if (actualId == bloomId)
+                    bloomMatches++;
+                if (actualId == survivorId)
+                {
+                    survivorMatches++;
+                    Assert.AreEqual(survivorJson, EditorJsonUtility.ToJson(asset));
+                }
+            }
+            Assert.AreEqual(sharedInSameFile ? 1 : 0, bloomMatches, "Reload must preserve or remove the exact hidden child identity.");
+            Assert.AreEqual(1, survivorMatches, "The unrelated effect identity must survive reload.");
+        }
+
         [TestCase("feature_add", false)]
         [TestCase("feature_add", true)]
         [TestCase("feature_remove", false)]
@@ -630,9 +710,11 @@ namespace MCPForUnityTests.Editor.Tools
             return volume;
         }
 
-        private Object AddBloom(Object profile)
+        private Object AddBloom(Object profile) => AddVolumeEffect(profile, "Bloom");
+
+        private Object AddVolumeEffect(Object profile, string effectName)
         {
-            var type = GraphicsHelpers.ResolveVolumeComponentType("Bloom");
+            var type = GraphicsHelpers.ResolveVolumeComponentType(effectName);
             Assert.IsNotNull(type);
             var effect = (Object)
                 GraphicsHelpers.VolumeProfileType.GetMethod("Add", new[] { typeof(Type), typeof(bool) }).Invoke(profile, new object[] { type, true });

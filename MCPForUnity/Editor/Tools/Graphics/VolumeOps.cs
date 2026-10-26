@@ -403,13 +403,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 return new ErrorResponse("Could not find VolumeProfile.Remove method.");
 
             var profileOwner = profile as UnityEngine.Object;
-            bool ownsComponent =
-                profileOwner != null
-                && componentToRemove != null
-                && AssetDatabase.Contains(profileOwner)
-                && AssetDatabase.Contains(componentToRemove)
-                && AssetDatabase.IsSubAsset(componentToRemove)
-                && string.Equals(AssetDatabase.GetAssetPath(profileOwner), AssetDatabase.GetAssetPath(componentToRemove), StringComparison.Ordinal);
+            bool ownsComponent = OwnsUnsharedPersistentEffect(profileOwner, componentToRemove);
             if (ownsComponent)
             {
                 ownershipError = GraphicsMutationGuard.Validate(componentToRemove);
@@ -424,7 +418,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (
                 ownsComponent
                 && GetProperty(profile, "components") is System.Collections.IList remainingComponents
-                && !remainingComponents.Cast<object>().Any(component => ReferenceEquals(component, componentToRemove))
+                && !remainingComponents.Cast<object>().Any(component => component is UnityEngine.Object obj && obj == componentToRemove)
             )
                 Undo.DestroyObjectImmediate(componentToRemove);
 
@@ -438,6 +432,52 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 message = $"Removed '{effectName}' from Volume.",
                 data = new { effect = effectName },
             };
+        }
+
+        private static bool OwnsUnsharedPersistentEffect(UnityEngine.Object profile, UnityEngine.Object component)
+        {
+            if (profile == null || component == null || !AssetDatabase.Contains(profile) || !AssetDatabase.Contains(component))
+                return false;
+            string path = AssetDatabase.GetAssetPath(profile);
+            if (string.IsNullOrEmpty(path) || !string.Equals(path, AssetDatabase.GetAssetPath(component), StringComparison.Ordinal))
+                return false;
+            if (
+                !AssetDatabase.TryGetGUIDAndLocalFileIdentifier(profile, out string profileGuid, out long profileId)
+                || !AssetDatabase.TryGetGUIDAndLocalFileIdentifier(component, out string componentGuid, out long componentId)
+                || string.IsNullOrEmpty(profileGuid)
+                || !string.Equals(profileGuid, componentGuid, StringComparison.Ordinal)
+                || profileId == 0
+                || componentId == 0
+                || profileId == componentId
+            )
+                return false;
+            var main = AssetDatabase.LoadMainAssetAtPath(path);
+            if (
+                main == null
+                || main == component
+                || !AssetDatabase.TryGetGUIDAndLocalFileIdentifier(main, out string mainGuid, out long mainId)
+                || !string.Equals(mainGuid, componentGuid, StringComparison.Ordinal)
+                || mainId == componentId
+            )
+                return false;
+
+            // Core effects use HideInHierarchy, which IsSubAsset can exclude. Prove membership
+            // in the same persistent file instead; never destroy an external borrowed component.
+            var assets = AssetDatabase.LoadAllAssetsAtPath(path);
+            if (!assets.Any(asset => asset == profile) || !assets.Any(asset => asset == component))
+                return false;
+            // Multiple profiles may share one file. Preserve a child still used by a sibling.
+            foreach (var asset in assets)
+            {
+                if (
+                    asset != profile
+                    && GraphicsHelpers.VolumeProfileType.IsInstanceOfType(asset)
+                    && GetProperty(asset, "components") is System.Collections.IList siblings
+                    && siblings.Cast<object>().Any(value => value is UnityEngine.Object obj && obj == component)
+                )
+                    return false;
+            }
+            return true;
         }
 
         // === volume_get_info ===
