@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from ipaddress import ip_network
 from types import SimpleNamespace
 
 import httpx
@@ -11,13 +12,17 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 
+from core.config import config
 from services.api_key_service import ApiKeyService
 import services.api_key_service as api_module
 from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE, RemoteControlAuthMiddleware
 
 
 @pytest_asyncio.fixture
-async def admission(monkeypatch):
+async def admission(monkeypatch, request):
+    monkeypatch.setattr(
+        config, "http_trusted_proxy_networks", getattr(request, "param", ()), raising=False
+    )
     actual_client = httpx.AsyncClient
     release = asyncio.Event()
     release.set()
@@ -79,16 +84,18 @@ async def admission(monkeypatch):
         Starlette(routes=[Route("/protected", protected), WebSocketRoute("/protected", websocket)])
     )
 
-    async def http(key, source="owned-peer"):
+    async def http(key, source="owned-peer", headers=None):
         transport = httpx.ASGITransport(app=app, client=(source, 12345))
         async with actual_client(
             transport=transport, base_url="http://owned.invalid", trust_env=False
         ) as client:
             return await client.get(
-                "/protected", headers={"X-API-Key": key, "X-Forwarded-For": "forged-peer"}
+                "/protected",
+                headers=[("X-API-Key", key), ("X-Forwarded-For", "forged-peer")]
+                + list(headers.items() if isinstance(headers, dict) else headers or ()),
             )
 
-    async def ws(key, source="owned-peer"):
+    async def ws(key, source="owned-peer", headers=None):
         messages = []
         scope = {
             "type": "websocket",
@@ -97,7 +104,11 @@ async def admission(monkeypatch):
             "raw_path": b"/protected",
             "scheme": "ws",
             "query_string": b"",
-            "headers": [(b"x-api-key", key.encode("ascii"))],
+            "headers": [(b"x-api-key", key.encode("ascii"))]
+            + [
+                (name.lower().encode("ascii"), value.encode("ascii"))
+                for name, value in (headers.items() if isinstance(headers, dict) else headers or ())
+            ],
             "client": (source, 12345),
             "server": ("owned.invalid", 80),
             "subprotocols": [],
@@ -113,6 +124,8 @@ async def admission(monkeypatch):
         return messages
 
     harness = SimpleNamespace(
+        app=app,
+        client_type=actual_client,
         service=service,
         http=http,
         ws=ws,
@@ -216,6 +229,272 @@ async def test_actual_peer_limits_ignore_forwarded_header_and_allow_other_peer(a
     responses = await asyncio.gather(*tasks)
     assert started == 3 and rejected == 3
     assert responses[-1].status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admission", [(ip_network("172.30.0.2/32"),)], indirect=True)
+@pytest.mark.parametrize("protocol", ["http", "ws"])
+async def test_proxy_client_exhaustion_does_not_block_other_cold_valid_key(admission, protocol):
+    admission.service.SOURCE_BURST = 2.0
+    call = getattr(admission, protocol)
+
+    def status(response):
+        if protocol == "http":
+            return response.status_code
+        return 200 if response[0]["type"] == "websocket.accept" else response[0]["code"]
+
+    for index in range(2):
+        admission.verdicts.append(httpx.Response(401))
+        response = await call(
+            "bogus-" + str(index), "172.30.0.2", {"X-Unity-MCP-Client-IP": "198.51.100.10"}
+        )
+        assert status(response) in (401, 1008)
+    blocked = await call(
+        "bogus-exhausted", "172.30.0.2", {"X-Unity-MCP-Client-IP": "198.51.100.10"}
+    )
+    assert status(blocked) in (429, 1013)
+    victim = await call("cold-valid", "172.30.0.2", {"X-Unity-MCP-Client-IP": "198.51.100.20"})
+    assert status(victim) == 200
+    assert admission.requests == ["bogus-0", "bogus-1", "cold-valid"]
+    # Exhaust the second source too; its cached positive still bypasses admission.
+    assert (
+        status(await call("second-key", "172.30.0.2", {"X-Unity-MCP-Client-IP": "198.51.100.20"}))
+        == 200
+    )
+    assert status(
+        await call("over-budget", "172.30.0.2", {"X-Unity-MCP-Client-IP": "198.51.100.20"})
+    ) in (429, 1013)
+    assert (
+        status(await call("cold-valid", "172.30.0.2", {"X-Unity-MCP-Client-IP": "198.51.100.20"}))
+        == 200
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admission", [(), (ip_network("172.30.0.2/32"),)], indirect=True)
+@pytest.mark.parametrize("protocol", ["http", "ws"])
+async def test_untrusted_proxy_metadata_cannot_choose_another_source(admission, protocol):
+    admission.service.SOURCE_BURST = 1.0
+    call = getattr(admission, protocol)
+    for index in range(3):
+        response = await call(
+            "spoof-" + str(index),
+            "198.51.100.40",
+            {
+                "X-Unity-MCP-Client-IP": "198.51.100." + str(50 + index),
+                "X-Forwarded-For": "198.51.100." + str(60 + index),
+                "Forwarded": "for=198.51.100." + str(70 + index),
+                "X-Real-IP": "198.51.100." + str(80 + index),
+            },
+        )
+        if protocol == "http":
+            assert response.status_code == (200 if index == 0 else 429)
+        else:
+            assert response[0]["type"] == ("websocket.accept" if index == 0 else "websocket.close")
+            if index:
+                assert response[0]["code"] == 1013
+    assert admission.requests == ["spoof-0"]
+    assert list(admission.service._sources) == ["198.51.100.40"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admission", [(ip_network("172.30.0.2/32"),)], indirect=True)
+@pytest.mark.parametrize("protocol", ["http", "ws"])
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"X-Unity-MCP-Client-IP": ""},
+        {"X-Unity-MCP-Client-IP": "198.51.100.10, 198.51.100.20"},
+        {"X-Unity-MCP-Client-IP": "example.invalid"},
+        {"X-Unity-MCP-Client-IP": "198.51.100.10:1234"},
+        {"X-Unity-MCP-Client-IP": " 198.51.100.10"},
+        {"X-Unity-MCP-Client-IP": "fe80::1%eth0"},
+        [("X-Unity-MCP-Client-IP", "198.51.100.10")] * 2,
+    ],
+)
+async def test_trusted_proxy_requires_one_unambiguous_client_ip(admission, protocol, headers):
+    response = await getattr(admission, protocol)("valid", "172.30.0.2", headers)
+    if protocol == "http":
+        assert response.status_code == 401
+    else:
+        assert response[0]["code"] == 1008
+    assert not admission.requests
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admission", [(ip_network("2001:db8:1::/64"),)], indirect=True)
+async def test_ipv6_proxy_and_client_spellings_share_a_canonical_source(admission):
+    admission.service.SOURCE_BURST = 1.0
+    first = await admission.http(
+        "ipv6-first",
+        "2001:0db8:0001:0000:0000:0000:0000:0002",
+        {"X-Unity-MCP-Client-IP": "2001:0db8:0002:0000:0000:0000:0000:000a"},
+    )
+    second = await admission.http(
+        "ipv6-second", "2001:db8:1::2", {"X-Unity-MCP-Client-IP": "2001:db8:2::a"}
+    )
+    assert [first.status_code, second.status_code] == [200, 429]
+    assert list(admission.service._sources) == ["2001:db8:2::a"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admission", [(ip_network("172.30.0.2/32"),)], indirect=True)
+async def test_ipv4_mapped_ipv6_peer_and_client_cannot_split_buckets(admission):
+    admission.service.SOURCE_BURST = 1.0
+    first = await admission.http(
+        "mapped-first", "::ffff:172.30.0.2", {"X-Unity-MCP-Client-IP": "::ffff:198.51.100.10"}
+    )
+    second = await admission.http(
+        "mapped-second", "172.30.0.2", {"X-Unity-MCP-Client-IP": "198.51.100.10"}
+    )
+    assert [first.status_code, second.status_code] == [200, 429]
+    assert list(admission.service._sources) == ["198.51.100.10"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admission", [(ip_network("172.30.0.2/32"),)], indirect=True)
+async def test_verified_proxy_sources_still_obey_global_validation_capacity(admission):
+    admission.release.clear()
+    tasks = [
+        asyncio.create_task(
+            admission.http(
+                "proxy-global-" + str(index),
+                "172.30.0.2",
+                {"X-Unity-MCP-Client-IP": "198.51.100." + str(index + 10)},
+            )
+        )
+        for index in range(6)
+    ]
+    await settle()
+    started, rejected = len(admission.requests), sum(task.done() for task in tasks)
+    admission.release.set()
+    responses = await asyncio.gather(*tasks)
+    assert started == 2 and rejected == 4
+    assert sorted(response.status_code for response in responses) == [200, 200, 429, 429, 429, 429]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admission", [(ip_network("172.30.0.2/32"),)], indirect=True)
+async def test_one_proxy_client_cannot_fill_all_global_validation_slots(admission):
+    admission.service.MAX_INFLIGHT_VALIDATIONS = 4
+    admission.service.MAX_VALIDATION_WAITERS = 8
+    admission.release.clear()
+    tasks = [
+        asyncio.create_task(
+            admission.http(
+                "busy-attacker-" + str(index),
+                "172.30.0.2",
+                {"X-Unity-MCP-Client-IP": "198.51.100.10"},
+            )
+        )
+        for index in range(5)
+    ]
+    tasks.append(
+        asyncio.create_task(
+            admission.http("cold-victim", "172.30.0.2", {"X-Unity-MCP-Client-IP": "198.51.100.20"})
+        )
+    )
+    await settle()
+    started, rejected = len(admission.requests), sum(task.done() for task in tasks)
+    admission.release.set()
+    responses = await asyncio.gather(*tasks)
+    assert started == 3 and rejected == 3
+    assert responses[-1].status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admission", [(ip_network("172.30.0.2/32"),)], indirect=True)
+@pytest.mark.parametrize("entrypoint", ["run_async", "run_http_async"])
+async def test_uvicorn_preserves_socket_peer_for_http_and_websocket(
+    admission, monkeypatch, entrypoint
+):
+    """Run the installed FastMCP/Uvicorn stack; this is not a Caddy topology test."""
+    import socket
+
+    import uvicorn
+    from main import UnityMCP
+
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "*")
+    admission.service.SOURCE_BURST = 1.0
+    peers = []
+
+    class CapturePeer:
+        state = SimpleNamespace(path="/protected")
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] in ("http", "websocket"):
+                peers.append((scope["type"], scope["client"][0]))
+            await admission.app(scope, receive, send)
+
+    mcp = UnityMCP("socket-peer-contract")
+    monkeypatch.setattr(mcp, "http_app", lambda **kwargs: CapturePeer())
+    real_server = uvicorn.Server
+    servers = []
+
+    def observe_server(settings):
+        server = real_server(settings)
+        servers.append(server)
+        return server
+
+    monkeypatch.setattr(uvicorn, "Server", observe_server)
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(128)
+    port = listener.getsockname()[1]
+    settings = {"proxy_headers": True, "log_config": None, "access_log": False}
+    runner = asyncio.create_task(
+        getattr(mcp, entrypoint)(
+            transport="http",
+            show_banner=False,
+            host="127.0.0.1",
+            port=port,
+            uvicorn_config=settings,
+            sockets=[listener],
+        )
+    )
+    try:
+        async with asyncio.timeout(10):
+            while not servers or not servers[0].started:
+                if runner.done():
+                    await runner
+                    pytest.fail("Uvicorn runner ended before startup")
+                await asyncio.sleep(0.01)
+        headers = {
+            "X-API-Key": "socket-http",
+            "X-Forwarded-For": "172.30.0.2",
+            "X-Unity-MCP-Client-IP": "198.51.100.10",
+        }
+        async with admission.client_type(trust_env=False) as client:
+            response = await client.get(f"http://127.0.0.1:{port}/protected", headers=headers)
+            assert response.status_code == 200
+            # Drive a real WebSocket handshake through Uvicorn's WS protocol.
+            response = await client.get(
+                f"http://127.0.0.1:{port}/protected",
+                headers={
+                    **headers,
+                    "X-API-Key": "socket-websocket",
+                    "X-Unity-MCP-Client-IP": "198.51.100.20",
+                    "Connection": "Upgrade",
+                    "Upgrade": "websocket",
+                    "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+                    "Sec-WebSocket-Version": "13",
+                },
+            )
+            assert response.status_code == 403
+        assert peers == [("http", "127.0.0.1"), ("websocket", "127.0.0.1")]
+        assert admission.requests == ["socket-http"]
+        assert list(admission.service._sources) == ["127.0.0.1"]
+        assert servers[0].config.proxy_headers is False
+        assert settings["proxy_headers"] is True
+    finally:
+        if servers:
+            servers[0].should_exit = True
+        try:
+            await asyncio.wait_for(runner, timeout=10)
+        finally:
+            listener.close()
 
 
 @pytest.mark.asyncio

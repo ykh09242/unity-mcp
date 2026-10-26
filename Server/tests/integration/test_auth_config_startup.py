@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.config import config
+from core.config import config, parse_trusted_proxy_cidrs
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -74,13 +74,40 @@ class TestStartupConfigValidation:
         monkeypatch.setattr(sys, "argv", arguments)
         monkeypatch.setenv("UNITY_MCP_HTTP_HOST", "127.0.0.1")
         monkeypatch.setenv("UNITY_MCP_HTTP_PORT", "8099")
+        monkeypatch.setenv("UNITY_MCP_AUTH_TRUSTED_PROXY_CIDRS", "127.0.0.1/32")
         server = MagicMock()
         monkeypatch.setattr(entry, "create_mcp_server", MagicMock(return_value=server))
 
         entry.main()
 
         assert config.http_remote_hosted and config.http_behind_tls_proxy
+        assert config.http_trusted_proxy_networks == parse_trusted_proxy_cidrs("127.0.0.1/32")
         server.run.assert_called_once_with(transport="http", host="127.0.0.1", port=8099)
+
+    @pytest.mark.parametrize("trusted_proxy", ["*", "0.0.0.0/0", "::/0", "172.30.0.2/24"])
+    def test_invalid_proxy_trust_fails_before_server_creation(self, monkeypatch, trusted_proxy):
+        import main as entry
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "main",
+                "--transport",
+                "http",
+                "--http-remote-hosted",
+                "--http-behind-tls-proxy",
+                "--api-key-validation-url",
+                "https://auth.example/validate",
+            ],
+        )
+        monkeypatch.setenv("UNITY_MCP_AUTH_TRUSTED_PROXY_CIDRS", trusted_proxy)
+        create = MagicMock()
+        monkeypatch.setattr(entry, "create_mcp_server", create)
+        with pytest.raises(SystemExit) as denied:
+            entry.main()
+        assert denied.value.code == 1
+        create.assert_not_called()
 
     def test_remote_hosted_flag_without_validation_url_exits(self, monkeypatch):
         """--http-remote-hosted without --api-key-validation-url should SystemExit(1)."""

@@ -6,6 +6,36 @@ This file contains all configurable parameters for the server.
 import math
 import os
 from dataclasses import dataclass, field
+from ipaddress import IPv4Network, IPv6Network, collapse_addresses, ip_network
+
+
+def parse_trusted_proxy_cidrs(value: str) -> tuple[IPv4Network | IPv6Network, ...]:
+    """Require explicit proxy networks; a catch-all would trust caller-supplied identity."""
+    if not value.strip():
+        return ()
+    networks = []
+    try:
+        for entry in value.split(","):
+            if "%" in entry:
+                raise ValueError("scoped proxy address")
+            network = ip_network(entry.strip(), strict=True)
+            if network.prefixlen == 0:
+                raise ValueError("catch-all proxy network")
+            networks.append(network)
+        for version in (4, 6):
+            if any(
+                network.prefixlen == 0
+                for network in collapse_addresses(
+                    entry for entry in networks if entry.version == version
+                )
+            ):
+                raise ValueError("combined catch-all proxy networks")
+    except ValueError:
+        raise ValueError(
+            "UNITY_MCP_AUTH_TRUSTED_PROXY_CIDRS must be comma-separated IP addresses or "
+            "strict CIDRs without zone identifiers or catch-all networks"
+        ) from None
+    return tuple(networks)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -57,6 +87,8 @@ class ServerConfig:
     http_remote_hosted: bool = False
     # Explicit deployment assertion: the HTTP backend is private behind HTTPS/WSS.
     http_behind_tls_proxy: bool = False
+    # Only these socket peers may assert a verified authentication source address.
+    http_trusted_proxy_networks: tuple[IPv4Network | IPv6Network, ...] = ()
     # Set only for this process launch; never include the secret in config reprs.
     local_auth_token: str | None = field(default=None, repr=False)
 

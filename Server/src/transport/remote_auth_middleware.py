@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import AsyncExitStack
+from ipaddress import IPv4Address, IPv6Address, ip_address
 
 import anyio
 from starlette.datastructures import Headers
@@ -9,16 +10,45 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.constants import API_KEY_HEADER
+from core.config import config
 from services.api_key_service import ApiKeyService
 from services.credential_lease import CredentialLeaseError
 
 AUTHENTICATED_USER_STATE = "unity_mcp_authenticated_user_id"
 AUTHENTICATED_LEASE_STATE = "unity_mcp_authenticated_credential_lease"
+VERIFIED_CLIENT_IP_HEADER = "X-Unity-MCP-Client-IP"
+
+
+def _source_ip(value: str) -> IPv4Address | IPv6Address:
+    """Normalize equivalent addresses without accepting lists, ports, or zone identifiers."""
+    if "%" in value:
+        raise ValueError("Scoped source IP is not allowed")
+    address = ip_address(value)
+    if isinstance(address, IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped
+    return address
 
 
 class RemoteControlAuthMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
+        self._trusted_proxy_networks = config.http_trusted_proxy_networks
+
+    def _source_id(self, scope: Scope) -> str:
+        peer = scope.get("client")
+        if not peer:
+            return "unknown"
+        try:
+            address = _source_ip(peer[0])
+        except ValueError:
+            # Non-IP peers cannot gain proxy trust (including ASGI test/Unix peers).
+            return peer[0]
+        if any(address in network for network in self._trusted_proxy_networks):
+            values = Headers(scope=scope).getlist(VERIFIED_CLIENT_IP_HEADER)
+            if len(values) != 1:
+                raise ValueError("Trusted proxy must provide one verified client IP")
+            return str(_source_ip(values[0]))
+        return str(address)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -36,10 +66,9 @@ class RemoteControlAuthMiddleware:
         overloaded = False
         keys = Headers(scope=scope).getlist(API_KEY_HEADER)
         if len(keys) == 1 and keys[0] and ApiKeyService.is_initialized():
-            peer = scope.get("client")
             try:
                 result = await ApiKeyService.get_instance().validate(
-                    keys[0], source_id=peer[0] if peer else "unknown"
+                    keys[0], source_id=self._source_id(scope)
                 )
             except (RuntimeError, OSError, ValueError):
                 result = None

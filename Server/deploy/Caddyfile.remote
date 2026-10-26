@@ -5,6 +5,12 @@ https://{$MCP_DOMAIN} {
         max_size 67108864
     }
     reverse_proxy unity-mcp-server:8080 {
+        # Replace every caller-supplied value with the socket client's address.
+        # The backend accepts this only from the configured private proxy peer.
+        header_up X-Unity-MCP-Client-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up -Forwarded
+        header_up -X-Real-IP
         # Deliver MCP streaming responses immediately; WebSockets also work.
         flush_interval -1
     }
