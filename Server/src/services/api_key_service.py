@@ -295,9 +295,9 @@ class ApiKeyService:
         )
 
     def _admit_source(self, source_id: str) -> bool:
-        """Called under the cache lock, using actual peer identity rather than forwarded headers.
+        """Called under the cache lock with the transport's verified source identity.
 
-        NAT/proxy peers share cold-miss capacity; cached credentials bypass this budget.
+        NAT peers share cold-miss capacity; cached credentials bypass this budget.
         """
         now = time.monotonic()
         budget = self._sources.get(source_id)

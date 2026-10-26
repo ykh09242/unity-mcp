@@ -44,7 +44,7 @@ from core.server_build import RUNNING_SERVER
 from core.sdk_compatibility import runtime_sdk_report
 from services.execution_receipt_context import owned_to_thread
 from services.reference_graph.reconcile import drained_task
-from core.config import config
+from core.config import config, parse_trusted_proxy_cidrs
 from core.custom_instructions import (
     CustomInstructionsError,
     append_custom_instructions,
@@ -582,6 +582,26 @@ class UnityMCP(FastMCP):
         anyio.run(
             partial(self.run_async, transport, show_banner=show_banner, **transport_kwargs),
             backend_options={"loop_factory": asyncio.SelectorEventLoop},
+        )
+
+    async def run_http_async(
+        self,
+        show_banner=True,
+        transport="http",
+        host=None,
+        port=None,
+        log_level=None,
+        path=None,
+        uvicorn_config=None,
+        *args,
+        **kwargs,
+    ) -> None:
+        if config.http_remote_hosted:
+            # Auth must inspect the socket peer, including for WebSocket handshakes.
+            # Never let Uvicorn or FORWARDED_ALLOW_IPS rewrite it before our boundary.
+            uvicorn_config = {**(uvicorn_config or {}), "proxy_headers": False}
+        await super().run_http_async(
+            show_banner, transport, host, port, log_level, path, uvicorn_config, *args, **kwargs
         )
 
     async def run_stdio_async(self, show_banner=True, log_level=None, stateless=False) -> None:
@@ -1336,6 +1356,15 @@ Examples:
     config.http_behind_tls_proxy = bool(args.http_behind_tls_proxy) or os.environ.get(
         "UNITY_MCP_HTTP_BEHIND_TLS_PROXY", ""
     ).lower() in ("true", "1", "yes", "on")
+    config.http_trusted_proxy_networks = ()
+    if config.http_remote_hosted:
+        try:
+            config.http_trusted_proxy_networks = parse_trusted_proxy_cidrs(
+                os.environ.get("UNITY_MCP_AUTH_TRUSTED_PROXY_CIDRS", "")
+            )
+        except ValueError as error:
+            logger.error("%s", error)
+            raise SystemExit(1) from None
 
     # API key authentication configuration
     config.api_key_validation_url = args.api_key_validation_url or os.environ.get(

@@ -32,6 +32,7 @@ API key authentication is only available when running with HTTP transport (`--tr
 | -------- | -------------------- | ------- | ----------- |
 | `--http-remote-hosted` | `UNITY_MCP_HTTP_REMOTE_HOSTED` | `false` | Enable remote-hosted mode. Requires API key auth. |
 | `--http-behind-tls-proxy` | `UNITY_MCP_HTTP_BEHIND_TLS_PROXY` | `false` | Confirm a private HTTP backend behind an HTTPS/WSS proxy (required for remote hosting). Does not enable TLS itself. |
+| Environment only | `UNITY_MCP_AUTH_TRUSTED_PROXY_CIDRS` | Empty | Comma-separated proxy IPs or strict CIDRs allowed to supply the verified client address for cold-auth admission. No peers are trusted by default. |
 | `--api-key-validation-url URL` | `UNITY_MCP_API_KEY_VALIDATION_URL` | None | External endpoint to validate API keys (required). |
 | `--api-key-login-url URL` | `UNITY_MCP_API_KEY_LOGIN_URL` | None | URL where users can obtain or manage API keys. |
 | `--api-key-cache-ttl SECONDS` | `UNITY_MCP_API_KEY_CACHE_TTL` | `300` | How long validated keys are cached (seconds). |
@@ -46,6 +47,7 @@ The server validates its configuration at startup:
 
 - If `--http-remote-hosted` is set but `--api-key-validation-url` is not provided (and the env var is also unset), the server logs an error and exits with code 1.
 - Remote HTTP startup also requires `--http-behind-tls-proxy` (or its environment variable). Configure HTTPS first and keep the backend reachable only by the proxy on loopback or an unpublished container network. Setting an `https://` value for `--http-url` alone does not enable TLS on this listener.
+- Invalid proxy CIDRs and catch-all networks (`0.0.0.0/0`, `::/0`, or `*`) stop hosted startup before the listener starts.
 - The validation endpoint must use absolute HTTPS, with no embedded credentials or URL fragment. Plaintext endpoints (including loopback) are rejected at initialization, and redirects are not followed. HTTPX honors the host's proxy and certificate environment settings; configure only trusted proxies and certificate authorities.
 
 ### HTTPS deployment
@@ -55,6 +57,7 @@ Clients must connect over **HTTPS**, and Unity's plugin connection must use **WS
 For a proxy on the same machine, bind the backend to loopback:
 
 ```bash
+UNITY_MCP_AUTH_TRUSTED_PROXY_CIDRS=127.0.0.1/32 \
 uv run --directory Server mcp-for-unity \
   --transport http \
   --http-host 127.0.0.1 \
@@ -74,6 +77,7 @@ export UNITY_MCP_HTTP_HOST=127.0.0.1
 export UNITY_MCP_HTTP_PORT=8080
 export UNITY_MCP_HTTP_REMOTE_HOSTED=true
 export UNITY_MCP_HTTP_BEHIND_TLS_PROXY=true
+export UNITY_MCP_AUTH_TRUSTED_PROXY_CIDRS=127.0.0.1/32
 export UNITY_MCP_API_KEY_VALIDATION_URL=https://auth.example.com/api/validate-key
 export UNITY_MCP_API_KEY_LOGIN_URL=https://app.example.com/api-keys
 
@@ -85,6 +89,10 @@ For example, run Caddy on the same host with this configuration, substituting a 
 ```caddyfile
 https://mcp.example.com {
     reverse_proxy 127.0.0.1:8080 {
+        header_up X-Unity-MCP-Client-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up -Forwarded
+        header_up -X-Real-IP
         flush_interval -1
     }
 }
@@ -101,7 +109,17 @@ export UNITY_MCP_API_KEY_LOGIN_URL=https://app.example.com/api-keys
 docker compose -f docker-compose.remote.yml up -d --build
 ```
 
-Run this Compose file on its own; combining it with the local `docker-compose.yml` would publish the backend port. Only Caddy publishes ports in the remote example. The backend uses the Compose network for proxy requests and outbound HTTPS for key validation. Do not put the proxy-to-backend hop across an untrusted network; use TLS for that hop if the services are on separate hosts. For ASGI embedding, configure the same private boundary and set `config.http_behind_tls_proxy = True` before calling `http_app()`.
+Run this Compose file on its own; combining it with the local `docker-compose.yml` would publish the backend port. Only Caddy publishes ports in the remote example. The backend uses a dedicated Compose bridge for proxy requests and outbound HTTPS for key validation. Caddy has the fixed address `172.30.0.2`, and the backend uses the distinct fixed address `172.30.0.3` so its earlier startup cannot claim Caddy's address. The backend trusts only `172.30.0.2/32`. Keep other services off this bridge. If `172.30.0.0/29` conflicts with another network, change the subnet, both service addresses, and trusted proxy CIDR together. See Docker's [static address configuration](https://docs.docker.com/reference/compose-file/services/#ipv4_address-ipv6_address).
+
+### Trusted client address and authentication admission
+
+The proxy must overwrite `X-Unity-MCP-Client-IP` with its socket client's IP, replacing all incoming values. Caddy's `header_up` assignment above does this; it also replaces `X-Forwarded-For` and removes `Forwarded` and `X-Real-IP`. The backend uses this dedicated header only when the actual socket peer matches `UNITY_MCP_AUTH_TRUSTED_PROXY_CIDRS`. A trusted proxy must send exactly one valid IP without a port, list, or zone identifier; missing or ambiguous metadata fails authentication. Metadata from every other peer is ignored. IPv6 spellings and IPv4-mapped IPv6 addresses normalize to one source bucket.
+
+`UnityMCP.run()`, `run_async()`, and `run_http_async()` disable Uvicorn proxy-header rewriting in hosted mode, including when `FORWARDED_ALLOW_IPS` is set. For direct ASGI embedding, preserve the socket peer too: run Uvicorn with `proxy_headers=False` (CLI: `--no-proxy-headers`) and do not wrap the app in forwarding middleware that rewrites `scope.client`. Before calling `http_app()`, set `config.http_behind_tls_proxy = True` and `config.http_trusted_proxy_networks = parse_trusted_proxy_cidrs("127.0.0.1/32")`, importing the parser from `core.config`. Other ASGI servers must preserve the same raw-peer contract. See the [Uvicorn proxy-header settings](https://uvicorn.dev/settings/#http).
+
+Cold validation has a separate budget for each verified source: a burst of 16, refilling at four per second, with at most eight concurrent waiters. Cached valid and invalid results bypass that budget. Independent global caps still limit external validations to 16 in flight and 128 waiters, so overall overload can reject new requests from any source. Clients sharing a NAT address share one source budget. These examples assume Caddy is the first public hop; placing a CDN or another proxy before it makes that hop the source unless a separate verified ingress boundary is configured. Do not substitute caller-supplied forwarding headers for the socket address.
+
+Keep the proxy-to-backend hop on a trusted private network; use TLS if the services are on separate hosts.
 
 ### Service Token (Optional)
 

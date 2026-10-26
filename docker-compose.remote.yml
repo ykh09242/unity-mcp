@@ -12,11 +12,18 @@ services:
     environment:
       UNITY_MCP_HTTP_REMOTE_HOSTED: "true"
       UNITY_MCP_HTTP_BEHIND_TLS_PROXY: "true"
+      # Match only Caddy's fixed address on this deployment's dedicated bridge.
+      UNITY_MCP_AUTH_TRUSTED_PROXY_CIDRS: "172.30.0.2/32"
       UNITY_MCP_API_KEY_VALIDATION_URL: "${UNITY_MCP_API_KEY_VALIDATION_URL:?Set an HTTPS API key validation URL}"
       UNITY_MCP_API_KEY_LOGIN_URL: "${UNITY_MCP_API_KEY_LOGIN_URL:-}"
       UNITY_MCP_API_KEY_SERVICE_TOKEN_HEADER: "${UNITY_MCP_API_KEY_SERVICE_TOKEN_HEADER:-}"
       UNITY_MCP_API_KEY_SERVICE_TOKEN: "${UNITY_MCP_API_KEY_SERVICE_TOKEN:-}"
       UNITY_MCP_SKIP_STARTUP_CONNECT: "1"
+    networks:
+      remote_backend:
+        # Reserve a distinct endpoint before Caddy starts; dynamic allocation
+        # could otherwise claim Caddy's trusted .2 address.
+        ipv4_address: 172.30.0.3
     command: ["--transport", "http", "--http-host", "0.0.0.0", "--http-port", "8080", "--project-scoped-tools"]
 
   proxy:
@@ -29,10 +36,21 @@ services:
       - "443:443"
     environment:
       MCP_DOMAIN: "${MCP_DOMAIN:?Set the public DNS hostname without a scheme or path}"
+    networks:
+      remote_backend:
+        ipv4_address: 172.30.0.2
     volumes:
       - ./Server/deploy/Caddyfile.remote:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+
+networks:
+  remote_backend:
+    # Keep this bridge exclusive to these services. Change the subnet, both
+    # service addresses, and trusted proxy CIDR together on a network conflict.
+    ipam:
+      config:
+        - subnet: 172.30.0.0/29
 
 volumes:
   caddy_data:

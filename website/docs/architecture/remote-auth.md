@@ -12,6 +12,10 @@ HTTP failures return `401`. WebSocket failures send an ASGI close with code `100
 
 On success, the middleware copies the ASGI scope/state and sets `unity_mcp_authenticated_user_id`. Identity is read from this validated request state, never from an unvalidated header or a host-local fallback.
 
+Cold-key admission uses the actual socket peer by default. In the supplied Caddy topology, the backend accepts one `X-Unity-MCP-Client-IP` only from Caddy's fixed private address, configured with `UNITY_MCP_AUTH_TRUSTED_PROXY_CIDRS`. Caddy overwrites that header with `{remote_host}` and replaces or removes ordinary forwarding metadata. Untrusted peers cannot select another source's bucket, and missing, duplicate, or malformed verified metadata from a trusted peer fails authentication. IP normalization prevents equivalent IPv6 or IPv4-mapped spellings from splitting a source budget.
+
+The hosted FastMCP runners disable Uvicorn proxy-header rewriting so this check sees the socket peer for HTTP and WebSocket requests. Direct `http_app()` embedding must also preserve `scope.client`, as described in the [deployment guide](../guides/remote-server-auth.md#trusted-client-address-and-authentication-admission). Invalid or catch-all configured CIDRs stop CLI startup. No proxy is trusted by default.
+
 ## MCP routing
 
 1. A client sends an HTTPS request with `X-API-Key` to the proxy.
@@ -51,6 +55,8 @@ The hub's inner guard can also close with `4401`, `4403`, or `1013` if authentic
 Validation uses a five-second request timeout and one retry with 100 ms backoff. Definitive valid and invalid results are cached; timeouts, connection failures, and 5xx responses are not. The cache is protected by an async lock and capped at 1,024 entries, with expired and negative entries preferred for eviction. A full cache cannot grow on arbitrary invalid keys.
 
 The default cache TTL is 300 seconds, configurable with `--api-key-cache-ttl`. Revocation can therefore take up to the TTL to propagate. `invalidate_cache(api_key)` and `clear_cache()` support explicit invalidation. Keys are represented in diagnostic logs by a one-way fingerprint rather than their original characters.
+
+Cached verdicts bypass cold-source admission. Each verified source has 16 burst tokens, refills four per second, and permits at most eight waiters. A depleted source cannot consume another source's budget. Global limits remain 16 external validations and 128 waiters; per-key coalescing, source-map limits, and fail-fast overload responses remain in force. NAT clients still share one source identity, and global overload can affect all sources.
 
 ## Fail-closed boundaries
 
