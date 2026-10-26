@@ -113,7 +113,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             return supported;
         }
 
-        internal async Task<StdioAuthenticatedSession> AuthenticateSessionAsync(NetworkStream stream, CancellationToken cancel)
+        internal async Task<StdioAuthenticatedSession> AuthenticateSessionAsync(
+            NetworkStream stream,
+            CancellationToken cancel,
+            Func<StdioAuthenticatedSession, bool> admit = null
+        )
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancel);
             deadline.CancelAfter(TimeSpan.FromSeconds(OperationTimeouts.EnvironmentSeconds("UNITY_MCP_HANDSHAKE_TIMEOUT", 30, 300)));
@@ -171,10 +175,33 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 ["proof"] = Proof(token, "server", Generation, challenge, nonce, session),
             };
             var negotiated = new StdioAuthenticatedSession(Generation, session, progress, arbitration);
+            deadline.Token.ThrowIfCancellationRequested();
+            if (admit != null && !admit(negotiated))
+            {
+                await WriteAcknowledgementAsync(
+                        stream,
+                        new JObject
+                        {
+                            ["type"] = "authentication_refused",
+                            ["version"] = 2,
+                            ["code"] = "client_admission_refused",
+                        },
+                        deadline.Token
+                    )
+                    .ConfigureAwait(false);
+                return null;
+            }
             if (negotiated.Capabilities.Count > 0)
                 acknowledgement["capabilities"] = new JArray(negotiated.Capabilities);
             if (arbitration)
                 acknowledgement["arbitration_generation"] = NativeCommandArbitrator.Shared.Generation;
+            await WriteAcknowledgementAsync(stream, acknowledgement, deadline.Token).ConfigureAwait(false);
+            return negotiated;
+        }
+
+        private static async Task WriteAcknowledgementAsync(NetworkStream stream, JObject acknowledgement, CancellationToken cancel)
+        {
+            byte[] header = new byte[8];
             byte[] reply = Encoding.ASCII.GetBytes(acknowledgement.ToString(Formatting.None));
             ulong remaining = (ulong)reply.Length;
             for (int i = 7; i >= 0; i--)
@@ -182,9 +209,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 header[i] = (byte)(remaining & 255);
                 remaining >>= 8;
             }
-            await stream.WriteAsync(header, 0, header.Length, deadline.Token).ConfigureAwait(false);
-            await stream.WriteAsync(reply, 0, reply.Length, deadline.Token).ConfigureAwait(false);
-            return negotiated;
+            await stream.WriteAsync(header, 0, header.Length, cancel).ConfigureAwait(false);
+            await stream.WriteAsync(reply, 0, reply.Length, cancel).ConfigureAwait(false);
         }
 
         public void Dispose() => credential?.Dispose();
