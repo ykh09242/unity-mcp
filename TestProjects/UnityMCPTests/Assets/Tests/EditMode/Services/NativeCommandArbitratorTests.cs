@@ -100,6 +100,37 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
+        [TestCase("execute_menu_item")]
+        [TestCase("execute_menu_item_observed")]
+        [TestCase("capture_ui_snapshot")]
+        public void ExclusiveCallbacksCannotClaimTheyWillNotStartPackageClient(string command)
+        {
+            var policy = ToolOperationPolicy.Resolve(command, new JObject(), true);
+            Assert.AreEqual(ToolOperationMode.Exclusive, policy.Mode);
+            Assert.IsNull(NativeCommandArbitrator.BarrierCandidate(command, policy.Mode, true));
+            Assert.AreEqual("get_selection", NativeCommandArbitrator.BarrierCandidate("get_selection", ToolOperationMode.SharedRead, true));
+            Assert.IsNull(NativeCommandArbitrator.BarrierCandidate("get_selection", ToolOperationMode.SharedRead, false));
+        }
+
+        [TestCase("execute_menu_item", false)]
+        [TestCase("execute_menu_item", true)]
+        [TestCase("execute_menu_item_observed", false)]
+        [TestCase("execute_menu_item_observed", true)]
+        [TestCase("capture_ui_snapshot", false)]
+        [TestCase("capture_ui_snapshot", true)]
+        public void ExclusiveCallbacksAreFencedByRetainedPackageQueryAndRecovery(string command, bool recovery)
+        {
+            var state = new NativeBarrierState { PackageQuery = !recovery, PackageQueryRecovery = recovery };
+            var policy = ToolOperationPolicy.Resolve(command, new JObject(), true);
+            string candidate = NativeCommandArbitrator.BarrierCandidate(command, policy.Mode, true);
+            Assert.IsTrue(NativeOperationBarriers.Evaluate(candidate, null, state, out var blocker));
+            Assert.AreEqual(recovery ? "recovery_required" : "native_job_active", blocker.Reason);
+            Assert.AreEqual(!recovery, blocker.Retryable);
+            var read = ToolOperationPolicy.Resolve("get_selection", new JObject(), true);
+            Assert.AreEqual(ToolOperationMode.SharedRead, read.Mode);
+            Assert.IsFalse(NativeOperationBarriers.Evaluate(NativeCommandArbitrator.BarrierCandidate("get_selection", read.Mode, true), null, state, out _));
+        }
+
         [Test]
         public void BatchHandoffIsConsumedBeforeUnrelatedAsyncWork()
         {

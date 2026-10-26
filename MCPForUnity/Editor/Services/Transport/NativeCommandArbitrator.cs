@@ -42,6 +42,12 @@ namespace MCPForUnity.Editor.Services.Transport
             return lease;
         }
 
+        // Exclusive handlers may invoke project callbacks (menu actions, property getters,
+        // OnEnable/OnValidate or import hooks) that start Client requests. Only audited reads
+        // can claim a narrower package candidate while another read-only request is retained.
+        internal static string BarrierCandidate(string commandName, ToolOperationMode mode, bool trustedBuiltIn) =>
+            trustedBuiltIn && mode != ToolOperationMode.Exclusive ? commandName : null;
+
         internal object CaptureStatus()
         {
             lock (gate)

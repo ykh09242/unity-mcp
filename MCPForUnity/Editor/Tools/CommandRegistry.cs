@@ -488,7 +488,7 @@ namespace MCPForUnity.Editor.Tools
             if (
                 !NativeCommandArbitrator.Shared.TryAcquire(
                     policy.Mode,
-                    trustedBuiltIn ? commandName : null,
+                    NativeCommandArbitrator.BarrierCandidate(commandName, policy.Mode, trustedBuiltIn),
                     @params,
                     parent,
                     out var lease,

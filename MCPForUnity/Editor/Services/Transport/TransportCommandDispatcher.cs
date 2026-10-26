@@ -560,7 +560,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 if (
                     !NativeCommandArbitrator.Shared.TryAcquire(
                         policy.Mode,
-                        trustedBuiltIn ? command.type : null,
+                        NativeCommandArbitrator.BarrierCandidate(command.type, policy.Mode, trustedBuiltIn),
                         parameters,
                         null,
                         out var lease,
