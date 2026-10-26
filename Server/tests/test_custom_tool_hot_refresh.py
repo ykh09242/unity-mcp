@@ -277,6 +277,9 @@ async def test_stdio_actual_worker_rechecks_catalog_and_connection_before_wire(
     conn = legacy.UnityConnection(port=1, instance_id="A@a")
     conn.sock = Socket()
     conn.session_generation = "old"
+    pool = legacy.UnityConnectionPool()
+    pool._connections[conn.instance_id] = conn
+    monkeypatch.setattr(legacy, "_unity_connection_pool", pool)
     monkeypatch.setattr(legacy, "get_unity_connection", lambda *a: conn)
     monkeypatch.setattr(legacy, "read_status_file", lambda *a: None)
     monkeypatch.setattr(conn, "_ensure_live_connection", lambda: None)
@@ -333,7 +336,11 @@ async def test_stdio_actual_worker_rechecks_catalog_and_connection_before_wire(
         elif barrier == "admission":
             gate.release()
     result = await asyncio.wait_for(task, watchdog_timeout())
-    assert result.data == {"reason": "custom_tool_catalog_changed", "dispatched": False}
+    assert result.data == (
+        {"reason": "operation_target_changed", "dispatch": "not_dispatched"}
+        if barrier == "reconnect"
+        else {"reason": "custom_tool_catalog_changed", "dispatched": False}
+    )
     assert writes == []
     monkeypatch.setattr(conn, "_ensure_live_connection", lambda: None)
     service.replace_project_catalog(

@@ -7,6 +7,7 @@ from concurrent.futures import CancelledError
 from contextlib import asynccontextmanager, nullcontext
 from copy import deepcopy
 import json
+import sys
 from threading import Event
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -19,6 +20,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from core.config import config
 from models.response_limits import ResponseOwner, response_owner
+from services.operation_policy import OperationMode, resolve_operation_policy
 from services.api_key_service import ApiKeyService, ValidationResult
 from transport.editor_state_store import EditorStateStore
 from transport.large_result_assembler import CHUNK_PAYLOAD_BYTES, MAGIC, THRESHOLD_BYTES
@@ -106,14 +108,14 @@ async def requester_call(client, user, function, *args):
         return await function(*args)
 
 
-def start_command(client, wire, session_id, *, owner=None, done=None):
+def start_command(client, wire, session_id, *, owner=None, done=None, command="run_tests"):
     async def execute():
         token = response_owner.set(owner)
         try:
             session = await PluginHub._registry.get_session(session_id)
             assert session is not None
             return await requester_call(
-                client, session.user_id, PluginHub.send_command, session_id, "run_tests", {}
+                client, session.user_id, PluginHub.send_command, session_id, command, {}
             )
         finally:
             response_owner.reset(token)
@@ -123,11 +125,18 @@ def start_command(client, wire, session_id, *, owner=None, done=None):
     task = client.portal.start_task_soon(execute)
     message = wire.receive_json()
     assert message["type"] == "execute"
+    assert message["name"] == command
+    assert message["params"] == {}
     return task, message["id"]
 
 
 def barrier(client, wire, session_id):
-    task, command_id = start_command(client, wire, session_id)
+    # A transport-processing witness must not queue another Exclusive run_tests
+    # behind the command whose partial result this test deliberately holds.
+    assert (
+        resolve_operation_policy("get_editor_state", {}, native=True).mode == OperationMode.CONTROL
+    )
+    task, command_id = start_command(client, wire, session_id, command="get_editor_state")
     wire.send_json({"type": "command_result", "id": command_id, "result": {"success": True}})
     assert task.result(timeout=watchdog_timeout()) == {"success": True}
 
@@ -202,6 +211,7 @@ def test_capabilities_are_negotiated_as_supported_intersection(client):
             "large_result_gzip_v1",
             "tool_settings_ack_v1",
             "phase_timing_v1",
+            "native_arbitration_v1",
         }
         assert set(registered["capabilities"]) == set(FEATURES)
         assert "tool_settings_ack_v1" not in registered["capabilities"]
@@ -313,7 +323,10 @@ def test_original_command_deadline_releases_partial_bytes_and_late_data_is_ignor
 
     def capture_deadline(deadline):
         guard = timeout_at(deadline)
-        guards.append(guard)
+        # Observe the whole-command budget, rather than counting its additional
+        # scheduler/transport scopes as independent caller deadlines.
+        if sys._getframe(1).f_code is PluginHub._send_command_response.__func__.__code__:
+            guards.append(guard)
         return guard
 
     with client.websocket_connect("/plugin", headers={"x-api-key": "alice"}) as wire:

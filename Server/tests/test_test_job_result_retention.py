@@ -195,7 +195,7 @@ def test_export_catalog_and_selected_tenant_enforcement_in_production_middleware
                     for sid, owner in (("owned", "alice"), ("foreign", "bob")):
                         await registry.register(sid, sid, sid + "-hash", "test", user_id=owner if hosted else None)
                         await registry.register_tools_for_session(sid, [ToolDefinitionModel(name="export_test_job")])
-                        PluginHub._connections[sid] = SimpleNamespace(state=SimpleNamespace(user_id=owner,
+                        PluginHub._connections[sid] = SimpleNamespace(state=SimpleNamespace(user_id=owner if hosted else None,
                             plugin_generation=sid + "-generation", plugin_registered=True, plugin_session_id=sid),
                             client_state=WebSocketState.CONNECTED, application_state=WebSocketState.CONNECTED,
                             close=AsyncMock())
@@ -220,7 +220,7 @@ def test_export_catalog_and_selected_tenant_enforcement_in_production_middleware
                         async with Client(app, mode=protocol) as client:
                             assert "export_test_job" in {t.name for t in await client.list_tools()}
                             reply = await client.call_tool("export_test_job", {"job_id": "job", "unity_instance": "owned@owned-hash"})
-                            assert json.loads(reply.content[0].text)["success"] is True
+                            assert json.loads(reply.content[0].text)["success"] is True, reply
                             assert calls == [("owned", "export_test_job", "alice" if hosted else None)]
                             if hosted:
                                 try:

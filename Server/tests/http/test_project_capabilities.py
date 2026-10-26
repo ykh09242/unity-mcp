@@ -747,6 +747,11 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
     # still scheduling the worker. The watchdog bounds a hang, not performance.
     monkeypatch.setattr(capabilities, "_QUERY_TIMEOUT_SECONDS", watchdog_timeout())
     connection = legacy.UnityConnection(port=1, instance_id="Fixture@hash")
+    # The real scheduler must see this owned connection in its captured pool;
+    # an unrelated pool left by another test correctly fails its identity fence.
+    pool = legacy.UnityConnectionPool()
+    pool._connections[connection.instance_id] = connection
+    monkeypatch.setattr(legacy, "_unity_connection_pool", pool)
     loop = asyncio.get_running_loop()
     entered, finished = asyncio.Event(), asyncio.Event()
     sent = []
@@ -798,8 +803,16 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
     query = asyncio.create_task(
         capabilities.query_project_capabilities(SimpleNamespace(get_state=state))
     )
+    entry_signal = asyncio.create_task(entered.wait())
     try:
-        await await_signal(entered, "entered")
+        observed, _ = await asyncio.wait(
+            {entry_signal, query}, timeout=watchdog_timeout(), return_when=asyncio.FIRST_COMPLETED
+        )
+        assert entry_signal in observed, (
+            f"Capability probe exited before its admitted worker: {query.result()!r}"
+            if query.done()
+            else "Capability worker never entered before its watchdog"
+        )
 
         # When: both observed budgets expire after admission and before the
         # independently held I/O lock is released. No wall-time race is required.
@@ -809,6 +822,8 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
         scopes[0].deadline = anyio.current_time()
         data = await asyncio.wait_for(query, watchdog_timeout())
     finally:
+        entry_signal.cancel()
+        await asyncio.gather(entry_signal, return_exceptions=True)
         connection._io_lock.release()
         if scopes:
             scopes[0].cancel()
