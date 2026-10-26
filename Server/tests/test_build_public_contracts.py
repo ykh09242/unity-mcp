@@ -183,7 +183,8 @@ definition = ToolDefinitionModel(name='manage_build', requires_polling=True,
                                  poll_action='status', max_poll_seconds=600)
 service.register_global_tools([definition])
 assert 'manage_build' not in service._global_tools
-service._register_project_tools('fixture', [definition], project_hash='fixture')
+polling_fixture = definition.model_copy(update={'name': 'fixture_build'})
+service._register_project_tools('fixture', [definition, polling_fixture], project_hash='fixture')
 cases = [
     ({'action': 'plan', 'scenes': '["Assets/First.unity"]', 'options': '["auto_run"]'}, {'action': 'plan', 'scenes': ['Assets/First.unity'], 'options': ['auto_run']}),
     ({'action': 'build_from_plan', 'expected_plan_sha256': 'a' * 64}, {'action': 'build_from_plan', 'expected_plan_sha256': 'a' * 64}),
@@ -236,6 +237,12 @@ async def main():
             check('manage_build' in discovered and 'execute_custom_tool' in discovered,
                   'actual registry/builtin preserved ' + mode)
             print('FULL_SCHEMA', mode, json.dumps(discovered['manage_build'].inputSchema, sort_keys=True))
+            rejected, sent = await invoke(client, 'execute_custom_tool',
+                {'tool_name': 'manage_build', 'parameters': {'action': 'plan'}}, mode)
+            check(rejected.structured_content.get('success') is False
+                  and rejected.structured_content.get('code') == 'builtin_tool_requires_canonical_route'
+                  and rejected.structured_content.get('data', {}).get('dispatched') is False
+                  and not sent, 'builtin custom route rejected without native effects')
             for payload, expected in cases:
                 for failed, wrapped in ((False, False), (True, True)):
                     response = {'success': not failed, 'message': 'Controlled native build diagnostic',
@@ -246,14 +253,14 @@ async def main():
                     check(result.structured_content == response, 'opaque native result fidelity ' + mode)
             raw = {'success': True, 'data': {'schema_version': 'unity-mcp/build-plan@1', 'plan_sha256': 'a' * 64}}
             result, sent = await invoke(client, 'execute_custom_tool',
-                {'tool_name': 'manage_build', 'parameters': {'action': 'plan'}}, mode)
+                {'tool_name': 'fixture_build', 'parameters': {'action': 'plan'}}, mode)
             envelope = result.structured_content
             check(not result.is_error and isinstance(envelope, dict)
                   and envelope.get('success') is True and envelope.get('data') == raw['data']
                   and set(envelope) <= {'success', 'data', 'message', 'error', 'hint'}
                   and all(envelope.get(key) is None for key in ('message', 'error', 'hint')),
                   'terminal plan preserves normalized public success/data envelope')
-            check(sent == [('Project@fixture', 'manage_build', {'action': 'plan'})],
+            check(sent == [('Project@fixture', 'fixture_build', {'action': 'plan'})],
                   'terminal plan has exactly one wire and no poll')
             check(isinstance(envelope, dict) and isinstance(envelope.get('data'), dict)
                   and all(key not in envelope and key not in envelope['data']
@@ -271,7 +278,7 @@ async def main():
                         'data': {'job_id': 'guarded-owned'}},
                        {'success': True, 'data': {'job_id': 'guarded-owned', 'result': 'succeeded'}}]
             result, sent = await invoke(client, 'execute_custom_tool',
-                {'tool_name': 'manage_build', 'parameters': original}, mode)
+                {'tool_name': 'fixture_build', 'parameters': original}, mode)
             check([item[2] for item in sent] == [original, {**original, 'action': 'status', 'job_id': 'guarded-owned'}],
                   'guarded pending keeps response job identity and normal poll action')
             for state in ('pending', 'building', 'succeeded', 'failed', 'cancelled'):
@@ -292,11 +299,11 @@ async def main():
                 replies = [initial, intermediate, final]
                 original = {'action': 'batch', 'targets': ['windows64', 'android'], 'development': False}
                 result, sent = await invoke(client, 'execute_custom_tool',
-                                            {'tool_name': 'manage_build', 'parameters': original}, mode)
+                                            {'tool_name': 'fixture_build', 'parameters': original}, mode)
                 expected_poll = {**original, 'action': 'status', 'job_id': 'batch-owned'}
-                check(sent == [('Project@fixture', 'manage_build', original),
-                               ('Project@fixture', 'manage_build', expected_poll),
-                               ('Project@fixture', 'manage_build', expected_poll)], 'response jobID poll identity')
+                check(sent == [('Project@fixture', 'fixture_build', original),
+                               ('Project@fixture', 'fixture_build', expected_poll),
+                               ('Project@fixture', 'fixture_build', expected_poll)], 'response jobID poll identity')
                 check(result.structured_content['success'] is final['success']
                       and result.structured_content['data'] == final['data']
                       and result.structured_content.get('error') == final.get('error'), 'terminal polling envelope')
