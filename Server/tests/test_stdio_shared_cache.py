@@ -1,6 +1,6 @@
 """Authenticated generation, stdio read counts, TTL and retained-copy bounds."""
 
-from tests.timing import await_signal, watchdog_timeout
+from tests.timing import await_completion, await_signal, watchdog_timeout
 
 import asyncio
 import importlib
@@ -304,6 +304,7 @@ async def test_replacement_does_not_join_old_active_stdio_job(monkeypatch, budge
         job_waits, "get_authenticated_stdio_generation", AsyncMock(side_effect=lambda _: generation)
     )
     entered, release = asyncio.Event(), asyncio.Event()
+    replacement_entered, release_replacement = asyncio.Event(), asyncio.Event()
     calls = []
 
     async def send(*_):
@@ -312,15 +313,39 @@ async def test_replacement_does_not_join_old_active_stdio_job(monkeypatch, budge
             entered.set()
             await release.wait()
             return {"success": True, "data": {"job_id": "job", "status": "succeeded"}}
+        replacement_entered.set()
+        await release_replacement.wait()
         return {"success": False, "error": "Job not found in replacement"}
 
     monkeypatch.setattr(jobs.unity_transport, "send_with_unity_instance", send)
-    old = asyncio.create_task(jobs.get_test_job(context(), "job", wait_timeout=1))
-    await entered.wait()
-    generation = "authenticated-replacement"
-    fresh = await jobs.get_test_job(context(), "job", wait_timeout=1)
-    release.set()
-    assert "replacement" in fresh.error and (await old).data.status == "succeeded"
+    # This checks generation isolation, not the one-second product deadline.
+    # Phase watchdogs bound a broken join without coupling old completion to
+    # how long replacement response delivery takes on a busy runner.
+    wait_timeout = max(1, int(watchdog_timeout()))
+    old = asyncio.create_task(jobs.get_test_job(context(), "job", wait_timeout=wait_timeout))
+    fresh = None
+    try:
+        await await_signal(entered, "old-generation status fetch")
+        generation = "authenticated-replacement"
+        fresh = asyncio.create_task(jobs.get_test_job(context(), "job", wait_timeout=wait_timeout))
+        await await_signal(replacement_entered, "independent replacement-generation status fetch")
+        assert not old.done() and not fresh.done()
+        release.set()
+        old_response = await await_completion(old, "old-generation status completion")
+        assert old_response.success and old_response.data is not None
+        assert old_response.data.status == "succeeded"
+        release_replacement.set()
+        fresh_response = await await_completion(fresh, "replacement-generation status completion")
+        assert fresh_response.success is False and "replacement" in fresh_response.error
+    finally:
+        release.set()
+        release_replacement.set()
+        for task in (old, fresh):
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in (old, fresh) if task is not None), return_exceptions=True
+        )
     assert calls == ["authenticated-old", "authenticated-replacement"]
 
 
