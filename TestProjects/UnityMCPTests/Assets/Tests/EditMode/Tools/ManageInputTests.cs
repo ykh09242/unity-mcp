@@ -13,7 +13,7 @@ namespace MCPForUnityTests.EditMode.Tools
     {
         private GameObject _root;
 
-        private sealed class CapabilityBackend : IInputSimulationBackend
+        private class CapabilityBackend : IInputSimulationBackend
         {
             public bool Available { get; set; }
             public string UnavailableReason => null;
@@ -22,6 +22,37 @@ namespace MCPForUnityTests.EditMode.Tools
             public object Apply(InputSimulationRequest request) => throw new InvalidOperationException("A status query must not dispatch input.");
 
             public void ReleaseAll() => throw new InvalidOperationException("A status query must not release input.");
+        }
+
+        private sealed class RoutingCapabilityBackend : CapabilityBackend, IPlayerInputSimulationBackend
+        {
+            public object DiagnosePlayer(GameObject target) => throw new InvalidOperationException("A status query must not inspect a player.");
+
+            public object PairPlayer(GameObject target, string device) => throw new InvalidOperationException("A status query must not pair a device.");
+
+            public object ReleasePlayer(GameObject target) => throw new InvalidOperationException("A status query must not release a player.");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void PairingCapabilityRequiresAvailableBackendWhileDiagnosticsRemainDiscoverable(bool available)
+        {
+            IInputSimulationBackend previous = ManageInput.InputBackend;
+            ManageInput.InputBackend = new RoutingCapabilityBackend { Available = available };
+            try
+            {
+                var result = (SuccessResponse)ManageInput.HandleCommand(new JObject { ["action"] = "status" });
+                var data = JObject.FromObject(result.Data);
+                Assert.That(data.Value<bool>("player_input_diagnostics"), Is.True);
+                Assert.That(data.Value<bool>("reversible_gamepad_pairing"), Is.EqualTo(available));
+                Assert.That(data.Value<bool>("input_system"), Is.EqualTo(available));
+                Assert.That(data.Value<bool>("legacy_raw_input"), Is.False);
+                Assert.That(data.Value<bool>("ui_dispatch_changes_raw_input"), Is.False);
+            }
+            finally
+            {
+                ManageInput.InputBackend = previous;
+            }
         }
 
         [TearDown]

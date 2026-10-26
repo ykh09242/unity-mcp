@@ -286,6 +286,40 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void V1PackingCapabilityExplainsV2RequirementAndRefusesWithoutMutation()
+        {
+            Create();
+            EditorSettings.spritePackerMode = SpritePackerMode.AlwaysOnAtlas;
+            var request = Guard(Read());
+            request["build_target"] = EditorUserBuildSettings.activeBuildTarget.ToString();
+            byte[] source = File.ReadAllBytes(Full(atlasPath));
+            byte[] metadata = File.ReadAllBytes(Full(atlasPath) + ".meta");
+            var capabilities = Data(Send("capabilities"));
+            Assert.IsFalse(capabilities.Value<bool>("packing_enabled"));
+            Assert.AreEqual("AlwaysOnAtlas", capabilities.Value<string>("packer_mode"));
+            CollectionAssert.AreEqual(new[] { "SpriteAtlasV2", "SpriteAtlasV2Build" }, capabilities["required_packer_modes"].Values<string>().ToArray());
+            StringAssert.Contains("V2", capabilities.Value<string>("packing_unavailable_reason"));
+            StringAssert.Contains("AlwaysOnAtlas", capabilities.Value<string>("packing_unavailable_reason"));
+            var result = Send("pack", atlasPath, request);
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("V2", result.Value<string>("error"));
+            Assert.AreEqual(SpritePackerMode.AlwaysOnAtlas, EditorSettings.spritePackerMode);
+            CollectionAssert.AreEqual(source, File.ReadAllBytes(Full(atlasPath)));
+            CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Full(atlasPath) + ".meta"));
+        }
+
+        [Test]
+        public void V2PackingCapabilityHasNoUnavailableReasonAndPreservesGlobalMode()
+        {
+            Assert.AreEqual(SpritePackerMode.SpriteAtlasV2, EditorSettings.spritePackerMode);
+            var capabilities = Data(Send("capabilities"));
+            Assert.IsTrue(capabilities.Value<bool>("packing_enabled"));
+            Assert.AreEqual(JTokenType.Null, capabilities["packing_unavailable_reason"].Type);
+            CollectionAssert.AreEqual(new[] { "SpriteAtlasV2", "SpriteAtlasV2Build" }, capabilities["required_packer_modes"].Values<string>().ToArray());
+            Assert.AreEqual(SpritePackerMode.SpriteAtlasV2, EditorSettings.spritePackerMode);
+        }
+
+        [Test]
         public void DisabledPacking_RefusesWithoutChangingGlobalMode()
         {
             // Given an authored atlas and explicitly disabled global packing.

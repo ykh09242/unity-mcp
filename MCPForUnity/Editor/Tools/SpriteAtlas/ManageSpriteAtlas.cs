@@ -332,6 +332,12 @@ namespace MCPForUnity.Editor.Tools.SpriteAtlasTools
                 authoring_unavailable_reason = AtlasAccess.ImporterSettingsSupported ? null : AtlasAccess.ImporterSettingsUnavailable().Message,
                 authoring_format = "V2 .spriteatlasv2",
                 packing_enabled = AtlasAccess.PackingEnabled,
+                required_packer_modes = new[] { "SpriteAtlasV2", "SpriteAtlasV2Build" },
+                packing_unavailable_reason = AtlasAccess.PackingEnabled
+                    ? null
+                    : "Scoped V2 preview packing requires SpriteAtlasV2 or SpriteAtlasV2Build; the current mode is "
+                        + EditorSettings.spritePackerMode
+                        + ". This tool does not change global packing settings.",
                 packer_mode = EditorSettings.spritePackerMode.ToString(),
                 active_build_target = EditorUserBuildSettings.activeBuildTarget.ToString(),
                 pack_scope = "one atlas plus its nonvariant master for variants",

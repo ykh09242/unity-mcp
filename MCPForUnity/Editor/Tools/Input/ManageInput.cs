@@ -105,7 +105,7 @@ namespace MCPForUnity.Editor.Tools.Input
                     gamepad = InputBackend?.Available ?? false,
                     wheel = InputBackend?.Available ?? false,
                     player_input_diagnostics = InputBackend is IPlayerInputSimulationBackend,
-                    reversible_gamepad_pairing = InputBackend is IPlayerInputSimulationBackend,
+                    reversible_gamepad_pairing = InputBackend is IPlayerInputSimulationBackend && InputBackend.Available,
                     multi_touch = InputBackend?.Available ?? false,
                     max_touch_contacts = 10,
                     legacy_raw_input = false,
