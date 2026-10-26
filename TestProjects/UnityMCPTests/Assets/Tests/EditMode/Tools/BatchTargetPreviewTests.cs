@@ -178,6 +178,39 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public async Task ParentRevocationDuringGuardVerificationNeverDispatchesFirstChild()
+        {
+            if (Application.platform != RuntimePlatform.WindowsEditor)
+                Assert.Ignore("Cooperative file hashing requires the Windows read-sharing guarantee; other Editors retain synchronous hashing.");
+            AssetDatabase.DisallowAutoRefresh();
+            try
+            {
+                string path = LargeAsset();
+                string destination = folder + "/ConsentRevoked.txt";
+                var commands = new JArray(Edit(), Move(path, destination));
+                JToken guard = Guard(Preview(commands));
+                Task<object> pending = BatchExecute.HandleCommand(new JObject { ["commands"] = commands, ["preview"] = guard });
+                Assert.IsFalse(pending.IsCompleted, "Whole-batch verification must yield before child zero.");
+
+                MCPServiceLocator.ToolDiscovery.SetToolEnabled("batch_execute", false);
+                JObject response = JObject.FromObject(await pending);
+
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(0, response.SelectToken("data.attemptedCount").Value<int>());
+                Assert.AreEqual(2, response.SelectToken("data.notRunCount").Value<int>());
+                Assert.AreEqual("not_started", (string)response.SelectToken("data.executionStatus"));
+                Assert.AreEqual(Vector3.zero, root.transform.localPosition);
+                Assert.IsTrue(File.Exists(path));
+                Assert.IsFalse(File.Exists(destination));
+                using (File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+            }
+            finally
+            {
+                AssetDatabase.AllowAutoRefresh();
+            }
+        }
+
+        [Test]
         public async Task GuardedApplyCancellationSettlesFileWorkWithoutMutatingEarlierTarget()
         {
             if (Application.platform != RuntimePlatform.WindowsEditor)

@@ -87,6 +87,15 @@ namespace MCPForUnity.Editor.Tools
             outcomes[index]["reason"] = reason;
         }
 
+        private static bool RejectRevokedBatch(JArray outcomes, int index)
+        {
+            if (MCPServiceLocator.ToolDiscovery.IsToolEnabled("batch_execute"))
+                return false;
+            for (int remaining = index; remaining < outcomes.Count; remaining++)
+                SetOutcome(outcomes, remaining, "not_run", "batch_disabled");
+            return true;
+        }
+
         private static JObject ValidationData(JArray items, bool complete, bool valid) =>
             new JObject
             {
@@ -338,12 +347,8 @@ namespace MCPForUnity.Editor.Tools
                     cancellationToken.ThrowIfCancellationRequested();
                     sliceStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 }
-                // The previous child has settled. Recheck the parent before the
-                // next item; initial dispatcher/preview admission is unchanged.
-                if (index > 0 && !MCPServiceLocator.ToolDiscovery.IsToolEnabled("batch_execute"))
+                if (RejectRevokedBatch(outcomes, index))
                 {
-                    for (int remaining = index; remaining < commandsToken.Count; remaining++)
-                        SetOutcome(outcomes, remaining, "not_run", "batch_disabled");
                     anyCommandFailed = true;
                     break;
                 }
@@ -409,6 +414,13 @@ namespace MCPForUnity.Editor.Tools
                     {
                         var rawParams = commandObj["params"] as JObject ?? new JObject();
                         var commandParams = NormalizeParameterKeys(rawParams);
+                        // Preview verification and target hashing can yield even before child zero.
+                        // Check parent consent after all preparation, with no Editor yield before dispatch.
+                        if (RejectRevokedBatch(outcomes, index))
+                        {
+                            anyCommandFailed = true;
+                            break;
+                        }
                         // The caller owns leases through every await, including the first child's
                         // rehash. Release just before dispatch so Windows moves can proceed;
                         // there is no Editor yield between release and handler invocation.
@@ -504,7 +516,7 @@ namespace MCPForUnity.Editor.Tools
                 requestedCount = commandsToken.Count,
                 attemptedCount = commandResults.Count - nativeNotStartedCount,
                 notRunCount = commandsToken.Count - commandResults.Count + nativeNotStartedCount,
-                executionStatus = nativeNotStartedCount > 0 && commandResults.Count == nativeNotStartedCount ? "not_started"
+                executionStatus = commandResults.Count == nativeNotStartedCount ? "not_started"
                 : nativeNotStartedCount == 0 && commandResults.Count == commandsToken.Count ? "completed"
                 : "partial",
                 rollbackPerformed = false,
