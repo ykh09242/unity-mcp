@@ -305,13 +305,15 @@ namespace MCPForUnityTests.EditMode.Tools
                 new object[] { null, new RenamedEventArgs(WatcherChangeTypes.Renamed, root, "Assets/new.gitignore", "Assets/old.gitignore") }
             );
             Assert.AreEqual(before, rules.Status("epoch", 1).Value<long>("ignore_revision"));
+            foreach (WatcherChangeTypes change in new[] { WatcherChangeTypes.Created, WatcherChangeTypes.Changed })
             foreach (string name in new[] { "Assets/Nested/.gitignore", ".gitignore", "Assets/Nested/.GITIGNORE" })
             {
                 before = rules.Status("epoch", 1).Value<long>("ignore_revision");
-                changed.Invoke(rules, new object[] { null, new FileSystemEventArgs(WatcherChangeTypes.Changed, root, name) });
+                changed.Invoke(rules, new object[] { null, new FileSystemEventArgs(change, root, name) });
                 long after = rules.Status("epoch", 1).Value<long>("ignore_revision");
-                Assert.AreEqual(name.EndsWith(".GITIGNORE", StringComparison.Ordinal) && Path.DirectorySeparatorChar != '\\' ? before : before + 1, after);
+                Assert.AreEqual(before + 1, after, "Rule-name hints must invalidate for either casing, independently of filesystem path comparison.");
             }
+            foreach (string rule in new[] { "Assets/.gitignore", "Assets/.GITIGNORE" })
             foreach (bool intoRule in new[] { false, true })
             {
                 before = rules.Status("epoch", 1).Value<long>("ignore_revision");
@@ -320,12 +322,7 @@ namespace MCPForUnityTests.EditMode.Tools
                     new object[]
                     {
                         null,
-                        new RenamedEventArgs(
-                            WatcherChangeTypes.Renamed,
-                            root,
-                            intoRule ? "Assets/.gitignore" : "Assets/renamed.txt",
-                            intoRule ? "Assets/renamed.txt" : "Assets/.gitignore"
-                        ),
+                        new RenamedEventArgs(WatcherChangeTypes.Renamed, root, intoRule ? rule : "Assets/renamed.txt", intoRule ? "Assets/renamed.txt" : rule),
                     }
                 );
                 Assert.Greater(rules.Status("epoch", 1).Value<long>("ignore_revision"), before);
@@ -451,6 +448,38 @@ namespace MCPForUnityTests.EditMode.Tools
             JObject page = Call("ignore_rules", "validate", true, "page_size", 1000);
             Assert.IsTrue(((JArray)page["files"]).Any(row => row.Value<string>("path") == root + "/NewParent/.gitignore"));
             Assert.AreEqual(beforeToken, token.GetValue(null), "New-parent discovery must extend the existing census candidates.");
+        }
+
+        [Test]
+        public void ExplicitNewCensusRefreshesJournalChangesWithoutRefreshingOrdinaryReads()
+        {
+            CreateText("census-before.txt", "before");
+            JObject before = Call("inventory", "page_size", 1);
+            string snapshot = before.Value<string>("snapshot");
+            var type = typeof(ManageAsset).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphCollector");
+            const BindingFlags hidden = BindingFlags.NonPublic | BindingFlags.Static;
+            FieldInfo token = type.GetField("inventoryToken", hidden);
+            FieldInfo census = type.GetField("inventory", hidden);
+            Assert.AreEqual(snapshot, Call("inventory", "page_size", 1).Value<string>("snapshot"), "An unchanged explicit census must reuse its snapshot.");
+            AssetDatabase.CreateFolder(root, "CensusAdded");
+            string path = CreateText("CensusAdded/census-after.txt", "after");
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            Assert.AreEqual(snapshot, token.GetValue(null), "Import notifications must not rebuild the shared census.");
+            Call("status");
+            Call("ignore_rules", "validate", true);
+            Assert.AreEqual(snapshot, token.GetValue(null), "Status and implicit ignore discovery must not refresh the census.");
+            Assert.IsFalse(((string[])census.GetValue(null)).Contains(guid));
+            Assert.AreEqual(snapshot, Call("inventory", "snapshot", snapshot, "offset", 0, "page_size", 1).Value<string>("snapshot"));
+            JObject fresh = Call("inventory", "page_size", 1);
+            Assert.AreNotEqual(snapshot, fresh.Value<string>("snapshot"));
+            int index = Array.IndexOf((string[])census.GetValue(null), guid);
+            Assert.GreaterOrEqual(index, 0, "A new explicit census must discover the new imported GUID.");
+            JObject row = Call("inventory", "snapshot", fresh.Value<string>("snapshot"), "offset", index, "page_size", 1);
+            Assert.AreEqual(guid, row["assets"][0].Value<string>("guid"));
+            Assert.AreEqual(path, row["assets"][0].Value<string>("path"));
+            Assert.AreEqual(fresh["snapshot"], Call("inventory", "page_size", 1)["snapshot"]);
+            var stale = Assert.Throws<TargetInvocationException>(() => Call("inventory", "snapshot", snapshot, "offset", 0, "page_size", 1));
+            Assert.IsInstanceOf<InvalidOperationException>(stale.InnerException);
         }
 
         [Test]

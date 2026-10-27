@@ -65,7 +65,7 @@ namespace MCPForUnity.Editor.Tools
                 MarkChanged();
         }
 
-        private static bool IsRuleName(string path) => string.Equals(Path.GetFileName(path), ".gitignore", PathComparison);
+        private static bool IsRuleName(string path) => string.Equals(Path.GetFileName(path), ".gitignore", StringComparison.OrdinalIgnoreCase);
 
         internal static bool CanObserveWithoutPolling(bool monoRuntime, Func<string> inspectBackend)
         {

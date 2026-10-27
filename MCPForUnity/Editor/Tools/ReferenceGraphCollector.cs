@@ -107,7 +107,7 @@ namespace MCPForUnity.Editor.Tools
             switch (action)
             {
                 case "inventory":
-                    return Inventory(request, count);
+                    return Inventory(request, count, refresh: true);
                 case "ignore_rules":
                     return IgnoreRules(true).Rules(request, count, ReferenceGraphJournal.Epoch, ReferenceGraphJournal.Revision, DiscoverIgnoreCandidates);
                 case "ignore_source":
@@ -321,7 +321,7 @@ namespace MCPForUnity.Editor.Tools
             return guid;
         }
 
-        private static JObject Inventory(JObject request, int count)
+        private static JObject Inventory(JObject request, int count, bool refresh = false)
         {
             int offset = Integer(request, "offset", 0, 0, int.MaxValue);
             string token = request.Value<string>("snapshot");
@@ -329,7 +329,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (offset != 0)
                     throw new ArgumentException("Inventory continuation requires its snapshot.");
-                if (inventory == null || inventoryEpoch != ReferenceGraphJournal.Epoch)
+                if (inventory == null || inventoryEpoch != ReferenceGraphJournal.Epoch || (refresh && inventoryRevision != ReferenceGraphJournal.Revision))
                 {
                     inventoryEpoch = ReferenceGraphJournal.Epoch;
                     inventoryRevision = ReferenceGraphJournal.Revision;
