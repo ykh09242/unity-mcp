@@ -8,6 +8,7 @@ import pytest_asyncio
 from starlette.websockets import WebSocketState
 
 from core.config import config
+from transport import plugin_hub as hub_module
 from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
@@ -64,7 +65,27 @@ async def test_lost_reply_reports_unknown_execution_without_replay(
     command_hub, monkeypatch, failure
 ):
     applied = []
-    monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 0.02)
+    scopes = []
+
+    if failure == "timeout":
+
+        def capture_deadline(when):
+            scope = asyncio.timeout_at(when)
+            scopes.append(scope)
+            return scope
+
+        async def expire_reply_wait(future, timeout):
+            pending = PluginHub._pending.get(applied[0], {}) if applied else {}
+            if future is pending.get("future"):
+                # Expire the real total deadline only after the write completes.
+                # A short setup budget can instead refuse before any dispatch.
+                scopes[0].reschedule(asyncio.get_running_loop().time())
+            return await asyncio.wait_for(future, timeout=timeout)
+
+        local_asyncio = SimpleNamespace(**vars(asyncio))
+        local_asyncio.timeout_at = capture_deadline
+        local_asyncio.wait_for = expire_reply_wait
+        monkeypatch.setattr(hub_module, "asyncio", local_asyncio)
 
     async def lose_reply(message):
         command_hub.sent.append(message)
@@ -89,6 +110,8 @@ async def test_lost_reply_reports_unknown_execution_without_replay(
     assert "inspect" in result["error"].lower()
     assert len(applied) == 1
     assert PluginHub._pending == {}
+    if failure == "timeout":
+        assert scopes[0].expired()
 
 
 @pytest.mark.asyncio
