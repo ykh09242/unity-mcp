@@ -1980,6 +1980,10 @@ def _main(argv: list[str] | None = None) -> int:
     execution_finished = False
     acquisitions = 0
     resource_generation = 0
+    # One absolute deadline is shared by every owner, waiter and hard timer.
+    # Normal completion may shorten it to an earlier independent cleanup phase;
+    # expiry and later handoffs never extend it.
+    cleanup_deadline = deadline + args.cleanup_timeout
     cleanup_snapshot: tuple[int, tuple[int, ...]] | None = None
     cleanup_result: bool | None = None
     summary_exit_code: int | None = None
@@ -2006,99 +2010,160 @@ def _main(argv: list[str] | None = None) -> int:
         try:
             yield
         finally:
-            with lifecycle_lock:
-                acquisitions -= 1
-                resource_generation += 1
+            try:
+                # A cleanup owner may be blocked writing a pre-launch receipt.
+                # Publish the returned identity before handing off, with a
+                # per-generation copy that an older writer cannot overwrite.
+                # Keep admission in flight until publication finishes so cleanup
+                # cannot delete the registry or receipt underneath this writer.
+                if _watchdog_expired.is_set() and owns_status_dir:
+                    with lifecycle_lock:
+                        pending = getattr(launcher, "pending_handle", None)
+                        primary = pending or getattr(args, "_warmup_handle", None) or handle
+                        generation = resource_generation + 1
+                    if primary is not None:
+                        reports_dir.mkdir(parents=True, exist_ok=True)
+                        receipt = (
+                            json.dumps(
+                                {
+                                    "project_path": str(project_path),
+                                    "status_dir": str(status_dir),
+                                    "pid": primary.pid,
+                                    "container": primary.container,
+                                    "ownership_confirmed": primary is not pending,
+                                    "acquisition_in_flight": True,
+                                    "generation": generation,
+                                    "cleanup_confirmed": False,
+                                    "scene": getattr(args, "_harness_scene", None),
+                                },
+                                indent=2,
+                            )
+                            + "\n"
+                        )
+                        publication = reports_dir / f"reuse-{status_dir.name}-{generation}.json"
+                        publication.write_text(receipt, encoding="utf-8")
+                        (reports_dir / "reuse.json").write_text(receipt, encoding="utf-8")
+            finally:
+                with lifecycle_lock:
+                    acquisitions -= 1
+                    resource_generation += 1
 
-    def do_teardown() -> bool:
+    def remaining_cleanup() -> float:
+        return max(0.0, cleanup_deadline - time.monotonic())
+
+    def do_teardown(*, wait_for_owner: bool = False) -> bool:
         nonlocal cleanup_result, cleanup_snapshot
-        # Never let competing cleanup or lifecycle bookkeeping block hard exit.
-        if not cleanup_lock.acquire(blocking=False):
+        # The main owner hands off within the same absolute budget. Hard-exit
+        # threads never acquire this lock or depend on this wait returning.
+        if wait_for_owner:
+            acquired = cleanup_lock.acquire(timeout=remaining_cleanup())
+        else:
+            acquired = cleanup_lock.acquire(blocking=False)
+        if not acquired:
             return False
         try:
-            with lifecycle_lock:
-                generation = resource_generation
-                in_flight = acquisitions > 0
-                warmup_handle = getattr(args, "_warmup_handle", None)
-                pending_handle = getattr(launcher, "pending_handle", None)
-                resources = []
-                for candidate in (handle, warmup_handle, pending_handle):
-                    if candidate is not None and all(candidate is not item for item in resources):
-                        resources.append(candidate)
-                snapshot = (generation, tuple(id(item) for item in resources))
-                if not in_flight and cleanup_snapshot == snapshot and cleanup_result is not None:
-                    return cleanup_result
-            # A pending replacement remains separate from an already-stopped
-            # resident. It has recovery identity but no exact-ID kill authority.
-            primary = pending_handle or warmup_handle or handle
-            if (resources or in_flight) and owns_status_dir:
-                reports_dir.mkdir(parents=True, exist_ok=True)
-                (reports_dir / "reuse.json").write_text(
-                    json.dumps(
-                        {
-                            "project_path": str(project_path),
-                            "status_dir": str(status_dir),
-                            "pid": primary.pid if primary is not None else None,
-                            "container": primary.container if primary is not None else None,
-                            "ownership_confirmed": primary is not None
-                            and primary is not pending_handle,
-                            "acquisition_in_flight": in_flight,
-                            "resources": [
-                                {
-                                    "pid": item.pid,
-                                    "container": item.container,
-                                    "ownership_confirmed": item is not pending_handle,
-                                }
-                                for item in resources
-                            ],
-                            "scene": getattr(args, "_harness_scene", None),
-                        },
-                        indent=2,
+            while True:
+                with lifecycle_lock:
+                    generation = resource_generation
+                    in_flight = acquisitions > 0
+                    warmup_handle = getattr(args, "_warmup_handle", None)
+                    pending_handle = getattr(launcher, "pending_handle", None)
+                    resources = []
+                    for candidate in (handle, warmup_handle, pending_handle):
+                        if candidate is not None and all(
+                            candidate is not item for item in resources
+                        ):
+                            resources.append(candidate)
+                    snapshot = (generation, tuple(id(item) for item in resources))
+                    if (
+                        not in_flight
+                        and cleanup_snapshot == snapshot
+                        and cleanup_result is not None
+                    ):
+                        return cleanup_result
+                # A pending replacement remains separate from an already-stopped
+                # resident. It has recovery identity but no exact-ID kill authority.
+                primary = pending_handle or warmup_handle or handle
+                if (resources or in_flight) and owns_status_dir:
+                    reports_dir.mkdir(parents=True, exist_ok=True)
+                    (reports_dir / "reuse.json").write_text(
+                        json.dumps(
+                            {
+                                "project_path": str(project_path),
+                                "status_dir": str(status_dir),
+                                "pid": primary.pid if primary is not None else None,
+                                "container": primary.container if primary is not None else None,
+                                "ownership_confirmed": primary is not None
+                                and primary is not pending_handle,
+                                "acquisition_in_flight": in_flight,
+                                "resources": [
+                                    {
+                                        "pid": item.pid,
+                                        "container": item.container,
+                                        "ownership_confirmed": item is not pending_handle,
+                                    }
+                                    for item in resources
+                                ],
+                                "scene": getattr(args, "_harness_scene", None),
+                            },
+                            indent=2,
+                        )
+                        + "\n",
+                        encoding="utf-8",
                     )
-                    + "\n",
-                    encoding="utf-8",
-                )
-            stopped = not in_flight
-            successful = not in_flight
-            for candidate in resources:
-                if candidate is pending_handle:
-                    stopped = successful = False
+                stopped = not in_flight
+                successful = not in_flight
+                for candidate in resources:
+                    if candidate is pending_handle:
+                        stopped = successful = False
+                        continue
+                    should_stop = candidate is warmup_handle or (
+                        owns_editor and not args.keep_alive
+                    )
+                    if should_stop and (in_flight or remaining_cleanup() <= 0):
+                        stopped = successful = False
+                        continue
+                    if not should_stop:
+                        stopped = False
+                        continue
+                    try:
+                        launcher.teardown(candidate)
+                        candidate_stopped = not launcher.is_alive(candidate)
+                    except Exception as error:  # cleanup is a top-level failure boundary
+                        print(f"::error:: owned Editor cleanup failed: {error}", flush=True)
+                        candidate_stopped = False
+                    stopped = stopped and candidate_stopped
+                    successful = successful and candidate_stopped
+                retry_latest = False
+                with lifecycle_lock:
+                    # An admitted acquisition can finish while this owner observes
+                    # old resources. Never cache success or delete its registry.
+                    if generation != resource_generation or acquisitions:
+                        stopped = successful = False
+                        retry_latest = generation != resource_generation and acquisitions == 0
+                    else:
+                        cleanup_snapshot = snapshot
+                        cleanup_result = successful
+                if retry_latest:
+                    # Refresh identity even after budget exhaustion, but never start
+                    # another termination then. The independent hard timer can exit
+                    # during any blocked recovery write.
                     continue
-                should_stop = candidate is warmup_handle or (owns_editor and not args.keep_alive)
-                if not should_stop:
-                    stopped = False
-                    continue
+                if not stopped:
+                    if owns_status_dir:
+                        print(
+                            f"== retained Editor registry: {status_dir}; reuse handle: {reports_dir / 'reuse.json'} =="
+                        )
+                    return successful
+                if (resources or in_flight) and owns_status_dir:
+                    (reports_dir / "reuse.json").unlink(missing_ok=True)
                 try:
-                    launcher.teardown(candidate)
-                    candidate_stopped = not launcher.is_alive(candidate)
-                except Exception as error:  # cleanup is a top-level failure boundary
-                    print(f"::error:: owned Editor cleanup failed: {error}", flush=True)
-                    candidate_stopped = False
-                stopped = stopped and candidate_stopped
-                successful = successful and candidate_stopped
-            with lifecycle_lock:
-                # An admitted acquisition can finish while this owner observes
-                # old resources. Never cache success or delete its registry.
-                if generation != resource_generation or acquisitions:
-                    stopped = successful = False
-                else:
-                    cleanup_snapshot = snapshot
-                    cleanup_result = successful
-            if not stopped:
-                if owns_status_dir:
-                    print(
-                        f"== retained Editor registry: {status_dir}; reuse handle: {reports_dir / 'reuse.json'} =="
-                    )
+                    cleanup_ci_scene(args, project_path)
+                except OSError:
+                    print("::warning:: Could not remove the owned CI scene.")
+                if owns_status_dir and not _has_linked_ancestor(status_dir):
+                    shutil.rmtree(status_dir, ignore_errors=True)
                 return successful
-            if (resources or in_flight) and owns_status_dir:
-                (reports_dir / "reuse.json").unlink(missing_ok=True)
-            try:
-                cleanup_ci_scene(args, project_path)
-            except OSError:
-                print("::warning:: Could not remove the owned CI scene.")
-            if owns_status_dir and not _has_linked_ancestor(status_dir):
-                shutil.rmtree(status_dir, ignore_errors=True)
-            return successful
         finally:
             cleanup_lock.release()
 
@@ -2136,7 +2201,7 @@ def _main(argv: list[str] | None = None) -> int:
         ).start()
         # Neither a cleanup lock, blocked daemon RPC nor blocked output can
         # prevent the hard exit. This is a separate budget from execution.
-        _cleanup_done.wait(args.cleanup_timeout)
+        _cleanup_done.wait(remaining_cleanup())
         os._exit(2)
 
     threading.Thread(target=_watchdog, name="harness-watchdog", daemon=True).start()
@@ -2335,9 +2400,11 @@ def _main(argv: list[str] | None = None) -> int:
         with lifecycle_lock:
             if time.monotonic() >= deadline:
                 _watchdog_expired.set()
+            if not _watchdog_expired.is_set():
+                cleanup_deadline = min(cleanup_deadline, time.monotonic() + args.cleanup_timeout)
             execution_finished = True
             _watchdog_stop.set()
-        cleanup_timer = threading.Timer(args.cleanup_timeout, lambda: os._exit(2))
+        cleanup_timer = threading.Timer(remaining_cleanup(), lambda: os._exit(2))
         cleanup_timer.daemon = True
         cleanup_timer.start()
         try:
@@ -2364,7 +2431,7 @@ def _main(argv: list[str] | None = None) -> int:
                     ),
                 )
                 write_reports(junit_path, reports_dir, [*outcomes, cleanup_outcome])
-            cleaned = do_teardown()
+            cleaned = do_teardown(wait_for_owner=True)
             _watchdog_stop.set()
             expired = _watchdog_expired.is_set()
             if cleanup_outcome is not None:
