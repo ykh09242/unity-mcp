@@ -193,6 +193,76 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(0, ((JArray)data["recommended_actions"]).Count);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void PagedPoll_RunningJobReturnsProgressUntilResultsExist(bool failedOnly)
+        {
+            var job = NewJob(Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            job.CompletedTests = 2;
+            job.TotalTests = 4;
+            Jobs.Add(job.JobId, job);
+            var response = JObject.FromObject(
+                MCPForUnity.Editor.Tools.GetTestJob.HandleCommand(
+                    new JObject
+                    {
+                        ["job_id"] = job.JobId,
+                        ["includeDetails"] = !failedOnly,
+                        ["includeFailedTests"] = failedOnly,
+                        ["page_size"] = 12,
+                    }
+                )
+            );
+
+            Assert.IsTrue((bool)response["success"], response.ToString());
+            Assert.AreEqual("running", (string)response["data"]["status"]);
+            Assert.AreEqual(2, (int)response["data"]["progress"]["completed"]);
+            Assert.AreEqual(JTokenType.Null, response["data"]["result_page"].Type);
+            Assert.AreEqual(TestJobStatus.Running, job.Status);
+        }
+
+        [Test]
+        public void PagedPoll_CursorWithoutResultsStillRejects()
+        {
+            var job = NewJob(Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            Jobs.Add(job.JobId, job);
+            var response = JObject.FromObject(
+                MCPForUnity.Editor.Tools.GetTestJob.HandleCommand(
+                    new JObject
+                    {
+                        ["job_id"] = job.JobId,
+                        ["includeDetails"] = true,
+                        ["page_size"] = 12,
+                        ["cursor"] = "invalid",
+                    }
+                )
+            );
+            Assert.IsFalse((bool)response["success"], response.ToString());
+        }
+
+        [Test]
+        public void PagedPoll_FailedWithoutResultsRetainsFailure()
+        {
+            var job = NewJob(Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            job.Status = TestJobStatus.Failed;
+            job.CompletionKind = "interrupted";
+            job.Error = "Test job failed to initialize";
+            Jobs.Add(job.JobId, job);
+            var response = JObject.FromObject(
+                MCPForUnity.Editor.Tools.GetTestJob.HandleCommand(
+                    new JObject
+                    {
+                        ["job_id"] = job.JobId,
+                        ["includeFailedTests"] = true,
+                        ["page_size"] = 12,
+                    }
+                )
+            );
+            Assert.IsTrue((bool)response["success"], response.ToString());
+            Assert.AreEqual("failed", (string)response["data"]["status"]);
+            Assert.AreEqual(job.Error, (string)response["data"]["error"]);
+            Assert.AreEqual(JTokenType.Null, response["data"]["result_page"].Type);
+        }
+
         [Test]
         public void CompletedHistory_IsBoundedAndRetainsNewestResults()
         {

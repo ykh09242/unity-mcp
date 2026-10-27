@@ -585,7 +585,9 @@ async def get_test_job(
     page_size: Annotated[
         int | None,
         Field(
-            ge=1, le=100, description="Opt-in terminal detail page size; requires a detail flag."
+            ge=1,
+            le=100,
+            description="Terminal detail page size; requires a detail flag. Running jobs return progress until results are available.",
         ),
     ] = None,
     cursor: Annotated[str | None, "Opaque next_cursor from a result page"] = None,
@@ -627,7 +629,7 @@ async def get_test_job(
         return response, observation_order
 
     # Both ordinary execution and Tasks use this same existing wait loop.
-    if wait_timeout and wait_timeout > 0 and page_size is None:
+    if wait_timeout and wait_timeout > 0:
         return await wait_for_test_job(
             ctx,
             unity_instance,
@@ -637,6 +639,8 @@ async def get_test_job(
             include_details,
             wait_timeout,
             _fetch_status,
+            page_size=page_size,
+            cursor=cursor,
         )
 
     # No wait_timeout - return immediately (original behavior)

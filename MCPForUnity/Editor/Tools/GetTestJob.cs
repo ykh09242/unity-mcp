@@ -43,9 +43,16 @@ namespace MCPForUnity.Editor.Tools
                 try
                 {
                     var value = JObject.FromObject(TestJobManager.ToSerializable(job, false, false));
-                    value["result_page"] = JObject.FromObject(
-                        TestJobManager.Page(job, (int)@params["page_size"], (string)@params["cursor"], !includeDetails && includeFailedTests)
-                    );
+                    // Paging is also used while polling. A running or interrupted job
+                    // has no terminal artifact yet; retain its progress/error instead
+                    // of turning an ordinary status read into an invalid-cursor error.
+                    // An explicit continuation must still be validated against results.
+                    value["result_page"] =
+                        string.IsNullOrEmpty((string)@params["cursor"]) && (job.CompletionKind != "completed" || job.ResultArtifact == null)
+                            ? JValue.CreateNull()
+                            : JObject.FromObject(
+                                TestJobManager.Page(job, (int)@params["page_size"], (string)@params["cursor"], !includeDetails && includeFailedTests)
+                            );
                     payload = value;
                 }
                 catch (Exception)

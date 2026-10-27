@@ -26,6 +26,9 @@ async def wait_for_test_job(
     include_details,
     wait_timeout,
     _fetch_status,
+    *,
+    page_size=None,
+    cursor=None,
 ):
     # Keep existing per-job observation/nudge state in its original owner module.
     from services.tools.run_tests import GetTestJobResponse, _job_status_reads, _update_job_nudge
@@ -51,6 +54,8 @@ async def wait_for_test_job(
             job_id,
             bool(include_failed_tests),
             bool(include_details),
+            page_size,
+            cursor,
         )
         if unity_instance
         and (not config.http_remote_hosted or isinstance(user_id, str) and bool(user_id))
@@ -83,6 +88,8 @@ async def wait_for_test_job(
                                 job_id,
                                 bool(include_failed_tests),
                                 bool(include_details),
+                                page_size,
+                                cursor,
                             )
                             if unity_instance and http_session
                             else None

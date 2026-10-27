@@ -69,6 +69,59 @@ def context():
 
 
 @pytest.mark.asyncio
+async def test_paged_wait_returns_completed_page_after_running_status(transport):
+    page = {"items": [{"fullName": "Suite.Failed", "state": "Failed"}], "next_cursor": None}
+    transport.side_effect = [
+        deepcopy(RUNNING),
+        {"success": True, "data": {"job_id": "job", "status": "failed", "result_page": page}},
+    ]
+    response = await jobs.get_test_job(
+        context(), "job", include_failed_tests=True, page_size=12, wait_timeout=5
+    )
+    assert response.success and response.data.status == "failed"
+    assert response.data.result_page == page
+    assert transport.await_count == 2
+    assert all(
+        call.args[3] == {"job_id": "job", "includeFailedTests": True, "page_size": 12}
+        for call in transport.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_paged_waits_share_only_identical_page_selection(transport):
+    async def fetch(_sender, _instance, _command, params, **kwargs):
+        await asyncio.sleep(0.02)
+        return {
+            "success": True,
+            "data": {
+                "job_id": "job",
+                "status": "succeeded",
+                "result_page": {"selection": [params.get("page_size"), params.get("cursor")]},
+            },
+        }
+
+    transport.side_effect = fetch
+    selections = [(12, None), (12, None), (24, None), (12, "next"), (None, None)]
+    replies = await asyncio.gather(
+        *(
+            jobs.get_test_job(
+                context(),
+                "job",
+                include_details=True,
+                page_size=size,
+                cursor=cursor,
+                wait_timeout=1,
+            )
+            for size, cursor in selections
+        )
+    )
+    assert [reply.data.result_page["selection"] for reply in replies] == [
+        list(x) for x in selections
+    ]
+    assert transport.await_count == 4
+
+
+@pytest.mark.asyncio
 async def test_twenty_concurrent_waiters_share_two_polling_rounds(transport):
     started = time.monotonic()
 
