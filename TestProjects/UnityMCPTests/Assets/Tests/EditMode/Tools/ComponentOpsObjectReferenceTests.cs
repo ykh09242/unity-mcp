@@ -24,6 +24,11 @@ namespace MCPForUnityTests.Editor.Tools
         [SerializeField]
         private Light privateLight = null;
         public Light PrivateLight => privateLight;
+
+        [SerializeField]
+        private Light[] privateLights = null;
+        public Light[] PrivateLights => privateLights;
+        public List<Light> lightList;
     }
 
     [System.Serializable]
@@ -186,15 +191,16 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNull(probe.lightReference);
         }
 
-        [Test]
-        public void SetProperty_MaterialArray_ResolvesReferencesAndExplicitNull()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SetProperty_MaterialArray_ResolvesReferencesAndExplicitNull(bool objectForm)
         {
             var renderer = owner.AddComponent<MeshRenderer>();
             var material = new Material(Shader.Find("Hidden/InternalErrorShader"));
             try
             {
                 Assert.IsTrue(
-                    ComponentOps.SetProperty(renderer, "sharedMaterials", new JArray(Reference(material, true), JValue.CreateNull()), out string error),
+                    ComponentOps.SetProperty(renderer, "sharedMaterials", new JArray(Reference(material, objectForm), JValue.CreateNull()), out string error),
                     error
                 );
                 CollectionAssert.AreEqual(new Material[] { material, null }, renderer.sharedMaterials);
@@ -207,8 +213,11 @@ namespace MCPForUnityTests.Editor.Tools
 
         [TestCase("incompatible")]
         [TestCase("unresolved")]
+        [TestCase("incompatible-integer")]
+        [TestCase("unresolved-integer")]
         [TestCase("boolean")]
-        [TestCase("integer")]
+        [TestCase("integer-overflow")]
+        [TestCase("fractional")]
         [TestCase("object")]
         [TestCase("array")]
         [TestCase("boolean-id")]
@@ -229,8 +238,11 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     "incompatible" => Reference(source.transform, true),
                     "unresolved" => unresolved,
+                    "incompatible-integer" => Reference(source.transform, false),
+                    "unresolved-integer" => unresolved["instanceID"].DeepClone(),
                     "boolean" => new JValue(true),
-                    "integer" => Reference(second, false),
+                    "integer-overflow" => new JValue((long)int.MaxValue + 1),
+                    "fractional" => new JValue(1.5),
                     "object" => new JObject { ["unexpected"] = true },
                     "array" => new JArray(),
                     "boolean-id" => new JObject { ["instanceID"] = true },
@@ -298,14 +310,53 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNull(probe.lightReferences);
         }
 
-        [Test]
-        public void SetProperty_NestedReferenceData_ResolvesListAndExplicitNull()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SetProperty_NestedReferenceData_ResolvesListAndExplicitNull(bool objectForm)
         {
-            var value = new JObject { ["first"] = Reference(light, true), ["references"] = new JArray(Reference(source, true), JValue.CreateNull()) };
+            var value = new JObject
+            {
+                ["first"] = Reference(light, objectForm),
+                ["references"] = new JArray(Reference(source, objectForm), JValue.CreateNull()),
+            };
 
             Assert.IsTrue(ComponentOps.SetProperty(probe, nameof(ObjectReferenceProbe.data), value, out string error), error);
             Assert.AreSame(light, probe.data.first);
             CollectionAssert.AreEqual(new Light[] { light, null }, probe.data.references);
+        }
+
+        [TestCase("lightReferences", false)]
+        [TestCase("lightReferences", true)]
+        [TestCase("privateLights", false)]
+        [TestCase("privateLights", true)]
+        [TestCase("lightList", false)]
+        [TestCase("lightList", true)]
+        public void SetPropertyCommand_ReferenceCollectionsAcceptMixedIdsAndNull(string propertyName, bool bulkProperties)
+        {
+            var value = new JArray(Reference(light, false), Reference(source, true), JValue.CreateNull());
+            var parameters = new JObject
+            {
+                ["action"] = "set_property",
+                ["target"] = owner.GetInstanceIDCompat(),
+                ["componentType"] = typeof(ObjectReferenceProbe).FullName,
+            };
+            if (bulkProperties)
+                parameters["properties"] = new JObject { [propertyName] = value };
+            else
+            {
+                parameters["property"] = propertyName;
+                parameters["value"] = value;
+            }
+
+            var response = JObject.FromObject(ManageComponents.HandleCommand(parameters));
+
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var actual =
+                propertyName == "lightList" ? probe.lightList.ToArray()
+                : propertyName == "privateLights" ? probe.PrivateLights
+                : probe.lightReferences;
+            CollectionAssert.AreEqual(new Light[] { light, light, null }, actual);
+            LogAssert.NoUnexpectedReceived();
         }
 
         [TestCase("incompatible")]
@@ -356,7 +407,7 @@ namespace MCPForUnityTests.Editor.Tools
         {
             Assert.IsTrue(ComponentOps.SetProperty(probe, "count", new JValue(-42), out string error), error);
             Assert.AreEqual(-42, probe.count);
-            LogAssert.Expect(LogType.Error, new Regex("Error converting token to System.Int32"));
+            LogAssert.Expect(LogType.Error, new Regex("\\[PropertyConversion\\] Property value conversion failed"));
             Assert.IsFalse(ComponentOps.SetProperty(probe, "count", new JValue(true), out error));
             Assert.AreEqual(-42, probe.count);
         }

@@ -714,8 +714,8 @@ namespace MCPForUnity.Editor.Helpers
             error = null;
             rejectedValue = false;
 
-            // Resolve integer IDs through the same typed SerializedProperty path as object forms.
-            // The shared JSON converter accepts object-form IDs but cannot read bare integers.
+            // Keep scalar references on the typed SerializedProperty path, including
+            // component filters and asset sub-object selection in object-form selectors.
             bool isObjectReferenceValue = value != null && (value.Type == JTokenType.Object || value.Type == JTokenType.Integer);
 
             // Try property first

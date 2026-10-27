@@ -62,6 +62,7 @@ async def manage_components(
         "Value to set (required with property for set_property). Null clears an object reference. "
         "For object references: instance ID (int), asset path (string), "
         'or {"guid": "..."} / {"path": "..."}. '
+        'Arrays and lists also accept integer IDs or {"instanceID": 123} elements, with null to clear an element. '
         'For Sprite sub-assets: {"guid": "...", "spriteName": "<name>"} or '
         '{"guid": "...", "fileID": <id>}. Single-sprite textures auto-resolve.',
     ] = _VALUE_DEFAULT,

@@ -456,9 +456,11 @@ namespace MCPForUnity.Runtime.Serialization
                 return loadedAsset;
             }
 
-            if (reader.TokenType == JsonToken.StartObject)
+            if (reader.TokenType == JsonToken.StartObject || reader.TokenType == JsonToken.Integer)
             {
-                JObject jo = JObject.Load(reader);
+                // Collection elements use this converter directly, unlike scalar component
+                // fields. Normalize bare IDs so both forms share strict range/type checks.
+                JObject jo = reader.TokenType == JsonToken.Integer ? new JObject { ["instanceID"] = JToken.Load(reader) } : JObject.Load(reader);
                 // Reject malformed IDs before trying a different reference form.
                 // A guid/path must not hide an invalid Boolean or fractional ID.
                 if (jo.TryGetValue("instanceID", out JToken scalarId) && scalarId.Type != JTokenType.Null)
@@ -594,7 +596,7 @@ namespace MCPForUnity.Runtime.Serialization
 
             // Unexpected token type
             return RejectReference(
-                $"[UnityEngineObjectConverter] Unexpected token type '{reader.TokenType}' when deserializing {objectType.Name}. Expected Null, String, or Object."
+                $"[UnityEngineObjectConverter] Unexpected token type '{reader.TokenType}' when deserializing {objectType.Name}. Expected Null, Integer, String, or Object."
             );
 #else
             // Runtime deserialization is tricky without AssetDatabase/EditorUtility
