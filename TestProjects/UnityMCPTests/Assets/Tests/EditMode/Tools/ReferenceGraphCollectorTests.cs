@@ -105,7 +105,7 @@ namespace MCPForUnityTests.EditMode.Tools
                     typeof(ReferenceGraphIgnoreRules).GetField("watchers", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(rules)
             )
             {
-                Assert.AreEqual(".gitignore", watcher.Filter);
+                Assert.AreEqual("*.gitignore", watcher.Filter);
                 if (watcher.Path == root)
                     Assert.IsFalse(watcher.IncludeSubdirectories, "Root observation must not subscribe Library and Temp trees.");
             }
@@ -229,32 +229,106 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
-        public void RealWatcherInvalidatesNestedRuleCreationEditMoveAndDeletion()
+        public void NestedRuleCreateEditMoveDeleteUsesDeclaredWatcherCapability()
         {
-            Acquire();
+            JObject page = Acquire();
+            bool automatic = page.Value<bool>("ignore_watchers");
             string nested = candidates["Assets/Nested/.gitignore"];
             string parent = candidates["Assets/.gitignore"];
+            string renamed = Path.Combine(root, "Assets", "renamed-rule.txt");
             foreach (
                 Action change in new Action[]
                 {
                     () => File.WriteAllText(nested, "created\n"),
                     () => File.AppendAllText(nested, "edited\n"),
                     () => File.Move(nested, parent),
+                    () => File.Move(parent, renamed),
+                    () => File.Move(renamed, parent),
                     () => File.Delete(parent),
                 }
             )
             {
                 long before = rules.Status("epoch", 1).Value<long>("ignore_revision");
                 change();
-                var elapsed = System.Diagnostics.Stopwatch.StartNew();
-                while (rules.Status("epoch", 1).Value<long>("ignore_revision") == before && elapsed.ElapsedMilliseconds < 15000)
-                    System.Threading.Thread.Sleep(10);
+                if (automatic)
+                {
+                    var elapsed = System.Diagnostics.Stopwatch.StartNew();
+                    while (rules.Status("epoch", 1).Value<long>("ignore_revision") == before && elapsed.ElapsedMilliseconds < 15000)
+                        System.Threading.Thread.Sleep(10);
+                }
+                else
+                {
+                    Assert.AreEqual(
+                        before,
+                        rules.Status("epoch", 1).Value<long>("ignore_revision"),
+                        "Degraded observation must not claim automatic invalidation."
+                    );
+                    Assert.Throws<InvalidOperationException>(
+                        () => Read(page, validate: true),
+                        "Explicit validation must reject changed nested rules before delivery."
+                    );
+                }
                 Assert.Greater(
                     rules.Status("epoch", 1).Value<long>("ignore_revision"),
                     before,
-                    "Nested changes must invalidate without a census or explicit validation."
+                    automatic
+                        ? "Nested changes must invalidate without a census or explicit validation."
+                        : "Changed rules must invalidate through declared explicit validation."
                 );
-                Acquire();
+                page = Acquire();
+                Assert.AreEqual(automatic, page.Value<bool>("ignore_watchers"));
+            }
+        }
+
+        [Test]
+        public void PollingUnknownAndUninspectableMonoBackendsRequireExplicitValidation()
+        {
+            foreach (string backend in new[] { "System.IO.DefaultWatcher", "System.IO.NullFileWatcher", "System.IO.UnknownWatcher", null })
+                Assert.IsFalse(ReferenceGraphIgnoreRules.CanObserveWithoutPolling(true, () => backend));
+            Assert.IsFalse(ReferenceGraphIgnoreRules.CanObserveWithoutPolling(true, () => throw new InvalidOperationException("Owned inspection failure")));
+            foreach (string backend in new[] { "System.IO.CoreFXFileSystemWatcherProxy", "System.IO.FAMWatcher", "System.IO.KeventWatcher" })
+                Assert.IsTrue(ReferenceGraphIgnoreRules.CanObserveWithoutPolling(true, () => backend));
+            Assert.IsTrue(ReferenceGraphIgnoreRules.CanObserveWithoutPolling(false, () => throw new Exception("Non-Mono inspection must not run.")));
+        }
+
+        [Test]
+        public void SuffixWatcherCallbacksInvalidateOnlyExactRuleNamesAndBothRenameSides()
+        {
+            Acquire();
+            PauseWatchers();
+            MethodInfo changed = typeof(ReferenceGraphIgnoreRules).GetMethod("Changed", BindingFlags.Instance | BindingFlags.NonPublic);
+            MethodInfo renamed = typeof(ReferenceGraphIgnoreRules).GetMethod("Renamed", BindingFlags.Instance | BindingFlags.NonPublic);
+            long before = rules.Status("epoch", 1).Value<long>("ignore_revision");
+            changed.Invoke(rules, new object[] { null, new FileSystemEventArgs(WatcherChangeTypes.Changed, root, "Assets/Nested/other.gitignore") });
+            renamed.Invoke(
+                rules,
+                new object[] { null, new RenamedEventArgs(WatcherChangeTypes.Renamed, root, "Assets/new.gitignore", "Assets/old.gitignore") }
+            );
+            Assert.AreEqual(before, rules.Status("epoch", 1).Value<long>("ignore_revision"));
+            foreach (string name in new[] { "Assets/Nested/.gitignore", ".gitignore", "Assets/Nested/.GITIGNORE" })
+            {
+                before = rules.Status("epoch", 1).Value<long>("ignore_revision");
+                changed.Invoke(rules, new object[] { null, new FileSystemEventArgs(WatcherChangeTypes.Changed, root, name) });
+                long after = rules.Status("epoch", 1).Value<long>("ignore_revision");
+                Assert.AreEqual(name.EndsWith(".GITIGNORE", StringComparison.Ordinal) && Path.DirectorySeparatorChar != '\\' ? before : before + 1, after);
+            }
+            foreach (bool intoRule in new[] { false, true })
+            {
+                before = rules.Status("epoch", 1).Value<long>("ignore_revision");
+                renamed.Invoke(
+                    rules,
+                    new object[]
+                    {
+                        null,
+                        new RenamedEventArgs(
+                            WatcherChangeTypes.Renamed,
+                            root,
+                            intoRule ? "Assets/.gitignore" : "Assets/renamed.txt",
+                            intoRule ? "Assets/renamed.txt" : "Assets/.gitignore"
+                        ),
+                    }
+                );
+                Assert.Greater(rules.Status("epoch", 1).Value<long>("ignore_revision"), before);
             }
         }
 

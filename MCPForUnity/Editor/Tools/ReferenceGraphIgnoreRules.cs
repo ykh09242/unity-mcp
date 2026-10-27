@@ -22,6 +22,7 @@ namespace MCPForUnity.Editor.Tools
         }
 
         private readonly string projectRoot;
+        private const string IgnoreFilter = "*.gitignore";
         private readonly Func<string, FileSystemWatcher> watcherFactory;
         private readonly List<FileSystemWatcher> watchers = new List<FileSystemWatcher>();
         private string[] watchedRoots = Array.Empty<string>();
@@ -46,15 +47,47 @@ namespace MCPForUnity.Editor.Tools
                 throw new ArgumentOutOfRangeException(nameof(initialRevision));
             revision = initialRevision;
             this.projectRoot = SafePathUtility.ResolveWithinRoot(projectRoot, ".");
-            this.watcherFactory = watcherFactory ?? (root => new FileSystemWatcher(root, ".gitignore"));
+            this.watcherFactory = watcherFactory ?? (root => new FileSystemWatcher(root, IgnoreFilter));
             SetWatchers(BaseRoots());
         }
 
         // Callbacks do not resolve paths, read files, or call Unity APIs. Even a late
         // callback from a disposed watcher invalidates instead of publishing old proof.
-        private void Changed(object sender, FileSystemEventArgs args) => MarkChanged();
+        private void Changed(object sender, FileSystemEventArgs args)
+        {
+            if (IsRuleName(args.Name))
+                MarkChanged();
+        }
 
-        private void Renamed(object sender, RenamedEventArgs args) => MarkChanged();
+        private void Renamed(object sender, RenamedEventArgs args)
+        {
+            if (IsRuleName(args.Name) || IsRuleName(args.OldName))
+                MarkChanged();
+        }
+
+        private static bool IsRuleName(string path) => string.Equals(Path.GetFileName(path), ".gitignore", PathComparison);
+
+        internal static bool CanObserveWithoutPolling(bool monoRuntime, Func<string> inspectBackend)
+        {
+            if (!monoRuntime)
+                return true;
+            try
+            {
+                switch (inspectBackend())
+                {
+                    case "System.IO.CoreFXFileSystemWatcherProxy":
+                    case "System.IO.FAMWatcher":
+                    case "System.IO.KeventWatcher":
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
 
         private void Failed(object sender, ErrorEventArgs args)
         {
@@ -264,7 +297,24 @@ namespace MCPForUnity.Editor.Tools
                 {
                     var watcher = watcherFactory(root);
                     watchers.Add(watcher);
-                    watcher.Filter = ".gitignore";
+                    // Mono selects its backend in the constructor. Inspect before
+                    // enabling: DefaultWatcher otherwise scans the tree every 750ms.
+                    if (
+                        !CanObserveWithoutPolling(
+                            Type.GetType("Mono.Runtime") != null,
+                            () =>
+                                typeof(FileSystemWatcher)
+                                    .GetField("watcher", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                                    ?.GetValue(watcher)
+                                    ?.GetType()
+                                    .FullName
+                        )
+                    )
+                        throw new NotSupportedException("The watcher backend cannot provide event-only invalidation.");
+                    // Mono's DefaultWatcher silently misses nested literal-name
+                    // filters. Keep the suffix filter narrow and check exact names
+                    // in the callbacks, including both sides of a rename.
+                    watcher.Filter = IgnoreFilter;
                     watcher.IncludeSubdirectories =
                         !root.Equals(projectRoot, PathComparison) && !root.Equals(Path.Combine(projectRoot, "Packages"), PathComparison);
                     watcher.NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size;

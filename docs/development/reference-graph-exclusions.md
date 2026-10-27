@@ -73,8 +73,12 @@ from publishing against rules that changed during collection.
 
 Native rule discovery reuses the asset inventory's ancestor directories. It does
 not recursively scan the whole project filesystem on each status request.
-Watcher events invalidate cached evidence, while explicit snapshot checks cover
-present and missing candidates. The server compiles and reuses matching rules
+Supported event-based watchers invalidate cached evidence, while explicit
+snapshot checks cover present and missing candidates. Unity Mono's polling-only
+or unavailable watcher backends remain inactive; protected requests validate
+the known rule candidates explicitly instead of starting a recurring recursive
+directory scan. This fallback does not require a manual rebuild. The server
+compiles and reuses matching rules
 by effective policy revision. Large rule files use bounded transport chunks and
 the existing operator-controlled collection budgets rather than a new total
 project-size limit.
