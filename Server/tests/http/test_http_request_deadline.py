@@ -601,10 +601,39 @@ async def test_sdk_custom_polling_uses_its_existing_bound_from_request_start(
     server.tool(execute_custom_tool)
     previous = CustomToolService._instance
     service = CustomToolService(server)
+    poll_seconds = 60
     service.register_global_tools(
-        [ToolDefinitionModel(name="fixture_job", requires_polling=True, max_poll_seconds=1)]
+        [
+            ToolDefinitionModel(
+                name="fixture_job", requires_polling=True, max_poll_seconds=poll_seconds
+            )
+        ]
     )
     calls = []
+    definition_entered, release_definition = asyncio.Event(), asyncio.Event()
+    polling_entered = asyncio.Event()
+    observed = {}
+    get_definition = service.get_tool_definition
+
+    async def observe_definition(*args, **kwargs):
+        request = http_request_budget.get()
+        observed["started_at"] = request.started_at
+        observed["initial_budget"] = request.budget.expires_at - request.started_at
+        definition_entered.set()
+        await release_definition.wait()
+        return await get_definition(*args, **kwargs)
+
+    monkeypatch.setattr(service, "get_tool_definition", observe_definition)
+    interpret_status = service._interpret_status
+
+    def observe_status(*args, **kwargs):
+        status, interval = interpret_status(*args, **kwargs)
+        if status == "pending":
+            observed["request"] = http_request_budget.get()
+            polling_entered.set()
+        return status, interval
+
+    monkeypatch.setattr(service, "_interpret_status", observe_status)
 
     async def send_json(message):
         command_hub.sent.append(message)
@@ -623,36 +652,42 @@ async def test_sdk_custom_polling_uses_its_existing_bound_from_request_start(
     try:
         async with Client(server, mode="legacy") as client:
             await client.call_tool("select_fixture")
-            monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 0.4 if not finish else 0.05)
-            release = None
-            if not finish:
-                await command_hub.registry._lock.acquire()
-
-                async def release_selection():
-                    await asyncio.sleep(0.3)
-                    command_hub.registry._lock.release()
-
-                release = asyncio.create_task(release_selection())
-            started = asyncio.get_running_loop().time()
-            try:
-                result = await client.call_tool(
+            monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 30)
+            task = asyncio.create_task(
+                client.call_tool(
                     "execute_custom_tool", {"tool_name": "fixture_job"}, raise_on_error=False
                 )
+            )
+            try:
+                await await_signal(
+                    definition_entered, "custom descriptor lookup", producers=(task,)
+                )
+                assert observed["initial_budget"] == pytest.approx(30)
+                release_definition.set()
+                await await_signal(polling_entered, "custom polling wait", producers=(task,))
+                request = observed["request"]
+                # Verify the policy at its boundary, without a 50 ms scheduler race.
+                assert request.budget.expires_at == observed["started_at"] + poll_seconds
+                assert request.scope.when() == request.budget.expires_at
+                if not finish:
+                    request.scope.reschedule(asyncio.get_running_loop().time())
+                result = await await_completion(task, "custom polling result")
+                if finish:
+                    assert result.structured_content["success"] is True, result.structured_content
+                    assert len(calls) == 2
+                else:
+                    assert result.structured_content["success"] is False
+                    assert result.structured_content["data"]["reason"] == "outcome_unknown"
+                    assert len(calls) == 1
+                assert service._active_polls == 0
+                assert PluginHub._pending == {}
             finally:
-                if release is not None:
-                    await release
-            elapsed = asyncio.get_running_loop().time() - started
-            if finish:
-                assert result.structured_content["success"] is True
-                assert len(calls) == 2
-                assert elapsed > 0.09
-            else:
-                assert result.structured_content["success"] is False
-                assert result.structured_content["data"]["reason"] == "outcome_unknown"
-                assert 0.9 < elapsed < 1.2
-                assert len(calls) == 1
-            assert service._active_polls == 0
-            assert PluginHub._pending == {}
+                release_definition.set()
+                if not task.done():
+                    task.cancel()
+                await await_completion(
+                    asyncio.gather(task, return_exceptions=True), "custom polling teardown"
+                )
     finally:
         CustomToolService._instance = previous
 
