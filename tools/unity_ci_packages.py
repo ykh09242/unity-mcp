@@ -790,6 +790,12 @@ def prepare(
         project = scratch / "project"
         for directory in ("Assets", "ProjectSettings"):
             copy_source(project_root / directory, project / directory)
+        # This disposable project targets the selected Editor, not the source
+        # test project's baseline. An older version marker triggers Unity's
+        # project upgrade and silently rewrites the pinned package manifest.
+        (project / "ProjectSettings" / "ProjectVersion.txt").write_text(
+            f"m_EditorVersion: {unity_version}\n", encoding="utf-8"
+        )
         (project / "Packages").mkdir()
         dependencies = {
             name: package.version

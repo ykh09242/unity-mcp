@@ -1492,6 +1492,7 @@ def test_modern_profile_uses_editor_framework_and_preserves_originals(
             repo / "MCPForUnity" / "package.json",
             repo / "TestProjects" / "UnityMCPTests" / "Packages" / "manifest.json",
             repo / "TestProjects" / "UnityMCPTests" / "Packages" / "packages-lock.json",
+            repo / "TestProjects" / "UnityMCPTests" / "ProjectSettings" / "ProjectVersion.txt",
         )
     }
     result = prepare(environment)
@@ -1526,9 +1527,9 @@ def test_modern_profile_uses_editor_framework_and_preserves_originals(
     ).read_text(encoding="utf-8") == "guid: preserved"
     assert not (project / "Library").exists()
     assert not (project / "Packages" / "packages-lock.json").exists()
-    assert (project / "ProjectSettings" / "ProjectVersion.txt").read_bytes() == (
-        repo / "TestProjects" / "UnityMCPTests" / "ProjectSettings" / "ProjectVersion.txt"
-    ).read_bytes()
+    assert (project / "ProjectSettings" / "ProjectVersion.txt").read_text(encoding="utf-8") == (
+        "m_EditorVersion: 6000.0.69f1\n"
+    )
     assert all(path.read_bytes() == original for path, original in originals.items())
     assert (repo / result.editor_coroutines_source / "Editor/Fixture.cs").is_file()
 

@@ -16,6 +16,9 @@ not narrowed to a particular argument case.
 Use a task-owned directory beneath this checkout's `reports/`. Existing external
 projects and running Editors are not adopted. Package preparation uses the
 existing resolver and accepts its existing registry cache option.
+The disposable project's `ProjectVersion.txt` records the selected Editor version;
+the source test project is unchanged. This prevents an older source version marker
+from triggering a project upgrade that rewrites the pinned package manifest.
 
 ```powershell
 python tools/unity_editor_transport_qa.py prepare --output reports/native-qa --ref HEAD --version 6000.0.69f1 --editor 'C:/Program Files/Unity/Hub/Editor/6000.0.69f1/Editor/Unity.exe'
