@@ -557,9 +557,16 @@ class ReferenceGraphService:
             await asyncio.sleep(0)
 
     @staticmethod
-    def _grant(scope: GraphScope, configuration: dict) -> ExternalSource:
+    def _grant(
+        scope: GraphScope, configuration: dict, policy: dict | None = None
+    ) -> ExternalSource:
         ReferenceGraphService._operator_grant(scope, configuration)
-        return ExternalSource(configuration)
+        policy = policy or {}
+        return ExternalSource(
+            configuration,
+            respect_gitignore=policy.get("respect_gitignore", True),
+            exclude=policy.get("exclude", []),
+        )
 
     @staticmethod
     def _operator_grant(scope: GraphScope, configuration: dict) -> None:
@@ -593,18 +600,15 @@ class ReferenceGraphService:
     def _validate_external(
         self, workspace: GraphWorkspace, result: dict, owner: str | None = None
     ) -> bool:
-        for edge in result.get("edges", []):
-            if edge["provider"].startswith("runtime:"):
-                provenance = edge.get("provenance", {})
-                for path in (
-                    edge.get("source_path", ""),
-                    provenance.get("path", ""),
-                    provenance.get("target_path", ""),
-                ):
-                    if path and not workspace.admitted(path):
-                        raise RevisionConflict(
-                            "Historical runtime evidence is excluded by the current collection policy"
-                        )
+        self._validate_manual_endpoints(
+            workspace,
+            (
+                node
+                for edge in result.get("edges", [])
+                if edge["provider"] == "manual"
+                for node in (edge["owner"], edge["target"])
+            ),
+        )
         pairs = {
             (edge["provider"], edge["owner"])
             for edge in result.get("edges", [])
@@ -615,8 +619,20 @@ class ReferenceGraphService:
             for item in result.get("coverage", [])
             if item["provider"].startswith("external:")
         )
+        metadata, policy, admission = workspace.external_validation(pairs, admission=True)
+        for edge in result.get("edges", []):
+            if edge["provider"].startswith("runtime:"):
+                provenance = edge.get("provenance", {})
+                for path in (
+                    edge.get("source_path", ""),
+                    provenance.get("path", ""),
+                    provenance.get("target_path", ""),
+                ):
+                    if path and not admission(path):
+                        raise RevisionConflict(
+                            "Historical runtime evidence is excluded by the current collection policy"
+                        )
         stale = set()
-        metadata = workspace.external_validation(pairs)
         adapters = {}
         repositories = {}
         for provider, identity in pairs:
@@ -626,7 +642,7 @@ class ReferenceGraphService:
             if provider not in adapters:
                 configuration = json.loads(cached["config"])
                 adapters[provider] = (
-                    self._grant(workspace.store.scope, configuration),
+                    self._grant(workspace.store.scope, configuration, policy),
                     configuration,
                 )
                 repositories[provider] = adapters[provider][0].repository_revision()
@@ -649,6 +665,29 @@ class ReferenceGraphService:
             raise RevisionConflict("Graph changed before delivery; restart the page")
         return bool(stale)
 
+    def _validate_manual_endpoints(self, workspace: GraphWorkspace, owners) -> None:
+        owners = {owner for owner in owners if owner.startswith("external:")}
+        if not owners:
+            return
+        rows = workspace.external_nodes(owners)
+        if {row["owner"] for row in rows} != owners:
+            raise RevisionConflict(
+                "Manual endpoint admission is unavailable; synchronize its source"
+            )
+        policy = workspace.policy()
+        adapters = {}
+        for row in rows:
+            if not row["enabled"]:
+                raise RevisionConflict("Manual endpoint source is no longer enabled")
+            if row["provider"] not in adapters:
+                adapters[row["provider"]] = self._grant(
+                    workspace.store.scope, json.loads(row["config"]), policy
+                )
+            if not adapters[row["provider"]].admitted(row["path"]):
+                raise RevisionConflict(
+                    "Manual endpoint is excluded by the current collection policy"
+                )
+
     def _validate_checked_sources(
         self, workspace: GraphWorkspace, expected: dict, revision: int
     ) -> None:
@@ -668,7 +707,7 @@ class ReferenceGraphService:
         if versions != expected_versions:
             raise RevisionConflict("External sources changed before checked delivery")
         for source in sources:
-            adapter = self._grant(workspace.store.scope, source["config"])
+            adapter = self._grant(workspace.store.scope, source["config"], workspace.policy())
             if adapter.repository_revision() != expected[source["provider"]].get("repository"):
                 raise RevisionConflict("Repository identity changed before checked delivery")
         for source in sources:
@@ -686,8 +725,11 @@ class ReferenceGraphService:
             if source is None or not source["enabled"] or source["version"] != version:
                 raise RevisionConflict("Exploration source grant changed; start a new query")
             if provider.startswith("external:"):
-                adapters[provider] = self._grant(workspace.store.scope, source["config"])
+                adapters[provider] = self._grant(
+                    workspace.store.scope, source["config"], workspace.policy()
+                )
         if result.get("historical"):
+            self._validate_manual_endpoints(workspace, result.get("_history_nodes", []))
             for provider, path in result["_history_access"]:
                 # The captured bytes may differ today. Require access to the
                 # original path, never assert historical evidence is current.
@@ -717,7 +759,7 @@ class ReferenceGraphService:
         if {provider: source["version"] for provider, source in sources.items()} != expected:
             raise RevisionConflict("Mutation source grants changed; restart receipt preparation")
         for source in sources.values():
-            self._grant(workspace.store.scope, source["config"])
+            self._grant(workspace.store.scope, source["config"], workspace.policy())
             self._operator_grant(workspace.store.scope, source["config"])
 
     async def execute(self, ctx, action: str, options: dict) -> dict:
@@ -817,6 +859,9 @@ class ReferenceGraphService:
         created_queries: list,
     ) -> dict:
         workspace, store = entry.workspace, entry.workspace.store
+        ignore_changed = not await drained_thread(workspace.ignore_current, editor)
+        if ignore_changed:
+            await drained_thread(workspace.block_admission)
         if action == "import_config":
             from services.reference_graph.operations import import_action
 
@@ -851,6 +896,44 @@ class ReferenceGraphService:
                 )
             editor = await entry.collect("status")
             checked_providers = await drained_thread(workspace.provider_status)
+        protected = (
+            action
+            in {
+                "query",
+                "diagnostics",
+                "explain",
+                "impact",
+                "path",
+                "snapshot",
+                "diff",
+                "mutation_diff",
+                "begin_mutation",
+                "add_mutation_targets",
+                "await_mutation",
+            }
+            or action.startswith("runtime_")
+            and action not in {"runtime_release", "runtime_sessions", "runtime_status"}
+        )
+        fallback = (
+            editor.get("ignore_watchers") is False
+            and (await drained_thread(workspace.policy))["respect_gitignore"]
+        )
+        ignore_verified = consistency == "checked"
+        admission_current = await drained_thread(workspace.ignore_current, editor)
+        if protected and fallback and admission_current and not ignore_verified:
+            ignore_verified = await entry.engine.validate_ignore()
+        if protected and (not admission_current or fallback and not ignore_verified):
+            if not await entry.engine.reconcile():
+                raise RevisionConflict(
+                    "Current ignore rules are not synchronized; retry collection"
+                )
+            editor = await entry.collect("status")
+            if not await drained_thread(workspace.ignore_current, editor):
+                raise RevisionConflict(
+                    "Current ignore rules are unavailable; graph admission is incomplete"
+                )
+            ignore_verified = True
+        admission_fence = await drained_thread(workspace.delivery_fence) if protected else None
         if action in {"overview", "export_config", "cleanup", "retry"}:
             from services.reference_graph import operations
 
@@ -942,7 +1025,11 @@ class ReferenceGraphService:
 
                 def produce_page():
                     result = getattr(queries, action)(**arguments)
-                    if action in {"impact", "path", "snapshot"} and not options.get("cursor"):
+                    if (
+                        action in {"impact", "path", "snapshot"}
+                        and not options.get("cursor")
+                        and "query_id" in result
+                    ):
                         created_queries.append((queries, result["query_id"]))
                     return result
 
@@ -1028,8 +1115,12 @@ class ReferenceGraphService:
         status = await drained_thread(store.status)
         progress = await drained_thread(workspace.progress)
         providers = await drained_thread(workspace.provider_status)
+        admission_current = await drained_thread(workspace.ignore_current, editor)
+        ignore_changed = not admission_current
         native_current = (
-            progress.get("initialized", False)
+            admission_current
+            and (not fallback or ignore_verified)
+            and progress.get("initialized", False)
             and progress.get("epoch") == editor.get("epoch")
             and progress.get("after") == editor.get("revision")
             and progress.get("editor", {}).get("compilation_context")
@@ -1096,6 +1187,7 @@ class ReferenceGraphService:
                     # Rehash all inputs only for an explicit force/checked request.
                     force=options.get("force", False),
                     wake=external_changed
+                    or ignore_changed
                     or (
                         not action.startswith("runtime_")
                         and action
@@ -1133,11 +1225,30 @@ class ReferenceGraphService:
             status["queue_idle"] = False
         # Internal bounded authorization inputs are never part of tool output.
         data.pop("_history_access", None)
+        data.pop("_history_nodes", None)
         runtime_policy = data.pop("_runtime_policy", None)
         if runtime_policy is not None and runtime_policy != await drained_thread(workspace.policy):
             raise RevisionConflict(
                 "Runtime collection policy changed before delivery; restart the page"
             )
+        if protected:
+            produced_fence = await drained_thread(workspace.delivery_fence)
+            if admission_fence[1:] != produced_fence[1:] or (
+                "revision" in data and data["revision"] != produced_fence[0]
+            ):
+                raise RevisionConflict(
+                    "Graph admission changed while producing the result; restart the request"
+                )
+            if fallback and not await entry.engine.validate_ignore():
+                raise RevisionConflict("Ignore rules changed before delivery; retry collection")
+            latest = await entry.collect("status")
+            if not await drained_thread(workspace.ignore_current, latest):
+                await drained_thread(workspace.block_admission)
+                raise RevisionConflict("Ignore rules changed before delivery; retry collection")
+            if await drained_thread(workspace.delivery_fence) != produced_fence:
+                raise RevisionConflict(
+                    "Graph admission changed before delivery; restart the request"
+                )
         return {
             "success": True,
             "data": {

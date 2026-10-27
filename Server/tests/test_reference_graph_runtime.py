@@ -202,9 +202,17 @@ class Native:
             "project_id": "project",
             "epoch": "epoch",
             "revision": 0,
+            "ignore_state": "available",
+            "ignore_revision": 0,
         }
         action = params["action"]
-        if action == "runtime_start":
+        if action == "ignore_rules":
+            result.update(snapshot="ignore", files=[], next_offset=None)
+        elif action == "inventory":
+            result.update(snapshot="inventory", assets=[], next_offset=None)
+        elif action == "changes":
+            result.update(requires_census=False, changes=[], next_after=0, has_more=False)
+        elif action == "runtime_start":
             result.update(self.captures.setdefault(params["token"], page([], offset=0)))
         elif action == "runtime_stop":
             self.captures[params["token"]]["state"] = "stopped"

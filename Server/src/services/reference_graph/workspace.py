@@ -11,6 +11,7 @@ import time
 
 from services.reference_graph.analysis import Analysis
 from services.reference_graph.external import _pattern
+from services.reference_graph.ignore import GitIgnoreRules
 from services.reference_graph.store import (
     Edge,
     GraphStore,
@@ -28,6 +29,8 @@ class GraphWorkspace:
         self.store = store
         self._queries = None
         self._mutations = None
+        self._admission_cache = None
+        self._key_cache = None
         with store._connect(write=True) as connection:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_workspace(version INTEGER NOT NULL)"
@@ -85,6 +88,41 @@ class GraphWorkspace:
                     "CREATE TABLE IF NOT EXISTS graph_collected_versions(guid TEXT PRIMARY KEY,payload TEXT NOT NULL)"
                 )
                 connection.execute("UPDATE graph_workspace SET version=6")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS graph_asset_paths(guid TEXT PRIMARY KEY,path TEXT NOT NULL,seen TEXT NOT NULL)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS graph_asset_paths_path ON graph_asset_paths(path,guid)"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO graph_asset_paths SELECT guid,path,seen FROM graph_assets"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS graph_blocked_keys(guid TEXT NOT NULL,scheme TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(guid,scheme,value))"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS graph_external_paths(provider TEXT NOT NULL,owner TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(provider,owner))"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS graph_external_paths_owner ON graph_external_paths(owner)"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO graph_external_paths SELECT provider,owner,path FROM graph_external"
+            )
+            if connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_runtime_schema'"
+            ).fetchone():
+                from services.reference_graph.runtime import initialize_bindings
+
+                previous_runtime = connection.execute(
+                    "SELECT version FROM graph_runtime_schema"
+                ).fetchone()[0]
+                if previous_runtime not in (1, 2):
+                    raise ValueError("Unsupported runtime observation schema")
+                initialize_bindings(connection)
+                if previous_runtime < 2:
+                    connection.execute("UPDATE graph_admission SET ready=0 WHERE id=1")
+                    self.store._bump(connection)
 
     def mutations(self):
         """Receipt state belongs to the same user/Editor database as evidence."""
@@ -237,17 +275,268 @@ class GraphWorkspace:
             self._set(connection, "progress", value)
 
     def policy(self) -> dict:
-        return self.state("policy", {"version": 0, "exclude": []})
+        return {"respect_gitignore": True, **self.state("policy", {"version": 0, "exclude": []})}
+
+    def _admission(self, connection):
+        policy = {
+            "respect_gitignore": True,
+            **self._state(connection, "policy", {"version": 0, "exclude": []}),
+        }
+        key = (policy["version"], self._state(connection, "ignore_key"))
+        cache = self._admission_cache
+        if cache is None or cache[0] != key:
+            files = (
+                self._state(connection, "ignore_files", []) if policy["respect_gitignore"] else []
+            )
+            cache = (
+                key,
+                GitIgnoreRules(files),
+                [_pattern(pattern) for pattern in policy["exclude"]],
+            )
+            self._admission_cache = cache
+        _, rules, patterns = cache
+        return lambda path: (
+            not any(pattern.fullmatch(path) for pattern in patterns) and not rules.ignored(path)
+        )
 
     def admitted(self, path: str) -> bool:
-        return not any(_pattern(pattern).fullmatch(path) for pattern in self.policy()["exclude"])
+        with self.store._connect() as connection:
+            return self._admission(connection)(path)
+
+    def admission(self):
+        """Capture one compiled policy for a bounded request or reconciliation batch."""
+        with self.store._connect() as connection:
+            return self._admission(connection)
+
+    def ignore_status(self) -> dict:
+        return self.state("ignore_status", {})
+
+    def delivery_fence(self) -> tuple:
+        """Bind a produced result to its graph and effective-admission generation."""
+        with self.store._connect() as connection:
+            return tuple(
+                connection.execute(
+                    "SELECT m.revision,a.revision,a.ready,COALESCE((SELECT json_extract(value,'$.version') FROM graph_state WHERE key='policy'),0),(SELECT value FROM graph_state WHERE key='ignore_key') FROM graph_meta m CROSS JOIN graph_admission a WHERE a.id=1"
+                ).fetchone()
+            )
+
+    def ignore_current(self, editor: dict) -> bool:
+        with self.store._connect() as connection:
+            policy = self._state(connection, "policy", {})
+            if not policy.get("respect_gitignore", True):
+                return bool(
+                    connection.execute("SELECT ready FROM graph_admission WHERE id=1").fetchone()[0]
+                )
+            known = self._state(connection, "ignore_status", {})
+            return (
+                editor.get("ignore_state") == "available"
+                and known.get("epoch") == editor.get("epoch")
+                and known.get("ignore_revision") == editor.get("ignore_revision")
+                and bool(
+                    connection.execute("SELECT ready FROM graph_admission WHERE id=1").fetchone()[0]
+                )
+            )
+
+    def block_admission(self) -> None:
+        """Fence cached results while current ignore rules are unknown or unavailable."""
+        with self.store._connect(write=True) as connection:
+            if connection.execute("SELECT ready FROM graph_admission WHERE id=1").fetchone()[0]:
+                connection.execute("UPDATE graph_admission SET ready=0 WHERE id=1")
+                self.store._bump(connection)
+
+    def invalidate_ignore(self) -> None:
+        """Retire an expired native token so a retry acquires a fresh rule snapshot."""
+        with self.store._connect(write=True) as connection:
+            connection.execute("DELETE FROM graph_state WHERE key='ignore_status'")
+            connection.execute("UPDATE graph_admission SET ready=0 WHERE id=1")
+            self.store._bump(connection)
+
+    def _reset_static(self, connection) -> None:
+        for table in (
+            "graph_assets",
+            "graph_documents",
+            "graph_analysis",
+            "graph_issues",
+            "graph_dependencies",
+            "graph_changed_inputs",
+            "graph_external",
+            "graph_asset_failures",
+            "graph_addressables",
+            "graph_collected_versions",
+        ):
+            connection.execute("DELETE FROM " + table)
+        connection.execute(
+            "DELETE FROM edges WHERE provider<>'manual' AND provider NOT LIKE 'runtime:%'"
+        )
+        connection.execute(
+            "DELETE FROM evidence_context WHERE provider<>'manual' AND provider NOT LIKE 'runtime:%'"
+        )
+        connection.execute(
+            "UPDATE observations SET generation=generation+1,state='deleted',error=NULL WHERE provider<>'manual' AND provider NOT LIKE 'runtime:%'"
+        )
+        self._set(connection, "progress", {"phase": "not_initialized"})
+        self._set(connection, "analysis_dirty", True)
+        self._set(
+            connection, "catalog_revision", self._state(connection, "catalog_revision", 0) + 1
+        )
+        connection.execute("DELETE FROM graph_state WHERE key LIKE 'external_scan:%'")
+
+    def _refresh_admission(self, connection, *, runtime: bool = False) -> None:
+        admitted = self._admission(connection)
+        external = list(
+            connection.execute(
+                "SELECT id,path FROM graph_excluded_nodes WHERE id LIKE 'external:%'"
+            )
+        )
+        paths = {
+            row[0]: row[1] for row in connection.execute("SELECT id,path FROM graph_excluded_nodes")
+        }
+        paths.update(
+            {
+                row[0]: row[1]
+                for row in connection.execute("SELECT id,path FROM nodes WHERE path<>''")
+            }
+        )
+        paths.update(
+            ("asset:" + row[0], row[1])
+            for row in connection.execute("SELECT guid,path FROM graph_asset_paths")
+        )
+        connection.execute("DELETE FROM graph_excluded_nodes")
+        excluded = [
+            (owner, path)
+            for owner, path in paths.items()
+            if not owner.startswith("external:") and path and not admitted(path)
+        ]
+        excluded.extend((row[0], row[1]) for row in external)
+        patterns = [
+            _pattern(pattern)
+            for pattern in self._state(connection, "policy", {"exclude": []})["exclude"]
+        ]
+        excluded_ids = {owner for owner, _ in excluded}
+        excluded.extend(
+            (owner, path)
+            for owner, path in connection.execute("SELECT owner,path FROM graph_external_paths")
+            if owner not in excluded_ids and any(pattern.fullmatch(path) for pattern in patterns)
+        )
+        connection.executemany("INSERT INTO graph_excluded_nodes VALUES (?,?)", excluded)
+        connection.execute(
+            "INSERT OR IGNORE INTO graph_excluded_nodes SELECT e.owner,x.path FROM edges e JOIN graph_excluded_nodes x ON x.id=e.target WHERE e.provider LIKE 'runtime:%'"
+        )
+        connection.execute("DELETE FROM nodes WHERE id IN (SELECT id FROM graph_excluded_nodes)")
+        connection.execute(
+            "DELETE FROM edges WHERE provider<>'manual' AND provider NOT LIKE 'runtime:%' AND (owner IN (SELECT id FROM graph_excluded_nodes) OR target IN (SELECT id FROM graph_excluded_nodes))"
+        )
+        if runtime:
+            self._refresh_runtime_admission(connection, admitted)
+
+    def _refresh_runtime_admission(self, connection, admitted) -> None:
+        if not connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_runtime_schema'"
+        ).fetchone():
+            return
+        from services.reference_graph.analysis import Catalog
+        from services.reference_graph.runtime import initialize_bindings, runtime_admitted
+
+        initialize_bindings(connection)
+        catalog = Catalog(self._catalog_rows(connection))
+        blocked_handles = {
+            (row["session"], row["handle"])
+            for row in connection.execute("SELECT * FROM graph_runtime_bindings")
+            if not runtime_admitted(dict(row), admitted, catalog)
+        }
+        connection.execute(
+            "CREATE TEMP TABLE runtime_admission_stage(id TEXT PRIMARY KEY,path TEXT NOT NULL)"
+        )
+        try:
+            cursor = connection.execute(
+                "SELECT e.owner,e.provider,e.payload,c.published,x.id AS excluded_target FROM edges e LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider LEFT JOIN graph_excluded_nodes x ON x.id=e.target WHERE e.provider LIKE 'runtime:%'"
+            )
+            while batch := cursor.fetchmany(256):
+                excluded = []
+                for row in batch:
+                    edge = json.loads(row["payload"])
+                    provenance = json.loads(row["published"] or "{}")
+                    evidence = json.loads(edge.get("evidence") or "{}")
+                    observation = {
+                        "owner_path": provenance.get("path", ""),
+                        "target_path": provenance.get("target_path", ""),
+                        "scheme": evidence.get("scheme", ""),
+                        "key": edge.get("key", ""),
+                    }
+                    if (
+                        not runtime_admitted(observation, admitted, catalog)
+                        or (row["provider"][8:], evidence.get("handle", "")) in blocked_handles
+                        or row["excluded_target"] is not None
+                    ):
+                        excluded.append((row["owner"], ""))
+                connection.executemany(
+                    "INSERT OR IGNORE INTO runtime_admission_stage VALUES (?,?)", excluded
+                )
+            old = "SELECT x.id FROM graph_excluded_nodes x JOIN observations o ON o.owner=x.id WHERE o.provider LIKE 'runtime:%'"
+            changed = (
+                connection.execute(
+                    "SELECT 1 FROM (SELECT id FROM runtime_admission_stage EXCEPT "
+                    + old
+                    + ") LIMIT 1"
+                ).fetchone()
+                or connection.execute(
+                    "SELECT 1 FROM ("
+                    + old
+                    + " EXCEPT SELECT id FROM runtime_admission_stage) LIMIT 1"
+                ).fetchone()
+            )
+            connection.execute(
+                "DELETE FROM graph_excluded_nodes WHERE id IN (SELECT owner FROM observations WHERE provider LIKE 'runtime:%')"
+            )
+            connection.execute(
+                "INSERT INTO graph_excluded_nodes SELECT * FROM runtime_admission_stage"
+            )
+            connection.execute(
+                "DELETE FROM nodes WHERE id IN (SELECT id FROM runtime_admission_stage)"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO nodes SELECT o.owner,COALESCE(json_extract(c.published,'$.path'),''),'runtime_observation',1 FROM observations o LEFT JOIN evidence_context c USING(owner,provider) WHERE o.provider LIKE 'runtime:%' AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=o.owner)"
+            )
+            if changed:
+                connection.execute(
+                    "UPDATE graph_admission SET revision=(SELECT revision+1 FROM graph_meta) WHERE id=1"
+                )
+        finally:
+            connection.execute("DROP TABLE runtime_admission_stage")
+
+    def set_ignore_rules(self, worker: str, files: list[tuple[str, str]], status: dict) -> bool:
+        """Commit verified native rules and retire every generated pre-policy publication."""
+        key = _hash(files)
+        with self._write(worker) as connection:
+            changed = self._state(connection, "ignore_key") != key
+            self._set(connection, "ignore_files", files)
+            self._set(connection, "ignore_key", key)
+            self._set(connection, "ignore_status", status)
+            if changed:
+                self._reset_static(connection)
+                self._refresh_admission(connection)
+                self.store._bump(connection)
+                connection.execute(
+                    "UPDATE graph_admission SET revision=(SELECT revision FROM graph_meta),ready=0 WHERE id=1"
+                )
+            else:
+                connection.execute("UPDATE graph_admission SET ready=1 WHERE id=1")
+            return changed
+
+    def finish_admission(self, worker: str) -> None:
+        with self._write(worker) as connection:
+            if not connection.execute("SELECT ready FROM graph_admission WHERE id=1").fetchone()[0]:
+                self._refresh_admission(connection, runtime=True)
+                connection.execute("UPDATE graph_admission SET ready=1 WHERE id=1")
+                self.store._bump(connection)
 
     def set_policy(self, policy: dict, *, expected_version: int) -> int:
         patterns = policy.get("exclude", [])
         if (
-            set(policy) - {"exclude"}
+            set(policy) - {"exclude", "respect_gitignore"}
             or not isinstance(patterns, list)
             or not all(isinstance(p, str) for p in patterns)
+            or type(policy.get("respect_gitignore", True)) is not bool
         ):
             raise ValueError("Policy accepts an exclude pattern list")
         for pattern in patterns:
@@ -256,40 +545,32 @@ class GraphWorkspace:
             current = self._state(connection, "policy", {"version": 0})
             if current["version"] != expected_version:
                 raise RevisionConflict("Graph policy changed")
-            self._set(connection, "policy", {"version": expected_version + 1, "exclude": patterns})
+            self._set(
+                connection,
+                "policy",
+                {
+                    "version": expected_version + 1,
+                    "exclude": patterns,
+                    "respect_gitignore": policy.get("respect_gitignore", True),
+                },
+            )
             # Retire the old worker before clearing its inputs. It cannot renew
             # or publish a pre-policy page while a fresh census is being admitted.
             connection.execute("DELETE FROM graph_worker")
-            for table in (
-                "graph_assets",
-                "graph_documents",
-                "graph_analysis",
-                "graph_issues",
-                "graph_dependencies",
-                "graph_changed_inputs",
-                "graph_external",
-                "graph_asset_failures",
-                "graph_addressables",
-            ):
-                connection.execute("DELETE FROM " + table)
-            connection.execute(
-                "DELETE FROM edges WHERE provider<>'manual' AND provider NOT LIKE 'runtime:%'"
-            )
-            connection.execute(
-                "UPDATE observations SET generation=generation+1,state='deleted',error=NULL WHERE provider<>'manual' AND provider NOT LIKE 'runtime:%'"
-            )
-            self._set(connection, "progress", {"phase": "not_initialized"})
-            self._set(connection, "analysis_dirty", True)
-            self._set(
-                connection, "catalog_revision", self._state(connection, "catalog_revision", 0) + 1
-            )
-            connection.execute("DELETE FROM graph_state WHERE key LIKE 'external_scan:%'")
+            self._reset_static(connection)
+            self._refresh_admission(connection)
             self.store._bump(connection)
+            connection.execute(
+                "UPDATE graph_admission SET revision=(SELECT revision FROM graph_meta),ready=0 WHERE id=1"
+            )
             return expected_version + 1
 
     def rebuild(self) -> None:
         policy = self.policy()
-        self.set_policy({"exclude": policy["exclude"]}, expected_version=policy["version"])
+        self.set_policy(
+            {key: policy[key] for key in ("exclude", "respect_gitignore")},
+            expected_version=policy["version"],
+        )
 
     def set_source(
         self, provider: str, config: dict, *, expected_version: int, enabled: bool = True
@@ -311,6 +592,7 @@ class GraphWorkspace:
             )
             for table in ("graph_analysis", "graph_issues", "graph_external"):
                 connection.execute("DELETE FROM " + table + " WHERE provider=?", (provider,))
+            connection.execute("DELETE FROM graph_external_paths WHERE provider=?", (provider,))
             connection.execute(
                 "DELETE FROM graph_state WHERE key=?", ("external_scan:" + provider,)
             )
@@ -335,6 +617,7 @@ class GraphWorkspace:
         self, worker: str, observation: Observation, *, stamp: str, analysis_key: str, seen: str
     ) -> int:
         with self._write(worker) as connection:
+            connection.execute("DELETE FROM graph_excluded_nodes WHERE id=?", (observation.owner,))
             generation = self.store._observe(connection, observation)
             # Track an admitted owner before any later publication. A crash,
             # parse failure or grant retirement must not orphan its evidence.
@@ -358,15 +641,42 @@ class GraphWorkspace:
         self, worker: str, assets: Iterable[dict], progress: dict, seen: str, *, force: bool = True
     ) -> None:
         with self._write(worker) as connection:
-            patterns = [
-                _pattern(pattern)
-                for pattern in self._state(connection, "policy", {"exclude": []})["exclude"]
-            ]
+            admitted = self._admission(connection)
             changed = []
             catalog_changed = False
             for asset in assets:
-                if any(pattern.fullmatch(asset["path"]) for pattern in patterns):
+                owner = "asset:" + asset["guid"]
+                connection.execute(
+                    "INSERT OR REPLACE INTO graph_asset_paths VALUES (?,?,?)",
+                    (asset["guid"], asset["path"], seen),
+                )
+                if not admitted(asset["path"]):
+                    catalog_changed = True
+                    connection.execute(
+                        "INSERT OR REPLACE INTO graph_excluded_nodes VALUES (?,?)",
+                        (owner, asset["path"]),
+                    )
+                    if connection.execute(
+                        "SELECT 1 FROM graph_assets WHERE guid=?", (asset["guid"],)
+                    ).fetchone():
+                        self._delete(connection, owner)
+                        connection.execute(
+                            "DELETE FROM graph_assets WHERE guid=?", (asset["guid"],)
+                        )
+                    connection.execute("DELETE FROM nodes WHERE id=?", (owner,))
+                    connection.execute(
+                        "DELETE FROM graph_blocked_keys WHERE guid=?", (asset["guid"],)
+                    )
+                    connection.executemany(
+                        "INSERT OR IGNORE INTO graph_blocked_keys VALUES (?,?,?)",
+                        (
+                            (asset["guid"], key["scheme"], key["value"])
+                            for key in asset.get("keys", ())
+                        ),
+                    )
                     continue
+                connection.execute("DELETE FROM graph_excluded_nodes WHERE id=?", (owner,))
+                connection.execute("DELETE FROM graph_blocked_keys WHERE guid=?", (asset["guid"],))
                 guid, payload = asset["guid"], _json(asset)
                 old = connection.execute(
                     "SELECT payload FROM graph_assets WHERE guid=?", (guid,)
@@ -392,6 +702,9 @@ class GraphWorkspace:
             if changed:
                 self._invalidate(connection, changed)
             if catalog_changed:
+                connection.execute(
+                    "UPDATE graph_admission SET ready=0 WHERE id=1 AND EXISTS (SELECT 1 FROM sources WHERE provider LIKE 'runtime:%')"
+                )
                 self._set(connection, "analysis_dirty", True)
                 self._set(
                     connection,
@@ -427,14 +740,22 @@ class GraphWorkspace:
             removed = [
                 "asset:" + row[0]
                 for row in connection.execute(
-                    "SELECT guid FROM graph_assets WHERE seen<>?", (seen,)
+                    "SELECT guid FROM graph_assets WHERE seen<>? UNION SELECT guid FROM graph_asset_paths WHERE seen<>?",
+                    (seen, seen),
                 )
             ]
             self._invalidate(connection, removed)
             for owner in removed:
                 self._delete(connection, owner)
             connection.execute("DELETE FROM graph_assets WHERE seen<>?", (seen,))
+            connection.execute("DELETE FROM graph_asset_paths WHERE seen<>?", (seen,))
+            connection.execute(
+                "DELETE FROM graph_blocked_keys WHERE guid NOT IN (SELECT guid FROM graph_asset_paths)"
+            )
             if removed:
+                connection.execute(
+                    "UPDATE graph_admission SET ready=0 WHERE id=1 AND EXISTS (SELECT 1 FROM sources WHERE provider LIKE 'runtime:%')"
+                )
                 self._set(connection, "analysis_dirty", True)
                 self._set(
                     connection,
@@ -450,8 +771,8 @@ class GraphWorkspace:
     def remove_path(self, worker: str, path: str) -> None:
         with self._write(worker) as connection:
             rows = connection.execute(
-                "SELECT guid FROM graph_assets WHERE path=? OR substr(path,1,?)=?",
-                (path, len(path) + 1, path + "/"),
+                "SELECT guid FROM graph_assets WHERE path=? OR substr(path,1,?)=? UNION SELECT guid FROM graph_asset_paths WHERE path=? OR substr(path,1,?)=?",
+                (path, len(path) + 1, path + "/", path, len(path) + 1, path + "/"),
             ).fetchall()
             owners = ["asset:" + row[0] for row in rows]
             self._invalidate(connection, owners)
@@ -460,7 +781,16 @@ class GraphWorkspace:
             connection.executemany(
                 "DELETE FROM graph_assets WHERE guid=?", [(row[0],) for row in rows]
             )
+            connection.executemany(
+                "DELETE FROM graph_asset_paths WHERE guid=?", [(row[0],) for row in rows]
+            )
+            connection.executemany(
+                "DELETE FROM graph_blocked_keys WHERE guid=?", [(row[0],) for row in rows]
+            )
             if rows:
+                connection.execute(
+                    "UPDATE graph_admission SET ready=0 WHERE id=1 AND EXISTS (SELECT 1 FROM sources WHERE provider LIKE 'runtime:%')"
+                )
                 self._set(connection, "analysis_dirty", True)
                 self._set(
                     connection,
@@ -471,6 +801,17 @@ class GraphWorkspace:
                     "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider='code' AND state='ready'"
                 )
                 self.store._bump(connection)
+
+    def descendant_assets(self, path: str, after: tuple[str, str]) -> list[dict]:
+        """Page only known descendant identities for targeted folder-move reconciliation."""
+        with self.store._connect() as connection:
+            return [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT guid,path FROM graph_asset_paths WHERE path>=? AND path<? AND (path,guid)>(?,?) ORDER BY path,guid LIMIT 256",
+                    (path + "/", path + "0", *after),
+                )
+            ]
 
     def catalog(self) -> list[dict]:
         with self.store._connect() as connection:
@@ -752,7 +1093,7 @@ class GraphWorkspace:
                 require_current(connection)
                 connection.execute("DELETE FROM edges WHERE owner=? AND provider='code'", (owner,))
                 connection.execute(
-                    "INSERT INTO edges SELECT identity,owner,'code',json_extract(payload,'$.target'),json_extract(payload,'$.kind'),payload FROM graph_staging WHERE worker=? AND owner=? AND generation=? AND kind='edge'",
+                    "INSERT INTO edges SELECT identity,owner,'code',json_extract(payload,'$.target'),json_extract(payload,'$.kind'),payload FROM graph_staging s WHERE worker=? AND owner=? AND generation=? AND kind='edge' AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=s.owner OR x.id=json_extract(s.payload,'$.target'))",
                     (worker, owner, generation),
                 )
                 connection.execute(
@@ -849,6 +1190,17 @@ class GraphWorkspace:
             current = connection.execute("SELECT revision FROM graph_meta").fetchone()[0]
             if (offset and revision is None) or (revision is not None and revision != current):
                 raise RevisionConflict("Diagnostics changed; restart with offset zero")
+            if connection.execute(
+                "SELECT 1 FROM graph_excluded_nodes WHERE id=?", (owner,)
+            ).fetchone():
+                return {
+                    "revision": current,
+                    "coverage": [],
+                    "issues": [],
+                    "next_offset": None,
+                    "excluded": True,
+                    "reason": "excluded_by_collection_policy",
+                }
             rows = connection.execute(
                 "SELECT i.provider,i.payload FROM graph_issues i JOIN sources s USING(provider) WHERE i.owner=? AND s.enabled=1 ORDER BY i.provider,i.ordinal LIMIT ? OFFSET ?",
                 (owner, limit + 1, offset),
@@ -899,18 +1251,20 @@ class GraphWorkspace:
                         "SELECT count(*) FROM graph_asset_failures"
                     ).fetchone()[0],
                     "unresolved": connection.execute(
-                        "SELECT count(*) FROM graph_issues i JOIN sources s USING(provider) WHERE s.enabled=1"
+                        "SELECT count(*) FROM graph_issues i JOIN sources s USING(provider) WHERE s.enabled=1 AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=i.owner)"
                     ).fetchone()[0],
                 },
                 generation=generation,
             )
 
-    def external_inputs(self, provider: str) -> dict[str, dict]:
+    def external_inputs(self, provider: str, *, admission: bool = False) -> dict[str, dict]:
         with self.store._connect() as connection:
             return {
                 row["path"]: dict(row)
                 for row in connection.execute(
-                    "SELECT e.*,o.state,c.published AS provenance FROM graph_external e LEFT JOIN observations o USING(owner,provider) LEFT JOIN evidence_context c USING(owner,provider) WHERE e.provider=?",
+                    "SELECT p.provider,p.owner,p.path,e.fingerprint,e.stamp,e.analysis_key,e.seen,o.state,c.published AS provenance FROM graph_external_paths p LEFT JOIN graph_external e USING(owner,provider) LEFT JOIN observations o USING(owner,provider) LEFT JOIN evidence_context c USING(owner,provider) WHERE p.provider=?"
+                    if admission
+                    else "SELECT e.*,o.state,c.published AS provenance FROM graph_external e LEFT JOIN observations o USING(owner,provider) LEFT JOIN evidence_context c USING(owner,provider) WHERE e.provider=?",
                     (provider,),
                 )
             }
@@ -958,29 +1312,95 @@ class GraphWorkspace:
             ).fetchone()
             return dict(row) if row else None
 
-    def external_validation(self, pairs: Iterable[tuple[str, str]]) -> dict:
+    def external_validation(self, pairs: Iterable[tuple[str, str]], *, admission: bool = False):
         """One request-local metadata snapshot, never a cached permission grant."""
         with self.store._connect() as connection:
-            return {
+            metadata = {
                 (row["provider"], row["owner"]): dict(row)
                 for row in connection.execute(
                     "SELECT e.*,s.enabled,s.version,s.config,c.published AS provenance FROM json_each(?) r JOIN graph_external e ON e.provider=json_extract(r.value,'$[0]') AND e.owner=json_extract(r.value,'$[1]') JOIN sources s USING(provider) LEFT JOIN evidence_context c ON c.provider=e.provider AND c.owner=e.owner",
                     (_json(list(pairs)),),
                 )
             }
+            if admission:
+                return (
+                    metadata,
+                    {"respect_gitignore": True, **self._state(connection, "policy", {})},
+                    self._admission(connection),
+                )
+            return metadata
+
+    def external_nodes(self, owners: Iterable[str]) -> list[dict]:
+        """Resolve manual endpoint identities to their exact granted source roots in one read."""
+        with self.store._connect() as connection:
+            return [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT e.owner,e.path,s.provider,s.enabled,s.config FROM json_each(?) r JOIN graph_external_paths e ON e.owner=r.value JOIN sources s USING(provider)",
+                    (_json(list(owners)),),
+                )
+            ]
+
+    def hide_external(self, worker: str, paths: Iterable[tuple[str, str]]) -> None:
+        with self._write(worker) as connection:
+            changed = False
+            for owner, path in paths:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM graph_excluded_nodes WHERE id=? AND path=?", (owner, path)
+                    ).fetchone()
+                    and not connection.execute(
+                        "SELECT 1 FROM nodes WHERE id=?", (owner,)
+                    ).fetchone()
+                ):
+                    continue
+                self._delete(connection, owner)
+                connection.execute(
+                    "INSERT OR REPLACE INTO graph_excluded_nodes VALUES (?,?)", (owner, path)
+                )
+                connection.execute("DELETE FROM nodes WHERE id=?", (owner,))
+                changed = True
+            if changed:
+                self.store._bump(connection)
+                connection.execute(
+                    "UPDATE graph_admission SET revision=(SELECT revision FROM graph_meta) WHERE id=1"
+                )
 
     def catalog_snapshot(self, known_revision: int | None = None) -> tuple[int, list[dict] | None]:
         with self.store._connect() as connection:
             revision = self._state(connection, "catalog_revision", 0)
-            rows = (
-                None
-                if revision == known_revision
-                else [
-                    json.loads(row[0])
-                    for row in connection.execute("SELECT payload FROM graph_assets ORDER BY guid")
-                ]
-            )
+            rows = None if revision == known_revision else self._catalog_rows(connection)
             return revision, rows
+
+    @staticmethod
+    def _catalog_rows(connection) -> list[dict]:
+        rows = [
+            json.loads(row[0])
+            for row in connection.execute("SELECT payload FROM graph_assets ORDER BY guid")
+        ]
+        blocked = {}
+        for guid, path in connection.execute(
+            "SELECT guid,path FROM graph_asset_paths WHERE 'asset:'||guid IN (SELECT id FROM graph_excluded_nodes)"
+        ):
+            blocked[guid] = {"guid": guid, "path": path, "_excluded": True, "keys": []}
+        for guid, scheme, value in connection.execute(
+            "SELECT guid,scheme,value FROM graph_blocked_keys"
+        ):
+            if guid in blocked:
+                blocked[guid]["keys"].append({"scheme": scheme, "value": value})
+        rows.extend(blocked.values())
+        return rows
+
+    def key_admission(self):
+        """Reuse a minimal key admission catalog across runtime pages."""
+        from services.reference_graph.analysis import Catalog
+
+        cache = self._key_cache
+        revision, assets = self.catalog_snapshot(cache[0] if cache else None)
+        if assets is not None:
+            cache = (revision, Catalog(assets))
+            self._key_cache = cache
+        return cache[1]
 
     def provider_status(self) -> dict:
         identity = []
@@ -1071,6 +1491,11 @@ class GraphWorkspace:
 
     @staticmethod
     def _record_external(connection, rows: Iterable[tuple]) -> None:
+        rows = list(rows)
+        connection.executemany(
+            "INSERT INTO graph_external_paths VALUES (?,?,?) ON CONFLICT(provider,owner) DO UPDATE SET path=excluded.path",
+            ((row[0], row[1], row[2]) for row in rows),
+        )
         connection.executemany(
             "INSERT INTO graph_external VALUES (?,?,?,?,?,?,?) ON CONFLICT(provider,owner) DO UPDATE SET path=excluded.path,fingerprint=excluded.fingerprint,stamp=excluded.stamp,analysis_key=excluded.analysis_key,seen=excluded.seen",
             rows,

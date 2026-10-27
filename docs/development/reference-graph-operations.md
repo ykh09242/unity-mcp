@@ -22,6 +22,10 @@ Connection/account changes invalidate displayed state and transfer fields.
 
 ## Configuration transfer
 
+**Collection policy** applies `.gitignore` by default and accepts additional
+graph-only exclusions. See [Reference graph exclusions](reference-graph-exclusions.md)
+for matching rules, external-source boundaries and existing-data behavior.
+
 Select a kind (`rule`, `source` or `policy`), read the first page and continue with
 **Next page**. **Copy page** copies only documented configuration fields,
 item IDs and versions, without credentials or operator grants. Pages are per-item

@@ -40,10 +40,12 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         private readonly McpReferenceExplorer explorer;
         private readonly DropdownField kind;
         private readonly TextField itemId,
-            payload;
+            payload,
+            policyExclude;
         private readonly IntegerField expectedVersion;
         private readonly Toggle reauthorize,
-            sourceEnabled;
+            sourceEnabled,
+            respectGitignore;
         private readonly Func<string, JObject, CancellationToken, Task<JObject>> send;
         private readonly Func<string> connectionIdentity;
         private JObject diagnosticGraph;
@@ -189,6 +191,17 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             };
             payload.AddToClassList("graph-json");
             editor.Add(payload);
+            respectGitignore = new Toggle("Respect .gitignore") { name = "graph-respect-gitignore", value = true };
+            respectGitignore.tooltip = "Exclude paths matched by project and nested .gitignore files. Enabled by default.";
+            editor.Add(respectGitignore);
+            policyExclude = new TextField("Additional exclusions (one pattern per line)")
+            {
+                name = "graph-policy-exclude",
+                multiline = true,
+                tooltip = "Graph-only glob patterns, added to .gitignore exclusions. For example: Assets/Generated/**",
+            };
+            policyExclude.AddToClassList("graph-json");
+            editor.Add(policyExclude);
             formMessage = Text(editor, "", "graph-form-message");
             formMessage.AddToClassList("hidden");
             sourceEnabled = new Toggle { text = "Enable this external source", value = false };
@@ -197,7 +210,13 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             editor.Add(reauthorize);
             AddButton(editor, "Apply item", "graph-import", Import).AddToClassList("graph-primary");
             itemId.RegisterValueChangedCallback(_ => draftDirty = true);
-            payload.RegisterValueChangedCallback(_ => draftDirty = true);
+            payload.RegisterValueChangedCallback(_ =>
+            {
+                draftDirty = true;
+                SyncPolicyFields();
+            });
+            respectGitignore.RegisterValueChangedCallback(_ => EditPolicy());
+            policyExclude.RegisterValueChangedCallback(_ => EditPolicy());
             expectedVersion.RegisterValueChangedCallback(_ => draftDirty = true);
             sourceEnabled.RegisterValueChangedCallback(_ => draftDirty = true);
             reauthorize.RegisterValueChangedCallback(_ => draftDirty = true);
@@ -251,6 +270,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         {
             itemId.SetValueWithoutNotify(draft?.Id ?? "");
             payload.SetValueWithoutNotify(draft?.Json ?? "{}");
+            SyncPolicyFields();
             expectedVersion.SetValueWithoutNotify(draft?.Version ?? 0);
             sourceEnabled.SetValueWithoutNotify(draft?.Enabled ?? false);
             reauthorize.SetValueWithoutNotify(draft?.Reauthorize ?? false);
@@ -360,6 +380,44 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             sourceEnabled.EnableInClassList("hidden", Kind != "source");
             reauthorize.EnableInClassList("hidden", Kind != "source");
             itemId.EnableInClassList("hidden", Kind == "policy");
+            respectGitignore.EnableInClassList("hidden", Kind != "policy");
+            policyExclude.EnableInClassList("hidden", Kind != "policy");
+        }
+
+        private void SyncPolicyFields()
+        {
+            try
+            {
+                JObject config = JObject.Parse(payload.value ?? "{}");
+                respectGitignore.SetValueWithoutNotify(
+                    config["respect_gitignore"]?.Type == JTokenType.Boolean ? config.Value<bool>("respect_gitignore") : true
+                );
+                policyExclude.SetValueWithoutNotify(config["exclude"] is JArray patterns ? string.Join("\n", patterns.Values<string>()) : "");
+            }
+            catch (Exception error) when (error is JsonException || error is InvalidCastException || error is ArgumentException)
+            {
+                // Keep invalid JSON editable and retain the last valid field values.
+            }
+        }
+
+        private void EditPolicy()
+        {
+            if (Kind != "policy")
+                return;
+            try
+            {
+                JObject config = JObject.Parse(payload.value ?? "{}");
+                config["respect_gitignore"] = respectGitignore.value;
+                config["exclude"] = new JArray((policyExclude.value ?? "").Replace("\r\n", "\n").Split('\n').Where(pattern => pattern.Length != 0));
+                payload.value = config.ToString(Formatting.Indented);
+            }
+            catch (JsonReaderException error)
+            {
+                FormFeedback(
+                    $"Invalid JSON at line {error.LineNumber}, column {error.LinePosition}. Correct the JSON before editing collection fields.",
+                    payload
+                );
+            }
         }
 
         private static VisualElement Box(VisualElement parent, string className)
@@ -391,7 +449,20 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                 button.SetEnabled(idle && viewIdentity != null);
             root.Q<Button>("graph-next")?.SetEnabled(idle && nextAfter != null);
             root.Q<Button>("graph-copy")?.SetEnabled(idle && exportPage != null);
-            foreach (var field in new VisualElement[] { kind, itemId, payload, expectedVersion, reauthorize, sourceEnabled, configurationRows })
+            foreach (
+                var field in new VisualElement[]
+                {
+                    kind,
+                    itemId,
+                    payload,
+                    expectedVersion,
+                    reauthorize,
+                    sourceEnabled,
+                    respectGitignore,
+                    policyExclude,
+                    configurationRows,
+                }
+            )
                 field.SetEnabled(idle && viewIdentity != null);
         }
 

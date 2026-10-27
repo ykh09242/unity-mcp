@@ -12,6 +12,384 @@ using UnityEngine;
 namespace MCPForUnityTests.EditMode.Tools
 {
     [TestFixture, Parallelizable(ParallelScope.None)]
+    public sealed class ReferenceGraphIgnoreRulesTests
+    {
+        private string root;
+        private ReferenceGraphIgnoreRules rules;
+        private System.Collections.Generic.Dictionary<string, string> candidates;
+
+        [SetUp]
+        public void SetUp()
+        {
+            root = Path.Combine(Path.GetTempPath(), "McpIgnoreRules_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Path.Combine(root, "Assets", "Nested"));
+            candidates = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [".gitignore"] = Path.Combine(root, ".gitignore"),
+                ["Assets/.gitignore"] = Path.Combine(root, "Assets", ".gitignore"),
+                ["Assets/Nested/.gitignore"] = Path.Combine(root, "Assets", "Nested", ".gitignore"),
+            };
+            rules = new ReferenceGraphIgnoreRules(root);
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            rules?.Dispose();
+            Assert.IsTrue(Path.GetFileName(root).StartsWith("McpIgnoreRules_", StringComparison.Ordinal));
+            Directory.Delete(root, true);
+        }
+
+        private JObject Acquire()
+        {
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            for (; ; )
+            {
+                try
+                {
+                    return rules.Rules(new JObject { ["validate"] = true }, 1, "epoch", 1, () => candidates);
+                }
+                catch (InvalidOperationException) when (elapsed.ElapsedMilliseconds < 15000)
+                {
+                    System.Threading.Thread.Sleep(20);
+                }
+            }
+        }
+
+        private JObject Read(JObject page, int offset = 0, bool validate = false) =>
+            rules.Rules(
+                new JObject
+                {
+                    ["snapshot"] = page["snapshot"],
+                    ["offset"] = offset,
+                    ["validate"] = validate,
+                },
+                1,
+                "epoch",
+                2,
+                () => throw new Exception("Cached rules must not rediscover assets.")
+            );
+
+        private void PauseWatchers()
+        {
+            foreach (
+                FileSystemWatcher watcher in (System.Collections.IEnumerable)
+                    typeof(ReferenceGraphIgnoreRules).GetField("watchers", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(rules)
+            )
+                watcher.EnableRaisingEvents = false;
+        }
+
+        [Test]
+        public void MissingCandidatesAndNestedRulesAreCheckedAtPublication()
+        {
+            JObject page = Acquire();
+            Assert.IsEmpty((JArray)page["files"]);
+            PauseWatchers();
+            File.WriteAllText(candidates["Assets/Nested/.gitignore"], "secret/\n");
+            Assert.Throws<InvalidOperationException>(() => Read(page, validate: true));
+            JObject changed = Acquire();
+            Assert.AreEqual("Assets/Nested/.gitignore", changed["files"][0].Value<string>("path"));
+            Assert.Greater(changed.Value<long>("ignore_revision"), page.Value<long>("ignore_revision"));
+            File.Delete(candidates["Assets/Nested/.gitignore"]);
+            Assert.Throws<InvalidOperationException>(() => Read(changed, validate: true));
+        }
+
+        [Test]
+        public void MetadataPagesAreStableLogicalOnlyAndUnrelatedImportsDoNotRediscover()
+        {
+            File.WriteAllText(candidates[".gitignore"], "Assets/Hidden/\n");
+            File.WriteAllText(candidates["Assets/.gitignore"], "Nested/*.asset\n");
+            JObject first = Acquire();
+            foreach (
+                FileSystemWatcher watcher in (System.Collections.IEnumerable)
+                    typeof(ReferenceGraphIgnoreRules).GetField("watchers", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(rules)
+            )
+            {
+                Assert.AreEqual("*.gitignore", watcher.Filter);
+                if (watcher.Path == root)
+                    Assert.IsFalse(watcher.IncludeSubdirectories, "Root observation must not subscribe Library and Temp trees.");
+            }
+            JObject second = Read(first, 1, true);
+            Assert.AreEqual(first["snapshot"], second["snapshot"]);
+            Assert.AreEqual(".gitignore", first["files"][0].Value<string>("path"));
+            Assert.AreEqual("Assets/.gitignore", second["files"][0].Value<string>("path"));
+            Assert.AreEqual(JTokenType.Null, second["next_offset"].Type);
+            StringAssert.DoesNotContain(root, first.ToString());
+            Assert.AreEqual(first.Value<long>("ignore_revision"), rules.Status("epoch", 100).Value<long>("ignore_revision"));
+            Assert.Throws<ArgumentException>(() => Read(first, 3));
+            Assert.Throws<ArgumentException>(() => rules.Rules(new JObject { ["offset"] = 1 }, 1, "epoch", 2, () => candidates));
+        }
+
+        [Test]
+        public void SourceRequiresExactManifestEntryAndChunksLargeRulesWithoutAFileCeiling()
+        {
+            byte[] expected = System.Text.Encoding.UTF8.GetBytes(new string('x', 150001));
+            File.WriteAllBytes(candidates[".gitignore"], expected);
+            JObject page = Acquire();
+            JObject file = (JObject)page["files"][0];
+            var request = new JObject
+            {
+                ["snapshot"] = page["snapshot"],
+                ["path"] = file["path"],
+                ["fingerprint"] = file["fingerprint"],
+            };
+            using (var output = new MemoryStream())
+            {
+                for (; ; )
+                {
+                    JObject chunk = rules.Source(request, "epoch", 99);
+                    byte[] bytes = Convert.FromBase64String(chunk.Value<string>("bytes_base64"));
+                    Assert.LessOrEqual(bytes.Length, 65536);
+                    output.Write(bytes, 0, bytes.Length);
+                    if (chunk["next_offset"].Type == JTokenType.Null)
+                        break;
+                    request["offset"] = chunk["next_offset"];
+                }
+                CollectionAssert.AreEqual(expected, output.ToArray());
+            }
+            foreach (string path in new[] { "Assets/Nested/other.txt", "../.gitignore", root + "/.gitignore", "Assets\\.gitignore" })
+            {
+                request["path"] = path;
+                Assert.Throws<ArgumentException>(() => rules.Source(request, "epoch", 99));
+            }
+        }
+
+        [Test]
+        public void FingerprintsCatchSameStampEditsAndMovedRules()
+        {
+            string path = candidates["Assets/.gitignore"];
+            File.WriteAllText(path, "one\n");
+            JObject before = Acquire();
+            PauseWatchers();
+            DateTime stamp = File.GetLastWriteTimeUtc(path);
+            File.WriteAllText(path, "two\n");
+            File.SetLastWriteTimeUtc(path, stamp);
+            Assert.Throws<InvalidOperationException>(() => Read(before, validate: true));
+            JObject changed = Acquire();
+            File.Move(path, candidates["Assets/Nested/.gitignore"]);
+            Assert.Throws<InvalidOperationException>(() => Read(changed, validate: true));
+        }
+
+        [Test]
+        public void LateCallbacksOverflowAndEpochChangesCannotPublishOldProof()
+        {
+            JObject page = Acquire();
+            typeof(ReferenceGraphIgnoreRules).GetMethod("MarkChanged", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(rules, null);
+            Assert.Throws<InvalidOperationException>(() => Read(page));
+            page = Acquire();
+            typeof(ReferenceGraphIgnoreRules)
+                .GetMethod("Failed", BindingFlags.Instance | BindingFlags.NonPublic)
+                .Invoke(rules, new object[] { null, new ErrorEventArgs(new InternalBufferOverflowException()) });
+            Assert.AreEqual("available", rules.Status("epoch", 1).Value<string>("ignore_state"));
+            Assert.IsFalse(rules.Status("epoch", 1).Value<bool>("ignore_watchers"));
+            Assert.Throws<InvalidOperationException>(() => Read(page, validate: true));
+            page = Acquire();
+            Assert.AreEqual("available", rules.Status("epoch", 1).Value<string>("ignore_state"));
+            Assert.Throws<InvalidOperationException>(() => rules.Rules(new JObject { ["snapshot"] = page["snapshot"] }, 1, "new-epoch", 1, () => candidates));
+            rules.Dispose();
+            Assert.IsEmpty(
+                (System.Collections.ICollection)
+                    typeof(ReferenceGraphIgnoreRules).GetField("watchers", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(rules)
+            );
+            Assert.Throws<ObjectDisposedException>(() => rules.Status("epoch", 1));
+        }
+
+        [Test]
+        public void InvalidSnapshotOffsetsFingerprintsAndOutsideCandidatesAreRejected()
+        {
+            File.WriteAllText(candidates[".gitignore"], "owned\n");
+            JObject page = Acquire();
+            var request = new JObject
+            {
+                ["snapshot"] = page["snapshot"],
+                ["path"] = ".gitignore",
+                ["fingerprint"] = page["files"][0]["fingerprint"],
+            };
+            foreach (JToken offset in new JToken[] { -1, "0", long.MaxValue })
+            {
+                request["offset"] = offset;
+                Assert.Throws<ArgumentException>(() => rules.Source(request, "epoch", 1));
+            }
+            request["offset"] = 0;
+            request["fingerprint"] = "wrong";
+            Assert.Throws<ArgumentException>(() => rules.Source(request, "epoch", 1));
+            request.Remove("snapshot");
+            Assert.Throws<InvalidOperationException>(() => rules.Source(request, "epoch", 1));
+            Assert.AreEqual(
+                page["ignore_revision"],
+                rules.Status("epoch", 1)["ignore_revision"],
+                "Invalid caller arguments must not invalidate shared evidence."
+            );
+            Assert.AreEqual("available", rules.Status("epoch", 1).Value<string>("ignore_state"));
+            Assert.DoesNotThrow(() => Read(page, validate: true));
+            rules.Invalidate();
+            candidates["Assets/Nested/.gitignore"] = Path.Combine(Path.GetDirectoryName(root), ".gitignore");
+            Assert.Throws<InvalidOperationException>(() => rules.Rules(new JObject(), 1, "epoch", 1, () => candidates));
+            Assert.AreEqual("unavailable", rules.Status("epoch", 1).Value<string>("ignore_state"));
+        }
+
+        [Test]
+        public void NestedRuleCreateEditMoveDeleteUsesDeclaredWatcherCapability()
+        {
+            JObject page = Acquire();
+            bool automatic = page.Value<bool>("ignore_watchers");
+            string nested = candidates["Assets/Nested/.gitignore"];
+            string parent = candidates["Assets/.gitignore"];
+            string renamed = Path.Combine(root, "Assets", "renamed-rule.txt");
+            foreach (
+                Action change in new Action[]
+                {
+                    () => File.WriteAllText(nested, "created\n"),
+                    () => File.AppendAllText(nested, "edited\n"),
+                    () => File.Move(nested, parent),
+                    () => File.Move(parent, renamed),
+                    () => File.Move(renamed, parent),
+                    () => File.Delete(parent),
+                }
+            )
+            {
+                long before = rules.Status("epoch", 1).Value<long>("ignore_revision");
+                change();
+                if (automatic)
+                {
+                    var elapsed = System.Diagnostics.Stopwatch.StartNew();
+                    while (rules.Status("epoch", 1).Value<long>("ignore_revision") == before && elapsed.ElapsedMilliseconds < 15000)
+                        System.Threading.Thread.Sleep(10);
+                }
+                else
+                {
+                    Assert.AreEqual(
+                        before,
+                        rules.Status("epoch", 1).Value<long>("ignore_revision"),
+                        "Degraded observation must not claim automatic invalidation."
+                    );
+                    Assert.Throws<InvalidOperationException>(
+                        () => Read(page, validate: true),
+                        "Explicit validation must reject changed nested rules before delivery."
+                    );
+                }
+                Assert.Greater(
+                    rules.Status("epoch", 1).Value<long>("ignore_revision"),
+                    before,
+                    automatic
+                        ? "Nested changes must invalidate without a census or explicit validation."
+                        : "Changed rules must invalidate through declared explicit validation."
+                );
+                page = Acquire();
+                Assert.AreEqual(automatic, page.Value<bool>("ignore_watchers"));
+            }
+        }
+
+        [Test]
+        public void PollingUnknownAndUninspectableMonoBackendsRequireExplicitValidation()
+        {
+            foreach (string backend in new[] { "System.IO.DefaultWatcher", "System.IO.NullFileWatcher", "System.IO.UnknownWatcher", null })
+                Assert.IsFalse(ReferenceGraphIgnoreRules.CanObserveWithoutPolling(true, () => backend));
+            Assert.IsFalse(ReferenceGraphIgnoreRules.CanObserveWithoutPolling(true, () => throw new InvalidOperationException("Owned inspection failure")));
+            foreach (string backend in new[] { "System.IO.CoreFXFileSystemWatcherProxy", "System.IO.FAMWatcher", "System.IO.KeventWatcher" })
+                Assert.IsTrue(ReferenceGraphIgnoreRules.CanObserveWithoutPolling(true, () => backend));
+            Assert.IsTrue(ReferenceGraphIgnoreRules.CanObserveWithoutPolling(false, () => throw new Exception("Non-Mono inspection must not run.")));
+        }
+
+        [Test]
+        public void SuffixWatcherCallbacksInvalidateOnlyExactRuleNamesAndBothRenameSides()
+        {
+            Acquire();
+            PauseWatchers();
+            MethodInfo changed = typeof(ReferenceGraphIgnoreRules).GetMethod("Changed", BindingFlags.Instance | BindingFlags.NonPublic);
+            MethodInfo renamed = typeof(ReferenceGraphIgnoreRules).GetMethod("Renamed", BindingFlags.Instance | BindingFlags.NonPublic);
+            long before = rules.Status("epoch", 1).Value<long>("ignore_revision");
+            changed.Invoke(rules, new object[] { null, new FileSystemEventArgs(WatcherChangeTypes.Changed, root, "Assets/Nested/other.gitignore") });
+            renamed.Invoke(
+                rules,
+                new object[] { null, new RenamedEventArgs(WatcherChangeTypes.Renamed, root, "Assets/new.gitignore", "Assets/old.gitignore") }
+            );
+            Assert.AreEqual(before, rules.Status("epoch", 1).Value<long>("ignore_revision"));
+            foreach (WatcherChangeTypes change in new[] { WatcherChangeTypes.Created, WatcherChangeTypes.Changed })
+            foreach (string name in new[] { "Assets/Nested/.gitignore", ".gitignore", "Assets/Nested/.GITIGNORE" })
+            {
+                before = rules.Status("epoch", 1).Value<long>("ignore_revision");
+                changed.Invoke(rules, new object[] { null, new FileSystemEventArgs(change, root, name) });
+                long after = rules.Status("epoch", 1).Value<long>("ignore_revision");
+                Assert.AreEqual(before + 1, after, "Rule-name hints must invalidate for either casing, independently of filesystem path comparison.");
+            }
+            foreach (string rule in new[] { "Assets/.gitignore", "Assets/.GITIGNORE" })
+            foreach (bool intoRule in new[] { false, true })
+            {
+                before = rules.Status("epoch", 1).Value<long>("ignore_revision");
+                renamed.Invoke(
+                    rules,
+                    new object[]
+                    {
+                        null,
+                        new RenamedEventArgs(WatcherChangeTypes.Renamed, root, intoRule ? rule : "Assets/renamed.txt", intoRule ? "Assets/renamed.txt" : rule),
+                    }
+                );
+                Assert.Greater(rules.Status("epoch", 1).Value<long>("ignore_revision"), before);
+            }
+        }
+
+        [Test]
+        public void WatcherFactoryFailureUsesFreshExplicitValidationWithoutAllowingStaleRules()
+        {
+            rules.Dispose();
+            rules = new ReferenceGraphIgnoreRules(root, 10, _ => throw new IOException("Owned watcher factory failure"));
+            JObject status = rules.Status("epoch", 1);
+            Assert.AreEqual("available", status.Value<string>("ignore_state"));
+            Assert.IsFalse(status.Value<bool>("ignore_watchers"));
+            JObject initial = Acquire();
+            Assert.IsFalse(initial.Value<bool>("ignore_watchers"));
+            File.WriteAllText(candidates["Assets/Nested/.gitignore"], "secret/\n");
+            Assert.Throws<InvalidOperationException>(() => Read(initial, validate: true));
+            JObject updated = Acquire();
+            Assert.Greater(updated.Value<long>("ignore_revision"), initial.Value<long>("ignore_revision"));
+            Assert.AreEqual("Assets/Nested/.gitignore", updated["files"][0].Value<string>("path"));
+            Assert.DoesNotThrow(() => Read(updated, validate: true));
+            Assert.IsFalse(rules.Status("epoch", 1).Value<bool>("ignore_watchers"));
+        }
+
+        [Test]
+        public void SourceReadFailureInvalidatesAndLatchesUnavailableUntilFreshCapture() => CheckLockedFileFailure(false);
+
+        [Test]
+        public void ValidationReadFailureInvalidatesAndLatchesUnavailableUntilFreshCapture() => CheckLockedFileFailure(true);
+
+        private void CheckLockedFileFailure(bool validation)
+        {
+            string physical = candidates["Assets/Nested/.gitignore"];
+            File.WriteAllText(physical, "private/\n");
+            JObject page = Acquire();
+            PauseWatchers();
+            var source = new JObject
+            {
+                ["snapshot"] = page["snapshot"],
+                ["path"] = page["files"][0]["path"],
+                ["fingerprint"] = page["files"][0]["fingerprint"],
+            };
+            using (File.Open(physical, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                Assert.Catch(() =>
+                {
+                    if (validation)
+                        Read(page, validate: true);
+                    else
+                        rules.Source(source, "epoch", 1);
+                });
+                JObject failed = rules.Status("epoch", 1);
+                Assert.AreEqual("unavailable", failed.Value<string>("ignore_state"), "A real file-read failure must not leave cached evidence current.");
+                Assert.Greater(failed.Value<long>("ignore_revision"), page.Value<long>("ignore_revision"));
+                Assert.IsNotEmpty(failed.Value<string>("ignore_error"));
+                Assert.Throws<InvalidOperationException>(() => Read(page));
+            }
+            Assert.AreEqual("unavailable", rules.Status("epoch", 1).Value<string>("ignore_state"), "Releasing a lock alone must not republish old proof.");
+            JObject recovered = Acquire();
+            Assert.AreEqual("available", rules.Status("epoch", 1).Value<string>("ignore_state"));
+            Assert.AreNotEqual(page["snapshot"], recovered["snapshot"]);
+            Assert.DoesNotThrow(() => Read(recovered, validate: true));
+        }
+    }
+
+    [TestFixture, Parallelizable(ParallelScope.None)]
     public sealed class ReferenceGraphCollectorTests
     {
         private string root;
@@ -49,6 +427,75 @@ namespace MCPForUnityTests.EditMode.Tools
             File.WriteAllText(path, value);
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
             return path;
+        }
+
+        [Test]
+        public void IgnoreParentsGrowFromImportsWithoutReplacingTheCachedCensus()
+        {
+            CreateText("initial.txt", "initial");
+            Call("ignore_rules", "validate", true);
+            var type = typeof(ManageAsset).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphCollector");
+            FieldInfo token = type.GetField("inventoryToken", BindingFlags.NonPublic | BindingFlags.Static);
+            string beforeToken = (string)token.GetValue(null);
+            long before = Call("status").Value<long>("ignore_revision");
+            CreateText("same-parent.txt", "same parent");
+            Assert.AreEqual(before, Call("status").Value<long>("ignore_revision"));
+            Assert.AreEqual(beforeToken, token.GetValue(null), "Known-parent imports must reuse the cached GUID census.");
+            AssetDatabase.CreateFolder(root, "NewParent");
+            CreateText("NewParent/new.txt", "new parent");
+            Assert.Greater(Call("status").Value<long>("ignore_revision"), before);
+            File.WriteAllText(root + "/NewParent/.gitignore", "new.txt\n");
+            JObject page = Call("ignore_rules", "validate", true, "page_size", 1000);
+            Assert.IsTrue(((JArray)page["files"]).Any(row => row.Value<string>("path") == root + "/NewParent/.gitignore"));
+            Assert.AreEqual(beforeToken, token.GetValue(null), "New-parent discovery must extend the existing census candidates.");
+        }
+
+        [Test]
+        public void ExplicitNewCensusRefreshesJournalChangesWithoutRefreshingOrdinaryReads()
+        {
+            CreateText("census-before.txt", "before");
+            JObject before = Call("inventory", "page_size", 1);
+            string snapshot = before.Value<string>("snapshot");
+            var type = typeof(ManageAsset).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphCollector");
+            const BindingFlags hidden = BindingFlags.NonPublic | BindingFlags.Static;
+            FieldInfo token = type.GetField("inventoryToken", hidden);
+            FieldInfo census = type.GetField("inventory", hidden);
+            Assert.AreEqual(snapshot, Call("inventory", "page_size", 1).Value<string>("snapshot"), "An unchanged explicit census must reuse its snapshot.");
+            AssetDatabase.CreateFolder(root, "CensusAdded");
+            string path = CreateText("CensusAdded/census-after.txt", "after");
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            Assert.AreEqual(snapshot, token.GetValue(null), "Import notifications must not rebuild the shared census.");
+            Call("status");
+            Call("ignore_rules", "validate", true);
+            Assert.AreEqual(snapshot, token.GetValue(null), "Status and implicit ignore discovery must not refresh the census.");
+            Assert.IsFalse(((string[])census.GetValue(null)).Contains(guid));
+            Assert.AreEqual(snapshot, Call("inventory", "snapshot", snapshot, "offset", 0, "page_size", 1).Value<string>("snapshot"));
+            JObject fresh = Call("inventory", "page_size", 1);
+            Assert.AreNotEqual(snapshot, fresh.Value<string>("snapshot"));
+            int index = Array.IndexOf((string[])census.GetValue(null), guid);
+            Assert.GreaterOrEqual(index, 0, "A new explicit census must discover the new imported GUID.");
+            JObject row = Call("inventory", "snapshot", fresh.Value<string>("snapshot"), "offset", index, "page_size", 1);
+            Assert.AreEqual(guid, row["assets"][0].Value<string>("guid"));
+            Assert.AreEqual(path, row["assets"][0].Value<string>("path"));
+            Assert.AreEqual(fresh["snapshot"], Call("inventory", "page_size", 1)["snapshot"]);
+            var stale = Assert.Throws<TargetInvocationException>(() => Call("inventory", "snapshot", snapshot, "offset", 0, "page_size", 1));
+            Assert.IsInstanceOf<InvalidOperationException>(stale.InnerException);
+        }
+
+        [Test]
+        public void ReleasingIgnoreObserversAdvancesRevisionAndExpiresTheirSnapshot()
+        {
+            CreateText("reload.txt", "owned");
+            JObject page = Call("ignore_rules", "validate", true);
+            JObject before = Call("status");
+            var type = typeof(ManageAsset).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphCollector");
+            type.GetMethod("ReleaseIgnoreRules", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+            JObject after = Call("status");
+            Assert.AreEqual(before["instance_id"], after["instance_id"]);
+            Assert.AreEqual(before["epoch"], after["epoch"]);
+            Assert.Greater(after.Value<long>("ignore_revision"), before.Value<long>("ignore_revision"));
+            var error = Assert.Throws<TargetInvocationException>(() => Call("ignore_rules", "snapshot", page.Value<string>("snapshot"), "validate", true));
+            Assert.IsInstanceOf<InvalidOperationException>(error.InnerException);
         }
 
         [TestCase("Packages/com.example/C:/Windows/win.ini")]

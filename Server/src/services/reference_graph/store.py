@@ -116,7 +116,7 @@ def check_owned_path(path: Path) -> Path:
 
 class GraphStore:
     APPLICATION_ID = 0x554D5247
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     @classmethod
     def open(cls, root: Path, scope: GraphScope) -> GraphStore:
@@ -168,7 +168,7 @@ class GraphStore:
                 raise ValueError("This database is not owned by the reference graph")
             return False
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (1, self.SCHEMA_VERSION):
+        if version not in (1, 2, self.SCHEMA_VERSION):
             raise ValueError("Unsupported reference graph schema; preserve the database")
         if connection.execute("SELECT scope FROM graph_meta").fetchone()[0] != self.scope.key:
             raise ValueError("Reference graph identity does not match")
@@ -263,6 +263,7 @@ class GraphStore:
             if application == self.APPLICATION_ID:
                 if connection.execute("PRAGMA user_version").fetchone()[0] not in (
                     1,
+                    2,
                     self.SCHEMA_VERSION,
                 ):
                     raise ValueError("Unsupported reference graph schema; preserve the database")
@@ -296,6 +297,13 @@ class GraphStore:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS evidence_context(owner TEXT NOT NULL,provider TEXT NOT NULL,generation INTEGER NOT NULL,pending TEXT NOT NULL,published TEXT NOT NULL DEFAULT '{}',PRIMARY KEY(owner,provider))"
             )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS graph_excluded_nodes(id TEXT PRIMARY KEY,path TEXT NOT NULL)"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS graph_admission(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,ready INTEGER NOT NULL)"
+            )
+            connection.execute("INSERT OR IGNORE INTO graph_admission VALUES (1,0,1)")
             connection.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
         self._ensure_wal()
 
@@ -443,7 +451,7 @@ class GraphStore:
     ) -> None:
         payload = _json(asdict(edge))
         connection.execute(
-            "INSERT OR REPLACE INTO edges VALUES (?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO edges SELECT ?,?,?,?,?,? WHERE ?='manual' OR ? LIKE 'runtime:%' OR NOT EXISTS (SELECT 1 FROM graph_excluded_nodes WHERE id=? OR id=?)",
             (
                 identity or _hash((owner, provider, payload)),
                 owner,
@@ -451,6 +459,10 @@ class GraphStore:
                 edge.target,
                 edge.kind,
                 payload,
+                provider,
+                provider,
+                owner,
+                edge.target,
             ),
         )
 
@@ -552,7 +564,7 @@ class GraphStore:
                 identity,
                 lambda: dict(
                     connection.execute(
-                        "SELECT o.state,count(*) FROM observations o JOIN sources s USING(provider) WHERE s.enabled=1 GROUP BY o.state"
+                        "SELECT o.state,count(*) FROM observations o JOIN sources s USING(provider) WHERE s.enabled=1 AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=o.owner) GROUP BY o.state"
                     )
                 ),
             )
@@ -586,9 +598,19 @@ class GraphStore:
             revision = connection.execute("SELECT revision FROM graph_meta").fetchone()[0]
             if position is not None and position.get("revision") != revision:
                 raise RevisionConflict("Graph changed between pages; restart the query")
+            if connection.execute(
+                "SELECT 1 FROM graph_excluded_nodes WHERE id=?", (node,)
+            ).fetchone():
+                return {
+                    "revision": revision,
+                    "edges": [],
+                    "next_cursor": None,
+                    "excluded": True,
+                    "reason": "excluded_by_collection_policy",
+                }
             column = "owner" if direction == "outgoing" else "target"
             rows = connection.execute(
-                f"SELECT e.*,o.state,n.present,c.published AS provenance FROM edges e JOIN sources s ON s.provider=e.provider LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider LEFT JOIN nodes n ON n.id=e.target WHERE e.{column}=? AND e.id>? AND s.enabled=1 ORDER BY e.id LIMIT ?",
+                f"SELECT e.*,o.state,n.present,c.published AS provenance FROM edges e JOIN sources s ON s.provider=e.provider LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider LEFT JOIN nodes n ON n.id=e.target WHERE e.{column}=? AND e.id>? AND s.enabled=1 AND (SELECT ready FROM graph_admission WHERE id=1)=1 AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.owner OR x.id=e.target) ORDER BY e.id LIMIT ?",
                 (node, position["last"] if position else "", limit + 1),
             ).fetchall()
             more = len(rows) > limit

@@ -183,9 +183,13 @@ class Native:
             "epoch": "epoch",
             "revision": self.revision,
             "compilation_failed": self.failed,
+            "ignore_state": "available",
+            "ignore_revision": 0,
         }
         action = params["action"]
-        if action == "inventory":
+        if action == "ignore_rules":
+            response.update(snapshot="ignore", files=[], next_offset=None)
+        elif action == "inventory":
             response.update(
                 snapshot="snapshot", assets=[self.asset()] if self.present else [], next_offset=None
             )

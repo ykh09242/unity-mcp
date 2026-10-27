@@ -699,8 +699,17 @@ class Catalog:
     def __init__(self, assets: Iterable[dict]):
         self.keys: dict[tuple[str, str], set[str]] = defaultdict(set)
         self.guids: set[str] = set()
+        self.blocked: set[tuple[str, str]] = set()
         self.addressables_unavailable = False
         for asset in assets:
+            if asset.get("_excluded"):
+                self.blocked.update(
+                    (key["scheme"], self.canonical_key(key["scheme"], key["value"]))
+                    for key in asset.get("keys", ())
+                )
+                self.blocked.add(("guid", asset["guid"].lower()))
+                self.blocked.add(("path", asset["path"]))
+                continue
             self.addressables_unavailable |= bool(asset.get("addressables_error")) or asset.get(
                 "addressables"
             ) in {"unavailable", "unsupported", "failed"}
@@ -728,6 +737,10 @@ class Catalog:
         if scheme == "addressables":
             targets.update(self.keys.get(("addressables_label", key), ()))
         if not targets:
+            if (scheme, key) in self.blocked or (
+                scheme == "addressables" and ("addressables_label", key) in self.blocked
+            ):
+                return set(), "excluded"
             if scheme in {"addressables", "addressables_label"} and self.addressables_unavailable:
                 return set(), "provider_unavailable"
             return set(), "key_not_found"
@@ -1376,7 +1389,7 @@ class AnalysisIndex:
             targets, reason, subobject = self.catalog.resolve_detail(
                 effect.scheme, key, effect.mode
             )
-            if reason:
+            if reason and reason != "excluded":
                 yield {"line": call.line, "call": call.name, "reason": reason, "key": key}
             for target in sorted(targets):
                 self.check()

@@ -46,6 +46,12 @@ namespace MCPForUnity.Editor.Tools
                     case "source":
                         fields = new[] { "guid", "offset", "fingerprint" };
                         break;
+                    case "ignore_rules":
+                        fields = new[] { "offset", "snapshot", "page_size", "validate" };
+                        break;
+                    case "ignore_source":
+                        fields = new[] { "snapshot", "path", "offset", "fingerprint" };
+                        break;
                     case "changes":
                         fields = new[] { "epoch", "after", "page_size" };
                         break;
@@ -78,6 +84,12 @@ namespace MCPForUnity.Editor.Tools
                     {
                         if (!(property.Value is JArray paths) || paths.Any(path => path.Type != JTokenType.String))
                             throw new ArgumentException("Collection paths must be an array of strings.");
+                        continue;
+                    }
+                    if (property.Name == "validate")
+                    {
+                        if (property.Value.Type != JTokenType.Boolean)
+                            throw new ArgumentException("Ignore validation requires a boolean.");
                         continue;
                     }
                     bool number = property.Name == "offset" || property.Name == "after" || property.Name == "page_size";
@@ -121,7 +133,9 @@ namespace MCPForUnity.Editor.Tools
                     message = parameters?["action"]?.Type == JTokenType.String
                     && ((string)parameters["action"]).StartsWith("runtime_", StringComparison.Ordinal)
                         ? "Runtime capture unavailable (" + error.GetType().Name + "). Inspect capture status, then retry or release it."
-                        : error.Message,
+                    : parameters?["action"]?.Type == JTokenType.String && ((string)parameters["action"]).StartsWith("ignore_", StringComparison.Ordinal)
+                        ? "Ignore evidence unavailable (" + error.GetType().Name + "). Refresh rule evidence and retry collection."
+                    : error.Message,
                 };
             }
         }

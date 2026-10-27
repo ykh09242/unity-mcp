@@ -340,8 +340,12 @@ class Sender:
             "project_id": "project",
             "epoch": "epoch",
             "revision": 0,
+            "ignore_state": "available",
+            "ignore_revision": 0,
         }
-        if params["action"] == "inventory":
+        if params["action"] == "ignore_rules":
+            result.update(snapshot="ignore", files=[], next_offset=None)
+        elif params["action"] == "inventory":
             result.update(snapshot="snapshot", assets=[], next_offset=None)
         elif params["action"] == "changes":
             result.update(requires_census=False, changes=[], next_after=0, has_more=False)
@@ -765,6 +769,7 @@ async def test_cached_external_results_recheck_file_access_and_operator_revocati
     with bind_credential_lease(lease):
         entry, _ = await service.resolve(ctx, "status")
         workspace = entry.workspace
+        assert await entry.engine.reconcile()
         workspace.store.set_source("external:settings", grant, expected_version=0)
         workspace.acquire("test")
         generation = workspace.store.observe(

@@ -118,6 +118,7 @@ namespace MCPForUnity.Editor.Tools
                     batch[path] = false;
             if (batch.Count == 0)
                 return;
+            ReferenceGraphCollector.ObserveIgnorePaths(imported.Concat(moved));
             // This is a journal retention policy, not an asset/workload limit. Every
             // consumer of an expired epoch must reconcile a complete new census.
             if (batch.Count > RetainedEvents - changes.Count)

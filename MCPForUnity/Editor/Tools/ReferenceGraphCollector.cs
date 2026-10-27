@@ -40,6 +40,12 @@ namespace MCPForUnity.Editor.Tools
         private static Delegate addressableObserver;
         private static int addressableChanged;
         private static string addressableObservationError;
+        private static ReferenceGraphIgnoreRules ignoreRules;
+        private const string IgnoreRevisionKey = "MCP.ReferenceGraph.IgnoreRevision.v1";
+        private static long ignoreLastRevision;
+        private static Dictionary<string, string> ignoreCandidates;
+        private static string ignoreCandidateEpoch;
+        private static readonly HashSet<string> pendingIgnorePaths = new HashSet<string>(StringComparer.Ordinal);
         private static readonly HashSet<string> SerializedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             ".asset",
@@ -101,7 +107,11 @@ namespace MCPForUnity.Editor.Tools
             switch (action)
             {
                 case "inventory":
-                    return Inventory(request, count);
+                    return Inventory(request, count, refresh: true);
+                case "ignore_rules":
+                    return IgnoreRules(true).Rules(request, count, ReferenceGraphJournal.Epoch, ReferenceGraphJournal.Revision, DiscoverIgnoreCandidates);
+                case "ignore_source":
+                    return IgnoreRules(true).Source(request, ReferenceGraphJournal.Epoch, ReferenceGraphJournal.Revision);
                 case "asset":
                     string path = request.Value<string>("path");
                     if (path != null && !Admitted(path))
@@ -133,8 +143,9 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static JObject Status() =>
-            new JObject
+        private static JObject Status()
+        {
+            JObject result = new JObject
             {
                 ["instance_id"] = ReferenceGraphJournal.InstanceId,
                 ["project_id"] = ProjectIdentityUtility.GetProjectHash(),
@@ -148,6 +159,149 @@ namespace MCPForUnity.Editor.Tools
                 ["addressables_event_error"] = addressableObservationError,
                 ["scope"] = "Assets and Packages; collection exclusions belong to the requesting user's graph policy",
             };
+            try
+            {
+                result.Merge(IgnoreRules().Status(ReferenceGraphJournal.Epoch, ReferenceGraphJournal.Revision));
+            }
+            catch (Exception error)
+            {
+                result["ignore_revision"] = ignoreRules?.Revision ?? ignoreLastRevision;
+                result["ignore_state"] = "unavailable";
+                result["ignore_watchers"] = false;
+                result["ignore_error"] = error.GetType().Name;
+            }
+            return result;
+        }
+
+        private static ReferenceGraphIgnoreRules IgnoreRules(bool validatePackages = false)
+        {
+            if (ignoreRules == null)
+            {
+                long.TryParse(SessionState.GetString(IgnoreRevisionKey, "0"), out long previous);
+                ignoreLastRevision = Math.Max(ignoreLastRevision, Math.Max(0, previous)) + 1;
+                ignoreRules = new ReferenceGraphIgnoreRules(Path.GetDirectoryName(Application.dataPath), ignoreLastRevision);
+                AssemblyReloadEvents.beforeAssemblyReload += ReleaseIgnoreRules;
+                EditorApplication.quitting += ReleaseIgnoreRules;
+            }
+            if (ignoreCandidateEpoch != ReferenceGraphJournal.Epoch)
+            {
+                ignoreCandidates = null;
+                ignoreCandidateEpoch = ReferenceGraphJournal.Epoch;
+                ignoreRules.Invalidate();
+            }
+            if (ignoreCandidates != null && pendingIgnorePaths.Count != 0)
+            {
+                int before = ignoreCandidates.Count;
+                foreach (string path in pendingIgnorePaths)
+                    AddIgnoreParents(ignoreCandidates, path);
+                pendingIgnorePaths.Clear();
+                if (before != ignoreCandidates.Count)
+                    ignoreRules.Invalidate();
+            }
+            if (validatePackages && ignoreCandidates != null)
+                RefreshIgnorePackages();
+            return ignoreRules;
+        }
+
+        private static void RefreshIgnorePackages()
+        {
+            string[] packages = ignoreCandidates
+                .Keys.Where(path => path.StartsWith("Packages/", StringComparison.Ordinal) && path.Count(value => value == '/') == 2)
+                .ToArray();
+            foreach (string candidate in packages)
+            {
+                string assetRoot = candidate.Substring(0, candidate.Length - "/.gitignore".Length);
+                var package = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(assetRoot);
+                string current =
+                    package == null
+                        ? null
+                        : SafePathUtility.ResolveWithinRoot(ResolveRegisteredPackagePath(assetRoot, package.assetPath, package.resolvedPath), ".gitignore");
+                if (current == ignoreCandidates[candidate])
+                    continue;
+                ignoreRules.Invalidate();
+                foreach (string path in ignoreCandidates.Keys.Where(path => path.StartsWith(assetRoot + "/", StringComparison.Ordinal)).ToArray())
+                {
+                    if (current == null)
+                        ignoreCandidates.Remove(path);
+                    else
+                        ignoreCandidates[path] = SafePathUtility.ResolveWithinRoot(Path.GetDirectoryName(current), path.Substring(assetRoot.Length + 1));
+                }
+            }
+        }
+
+        internal static void ObserveIgnorePaths(IEnumerable<string> paths)
+        {
+            if (ignoreRules != null)
+                foreach (string path in paths)
+                    pendingIgnorePaths.Add(path);
+        }
+
+        private static Dictionary<string, string> DiscoverIgnoreCandidates()
+        {
+            if (ignoreCandidates == null)
+            {
+                // Use the same GUID census as inventory; never walk the filesystem
+                // or perform another whole-project query on ordinary status/imports.
+                if (inventory == null || inventoryEpoch != ReferenceGraphJournal.Epoch)
+                    Inventory(new JObject(), 1);
+                var discovered = new Dictionary<string, string>(StringComparer.Ordinal);
+                string projectRoot = Path.GetDirectoryName(Application.dataPath);
+                discovered[".gitignore"] = SafePathUtility.ResolveWithinRoot(projectRoot, ".gitignore");
+                discovered["Assets/.gitignore"] = SafePathUtility.ResolveWithinRoot(Application.dataPath, ".gitignore");
+                discovered["Packages/.gitignore"] = SafePathUtility.ResolveWithinRoot(projectRoot, "Packages/.gitignore");
+                foreach (string guid in inventory)
+                    AddIgnoreParents(discovered, AssetDatabase.GUIDToAssetPath(guid));
+                ignoreCandidates = discovered;
+            }
+            foreach (string path in pendingIgnorePaths)
+                AddIgnoreParents(ignoreCandidates, path);
+            pendingIgnorePaths.Clear();
+            return new Dictionary<string, string>(ignoreCandidates, StringComparer.Ordinal);
+        }
+
+        private static void AddIgnoreParents(Dictionary<string, string> candidates, string path)
+        {
+            if (!Admitted(path))
+                return;
+            string parent = AssetDatabase.IsValidFolder(path) ? path : path.Substring(0, path.LastIndexOf('/'));
+            while (parent.Length != 0)
+            {
+                string logical = parent + "/.gitignore";
+                if (!candidates.ContainsKey(logical))
+                {
+                    string physical;
+                    if (parent.StartsWith("Packages/", StringComparison.Ordinal))
+                    {
+                        var package = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(parent);
+                        if (package == null)
+                            throw new InvalidOperationException("Ignore package root cannot be resolved.");
+                        string root = ResolveRegisteredPackagePath(package.assetPath, package.assetPath, package.resolvedPath);
+                        physical = SafePathUtility.ResolveWithinRoot(root, logical.Substring(package.assetPath.Length + 1));
+                    }
+                    else
+                        physical = SafePathUtility.ResolveWithinRoot(Path.GetDirectoryName(Application.dataPath), logical);
+                    candidates.Add(logical, physical);
+                }
+                int separator = parent.LastIndexOf('/');
+                parent = separator < 0 ? "" : parent.Substring(0, separator);
+            }
+        }
+
+        private static void ReleaseIgnoreRules()
+        {
+            if (ignoreRules != null)
+            {
+                ignoreLastRevision = ignoreRules.Revision;
+                SessionState.SetString(IgnoreRevisionKey, ignoreRules.Revision.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            ignoreRules?.Dispose();
+            ignoreRules = null;
+            ignoreCandidates = null;
+            ignoreCandidateEpoch = null;
+            pendingIgnorePaths.Clear();
+            AssemblyReloadEvents.beforeAssemblyReload -= ReleaseIgnoreRules;
+            EditorApplication.quitting -= ReleaseIgnoreRules;
+        }
 
         private static int Integer(JObject request, string key, int fallback, int min, int max)
         {
@@ -167,7 +321,7 @@ namespace MCPForUnity.Editor.Tools
             return guid;
         }
 
-        private static JObject Inventory(JObject request, int count)
+        private static JObject Inventory(JObject request, int count, bool refresh = false)
         {
             int offset = Integer(request, "offset", 0, 0, int.MaxValue);
             string token = request.Value<string>("snapshot");
@@ -175,7 +329,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (offset != 0)
                     throw new ArgumentException("Inventory continuation requires its snapshot.");
-                if (inventory == null || inventoryEpoch != ReferenceGraphJournal.Epoch)
+                if (inventory == null || inventoryEpoch != ReferenceGraphJournal.Epoch || (refresh && inventoryRevision != ReferenceGraphJournal.Revision))
                 {
                     inventoryEpoch = ReferenceGraphJournal.Epoch;
                     inventoryRevision = ReferenceGraphJournal.Revision;

@@ -45,6 +45,47 @@ namespace MCPForUnityTests.EditMode.Windows
         private static JObject Sample() => (JObject)typeof(ReferenceGraphPanelTests).GetMethod("Sample", Static).Invoke(null, null);
 
         [Test]
+        public async Task CollectionPolicyFieldsPreserveUnknownConfigurationVersionAndDrafts()
+        {
+            var root = NewRoot();
+            JObject imported = null;
+            using var section = new McpReferenceGraphSection(
+                root,
+                (action, options, _) =>
+                {
+                    if (action == "import_config")
+                        imported = (JObject)options.DeepClone();
+                    return Task.FromResult(action == "overview" ? Sample() : new JObject());
+                },
+                () => "one"
+            );
+            section.SetVisible(true);
+            await section.Run("overview", new JObject());
+            root.Q<DropdownField>("graph-kind").index = 2;
+            Assert.IsTrue(root.Q<Toggle>("graph-respect-gitignore").value);
+            typeof(McpReferenceGraphSection)
+                .GetMethod("LoadItem", Instance)
+                .Invoke(
+                    section,
+                    new object[] { JObject.Parse("{'id':'policy','version':7,'config':{'future':{'preserved':true},'exclude':['Assets/Legacy/**']}}") }
+                );
+            root.Q<Toggle>("graph-respect-gitignore").value = false;
+            root.Q<TextField>("graph-policy-exclude").value = "Assets/Generated/**\nPackages/com.example/Tests/**";
+            JObject config = JObject.Parse(root.Q<TextField>("graph-config").value);
+            Assert.IsTrue(config["future"].Value<bool>("preserved"));
+            Assert.IsFalse(config.Value<bool>("respect_gitignore"));
+            root.Q<DropdownField>("graph-kind").index = 0;
+            root.Q<DropdownField>("graph-kind").index = 2;
+            Assert.IsFalse(root.Q<Toggle>("graph-respect-gitignore").value);
+            StringAssert.Contains("Assets/Generated/**", root.Q<TextField>("graph-policy-exclude").value);
+            await (Task)typeof(McpReferenceGraphSection).GetMethod("Import", Instance).Invoke(section, null);
+            Assert.AreEqual(7, imported.Value<int>("expected_version"));
+            Assert.AreEqual("policy", imported.Value<string>("id"));
+            Assert.IsTrue(imported["config"]["future"].Value<bool>("preserved"));
+            Assert.AreEqual(2, ((JArray)imported["config"]["exclude"]).Count);
+        }
+
+        [Test]
         public async Task SameIdentityAndKindRoundtripsKeepIndependentDrafts()
         {
             var root = NewRoot();
