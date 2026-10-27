@@ -38,7 +38,7 @@ def test_docker_uses_unique_names_and_removes_only_returned_owned_ids(tmp_path, 
             return subprocess.CompletedProcess(argv, 0, stdout=next(ids) + "\n")
         return subprocess.CompletedProcess(argv, 0, stdout="running\n")
 
-    monkeypatch.setattr(lh.subprocess, "run", command)
+    monkeypatch.setattr(lh, "_run_docker", command)
     monkeypatch.setenv("UNITY_IMAGE", "owned-image")
     args = lh.build_arg_parser().parse_args(["--ci"])
     first, second = lh.DockerLauncher(args), lh.DockerLauncher(args)
@@ -64,7 +64,7 @@ def test_docker_never_recursively_changes_supplied_directory_permissions(tmp_pat
     foreign.write_text("owned by caller", encoding="utf-8")
     before = foreign.stat().st_mode
     calls = []
-    monkeypatch.setattr(lh.subprocess, "run", lambda argv, **kwargs: calls.append(argv))
+    monkeypatch.setattr(lh, "_run_docker", lambda argv, **kwargs: calls.append(argv))
     launcher = lh.DockerLauncher(lh.build_arg_parser().parse_args(["--ci"]))
     launcher.fixup_permissions(tmp_path)
     assert calls == []
@@ -117,7 +117,7 @@ def test_status_cleanup_follows_editor_lifetime(tmp_path, monkeypatch, keep_aliv
     ]
     if keep_alive:
         args.append("--keep-alive")
-    assert lh.main(args) == 0
+    assert lh.main(args) == (2 if stop_fails else 0)
     retained = keep_alive or stop_fails
     assert state["status"].exists() is retained
     assert state["stopped"] is not retained
@@ -165,7 +165,7 @@ def test_docker_permission_repair_targets_only_owned_status_files(tmp_path, monk
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, stdout="a" * 64 + "\n")
 
-    monkeypatch.setattr(lh.subprocess, "run", command)
+    monkeypatch.setattr(lh, "_run_docker", command)
     monkeypatch.setattr(lh.os, "getuid", lambda: owned.stat().st_uid + 1, raising=False)
     monkeypatch.setattr(lh.os, "getgid", lambda: 4242, raising=False)
     monkeypatch.setenv("UNITY_IMAGE", "owned-image")

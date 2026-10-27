@@ -57,6 +57,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import math
 import os
 import re
 import shutil
@@ -69,6 +70,7 @@ import threading
 import time
 import uuid
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from typing import Any, Callable
@@ -675,6 +677,25 @@ def aggregate_exit(outcomes: list[LegOutcome]) -> int:
 # ===========================================================================
 # Argument parser (pure, importable, Unity-free)
 # ===========================================================================
+class CleanupUnconfirmed(RuntimeError):
+    """The owned Editor's exit could not be confirmed."""
+
+
+def positive_integer_seconds(value: str) -> int:
+    seconds = int(value)
+    if seconds <= 0:
+        raise argparse.ArgumentTypeError("time budget must be positive")
+    return seconds
+
+
+def positive_seconds(value: str) -> float:
+    """Parse a finite positive operator time budget."""
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise argparse.ArgumentTypeError("time budget must be finite and positive")
+    return seconds
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="local_harness.py",
@@ -733,9 +754,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--reports", default=None, help="Reports directory. Default: dirname(--junit) or reports/."
     )
     p.add_argument(
-        "--boot-timeout", type=int, default=900, help="Warm-up + resident-boot budget (s)."
+        "--boot-timeout",
+        type=positive_integer_seconds,
+        default=900,
+        help="Warm-up + resident-boot budget (s).",
     )
-    p.add_argument("--bridge-wait", type=int, default=600, help="Bridge-ready budget (s).")
+    p.add_argument(
+        "--bridge-wait", type=positive_integer_seconds, default=600, help="Bridge-ready budget (s)."
+    )
     p.add_argument(
         "--playmode-init-timeout",
         type=int,
@@ -744,9 +770,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--overall-timeout",
-        type=int,
+        type=positive_integer_seconds,
         default=2400,
-        help="Wall-clock watchdog (s); on expiry kill owned PID, exit 2.",
+        help="Execution watchdog (s); on expiry attempt owned cleanup, then exit 2.",
+    )
+    p.add_argument(
+        "--cleanup-timeout",
+        type=positive_seconds,
+        default=30.0,
+        help="Independent hard cleanup budget (s), including force-kill/reap and diagnostics.",
     )
     p.add_argument("--max-retries", type=int, default=8, help="Reload retries per wire command.")
     p.add_argument("--retry-ms", type=int, default=250, help="Reload retry delay (ms).")
@@ -855,12 +887,15 @@ class LocalLauncher:
     def warmup(self, editor: str, project_path: Path, log_path: Path, timeout_s: int) -> int:
         argv = self.warmup_argv(editor, project_path, log_path)
         proc = subprocess.Popen(argv)
+        self.args._warmup_handle = Handle(proc=proc, log_path=str(log_path), pid=proc.pid)
         try:
-            return proc.wait(timeout=timeout_s)
+            result = proc.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.wait()
-            return -1
+            proc.wait(timeout=self.args.cleanup_timeout / 2)
+            result = -1
+        self.args._warmup_handle = None
+        return result
 
     def launch(
         self,
@@ -914,7 +949,7 @@ class LocalLauncher:
                     return
                 except subprocess.TimeoutExpired:
                     proc.kill()
-                    proc.wait()
+                    proc.wait(timeout=self.args.cleanup_timeout / 2)
                     return
             if pid is not None:
                 os.kill(pid, signal.SIGTERM)
@@ -933,12 +968,50 @@ class LocalLauncher:
             pass
 
 
+def _run_docker(
+    argv: list[str],
+    *,
+    timeout: float,
+    capture_output: bool = False,
+    check: bool = False,
+    cleanup_timeout: float = 10.0,
+) -> subprocess.CompletedProcess[str]:
+    """Bound the owned Docker CLI's kill/reap without pipe-reader backpressure."""
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        proc = subprocess.Popen(
+            argv,
+            stdout=stdout if capture_output else subprocess.DEVNULL,
+            stderr=stderr if capture_output else subprocess.DEVNULL,
+        )
+        try:
+            returncode = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            proc.wait(timeout=cleanup_timeout)
+            raise
+        stdout.seek(0)
+        stderr.seek(0)
+        result = subprocess.CompletedProcess(
+            argv,
+            returncode,
+            stdout.read().decode("utf-8", errors="replace"),
+            stderr.read().decode("utf-8", errors="replace"),
+        )
+        if check:
+            result.check_returncode()
+        return result
+
+
 class DockerLauncher:
     """Launch an owned CI Editor container with shared license/cache mounts."""
 
     def __init__(self, args: argparse.Namespace):
         self.args = args
         self._owned_containers: dict[str, Path] = {}
+        self.pending_handle: Handle | None = None
 
     def resolve_editor(self, project_path: Path) -> EditorSpec:
         # CI short-circuits to the fixed image entrypoint; never touches Hub.
@@ -1039,26 +1112,38 @@ class DockerLauncher:
             container_name,
             runner_temp,
         )
-        result = subprocess.run(argv, check=True, capture_output=True, text=True)
+        # A timed-out launch may have reached the daemon without returning an
+        # ID. Retain its unique requested name as recovery evidence, but never
+        # acquire removal authority until Docker returns the exact container ID.
+        self.pending_handle = Handle(container=container_name, log_path=container_log)
+        result = _run_docker(
+            argv,
+            check=True,
+            capture_output=True,
+            timeout=self.args.boot_timeout,
+            cleanup_timeout=self.args.cleanup_timeout / 3,
+        )
         container_id = result.stdout.strip()
         if not re.fullmatch(r"[0-9a-f]{64}", container_id):
             raise RuntimeError("Docker did not return the launched container ID")
         self._owned_containers[container_id] = status_dir.absolute()
+        self.pending_handle = None
         return Handle(container=container_id, log_path=container_log)
 
     def is_alive(self, handle: Handle) -> bool:
         if handle.container not in self._owned_containers:
-            return False
+            return self.pending_handle is not None and handle is self.pending_handle
         try:
-            out = subprocess.run(
+            out = _run_docker(
                 ["docker", "inspect", "-f", "{{.State.Status}}", handle.container],
+                timeout=min(10.0, self.args.cleanup_timeout / 3),
+                cleanup_timeout=self.args.cleanup_timeout / 3,
                 capture_output=True,
-                text=True,
                 check=False,
             )
             # An inspect failure cannot prove the owned process stopped.
             return out.returncode != 0 or out.stdout.strip() not in ("exited", "dead")
-        except OSError:
+        except (OSError, subprocess.TimeoutExpired):
             return True
 
     def tail_log(self, handle: Handle, n: int) -> str:
@@ -1068,23 +1153,17 @@ class DockerLauncher:
         try:
             # Unity uses -logFile, so its diagnostics are not on Docker stdout.
             if handle.log_path:
-                file_log = subprocess.run(
+                file_log = _run_docker(
                     ["docker", "exec", container, "tail", "-n", str(n), handle.log_path],
                     capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
                     check=False,
                     timeout=10,
                 )
                 if file_log.returncode == 0:
                     return file_log.stdout or ""
-            out = subprocess.run(
+            out = _run_docker(
                 ["docker", "logs", "--tail", str(n), container],
                 capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
                 check=False,
                 timeout=10,
             )
@@ -1127,7 +1206,7 @@ class DockerLauncher:
             ):
                 files.append(str(candidate))
         if files:
-            subprocess.run(
+            _run_docker(
                 [
                     "docker",
                     "exec",
@@ -1137,18 +1216,17 @@ class DockerLauncher:
                     f"{owner_uid}:{owner_gid}",
                     *files,
                 ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                timeout=self.args.boot_timeout,
                 check=False,
             )
 
     def teardown(self, handle: Handle, grace_s: float = 10.0) -> None:
         if handle.container not in self._owned_containers:
             return
-        result = subprocess.run(
+        result = _run_docker(
             ["docker", "rm", "-f", handle.container],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            timeout=min(grace_s, self.args.cleanup_timeout / 3),
+            cleanup_timeout=self.args.cleanup_timeout / 3,
             check=False,
         )
         if result.returncode == 0:
@@ -1804,7 +1882,7 @@ def _print_summary(outcomes: list[LegOutcome], exit_code: int) -> None:
     print(f"== exit {exit_code} ==")
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
 
     requested_legs = [p.strip().lower() for p in (args.legs or "").split(",") if p.strip()]
@@ -1894,42 +1972,212 @@ def main(argv: list[str] | None = None) -> int:
         )
         write_reports(junit_path, reports_dir, outcomes)
 
-    def do_teardown() -> None:
-        stopped = handle is None
-        if handle is not None and owns_editor and not args.keep_alive:
+    cleanup_lock = threading.Lock()
+    lifecycle_lock = threading.Lock()
+    _watchdog_stop = threading.Event()
+    _watchdog_expired = threading.Event()
+    _cleanup_done = threading.Event()
+    execution_finished = False
+    acquisitions = 0
+    resource_generation = 0
+    # One absolute deadline is shared by every owner, waiter and hard timer.
+    # Normal completion may shorten it to an earlier independent cleanup phase;
+    # expiry and later handoffs never extend it.
+    cleanup_deadline = deadline + args.cleanup_timeout
+    cleanup_snapshot: tuple[int, tuple[int, ...]] | None = None
+    cleanup_result: bool | None = None
+    confirmed_stopped: list[Handle] = []
+    summary_exit_code: int | None = None
+
+    def require_execution_locked() -> None:
+        if _watchdog_expired.is_set() or time.monotonic() >= deadline:
+            _watchdog_expired.set()
+            raise SystemExit(2)
+        if execution_finished:
+            raise SystemExit(2)
+
+    def require_execution() -> None:
+        with lifecycle_lock:
+            require_execution_locked()
+
+    @contextmanager
+    def acquiring_editor():
+        nonlocal acquisitions, resource_generation
+        # Admission is atomic with expiry; launch itself never holds this lock.
+        with lifecycle_lock:
+            require_execution_locked()
+            acquisitions += 1
+            resource_generation += 1
+        try:
+            yield
+        finally:
             try:
-                launcher.teardown(handle)
-                stopped = not launcher.is_alive(handle)
-            except Exception:
-                stopped = False
-        if handle is not None and not stopped:
-            if owns_status_dir:
-                reports_dir.mkdir(parents=True, exist_ok=True)
-                receipt = {
-                    "project_path": str(project_path),
-                    "status_dir": str(status_dir),
-                    "pid": handle.pid,
-                    "container": handle.container,
-                    "scene": getattr(args, "_harness_scene", None),
-                }
-                (reports_dir / "reuse.json").write_text(
-                    json.dumps(receipt, indent=2) + "\n", encoding="utf-8"
-                )
-                print(
-                    f"== retained Editor registry: {status_dir}; reuse handle: {reports_dir / 'reuse.json'} =="
-                )
-            return
-        if stopped:
-            try:
-                cleanup_ci_scene(args, project_path)
-            except OSError:
-                print("::warning:: Could not remove the owned CI scene.")
-        if owns_status_dir and stopped and not _has_linked_ancestor(status_dir):
-            # status_dir is the exact unique directory allocated above, never its supplied parent.
-            shutil.rmtree(status_dir, ignore_errors=True)
+                # A cleanup owner may be blocked writing a pre-launch receipt.
+                # Publish the returned identity before handing off, with a
+                # per-generation copy that an older writer cannot overwrite.
+                # Keep admission in flight until publication finishes so cleanup
+                # cannot delete the registry or receipt underneath this writer.
+                if _watchdog_expired.is_set() and owns_status_dir:
+                    with lifecycle_lock:
+                        pending = getattr(launcher, "pending_handle", None)
+                        primary = pending or getattr(args, "_warmup_handle", None) or handle
+                        generation = resource_generation + 1
+                    if primary is not None:
+                        reports_dir.mkdir(parents=True, exist_ok=True)
+                        receipt = (
+                            json.dumps(
+                                {
+                                    "project_path": str(project_path),
+                                    "status_dir": str(status_dir),
+                                    "pid": primary.pid,
+                                    "container": primary.container,
+                                    "ownership_confirmed": primary is not pending,
+                                    "acquisition_in_flight": True,
+                                    "generation": generation,
+                                    "cleanup_confirmed": False,
+                                    "scene": getattr(args, "_harness_scene", None),
+                                },
+                                indent=2,
+                            )
+                            + "\n"
+                        )
+                        publication = reports_dir / f"reuse-{status_dir.name}-{generation}.json"
+                        publication.write_text(receipt, encoding="utf-8")
+                        (reports_dir / "reuse.json").write_text(receipt, encoding="utf-8")
+            finally:
+                with lifecycle_lock:
+                    acquisitions -= 1
+                    resource_generation += 1
+
+    def remaining_cleanup() -> float:
+        return max(0.0, cleanup_deadline - time.monotonic())
+
+    def do_teardown(*, wait_for_owner: bool = False) -> bool:
+        nonlocal cleanup_result, cleanup_snapshot
+        # The main owner hands off within the same absolute budget. Hard-exit
+        # threads never acquire this lock or depend on this wait returning.
+        if wait_for_owner:
+            acquired = cleanup_lock.acquire(timeout=remaining_cleanup())
+        else:
+            acquired = cleanup_lock.acquire(blocking=False)
+        if not acquired:
+            return False
+        try:
+            while True:
+                with lifecycle_lock:
+                    generation = resource_generation
+                    in_flight = acquisitions > 0
+                    warmup_handle = getattr(args, "_warmup_handle", None)
+                    pending_handle = getattr(launcher, "pending_handle", None)
+                    resources = []
+                    for candidate in (handle, warmup_handle, pending_handle):
+                        if candidate is not None and all(
+                            candidate is not item for item in resources
+                        ):
+                            resources.append(candidate)
+                    snapshot = (generation, tuple(id(item) for item in resources))
+                    if (
+                        not in_flight
+                        and cleanup_snapshot == snapshot
+                        and cleanup_result is not None
+                    ):
+                        return cleanup_result
+                # A pending replacement remains separate from an already-stopped
+                # resident. It has recovery identity but no exact-ID kill authority.
+                primary = pending_handle or warmup_handle or handle
+                if (resources or in_flight) and owns_status_dir:
+                    reports_dir.mkdir(parents=True, exist_ok=True)
+                    (reports_dir / "reuse.json").write_text(
+                        json.dumps(
+                            {
+                                "project_path": str(project_path),
+                                "status_dir": str(status_dir),
+                                "pid": primary.pid if primary is not None else None,
+                                "container": primary.container if primary is not None else None,
+                                "ownership_confirmed": primary is not None
+                                and primary is not pending_handle,
+                                "acquisition_in_flight": in_flight,
+                                "resources": [
+                                    {
+                                        "pid": item.pid,
+                                        "container": item.container,
+                                        "ownership_confirmed": item is not pending_handle,
+                                    }
+                                    for item in resources
+                                ],
+                                "scene": getattr(args, "_harness_scene", None),
+                            },
+                            indent=2,
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                stopped = not in_flight
+                successful = not in_flight
+                for candidate in resources:
+                    if candidate is pending_handle:
+                        stopped = successful = False
+                        continue
+                    should_stop = candidate is warmup_handle or (
+                        owns_editor and not args.keep_alive
+                    )
+                    if should_stop and any(candidate is item for item in confirmed_stopped):
+                        continue
+                    # An admitted operation may already expose an exact owned
+                    # process (notably warmup before its boot wait). Attempt it
+                    # even while acquisition is unresolved; retain the existing
+                    # no-success/no-deletion rule for the acquisition itself.
+                    if should_stop and remaining_cleanup() <= 0:
+                        stopped = successful = False
+                        continue
+                    if not should_stop:
+                        stopped = False
+                        continue
+                    try:
+                        launcher.teardown(candidate)
+                        candidate_stopped = not launcher.is_alive(candidate)
+                    except Exception as error:  # cleanup is a top-level failure boundary
+                        print(f"::error:: owned Editor cleanup failed: {error}", flush=True)
+                        candidate_stopped = False
+                    if candidate_stopped:
+                        confirmed_stopped.append(candidate)
+                    stopped = stopped and candidate_stopped
+                    successful = successful and candidate_stopped
+                retry_latest = False
+                with lifecycle_lock:
+                    # An admitted acquisition can finish while this owner observes
+                    # old resources. Never cache success or delete its registry.
+                    if generation != resource_generation or acquisitions:
+                        stopped = successful = False
+                        retry_latest = generation != resource_generation and acquisitions == 0
+                    else:
+                        cleanup_snapshot = snapshot
+                        cleanup_result = successful
+                if retry_latest:
+                    # Refresh identity even after budget exhaustion, but never start
+                    # another termination then. The independent hard timer can exit
+                    # during any blocked recovery write.
+                    continue
+                if not stopped:
+                    if owns_status_dir:
+                        print(
+                            f"== retained Editor registry: {status_dir}; reuse handle: {reports_dir / 'reuse.json'} =="
+                        )
+                    return successful
+                if (resources or in_flight) and owns_status_dir:
+                    (reports_dir / "reuse.json").unlink(missing_ok=True)
+                try:
+                    cleanup_ci_scene(args, project_path)
+                except OSError:
+                    print("::warning:: Could not remove the owned CI scene.")
+                if owns_status_dir and not _has_linked_ancestor(status_dir):
+                    shutil.rmtree(status_dir, ignore_errors=True)
+                return successful
+        finally:
+            cleanup_lock.release()
 
     def _signal_handler(signum, frame):  # pragma: no cover - signal path
-        do_teardown()
+        # Unwind into the single cleanup owner, where the hard cleanup timer is active.
         raise SystemExit(2)
 
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -1941,22 +2189,29 @@ def main(argv: list[str] | None = None) -> int:
     # Hard wall-clock watchdog: the polled deadlines inside the wait/poll loops do
     # not cover blocking subprocess/socket calls (smoke subprocess, compile probe),
     # so a background daemon enforces --overall-timeout across ALL phases.
-    _watchdog_stop = threading.Event()
-
     def _watchdog() -> None:  # pragma: no cover - timing/daemon path
         remaining = deadline - time.monotonic()
         if remaining > 0:
             _watchdog_stop.wait(remaining)
-        if _watchdog_stop.is_set():
-            return
-        print(
-            f"::error:: overall watchdog timed out after {args.overall_timeout}s -- killing editor",
-            flush=True,
-        )
-        try:
+        with lifecycle_lock:
+            if _watchdog_stop.is_set() or execution_finished:
+                return
+            _watchdog_expired.set()
+
+        def expired_cleanup() -> None:
+            print(
+                f"::error:: overall watchdog timed out after {args.overall_timeout}s; attempting owned cleanup",
+                flush=True,
+            )
             do_teardown()
-        finally:
-            os._exit(2)
+
+        threading.Thread(
+            target=expired_cleanup, name="harness-expired-cleanup", daemon=True
+        ).start()
+        # Neither a cleanup lock, blocked daemon RPC nor blocked output can
+        # prevent the hard exit. This is a separate budget from execution.
+        _cleanup_done.wait(remaining_cleanup())
+        os._exit(2)
 
     threading.Thread(target=_watchdog, name="harness-watchdog", daemon=True).start()
 
@@ -1997,12 +2252,15 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  install a matching {maj_min}.x editor or pass --editor (wanted {want})")
                 return 5
 
+            require_execution()
             os.environ["UNITY_MCP_STATUS_DIR"] = str(status_dir)
 
             # Phase 1 -- warm-up (skip with --no-warmup / --ci).
             if not args.no_warmup:
                 warmup_log = status_dir / "warmup.log"
-                rc = launcher.warmup(spec.binary, project_path, warmup_log, args.boot_timeout)
+                with acquiring_editor():
+                    rc = launcher.warmup(spec.binary, project_path, warmup_log, args.boot_timeout)
+                require_execution()
                 if rc not in (0,):
                     tail = launcher.tail_log(Handle(log_path=str(warmup_log)), 200)
                     kind = classify_log(
@@ -2019,14 +2277,18 @@ def main(argv: list[str] | None = None) -> int:
 
             # Phase 2 -- resident (NO -quit).
             editor_log = status_dir / "editor.log"
-            handle = launcher.launch(
-                spec.binary, project_path, status_dir, editor_log, args.editor_args
-            )
+            with acquiring_editor():
+                handle = launcher.launch(
+                    spec.binary, project_path, status_dir, editor_log, args.editor_args
+                )
+            require_execution()
             ready = wait_for_ready(
                 launcher, handle, status_dir, args.bridge_wait, boot_start, deadline
             )
             instance_id = ready.instance_id
 
+        # A blocked resolver/launch must not resume commands after expiry.
+        require_execution()
         # Pin the instance so smoke + UTF target our own editor.
         os.environ["UNITY_MCP_DEFAULT_INSTANCE"] = instance_id
         print(f"== bridge ready: instance={instance_id} port={ready.port} ==")
@@ -2039,6 +2301,7 @@ def main(argv: list[str] | None = None) -> int:
             if not compile_ok:
                 print("::error:: project does not compile -- skipping UTF legs")
 
+        require_execution()
         # Creating and deleting smoke objects leaves an untitled scene dirty. UTF
         # cancels its save dialog in batch mode without firing test callbacks.
         if wants_utf and compile_ok and not prepare_ci_scene(args, instance_id):
@@ -2093,13 +2356,20 @@ def main(argv: list[str] | None = None) -> int:
 
                 def _relaunch() -> str:
                     nonlocal handle, ready, instance_id
+                    require_execution()
                     if handle is not None and owns_editor:
                         launcher.teardown(handle)
+                        if launcher.is_alive(handle):
+                            raise CleanupUnconfirmed(
+                                "previous owned Editor exit could not be confirmed"
+                            )
                     time.sleep(SOCKET_RELEASE_MS / 1000.0)
                     editor_log = status_dir / "editor.log"
-                    handle = launcher.launch(
-                        spec.binary, project_path, status_dir, editor_log, args.editor_args
-                    )
+                    with acquiring_editor():
+                        handle = launcher.launch(
+                            spec.binary, project_path, status_dir, editor_log, args.editor_args
+                        )
+                    require_execution()
                     ready = wait_for_ready(
                         launcher, handle, status_dir, args.bridge_wait, time.monotonic(), deadline
                     )
@@ -2128,14 +2398,102 @@ def main(argv: list[str] | None = None) -> int:
         write_reports(junit_path, reports_dir, outcomes)
         exit_code = aggregate_exit(outcomes)
         # If a compile failure surfaced, it dominates (precedence keeps 3).
-        _print_summary(outcomes, exit_code)
+        summary_exit_code = exit_code
         return exit_code
 
     except SystemExit as e:
         return int(e.code) if isinstance(e.code, int) else 2
     finally:
-        _watchdog_stop.set()
-        do_teardown()
+        # Execution and cleanup have independent budgets. Preserve an expiry
+        # already observed (including an unscheduled watchdog at the deadline).
+        with lifecycle_lock:
+            if time.monotonic() >= deadline:
+                _watchdog_expired.set()
+            if not _watchdog_expired.is_set():
+                cleanup_deadline = min(cleanup_deadline, time.monotonic() + args.cleanup_timeout)
+            execution_finished = True
+            _watchdog_stop.set()
+        cleanup_timer = threading.Timer(remaining_cleanup(), lambda: os._exit(2))
+        cleanup_timer.daemon = True
+        cleanup_timer.start()
+        try:
+            cleanup_outcome = None
+            if (
+                (handle is not None and owns_editor)
+                or getattr(args, "_warmup_handle", None)
+                or getattr(launcher, "pending_handle", None)
+            ):
+                cleanup_outcome = LegOutcome(
+                    "cleanup",
+                    "error",
+                    blocking=True,
+                    detail="Owned Editor exit has not been confirmed",
+                    exit_code=2,
+                    junit_suite=JUnitSuite(
+                        name="cleanup",
+                        cases=[
+                            JUnitCase(
+                                name="cleanup.editor_exit",
+                                failure="Owned Editor exit has not been confirmed",
+                            )
+                        ],
+                    ),
+                )
+                write_reports(junit_path, reports_dir, [*outcomes, cleanup_outcome])
+            cleaned = do_teardown(wait_for_owner=True)
+            _watchdog_stop.set()
+            expired = _watchdog_expired.is_set()
+            if cleanup_outcome is not None:
+                if cleaned:
+                    cleanup_outcome.status = "pass"
+                    cleanup_outcome.detail = "Owned Editor exit confirmed"
+                    cleanup_outcome.exit_code = 0
+                    # Cleanup is a lifecycle gate, not another executed test.
+                    cleanup_outcome.junit_suite.cases.clear()
+                outcomes.append(cleanup_outcome)
+            if expired:
+                outcomes.append(
+                    LegOutcome(
+                        "watchdog",
+                        "error",
+                        blocking=True,
+                        detail="Overall execution budget expired",
+                        exit_code=2,
+                        junit_suite=JUnitSuite(
+                            name="watchdog",
+                            cases=[
+                                JUnitCase(
+                                    name="watchdog.execution",
+                                    failure="Overall execution budget expired",
+                                )
+                            ],
+                        ),
+                    )
+                )
+            if cleanup_outcome is not None or expired:
+                write_reports(junit_path, reports_dir, outcomes)
+            if not cleaned:
+                print(
+                    "::error:: owned Editor exit could not be confirmed; registry retained",
+                    flush=True,
+                )
+            cleaned = cleaned and not expired
+            if summary_exit_code is not None:
+                _print_summary(outcomes, summary_exit_code if cleaned else 2)
+            if not cleaned:
+                raise CleanupUnconfirmed("owned Editor exit could not be confirmed")
+        finally:
+            cleanup_timer.cancel()
+            _watchdog_stop.set()
+            _cleanup_done.set()
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Report unconfirmed cleanup as setup failure, including normal completion."""
+    try:
+        return _main(argv)
+    except CleanupUnconfirmed:
+        return 2
 
 
 def _norm_project_root(p: str, *, strip_assets: bool = True) -> str:

@@ -27,6 +27,9 @@ from transport.large_result_assembler import (
     LargeResultProtocolError,
 )
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+from owned_process import drain_owned_process
+
 COMMAND_ID = "01234567-89ab-cdef-0123-456789abcdef"
 OWNER = "socket-generation-a"
 
@@ -507,13 +510,11 @@ async def test_real_csharp_websocket_messages_reconstruct_with_control_between_c
                 stderr=subprocess.PIPE,
             )
             try:
-                complete = await asyncio.wait_for(received, 15)
-                _, stderr = await asyncio.wait_for(process.communicate(), 15)
-                assert process.returncode == 0, stderr.decode()
+                async with drain_owned_process(process) as output:
+                    complete = await asyncio.wait_for(received, 15)
+                    _, stderr = await asyncio.wait_for(asyncio.shield(output), 15)
+                    assert process.returncode == 0, stderr.decode()
             finally:
-                if process.returncode is None:
-                    process.kill()
-                    await process.wait()
                 assembler.discard_owner(OWNER)
     assert complete.payload == payload
     assert message_kinds[:4] == ["result_start", "B", "pong", "B"]

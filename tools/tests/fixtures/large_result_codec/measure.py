@@ -24,6 +24,8 @@ import tracemalloc
 
 ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / "Server/src"))
+sys.path.insert(0, str(ROOT / "tools"))
+from owned_process import drain_owned_process, positive_seconds
 from transport.large_result_assembler import LargeResultAssembler
 from models.response_limits import bounded_json_text, response_size
 
@@ -157,7 +159,18 @@ def run_case(work, harness, name, payload, mode="bytes"):
     return measured
 
 
-async def wire_case(work, harness, name, payload, mode, rate):
+async def wire_case(
+    work,
+    harness,
+    name,
+    payload,
+    mode,
+    rate,
+    *,
+    receive_timeout=30.0,
+    exit_timeout=10.0,
+    cleanup_timeout=10.0,
+):
     from websockets.asyncio.server import serve
 
     source = work / f"{name}-wire.json"
@@ -169,36 +182,48 @@ async def wire_case(work, harness, name, payload, mode, rate):
     )
 
     async def receive(socket):
-        receiver_begin = time.perf_counter()
-        async for frame in socket:
-            if isinstance(frame, str):
-                start = json.loads(frame)
-                assembler.begin(
-                    "owned",
-                    start["id"],
-                    start["total_bytes"],
-                    start["chunk_count"],
-                    encoding=start.get("encoding", "identity"),
-                    decoded_bytes=start.get("decoded_bytes"),
-                )
-            else:
-                complete = assembler.feed("owned", frame)
-                if complete is not None:
-                    assert complete.payload == payload
-                    text = bounded_json_text(
-                        complete.payload.decode("utf-8"),
-                        max_bytes=32 * 1024 * 1024,
-                        max_depth=64,
-                        max_nodes=100000,
+        try:
+            receiver_begin = time.perf_counter()
+            async for frame in socket:
+                if isinstance(frame, str):
+                    start = json.loads(frame)
+                    assembler.begin(
+                        "owned",
+                        start["id"],
+                        start["total_bytes"],
+                        start["chunk_count"],
+                        encoding=start.get("encoding", "identity"),
+                        decoded_bytes=start.get("decoded_bytes"),
                     )
-                    assert text is not None
-                    decoded = json.loads(text)
-                    assert decoded["type"] == "command_result"
-                    assert response_size(decoded["result"]) is not None
-                    done.set_result((time.perf_counter() - receiver_begin) * 1000)
-                    return
+                else:
+                    complete = assembler.feed("owned", frame)
+                    if complete is not None:
+                        assert complete.payload == payload
+                        text = bounded_json_text(
+                            complete.payload.decode("utf-8"),
+                            max_bytes=32 * 1024 * 1024,
+                            max_depth=64,
+                            max_nodes=100000,
+                        )
+                        assert text is not None
+                        decoded = json.loads(text)
+                        assert decoded["type"] == "command_result"
+                        assert response_size(decoded["result"]) is not None
+                        if not done.done():
+                            done.set_result((time.perf_counter() - receiver_begin) * 1000)
+                        return
+            if not done.done():
+                done.set_exception(
+                    ConnectionError("owned sender closed before completing the result")
+                )
+        except Exception as error:  # receiver boundary must notify its waiting owner
+            if not done.done():
+                done.set_exception(error)
+            raise
 
-    async with serve(receive, "127.0.0.1", 0, compression=None, max_size=65536) as server:
+    async with serve(
+        receive, "127.0.0.1", 0, compression=None, max_size=65536, close_timeout=cleanup_timeout
+    ) as server:
         port = server.sockets[0].getsockname()[1]
         process = await asyncio.create_subprocess_exec(
             harness[0],
@@ -211,17 +236,13 @@ async def wire_case(work, harness, name, payload, mode, rate):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        try:
-            receiver_ms = await asyncio.wait_for(done, 30)
-            stdout, stderr = await asyncio.wait_for(process.communicate(), 10)
+        async with drain_owned_process(process, cleanup_timeout) as output:
+            receiver_ms = await asyncio.wait_for(done, receive_timeout)
+            stdout, stderr = await asyncio.wait_for(asyncio.shield(output), exit_timeout)
             assert process.returncode == 0, stderr.decode()
             measured = json.loads(stdout)
             measured["whole_receive_ms"] = receiver_ms
             return measured
-        finally:
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
 
 
 def main():
@@ -231,6 +252,9 @@ def main():
     parser.add_argument("--after", action="store_true")
     parser.add_argument("--wire", action="store_true")
     parser.add_argument("--baseline-ref")
+    parser.add_argument("--wire-receive-timeout", type=positive_seconds, default=30.0)
+    parser.add_argument("--wire-exit-timeout", type=positive_seconds, default=10.0)
+    parser.add_argument("--cleanup-timeout", type=positive_seconds, default=10.0)
     args = parser.parse_args()
     rng = random.Random(7008)
     base = {
@@ -281,7 +305,17 @@ def main():
                 for rate in [512, 5120]:
                     for mode in ["string_json", "gzip_json"]:
                         wire_results[f"{name}:{mode}:{rate}KiB_s"] = asyncio.run(
-                            wire_case(work, harness, name, payload, mode, rate)
+                            wire_case(
+                                work,
+                                harness,
+                                name,
+                                payload,
+                                mode,
+                                rate,
+                                receive_timeout=args.wire_receive_timeout,
+                                exit_timeout=args.wire_exit_timeout,
+                                cleanup_timeout=args.cleanup_timeout,
+                            )
                         )
     report = {
         "python": platform.python_version(),

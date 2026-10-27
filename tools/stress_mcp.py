@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import asyncio
 import argparse
+import inspect
 import json
+import math
 import os
 import struct
 import time
@@ -10,7 +12,15 @@ import random
 import sys
 
 
-TIMEOUT = float(os.environ.get("MCP_STRESS_TIMEOUT", "2.0"))
+def positive_seconds(value: str) -> float:
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError("time budget must be finite and positive")
+    return seconds
+
+
+TIMEOUT = positive_seconds(os.environ.get("MCP_STRESS_TIMEOUT", "2.0"))
+CLEANUP_TIMEOUT = positive_seconds(os.environ.get("MCP_STRESS_CLEANUP_TIMEOUT", "2.0"))
 DEBUG = os.environ.get("MCP_STRESS_DEBUG", "").lower() in ("1", "true", "yes")
 
 
@@ -93,6 +103,51 @@ def make_execute_menu_item(menu_path: str) -> bytes:
     return json.dumps(payload).encode("utf-8")
 
 
+async def close_writer(writer: asyncio.StreamWriter, stats: dict) -> None:
+    """Close one owned stream, aborting its transport if the peer stalls."""
+    closed = None
+    try:
+        writer.close()
+        # StreamWriter.wait_closed only awaits this protocol Future on supported
+        # CPython versions. Observe it directly so timeout/cancellation never
+        # leaves a background wait_closed coroutine behind.
+        protocol = getattr(writer, "_protocol", None)
+        get_waiter = getattr(protocol, "_get_close_waiter", None)
+        if not callable(get_waiter):
+            raise RuntimeError("Unsupported StreamWriter close protocol")
+        candidate = get_waiter(writer)
+        if inspect.iscoroutine(candidate):
+            candidate.close()
+        if (
+            not isinstance(candidate, asyncio.Future)
+            or isinstance(candidate, asyncio.Task)
+            or candidate.get_loop() is not asyncio.get_running_loop()
+        ):
+            raise RuntimeError("Unsupported StreamWriter close Future")
+        closed = candidate
+        done, pending = await asyncio.wait({closed}, timeout=CLEANUP_TIMEOUT / 2)
+        if pending:
+            stats["cleanup_timeouts"] = stats.get("cleanup_timeouts", 0) + 1
+            writer.transport.abort()
+            done, pending = await asyncio.wait({closed}, timeout=CLEANUP_TIMEOUT / 2)
+            if pending:
+                closed.cancel()
+                stats["cleanup_errors"] = stats.get("cleanup_errors", 0) + 1
+        for completed in done:
+            if not completed.cancelled():
+                completed.result()
+    except asyncio.CancelledError:
+        writer.transport.abort()
+        if closed is not None:
+            closed.cancel()
+        raise
+    except Exception:  # cleanup boundary must preserve the original operation exception
+        stats["cleanup_errors"] = stats.get("cleanup_errors", 0) + 1
+        writer.transport.abort()
+        if closed is not None and not closed.done():
+            closed.cancel()
+
+
 async def client_loop(idx: int, host: str, port: int, stop_time: float, stats: dict):
     reconnect_delay = 0.2
     while time.time() < stop_time:
@@ -130,11 +185,7 @@ async def client_loop(idx: int, host: str, port: int, stop_time: float, stats: d
             continue
         finally:
             if writer is not None:
-                try:
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception:
-                    pass
+                await close_writer(writer, stats)
 
 
 async def reload_churn_task(
@@ -234,11 +285,7 @@ async def reload_churn_task(
                                 await asyncio.sleep(0.2 * (2**attempt) + random.uniform(0.0, 0.1))
                             finally:
                                 if "writer" in locals() and writer is not None:
-                                    try:
-                                        writer.close()
-                                        await writer.wait_closed()
-                                    except Exception:
-                                        pass
+                                    await close_writer(writer, stats)
 
                         if not read_success or contents is None:
                             stats["apply_errors"] = stats.get("apply_errors", 0) + 1
@@ -308,11 +355,7 @@ async def reload_churn_task(
                                 await asyncio.sleep(0.2 * (2**attempt) + random.uniform(0.0, 0.1))
                             finally:
                                 if "writer" in locals() and writer is not None:
-                                    try:
-                                        writer.close()
-                                        await writer.wait_closed()
-                                    except Exception:
-                                        pass
+                                    await close_writer(writer, stats)
                         if not apply_success:
                             stats["apply_errors"] = stats.get("apply_errors", 0) + 1
 

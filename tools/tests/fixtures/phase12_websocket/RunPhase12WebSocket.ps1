@@ -4,7 +4,9 @@ param(
     [string]$SdkPath = 'C:/Program Files/dotnet/sdk/10.0.401',
     [string]$DotnetPath = 'dotnet',
     [Parameter(Mandatory=$true)][string]$Evidence,
-    [string]$Case = 'all'
+    [string]$Case = 'all',
+    [ValidateRange(1, 2147483647)][int]$ProcessTimeoutMilliseconds = 30000,
+    [ValidateRange(1, 2147483647)][int]$CleanupTimeoutMilliseconds = 10000
 )
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../..'))
@@ -59,12 +61,22 @@ $runtimeError = Join-Path $work 'runtime.stderr.log'
 $process = Start-Process -FilePath (Join-Path $UnityData 'MonoBleedingEdge/bin/mono.exe') `
     -ArgumentList @(('"' + (Join-Path $work 'Phase12WebSocket.exe') + '"'), $Case) `
     -WindowStyle Hidden -PassThru -RedirectStandardOutput $runtimeOutput -RedirectStandardError $runtimeError
-if (!$process.WaitForExit(30000)) {
-    $process.Kill()
-    $process.WaitForExit()
-    Get-Content -LiteralPath $runtimeOutput
-    Get-Content -LiteralPath $runtimeError
-    throw 'Owned WebSocket fixture exceeded its 30-second process timeout'
+if (!$process.WaitForExit($ProcessTimeoutMilliseconds)) {
+    $cleanupFailure = $null
+    try {
+        $process.Kill()
+        if (!$process.WaitForExit($CleanupTimeoutMilliseconds)) {
+            $cleanupFailure = 'Owned WebSocket fixture exit could not be confirmed within the cleanup budget'
+        }
+    } catch {
+        $cleanupFailure = 'Owned WebSocket fixture cleanup failed: ' + $_.Exception.Message
+    } finally {
+        Get-Content -LiteralPath $runtimeOutput
+        Get-Content -LiteralPath $runtimeError
+        $process.Dispose()
+    }
+    if ($null -ne $cleanupFailure) { throw $cleanupFailure }
+    throw 'Owned WebSocket fixture exceeded its process timeout'
 }
 $process.Refresh()
 Get-Content -LiteralPath $runtimeOutput
