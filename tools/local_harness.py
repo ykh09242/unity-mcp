@@ -1986,6 +1986,7 @@ def _main(argv: list[str] | None = None) -> int:
     cleanup_deadline = deadline + args.cleanup_timeout
     cleanup_snapshot: tuple[int, tuple[int, ...]] | None = None
     cleanup_result: bool | None = None
+    confirmed_stopped: list[Handle] = []
     summary_exit_code: int | None = None
 
     def require_execution_locked() -> None:
@@ -2120,7 +2121,13 @@ def _main(argv: list[str] | None = None) -> int:
                     should_stop = candidate is warmup_handle or (
                         owns_editor and not args.keep_alive
                     )
-                    if should_stop and (in_flight or remaining_cleanup() <= 0):
+                    if should_stop and any(candidate is item for item in confirmed_stopped):
+                        continue
+                    # An admitted operation may already expose an exact owned
+                    # process (notably warmup before its boot wait). Attempt it
+                    # even while acquisition is unresolved; retain the existing
+                    # no-success/no-deletion rule for the acquisition itself.
+                    if should_stop and remaining_cleanup() <= 0:
                         stopped = successful = False
                         continue
                     if not should_stop:
@@ -2132,6 +2139,8 @@ def _main(argv: list[str] | None = None) -> int:
                     except Exception as error:  # cleanup is a top-level failure boundary
                         print(f"::error:: owned Editor cleanup failed: {error}", flush=True)
                         candidate_stopped = False
+                    if candidate_stopped:
+                        confirmed_stopped.append(candidate)
                     stopped = stopped and candidate_stopped
                     successful = successful and candidate_stopped
                 retry_latest = False
