@@ -16,6 +16,13 @@ on:
       - "Server/tests/e2e/**"
       - "tools/local_harness.py"
       - "tools/ci_unity_license.py"
+      - "tools/unity_ci_packages.py"
+      - "tools/unity_ci_package_cache.py"
+      - "tools/unity-ci-packages.json"
+      - "tools/unity-versions.json"
+      - "tools/unity-ci/**"
+      - "tools/tests/test_unity_ci_packages.py"
+      - "tools/tests/test_fork_workflows.py"
       - "tools/tests/test_ci_unity_license.py"
       - ".github/workflows/e2e-bridge.yml"
 
@@ -27,7 +34,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  UNITY_IMAGE: unityci/editor:ubuntu-2021.3.45f2-linux-il2cpp-3
+  UNITY_IMAGE: unityci/editor:ubuntu-2021.3.45f2-linux-il2cpp-3@sha256:903ced48a1d4f415b597280b76c4f01f1bd38f66c654805fb3ffd16874d7d2ee
 
 jobs:
   license:
@@ -102,6 +109,22 @@ jobs:
           python-version: "3.14"
           enable-cache: false
 
+      - name: Prepare version-specific test packages
+        id: packages
+        run: |
+          set -euo pipefail
+          python3 tools/unity_ci_packages.py prepare \
+            --unity-version 2021.3.45f2 --image "$UNITY_IMAGE" \
+            --output .unity-ci/e2e-bridge
+
+      - name: Select prepared Unity project
+        id: project
+        env:
+          PREPARED_PROJECT: ${{ steps.packages.outputs.project_path }}
+        run: |
+          set -euo pipefail
+          echo "UNITY_PROJECT_ROOT=$GITHUB_WORKSPACE/$PREPARED_PROJECT" >> "$GITHUB_ENV"
+
       - name: Install MCP server
         run: |
           set -eux
@@ -141,7 +164,7 @@ jobs:
             -v "$RUNNER_TEMP/unity-local:/root/.local/share/unity3d" \
             -v "$RUNNER_TEMP/unity-cache:/root/.cache/unity3d" \
             "$UNITY_IMAGE" /opt/unity/Editor/Unity -batchmode -nographics -logFile - \
-              -projectPath "${{ github.workspace }}/TestProjects/UnityMCPTests" \
+              -projectPath "$UNITY_PROJECT_ROOT" \
               -quit
 
       - name: Clean old MCP status
@@ -162,7 +185,7 @@ jobs:
           # runs the smoke + EditMode + PlayMode legs over the bridge.
           python3 tools/local_harness.py --ci \
             --legs smoke,editmode,playmode \
-            --project-path TestProjects/UnityMCPTests \
+            --project-path "$UNITY_PROJECT_ROOT" \
             --reports reports
 
       - name: Return Unity license seat
