@@ -121,3 +121,87 @@ async def test_cancelled_signal_observer_releases_its_waiter():
         await observer
     assert asyncio.all_tasks() == before
     assert not event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_signal_reports_successful_producer_exit_instead_of_waiting_for_missing_phase():
+    from tests.timing import await_signal
+
+    event = asyncio.Event()
+    producer = asyncio.get_running_loop().create_future()
+    producer.set_result({"reason": "deadline_before_send"})
+    before = asyncio.all_tasks()
+    with pytest.raises(AssertionError, match="before fixture send.*deadline_before_send"):
+        await await_signal(event, "fixture send", producers=(producer,))
+    assert asyncio.all_tasks() == before
+    assert producer.result() == {"reason": "deadline_before_send"}
+    assert not event.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_signal_preserves_early_producer_failure_and_cancellation(cancelled):
+    from tests.timing import await_signal
+
+    producer = asyncio.get_running_loop().create_future()
+    if cancelled:
+        producer.cancel()
+    else:
+        producer.set_exception(RuntimeError("owned producer failed"))
+    before = asyncio.all_tasks()
+    expected = asyncio.CancelledError if cancelled else RuntimeError
+    with pytest.raises(expected):
+        await await_signal(asyncio.Event(), "never entered", producers=(producer,))
+    assert asyncio.all_tasks() == before
+
+
+@pytest.mark.asyncio
+async def test_phase_completion_wins_without_cancelling_other_producers():
+    from tests.timing import await_completion, await_signal
+
+    loop = asyncio.get_running_loop()
+    phase, producer, other = (loop.create_future() for _ in range(3))
+    phase.set_result("phase finished")
+    producer.set_result("producer finished too")
+    assert await await_completion(phase, "ready", producers=(producer, other)) == "phase finished"
+    event = asyncio.Event()
+    event.set()
+    await await_signal(event, "already entered", producers=(producer, other))
+    assert not other.done()
+    other.cancel()
+
+
+@pytest.mark.asyncio
+async def test_completion_observes_all_producers_and_preserves_pending_work():
+    from tests.timing import await_completion
+
+    loop = asyncio.get_running_loop()
+    phase, pending, failed = (loop.create_future() for _ in range(3))
+    loop.call_soon(failed.set_exception, RuntimeError("second producer failed"))
+    with pytest.raises(RuntimeError, match="second producer failed"):
+        await await_completion(phase, "queue item", producers=(pending, failed))
+    assert not phase.done() and not pending.done()
+    phase.cancel()
+    pending.cancel()
+
+
+@pytest.mark.asyncio
+async def test_phase_timeout_and_observer_cancellation_leave_producer_untouched():
+    from tests.timing import await_signal
+
+    producer = asyncio.get_running_loop().create_future()
+    before = asyncio.all_tasks()
+    with pytest.raises(AssertionError, match="missing phase"):
+        await await_signal(asyncio.Event(), "missing phase", timeout=0, producers=(producer,))
+    assert not producer.done()
+    assert asyncio.all_tasks() == before
+    observer = asyncio.create_task(
+        await_signal(asyncio.Event(), "cancelled phase", producers=(producer,))
+    )
+    await asyncio.sleep(0)
+    observer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await observer
+    assert not producer.done()
+    assert asyncio.all_tasks() == before
+    producer.cancel()

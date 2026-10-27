@@ -24,6 +24,23 @@ from websockets.sync.client import connect
 from core.local_auth import LOCAL_AUTH_HEADER
 
 
+def _terminate_and_reap(process: subprocess.Popen) -> None:
+    """Give the owned child a graceful exit, then kill and reap within a watchdog."""
+    if process.poll() is None:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+    try:
+        process.wait(timeout=watchdog_timeout())
+    except subprocess.TimeoutExpired:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=watchdog_timeout())
+
+
 def _startup_failure_message(
     reason: str,
     command: list[str],
@@ -112,86 +129,93 @@ def local_server_process(
     log_path = tmp_path / "server.log"
     token = ""
     with log_path.open("w", encoding="utf-8") as log:
-        with subprocess.Popen(
+        process = subprocess.Popen(
             command,
             cwd=Path(__file__).resolve().parents[2],
             env=env,
             stdout=log,
             stderr=log,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        ) as process:
-            try:
-                with httpx.Client(timeout=0.5, trust_env=False) as client:
-                    deadline = time.monotonic() + watchdog_timeout(20)
-                    while time.monotonic() < deadline:
-                        exit_code = process.poll()
-                        if exit_code is not None:
-                            raise AssertionError(
-                                _startup_failure_message(
-                                    "Local server exited before readiness",
-                                    command,
-                                    exit_code,
-                                    log_path,
-                                    token_path,
-                                    token,
-                                )
-                            )
-                        try:
-                            token = ""
-                            if validation_url is None:
-                                try:
-                                    token = token_path.read_text(encoding="utf-8").strip()
-                                except FileNotFoundError:
-                                    pass  # The owned launch has not published its credential yet.
-                            # The free-port handoff can race another listener. Public
-                            # health alone cannot prove that this is our local child.
-                            if (
-                                (validation_url is not None or token)
-                                and client.get(f"{url}/health").status_code == 200
-                                and (
-                                    validation_url is not None
-                                    or (
-                                        client.get(f"{url}/api/instances").status_code == 401
-                                        and client.get(
-                                            f"{url}/api/instances",
-                                            headers={LOCAL_AUTH_HEADER: token},
-                                        ).status_code
-                                        == 200
-                                    )
-                                )
-                            ):
-                                exit_code = process.poll()
-                                if exit_code is not None:
-                                    raise AssertionError(
-                                        _startup_failure_message(
-                                            "Local server exited before readiness",
-                                            command,
-                                            exit_code,
-                                            log_path,
-                                            token_path,
-                                            token,
-                                        )
-                                    )
-                                break
-                        except httpx.TransportError:
-                            pass
-                        # Bounded external-process readiness polling, not a race delay.
-                        time.sleep(0.05)
-                    else:
-                        pytest.fail(
+        )
+        try:
+            with httpx.Client(timeout=0.5, trust_env=False) as client:
+                deadline = time.monotonic() + watchdog_timeout(20)
+                while time.monotonic() < deadline:
+                    exit_code = process.poll()
+                    if exit_code is not None:
+                        raise AssertionError(
                             _startup_failure_message(
-                                "Local server did not become ready",
+                                "Local server exited before readiness",
                                 command,
-                                process.poll(),
+                                exit_code,
                                 log_path,
                                 token_path,
                                 token,
                             )
                         )
-                yield url, port, token
-            finally:
-                process.terminate()
-                process.wait(timeout=watchdog_timeout())
+                    try:
+                        token = ""
+                        if validation_url is None:
+                            try:
+                                token = token_path.read_text(encoding="utf-8").strip()
+                            except FileNotFoundError:
+                                pass  # The owned launch has not published its credential yet.
+                        # The free-port handoff can race another listener. Public
+                        # health alone cannot prove that this is our local child.
+                        if (
+                            (validation_url is not None or token)
+                            and client.get(f"{url}/health").status_code == 200
+                            and (
+                                validation_url is not None
+                                or (
+                                    client.get(f"{url}/api/instances").status_code == 401
+                                    and client.get(
+                                        f"{url}/api/instances",
+                                        headers={LOCAL_AUTH_HEADER: token},
+                                    ).status_code
+                                    == 200
+                                )
+                            )
+                        ):
+                            exit_code = process.poll()
+                            if exit_code is not None:
+                                raise AssertionError(
+                                    _startup_failure_message(
+                                        "Local server exited before readiness",
+                                        command,
+                                        exit_code,
+                                        log_path,
+                                        token_path,
+                                        token,
+                                    )
+                                )
+                            break
+                    except httpx.TransportError:
+                        pass
+                    # Bounded external-process readiness polling, not a race delay.
+                    time.sleep(0.05)
+                else:
+                    pytest.fail(
+                        _startup_failure_message(
+                            "Local server did not become ready",
+                            command,
+                            process.poll(),
+                            log_path,
+                            token_path,
+                            token,
+                        )
+                    )
+            yield url, port, token
+        finally:
+            failure = sys.exception()
+            try:
+                _terminate_and_reap(process)
+            except Exception as cleanup_error:
+                if failure is None:
+                    raise
+                failure.add_note(
+                    f"Owned local server cleanup failed: {type(cleanup_error).__name__}"
+                )
 
 
 @pytest.fixture
@@ -381,6 +405,41 @@ def test_remote_readiness_does_not_require_a_local_launch_token(tmp_path, contro
         assert [request.url.path for request in state.requests] == ["/health"]
     process.terminate.assert_called_once()
     process.wait.assert_called_once()
+
+
+@pytest.mark.parametrize("primary_failure", [False, True])
+@pytest.mark.parametrize("reap_failure", [False, True])
+def test_local_child_cleanup_kills_after_grace_and_never_uses_unbounded_context_exit(
+    tmp_path, controlled_startup, primary_failure, reap_failure
+):
+    _state, process = controlled_startup
+    timeout = subprocess.TimeoutExpired("owned child", watchdog_timeout())
+    process.wait.side_effect = [timeout, timeout if reap_failure else 0]
+
+    def scenario():
+        with local_server_process(tmp_path):
+            if primary_failure:
+                raise AssertionError("original owned fixture failure")
+
+    if primary_failure:
+        with pytest.raises(AssertionError, match="original owned fixture failure") as failure:
+            scenario()
+        if reap_failure:
+            assert failure.value.__notes__ == ["Owned local server cleanup failed: TimeoutExpired"]
+    elif reap_failure:
+        with pytest.raises(subprocess.TimeoutExpired):
+            scenario()
+    else:
+        scenario()
+
+    process.terminate.assert_called_once()
+    process.kill.assert_called_once()
+    assert process.wait.call_count == 2
+    assert all(
+        call.kwargs == {"timeout": watchdog_timeout()} for call in process.wait.call_args_list
+    )
+    process.__enter__.assert_not_called()
+    process.__exit__.assert_not_called()
 
 
 def test_startup_exit_preserves_bounded_child_output_without_launch_credential(

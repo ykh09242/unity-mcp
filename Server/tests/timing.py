@@ -6,6 +6,7 @@ failure leaves the observed operation intact for assertions and owned teardown.
 """
 
 import asyncio
+from collections.abc import Iterable
 import math
 import os
 from typing import TypeVar
@@ -27,11 +28,26 @@ def watchdog_timeout(default_seconds: float = 60.0) -> float:
 
 
 async def await_completion(
-    future: asyncio.Future[T], phase: str, *, timeout: float | None = None
+    future: asyncio.Future[T],
+    phase: str,
+    *,
+    timeout: float | None = None,
+    producers: Iterable[asyncio.Future] = (),
 ) -> T:
-    """Observe an owned task/future without cancelling it on watchdog expiry."""
+    """Observe a phase or report an early producer exit without cancelling either.
+
+    Phase completion wins when both are ready. Otherwise producer errors and
+    cancellation propagate; successful exit before the phase is an assertion.
+    """
     seconds = watchdog_timeout() if timeout is None else timeout
-    done, _ = await asyncio.wait({future}, timeout=seconds)
+    producers = tuple(producers)
+    done, _ = await asyncio.wait(
+        {future, *producers}, timeout=seconds, return_when=asyncio.FIRST_COMPLETED
+    )
+    if future in done:
+        return future.result()
+    results = [producer.result() for producer in producers if producer in done]
+    assert not results, f"Producer completed before {phase}: {results!r}"
     assert future in done, (
         f"Timed out waiting for {phase} after {seconds:g}s; "
         f"increase {TIMEOUT_SCALE_ENV} on slow runners. The operation was not cancelled."
@@ -39,11 +55,17 @@ async def await_completion(
     return future.result()
 
 
-async def await_signal(event: asyncio.Event, phase: str, *, timeout: float | None = None) -> None:
+async def await_signal(
+    event: asyncio.Event,
+    phase: str,
+    *,
+    timeout: float | None = None,
+    producers: Iterable[asyncio.Future] = (),
+) -> None:
     """Wait for a phase event and always release this helper's own waiter."""
     waiter = asyncio.create_task(event.wait())
     try:
-        await await_completion(waiter, phase, timeout=timeout)
+        await await_completion(waiter, phase, timeout=timeout, producers=producers)
     finally:
         if not waiter.done():
             waiter.cancel()
