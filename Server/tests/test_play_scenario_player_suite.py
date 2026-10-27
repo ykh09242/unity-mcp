@@ -80,6 +80,12 @@ def owned_children(monkeypatch, tmp_path):
     script.write_text(
         r"""
 import json, os, pathlib, sys, time
+def publish(path, value):
+    # Expose only complete snapshots to the real launcher observer.
+    temporary = path.with_name(path.name + '.tmp')
+    temporary.write_text(json.dumps(value), encoding='utf-8')
+    os.replace(temporary, path)
+
 request_path=pathlib.Path(sys.argv[1]); request=json.loads(request_path.read_text())
 manifest=json.loads(pathlib.Path(sys.argv[2]).read_text()); modes=json.loads(sys.argv[3])
 index=next(i for i,c in enumerate(manifest['children']) if c['scenario_name']==request['scenario_name'])
@@ -90,7 +96,7 @@ if evidence_mode: mode='failed' if evidence_mode=='report-error' else 'succeeded
 if wrong_suite: mode='succeeded'
 progress={'schema_version':1,'job_id':request['job_id'],'definition_hash':request['definition_hash'],'build_id':request['build_id'],'payload_hash':request['payload_hash'],'build_source_revision':request['build_source_revision'],'process_id':os.getpid(),'sequence':1,'main_loop_sequence':1,'heartbeat_unix_ms':int(time.time()*1000),'elapsed_ms':1,'phase':'running','iteration':1,'stage':'steps','step_index':0,'status':'running'}
 if evidence_mode=='invalid-heartbeat': progress['job_id']='f'*32
-if evidence_mode!='missing-heartbeat': (request_path.parent/'progress.json').write_text(json.dumps(progress))
+if evidence_mode!='missing-heartbeat': publish(request_path.parent/'progress.json', progress)
 if mode=='wait_cancel':
  while not (request_path.parent/'cancel').exists(): time.sleep(.01)
  mode='cancelled'
@@ -99,7 +105,7 @@ report={'job_id':request['job_id'],'scenario':child['definition'],'status':mode,
 if wrong_suite: report['player_suite']['child_index']=(index+1)%3
 if evidence_mode=='progress-error': report['progress_error']='controlled progress publication failure'
 if evidence_mode=='report-error': report['report_error']='Failure diagnostics unavailable: IOException: controlled capture failure'
-(request_path.parent/'run.json').write_text(json.dumps(report)); sys.exit(code)
+publish(request_path.parent/'run.json', report); sys.exit(code)
 """,
         encoding="utf-8",
     )
@@ -181,7 +187,7 @@ def test_child_failure_policy_does_not_replay_or_invent_unstarted_results(
         )
     )
     assert result.exit_code == 1 and result.report["status"] == "failed"
-    assert [entry["status"] for entry in result.report["scenarios"]] == expected
+    assert [entry["status"] for entry in result.report["scenarios"]] == expected, result.report
     assert len(owned_children[1]) == (2 if policy == "stop" else 3)
     assert all(process.poll() is not None for process in owned_children[1])
 
