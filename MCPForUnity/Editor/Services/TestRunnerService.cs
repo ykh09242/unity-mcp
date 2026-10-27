@@ -24,6 +24,7 @@ namespace MCPForUnity.Editor.Services
         private readonly TestRunnerApi _testRunnerApi;
         private readonly Action<TestMode, Action<ITestAdaptor>> _retrieveTestList;
         private readonly TimeSpan _retrievalTimeout;
+        private readonly Action<CancellationTokenSource> _observeDiscoveryBudget;
         private readonly SemaphoreSlim _operationLock = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _lifetimeCancellation = new CancellationTokenSource();
         private readonly List<ITestResultAdaptor> _leafResults = new List<ITestResultAdaptor>();
@@ -103,11 +104,16 @@ namespace MCPForUnity.Editor.Services
         public TestRunnerService()
             : this(null, TimeSpan.FromSeconds(OperationTimeouts.EnvironmentSeconds("UNITY_MCP_TEST_DISCOVERY_TIMEOUT", 300))) { }
 
-        internal TestRunnerService(Action<TestMode, Action<ITestAdaptor>> retrieveTestList, TimeSpan retrievalTimeout)
+        internal TestRunnerService(
+            Action<TestMode, Action<ITestAdaptor>> retrieveTestList,
+            TimeSpan retrievalTimeout,
+            Action<CancellationTokenSource> observeDiscoveryBudget = null
+        )
         {
             _testRunnerApi = ScriptableObject.CreateInstance<TestRunnerApi>();
             _retrieveTestList = retrieveTestList ?? _testRunnerApi.RetrieveTestList;
             _retrievalTimeout = retrievalTimeout;
+            _observeDiscoveryBudget = observeDiscoveryBudget;
             _testRunnerApi.hideFlags = HideFlags.HideAndDontSave;
             _testRunnerApi.RegisterCallbacks(this);
             var retiredJobId = SessionState.GetString(RetiredRunSessionKey, string.Empty);
@@ -148,6 +154,7 @@ namespace MCPForUnity.Editor.Services
             var lifetime = _lifetimeCancellation.Token;
             using var observation = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
             observation.CancelAfter(budget);
+            _observeDiscoveryBudget?.Invoke(observation);
             var cancellationToken = observation.Token;
             var elapsed = System.Diagnostics.Stopwatch.StartNew();
             bool entered = false;
