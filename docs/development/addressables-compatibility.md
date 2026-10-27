@@ -88,7 +88,9 @@ Source compatibility on another OS is not native OS validation.
 
 Run the complete `AddressablesCompatibilityTests` and `AddressablesAuthoringTests`
 cohorts for 1.29.0, 2.11.2, 3.0.0, 3.1.0, 4.0.0 and 4.1.1, then restore and run
-the warm project's 2.7.6 baseline. Native results for this matrix are pending.
+the warm project's 2.7.6 baseline. Retain each executed row's original result,
+exact package/Editor versions and source identity in the corresponding release
+verification records; source audit and compilation are not native execution.
 The first suite covers strict family admission, exact action signatures,
 stored/layout schemas and report coverage refusal. The second uses package-created
 temporary settings for inspection, preflight, address/group/profile edits,
