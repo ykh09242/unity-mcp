@@ -265,3 +265,69 @@ async def test_failed_terminal_job_preserves_test_results(job_transport):
     assert response.success
     assert response.data.result.summary.failed == 1
     assert job_transport.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["succeeded", "failed", "cancelled"])
+@pytest.mark.parametrize("paged", [False, True])
+async def test_terminal_wait_includes_native_cleanup(job_transport, monkeypatch, status, paged):
+    from services.tools.shared_tool_reads import SharedToolReads
+
+    # The virtual wait clock must not reuse a snapshot against the real cache clock.
+    monkeypatch.setattr(jobs, "_job_status_reads", SharedToolReads(freshness_s=0))
+    now = [0.0]
+    monkeypatch.setattr(
+        jobs.asyncio, "get_event_loop", lambda: SimpleNamespace(time=lambda: now[0])
+    )
+
+    async def advance(seconds):
+        now[0] += seconds
+
+    monkeypatch.setattr(jobs.asyncio, "sleep", advance)
+    pending = {
+        "success": True,
+        "data": {
+            "job_id": "job",
+            "status": status,
+            "native_control": {"released": False, "final_witness": False},
+            "result_page": {"items": [{"state": "Failed"}], "generation": "saved-page"},
+        },
+    }
+    released = deepcopy(pending)
+    released["data"]["native_control"].update(released=True, final_witness=True)
+    job_transport.side_effect = [pending, released]
+
+    response = await jobs.get_test_job(
+        AsyncMock(),
+        "job",
+        wait_timeout=30,
+        **({"include_failed_tests": True, "page_size": 5} if paged else {}),
+    )
+
+    assert response.success and response.data.status == status
+    assert response.data.native_control["released"] is True
+    assert response.data.native_cleanup_pending is False
+    assert response.data.result_page["generation"] == "saved-page"
+    assert job_transport.await_count == 2
+    assert now[0] == 2.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wait_timeout", [None, 1])
+async def test_pending_cleanup_returns_results_and_guidance_at_budget(job_transport, wait_timeout):
+    job_transport.return_value = {
+        "success": True,
+        "data": {
+            "job_id": "job",
+            "status": "failed",
+            "native_control": {"released": False, "final_witness": False},
+            "result_page": {"items": [{"message": "original failure"}], "generation": "saved"},
+        },
+    }
+    response = await jobs.get_test_job(AsyncMock(), "job", wait_timeout=wait_timeout)
+    assert response.success and response.data.status == "failed"
+    assert response.data.native_cleanup_pending is True
+    assert response.hint == "wait_for_native_cleanup"
+    assert "get_test_job" in response.message
+    assert response.data.result_page["items"][0]["message"] == "original failure"
+    assert job_transport.await_count == 1

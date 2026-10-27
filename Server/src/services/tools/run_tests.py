@@ -431,6 +431,9 @@ class GetTestJobData(BaseModel):
     native_control: dict[str, Any] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    native_cleanup_pending: bool | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     native_cleanup_diagnostics: NativeCleanupDiagnostics | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
@@ -441,6 +444,27 @@ class GetTestJobData(BaseModel):
 
 class GetTestJobResponse(MCPResponse):
     data: GetTestJobData | None = None
+
+
+def native_test_cleanup_pending(data: dict[str, Any]) -> bool | None:
+    control = data.get("native_control")
+    if not isinstance(control, dict) or not control:
+        return None  # Older packages do not expose native release evidence.
+    return control.get("released") is not True
+
+
+def test_job_response(response: dict[str, Any]) -> GetTestJobResponse:
+    data = dict(response.get("data") or {})
+    pending = native_test_cleanup_pending(data)
+    data["native_cleanup_pending"] = pending
+    payload = {**response, "data": data}
+    if pending and data.get("status") in ("succeeded", "failed", "cancelled"):
+        payload["hint"] = "wait_for_native_cleanup"
+        payload["message"] = (
+            "Test results are available; Unity native cleanup is still pending. "
+            "Poll get_test_job with wait_timeout=30 before issuing another Editor command."
+        )
+    return GetTestJobResponse(**payload)
 
 
 @mcp_for_unity_tool(
@@ -578,9 +602,11 @@ async def get_test_job(
     include_details: Annotated[bool, "Include details for all tests (default: false)"] = False,
     wait_timeout: Annotated[
         int | None,
-        "If set, wait up to this many seconds for tests to complete before returning. "
+        "If set, wait up to this many seconds for tests and native cleanup to complete. "
         "Reduces polling frequency and avoids client-side loop detection. "
-        "Recommended: 30-60 seconds. Returns immediately if tests complete sooner.",
+        "Recommended: 30-60 seconds. On expiry results remain available with "
+        "native_cleanup_pending and retry guidance. Older packages without release evidence "
+        "return on terminal test status.",
     ] = None,
     page_size: Annotated[
         int | None,
@@ -661,4 +687,4 @@ async def get_test_job(
         wait=False,
         observation_order=observation_order,
     )
-    return GetTestJobResponse(**response)
+    return test_job_response(response)

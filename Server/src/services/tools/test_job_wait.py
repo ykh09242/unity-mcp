@@ -31,7 +31,12 @@ async def wait_for_test_job(
     cursor=None,
 ):
     # Keep existing per-job observation/nudge state in its original owner module.
-    from services.tools.run_tests import GetTestJobResponse, _job_status_reads, _update_job_nudge
+    from services.tools.run_tests import (
+        _job_status_reads,
+        _update_job_nudge,
+        native_test_cleanup_pending,
+        test_job_response,
+    )
 
     http_session = (
         await ctx.get_state("unity_session_id")
@@ -72,7 +77,7 @@ async def wait_for_test_job(
                         success=False,
                         error="wait_timeout expired before a test job status was received",
                     )
-                return GetTestJobResponse.model_validate(response)
+                return test_job_response(response)
             try:
                 if config.transport_mode.lower() != "http":
                     current_generation = await get_authenticated_stdio_generation(unity_instance)
@@ -108,7 +113,7 @@ async def wait_for_test_job(
                         success=False,
                         error="wait_timeout expired before a test job status was received",
                     )
-                return GetTestJobResponse.model_validate(response)
+                return test_job_response(response)
 
             if isinstance(response, MCPResponse):
                 return response
@@ -134,15 +139,17 @@ async def wait_for_test_job(
                     timeout=max(0.0, deadline - asyncio.get_event_loop().time()),
                 )
             except asyncio.TimeoutError:
-                return GetTestJobResponse(**response)
-            if status in ("succeeded", "failed", "cancelled"):
-                return GetTestJobResponse(**response)
+                return test_job_response(response)
+            if status in ("succeeded", "failed", "cancelled") and not native_test_cleanup_pending(
+                data
+            ):
+                return test_job_response(response)
 
             # Check timeout
             remaining = deadline - asyncio.get_event_loop().time()
             if remaining <= 0:
                 # Timeout reached, return current status
-                return GetTestJobResponse(**response)
+                return test_job_response(response)
 
             # Wait before next poll (but don't exceed remaining time)
             await asyncio.sleep(min(poll_interval, remaining))
