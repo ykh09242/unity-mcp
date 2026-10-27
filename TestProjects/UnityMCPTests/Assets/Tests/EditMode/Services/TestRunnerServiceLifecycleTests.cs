@@ -870,10 +870,14 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsNull(typeof(TestRunnerService).GetField("_runCompletionSource", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service));
         }
 
-        private void SetDiscovery(Action<TestMode, Action<ITestAdaptor>> retrieve, TimeSpan? timeout = null)
+        private void SetDiscovery(
+            Action<TestMode, Action<ITestAdaptor>> retrieve,
+            TimeSpan? timeout = null,
+            Action<CancellationTokenSource> observeBudget = null
+        )
         {
             _service.Dispose();
-            _service = new TestRunnerService(retrieve, timeout ?? TimeSpan.FromSeconds(30));
+            _service = new TestRunnerService(retrieve, timeout ?? TimeSpan.FromSeconds(TestUtilities.TaskWaitSeconds), observeBudget);
             _runner = new CapturingRunner(_service);
             MCPServiceLocator.Register<ITestRunnerService>(_runner);
             _api = (TestRunnerApi)typeof(TestRunnerService).GetField("_testRunnerApi", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
@@ -1005,9 +1009,57 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public async Task Discovery_ExpiredObservationBeforeEntryNeverRetrievesAndAllowsRetry()
+        {
+            int observations = 0;
+            int retrievals = 0;
+            SetDiscovery(
+                (_, received) =>
+                {
+                    retrievals++;
+                    received(new DiscoveryNode());
+                },
+                observeBudget: budget =>
+                {
+                    if (++observations != 1)
+                        return;
+                    budget.CancelAfter(0);
+                    Assert.IsTrue(SpinWait.SpinUntil(() => budget.IsCancellationRequested, TimeSpan.FromSeconds(TestUtilities.TaskWaitSeconds)));
+                }
+            );
+            var expired = _service.GetTestsAsync(TestMode.EditMode);
+            Assert.IsInstanceOf<TimeoutException>(ObserveFailure(expired));
+            Assert.AreEqual(0, retrievals, "An expired admission must never invoke native retrieval.");
+            Assert.AreEqual(1, (await _service.GetTestsAsync(TestMode.EditMode)).Count);
+            Assert.AreEqual(1, retrievals);
+        }
+
+        [Test]
+        public async Task Discovery_BudgetObserverFailureDisposesObservationAndAllowsRetry()
+        {
+            int observations = 0;
+            CancellationTokenSource captured = null;
+            SetDiscovery(
+                (_, received) => received(new DiscoveryNode()),
+                observeBudget: budget =>
+                {
+                    if (++observations != 1)
+                        return;
+                    captured = budget;
+                    throw new InvalidOperationException("Injected budget observer failure");
+                }
+            );
+            var failed = _service.GetTestsAsync(TestMode.EditMode);
+            StringAssert.Contains("Injected budget observer failure", ObserveFailure(failed).Message);
+            Assert.Throws<ObjectDisposedException>(() => captured.CancelAfter(0));
+            Assert.AreEqual(1, (await _service.GetTestsAsync(TestMode.EditMode)).Count);
+        }
+
+        [Test]
         public async Task Discovery_TimeoutIgnoresLateCallbacksAndAllowsRetry()
         {
             Action<ITestAdaptor> callback = null;
+            CancellationTokenSource observation = null;
             int retrievals = 0;
             SetDiscovery(
                 (_, received) =>
@@ -1018,10 +1070,12 @@ namespace MCPForUnityTests.Editor.Services
                     else
                         received(new DiscoveryNode());
                 },
-                TimeSpan.FromMilliseconds(20)
+                observeBudget: budget => observation = budget
             );
             var discovery = _service.GetTestsAsync(TestMode.EditMode);
-            Assert.AreSame(discovery, await Task.WhenAny(discovery, Task.Delay(2000)));
+            Assert.IsNotNull(callback, "The retrieval callback must be captured before expiring its observation.");
+            observation.CancelAfter(0);
+            Assert.AreSame(discovery, await Task.WhenAny(discovery, Task.Delay(TimeSpan.FromSeconds(TestUtilities.TaskWaitSeconds))));
             Assert.IsInstanceOf<TimeoutException>(ObserveFailure(discovery));
             var discarded = new DiscoveryNode { Unexpected = true };
             callback(discarded);
@@ -1094,12 +1148,18 @@ namespace MCPForUnityTests.Editor.Services
             {
                 SynchronizationContext.SetSynchronizationContext(paused);
                 Action<ITestAdaptor> callback = null;
-                SetDiscovery((_, received) => callback = received, TimeSpan.FromMilliseconds(20));
+                CancellationTokenSource observation = null;
+                SetDiscovery((_, received) => callback = received, observeBudget: budget => observation = budget);
                 var discovery = _service.GetTestsAsync(TestMode.EditMode);
+                Assert.IsNotNull(callback, "The retrieval callback must be captured before expiring its observation.");
                 callback(new DiscoveryNode());
-                Thread.Sleep(50);
+                observation.CancelAfter(0);
+                Assert.IsTrue(
+                    SpinWait.SpinUntil(() => observation.IsCancellationRequested, TimeSpan.FromSeconds(TestUtilities.TaskWaitSeconds)),
+                    "The real observation timer must fire while its accepted continuation is paused."
+                );
                 var deadline = System.Diagnostics.Stopwatch.StartNew();
-                while (!discovery.IsCompleted && deadline.ElapsedMilliseconds < 2000)
+                while (!discovery.IsCompleted && deadline.Elapsed.TotalSeconds < TestUtilities.TaskWaitSeconds)
                 {
                     paused.Drain();
                     Thread.Sleep(1);
@@ -1125,6 +1185,7 @@ namespace MCPForUnityTests.Editor.Services
             {
                 SynchronizationContext.SetSynchronizationContext(paused);
                 Action<ITestAdaptor> callback = null;
+                CancellationTokenSource observation = null;
                 int calls = 0;
                 SetDiscovery(
                     (_, received) =>
@@ -1132,14 +1193,18 @@ namespace MCPForUnityTests.Editor.Services
                         calls++;
                         callback = received;
                     },
-                    TimeSpan.FromMilliseconds(20)
+                    observeBudget: budget => observation = budget
                 );
                 var discovery = _service.GetTestsAsync(null);
+                Assert.IsNotNull(callback, "The first-mode retrieval must enter before expiring the shared observation.");
                 callback(new DiscoveryNode());
-                // Deliberately cross the functional timeout, not a completion watchdog.
-                Thread.Sleep(50);
+                observation.CancelAfter(0);
+                Assert.IsTrue(
+                    SpinWait.SpinUntil(() => observation.IsCancellationRequested, TimeSpan.FromSeconds(TestUtilities.TaskWaitSeconds)),
+                    "The real shared observation timer must fire before the first continuation resumes."
+                );
                 var watchdog = System.Diagnostics.Stopwatch.StartNew();
-                while (!discovery.IsCompleted && watchdog.Elapsed.TotalSeconds < 60)
+                while (!discovery.IsCompleted && watchdog.Elapsed.TotalSeconds < TestUtilities.TaskWaitSeconds)
                 {
                     paused.Drain();
                     Thread.Sleep(1);

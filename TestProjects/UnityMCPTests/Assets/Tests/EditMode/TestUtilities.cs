@@ -1,5 +1,7 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.Transport;
@@ -16,6 +18,24 @@ namespace MCPForUnityTests.Editor
     /// </summary>
     public static class TestUtilities
     {
+        internal static double TaskWaitSeconds => MCPForUnity.Editor.Helpers.OperationTimeouts.EnvironmentSeconds("UNITY_MCP_TEST_WAIT_TIMEOUT", 60);
+
+        internal static IEnumerator WaitUntil(Func<bool> ready, string phase, Func<bool> producerCompleted = null, double? timeoutSeconds = null)
+        {
+            var elapsed = Stopwatch.StartNew();
+            double budget = timeoutSeconds ?? TaskWaitSeconds;
+            while (!ready())
+            {
+                if (producerCompleted?.Invoke() == true)
+                {
+                    Assert.IsTrue(ready(), $"The producer completed before {phase}.");
+                    yield break;
+                }
+                Assert.Less(elapsed.Elapsed.TotalSeconds, budget, $"Timed out waiting for {phase}.");
+                yield return null;
+            }
+        }
+
         /// <summary>
         /// Safely converts a command result to JObject, handling both JSON objects and other types.
         /// Returns an empty JObject if result is null.
@@ -134,6 +154,139 @@ namespace MCPForUnityTests.Editor
                     break;
                 }
             }
+        }
+    }
+
+    /// <summary>Releases test-owned gates and cancellation before asynchronously settling their tasks.</summary>
+    internal sealed class OwnedTestTasks
+    {
+        private readonly List<Task> tasks = new List<Task>();
+        private readonly List<Action> stop = new List<Action>();
+        private readonly List<IDisposable> resources = new List<IDisposable>();
+
+        internal T Track<T>(T task)
+            where T : Task
+        {
+            tasks.Add(task);
+            return task;
+        }
+
+        internal T Own<T>(T resource)
+            where T : IDisposable
+        {
+            resources.Add(resource);
+            return resource;
+        }
+
+        internal void OnCleanup(Action action) => stop.Add(action);
+
+        internal IEnumerator Cleanup()
+        {
+            var errors = new List<Exception>();
+            foreach (var action in stop)
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception error)
+                {
+                    errors.Add(error);
+                }
+            }
+            var elapsed = Stopwatch.StartNew();
+            while (tasks.Exists(task => !task.IsCompleted) && elapsed.Elapsed.TotalSeconds < TestUtilities.TaskWaitSeconds)
+                yield return null;
+            bool settled = tasks.TrueForAll(task => task.IsCompleted);
+            foreach (var task in tasks)
+                if (task.IsFaulted)
+                    _ = task.Exception;
+            // A late callback may still use these handles. Do not dispose them underneath it.
+            if (settled)
+            {
+                foreach (var resource in resources)
+                {
+                    try
+                    {
+                        resource.Dispose();
+                    }
+                    catch (Exception error)
+                    {
+                        errors.Add(error);
+                    }
+                }
+            }
+            Assert.IsTrue(settled, "Test-owned tasks did not settle after cancellation and gate release.");
+            Assert.IsEmpty(errors, "Test-owned task cleanup failed.");
+        }
+    }
+
+    public class CoroutineWaitTests
+    {
+        [Test]
+        public void IncompleteTaskKeepsYieldingPastTheLegacyFrameLimit()
+        {
+            var producer = new TaskCompletionSource<bool>();
+            var wait = TestUtilities.WaitUntil(() => producer.Task.IsCompleted, "a deliberately late worker");
+            for (int frame = 0; frame < 301; frame++)
+                Assert.IsTrue(wait.MoveNext(), "An unfinished task must keep yielding, never synchronously retrieve its result.");
+            producer.SetResult(true);
+            Assert.IsFalse(wait.MoveNext());
+        }
+
+        [Test]
+        public void ProducerCompletionBeforeEntryFailsWithoutWaitingForTheWatchdog()
+        {
+            var producer = new TaskCompletionSource<bool>();
+            var wait = TestUtilities.WaitUntil(() => false, "reader entry", () => producer.Task.IsCompleted);
+            Assert.IsTrue(wait.MoveNext());
+            producer.SetResult(true);
+            StringAssert.Contains("producer completed before reader entry", Assert.Throws<AssertionException>(() => wait.MoveNext()).Message);
+        }
+
+        [Test]
+        public void MissingPhaseWithLiveProducerFailsAtTheMonotonicWatchdog()
+        {
+            var wait = TestUtilities.WaitUntil(() => false, "a missing phase", () => false, timeoutSeconds: 0);
+            StringAssert.Contains("Timed out waiting for a missing phase", Assert.Throws<AssertionException>(() => wait.MoveNext()).Message);
+        }
+
+        [Test]
+        public void CompletedPhaseWinsSimultaneousProducerCompletion()
+        {
+            Assert.IsFalse(TestUtilities.WaitUntil(() => true, "reader entry", () => true).MoveNext());
+        }
+
+        [Test]
+        public void PhasePublishedBetweenReadinessAndCompletionChecksStillWins()
+        {
+            bool ready = false;
+            var wait = TestUtilities.WaitUntil(
+                () => ready,
+                "reader entry",
+                () =>
+                {
+                    ready = true;
+                    return true;
+                }
+            );
+            Assert.IsFalse(wait.MoveNext());
+        }
+
+        [Test]
+        public void CleanupReleasesTheGateThenYieldsUntilOwnedWorkSettles()
+        {
+            var owned = new OwnedTestTasks();
+            var completion = new TaskCompletionSource<bool>();
+            var producer = owned.Track(completion.Task);
+            bool stopped = false;
+            owned.OnCleanup(() => stopped = true);
+            var cleanup = owned.Cleanup();
+            Assert.IsTrue(cleanup.MoveNext());
+            Assert.IsTrue(stopped, "Cancellation and gate release must precede asynchronous settlement.");
+            Assert.IsFalse(producer.IsCompleted);
+            completion.SetResult(true);
+            Assert.IsFalse(cleanup.MoveNext());
         }
     }
 

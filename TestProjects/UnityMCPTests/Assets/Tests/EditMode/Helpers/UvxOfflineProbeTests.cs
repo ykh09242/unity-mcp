@@ -11,11 +11,21 @@ namespace MCPForUnityTests.Editor.Helpers
 {
     public class UvxOfflineProbeTests
     {
+        private OwnedTestTasks owned;
+
+        [SetUp]
+        public void SetUp() => owned = new OwnedTestTasks();
+
+        [UnityTearDown]
+        public IEnumerator TearDown() => owned.Cleanup();
+
         [UnityTest]
         public IEnumerator ProbeReturnsPromptlySharesWorkAndIsolatesCanceledWaiters()
         {
-            using var gate = new ManualResetEventSlim(false);
-            using var cancel = new CancellationTokenSource();
+            var gate = owned.Own(new ManualResetEventSlim(false));
+            var cancel = owned.Own(new CancellationTokenSource());
+            owned.OnCleanup(gate.Set);
+            owned.OnCleanup(cancel.Cancel);
             int calls = 0,
                 thread = 0;
             int editorThread = Thread.CurrentThread.ManagedThreadId;
@@ -24,22 +34,32 @@ namespace MCPForUnityTests.Editor.Helpers
                 {
                     Interlocked.Increment(ref calls);
                     thread = Thread.CurrentThread.ManagedThreadId;
-                    return gate.Wait(5000);
+                    gate.Wait();
+                    return true;
                 }
             );
             var timer = Stopwatch.StartNew();
             Assert.IsFalse(probe.GetCachedOrSchedule("synthetic-uvx", "source-one"));
-            var first = probe.ProbeAsync("synthetic-uvx", "source-one", cancel.Token);
-            var second = probe.ProbeAsync("synthetic-uvx", "source-one", CancellationToken.None);
-            Assert.Less(timer.ElapsedMilliseconds, 500);
-            cancel.Cancel();
-            gate.Set();
-            for (int i = 0; i < 300 && (!first.IsCompleted || !second.IsCompleted); i++)
-                yield return null;
-            Assert.IsTrue(first.IsCanceled);
-            Assert.IsTrue(second.GetAwaiter().GetResult());
-            Assert.AreEqual(1, calls);
-            Assert.AreNotEqual(editorThread, thread);
+            var first = owned.Track(probe.ProbeAsync("synthetic-uvx", "source-one", cancel.Token));
+            var second = owned.Track(probe.ProbeAsync("synthetic-uvx", "source-one", CancellationToken.None));
+            try
+            {
+                Assert.Less(timer.ElapsedMilliseconds, 500);
+                Assert.IsFalse(second.IsCompleted, "Scheduling must return while the owned worker gate is closed.");
+                cancel.Cancel();
+                gate.Set();
+                yield return TestUtilities.WaitUntil(() => first.IsCompleted && second.IsCompleted, "both probe observations to complete");
+                Assert.IsTrue(first.IsCompleted && second.IsCompleted, "Never block the Editor on an unfinished observation.");
+                Assert.IsTrue(first.IsCanceled);
+                Assert.IsTrue(second.GetAwaiter().GetResult());
+                Assert.AreEqual(1, calls);
+                Assert.AreNotEqual(editorThread, thread);
+            }
+            finally
+            {
+                gate.Set();
+                cancel.Cancel();
+            }
         }
 
         [UnityTest]
@@ -67,9 +87,8 @@ namespace MCPForUnityTests.Editor.Helpers
                         File.WriteAllText(exe, "new identity");
                     if (phase == 3)
                         now = now.AddSeconds(31);
-                    var task = probe.ProbeAsync(exe, phase == 4 ? "different" : "source", CancellationToken.None);
-                    while (!task.IsCompleted)
-                        yield return null;
+                    var task = owned.Track(probe.ProbeAsync(exe, phase == 4 ? "different" : "source", CancellationToken.None));
+                    yield return TestUtilities.WaitUntil(() => task.IsCompleted, "probe cache observation to complete");
                     Assert.IsTrue(task.GetAwaiter().GetResult());
                 }
                 Assert.AreEqual(4, calls);
