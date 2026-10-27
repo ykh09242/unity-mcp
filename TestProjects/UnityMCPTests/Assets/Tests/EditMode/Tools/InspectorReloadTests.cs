@@ -135,7 +135,13 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNull(PrefabStageUtility.GetCurrentPrefabStage(), "Preserve any existing prefab stage.");
             string folder = "Assets/InspectorReload_" + Guid.NewGuid().ToString("N");
             SessionState.SetString(Key + "folder", folder);
+#if UNITY_6000_5_OR_NEWER
+            SessionState.SetString(Key + "selection", string.Join(",", Selection.entityIds.Select(EntityId.ToULong)));
+#elif UNITY_6000_3_OR_NEWER
+            SessionState.SetString(Key + "selection", string.Join(",", Selection.entityIds.Select(id => (int)id)));
+#else
             SessionState.SetString(Key + "selection", string.Join(",", Selection.instanceIDs));
+#endif
             AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
             for (int i = 0; i < 2; i++)
             {
@@ -235,7 +241,17 @@ namespace MCPForUnityTests.Editor.Tools
             if (folder.StartsWith("Assets/InspectorReload_", StringComparison.Ordinal) && AssetDatabase.IsValidFolder(folder))
                 AssetDatabase.DeleteAsset(folder);
             string selection = SessionState.GetString(Key + "selection", "");
+#if UNITY_6000_5_OR_NEWER
+            Selection.entityIds = string.IsNullOrEmpty(selection)
+                ? Array.Empty<EntityId>()
+                : selection.Split(',').Select(value => EntityId.FromULong(ulong.Parse(value))).ToArray();
+#elif UNITY_6000_3_OR_NEWER
+            Selection.entityIds = string.IsNullOrEmpty(selection)
+                ? Array.Empty<EntityId>()
+                : selection.Split(',').Select(value => (EntityId)int.Parse(value)).ToArray();
+#else
             Selection.instanceIDs = string.IsNullOrEmpty(selection) ? Array.Empty<int>() : selection.Split(',').Select(int.Parse).ToArray();
+#endif
             foreach (string name in new[] { "folder", "selection", "domain", "scenario" })
                 SessionState.EraseString(Key + name);
             SessionState.EraseInt(Key + "window");
