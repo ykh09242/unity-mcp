@@ -21,26 +21,32 @@ namespace MCPForUnityTests.Editor.Tools
             return type.GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, args);
         }
 
+        [TestCase("1.0.0", true)]
+        [TestCase("1.1.5", true)]
         [TestCase("1.28.2", true)]
+        [TestCase("1.29.0", true)]
         [TestCase("1.28.3", true)]
         [TestCase("2.0.0", true)]
         [TestCase("2.7.6", true)]
         [TestCase("2.8.0", true)]
+        [TestCase("2.11.2", true)]
+        [TestCase("4.0.0", true)]
+        [TestCase("0.9.0", false)]
         [TestCase("3.1.0", true)]
         [TestCase("3.2.0", true)]
         [TestCase("4.1.1", true)]
         [TestCase("4.1.2", true)]
         [TestCase("4.2.0", true)]
-        [TestCase("3.0.9", false)]
-        [TestCase("4.0.9", false)]
-        [TestCase("4.1.0", false)]
+        [TestCase("3.0.9", true)]
+        [TestCase("4.0.9", true)]
+        [TestCase("4.1.0", true)]
         [TestCase("5.0.0", false)]
         [TestCase("3.1.0-pre.1", false)]
         [TestCase("4.1.1+metadata", false)]
         [TestCase("3.01.0", false)]
         [TestCase("4.1.01", false)]
-        [TestCase("1.27.0", false)]
-        [TestCase("3.0.0", false)]
+        [TestCase("1.27.0", true)]
+        [TestCase("3.0.0", true)]
         [TestCase("2.7.6-pre.1", false)]
         [TestCase("2.7", false)]
         [TestCase("2.7.6.1", false)]
@@ -55,8 +61,8 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("2.7.6", false)]
         [TestCase("3.1.0", true)]
         [TestCase("4.1.1", true)]
-        [TestCase("3.0.0", false)]
-        [TestCase("4.1.0", false)]
+        [TestCase("3.0.0", true)]
+        [TestCase("4.1.0", true)]
         [TestCase("5.0.0", false)]
         public void LookupCacheResetIsRequiredOnlyForCompatibleAffectedFamilies(string version, bool expected) =>
             Assert.AreEqual(expected, Policy("RequiresLookupCacheReset", version));
@@ -202,6 +208,80 @@ namespace MCPForUnityTests.Editor.Tools
             StringAssert.Contains("analyze_layout", error.InnerException.Message);
         }
 
+#pragma warning disable CS0649, CS0169 // Deliberately incomplete native schema fixtures are inspected through reflection.
+        private class LegacyLayout
+        {
+            public class Group { }
+        }
+
+        private class ModernLayout
+        {
+            public class Group
+            {
+                public string ContentDirectoryName;
+            }
+
+            public class ContentDirectory { }
+
+            public List<ContentDirectory> ContentDirectories;
+        }
+
+        private class PartialLayout
+        {
+            public class Group
+            {
+                public string ContentDirectoryName;
+            }
+        }
+
+        private class MalformedLayout
+        {
+            public class Group
+            {
+                public int ContentDirectoryName;
+            }
+
+            public class ContentDirectory { }
+
+            public List<ContentDirectory> ContentDirectories;
+        }
+
+        private class PrivateExtensionLayout
+        {
+            public class Group { }
+
+            private List<object> ContentDirectories;
+        }
+
+#pragma warning restore CS0649, CS0169
+
+        [TestCase(typeof(LegacyLayout), false)]
+        [TestCase(typeof(ModernLayout), true)]
+        public void ContentDirectoryCapabilityUsesNativeSchemaRatherThanVersion(Type layout, bool expected)
+        {
+            Type adapter = Type.GetType("MCPForUnity.Editor.Tools.Addressables.AddressablesLayout, MCPForUnity.Editor", true);
+            Assert.AreEqual(
+                expected,
+                adapter.GetMethod("UsesContentDirectories", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { layout })
+            );
+        }
+
+        [TestCase(typeof(PartialLayout))]
+        [TestCase(typeof(MalformedLayout))]
+        [TestCase(typeof(PrivateExtensionLayout))]
+        public void IncompleteNativeContentDirectorySchemaRefusesBeforeReadingReports(Type layout)
+        {
+            Type adapter = Type.GetType("MCPForUnity.Editor.Tools.Addressables.AddressablesLayout, MCPForUnity.Editor", true);
+            var error = Assert.Throws<TargetInvocationException>(() =>
+                adapter.GetMethod("UsesContentDirectories", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { layout })
+            );
+            Assert.AreEqual(
+                "addressables_api_unsupported",
+                error.InnerException.GetType().GetField("Code", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(error.InnerException)
+            );
+            StringAssert.Contains("analyze_layout", error.InnerException.Message);
+        }
+
         [Test]
         public void InstalledPackageHasTheCompleteConsumedLayoutSchema()
         {
@@ -210,11 +290,9 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.Ignore("A supported real Addressables package is required.");
             Type adapter = Type.GetType("MCPForUnity.Editor.Tools.Addressables.AddressablesLayout, MCPForUnity.Editor", true);
             Assert.DoesNotThrow(() => adapter.GetMethod("RequireSchema", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { layout }));
-            string version = UnityEditor.PackageManager.PackageInfo.FindForAssembly(layout.Assembly)?.version;
-            if ((bool)Policy("UsesContentDirectories", version))
-                Assert.DoesNotThrow(() =>
-                    adapter.GetMethod("RequireModernSchema", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { layout })
-                );
+            Assert.DoesNotThrow(() =>
+                adapter.GetMethod("UsesContentDirectories", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { layout })
+            );
         }
     }
 
@@ -400,20 +478,29 @@ namespace MCPForUnityTests.Editor.Tools
                 CollectionAssert.AreEqual(pair.Value, File.ReadAllBytes(pair.Key), "Inspection must preserve existing owned asset bytes.");
         }
 
-        [Test]
-        public void UnknownStoredProfileSchemaRefusesWithoutMigration()
+        [TestCase("inspect")]
+        [TestCase("preflight")]
+        [TestCase("set_address")]
+        [TestCase("move_entry")]
+        [TestCase("set_profile_value")]
+        public void UnknownStoredProfileSchemaRefusesWithoutMigration(string action)
         {
             FieldInfo field = profiles.GetType().GetField("m_ProfileVersion", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.IsNotNull(field);
             object original = field.GetValue(profiles);
             bool dirty = EditorUtility.IsDirty((UnityEngine.Object)settings);
+            string address = (string)Get(entry, "address");
+            int undo = Undo.GetCurrentGroup();
             try
             {
                 field.SetValue(profiles, 2);
-                JObject response = Call("inspect");
+                JObject response = Call(action);
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 Assert.AreEqual("addressables_profile_schema_unsupported", response.Value<string>("code"));
-                Assert.AreEqual(2, field.GetValue(profiles), "Inspection must not invoke a native profile migration.");
+                StringAssert.Contains(action, response["data"].Value<string>("message"));
+                Assert.AreEqual(2, field.GetValue(profiles), "The action must not invoke a native profile migration.");
+                Assert.AreEqual(address, Get(entry, "address"));
+                Assert.AreEqual(undo, Undo.GetCurrentGroup(), "Unsupported stored schemas must refuse before Undo registration.");
                 Assert.AreEqual(dirty, EditorUtility.IsDirty((UnityEngine.Object)settings));
             }
             finally
@@ -493,7 +580,7 @@ namespace MCPForUnityTests.Editor.Tools
                     report["Groups"] = new JArray(group);
                 reports.Add(report);
             }
-            if (version.StartsWith("3.", StringComparison.Ordinal) || version.StartsWith("4.", StringComparison.Ordinal))
+            if (layoutType.GetField("ContentDirectories") != null)
             {
                 var missing = (JObject)baseline.DeepClone();
                 missing.Remove("ContentDirectories");

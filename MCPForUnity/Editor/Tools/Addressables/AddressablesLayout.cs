@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Helpers;
@@ -70,6 +71,21 @@ namespace MCPForUnity.Editor.Tools.Addressables
             Field(item, "StreamedSize", typeof(ulong));
         }
 
+        internal static bool UsesContentDirectories(Type layout)
+        {
+            Type group = Nested(layout, "Group");
+            const BindingFlags fields = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+            if (
+                layout.GetField("ContentDirectories", fields) == null
+                && layout.GetNestedType("ContentDirectory", BindingFlags.Public | BindingFlags.NonPublic) == null
+                && group.GetField("ContentDirectoryName", fields) == null
+            )
+                return false;
+            // An optional extension is compatible only when its entire consumed schema is exact.
+            RequireModernSchema(layout);
+            return true;
+        }
+
         internal static void RequireModernSchema(Type layout)
         {
             ListField(layout, "ContentDirectories", Nested(layout, "ContentDirectory"));
@@ -105,9 +121,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
             AddressablesState.RequirePackage(out Type settingsType, out string version);
             Type layoutType = settingsType.Assembly.GetType("UnityEditor.AddressableAssets.Build.Layout.BuildLayout");
             RequireSchema(layoutType);
-            bool modern = AddressablesCompatibility.UsesContentDirectories(version);
-            if (modern)
-                RequireModernSchema(layoutType);
+            bool modern = UsesContentDirectories(layoutType);
             string relative = AddressablesState.Text(request["layout_path"], "layout_path");
             if (
                 (

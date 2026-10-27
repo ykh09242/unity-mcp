@@ -43,16 +43,10 @@ namespace MCPForUnity.Editor.Tools.Addressables
                     || !int.TryParse(parts[i], NumberStyles.None, CultureInfo.InvariantCulture, out numbers[i])
                 )
                     return false;
-            return (numbers[0] == 1 && numbers[1] >= 28)
-                || numbers[0] == 2
-                || (numbers[0] == 3 && numbers[1] >= 1)
-                || (numbers[0] == 4 && (numbers[1] > 1 || (numbers[1] == 1 && numbers[2] >= 1)));
+            return numbers[0] >= 1 && numbers[0] <= 4;
         }
 
         internal static bool RequiresLookupCacheReset(string version) => SupportsVersion(version) && !version.StartsWith("2.", StringComparison.Ordinal);
-
-        internal static bool UsesContentDirectories(string version) =>
-            SupportsVersion(version) && (version.StartsWith("3.", StringComparison.Ordinal) || version.StartsWith("4.", StringComparison.Ordinal));
 
         internal static MethodInfo RequireMethod(object target, string action, string name, Type result, params Type[] parameters)
         {
@@ -234,11 +228,27 @@ namespace MCPForUnity.Editor.Tools.Addressables
             if (!AddressablesCompatibility.SupportsVersion(version))
                 Fail(
                     "addressables_version_unsupported",
-                    "This adapter requires stable Addressables 1.28+, 2.x, 3.1+ or 4.1.1+, compatible action APIs and stored profile schema 1."
+                    "This adapter requires stable Addressables 1.x, 2.x, 3.x or 4.x, compatible action APIs and stored profile schema 1."
                 );
         }
 
         internal static AddressablesState Capture(JObject request)
+        {
+            string action = request.Value<string>("action") ?? "inspect";
+            try
+            {
+                return CaptureCore(request, action);
+            }
+            catch (AddressablesException error) when (error.Code == "addressables_api_unsupported" || error.Code == "addressables_profile_schema_unsupported")
+            {
+                throw new AddressablesException(
+                    error.Code,
+                    error.Message.StartsWith(action + " ", StringComparison.Ordinal) ? error.Message : action + ": " + error.Message
+                );
+            }
+        }
+
+        private static AddressablesState CaptureCore(JObject request, string action)
         {
             if (Encoding.UTF8.GetByteCount(request.ToString(Formatting.None)) > 262144)
                 Fail("addressables_budget_exceeded", "Request exceeds256KiB.");
@@ -316,15 +326,15 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 groupRow["entry_guids"] = new JArray(((JArray)groupRow["entry_guids"]).Values<string>().OrderBy(x => x, StringComparer.Ordinal));
             }
             state.Document["labels"] = new JArray(
-                List(AddressablesCompatibility.RequireMethod(settings, "inspect", "GetLabels", typeof(List<string>)).Invoke(settings, null), 256)
+                List(AddressablesCompatibility.RequireMethod(settings, action, "GetLabels", typeof(List<string>)).Invoke(settings, null), 256)
                     .Select(x => state.String(x, 128))
                     .OrderBy(x => x, StringComparer.Ordinal)
             );
             state.ProfilesObject = Get(settings, "m_ProfileSettings");
-            // Public profile getters can create defaults or migrate data. Both supported families store schema 1.
+            // Public profile getters can create defaults or migrate data. Compatible snapshots require stored schema 1.
             if (state.ProfilesObject == null)
                 Fail("addressables_profile_schema_unsupported", "Stored profile settings are missing; no defaults were created.");
-            FieldInfo profileVersion = AddressablesCompatibility.RequireField(state.ProfilesObject.GetType(), "inspect", "m_ProfileVersion", typeof(int), true);
+            FieldInfo profileVersion = AddressablesCompatibility.RequireField(state.ProfilesObject.GetType(), action, "m_ProfileVersion", typeof(int), true);
             if ((int)profileVersion.GetValue(state.ProfilesObject) != 1)
                 Fail("addressables_profile_schema_unsupported", "Stored profiles need an explicit package migration outside this read operation.");
             foreach (object variable in List(Get(state.ProfilesObject, "m_ProfileEntryNames"), 64))
