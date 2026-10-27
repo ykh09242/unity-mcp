@@ -1,5 +1,6 @@
 """Persistence and publication races for generated and declared references."""
 
+from tests.lifecycle import FixtureProgress
 from tests.timing import watchdog_timeout
 
 import sqlite3
@@ -273,7 +274,9 @@ def test_paginated_fanout_is_complete_and_rejects_mixed_revision(graph):
     publish(graph, "a", "v1", [f"target-{i}" for i in range(2101)])
     seen = set()
     cursor = None
+    progress = FixtureProgress(2101 + 32, "store fanout fixture")
     while True:
+        progress.step(cursor)
         page = graph.query("a", limit=100, cursor=cursor)
         seen.update(e["target"] for e in page["edges"])
         cursor = page["next_cursor"]

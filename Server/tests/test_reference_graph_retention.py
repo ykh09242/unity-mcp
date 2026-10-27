@@ -1,5 +1,6 @@
 """Durable admission and shared snapshot evidence preserve existing graph work."""
 
+from tests.lifecycle import FixtureProgress
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import sqlite3
@@ -16,7 +17,9 @@ from services.reference_graph import snapshot_storage
 
 def capture(queries, name="saved", limit=100):
     cursor = None
+    progress = FixtureProgress(4 * 3 + 32, "snapshot fixture")
     while True:
+        progress.step(cursor)
         result = queries.snapshot(name=name, limit=limit, cursor=cursor)
         cursor = result["next_cursor"]
         if cursor is None:
@@ -60,7 +63,9 @@ def test_concurrent_captures_merge_backing_and_last_alias_reclaims_rows(tmp_path
 
     # When both finish, then both names refer to one copy of the graph.
     for name, page in (("first", first), ("second", second)):
+        progress = FixtureProgress(4 * 3 + 32, "concurrent snapshot fixture")
         while page["next_cursor"]:
+            progress.step(page["next_cursor"])
             page = queries.snapshot(name=name, limit=1, cursor=page["next_cursor"])
     with store._connect() as db:
         assert db.execute("SELECT count(*) FROM graph_snapshot_edges").fetchone()[0] == 3
@@ -115,8 +120,9 @@ def test_cleanup_retires_partial_alias_before_new_capture_reuses_backing(tmp_pat
             ).fetchone()[0]
             == 3
         )
+    progress = FixtureProgress(8 * 3 + 32, "three-edge alias cleanup")
     while cleanup(workspace, before=time.time() + 1, limit=1)["more"]:
-        pass
+        progress.step()
 
     # Remaining cleanup cannot destroy the new ready snapshot or its retry page.
     page = queries.snapshot(name="retry", limit=2)
@@ -141,8 +147,9 @@ def test_cleanup_partial_alias_preserves_other_ready_alias_and_reuse(tmp_path):
     queries.abandon(partial)
 
     # When the partial alias is reclaimed, ready evidence remains reusable after restart.
+    progress = FixtureProgress(8 * 3 + 32, "three-edge alias cleanup")
     while cleanup(workspace, before=time.time() + 1, limit=1)["more"]:
-        pass
+        progress.step()
     reopened = GraphQueries(GraphStore.open(tmp_path, store.scope))
     fresh = capture(reopened, "fresh")
     with store._connect() as db:

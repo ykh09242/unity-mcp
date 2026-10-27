@@ -1,5 +1,6 @@
 """Operational actions preserve scope, authored state and unfinished work."""
 
+from tests.lifecycle import FixtureProgress
 from types import SimpleNamespace
 import json
 import time
@@ -506,7 +507,9 @@ async def test_editor_explorer_routes_preserve_paging_and_scope(setup):
                 str(index), "a", Edge(f"b-{index}", "manual"), expected_version=0
             )
         edges = []
+        progress = FixtureProgress(4 * 61 + 32, "REST graph fixture")
         while True:
+            progress.step(body["options"].get("cursor"))
             response = await handle(request, service)
             assert response.status_code == 200
             page = json.loads(response.body)["data"]

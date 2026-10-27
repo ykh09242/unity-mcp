@@ -1,5 +1,6 @@
 """Registry changes wake reconnect waits without polling or shared-task cancellation."""
 
+from tests.timing import await_signal
 import asyncio
 from unittest.mock import AsyncMock
 
@@ -80,7 +81,7 @@ async def test_cancel_one_waiter_does_not_cancel_shared_notification(registry_hu
     first = asyncio.create_task(PluginHub._resolve_session_id("hash", user_id="alice"))
     second = asyncio.create_task(PluginHub._resolve_session_id("hash", user_id="alice"))
     try:
-        await entered.wait()
+        await await_signal(entered, "registry waiter entered", producers=(first, second))
         first.cancel()
         with pytest.raises(asyncio.CancelledError):
             await first
@@ -144,7 +145,7 @@ async def test_shutdown_or_configure_replacement_wakes_old_registry_waiter(
         monkeypatch.setattr(PluginHub, name, {})
     task = asyncio.create_task(PluginHub._resolve_session_id("hash", user_id="alice"))
     try:
-        await entered.wait()
+        await await_signal(entered, "registry waiter entered", producers=(task,))
         if replace:
             PluginHub.configure(PluginRegistry())
         else:
@@ -210,11 +211,11 @@ async def test_cancelled_shutdown_notifies_before_owned_ping_drain(registry_hub,
     owned_ping = asyncio.create_task(ping())
     shutdown = None
     try:
-        await waiting.wait()
-        await ping_started.wait()
+        await await_signal(waiting, "resolver waiting", producers=(resolver,))
+        await await_signal(ping_started, "ping started", producers=(owned_ping,))
         PluginHub._ping_tasks["owned"] = owned_ping
         shutdown = asyncio.create_task(PluginHub.shutdown())
-        await draining.wait()
+        await await_signal(draining, "ping draining", producers=(owned_ping, shutdown))
         # Revocation is observable while slow ping cleanup is still blocked.
         assert PluginHub._registry is None and event.is_set()
         shutdown.cancel()
@@ -253,7 +254,7 @@ async def test_resolution_waiting_for_registry_lock_cannot_return_old_session_af
             task = asyncio.create_task(
                 PluginHub._resolve_session_id("hash" if explicit else None, user_id="alice")
             )
-            await entered.wait()
+            await await_signal(entered, "registry waiter entered", producers=(task,))
             PluginHub.configure(PluginRegistry())
         with pytest.raises(NoUnitySessionError, match="stopped or replaced"):
             await task

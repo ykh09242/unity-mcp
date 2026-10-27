@@ -180,8 +180,9 @@ async def test_text_output_error_clears_response_and_owner_after_teardown(phase)
             async with read, write:
                 stdio_delivery.get().register(7, owner)
                 references.append(await send_response(write, "x" * 65_536))
-                await asyncio.Future()
-    assert "owned " in str(failure.value.exceptions[0])
+                await await_signal(asyncio.Event(), "text writer failure teardown")
+    assert failure.value.subgroup(BrokenPipeError) is not None
+    assert failure.value.subgroup((AssertionError, TimeoutError)) is None
     assert owner.released and not ledger
     # Exception tracebacks can own transient serializer locals until disposed.
     del failure

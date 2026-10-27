@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tests.timing import await_completion, await_signal, watchdog_timeout
+
 from services.api_key_service import ApiKeyService, ValidationResult
 from services.credential_lease import CredentialLeaseError
 
@@ -99,15 +101,21 @@ async def test_cancelling_one_waiter_keeps_other_waiter_fetch_alive(transport):
     transport.side_effect = fetch
     first = asyncio.create_task(jobs.get_test_job(context(), "job", wait_timeout=5))
     second = asyncio.create_task(jobs.get_test_job(context(), "job", wait_timeout=5))
-    await started.wait()
-    await asyncio.sleep(0.02)
-    first.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await first
-    assert not cancelled.is_set()
-    release.set()
-    assert (await second).data.status == "succeeded"
-    assert transport.await_count == 1
+    try:
+        await await_signal(started, "poll started", producers=(first, second))
+        await asyncio.sleep(0.02)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert not cancelled.is_set()
+        release.set()
+        assert (await second).data.status == "succeeded"
+        assert transport.await_count == 1
+    finally:
+        release.set()
+        for task in (first, second):
+            task.cancel()
+        await asyncio.gather(first, second, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -196,8 +204,35 @@ async def test_staggered_waiter_reuses_running_snapshot_with_same_observation_or
         parked.put_nowait(task)
         await future
 
-    monkeypatch.setattr(loop, "time", lambda: now)
-    monkeypatch.setattr(jobs.asyncio, "sleep", controlled_sleep)
+    import services.tools.test_job_wait as waits
+    import services.tools.shared_tool_reads as sharing
+
+    class ProductLoop:
+        def time(self):
+            return now
+
+        def __getattr__(self, name):
+            return getattr(loop, name)
+
+    product_loop = ProductLoop()
+
+    class ProductAsyncio:
+        def get_event_loop(self):
+            return product_loop
+
+        def get_running_loop(self):
+            return product_loop
+
+        def __getattr__(self, name):
+            return getattr(asyncio, name)
+
+    clock = ProductAsyncio()
+    clock.sleep = controlled_sleep
+    monkeypatch.setattr(waits, "asyncio", clock)
+    monkeypatch.setattr(sharing, "asyncio", ProductAsyncio())
+    # A missing product phase must still expire while this product clock is frozen.
+    with pytest.raises(AssertionError, match="frozen product clock observer"):
+        await await_signal(asyncio.Event(), "frozen product clock observer", timeout=0.001)
 
     async def fetch(*args, **kwargs):
         received.set()
@@ -207,12 +242,28 @@ async def test_staggered_waiter_reuses_running_snapshot_with_same_observation_or
     first = asyncio.create_task(jobs.get_test_job(context(), "job", wait_timeout=0.2))
     second = None
     try:
-        await received.wait()
-        assert await parked.get() is first
+        await await_signal(received, "first poll received", producers=(first,))
+        parked_first = asyncio.create_task(parked.get())
+        try:
+            assert (
+                await await_completion(parked_first, "first poll parked", producers=(first,))
+                is first
+            )
+        finally:
+            parked_first.cancel()
+            await asyncio.gather(parked_first, return_exceptions=True)
         # When: a staggered second waiter observes the same still-fresh snapshot.
         now += 0.02
         second = asyncio.create_task(jobs.get_test_job(context(), "job", wait_timeout=0.1))
-        assert await parked.get() is second
+        parked_second = asyncio.create_task(parked.get())
+        try:
+            assert (
+                await await_completion(parked_second, "second poll parked", producers=(second,))
+                is second
+            )
+        finally:
+            parked_second.cancel()
+            await asyncio.gather(parked_second, return_exceptions=True)
         now = sleeping[second][1]
         sleeping[second][0].set_result(None)
         assert (await second).data.status == "running"
@@ -286,24 +337,22 @@ async def test_replacement_http_session_does_not_join_previous_job_snapshot(tran
 
     transport.side_effect = fetch
     async with remote_callers(monkeypatch, "owned-user") as call:
-        old = asyncio.create_task(call("owned-user", context("old-session"), wait_timeout=0.2))
-        ready = asyncio.create_task(received.wait())
+        old = asyncio.create_task(
+            call("owned-user", context("old-session"), wait_timeout=watchdog_timeout())
+        )
         try:
-            done, _ = await asyncio.wait(
-                {old, ready}, timeout=1.0, return_when=asyncio.FIRST_COMPLETED
+            await await_signal(received, "old HTTP poll received", producers=(old,))
+            fresh = await call(
+                "owned-user", context("new-session"), wait_timeout=watchdog_timeout()
             )
-            if old in done:
-                await old  # Surface an early caller exception instead of waiting for its event.
-            assert ready in done, "The first polling observation did not start within one second"
-            fresh = await call("owned-user", context("new-session"), wait_timeout=0.05)
             assert fresh.success is False and "replacement" in fresh.error
-            assert (await old).data.status == "running"
+            old.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await old
             assert len(calls) == 2
         finally:
-            for task in (old, ready):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(old, ready, return_exceptions=True)
+            old.cancel()
+            await asyncio.gather(old, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -342,9 +391,16 @@ async def test_stdio_replacement_alias_never_joins_old_job_snapshot(transport, m
         return {"success": False, "error": "Job not found after stdio reconnect"}
 
     transport.side_effect = fetch
-    old = asyncio.create_task(jobs.get_test_job(context(), "job", wait_timeout=0.2))
-    await entered.wait()
-    fresh = await jobs.get_test_job(context(), "job", wait_timeout=0.05)
-    assert fresh.success is False and "reconnect" in fresh.error
-    assert (await old).data.status == "running"
-    assert transport.await_count == 2
+    # Admission is not the subject of this identity-isolation regression.
+    old = asyncio.create_task(jobs.get_test_job(context(), "job", wait_timeout=watchdog_timeout()))
+    try:
+        await await_signal(entered, "old stdio poll entered", producers=(old,))
+        fresh = await jobs.get_test_job(context(), "job", wait_timeout=watchdog_timeout())
+        assert fresh.success is False and "reconnect" in fresh.error
+        old.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await old
+        assert transport.await_count == 2
+    finally:
+        old.cancel()
+        await asyncio.gather(old, return_exceptions=True)
