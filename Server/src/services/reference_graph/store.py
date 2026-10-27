@@ -123,7 +123,7 @@ class GraphStore:
         return cls(Path(root) / (scope.key + ".sqlite"), scope)
 
     def __init__(self, path: Path, scope: GraphScope):
-        from services.reference_graph.storage_budget import StorageBudget
+        from services.reference_graph.storage_budget import StorageBudget, file_lock
 
         if not isinstance(scope, GraphScope):
             raise ValueError("A resolved graph identity is required")
@@ -134,27 +134,37 @@ class GraphStore:
         self.path = check_owned_path(Path(path))
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         check_owned_path(self.path)
-        existing_bytes = 0
-        if self.path.exists() and self.path.stat().st_size:
-            with self._connect() as connection:
-                self._validate_identity(connection)
-                # A recovered WAL can hold logical pages beyond the main file.
-                existing_bytes = (
-                    connection.execute("PRAGMA page_count").fetchone()[0]
-                    * connection.execute("PRAGMA page_size").fetchone()[0]
+        # A missing-main check and sidecar probe must share creation ownership:
+        # another opener can otherwise create a live WAL between those reads.
+        # Existing stores keep their lock-free preflight. Release creation
+        # ownership before _initialize acquires the same per-scope writer lock.
+        ownership = (
+            nullcontext() if self.path.exists() else file_lock(Path(str(self.path) + ".lock"))
+        )
+        with ownership:
+            existing_bytes = 0
+            if self.path.exists() and self.path.stat().st_size:
+                with self._connect() as connection:
+                    self._validate_identity(connection)
+                    # A recovered WAL can hold logical pages beyond the main file.
+                    existing_bytes = (
+                        connection.execute("PRAGMA page_count").fetchone()[0]
+                        * connection.execute("PRAGMA page_size").fetchone()[0]
+                    )
+            elif not self.path.exists() and any(
+                Path(str(self.path) + suffix).exists() for suffix in ("-wal", "-shm", "-journal")
+            ):
+                raise ValueError(
+                    "Preserve orphaned reference graph sidecars before opening this scope"
                 )
-        elif not self.path.exists() and any(
-            Path(str(self.path) + suffix).exists() for suffix in ("-wal", "-shm", "-journal")
-        ):
-            raise ValueError("Preserve orphaned reference graph sidecars before opening this scope")
-        self._budget = StorageBudget(self.path, scope.user_id, existing_bytes=existing_bytes)
-        if not self.path.exists():
-            try:
-                descriptor = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            except FileExistsError:
-                pass
-            else:
-                os.close(descriptor)
+            self._budget = StorageBudget(self.path, scope.user_id, existing_bytes=existing_bytes)
+            if not self.path.exists():
+                try:
+                    descriptor = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                except FileExistsError:
+                    pass
+                else:
+                    os.close(descriptor)
         self._initialize()
 
     def _validate_identity(self, connection: sqlite3.Connection) -> bool:

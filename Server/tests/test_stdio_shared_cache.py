@@ -6,6 +6,7 @@ import asyncio
 import importlib
 import socket
 import threading
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -107,7 +108,8 @@ async def test_cancel_during_cache_expiry_join_cannot_orphan_snapshot(budget):
             entered.set()
             await drain.wait()
 
-    read.expiry_task = asyncio.create_task(parked_expiry())
+    expiry = asyncio.create_task(parked_expiry())
+    read.expiry_task = expiry
     await asyncio.sleep(0)
 
     async def join():
@@ -115,13 +117,55 @@ async def test_cancel_during_cache_expiry_join_cannot_orphan_snapshot(budget):
             pytest.fail("cancelled join must not enter lease body")
 
     waiter = asyncio.create_task(join())
-    await entered.wait()
-    waiter.cancel()
-    drain.set()
-    with pytest.raises(asyncio.CancelledError):
-        await waiter
-    await asyncio.sleep(0.03)
-    assert not reads._loops[asyncio.get_running_loop()]
+    try:
+        await await_signal(entered, "expiry cancellation entered", producers=(waiter,))
+        waiter.cancel()
+        drain.set()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        await asyncio.sleep(0.03)
+        assert not reads._loops[asyncio.get_running_loop()]
+    finally:
+        drain.set()
+        waiter.cancel()
+        expiry.cancel()
+        await asyncio.gather(waiter, expiry, return_exceptions=True)
+        await reads.invalidate("generation")
+
+
+@pytest.mark.asyncio
+async def test_expiry_join_fault_preserves_original_error_and_drains_owned_tasks(
+    budget, monkeypatch
+):
+    original_session = SharedToolReads.session
+    calls = 0
+    pools = []
+    fault = RuntimeError("second session entry failed before expiry cancellation")
+
+    @asynccontextmanager
+    async def session(pool, key):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise fault
+        pools.append(pool)
+        async with original_session(pool, key) as read:
+            yield read
+
+    monkeypatch.setattr(SharedToolReads, "session", session)
+    before = asyncio.all_tasks()
+    owner = asyncio.create_task(test_cancel_during_cache_expiry_join_cannot_orphan_snapshot(budget))
+    try:
+        with pytest.raises(RuntimeError, match="second session entry failed") as observed:
+            await await_completion(owner, "early expiry-join failure teardown")
+        assert observed.value is fault
+        assert calls == 2
+    finally:
+        owner.cancel()
+        await asyncio.gather(owner, return_exceptions=True)
+        for pool in pools:
+            await pool.invalidate("generation")
+    assert asyncio.all_tasks() == before
 
 
 @pytest.mark.asyncio

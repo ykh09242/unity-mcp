@@ -13,6 +13,7 @@ import pytest
 from mcp.shared.message import SessionMessage
 from mcp.types import ErrorData, JSONRPCError, JSONRPCNotification, JSONRPCRequest, JSONRPCResponse
 from pydantic import BaseModel, Field, ConfigDict
+from pydantic_core import PydanticSerializationError
 
 from models.response_limits import ResponseOwner
 from transport.stdio_response_delivery import retained_stdio_server, stdio_delivery
@@ -132,12 +133,15 @@ async def test_binary_failure_releases_owner_and_tears_down(phase):
     text = "\ud800" if phase == "serialize" else "valid"
     message = JSONRPCResponse(jsonrpc="2.0", id=7, result={"text": text})
     with Broken() as output:
-        with pytest.raises(BaseExceptionGroup):
+        with pytest.raises(BaseExceptionGroup) as failure:
             async with retained_stdio_server(stdin=stdin, binary_stdout=output) as (read, write):
                 async with read, write:
                     stdio_delivery.get().register(7, owner)
                     await write.send(SessionMessage(message))
-                    await asyncio.Event().wait()
+                    await await_signal(asyncio.Event(), "binary writer failure teardown")
+        expected_error = PydanticSerializationError if phase == "serialize" else BrokenPipeError
+        assert failure.value.subgroup(expected_error) is not None
+        assert failure.value.subgroup((AssertionError, TimeoutError)) is None
         assert owner.released
 
 

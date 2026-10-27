@@ -1,5 +1,6 @@
 """Immutable fan-out preserves mutable responses, ownership and fallback behavior."""
 
+from tests.timing import await_signal
 import asyncio
 from copy import deepcopy
 import math
@@ -120,13 +121,19 @@ async def test_cancelled_joiner_does_not_cancel_immutable_flight_or_leak_budget(
     reads = SharedToolReads(freshness_s=1, copy_preparer=prepare_json_copy)
     async with reads.session("same") as read:
         tasks = [asyncio.create_task(read.fetch(fetch)) for _ in range(17)]
-        await started.wait()
-        tasks[0].cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await tasks[0]
-        release.set()
-        results = await asyncio.gather(*tasks[1:])
-        assert calls == 1 and results == [{"rows": [{"id": 42}]}] * 16
-        results[0]["rows"].clear()
-        assert results[1]["rows"] == [{"id": 42}]
+        try:
+            await await_signal(started, "immutable fetch started", producers=tasks)
+            tasks[0].cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await tasks[0]
+            release.set()
+            results = await asyncio.gather(*tasks[1:])
+            assert calls == 1 and results == [{"rows": [{"id": 42}]}] * 16
+            results[0]["rows"].clear()
+            assert results[1]["rows"] == [{"id": 42}]
+        finally:
+            release.set()
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
     assert shared_read_budget.retained_bytes == before

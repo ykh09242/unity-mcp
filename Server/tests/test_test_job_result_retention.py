@@ -1,5 +1,6 @@
 """Public SDK boundaries for retained native test evidence (native IO is faked)."""
 
+from tests.lifecycle import FixtureProgress
 import importlib
 import json
 import os
@@ -144,7 +145,9 @@ async def test_public_sdk_reads_all_thousand_results_without_merging_pages(
     names = []
     cursor = None
     async with Client(app) as client:
+        progress = FixtureProgress(1000 + 32, "retained test results fixture")
         while True:
+            progress.step(cursor)
             params = {"job_id": "job", "include_details": True, "page_size": 73, "wait_timeout": 30}
             if cursor is not None:
                 params["cursor"] = cursor

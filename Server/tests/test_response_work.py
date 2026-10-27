@@ -1,6 +1,6 @@
 """Response CPU workers retain ownership until actual completion."""
 
-from tests.timing import watchdog_timeout
+from tests.timing import await_signal, watchdog_timeout
 
 import asyncio
 import threading
@@ -186,7 +186,7 @@ async def test_cancellation_aborts_an_unstarted_executor_operation(monkeypatch):
     )
     del payload
     try:
-        await submitted.wait()
+        await await_signal(submitted, "response work submitted", producers=(task,))
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(asyncio.shield(task), watchdog_timeout())

@@ -1,5 +1,6 @@
 """Failed retained reads must not park exception payloads after their final lease."""
 
+from tests.timing import await_signal
 import asyncio
 import gc
 from types import SimpleNamespace
@@ -101,9 +102,14 @@ async def test_failed_flight_waits_for_last_lease_then_drops_traceback_payload(c
 
     tasks = [asyncio.create_task(caller(index)) for index in range(2)]
     try:
-        await began.wait()
+        await await_signal(began, "shared fetch began", producers=tasks)
         finish.set()
-        await asyncio.gather(*(event.wait() for event in failed))
+        await asyncio.gather(
+            *(
+                await_signal(event, "caller observed failure", producers=(task,))
+                for event, task in zip(failed, tasks)
+            )
+        )
         assert calls == 1 and entries(cache.reads)["key"].callers == 2
         leave[0].set()
         await tasks[0]
@@ -126,6 +132,8 @@ async def test_failed_flight_waits_for_last_lease_then_drops_traceback_payload(c
         finish.set()
         for event in leave:
             event.set()
+        for task in tasks:
+            task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
@@ -157,8 +165,9 @@ async def test_cancelled_caller_preserves_inflight_dedup_and_success_ttl(cache):
             return await read.fetch(fetch)
 
     task = asyncio.create_task(caller())
+    next_call = None
     try:
-        await entered.wait()
+        await await_signal(entered, "shared fetch entered", producers=(task,))
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -170,6 +179,10 @@ async def test_cancelled_caller_preserves_inflight_dedup_and_success_ttl(cache):
         assert calls == 1
     finally:
         finish.set()
+        task.cancel()
+        if next_call is not None:
+            next_call.cancel()
+            await asyncio.gather(next_call, return_exceptions=True)
         await asyncio.gather(task, return_exceptions=True)
 
 
@@ -199,7 +212,7 @@ async def test_old_failed_lease_does_not_remove_replacement_success(cache, inval
         return {"data": "replacement"}
 
     try:
-        await failed.wait()
+        await await_signal(failed, "old caller observed failure", producers=(task,))
         if invalidate:
             await cache.reads.invalidate("key")
         async with cache.reads.session("key") as current:
@@ -212,6 +225,7 @@ async def test_old_failed_lease_does_not_remove_replacement_success(cache, inval
         assert calls == 1
     finally:
         leave.set()
+        task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
 
@@ -243,7 +257,7 @@ async def test_idle_inflight_failure_releases_late_payload_without_waiting_for_t
     loop.set_exception_handler(lambda _loop, context: diagnostics.append(context["message"]))
     task = asyncio.create_task(caller())
     try:
-        await started.wait()
+        await await_signal(started, "shared fetch started", producers=(task,))
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -258,5 +272,6 @@ async def test_idle_inflight_failure_releases_late_payload_without_waiting_for_t
         assert all("exception in shielded future" in message for message in diagnostics)
     finally:
         finish.set()
+        task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         loop.set_exception_handler(previous_handler)

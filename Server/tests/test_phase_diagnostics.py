@@ -1,6 +1,6 @@
 """Payload-free diagnostic ownership and negotiated wire propagation."""
 
-from tests.timing import watchdog_timeout
+from tests.timing import await_signal, watchdog_timeout
 
 import asyncio
 from contextvars import copy_context
@@ -49,9 +49,15 @@ async def test_concurrent_invocations_have_distinct_tokens_and_closed_inherited_
             diag.step("command", "response")
 
     tasks = [asyncio.create_task(work()) for _ in range(2)]
-    await ready.wait()
-    release.set()
-    await asyncio.gather(*tasks)
+    try:
+        await await_signal(ready, "diagnostic invocations ready", producers=tasks)
+        release.set()
+        await asyncio.gather(*tasks)
+    finally:
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     assert len(set(tokens)) == 2
     assert {r["correlation"] for r in rows} == set(tokens)
     assert all(r["outcome"] == "returned" for r in rows)

@@ -6,7 +6,9 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Windows.PlayScenarios;
+using MCPForUnityTests.Editor;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -18,6 +20,18 @@ namespace MCPForUnityTests.EditMode.Windows
 {
     internal static class PlayScenarioImportTestPump
     {
+        internal static Task Track(OwnedTestTasks owned, PlayScenarioImportWorker worker)
+        {
+            var active = typeof(PlayScenarioImportWorker).GetField("active", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(worker);
+            Assert.IsNotNull(active, "An accepted read must own a task before its first pump.");
+            var task = (Task)active.GetType().GetField("Task", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(active);
+            owned.Track(task);
+            owned.OnCleanup(worker.Dispose);
+            return task;
+        }
+
+        internal static IEnumerator Phase(Func<bool> ready, Task producer, string phase) => TestUtilities.WaitUntil(ready, phase, () => producer.IsCompleted);
+
         // Existing synchronous UI assertions explicitly pump a pure background reader's completion.
         internal static void Drain(VisualElement parent, string sectionName)
         {
@@ -33,10 +47,7 @@ namespace MCPForUnityTests.EditMode.Windows
 
         internal static IEnumerator Wait(PlayScenarioImportWorker worker)
         {
-            var elapsed = Stopwatch.StartNew();
-            while (worker.IsBusy && elapsed.ElapsedMilliseconds < 10000)
-                yield return null;
-            Assert.IsFalse(worker.IsBusy, "The bounded import did not complete.");
+            yield return TestUtilities.WaitUntil(() => !worker.IsBusy, "the bounded import to complete");
         }
     }
 
@@ -44,12 +55,14 @@ namespace MCPForUnityTests.EditMode.Windows
     {
         private string root;
         private ImportTestWindow window;
+        private OwnedTestTasks owned;
 
         private sealed class ImportTestWindow : UnityEditor.EditorWindow { }
 
         [UnitySetUp]
         public IEnumerator SetUp()
         {
+            owned = new OwnedTestTasks();
             root = Path.Combine(Path.GetTempPath(), "unity-mcp-import-worker-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
             window = ScriptableObject.CreateInstance<ImportTestWindow>();
@@ -57,13 +70,20 @@ namespace MCPForUnityTests.EditMode.Windows
             yield return null;
         }
 
-        [TearDown]
-        public void TearDown()
+        [UnityTearDown]
+        public IEnumerator TearDown()
         {
-            if (window != null)
-                UnityEngine.Object.DestroyImmediate(window);
-            if (Directory.Exists(root))
-                Directory.Delete(root, true);
+            try
+            {
+                yield return owned.Cleanup();
+            }
+            finally
+            {
+                if (window != null)
+                    UnityEngine.Object.DestroyImmediate(window);
+                if (Directory.Exists(root))
+                    Directory.Delete(root, true);
+            }
         }
 
         [UnityTest]
@@ -115,9 +135,10 @@ namespace MCPForUnityTests.EditMode.Windows
             int oldCallbacks = 0;
             int skippedReads = 0;
             string delivered = null;
-            using (var entered = new ManualResetEventSlim())
-            using (var cancelled = new ManualResetEventSlim())
-            using (var release = new ManualResetEventSlim())
+            var entered = owned.Own(new ManualResetEventSlim());
+            var cancelled = owned.Own(new ManualResetEventSlim());
+            var release = owned.Own(new ManualResetEventSlim());
+            owned.OnCleanup(release.Set);
             using (var worker = new PlayScenarioImportWorker())
             {
                 worker.RequestRead(
@@ -136,41 +157,47 @@ namespace MCPForUnityTests.EditMode.Windows
                     },
                     (_, __) => oldCallbacks++
                 );
-                while (!entered.IsSet)
-                    yield return null;
-                worker.RequestRead(
-                    "middle",
-                    _ =>
-                    {
-                        Interlocked.Increment(ref skippedReads);
-                        return "middle";
-                    },
-                    (_, __) => oldCallbacks++
-                );
-                worker.RequestRead(
-                    "newest",
-                    _ =>
-                    {
-                        Interlocked.Increment(ref running);
-                        maximum = Math.Max(maximum, running);
-                        Interlocked.Decrement(ref running);
-                        return "newest";
-                    },
-                    (value, error) =>
-                    {
-                        Assert.IsNull(error);
-                        delivered = (string)value;
-                    }
-                );
-                while (!cancelled.IsSet)
-                    yield return null;
-                Assert.AreEqual(1, running);
-                release.Set();
-                yield return PlayScenarioImportTestPump.Wait(worker);
-                Assert.AreEqual("newest", delivered);
-                Assert.AreEqual(1, maximum);
-                Assert.AreEqual(0, oldCallbacks);
-                Assert.AreEqual(0, skippedReads);
+                var producer = PlayScenarioImportTestPump.Track(owned, worker);
+                try
+                {
+                    yield return PlayScenarioImportTestPump.Phase(() => entered.IsSet, producer, "the superseded reader to enter");
+                    worker.RequestRead(
+                        "middle",
+                        _ =>
+                        {
+                            Interlocked.Increment(ref skippedReads);
+                            return "middle";
+                        },
+                        (_, __) => oldCallbacks++
+                    );
+                    worker.RequestRead(
+                        "newest",
+                        _ =>
+                        {
+                            Interlocked.Increment(ref running);
+                            maximum = Math.Max(maximum, running);
+                            Interlocked.Decrement(ref running);
+                            return "newest";
+                        },
+                        (value, error) =>
+                        {
+                            Assert.IsNull(error);
+                            delivered = (string)value;
+                        }
+                    );
+                    yield return PlayScenarioImportTestPump.Phase(() => cancelled.IsSet, producer, "the superseded reader to observe cancellation");
+                    Assert.AreEqual(1, running);
+                    release.Set();
+                    yield return PlayScenarioImportTestPump.Wait(worker);
+                    Assert.AreEqual("newest", delivered);
+                    Assert.AreEqual(1, maximum);
+                    Assert.AreEqual(0, oldCallbacks);
+                    Assert.AreEqual(0, skippedReads);
+                }
+                finally
+                {
+                    release.Set();
+                }
             }
         }
 
@@ -178,8 +205,8 @@ namespace MCPForUnityTests.EditMode.Windows
         public IEnumerator DisposeCancelsWorkAndReleasesCallbacksWithoutLateDelivery()
         {
             int callbacks = 0;
-            using (var entered = new ManualResetEventSlim())
-            using (var cancelled = new ManualResetEventSlim())
+            var entered = owned.Own(new ManualResetEventSlim());
+            var cancelled = owned.Own(new ManualResetEventSlim());
             {
                 var worker = new PlayScenarioImportWorker();
                 worker.RequestRead(
@@ -194,12 +221,11 @@ namespace MCPForUnityTests.EditMode.Windows
                     },
                     (_, __) => callbacks++
                 );
-                while (!entered.IsSet)
-                    yield return null;
+                var producer = PlayScenarioImportTestPump.Track(owned, worker);
+                yield return PlayScenarioImportTestPump.Phase(() => entered.IsSet, producer, "the disposed reader to enter");
                 worker.Dispose();
                 worker.Dispose();
-                while (!cancelled.IsSet)
-                    yield return null;
+                yield return PlayScenarioImportTestPump.Phase(() => cancelled.IsSet, producer, "the disposed reader to observe cancellation");
                 yield return null;
                 worker.Pump();
                 Assert.AreEqual(0, callbacks);
@@ -442,8 +468,8 @@ namespace MCPForUnityTests.EditMode.Windows
         public IEnumerator SessionPathChangeCancelsPendingReadAndWindowCloseDisposesItsImporter()
         {
             int callbacks = 0;
-            using (var entered = new ManualResetEventSlim())
-            using (var cancelled = new ManualResetEventSlim())
+            var entered = owned.Own(new ManualResetEventSlim());
+            var cancelled = owned.Own(new ManualResetEventSlim());
             {
                 var parent = new VisualElement();
                 window.rootVisualElement.Add(parent);
@@ -465,11 +491,10 @@ namespace MCPForUnityTests.EditMode.Windows
                 {
                     Click(parent, "openPlayerSession");
                     var worker = (PlayScenarioImportWorker)parent.Q("playerSession").userData;
-                    while (!entered.IsSet)
-                        yield return null;
+                    var producer = PlayScenarioImportTestPump.Track(owned, worker);
+                    yield return PlayScenarioImportTestPump.Phase(() => entered.IsSet, producer, "the session reader to enter");
                     parent.Q<TextField>("playerSessionPath").value = Path.Combine(root, "new", "session.json");
-                    while (!cancelled.IsSet)
-                        yield return null;
+                    yield return PlayScenarioImportTestPump.Phase(() => cancelled.IsSet, producer, "the session reader to observe cancellation");
                     yield return PlayScenarioImportTestPump.Wait(worker);
                     Assert.AreEqual(0, callbacks);
                     Assert.IsEmpty(parent.Q("playerSessionSummary").Query<Label>().ToList());
@@ -487,8 +512,8 @@ namespace MCPForUnityTests.EditMode.Windows
         {
             int reads = 0;
             int callbacks = 0;
-            using (var entered = new ManualResetEventSlim())
-            using (var cancelled = new ManualResetEventSlim())
+            var entered = owned.Own(new ManualResetEventSlim());
+            var cancelled = owned.Own(new ManualResetEventSlim());
             {
                 var parent = new VisualElement();
                 window.rootVisualElement.Add(parent);
@@ -512,12 +537,11 @@ namespace MCPForUnityTests.EditMode.Windows
                     Click(parent, "openPlayerSoak");
                     Click(parent, "importPlayerSoak");
                     var worker = (PlayScenarioImportWorker)parent.Q("playerSoak").userData;
-                    while (!entered.IsSet)
-                        yield return null;
+                    var producer = PlayScenarioImportTestPump.Track(owned, worker);
+                    yield return PlayScenarioImportTestPump.Phase(() => entered.IsSet, producer, "the soak reader to enter");
                     Assert.AreEqual(1, reads);
                     parent.RemoveFromHierarchy();
-                    while (!cancelled.IsSet)
-                        yield return null;
+                    yield return PlayScenarioImportTestPump.Phase(() => cancelled.IsSet, producer, "the soak reader to observe cancellation");
                     yield return null;
                     Assert.IsTrue(worker.IsDisposed);
                     Assert.IsFalse(worker.IsPumping);

@@ -1,4 +1,5 @@
-from tests.timing import watchdog_timeout
+from tests.timing import await_signal, watchdog_timeout
+from tests.lifecycle import await_condition
 import asyncio
 import importlib
 import io
@@ -73,8 +74,7 @@ async def test_cancelled_fetch_holds_capacity_until_worker_exits(monkeypatch):
     monkeypatch.setattr(docs, "urlopen", blocking_open)
     task = asyncio.create_task(docs._fetch_url_full(Response.url))
     try:
-        while not started.is_set():
-            await asyncio.sleep(0.001)
+        await await_condition(started.is_set, "documentation worker started", producers=(task,))
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -82,6 +82,8 @@ async def test_cancelled_fetch_holds_capacity_until_worker_exits(monkeypatch):
             await docs._fetch_url_full(Response.url)
     finally:
         release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
         for _ in range(1000):
             if slots.acquire(blocking=False):
                 slots.release()
@@ -103,10 +105,14 @@ async def test_request_concurrency_and_deadline(monkeypatch):
 
     monkeypatch.setattr(docs, "_get_doc", slow)
     first = asyncio.create_task(docs.unity_docs(None, action="get_doc", class_name="Physics"))
-    await started.wait()
-    busy = await docs.unity_docs(None, action="get_doc", class_name="Physics")
-    assert not busy["success"] and "busy" in busy["message"]
-    assert not (await first)["success"]
+    try:
+        await await_signal(started, "documentation request started", producers=(first,))
+        busy = await docs.unity_docs(None, action="get_doc", class_name="Physics")
+        assert not busy["success"] and "busy" in busy["message"]
+        assert not (await first)["success"]
+    finally:
+        first.cancel()
+        await asyncio.gather(first, return_exceptions=True)
 
 
 @pytest.mark.asyncio

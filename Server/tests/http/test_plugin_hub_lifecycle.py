@@ -143,27 +143,41 @@ async def test_cancelled_send_releases_pending_future(isolated_hub: PluginRegist
 async def test_command_timeout_includes_blocked_send(
     isolated_hub: PluginRegistry, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Given a socket whose send cannot finish and a short command timeout.
+    # Given a socket whose send cannot finish, expire the real command scope
+    # after send starts so admission scheduling cannot consume a tiny deadline.
     PluginHub.configure(isolated_hub)
     entered = asyncio.Event()
+    deadlines = []
+    timeout_at = asyncio.timeout_at
+
+    def capture_deadline(when):
+        deadline = timeout_at(when)
+        if asyncio.current_task() is command:
+            deadlines.append(deadline)
+        return deadline
 
     async def blocked_send(payload) -> None:
         entered.set()
+        assert deadlines, "The command must own a timeout scope before sending"
+        deadlines[0].reschedule(asyncio.get_running_loop().time())
         await asyncio.Event().wait()
 
     ws = AsyncMock()
     ws.send_json.side_effect = blocked_send
     PluginHub._connections["session"] = ws
-    monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", 0.02)
+    monkeypatch.setattr(asyncio, "timeout_at", capture_deadline)
+    monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", LIFECYCLE_WATCHDOG_SECONDS)
     command = asyncio.create_task(PluginHub.send_command("session", "ping", {}))
-    await entered.wait()
     try:
         # When the deadline passes while the write remains blocked.
         done, _ = await asyncio.wait({command}, timeout=LIFECYCLE_WATCHDOG_SECONDS)
         # Then the command returns its unknown-outcome response and releases state.
         assert command in done, "Command deadline must cover socket writes"
+        assert entered.is_set(), "The deadline must expire during a blocked socket write"
         result = command.result()
+        assert deadlines[0].expired()
         assert result["success"] is False
+        assert result["data"]["cause"] == "timeout"
         assert result["hint"] == "inspect_state_before_retry"
         assert PluginHub._pending == {}
     finally:

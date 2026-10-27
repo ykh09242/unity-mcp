@@ -1,10 +1,12 @@
 """Persistence and publication races for generated and declared references."""
 
+from tests.lifecycle import FixtureProgress
 from tests.timing import watchdog_timeout
 
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
 from concurrent.futures import ThreadPoolExecutor
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -219,6 +221,101 @@ def test_concurrent_sessions_share_only_their_exact_scope_and_serialize_writes(t
     assert GraphStore(moved, SCOPE).status()["ready"] == 12
 
 
+def test_pending_scope_owner_cannot_create_main_before_acquiring_ownership(tmp_path, monkeypatch):
+    from services.reference_graph import storage_budget
+
+    path = tmp_path / (SCOPE.key + ".sqlite")
+    scope_lock = Path(str(path) + ".lock")
+    requested = threading.Event()
+    file_lock = storage_budget.file_lock
+
+    @contextmanager
+    def record_lock_request(candidate):
+        if candidate == scope_lock:
+            requested.set()
+        with file_lock(candidate):
+            yield
+
+    monkeypatch.setattr(storage_budget, "file_lock", record_lock_request)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with file_lock(scope_lock):
+            pending = executor.submit(GraphStore.open, tmp_path, SCOPE)
+            assert requested.wait(timeout=watchdog_timeout())
+            assert not path.exists(), "A pending opener created main before owning orphan preflight"
+            other = GraphStore.open(tmp_path, GraphScope("other", "editor-a", "project-a"))
+            assert other.status()["backend"] == "sqlite"
+        assert pending.result(timeout=watchdog_timeout()).status()["backend"] == "sqlite"
+
+
+def test_current_store_reopens_while_writer_holds_scope_ownership(graph):
+    from services.reference_graph.storage_budget import file_lock
+
+    with file_lock(Path(str(graph.path) + ".lock")):
+        assert GraphStore(graph.path, SCOPE).status()["backend"] == "sqlite"
+
+
+@pytest.mark.parametrize("hardlink", [False, True], ids=["symlink", "hardlink"])
+def test_new_scope_refuses_linked_ownership_file(tmp_path, hardlink):
+    path = tmp_path / (SCOPE.key + ".sqlite")
+    scope_lock = Path(str(path) + ".lock")
+    target = tmp_path / "operator.lock"
+    evidence = b"operator lock evidence"
+    target.write_bytes(evidence)
+    if hardlink:
+        os.link(target, scope_lock)
+    else:
+        try:
+            scope_lock.symlink_to(target)
+        except (OSError, NotImplementedError):
+            pytest.skip("Symlink creation is unavailable for this account")
+
+    with pytest.raises(ValueError, match="linked|regular"):
+        GraphStore.open(tmp_path, SCOPE)
+    assert target.read_bytes() == evidence
+    assert not path.exists()
+    assert not (tmp_path / ".storage.sqlite").exists()
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_orphan_sidecar_is_preserved_without_creating_main(tmp_path, suffix):
+    path = tmp_path / (SCOPE.key + ".sqlite")
+    sidecar = Path(str(path) + suffix)
+    evidence = b"operator must retain orphaned evidence\x00\xff"
+    sidecar.write_bytes(evidence)
+
+    with pytest.raises(ValueError, match="Preserve orphaned"):
+        GraphStore.open(tmp_path, SCOPE)
+    assert sidecar.read_bytes() == evidence
+    assert not path.exists()
+    assert not (tmp_path / ".storage.sqlite").exists()
+
+
+def test_concurrent_processes_publish_to_the_same_new_scope(tmp_path):
+    program = """
+from pathlib import Path
+import sys
+from services.reference_graph.store import Edge, GraphScope, GraphStore
+store = GraphStore.open(Path(sys.argv[1]), GraphScope('user-a', 'editor-a', 'project-a'))
+store.put_declaration(sys.argv[2], sys.argv[2], Edge('target', 'declared'), expected_version=0)
+"""
+
+    def update(index):
+        result = subprocess.run(
+            [sys.executable, "-c", program, str(tmp_path), str(index)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=watchdog_timeout(),
+        )
+        assert result.returncode == 0, result.stderr
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        list(executor.map(update, range(12)))
+    store = GraphStore.open(tmp_path, SCOPE)
+    assert len(store.query("target", direction="incoming")["edges"]) == 12
+    assert len(store.declarations()) == 12
+
+
 def test_source_revocation_hides_cached_edges_and_rejects_old_worker(graph):
     graph.set_source("external:settings", {"folders": ["GameData"]}, expected_version=0)
     generation = publish(graph, "config", "v1", ["prefab"], provider="external:settings")
@@ -273,7 +370,9 @@ def test_paginated_fanout_is_complete_and_rejects_mixed_revision(graph):
     publish(graph, "a", "v1", [f"target-{i}" for i in range(2101)])
     seen = set()
     cursor = None
+    progress = FixtureProgress(2101 + 32, "store fanout fixture")
     while True:
+        progress.step(cursor)
         page = graph.query("a", limit=100, cursor=cursor)
         seen.update(e["target"] for e in page["edges"])
         cursor = page["next_cursor"]

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.timing import await_completion, await_signal, watchdog_timeout
 from core.constants import API_KEY_HEADER
 from services.api_key_service import ApiKeyService, ValidationResult
 from services.credential_lease import CredentialLeaseError, current_credential_lease
@@ -119,10 +120,24 @@ async def test_paused_positive_cannot_cross_invalidation_fence(monkeypatch, clea
 
 @pytest.mark.asyncio
 async def test_renewal_timeout_retires_before_noncooperative_work_exits(monkeypatch):
+    import services.api_key_service as service_module
+
     async with credential_service(monkeypatch) as fixture:
         lease = (await fixture.service.validate("fixture-key")).lease
         entered, release = asyncio.Event(), asyncio.Event()
-        monkeypatch.setattr(fixture.service, "REVALIDATION_TIMEOUT", 0.01)
+        monkeypatch.setattr(fixture.service, "REVALIDATION_TIMEOUT", watchdog_timeout())
+        timeouts = []
+
+        async def expire_after_entry(tasks, *, timeout):
+            timeouts.append(timeout)
+            await await_signal(entered, "renewal validator", producers=tasks)
+            # Expire asyncio.wait's real timer after the cancellation-resistant
+            # validator starts, rather than timing its admission on a busy runner.
+            return await asyncio.wait(tasks, timeout=0)
+
+        local_asyncio = SimpleNamespace(**vars(asyncio))
+        local_asyncio.wait = expire_after_entry
+        monkeypatch.setattr(service_module, "asyncio", local_asyncio)
 
         async def resistant(key):
             entered.set()
@@ -135,15 +150,26 @@ async def test_renewal_timeout_retires_before_noncooperative_work_exits(monkeypa
         monkeypatch.setattr(fixture.service, "_validate_external", resistant)
         fixture.now[0] = 10
         checking = asyncio.create_task(lease.check())
-        await entered.wait()
         try:
+            await await_signal(entered, "renewal validator", producers=(checking,))
             with pytest.raises(CredentialLeaseError):
-                await checking
+                await await_completion(checking, "expired renewal")
+            assert len(timeouts) == 1
+            assert 0 < timeouts[0] <= fixture.service.REVALIDATION_TIMEOUT
             assert len(fixture.service._inflight) == 1
             assert not (await fixture.service.validate("fixture-key")).valid
         finally:
             release.set()
-            await asyncio.gather(*(f.task for f in fixture.service._inflight.values()))
+            if not checking.done():
+                checking.cancel()
+            await await_completion(
+                asyncio.gather(
+                    checking,
+                    *(f.task for f in fixture.service._inflight.values()),
+                    return_exceptions=True,
+                ),
+                "renewal provider teardown",
+            )
 
 
 @pytest.mark.asyncio

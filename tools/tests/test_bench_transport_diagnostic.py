@@ -187,7 +187,7 @@ def test_overflow_is_bounded_and_does_not_mask_delegate_failure() -> None:
         trace.check()
 
 
-@pytest.mark.parametrize("fastmcp_version", ["4.0.11", "4.1.0", "4.1.1", "4.1.3"])
+@pytest.mark.parametrize("fastmcp_version", ["4.0.11", "4.1.0", "4.1.1", "4.1.3", "4.1.4"])
 def test_reviewed_sdk_versions_are_supported(monkeypatch, fastmcp_version) -> None:
     versions = {"mcp": "2.3.0", "fastmcp": fastmcp_version}
     monkeypatch.setattr("tools.bench_transport_diagnostic.importlib.metadata.version", versions.get)
@@ -200,6 +200,21 @@ def test_sdk_version_mismatch_fails_before_patching(monkeypatch) -> None:
     )
     with pytest.raises(DiagnosticError, match="SDK"):
         require_sdk()
+
+
+@pytest.mark.parametrize("package,unreviewed", [("mcp", "2.3.1"), ("fastmcp", "4.1.5")])
+def test_unreviewed_package_fails_with_reviewed_counterpart(
+    monkeypatch, package, unreviewed
+) -> None:
+    # Given: one package is reviewed while its counterpart advances without review.
+    versions = {"mcp": "2.3.0", "fastmcp": "4.1.4"}
+    versions[package] = unreviewed
+    monkeypatch.setattr("tools.bench_transport_diagnostic.importlib.metadata.version", versions.get)
+    # When: diagnostics checks its version boundary before installing any wrappers.
+    with pytest.raises(DiagnosticError) as failure:
+        require_sdk()
+    # Then: the guard identifies the independently unreviewed package.
+    assert package in str(failure.value)
 
 
 def test_sidecar_byte_overflow_preserves_bounded_explicit_failure(tmp_path: Path) -> None:

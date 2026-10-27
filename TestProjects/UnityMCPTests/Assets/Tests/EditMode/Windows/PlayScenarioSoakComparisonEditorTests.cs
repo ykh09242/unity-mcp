@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Editor.Windows.PlayScenarios;
+using MCPForUnityTests.Editor;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -21,12 +22,14 @@ namespace MCPForUnityTests.EditMode.Windows
     {
         private string root;
         private ComparisonTestWindow window;
+        private OwnedTestTasks owned;
 
         private sealed class ComparisonTestWindow : UnityEditor.EditorWindow { }
 
         [UnitySetUp]
         public IEnumerator SetUp()
         {
+            owned = new OwnedTestTasks();
             root = Path.Combine(Path.GetTempPath(), "unity-mcp-soak-comparison-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
             window = ScriptableObject.CreateInstance<ComparisonTestWindow>();
@@ -34,12 +37,19 @@ namespace MCPForUnityTests.EditMode.Windows
             yield return null;
         }
 
-        [TearDown]
-        public void TearDown()
+        [UnityTearDown]
+        public IEnumerator TearDown()
         {
-            if (window != null)
-                UnityEngine.Object.DestroyImmediate(window);
-            Directory.Delete(root, true);
+            try
+            {
+                yield return owned.Cleanup();
+            }
+            finally
+            {
+                if (window != null)
+                    UnityEngine.Object.DestroyImmediate(window);
+                Directory.Delete(root, true);
+            }
         }
 
         private static JObject EnvironmentMetadata() =>
@@ -423,8 +433,8 @@ namespace MCPForUnityTests.EditMode.Windows
         [UnityTest]
         public IEnumerator DetachCancelsBothSlotWorkersWithoutRetainingCallbacks()
         {
-            using (var entered = new CountdownEvent(2))
-            using (var cancelled = new CountdownEvent(2))
+            var entered = owned.Own(new CountdownEvent(2));
+            var cancelled = owned.Own(new CountdownEvent(2));
             {
                 var parent = new VisualElement();
                 window.rootVisualElement.Add(parent);
@@ -447,11 +457,19 @@ namespace MCPForUnityTests.EditMode.Windows
                     Click(parent, "chooseSoakCandidate");
                     var left = (PlayScenarioImportWorker)parent.Q<TextField>("soakBaselinePath").userData;
                     var right = (PlayScenarioImportWorker)parent.Q<TextField>("soakCandidatePath").userData;
-                    while (!entered.IsSet)
-                        yield return null;
+                    var leftTask = PlayScenarioImportTestPump.Track(owned, left);
+                    var rightTask = PlayScenarioImportTestPump.Track(owned, right);
+                    yield return TestUtilities.WaitUntil(
+                        () => entered.IsSet,
+                        "both comparison readers to enter",
+                        () => leftTask.IsCompleted || rightTask.IsCompleted
+                    );
                     parent.RemoveFromHierarchy();
-                    while (!cancelled.IsSet)
-                        yield return null;
+                    yield return TestUtilities.WaitUntil(
+                        () => cancelled.IsSet,
+                        "both comparison readers to observe cancellation",
+                        () => leftTask.IsCompleted && rightTask.IsCompleted
+                    );
                     yield return null;
                     Assert.IsTrue(left.IsDisposed && right.IsDisposed);
                     Assert.IsFalse(left.IsPumping || right.IsPumping);
@@ -517,12 +535,23 @@ namespace MCPForUnityTests.EditMode.Windows
                 actual = ScriptableObject.CreateInstance<PlayScenarioWindow>();
                 actual.ConfigureForTests(new PlayScenarioStore(Path.Combine(root, "definitions")));
                 actual.ShowDialog = (_, __, ___, ____, _____) => 1;
-                actual.position = new Rect(100, 100, 850, 560);
                 actual.Show();
-                yield return null;
+                // Show restores this window type's saved geometry before the test requests its viewport.
+                actual.position = new Rect(100, 100, 850, 560);
+                yield return TestUtilities.WaitUntil(
+                    () =>
+                    {
+                        actual.Repaint();
+                        var bounds = actual.rootVisualElement.worldBound;
+                        return Math.Abs(bounds.width - 850) <= 2 && bounds.height > 0 && bounds.height <= 562;
+                    },
+                    "the shown Play Scenarios window to apply its requested 850x560 viewport"
+                );
                 actual.CreateGUI();
                 actual.ChoosePlayerSoakComparisonFile = side => side == "Baseline" ? leftSource : rightSource;
                 var elements = actual.rootVisualElement;
+                Click(elements, "scenario-tab-results");
+                elements.Q<Foldout>("scenarioResultTools").value = true;
                 elements.Q<Foldout>("playerSoakComparison").value = true;
                 var metadata = elements.Q<Foldout>("soakComparisonMetadata");
                 metadata.value = true;
@@ -530,12 +559,24 @@ namespace MCPForUnityTests.EditMode.Windows
                 Click(elements, "chooseSoakCandidate");
                 yield return PlayScenarioImportTestPump.Wait((PlayScenarioImportWorker)elements.Q<TextField>("soakBaselinePath").userData);
                 yield return PlayScenarioImportTestPump.Wait((PlayScenarioImportWorker)elements.Q<TextField>("soakCandidatePath").userData);
-                yield return null;
-                yield return null;
                 var outer = elements.Q<ScrollView>("scenarioResultsScroll");
                 var inner = elements.Q<ScrollView>("soakComparisonScroll");
                 var metadataScroll = elements.Q<ScrollView>("soakComparisonMetadataScroll");
                 var chart = elements.Q<PlayScenarioSoakComparisonChart>("soakComparisonChart");
+                var geometryTargets = new VisualElement[] { elements, outer.contentViewport, inner.contentViewport, metadataScroll, metadata, chart };
+                Rect[] previousBounds = null;
+                yield return TestUtilities.WaitUntil(
+                    () =>
+                    {
+                        actual.Repaint();
+                        Rect[] bounds = geometryTargets.Select(element => element.worldBound).ToArray();
+                        bool visible = geometryTargets.All(element => element.panel != null && element.worldBound.width > 0 && element.worldBound.height > 0);
+                        bool stable = previousBounds != null && bounds.SequenceEqual(previousBounds);
+                        previousBounds = bounds;
+                        return visible && stable;
+                    },
+                    "the visible Results comparison and expanded metadata geometry to settle"
+                );
                 Assert.AreEqual(850, elements.worldBound.width, 2);
                 Assert.LessOrEqual(elements.worldBound.height, 560 + 2);
                 Assert.GreaterOrEqual(inner.contentViewport.worldBound.height, 180);
