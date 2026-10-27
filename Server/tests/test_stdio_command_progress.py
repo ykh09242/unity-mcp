@@ -570,8 +570,8 @@ async def test_partial_optional_frame_is_unknown_and_never_resends(environment, 
 
 
 @pytest.mark.asyncio
-async def test_controls_do_not_renew_original_command_deadline(environment):
-    # Given: paced traffic would continue well beyond the original half-second ceiling.
+async def test_controls_do_not_renew_original_command_deadline(environment, monkeypatch):
+    # Given: real framed traffic continues until the owned worker closes its socket.
     ctx = RecordingContext()
     owner_closed = threading.Event()
     observed = {}
@@ -589,25 +589,45 @@ async def test_controls_do_not_renew_original_command_deadline(environment):
                 unexpected = b""
             assert unexpected == b"", "Unexpected command bytes while waiting for owned close"
             observed["unsent_frames"] = 19 - index
-            observed["closed_at"] = time.monotonic()
             owner_closed.set()
             return
         pytest.fail("Owner accepted paced optional traffic beyond its original deadline")
 
     with wire_peer(respond, capabilities=[CAPABILITY]) as peer:
-        # Complete real authentication before measuring the command's ceiling.
+        # Complete real authentication before controlling only the worker's clock.
         connection = await _prepared_connection(environment, peer)
-        started = asyncio.get_running_loop().time()
+        started = time.monotonic()
+        budget = watchdog_timeout()
+        deadline = started + budget
+        clock = SimpleNamespace(now=started)
+        deadlines = []
+        controls = []
+        set_deadline = connection._set_socket_deadline
+        offer_progress = connection._offer_stdio_progress
+
+        def observe_deadline(sock, value):
+            deadlines.append(value)
+            return set_deadline(sock, value)
+
+        def advance_after_control(sink, command_id, raw):
+            offer_progress(sink, command_id, raw)
+            controls.append(raw)
+            clock.now = deadline if len(controls) == 3 else started + len(controls) * budget / 3
+
+        worker_time = SimpleNamespace(**vars(time))
+        worker_time.monotonic = lambda: clock.now
+        monkeypatch.setattr(uc, "time", worker_time)
+        monkeypatch.setattr(connection, "_set_socket_deadline", observe_deadline)
+        monkeypatch.setattr(connection, "_offer_stdio_progress", advance_after_control)
         # When: one explicit monotonic ceiling covers admission, every control and final wait.
-        result = await _route(environment, peer, ctx, deadline=started + 0.5, connection=connection)
+        result = await _route(environment, peer, ctx, deadline=deadline, connection=connection)
         # Then: optional traffic never becomes a fresh duration or work retry.
-        ended = asyncio.get_running_loop().time()
         await _wait_owned_event(owner_closed)
         view = result.model_dump() if hasattr(result, "model_dump") else result
         assert view["success"] is False
         assert view["data"]["reason"] == "outcome_unknown"
-        assert 0.35 <= ended - started < 1.25
-        assert observed["closed_at"] - started < 1.25
+        assert len(controls) == 3
+        assert deadlines and all(value == deadline for value in deadlines)
         assert observed["unsent_frames"] >= 5, "Traffic ended before the deadline oracle"
         assert peer.business == [_expected_business()]
         assert ctx.calls == []
