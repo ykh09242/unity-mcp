@@ -108,9 +108,10 @@ async def test_public_readiness_exposes_scan_coverage(monkeypatch, complete, lim
     assert response.data["assets"]["external_changes_scan_limited_reason"] == (
         "local_package_root_limit" if limited else None
     )
-    assert response.data["advice"]["ready_for_tools"] is (complete and not limited)
+    assert response.data["advice"]["ready_for_tools"] is True
+    assert response.data["advice"]["blocking_reasons"] == []
     if not complete or limited:
-        assert any("scan" in reason for reason in response.data["advice"]["blocking_reasons"])
+        assert any("scan" in reason for reason in response.data["advice"]["warnings"])
 
 
 @pytest.mark.asyncio
@@ -150,5 +151,6 @@ async def test_scan_readiness_distinguishes_unavailable_root_from_pending_scan(
     assets, advice = response.data["assets"], response.data["advice"]
     assert assets["external_changes_scan_complete"] is (False if has_root else None)
     assert assets["external_changes_scan_limited"] is (False if has_root else None)
-    assert advice["ready_for_tools"] is (not has_root)
-    assert advice["blocking_reasons"] == (["external_changes_scan_pending"] if has_root else [])
+    assert advice["ready_for_tools"] is True
+    assert advice["blocking_reasons"] == []
+    assert advice["warnings"] == (["external_changes_scan_pending"] if has_root else [])

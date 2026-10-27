@@ -131,6 +131,7 @@ class EditorStateSettings(BaseModel):
 class EditorStateAdvice(BaseModel):
     ready_for_tools: bool | None = None
     blocking_reasons: list[str] | None = None
+    warnings: list[str] | None = None
     recommended_retry_after_ms: int | None = None
     recommended_next_action: str | None = None
 
@@ -268,10 +269,13 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
         blocking.append("asset_refresh")
     if assets.get("is_updating") is True:
         blocking.append("asset_import")
+    # Filesystem coverage is independent of native command admission. A large
+    # baseline can take minutes while the Editor is already responsive and idle.
+    warnings: list[str] = []
     if assets.get("external_changes_scan_limited") is True:
-        blocking.append("external_changes_scan_limited")
+        warnings.append("external_changes_scan_limited")
     elif assets.get("external_changes_scan_complete") is False:
-        blocking.append("external_changes_scan_pending")
+        warnings.append("external_changes_scan_pending")
     activity = state_v2.get("activity") or {}
     phase = activity.get("phase")
     if phase == "playmode_transition":
@@ -326,6 +330,7 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
     state_v2["advice"] = {
         "ready_for_tools": ready_for_tools,
         "blocking_reasons": blocking,
+        "warnings": warnings,
         "recommended_retry_after_ms": 0 if ready_for_tools else 5000 if inspect_editor else 500,
         "recommended_next_action": "inspect_editor"
         if inspect_editor
@@ -345,8 +350,10 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
     description=(
         "Canonical editor readiness snapshot. Includes advice, server-computed staleness, "
         "and assets.external_changes_scan_complete/limited coverage. scan_in_progress "
-        "distinguishes a routine recheck from verified coverage. Initial pending or limited "
-        "local coverage is not ready_for_tools; unknown remote coverage remains null."
+        "distinguishes a routine recheck from verified coverage. Pending or limited local "
+        "coverage is reported in advice.warnings without blocking native readiness; "
+        "ready_for_tools does not certify that all external changes were scanned or imported. "
+        "Unknown remote coverage remains null."
         "\n\nURI: mcpforunity://editor/state"
     ),
 )

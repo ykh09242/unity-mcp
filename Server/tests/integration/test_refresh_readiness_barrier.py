@@ -98,7 +98,7 @@ async def test_refresh_waits_for_canonical_asset_refresh(
 
 
 @pytest.mark.asyncio
-async def test_refresh_pending_scan_uses_one_deadline_and_never_replays(monkeypatch):
+async def test_refresh_pending_scan_does_not_block_idle_editor_or_replay(monkeypatch):
     instance = "ReadinessFixture@12345678"
     ctx = DummyContext()
     await ctx.set_state("unity_instance", instance)
@@ -159,9 +159,8 @@ async def test_refresh_pending_scan_uses_one_deadline_and_never_replays(monkeypa
     monkeypatch.setattr(refresh_module.unity_transport, "send_with_unity_instance", transport)
 
     response = await refresh_module.refresh_unity(ctx, wait_for_ready=True, timeout_seconds=1.0)
-    assert response.success is False
-    assert response.data == {"timeout": True, "wait_seconds": 1.0}
+    assert response.success is True
     assert refreshes == 1
-    assert polls > 1
-    assert elapsed == 1.0
-    assert scanner._states[instance].dirty is True
+    assert polls == 1
+    assert elapsed == 0.4
+    assert scanner._states[instance].dirty is False
