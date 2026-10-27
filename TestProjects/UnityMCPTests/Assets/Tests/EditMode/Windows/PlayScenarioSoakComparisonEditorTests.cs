@@ -535,12 +535,23 @@ namespace MCPForUnityTests.EditMode.Windows
                 actual = ScriptableObject.CreateInstance<PlayScenarioWindow>();
                 actual.ConfigureForTests(new PlayScenarioStore(Path.Combine(root, "definitions")));
                 actual.ShowDialog = (_, __, ___, ____, _____) => 1;
-                actual.position = new Rect(100, 100, 850, 560);
                 actual.Show();
-                yield return null;
+                // Show restores this window type's saved geometry before the test requests its viewport.
+                actual.position = new Rect(100, 100, 850, 560);
+                yield return TestUtilities.WaitUntil(
+                    () =>
+                    {
+                        actual.Repaint();
+                        var bounds = actual.rootVisualElement.worldBound;
+                        return Math.Abs(bounds.width - 850) <= 2 && bounds.height > 0 && bounds.height <= 562;
+                    },
+                    "the shown Play Scenarios window to apply its requested 850x560 viewport"
+                );
                 actual.CreateGUI();
                 actual.ChoosePlayerSoakComparisonFile = side => side == "Baseline" ? leftSource : rightSource;
                 var elements = actual.rootVisualElement;
+                Click(elements, "scenario-tab-results");
+                elements.Q<Foldout>("scenarioResultTools").value = true;
                 elements.Q<Foldout>("playerSoakComparison").value = true;
                 var metadata = elements.Q<Foldout>("soakComparisonMetadata");
                 metadata.value = true;
@@ -548,12 +559,24 @@ namespace MCPForUnityTests.EditMode.Windows
                 Click(elements, "chooseSoakCandidate");
                 yield return PlayScenarioImportTestPump.Wait((PlayScenarioImportWorker)elements.Q<TextField>("soakBaselinePath").userData);
                 yield return PlayScenarioImportTestPump.Wait((PlayScenarioImportWorker)elements.Q<TextField>("soakCandidatePath").userData);
-                yield return null;
-                yield return null;
                 var outer = elements.Q<ScrollView>("scenarioResultsScroll");
                 var inner = elements.Q<ScrollView>("soakComparisonScroll");
                 var metadataScroll = elements.Q<ScrollView>("soakComparisonMetadataScroll");
                 var chart = elements.Q<PlayScenarioSoakComparisonChart>("soakComparisonChart");
+                var geometryTargets = new VisualElement[] { elements, outer.contentViewport, inner.contentViewport, metadataScroll, metadata, chart };
+                Rect[] previousBounds = null;
+                yield return TestUtilities.WaitUntil(
+                    () =>
+                    {
+                        actual.Repaint();
+                        Rect[] bounds = geometryTargets.Select(element => element.worldBound).ToArray();
+                        bool visible = geometryTargets.All(element => element.panel != null && element.worldBound.width > 0 && element.worldBound.height > 0);
+                        bool stable = previousBounds != null && bounds.SequenceEqual(previousBounds);
+                        previousBounds = bounds;
+                        return visible && stable;
+                    },
+                    "the visible Results comparison and expanded metadata geometry to settle"
+                );
                 Assert.AreEqual(850, elements.worldBound.width, 2);
                 Assert.LessOrEqual(elements.worldBound.height, 560 + 2);
                 Assert.GreaterOrEqual(inner.contentViewport.worldBound.height, 180);
