@@ -174,7 +174,8 @@ def test_cached_port_change_reconnects_with_framing(tmp_path, changed):
         actual = module.get_unity_connection("aaaa1111")
         assert actual is conn and conn.port == target.port
         assert old.closed is {changed!r}
-        assert (conn.sock is None) is {changed!r}
+        assert conn.sock is (created[0][1] if {changed!r} else old)
+        assert conn.use_framing is True and conn.sock.requests == []
         response = conn.send_command("fixture_query", {{}}, max_attempts=0)
         assert response == {{"endpoint": target.port}}
         assert conn.use_framing is True and conn._needs_tool_resync is {changed!r}

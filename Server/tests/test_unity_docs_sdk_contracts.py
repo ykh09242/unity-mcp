@@ -31,7 +31,8 @@ def test_docs_versions_and_policy_at_actual_sdk_boundary():
             return 200, "<h1>Fixture</h1>", url
         docs._fetch_url_full = fetch
         middleware = UnityInstanceMiddleware()
-        async def resolve(value, ctx):
+        async def resolve(value, ctx, *, allow_reconnect=False):
+            assert allow_reconnect is False
             assert value in versions
             return value
         async def no_auto(ctx): return None
