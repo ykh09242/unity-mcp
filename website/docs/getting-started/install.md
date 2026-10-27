@@ -8,11 +8,11 @@ description: Install the stable fork, authenticate a client, and verify the Unit
 
 # Install And Connect
 
-Install stable **Unity MCP (ykh09242) 2.1.3**, then connect an MCP client to your Editor. This is a Git-distributed fork of CoplayDev/unity-mcp, not an upstream release or a hosted AI service.
+Install stable **Unity MCP (ykh09242) 2.1.4**, then connect an MCP client to your Editor. This is a Git-distributed fork of CoplayDev/unity-mcp, not an upstream release or a hosted AI service.
 
 ## Before you start
 
-- Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v2.1.3).
+- Unity **2021.3 or newer**. The declared minimum is not runtime certification for every Editor; see the [release verification and limits](https://github.com/ykh09242/unity-mcp/releases/tag/ykh09242-v2.1.4).
 - Git available to Unity Package Manager.
 - Python **3.11+** and [`uv`/`uvx`](../guides/uv-setup.md) available to Unity.
 - An MCP client. Use a client you already have; [client configuration](./clients.md) describes the package's configurators without requiring a specific provider.
@@ -24,10 +24,10 @@ Install stable **Unity MCP (ykh09242) 2.1.3**, then connect an MCP client to you
 In **Window > Package Manager**, choose **+ > Add package from git URL**:
 
 ```text
-https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v2.1.3
+https://github.com/ykh09242/unity-mcp.git?path=/MCPForUnity#ykh09242-v2.1.4
 ```
 
-This tag identifies stable `2.1.3`. For a commit-addressed install, replace the tag after `#` with the full 40-character package commit SHA recorded in the verified release notes.
+This tag identifies stable `2.1.4`. For a commit-addressed install, replace the tag after `#` with the full 40-character package commit SHA recorded in the verified release notes.
 
 `#beta` follows a moving development branch; its name does not make the stable release a beta. The installed package's `mcpServerSource` selects its matching Python source independently. Do not substitute an inherited upstream tag or a PyPI package. See [version and update policy](./migrate.md#versions-and-updates).
 
@@ -54,7 +54,7 @@ resolved as a package dependency for UPM waits; server connections remain indepe
 of window lifetime.
 :::
 
-Unity package **2.1.3** selects Python server **2.1.3** through its installed
+Unity package **2.1.4** selects Python server **2.1.4** through its installed
 `mcpServerSource` pin and retains the **Python 3.11+** requirement introduced in 1.1.4.
 Install a supported interpreter with `uv python install 3.11`, clear unintended
 server source overrides, and regenerate existing stdio client configurations
