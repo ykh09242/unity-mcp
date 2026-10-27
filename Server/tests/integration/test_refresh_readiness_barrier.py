@@ -82,12 +82,16 @@ async def test_refresh_waits_for_canonical_asset_refresh(
     assert refreshes == 1
     assert scanner._states[instance].dirty is (not expected_success)
     if not expected_success:
+        data = dict(response.data)
+        readiness = data.pop("readiness")
+        assert readiness["ready"] is False
+        assert readiness["blocking_reasons"] == (["stale_status"] if stale else ["asset_refresh"])
         if compile_mode == "none":
-            assert response.data == {"timeout": True, "wait_seconds": 300.0}
+            assert data == {"timeout": True, "wait_seconds": 300.0}
             assert dispatched_compile_id is None
         else:
-            data = dict(response.data)
             compilation = data.pop("compilation")
+            assert data.pop("compilation_observation_age_seconds") is None
             assert data.pop("source_revision_confirmed") is False
             assert data == {"timeout": True, "wait_seconds": 300.0}
             assert compilation["compile_id"] == dispatched_compile_id

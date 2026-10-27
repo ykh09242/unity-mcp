@@ -2,7 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
@@ -49,7 +49,7 @@ async def test_refresh_spends_one_budget_without_replaying_mutation(
     assert result.success is expected_ready
     assert len(params_seen) == 1 and params_seen[0]["timeout_seconds"] == 900
     if expected_ready:
-        ready.assert_awaited_once_with(None, timeout_s=420)
+        ready.assert_awaited_once_with(None, timeout_s=420, on_observation=ANY)
     else:
         ready.assert_not_awaited()
         assert result.data["timeout"] is True

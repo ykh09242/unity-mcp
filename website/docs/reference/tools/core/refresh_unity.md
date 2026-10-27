@@ -12,7 +12,7 @@ description: "Request a Unity asset database refresh and optionally a script com
 
 ## Description
 
-Request a Unity asset database refresh and optionally a script compilation. Can optionally wait for readiness.
+Request a Unity asset database refresh and optionally a script compilation. Can wait for native Editor readiness, independently of background file scan coverage. Readiness timeout preserves the latest compilation snapshot and reports readiness blockers separately; compilation_observation_age_seconds describes snapshot age. A timeout never replays the refresh or cancels native compilation.
 
 ## Parameters
 
