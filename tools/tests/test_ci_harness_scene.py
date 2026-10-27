@@ -61,11 +61,22 @@ def test_setup_failure_preserves_results_before_editor_teardown(
 
     reports = tmp_path / "reports"
     snapshots = []
+    state = {"alive": False}
+
+    def launch(*_):
+        state["alive"] = True
+        return lh.Handle(container="owned-editor", log_path="Editor.log")
+
+    def teardown(*_):
+        snapshots.append((reports / "junit-all.xml").exists())
+        state["alive"] = False
+
     launcher = SimpleNamespace(
         resolve_editor=lambda *_: lh.EditorSpec("fake-editor", "2021"),
-        launch=lambda *_: lh.Handle(container="owned-editor", log_path="Editor.log"),
+        launch=launch,
         tail_log=lambda *_: "scene setup diagnostics",
-        teardown=lambda *_: snapshots.append((reports / "junit-all.xml").exists()),
+        teardown=teardown,
+        is_alive=lambda _: state["alive"],
     )
     monkeypatch.setenv("UNITY_IMAGE", "fake-image")
     monkeypatch.setattr(lh, "make_launcher", lambda *_: launcher)

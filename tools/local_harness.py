@@ -70,6 +70,7 @@ import threading
 import time
 import uuid
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from typing import Any, Callable
@@ -1972,38 +1973,84 @@ def _main(argv: list[str] | None = None) -> int:
         write_reports(junit_path, reports_dir, outcomes)
 
     cleanup_lock = threading.Lock()
+    lifecycle_lock = threading.Lock()
+    _watchdog_stop = threading.Event()
+    _watchdog_expired = threading.Event()
+    _cleanup_done = threading.Event()
+    execution_finished = False
+    acquisitions = 0
+    resource_generation = 0
+    cleanup_snapshot: tuple[int, tuple[int, ...]] | None = None
     cleanup_result: bool | None = None
     summary_exit_code: int | None = None
 
+    def require_execution_locked() -> None:
+        if _watchdog_expired.is_set() or time.monotonic() >= deadline:
+            _watchdog_expired.set()
+            raise SystemExit(2)
+        if execution_finished:
+            raise SystemExit(2)
+
+    def require_execution() -> None:
+        with lifecycle_lock:
+            require_execution_locked()
+
+    @contextmanager
+    def acquiring_editor():
+        nonlocal acquisitions, resource_generation
+        # Admission is atomic with expiry; launch itself never holds this lock.
+        with lifecycle_lock:
+            require_execution_locked()
+            acquisitions += 1
+            resource_generation += 1
+        try:
+            yield
+        finally:
+            with lifecycle_lock:
+                acquisitions -= 1
+                resource_generation += 1
+
     def do_teardown() -> bool:
-        nonlocal cleanup_result
-        # Signal, execution watchdog and normal completion may race. Never wait
-        # for a cleanup owner: the hard-exit timers must remain independent.
+        nonlocal cleanup_result, cleanup_snapshot
+        # Never let competing cleanup or lifecycle bookkeeping block hard exit.
         if not cleanup_lock.acquire(blocking=False):
             return False
         try:
-            if cleanup_result is not None:
-                return cleanup_result
-            warmup_handle = getattr(args, "_warmup_handle", None)
-            pending_handle = getattr(launcher, "pending_handle", None)
-            cleanup_handle = handle or warmup_handle or pending_handle
-            is_warmup = warmup_handle is not None and cleanup_handle is warmup_handle
-            stopped = cleanup_handle is None
-            should_stop = is_warmup or (owns_editor and not args.keep_alive)
-            unconfirmed_launch = (
-                pending_handle is not None and handle is None and cleanup_handle is pending_handle
-            )
-            should_stop = should_stop or unconfirmed_launch
-            if cleanup_handle is not None and owns_status_dir:
+            with lifecycle_lock:
+                generation = resource_generation
+                in_flight = acquisitions > 0
+                warmup_handle = getattr(args, "_warmup_handle", None)
+                pending_handle = getattr(launcher, "pending_handle", None)
+                resources = []
+                for candidate in (handle, warmup_handle, pending_handle):
+                    if candidate is not None and all(candidate is not item for item in resources):
+                        resources.append(candidate)
+                snapshot = (generation, tuple(id(item) for item in resources))
+                if not in_flight and cleanup_snapshot == snapshot and cleanup_result is not None:
+                    return cleanup_result
+            # A pending replacement remains separate from an already-stopped
+            # resident. It has recovery identity but no exact-ID kill authority.
+            primary = pending_handle or warmup_handle or handle
+            if (resources or in_flight) and owns_status_dir:
                 reports_dir.mkdir(parents=True, exist_ok=True)
                 (reports_dir / "reuse.json").write_text(
                     json.dumps(
                         {
                             "project_path": str(project_path),
                             "status_dir": str(status_dir),
-                            "pid": cleanup_handle.pid,
-                            "container": cleanup_handle.container,
-                            "ownership_confirmed": not unconfirmed_launch,
+                            "pid": primary.pid if primary is not None else None,
+                            "container": primary.container if primary is not None else None,
+                            "ownership_confirmed": primary is not None
+                            and primary is not pending_handle,
+                            "acquisition_in_flight": in_flight,
+                            "resources": [
+                                {
+                                    "pid": item.pid,
+                                    "container": item.container,
+                                    "ownership_confirmed": item is not pending_handle,
+                                }
+                                for item in resources
+                            ],
                             "scene": getattr(args, "_harness_scene", None),
                         },
                         indent=2,
@@ -2011,32 +2058,47 @@ def _main(argv: list[str] | None = None) -> int:
                     + "\n",
                     encoding="utf-8",
                 )
-            if cleanup_handle is not None and should_stop:
+            stopped = not in_flight
+            successful = not in_flight
+            for candidate in resources:
+                if candidate is pending_handle:
+                    stopped = successful = False
+                    continue
+                should_stop = candidate is warmup_handle or (owns_editor and not args.keep_alive)
+                if not should_stop:
+                    stopped = False
+                    continue
                 try:
-                    launcher.teardown(cleanup_handle)
-                    stopped = not launcher.is_alive(cleanup_handle)
+                    launcher.teardown(candidate)
+                    candidate_stopped = not launcher.is_alive(candidate)
                 except Exception as error:  # cleanup is a top-level failure boundary
                     print(f"::error:: owned Editor cleanup failed: {error}", flush=True)
-                    stopped = False
-            cleanup_result = stopped or not should_stop
-            if cleanup_handle is not None and not stopped:
+                    candidate_stopped = False
+                stopped = stopped and candidate_stopped
+                successful = successful and candidate_stopped
+            with lifecycle_lock:
+                # An admitted acquisition can finish while this owner observes
+                # old resources. Never cache success or delete its registry.
+                if generation != resource_generation or acquisitions:
+                    stopped = successful = False
+                else:
+                    cleanup_snapshot = snapshot
+                    cleanup_result = successful
+            if not stopped:
                 if owns_status_dir:
-                    reports_dir.mkdir(parents=True, exist_ok=True)
                     print(
                         f"== retained Editor registry: {status_dir}; reuse handle: {reports_dir / 'reuse.json'} =="
                     )
-                return cleanup_result
-            if stopped:
-                if cleanup_handle is not None and owns_status_dir:
-                    (reports_dir / "reuse.json").unlink(missing_ok=True)
-                try:
-                    cleanup_ci_scene(args, project_path)
-                except OSError:
-                    print("::warning:: Could not remove the owned CI scene.")
-            if owns_status_dir and stopped and not _has_linked_ancestor(status_dir):
-                # Delete only the exact unique directory allocated for this run.
+                return successful
+            if (resources or in_flight) and owns_status_dir:
+                (reports_dir / "reuse.json").unlink(missing_ok=True)
+            try:
+                cleanup_ci_scene(args, project_path)
+            except OSError:
+                print("::warning:: Could not remove the owned CI scene.")
+            if owns_status_dir and not _has_linked_ancestor(status_dir):
                 shutil.rmtree(status_dir, ignore_errors=True)
-            return cleanup_result
+            return successful
         finally:
             cleanup_lock.release()
 
@@ -2053,16 +2115,14 @@ def _main(argv: list[str] | None = None) -> int:
     # Hard wall-clock watchdog: the polled deadlines inside the wait/poll loops do
     # not cover blocking subprocess/socket calls (smoke subprocess, compile probe),
     # so a background daemon enforces --overall-timeout across ALL phases.
-    _watchdog_stop = threading.Event()
-    _watchdog_expired = threading.Event()
-
     def _watchdog() -> None:  # pragma: no cover - timing/daemon path
         remaining = deadline - time.monotonic()
         if remaining > 0:
             _watchdog_stop.wait(remaining)
-        if _watchdog_stop.is_set():
-            return
-        _watchdog_expired.set()
+        with lifecycle_lock:
+            if _watchdog_stop.is_set() or execution_finished:
+                return
+            _watchdog_expired.set()
 
         def expired_cleanup() -> None:
             print(
@@ -2076,7 +2136,7 @@ def _main(argv: list[str] | None = None) -> int:
         ).start()
         # Neither a cleanup lock, blocked daemon RPC nor blocked output can
         # prevent the hard exit. This is a separate budget from execution.
-        _watchdog_stop.wait(args.cleanup_timeout)
+        _cleanup_done.wait(args.cleanup_timeout)
         os._exit(2)
 
     threading.Thread(target=_watchdog, name="harness-watchdog", daemon=True).start()
@@ -2118,12 +2178,15 @@ def _main(argv: list[str] | None = None) -> int:
                 print(f"  install a matching {maj_min}.x editor or pass --editor (wanted {want})")
                 return 5
 
+            require_execution()
             os.environ["UNITY_MCP_STATUS_DIR"] = str(status_dir)
 
             # Phase 1 -- warm-up (skip with --no-warmup / --ci).
             if not args.no_warmup:
                 warmup_log = status_dir / "warmup.log"
-                rc = launcher.warmup(spec.binary, project_path, warmup_log, args.boot_timeout)
+                with acquiring_editor():
+                    rc = launcher.warmup(spec.binary, project_path, warmup_log, args.boot_timeout)
+                require_execution()
                 if rc not in (0,):
                     tail = launcher.tail_log(Handle(log_path=str(warmup_log)), 200)
                     kind = classify_log(
@@ -2140,14 +2203,18 @@ def _main(argv: list[str] | None = None) -> int:
 
             # Phase 2 -- resident (NO -quit).
             editor_log = status_dir / "editor.log"
-            handle = launcher.launch(
-                spec.binary, project_path, status_dir, editor_log, args.editor_args
-            )
+            with acquiring_editor():
+                handle = launcher.launch(
+                    spec.binary, project_path, status_dir, editor_log, args.editor_args
+                )
+            require_execution()
             ready = wait_for_ready(
                 launcher, handle, status_dir, args.bridge_wait, boot_start, deadline
             )
             instance_id = ready.instance_id
 
+        # A blocked resolver/launch must not resume commands after expiry.
+        require_execution()
         # Pin the instance so smoke + UTF target our own editor.
         os.environ["UNITY_MCP_DEFAULT_INSTANCE"] = instance_id
         print(f"== bridge ready: instance={instance_id} port={ready.port} ==")
@@ -2160,6 +2227,7 @@ def _main(argv: list[str] | None = None) -> int:
             if not compile_ok:
                 print("::error:: project does not compile -- skipping UTF legs")
 
+        require_execution()
         # Creating and deleting smoke objects leaves an untitled scene dirty. UTF
         # cancels its save dialog in batch mode without firing test callbacks.
         if wants_utf and compile_ok and not prepare_ci_scene(args, instance_id):
@@ -2214,6 +2282,7 @@ def _main(argv: list[str] | None = None) -> int:
 
                 def _relaunch() -> str:
                     nonlocal handle, ready, instance_id
+                    require_execution()
                     if handle is not None and owns_editor:
                         launcher.teardown(handle)
                         if launcher.is_alive(handle):
@@ -2222,9 +2291,11 @@ def _main(argv: list[str] | None = None) -> int:
                             )
                     time.sleep(SOCKET_RELEASE_MS / 1000.0)
                     editor_log = status_dir / "editor.log"
-                    handle = launcher.launch(
-                        spec.binary, project_path, status_dir, editor_log, args.editor_args
-                    )
+                    with acquiring_editor():
+                        handle = launcher.launch(
+                            spec.binary, project_path, status_dir, editor_log, args.editor_args
+                        )
+                    require_execution()
                     ready = wait_for_ready(
                         launcher, handle, status_dir, args.bridge_wait, time.monotonic(), deadline
                     )
@@ -2259,6 +2330,13 @@ def _main(argv: list[str] | None = None) -> int:
     except SystemExit as e:
         return int(e.code) if isinstance(e.code, int) else 2
     finally:
+        # Execution and cleanup have independent budgets. Preserve an expiry
+        # already observed (including an unscheduled watchdog at the deadline).
+        with lifecycle_lock:
+            if time.monotonic() >= deadline:
+                _watchdog_expired.set()
+            execution_finished = True
+            _watchdog_stop.set()
         cleanup_timer = threading.Timer(args.cleanup_timeout, lambda: os._exit(2))
         cleanup_timer.daemon = True
         cleanup_timer.start()
@@ -2294,7 +2372,8 @@ def _main(argv: list[str] | None = None) -> int:
                     cleanup_outcome.status = "pass"
                     cleanup_outcome.detail = "Owned Editor exit confirmed"
                     cleanup_outcome.exit_code = 0
-                    cleanup_outcome.junit_suite.cases[0].failure = None
+                    # Cleanup is a lifecycle gate, not another executed test.
+                    cleanup_outcome.junit_suite.cases.clear()
                 outcomes.append(cleanup_outcome)
             if expired:
                 outcomes.append(
@@ -2330,6 +2409,7 @@ def _main(argv: list[str] | None = None) -> int:
         finally:
             cleanup_timer.cancel()
             _watchdog_stop.set()
+            _cleanup_done.set()
 
 
 def main(argv: list[str] | None = None) -> int:
