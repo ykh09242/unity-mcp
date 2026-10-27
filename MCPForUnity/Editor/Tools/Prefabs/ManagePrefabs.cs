@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
@@ -21,6 +22,23 @@ namespace MCPForUnity.Editor.Tools.Prefabs
     /// </summary>
     public static class ManagePrefabs
     {
+        private static readonly MethodInfo RebuildInspectorTrackers = typeof(ActiveEditorTracker).GetMethod(
+            "RebuildAllIfNecessary",
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic
+        );
+
+        private static void SynchronizeStageInspectors()
+        {
+            // Native-tick commands can switch stages and synchronously import scripts
+            // before another UI update. Flush Unity's pending tracker rebuilds now so
+            // Editors for the unloaded stage do not retain destroyed targets. This
+            // preserves Unity's selection and each Inspector's valid locked targets.
+            if (RebuildInspectorTrackers != null)
+                RebuildInspectorTrackers.Invoke(null, null);
+            else
+                ActiveEditorTracker.sharedTracker.RebuildIfNecessary();
+        }
+
         // Action constants
         private const string ACTION_CREATE_FROM_GAMEOBJECT = "create_from_gameobject";
         private const string ACTION_GET_INFO = "get_info";
@@ -1782,6 +1800,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 }
 
                 var prefabStage = PrefabStageUtility.OpenPrefab(sanitizedPath);
+                SynchronizeStageInspectors();
                 bool enteredStage =
                     prefabStage != null
                     && string.Equals(prefabStage.assetPath, sanitizedPath, StringComparison.OrdinalIgnoreCase)
@@ -1854,6 +1873,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
                 string prefabPath = prefabStage.assetPath;
                 StageUtility.GoToMainStage();
+                SynchronizeStageInspectors();
                 if (PrefabStageUtility.GetCurrentPrefabStage() != null)
                 {
                     return new ErrorResponse($"Failed to exit prefab stage for '{prefabPath}'. The stage switch was cancelled or unsuccessful.");

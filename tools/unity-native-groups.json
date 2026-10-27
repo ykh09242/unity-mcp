@@ -1,6 +1,26 @@
 {
   "schema_version": 1,
   "groups": {
+    "inspector-stage-targets": {
+      "methods": [
+        "MCPForUnityTests.Editor.Tools.InspectorReloadTests.StageTransition_ReleasesStaleInspectorsAndPreservesUnrelatedLocks"
+      ],
+      "disruptive": false,
+      "requires_graphics": true,
+      "platform_exclusions": {}
+    },
+    "inspector-stage-reload": {
+      "methods": [
+        "MCPForUnityTests.Editor.Tools.InspectorReloadTests.SelectedPrefab_ActualReload",
+        "MCPForUnityTests.Editor.Tools.InspectorReloadTests.CloseWithDirtySourceAndForceRefresh_ActualReload"
+      ],
+      "disruptive": true,
+      "requires_graphics": true,
+      "platform_exclusions": {
+        "linux": "This Inspector reload cohort has only Windows native evidence.",
+        "darwin": "This Inspector reload cohort has only Windows native evidence."
+      }
+    },
     "transport-readiness": {
       "methods": [
         "MCPForUnityTests.Editor.Transport.StdioTransportClientReadinessTests.KeepsWaiting_WhenNotReady_AndWithinWindow",

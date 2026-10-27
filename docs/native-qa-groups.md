@@ -62,6 +62,16 @@ like a source edit. Initially absent `.meta` and package lock files may be creat
 by Unity. Previously captured files remain guarded. Generated Editor UserSettings, caches and outputs
 are excluded from source identity; new C# or package inputs are not.
 
+The `inspector-stage-targets` and `inspector-stage-reload` groups require an owned
+batch Editor with graphics and `UNITY_MCP_INSPECTOR_RELOAD_PROJECT` set to the exact
+absolute prepared project path. They create real Inspectors and temporary UI
+prefabs. The reload group also imports and removes a temporary script, witnesses
+actual domain replacement, and verifies that the Inspector survives it. Run the
+two groups separately because the reload group is disruptive. They do not use or
+modify an existing user's Editor layout. The target tests verify immediate cleanup
+of destroyed prefab targets and preservation of unrelated locked Inspectors;
+passing reload tests alone do not establish reproduction of a user's exception.
+
 Disruptive groups cannot be combined with ordinary groups. A platform exclusion
 refuses that selection with its declared reason rather than reporting success.
 The initial reload cohort is explicitly limited to the available Windows evidence.
