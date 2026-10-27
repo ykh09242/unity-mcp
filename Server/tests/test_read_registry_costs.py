@@ -1,5 +1,6 @@
 """Read lookup costs stay bounded without changing selection or weak ownership."""
 
+from tests.timing import await_signal
 import asyncio
 import gc
 import weakref
@@ -48,7 +49,7 @@ async def test_twenty_overlapping_leases_construct_one_loop_registry(monkeypatch
 
     callers = [asyncio.create_task(caller()) for _ in range(20)]
     try:
-        await joined.wait()
+        await await_signal(joined, "twenty callers joined", producers=callers)
         release.set()
         replies = await asyncio.gather(*callers)
         assert all(reply["success"] for reply in replies)
@@ -56,6 +57,7 @@ async def test_twenty_overlapping_leases_construct_one_loop_registry(monkeypatch
         assert len(constructions) == 1
         assert len(pool._loops[asyncio.get_running_loop()]) == 0
     finally:
+        release.set()
         for task in callers:
             task.cancel()
         await asyncio.gather(*callers, return_exceptions=True)

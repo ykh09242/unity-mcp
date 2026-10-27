@@ -1,5 +1,6 @@
 """Runtime evidence stays scoped, replayable and distinct from static proof."""
 
+from tests.lifecycle import FixtureProgress
 from tests.timing import await_signal
 
 import asyncio
@@ -123,11 +124,14 @@ def test_runtime_continuations_preserve_large_sessions(capture):
             page([event(i + 1, "load", "") for i in range(start, start + 100)], offset=start + 100),
         )
     after, total = 0, 0
+    progress = FixtureProgress(3000 + 32, "runtime events fixture")
     while True:
+        progress.step(after)
         result = runtime.events(identity, after=after, limit=137)
         total += len(result["events"])
         if result["next_after"] is None:
             break
+        assert result["next_after"] > after, "runtime continuation did not advance"
         after = result["next_after"]
     assert total == 3000
 

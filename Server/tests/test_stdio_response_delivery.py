@@ -1,6 +1,7 @@
 """Actual SDK stdio writer backpressure and typed response ownership."""
 
 from tests.timing import await_signal, watchdog_timeout
+from tests.lifecycle import await_condition
 
 import asyncio
 import gc
@@ -37,7 +38,12 @@ async def owned_stdio_streams(stdin, stdout):
     # owns/closes both consumer endpoints, including on cancellation/failure.
     async with retained_stdio_server(stdin, stdout) as (read, write):
         async with read, write:
-            yield read, write
+            try:
+                yield read, write
+            finally:
+                stdin.stop.set()
+                for gate in getattr(stdout, "resume", {}).values():
+                    gate.set()
 
 
 class IdleInput:
@@ -115,35 +121,43 @@ async def test_actual_sdk_keeps_source_and_delayed_copy_charged_until_each_flush
             SessionMessage(JSONRPCResponse(jsonrpc="2.0", id=request_id, result=result))
         )
 
-    async with owned_stdio_streams(stdin, stdout) as (_, write):
-        first = asyncio.create_task(produce(7, write))
-        entered, resume = stdout.gate(7)
-        await await_signal(entered, "entered")
-        await asyncio.wait_for(first, watchdog_timeout())
-        await asyncio.sleep(0)  # producer task_done has run, stdout is still blocked
-        one_delivery = budget.retained_bytes
-        assert charge < one_delivery < 2 * charge
-        copy_charge = one_delivery - charge
-        second = asyncio.create_task(produce("7", write))
-        for _ in range(200):
-            if budget.retained_bytes == charge + 2 * copy_charge:
-                break
-            await asyncio.sleep(0.005)
-        assert budget.retained_bytes == charge + 2 * copy_charge
-        assert len(stdio_delivery.get().pending) == 2
-        refused = ResponseOwner()
-        assert not budget.reserve(refused, charge)
-        resume.set()
-        entered_second, resume_second = stdout.gate("7")
-        await await_signal(entered_second, "entered_second")
-        await asyncio.wait_for(second, watchdog_timeout())
-        await asyncio.sleep(0)
-        assert budget.retained_bytes == one_delivery  # source + delayed string-ID copy
-        assert len(stdio_delivery.get().pending) == 1
-        resume_second.set()
-        await write.aclose()
-        stdin.stop.set()
-    await reads.invalidate("owned")
+    tasks = []
+    try:
+        async with owned_stdio_streams(stdin, stdout) as (_, write):
+            first = asyncio.create_task(produce(7, write))
+            tasks.append(first)
+            entered, resume = stdout.gate(7)
+            await await_signal(entered, "entered")
+            await asyncio.wait_for(first, watchdog_timeout())
+            await asyncio.sleep(0)  # producer task_done has run, stdout is still blocked
+            one_delivery = budget.retained_bytes
+            assert charge < one_delivery < 2 * charge
+            copy_charge = one_delivery - charge
+            second = asyncio.create_task(produce("7", write))
+            tasks.append(second)
+            for _ in range(200):
+                if budget.retained_bytes == charge + 2 * copy_charge:
+                    break
+                await asyncio.sleep(0.005)
+            assert budget.retained_bytes == charge + 2 * copy_charge
+            assert len(stdio_delivery.get().pending) == 2
+            refused = ResponseOwner()
+            assert not budget.reserve(refused, charge)
+            resume.set()
+            entered_second, resume_second = stdout.gate("7")
+            await await_signal(entered_second, "entered_second")
+            await asyncio.wait_for(second, watchdog_timeout())
+            await asyncio.sleep(0)
+            assert budget.retained_bytes == one_delivery  # source + delayed string-ID copy
+            assert len(stdio_delivery.get().pending) == 1
+            resume_second.set()
+            await write.aclose()
+            stdin.stop.set()
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await reads.invalidate("owned")
     assert budget.retained_bytes == 0
     assert [json.loads(line)["id"] for line in stdout.lines] == [7, "7"]
 
@@ -179,28 +193,42 @@ async def test_cancelled_producer_releases_only_before_handoff_and_disconnect_dr
                 await hold.wait()  # request task can be canceled after channel acceptance
 
             task = asyncio.create_task(producer())
-            await (entered.wait() if after_handoff else acquired.wait())
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            await asyncio.sleep(0)
-            assert bool(ledger) == after_handoff
-            observed.set()
-            await hold.wait()
+            try:
+                await await_signal(
+                    entered if after_handoff else acquired, "producer phase", producers=(task,)
+                )
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                await asyncio.sleep(0)
+                assert bool(ledger) == after_handoff
+                observed.set()
+                await hold.wait()
+            finally:
+                hold.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
     server = asyncio.create_task(serve())
-    await await_signal(acquired, "acquired")
-    if after_handoff:
-        await await_signal(entered, "entered")
-    await await_signal(observed, "observed")
-    for _ in range(100):
-        if (owner_ref and owner_ref[0].released) == (not after_handoff):
-            break
-        await asyncio.sleep(0.005)
-    assert bool(ledger) == after_handoff
-    server.cancel()  # owned stdio generation/blocked writer disconnect
-    with pytest.raises(asyncio.CancelledError):
-        await server
+    try:
+        await await_signal(acquired, "acquired", producers=(server,))
+        if after_handoff:
+            await await_signal(entered, "entered", producers=(server,))
+        await await_signal(observed, "observed", producers=(server,))
+        for _ in range(100):
+            if (owner_ref and owner_ref[0].released) == (not after_handoff):
+                break
+            await asyncio.sleep(0.005)
+        assert bool(ledger) == after_handoff
+        server.cancel()  # owned stdio generation/blocked writer disconnect
+        with pytest.raises(asyncio.CancelledError):
+            await server
+    finally:
+        hold.set()
+        for gate in stdout.resume.values():
+            gate.set()
+        server.cancel()
+        await asyncio.gather(server, return_exceptions=True)
     assert ledger == {}
     assert owner_ref[0].released
 
@@ -244,29 +272,37 @@ async def test_duplicate_sdk_error_flush_cannot_release_original_active_producer
             await write.send(SessionMessage(JSONRPCResponse(jsonrpc="2.0", id=7, result=result)))
 
         original = asyncio.create_task(first())
-        await ready.wait()
-        with pytest.raises(ValueError, match="already active"):
-            await guard.on_message(context(7), lambda _: asyncio.sleep(0, result={}))
-        # The installed dispatcher turns that failure into this same-ID error.
-        await write.send(
-            SessionMessage(
-                JSONRPCError(
-                    jsonrpc="2.0", id=7, error=ErrorData(code=-32603, message="Duplicate request")
+        try:
+            await await_signal(ready, "original producer ready", producers=(original,))
+            with pytest.raises(ValueError, match="already active"):
+                await guard.on_message(context(7), lambda _: asyncio.sleep(0, result={}))
+            # The installed dispatcher turns that failure into this same-ID error.
+            await write.send(
+                SessionMessage(
+                    JSONRPCError(
+                        jsonrpc="2.0",
+                        id=7,
+                        error=ErrorData(code=-32603, message="Duplicate request"),
+                    )
                 )
             )
-        )
 
-        async def flushed():
-            while not stdout.flushed:
-                await asyncio.sleep(0)
+            async def flushed():
+                while not stdout.flushed:
+                    await asyncio.sleep(0)
 
-        await asyncio.wait_for(flushed(), watchdog_timeout())
-        assert not original.done()
-        assert ledger == {"original": 100}
-        complete.set()
-        await original
-        await write.aclose()
-        stdin.stop.set()
+            await asyncio.wait_for(flushed(), watchdog_timeout())
+            assert not original.done()
+            assert ledger == {"original": 100}
+            complete.set()
+            await original
+            await write.aclose()
+            stdin.stop.set()
+        finally:
+            complete.set()
+            original.cancel()
+            await asyncio.gather(original, return_exceptions=True)
+
     assert ledger == {}
 
 
@@ -289,7 +325,7 @@ async def test_actual_sdk_writer_failure_releases_delivery(phase):
                 await fail.wait()
                 raise BrokenPipeError("owned reader disconnected")
 
-    with pytest.raises(BaseExceptionGroup):
+    with pytest.raises(BaseExceptionGroup) as failure:
         async with owned_stdio_streams(stdin, BrokenOutput()) as (_, write):
 
             async def producer():
@@ -305,12 +341,19 @@ async def test_actual_sdk_writer_failure_releases_delivery(phase):
                 )
 
             task = asyncio.create_task(producer())
-            await await_signal(entered, "entered")
-            await task
-            await asyncio.sleep(0)
-            assert ledger
-            fail.set()
-            await asyncio.Event().wait()  # SDK task group terminates this owned connection
+            try:
+                await await_signal(entered, "entered")
+                await task
+                await asyncio.sleep(0)
+                assert ledger
+                fail.set()
+                await await_signal(asyncio.Event(), "SDK writer failure teardown")
+            finally:
+                fail.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+    assert failure.value.subgroup(BrokenPipeError) is not None
+    assert failure.value.subgroup((AssertionError, TimeoutError)) is None
     assert ledger == {}
 
 
@@ -363,6 +406,8 @@ async def test_cancel_during_sdk_channel_send_retains_ambiguous_handoff_until_di
     stdin, stdout = IdleInput(), BlockedOutput("write")
     ready = asyncio.Event()
 
+    tasks = []
+
     async def serve():
         async with owned_stdio_streams(stdin, stdout) as (_, write):
 
@@ -379,15 +424,20 @@ async def test_cancel_during_sdk_channel_send_retains_ambiguous_handoff_until_di
                 )
 
             first = asyncio.create_task(produce("first"))
-            await stdout.gate("first")[0].wait()
+            tasks.append(first)
+            await await_signal(stdout.gate("first")[0], "first response writer entered")
             await first
             second = asyncio.create_task(produce("queued"))
-            while (
-                not stdio_delivery.get()
-                .pending.get((str, "queued"), SimpleNamespace(handed_off=False))
-                .handed_off
-            ):
-                await asyncio.sleep(0)
+            tasks.append(second)
+            await await_condition(
+                lambda: (
+                    stdio_delivery.get()
+                    .pending.get((str, "queued"), SimpleNamespace(handed_off=False))
+                    .handed_off
+                ),
+                "queued response handed off",
+                producers=(second,),
+            )
             assert not second.done()
             second.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -398,10 +448,18 @@ async def test_cancel_during_sdk_channel_send_retains_ambiguous_handoff_until_di
             await asyncio.Event().wait()
 
     server = asyncio.create_task(serve())
-    await await_signal(ready, "ready")
-    server.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await server
+    try:
+        await await_signal(ready, "queued response ready", producers=(server,))
+        server.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server
+    finally:
+        for gate in stdout.resume.values():
+            gate.set()
+        server.cancel()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(server, *tasks, return_exceptions=True)
     assert ledger == {}
 
 

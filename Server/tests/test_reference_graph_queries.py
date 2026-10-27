@@ -1,5 +1,6 @@
 """Disk-backed exploration keeps exact revision and scope boundaries."""
 
+from tests.lifecycle import FixtureProgress
 import json
 
 import pytest
@@ -37,7 +38,9 @@ def publish(store, owner, targets):
 
 def snapshot(queries, name="test", limit=2):
     cursor = None
+    progress = FixtureProgress(4 * 1200 + 32, "snapshot fixture")
     while True:
+        progress.step(cursor)
         result = queries.snapshot(name=name, limit=limit, cursor=cursor)
         cursor = result["next_cursor"]
         if not cursor:
@@ -55,7 +58,9 @@ def test_impact_preserves_cycles_multiple_routes_and_replayable_pages(graph):
     assert queries.impact("a", direction="outgoing", limit=1, cursor=cursor) == second
     rows = first["edges"] + second["edges"]
     cursor = second["next_cursor"]
+    progress = FixtureProgress(4 * 4 + 32, "cyclic impact fixture")
     while cursor:
+        progress.step(cursor)
         page = queries.impact("a", direction="outgoing", limit=1, cursor=cursor)
         rows.extend(page["edges"])
         cursor = page["next_cursor"]
@@ -73,7 +78,9 @@ def test_large_fanout_uses_continuations_and_no_total_result_cap(graph):
     store, queries = graph
     publish(store, "root", [f"child{i}" for i in range(1200)])
     cursor, total, pages = None, 0, 0
+    progress = FixtureProgress(4 * 1200 + 32, "fanout fixture")
     while True:
+        progress.step(cursor)
         result = queries.impact("root", direction="outgoing", limit=73, cursor=cursor)
         assert len(result["edges"]) <= 73
         total += len(result["edges"])
@@ -120,7 +127,9 @@ def test_snapshot_diff_is_paged_stable_and_keeps_manual_ids(graph):
     store.put_declaration("manual", "owner", Edge("after", "declared"), expected_version=1)
     after = snapshot(queries, "after")
     rows, cursor = [], None
+    progress = FixtureProgress(4 * 4 + 32, "diff fixture")
     while True:
+        progress.step(cursor)
         page = queries.diff(before, after, limit=1, cursor=cursor)
         rows.extend(page["changes"])
         cursor = page["next_cursor"]
@@ -191,7 +200,9 @@ def test_shortest_path_is_paged_and_distinguishes_unreachable_from_pending(graph
     publish(store, "longer", ["destination"])
     publish(store, "short", ["destination"])
     cursor, route = None, []
+    progress = FixtureProgress(4 * 5 + 32, "path fixture")
     while True:
+        progress.step(cursor)
         page = queries.path("a", "destination", direction="outgoing", limit=1, cursor=cursor)
         route.extend(page["edges"])
         cursor = page["next_cursor"]

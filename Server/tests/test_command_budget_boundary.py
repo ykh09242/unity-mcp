@@ -1,5 +1,6 @@
 """Characterize the request clock and detached evidence before moving their owner."""
 
+from tests.timing import await_signal
 import asyncio
 import dataclasses
 import pytest
@@ -80,7 +81,7 @@ async def test_context_is_task_local_and_restored_without_a_request():
 
     task = asyncio.create_task(child())
     try:
-        await entered.wait()
+        await await_signal(entered, "request budget installed", producers=(task,))
         assert budgets.capture_http_request_budget() is None
         budgets.extend_http_request_deadline(10000)
     finally:

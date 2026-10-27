@@ -1,5 +1,6 @@
 """Batch cache misses share settings reads while retaining independent dispatch."""
 
+from tests.timing import await_signal
 import asyncio
 import importlib
 from types import SimpleNamespace
@@ -83,14 +84,19 @@ async def test_invalidation_during_shared_read_does_not_publish_old_limit(batch,
     monkeypatch.setattr(batch, "send_with_unity_instance", send)
     ctx = context()
     old = asyncio.create_task(batch._get_max_commands_from_editor_state(ctx, ctx.instance))
-    await entered.wait()
-    batch.invalidate_cached_max_commands()
-    fresh = await batch._get_max_commands_from_editor_state(ctx, ctx.instance)
-    release.set()
-    assert await old == 1
-    assert fresh == 3
-    assert await batch._get_max_commands_from_editor_state(ctx, ctx.instance) == 3
-    assert calls == 2
+    try:
+        await await_signal(entered, "batch settings entered", producers=(old,))
+        batch.invalidate_cached_max_commands()
+        fresh = await batch._get_max_commands_from_editor_state(ctx, ctx.instance)
+        release.set()
+        assert await old == 1
+        assert fresh == 3
+        assert await batch._get_max_commands_from_editor_state(ctx, ctx.instance) == 3
+        assert calls == 2
+    finally:
+        release.set()
+        old.cancel()
+        await asyncio.gather(old, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -116,15 +122,21 @@ async def test_one_cancelled_batch_does_not_cancel_other_batch_settings(batch, m
         asyncio.create_task(batch.batch_execute(context(), [{"tool": "read_console"}]))
         for _ in range(2)
     ]
-    await entered.wait()
-    await asyncio.sleep(0.02)
-    tasks[0].cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await tasks[0]
-    assert not cancelled.is_set()
-    release.set()
-    assert (await tasks[1])["success"]
-    assert calls == 1
+    try:
+        await await_signal(entered, "batch settings entered", producers=tasks)
+        await asyncio.sleep(0.02)
+        tasks[0].cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await tasks[0]
+        assert not cancelled.is_set()
+        release.set()
+        assert (await tasks[1])["success"]
+        assert calls == 1
+    finally:
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -211,12 +223,21 @@ async def test_replacement_http_session_does_not_join_old_limit_read_or_cache(ba
     old = asyncio.create_task(
         batch._get_max_commands_from_editor_state(old_context, old_context.instance)
     )
-    await entered.wait()
-    assert await batch._get_max_commands_from_editor_state(new_context, new_context.instance) == 3
-    release.set()
-    assert await old == 1
-    assert await batch._get_max_commands_from_editor_state(new_context, new_context.instance) == 3
-    assert calls == 2
+    try:
+        await await_signal(entered, "batch settings entered", producers=(old,))
+        assert (
+            await batch._get_max_commands_from_editor_state(new_context, new_context.instance) == 3
+        )
+        release.set()
+        assert await old == 1
+        assert (
+            await batch._get_max_commands_from_editor_state(new_context, new_context.instance) == 3
+        )
+        assert calls == 2
+    finally:
+        release.set()
+        old.cancel()
+        await asyncio.gather(old, return_exceptions=True)
 
 
 @pytest.mark.asyncio

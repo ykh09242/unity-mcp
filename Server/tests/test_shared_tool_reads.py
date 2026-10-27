@@ -1,5 +1,6 @@
 """Lifecycle and capacity bounds for reads shared by batch and test-job callers."""
 
+from tests.timing import await_signal
 import asyncio
 
 import pytest
@@ -66,10 +67,14 @@ async def test_last_cancelled_waiter_cancels_and_drains_orphan_then_can_retry():
             return await read.fetch(fetch)
 
     waiter = asyncio.create_task(wait())
-    await started.wait()
-    waiter.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await waiter
+    try:
+        await await_signal(started, "shared fetch started", producers=(waiter,))
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+    finally:
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
     assert cancelled.is_set()
     assert reads._loops[asyncio.get_running_loop()] == {}
     async with reads.session("job") as fresh:
