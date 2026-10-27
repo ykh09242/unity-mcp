@@ -355,6 +355,8 @@ class Editor:
                 "has_more": after < len(self.events),
             }
         if action == "asset":
+            if "guid" in params:
+                return self.assets.get(params["guid"], {"present": False}).copy()
             return next(
                 (row.copy() for row in self.assets.values() if row["path"] == params["path"]),
                 {"present": False},

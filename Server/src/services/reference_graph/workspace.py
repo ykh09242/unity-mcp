@@ -92,11 +92,37 @@ class GraphWorkspace:
                 "CREATE TABLE IF NOT EXISTS graph_asset_paths(guid TEXT PRIMARY KEY,path TEXT NOT NULL,seen TEXT NOT NULL)"
             )
             connection.execute(
+                "CREATE INDEX IF NOT EXISTS graph_asset_paths_path ON graph_asset_paths(path,guid)"
+            )
+            connection.execute(
                 "INSERT OR IGNORE INTO graph_asset_paths SELECT guid,path,seen FROM graph_assets"
             )
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_blocked_keys(guid TEXT NOT NULL,scheme TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(guid,scheme,value))"
             )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS graph_external_paths(provider TEXT NOT NULL,owner TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(provider,owner))"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS graph_external_paths_owner ON graph_external_paths(owner)"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO graph_external_paths SELECT provider,owner,path FROM graph_external"
+            )
+            if connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_runtime_schema'"
+            ).fetchone():
+                from services.reference_graph.runtime import initialize_bindings
+
+                previous_runtime = connection.execute(
+                    "SELECT version FROM graph_runtime_schema"
+                ).fetchone()[0]
+                if previous_runtime not in (1, 2):
+                    raise ValueError("Unsupported runtime observation schema")
+                initialize_bindings(connection)
+                if previous_runtime < 2:
+                    connection.execute("UPDATE graph_admission SET ready=0 WHERE id=1")
+                    self.store._bump(connection)
 
     def mutations(self):
         """Receipt state belongs to the same user/Editor database as evidence."""
@@ -285,6 +311,15 @@ class GraphWorkspace:
     def ignore_status(self) -> dict:
         return self.state("ignore_status", {})
 
+    def delivery_fence(self) -> tuple:
+        """Bind a produced result to its graph and effective-admission generation."""
+        with self.store._connect() as connection:
+            return tuple(
+                connection.execute(
+                    "SELECT m.revision,a.revision,a.ready,COALESCE((SELECT json_extract(value,'$.version') FROM graph_state WHERE key='policy'),0),(SELECT value FROM graph_state WHERE key='ignore_key') FROM graph_meta m CROSS JOIN graph_admission a WHERE a.id=1"
+                ).fetchone()
+            )
+
     def ignore_current(self, editor: dict) -> bool:
         with self.store._connect() as connection:
             policy = self._state(connection, "policy", {})
@@ -346,7 +381,7 @@ class GraphWorkspace:
         )
         connection.execute("DELETE FROM graph_state WHERE key LIKE 'external_scan:%'")
 
-    def _refresh_admission(self, connection) -> None:
+    def _refresh_admission(self, connection, *, runtime: bool = False) -> None:
         admitted = self._admission(connection)
         external = list(
             connection.execute(
@@ -373,6 +408,16 @@ class GraphWorkspace:
             if not owner.startswith("external:") and path and not admitted(path)
         ]
         excluded.extend((row[0], row[1]) for row in external)
+        patterns = [
+            _pattern(pattern)
+            for pattern in self._state(connection, "policy", {"exclude": []})["exclude"]
+        ]
+        excluded_ids = {owner for owner, _ in excluded}
+        excluded.extend(
+            (owner, path)
+            for owner, path in connection.execute("SELECT owner,path FROM graph_external_paths")
+            if owner not in excluded_ids and any(pattern.fullmatch(path) for pattern in patterns)
+        )
         connection.executemany("INSERT INTO graph_excluded_nodes VALUES (?,?)", excluded)
         connection.execute(
             "INSERT OR IGNORE INTO graph_excluded_nodes SELECT e.owner,x.path FROM edges e JOIN graph_excluded_nodes x ON x.id=e.target WHERE e.provider LIKE 'runtime:%'"
@@ -381,6 +426,83 @@ class GraphWorkspace:
         connection.execute(
             "DELETE FROM edges WHERE provider<>'manual' AND provider NOT LIKE 'runtime:%' AND (owner IN (SELECT id FROM graph_excluded_nodes) OR target IN (SELECT id FROM graph_excluded_nodes))"
         )
+        if runtime:
+            self._refresh_runtime_admission(connection, admitted)
+
+    def _refresh_runtime_admission(self, connection, admitted) -> None:
+        if not connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_runtime_schema'"
+        ).fetchone():
+            return
+        from services.reference_graph.analysis import Catalog
+        from services.reference_graph.runtime import initialize_bindings, runtime_admitted
+
+        initialize_bindings(connection)
+        catalog = Catalog(self._catalog_rows(connection))
+        blocked_handles = {
+            (row["session"], row["handle"])
+            for row in connection.execute("SELECT * FROM graph_runtime_bindings")
+            if not runtime_admitted(dict(row), admitted, catalog)
+        }
+        connection.execute(
+            "CREATE TEMP TABLE runtime_admission_stage(id TEXT PRIMARY KEY,path TEXT NOT NULL)"
+        )
+        try:
+            cursor = connection.execute(
+                "SELECT e.owner,e.provider,e.payload,c.published,x.id AS excluded_target FROM edges e LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider LEFT JOIN graph_excluded_nodes x ON x.id=e.target WHERE e.provider LIKE 'runtime:%'"
+            )
+            while batch := cursor.fetchmany(256):
+                excluded = []
+                for row in batch:
+                    edge = json.loads(row["payload"])
+                    provenance = json.loads(row["published"] or "{}")
+                    evidence = json.loads(edge.get("evidence") or "{}")
+                    observation = {
+                        "owner_path": provenance.get("path", ""),
+                        "target_path": provenance.get("target_path", ""),
+                        "scheme": evidence.get("scheme", ""),
+                        "key": edge.get("key", ""),
+                    }
+                    if (
+                        not runtime_admitted(observation, admitted, catalog)
+                        or (row["provider"][8:], evidence.get("handle", "")) in blocked_handles
+                        or row["excluded_target"] is not None
+                    ):
+                        excluded.append((row["owner"], ""))
+                connection.executemany(
+                    "INSERT OR IGNORE INTO runtime_admission_stage VALUES (?,?)", excluded
+                )
+            old = "SELECT x.id FROM graph_excluded_nodes x JOIN observations o ON o.owner=x.id WHERE o.provider LIKE 'runtime:%'"
+            changed = (
+                connection.execute(
+                    "SELECT 1 FROM (SELECT id FROM runtime_admission_stage EXCEPT "
+                    + old
+                    + ") LIMIT 1"
+                ).fetchone()
+                or connection.execute(
+                    "SELECT 1 FROM ("
+                    + old
+                    + " EXCEPT SELECT id FROM runtime_admission_stage) LIMIT 1"
+                ).fetchone()
+            )
+            connection.execute(
+                "DELETE FROM graph_excluded_nodes WHERE id IN (SELECT owner FROM observations WHERE provider LIKE 'runtime:%')"
+            )
+            connection.execute(
+                "INSERT INTO graph_excluded_nodes SELECT * FROM runtime_admission_stage"
+            )
+            connection.execute(
+                "DELETE FROM nodes WHERE id IN (SELECT id FROM runtime_admission_stage)"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO nodes SELECT o.owner,COALESCE(json_extract(c.published,'$.path'),''),'runtime_observation',1 FROM observations o LEFT JOIN evidence_context c USING(owner,provider) WHERE o.provider LIKE 'runtime:%' AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=o.owner)"
+            )
+            if changed:
+                connection.execute(
+                    "UPDATE graph_admission SET revision=(SELECT revision+1 FROM graph_meta) WHERE id=1"
+                )
+        finally:
+            connection.execute("DROP TABLE runtime_admission_stage")
 
     def set_ignore_rules(self, worker: str, files: list[tuple[str, str]], status: dict) -> bool:
         """Commit verified native rules and retire every generated pre-policy publication."""
@@ -404,7 +526,7 @@ class GraphWorkspace:
     def finish_admission(self, worker: str) -> None:
         with self._write(worker) as connection:
             if not connection.execute("SELECT ready FROM graph_admission WHERE id=1").fetchone()[0]:
-                self._refresh_admission(connection)
+                self._refresh_admission(connection, runtime=True)
                 connection.execute("UPDATE graph_admission SET ready=1 WHERE id=1")
                 self.store._bump(connection)
 
@@ -470,6 +592,7 @@ class GraphWorkspace:
             )
             for table in ("graph_analysis", "graph_issues", "graph_external"):
                 connection.execute("DELETE FROM " + table + " WHERE provider=?", (provider,))
+            connection.execute("DELETE FROM graph_external_paths WHERE provider=?", (provider,))
             connection.execute(
                 "DELETE FROM graph_state WHERE key=?", ("external_scan:" + provider,)
             )
@@ -579,6 +702,9 @@ class GraphWorkspace:
             if changed:
                 self._invalidate(connection, changed)
             if catalog_changed:
+                connection.execute(
+                    "UPDATE graph_admission SET ready=0 WHERE id=1 AND EXISTS (SELECT 1 FROM sources WHERE provider LIKE 'runtime:%')"
+                )
                 self._set(connection, "analysis_dirty", True)
                 self._set(
                     connection,
@@ -614,7 +740,8 @@ class GraphWorkspace:
             removed = [
                 "asset:" + row[0]
                 for row in connection.execute(
-                    "SELECT guid FROM graph_assets WHERE seen<>?", (seen,)
+                    "SELECT guid FROM graph_assets WHERE seen<>? UNION SELECT guid FROM graph_asset_paths WHERE seen<>?",
+                    (seen, seen),
                 )
             ]
             self._invalidate(connection, removed)
@@ -626,6 +753,9 @@ class GraphWorkspace:
                 "DELETE FROM graph_blocked_keys WHERE guid NOT IN (SELECT guid FROM graph_asset_paths)"
             )
             if removed:
+                connection.execute(
+                    "UPDATE graph_admission SET ready=0 WHERE id=1 AND EXISTS (SELECT 1 FROM sources WHERE provider LIKE 'runtime:%')"
+                )
                 self._set(connection, "analysis_dirty", True)
                 self._set(
                     connection,
@@ -641,8 +771,8 @@ class GraphWorkspace:
     def remove_path(self, worker: str, path: str) -> None:
         with self._write(worker) as connection:
             rows = connection.execute(
-                "SELECT guid FROM graph_assets WHERE path=? OR substr(path,1,?)=?",
-                (path, len(path) + 1, path + "/"),
+                "SELECT guid FROM graph_assets WHERE path=? OR substr(path,1,?)=? UNION SELECT guid FROM graph_asset_paths WHERE path=? OR substr(path,1,?)=?",
+                (path, len(path) + 1, path + "/", path, len(path) + 1, path + "/"),
             ).fetchall()
             owners = ["asset:" + row[0] for row in rows]
             self._invalidate(connection, owners)
@@ -651,7 +781,16 @@ class GraphWorkspace:
             connection.executemany(
                 "DELETE FROM graph_assets WHERE guid=?", [(row[0],) for row in rows]
             )
+            connection.executemany(
+                "DELETE FROM graph_asset_paths WHERE guid=?", [(row[0],) for row in rows]
+            )
+            connection.executemany(
+                "DELETE FROM graph_blocked_keys WHERE guid=?", [(row[0],) for row in rows]
+            )
             if rows:
+                connection.execute(
+                    "UPDATE graph_admission SET ready=0 WHERE id=1 AND EXISTS (SELECT 1 FROM sources WHERE provider LIKE 'runtime:%')"
+                )
                 self._set(connection, "analysis_dirty", True)
                 self._set(
                     connection,
@@ -662,6 +801,17 @@ class GraphWorkspace:
                     "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider='code' AND state='ready'"
                 )
                 self.store._bump(connection)
+
+    def descendant_assets(self, path: str, after: tuple[str, str]) -> list[dict]:
+        """Page only known descendant identities for targeted folder-move reconciliation."""
+        with self.store._connect() as connection:
+            return [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT guid,path FROM graph_asset_paths WHERE path>=? AND path<? AND (path,guid)>(?,?) ORDER BY path,guid LIMIT 256",
+                    (path + "/", path + "0", *after),
+                )
+            ]
 
     def catalog(self) -> list[dict]:
         with self.store._connect() as connection:
@@ -1107,12 +1257,14 @@ class GraphWorkspace:
                 generation=generation,
             )
 
-    def external_inputs(self, provider: str) -> dict[str, dict]:
+    def external_inputs(self, provider: str, *, admission: bool = False) -> dict[str, dict]:
         with self.store._connect() as connection:
             return {
                 row["path"]: dict(row)
                 for row in connection.execute(
-                    "SELECT e.*,o.state,c.published AS provenance FROM graph_external e LEFT JOIN observations o USING(owner,provider) LEFT JOIN evidence_context c USING(owner,provider) WHERE e.provider=?",
+                    "SELECT p.provider,p.owner,p.path,e.fingerprint,e.stamp,e.analysis_key,e.seen,o.state,c.published AS provenance FROM graph_external_paths p LEFT JOIN graph_external e USING(owner,provider) LEFT JOIN observations o USING(owner,provider) LEFT JOIN evidence_context c USING(owner,provider) WHERE p.provider=?"
+                    if admission
+                    else "SELECT e.*,o.state,c.published AS provenance FROM graph_external e LEFT JOIN observations o USING(owner,provider) LEFT JOIN evidence_context c USING(owner,provider) WHERE e.provider=?",
                     (provider,),
                 )
             }
@@ -1184,7 +1336,7 @@ class GraphWorkspace:
             return [
                 dict(row)
                 for row in connection.execute(
-                    "SELECT e.owner,e.path,s.provider,s.enabled,s.config FROM json_each(?) r JOIN graph_external e ON e.owner=r.value JOIN sources s USING(provider)",
+                    "SELECT e.owner,e.path,s.provider,s.enabled,s.config FROM json_each(?) r JOIN graph_external_paths e ON e.owner=r.value JOIN sources s USING(provider)",
                     (_json(list(owners)),),
                 )
             ]
@@ -1193,6 +1345,15 @@ class GraphWorkspace:
         with self._write(worker) as connection:
             changed = False
             for owner, path in paths:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM graph_excluded_nodes WHERE id=? AND path=?", (owner, path)
+                    ).fetchone()
+                    and not connection.execute(
+                        "SELECT 1 FROM nodes WHERE id=?", (owner,)
+                    ).fetchone()
+                ):
+                    continue
                 self._delete(connection, owner)
                 connection.execute(
                     "INSERT OR REPLACE INTO graph_excluded_nodes VALUES (?,?)", (owner, path)
@@ -1208,27 +1369,27 @@ class GraphWorkspace:
     def catalog_snapshot(self, known_revision: int | None = None) -> tuple[int, list[dict] | None]:
         with self.store._connect() as connection:
             revision = self._state(connection, "catalog_revision", 0)
-            rows = (
-                None
-                if revision == known_revision
-                else [
-                    json.loads(row[0])
-                    for row in connection.execute("SELECT payload FROM graph_assets ORDER BY guid")
-                ]
-            )
-            if rows is not None:
-                blocked = {}
-                for guid, path in connection.execute(
-                    "SELECT guid,path FROM graph_asset_paths WHERE 'asset:'||guid IN (SELECT id FROM graph_excluded_nodes)"
-                ):
-                    blocked[guid] = {"guid": guid, "path": path, "_excluded": True, "keys": []}
-                for guid, scheme, value in connection.execute(
-                    "SELECT guid,scheme,value FROM graph_blocked_keys"
-                ):
-                    if guid in blocked:
-                        blocked[guid]["keys"].append({"scheme": scheme, "value": value})
-                rows.extend(blocked.values())
+            rows = None if revision == known_revision else self._catalog_rows(connection)
             return revision, rows
+
+    @staticmethod
+    def _catalog_rows(connection) -> list[dict]:
+        rows = [
+            json.loads(row[0])
+            for row in connection.execute("SELECT payload FROM graph_assets ORDER BY guid")
+        ]
+        blocked = {}
+        for guid, path in connection.execute(
+            "SELECT guid,path FROM graph_asset_paths WHERE 'asset:'||guid IN (SELECT id FROM graph_excluded_nodes)"
+        ):
+            blocked[guid] = {"guid": guid, "path": path, "_excluded": True, "keys": []}
+        for guid, scheme, value in connection.execute(
+            "SELECT guid,scheme,value FROM graph_blocked_keys"
+        ):
+            if guid in blocked:
+                blocked[guid]["keys"].append({"scheme": scheme, "value": value})
+        rows.extend(blocked.values())
+        return rows
 
     def key_admission(self):
         """Reuse a minimal key admission catalog across runtime pages."""
@@ -1330,6 +1491,11 @@ class GraphWorkspace:
 
     @staticmethod
     def _record_external(connection, rows: Iterable[tuple]) -> None:
+        rows = list(rows)
+        connection.executemany(
+            "INSERT INTO graph_external_paths VALUES (?,?,?) ON CONFLICT(provider,owner) DO UPDATE SET path=excluded.path",
+            ((row[0], row[1], row[2]) for row in rows),
+        )
         connection.executemany(
             "INSERT INTO graph_external VALUES (?,?,?,?,?,?,?) ON CONFLICT(provider,owner) DO UPDATE SET path=excluded.path,fingerprint=excluded.fingerprint,stamp=excluded.stamp,analysis_key=excluded.analysis_key,seen=excluded.seen",
             rows,

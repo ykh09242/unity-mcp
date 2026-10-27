@@ -451,7 +451,7 @@ class GraphStore:
     ) -> None:
         payload = _json(asdict(edge))
         connection.execute(
-            "INSERT OR REPLACE INTO edges SELECT ?,?,?,?,?,? WHERE ?='manual' OR NOT EXISTS (SELECT 1 FROM graph_excluded_nodes WHERE id=? OR id=?)",
+            "INSERT OR REPLACE INTO edges SELECT ?,?,?,?,?,? WHERE ?='manual' OR ? LIKE 'runtime:%' OR NOT EXISTS (SELECT 1 FROM graph_excluded_nodes WHERE id=? OR id=?)",
             (
                 identity or _hash((owner, provider, payload)),
                 owner,
@@ -459,6 +459,7 @@ class GraphStore:
                 edge.target,
                 edge.kind,
                 payload,
+                provider,
                 provider,
                 owner,
                 edge.target,

@@ -461,32 +461,84 @@ class Reconciler:
             )
             self._budget.admit_items(len(changes))
             catalog = False
+            admitted = await drained_thread(self.workspace.admission)
+            moved_roots = set()
+            pending_assets = []
+            blocked = False
+
+            async def flush_assets():
+                if pending_assets:
+                    await drained_thread(
+                        self.workspace.record_page,
+                        self.worker,
+                        pending_assets,
+                        self.progress,
+                        "event",
+                    )
+                    pending_assets.clear()
+
             for change in changes:
                 if change.get("kind") == "addressables_catalog":
                     catalog |= change["revision"] > self.progress.get("catalog_through", -1)
                     continue
                 path = change["path"]
-                if not await drained_thread(self.workspace.admitted, path):
-                    continue
+                if not admitted(path) and not blocked:
+                    await drained_thread(self.workspace.block_admission)
+                    blocked = True
                 if change["deleted"]:
-                    await drained_thread(self.workspace.remove_path, self.worker, path)
+                    await flush_assets()
+                    moved_roots.update(await self._remove_changed_path(path))
                 else:
                     asset = await self.collect("asset", path=path)
                     if asset.get("present"):
                         self._budget.admit_items(1)
-                        await drained_thread(
-                            self.workspace.record_page, self.worker, [asset], self.progress, "event"
-                        )
+                        pending_assets.append(asset)
                     else:
+                        await flush_assets()
                         # Folder moves/imports can affect descendants not listed individually.
-                        await drained_thread(self.workspace.remove_path, self.worker, path)
-                        catalog |= change["revision"] > self.progress.get("catalog_through", -1)
+                        if path not in moved_roots:
+                            if admitted(path):
+                                await drained_thread(self.workspace.remove_path, self.worker, path)
+                            if change["revision"] > self.progress.get("catalog_through", -1):
+                                await drained_thread(self.workspace.block_admission)
+                                catalog = True
+            await flush_assets()
             await self._phase("changes", after=following)
             if catalog:
                 await self._census(await self.collect("status"), force=False)
                 continue
             if not more:
                 return
+
+    async def _remove_changed_path(self, path: str) -> set[str]:
+        after = ("", "")
+        destination, ambiguous = None, False
+        while candidates := await drained_thread(self.workspace.descendant_assets, path, after):
+            # A folder-only move can omit child events. Resolve known GUIDs before
+            # deleting the old prefix, without a global inventory or content read.
+            await drained_thread(self.workspace.block_admission)
+            assets = []
+            for candidate in candidates:
+                asset = await self.collect("asset", guid=candidate["guid"])
+                if asset.get("present"):
+                    self._budget.admit_items(1)
+                    assets.append(asset)
+                    suffix = "/" + candidate["path"][len(path) + 1 :]
+                    if asset["path"].endswith(suffix):
+                        root = asset["path"][: -len(suffix)]
+                        if destination is None:
+                            destination = root
+                        elif destination != root:
+                            ambiguous = True
+                    else:
+                        ambiguous = True
+            if assets:
+                await drained_thread(
+                    self.workspace.record_page, self.worker, assets, self.progress, "event"
+                )
+            after = (candidates[-1]["path"], candidates[-1]["guid"])
+        await drained_thread(self.workspace.remove_path, self.worker, path)
+        return {destination} if destination and not ambiguous else set()
 
     async def _assets(self) -> None:
         await self._phase("collecting")
@@ -917,7 +969,7 @@ class Reconciler:
         )
         repository = adapter.repository_revision()
         provider, seen = source["provider"], uuid.uuid4().hex
-        previous = self.workspace.external_inputs(provider)
+        previous = self.workspace.external_inputs(provider, admission=True)
         analysis_key = _hash((ANALYSIS_VERSION, source["version"], rules, catalog_revision))
         failures = 0
         pending = []
@@ -926,7 +978,7 @@ class Reconciler:
             self._check_source(source, require_source)
             old = previous.pop(path, None)
             owner = provider + ":" + _hash(path)
-            fingerprint = old["fingerprint"] if old else "unavailable"
+            fingerprint = (old or {}).get("fingerprint") or "unavailable"
             stamp = ""
             recorded = False
             try:

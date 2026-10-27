@@ -12,6 +12,49 @@ from services.reference_graph.queries import GraphQueries
 from services.reference_graph.store import Edge, Observation, RevisionConflict, _json
 
 
+def initialize_bindings(connection) -> None:
+    """Migrate only minimal acquisition identities; event payloads remain immutable."""
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS graph_runtime_bindings(session TEXT NOT NULL,handle TEXT NOT NULL,scheme TEXT NOT NULL,key TEXT NOT NULL,owner_path TEXT NOT NULL,target_path TEXT NOT NULL,PRIMARY KEY(session,handle,scheme,key,owner_path,target_path))"
+    )
+    if connection.execute("SELECT version FROM graph_runtime_schema").fetchone()[0] < 2:
+        connection.execute(
+            "INSERT OR IGNORE INTO graph_runtime_bindings SELECT session,json_extract(payload,'$.handle'),COALESCE(json_extract(payload,'$.scheme'),''),COALESCE(json_extract(payload,'$.key'),''),COALESCE(json_extract(payload,'$.owner_path'),''),COALESCE(json_extract(payload,'$.target_path'),'') FROM graph_runtime_events WHERE json_extract(payload,'$.kind')='acquire' AND COALESCE(json_extract(payload,'$.handle'),'')<>''"
+        )
+        connection.execute("UPDATE graph_runtime_schema SET version=2")
+
+
+def blocked_bindings(connection, identity, handles, admission, catalog):
+    """Stream one indexed page lookup; retain only blocked handle IDs, not whole histories."""
+    result = set()
+    for row in connection.execute(
+        "SELECT b.* FROM graph_runtime_bindings b JOIN json_each(?) r ON b.handle=r.value WHERE b.session=?",
+        (_json(list(set(handles))), identity),
+    ):
+        if row["handle"] not in result and not runtime_admitted(dict(row), admission, catalog):
+            result.add(row["handle"])
+    return result
+
+
+def runtime_admitted(row, admission, catalog) -> bool:
+    """One current policy predicate for events, graph evidence and acquisition bindings."""
+    for name in ("owner_path", "target_path"):
+        path = row.get(name, "")
+        if path and (
+            not isinstance(path, str)
+            or not path.startswith(("Assets/", "Packages/"))
+            or "\\" in path
+            or any(not part or part.startswith(".") for part in path.split("/"))
+            or not admission(path)
+        ):
+            return False
+    return not (
+        row.get("key")
+        and catalog is not None
+        and catalog.resolve_detail(row.get("scheme", ""), row["key"])[1] == "excluded"
+    )
+
+
 class RuntimeObservations:
     def __init__(self, workspace):
         self.workspace, self.store = workspace, workspace.store
@@ -20,7 +63,7 @@ class RuntimeObservations:
                 "CREATE TABLE IF NOT EXISTS graph_runtime_schema(version INTEGER NOT NULL)"
             )
             row = connection.execute("SELECT version FROM graph_runtime_schema").fetchone()
-            if row is not None and row[0] != 1:
+            if row is not None and row[0] not in (1, 2):
                 raise ValueError("Unsupported runtime observation schema")
             if row is None:
                 for sql in (
@@ -30,6 +73,7 @@ class RuntimeObservations:
                 ):
                     connection.execute(sql)
                 connection.execute("INSERT INTO graph_runtime_schema VALUES (1)")
+            initialize_bindings(connection)
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_runtime_blocked_handles(session TEXT NOT NULL,handle TEXT NOT NULL,PRIMARY KEY(session,handle))"
             )
@@ -90,23 +134,7 @@ class RuntimeObservations:
 
     def admitted(self, row, admission=None, catalog=None):
         admission = admission or self.workspace.admission()
-        for key in ("owner_path", "target_path"):
-            path = row.get(key, "")
-            if path and (
-                not isinstance(path, str)
-                or not path.startswith(("Assets/", "Packages/"))
-                or "\\" in path
-                or any(not part or part.startswith(".") for part in path.split("/"))
-                or not admission(path)
-            ):
-                return False
-        if (
-            row.get("key")
-            and catalog is not None
-            and catalog.resolve_detail(row.get("scheme", ""), row["key"])[1] == "excluded"
-        ):
-            return False
-        return True
+        return runtime_admitted(row, admission, catalog)
 
     def ingest(self, identity, after, page):
         events = page.get("events")
@@ -138,6 +166,17 @@ class RuntimeObservations:
             accepted, sequence = session["accepted"], session["sequence"]
             admission = self.workspace._admission(connection)
             catalog = self.workspace.key_admission()
+            blocked = blocked_bindings(
+                connection,
+                identity,
+                (
+                    row.get("handle", "")
+                    for row in events
+                    if isinstance(row, dict) and isinstance(row.get("handle", ""), str)
+                ),
+                admission,
+                catalog,
+            )
             for row in events:
                 if (
                     not isinstance(row, dict)
@@ -180,6 +219,17 @@ class RuntimeObservations:
                     connection.execute(
                         "DELETE FROM graph_runtime_blocked_handles WHERE session=? AND handle=?",
                         (identity, handle),
+                    )
+                    connection.execute(
+                        "INSERT OR IGNORE INTO graph_runtime_bindings VALUES (?,?,?,?,?,?)",
+                        (
+                            identity,
+                            handle,
+                            row.get("scheme", ""),
+                            row.get("key", ""),
+                            row.get("owner_path", ""),
+                            row.get("target_path", ""),
+                        ),
                     )
                 inserted = connection.execute(
                     "INSERT OR IGNORE INTO graph_runtime_events VALUES (?,?,?)",
@@ -242,6 +292,11 @@ class RuntimeObservations:
                     (owner, provider),
                 )
                 self.store._publish_context(connection, owner, provider, generation)
+                if handle in blocked:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO graph_excluded_nodes VALUES (?,'')", (owner,)
+                    )
+                    connection.execute("DELETE FROM nodes WHERE id=?", (owner,))
             connection.execute(
                 "UPDATE graph_runtime_sessions SET state=?,offset=?,metadata=?,accepted=?,sequence=? WHERE id=?",
                 (
@@ -279,6 +334,8 @@ class RuntimeObservations:
         GraphQueries._page_size(limit)
         if type(after) is not int or after < 0:
             raise ValueError("Runtime event cursor must be nonnegative")
+        admission = self.workspace.admission()
+        catalog = self.workspace.key_admission()
         with self.store._connect() as connection:
             self._session(connection, identity)
             rows = [
@@ -288,10 +345,11 @@ class RuntimeObservations:
                     (identity, after, limit + 1),
                 )
             ]
-        admission = self.workspace.admission()
-        catalog = self.workspace.key_admission()
+            blocked = blocked_bindings(
+                connection, identity, (row.get("handle", "") for row in rows), admission, catalog
+            )
         for row in rows:
-            if not self.admitted(row, admission, catalog):
+            if not self.admitted(row, admission, catalog) or row.get("handle", "") in blocked:
                 raise RevisionConflict(
                     "Runtime observation is excluded by the current collection policy"
                 )
@@ -304,6 +362,8 @@ class RuntimeObservations:
         GraphQueries._page_size(limit)
         if not isinstance(after, str):
             raise ValueError("Handle cursor must be a string")
+        admission = self.workspace.admission()
+        catalog = self.workspace.key_admission()
         with self.store._connect() as connection:
             self._session(connection, identity)
             rows = [
@@ -313,9 +373,11 @@ class RuntimeObservations:
                     (identity, after, limit + 1),
                 )
             ]
-        admission = self.workspace.admission()
+            blocked = blocked_bindings(
+                connection, identity, (row["handle"] for row in rows), admission, catalog
+            )
         for row in rows:
-            if not self.admitted(row, admission):
+            if not self.admitted(row, admission, catalog) or row["handle"] in blocked:
                 raise RevisionConflict(
                     "Runtime handle is excluded by the current collection policy"
                 )
@@ -341,6 +403,7 @@ class RuntimeObservations:
                 "graph_runtime_events",
                 "graph_runtime_handles",
                 "graph_runtime_blocked_handles",
+                "graph_runtime_bindings",
             ):
                 connection.execute(f"DELETE FROM {table} WHERE session=?", (identity,))
             connection.execute("DELETE FROM graph_runtime_sessions WHERE id=?", (identity,))

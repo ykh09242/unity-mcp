@@ -670,6 +670,10 @@ class ReferenceGraphService:
         if not owners:
             return
         rows = workspace.external_nodes(owners)
+        if {row["owner"] for row in rows} != owners:
+            raise RevisionConflict(
+                "Manual endpoint admission is unavailable; synchronize its source"
+            )
         policy = workspace.policy()
         adapters = {}
         for row in rows:
@@ -929,6 +933,7 @@ class ReferenceGraphService:
                     "Current ignore rules are unavailable; graph admission is incomplete"
                 )
             ignore_verified = True
+        admission_fence = await drained_thread(workspace.delivery_fence) if protected else None
         if action in {"overview", "export_config", "cleanup", "retry"}:
             from services.reference_graph import operations
 
@@ -1227,12 +1232,23 @@ class ReferenceGraphService:
                 "Runtime collection policy changed before delivery; restart the page"
             )
         if protected:
+            produced_fence = await drained_thread(workspace.delivery_fence)
+            if admission_fence[1:] != produced_fence[1:] or (
+                "revision" in data and data["revision"] != produced_fence[0]
+            ):
+                raise RevisionConflict(
+                    "Graph admission changed while producing the result; restart the request"
+                )
             if fallback and not await entry.engine.validate_ignore():
                 raise RevisionConflict("Ignore rules changed before delivery; retry collection")
             latest = await entry.collect("status")
             if not await drained_thread(workspace.ignore_current, latest):
                 await drained_thread(workspace.block_admission)
                 raise RevisionConflict("Ignore rules changed before delivery; retry collection")
+            if await drained_thread(workspace.delivery_fence) != produced_fence:
+                raise RevisionConflict(
+                    "Graph admission changed before delivery; restart the request"
+                )
         return {
             "success": True,
             "data": {
