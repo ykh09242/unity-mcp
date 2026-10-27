@@ -54,7 +54,7 @@
 .scenario-results-tools { flex-shrink: 0; min-width: 0; }
 .scenario-results-tools > .unity-foldout__content { flex-grow: 1; flex-shrink: 1; min-height: 0; }
 .scenario-results-evidence-open .scenario-current-report { display: none; }
-.scenario-results-evidence-open .scenario-results-tools { flex-grow: 1; min-height: 0; }
+.scenario-results-evidence-open .scenario-results-tools { flex-grow: 1; flex-shrink: 1; min-height: 0; }
 .scenario-evidence-scroll { flex-grow: 1; flex-shrink: 1; min-height: 0; min-width: 0; }
 .scenario-short .scenario-heading, .scenario-short .scenario-intro, .scenario-short .scenario-section-title { display: none; }
 .scenario-short.play-scenarios { padding: 4px; }
