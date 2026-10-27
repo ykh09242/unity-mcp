@@ -124,6 +124,49 @@ async def write():
 
 
 @pytest.mark.asyncio
+async def test_idle_closed_socket_reconnects_before_operation_generation_is_captured(
+    peer, monkeypatch
+):
+    pool = uc.UnityConnectionPool()
+    connection = peer.connection
+    pool._connections[connection.instance_id] = connection
+    target = SimpleNamespace(id=connection.instance_id, port=connection.port)
+    monkeypatch.setattr(pool, "resolve_instance", lambda _: target)
+    monkeypatch.setattr(uc, "_unity_connection_pool", pool)
+    monkeypatch.setattr(uc, "get_unity_connection", pool.get_connection)
+    receive = peer.socket.recv
+    reconnected = []
+
+    def recv(size, flags=0):
+        if flags and not reconnected:
+            return b""  # A peer FIN already exists before this public invocation.
+        return receive(size, flags)
+
+    def connect(*args, **kwargs):
+        reconnected.append(True)
+        connection.sock = peer.socket
+        connection.authenticated_session = StdioAuthenticatedSession(
+            "replacement-transport",
+            "replacement-session",
+            frozenset({"native_arbitration_v1"}),
+            GENERATION,
+        )
+        connection.session_generation = connection.authenticated_session.session_generation
+        return True
+
+    monkeypatch.setattr(peer.socket, "recv", recv)
+    monkeypatch.setattr(connection, "connect", connect)
+    peer.socket.allow_write = True
+
+    result = await write()
+
+    assert result == {"success": True}
+    assert len(reconnected) == 1
+    assert [item["type"] for item in peer.socket.commands] == ["manage_scene"]
+    assert scheduler().snapshot()["instances"] == 0
+
+
+@pytest.mark.asyncio
 async def test_not_started_wait_releases_same_connection_for_control(peer):
     pending = asyncio.create_task(write())
     await await_signal(peer.rejected, "native pre-handler rejection")

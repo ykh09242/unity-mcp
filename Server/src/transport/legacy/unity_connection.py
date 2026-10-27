@@ -1466,6 +1466,21 @@ class UnityConnectionPool:
                     with conn._io_lock:
                         conn.disconnect()
                         conn.port = target.port
+                # Discard an already-closed idle socket before callers capture its
+                # operation generation. Otherwise the first send discovers the FIN
+                # and incorrectly refuses this new invocation as a changed target.
+                # Never wait for an in-flight command here: its captured generation
+                # must remain fenced until the existing wire owner has settled.
+                if conn._io_lock.acquire(blocking=False):
+                    try:
+                        conn._ensure_live_connection()
+                        if not conn.sock and not conn.connect():
+                            raise ConnectionError(
+                                f"Failed to reconnect to Unity instance '{target.id}' "
+                                f"on port {target.port}. Ensure the Unity Editor is running."
+                            )
+                    finally:
+                        conn._io_lock.release()
                 logger.debug(f"Reusing existing connection to: {target.id}")
 
             self._last_used[target.id] = now
