@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Helpers;
@@ -70,11 +71,57 @@ namespace MCPForUnity.Editor.Tools.Addressables
             Field(item, "StreamedSize", typeof(ulong));
         }
 
+        internal static bool UsesContentDirectories(Type layout)
+        {
+            Type group = Nested(layout, "Group");
+            const BindingFlags fields = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+            if (
+                layout.GetField("ContentDirectories", fields) == null
+                && layout.GetNestedType("ContentDirectory", BindingFlags.Public | BindingFlags.NonPublic) == null
+                && group.GetField("ContentDirectoryName", fields) == null
+            )
+                return false;
+            // An optional extension is compatible only when its entire consumed schema is exact.
+            RequireModernSchema(layout);
+            return true;
+        }
+
+        internal static void RequireModernSchema(Type layout)
+        {
+            ListField(layout, "ContentDirectories", Nested(layout, "ContentDirectory"));
+            Field(Nested(layout, "Group"), "ContentDirectoryName", typeof(string));
+        }
+
+        internal static void RequireSupportedReportShape(JObject report, bool modern)
+        {
+            if (!(report["DuplicatedAssets"] is JArray) || !(report["Groups"] is JArray))
+                AddressablesState.Fail("addressables_layout_invalid", "Required native layout schema is missing.");
+            JToken directories = report["ContentDirectories"];
+            if ((modern || directories != null) && (!(directories is JArray items) || items.Count != 0))
+                AddressablesState.Fail(
+                    "addressables_layout_schema_unsupported",
+                    "Content Directory layout analysis is unsupported; only an explicit empty ContentDirectories array is compatible."
+                );
+            // SerializeReference can place Group data in the references table.
+            // Scan the already bounded JSON tree without materializing another copy.
+            foreach (JProperty property in report.Descendants().OfType<JProperty>())
+                if (
+                    property.Name == "ContentDirectoryName"
+                    && property.Value.Type != JTokenType.Null
+                    && (property.Value.Type != JTokenType.String || property.Value.Value<string>().Length != 0)
+                )
+                    AddressablesState.Fail(
+                        "addressables_layout_schema_unsupported",
+                        "Content Directory group coverage is unsupported; ContentDirectoryName must be null or empty before legacy duplication analysis."
+                    );
+        }
+
         internal static object Read(JObject request)
         {
             AddressablesState.RequirePackage(out Type settingsType, out string version);
             Type layoutType = settingsType.Assembly.GetType("UnityEditor.AddressableAssets.Build.Layout.BuildLayout");
             RequireSchema(layoutType);
+            bool modern = UsesContentDirectories(layoutType);
             string relative = AddressablesState.Text(request["layout_path"], "layout_path");
             if (
                 (
@@ -113,7 +160,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
             using (var text = new StringReader(json))
             using (var reader = new JsonTextReader(text) { MaxDepth = 64 })
                 header = JObject.Load(reader);
-            // Both supported families' BuildLayoutGenerationTask declares package identity and version.
+            // Audited families' BuildLayoutGenerationTask declares package identity and version.
             // Do not substitute the installed package version for missing or different report metadata.
             JToken declaration = header["PackageVersion"];
             if (declaration?.Type != JTokenType.String || declaration.Value<string>() != "com.unity.addressables: " + version)
@@ -121,10 +168,9 @@ namespace MCPForUnity.Editor.Tools.Addressables
                     "addressables_layout_version_unsupported",
                     "The native report must declare com.unity.addressables: " + version + ", matching the installed package."
                 );
-            if (!(header["DuplicatedAssets"] is JArray) || !(header["Groups"] is JArray))
-                AddressablesState.Fail("addressables_layout_invalid", "Required native layout schema is missing.");
+            RequireSupportedReportShape(header, modern);
             object layout = Activator.CreateInstance(layoutType);
-            // Both families' BuildLayout.ReadFull use this native deserializer; apply it to the bounded immutable bytes.
+            // Audited families' BuildLayout.ReadFull use this native deserializer; apply it to the bounded immutable bytes.
             // Avoid reopening a changing report or writing a temporary file during this read action.
             EditorJsonUtility.FromJsonOverwrite(json, layout);
             string revision;
