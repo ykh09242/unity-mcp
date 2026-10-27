@@ -54,7 +54,7 @@ Headless prefab editing and scene-instance editing are different. Inspect the pr
 
 For scene-instance overrides, call `list_overrides` with the resolved instance target. Select the returned `overrideId` values for `revert_overrides` or `apply_overrides`; apply also requires the listed `prefab_path`. Scope follows the nearest nested instance root. Re-list after structural edits because IDs are editor-session identifiers. Do not infer apply-all from an empty selection; inspect rejected compound properties and structural dependencies before retrying.
 
-For Addressables, inspect the installed package and the requested action's capabilities. Stable 1.28+ in the 1.x family and stable 2.x are eligible when their required API and Undo capabilities match; this is not a promise that every action or layout format is supported. Use the returned capability reason rather than upgrading the project's package to bypass a refusal.
+For Addressables, inspect the installed package and the requested action's capabilities. Stable 1.28+ in the 1.x family, stable 2.x, stable 3.1+ in the 3.x family and stable 4.1.1+ in the 4.x family are eligible when their exact APIs, stored profile schema and Undo capabilities match. This is conditional source compatibility, not a claim that every version has passed native tests. Content Directory layout coverage is unsupported: reports must have no content directories or nonempty group ContentDirectoryName values, including managed-reference data. Use the returned capability reason rather than upgrading the project's package to bypass a refusal.
 
 ## UI Creation Workflows
 

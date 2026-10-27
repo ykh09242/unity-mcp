@@ -26,7 +26,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
 
     internal static class AddressablesCompatibility
     {
-        // Stable 1.28+ and 2.x share the adapter's stored profile schema and public authoring APIs.
+        // Audited stable families retain the stored profile schema and public authoring APIs.
         // Membership permits probing; it does not replace the per-action API and stored-schema checks.
         internal static bool SupportsVersion(string version)
         {
@@ -43,8 +43,16 @@ namespace MCPForUnity.Editor.Tools.Addressables
                     || !int.TryParse(parts[i], NumberStyles.None, CultureInfo.InvariantCulture, out numbers[i])
                 )
                     return false;
-            return (numbers[0] == 1 && numbers[1] >= 28) || numbers[0] == 2;
+            return (numbers[0] == 1 && numbers[1] >= 28)
+                || numbers[0] == 2
+                || (numbers[0] == 3 && numbers[1] >= 1)
+                || (numbers[0] == 4 && (numbers[1] > 1 || (numbers[1] == 1 && numbers[2] >= 1)));
         }
+
+        internal static bool RequiresLookupCacheReset(string version) => SupportsVersion(version) && !version.StartsWith("2.", StringComparison.Ordinal);
+
+        internal static bool UsesContentDirectories(string version) =>
+            SupportsVersion(version) && (version.StartsWith("3.", StringComparison.Ordinal) || version.StartsWith("4.", StringComparison.Ordinal));
 
         internal static MethodInfo RequireMethod(object target, string action, string name, Type result, params Type[] parameters)
         {
@@ -226,7 +234,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
             if (!AddressablesCompatibility.SupportsVersion(version))
                 Fail(
                     "addressables_version_unsupported",
-                    "This adapter requires stable Addressables 1.28+ or 2.x, compatible action APIs and stored profile schema 1."
+                    "This adapter requires stable Addressables 1.28+, 2.x, 3.1+ or 4.1.1+, compatible action APIs and stored profile schema 1."
                 );
         }
 

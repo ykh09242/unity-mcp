@@ -192,7 +192,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
 
         internal static void Prepare(UnityEngine.Object settings, string version, string action)
         {
-            if (!version.StartsWith("1.", StringComparison.Ordinal))
+            if (!AddressablesCompatibility.RequiresLookupCacheReset(version))
                 return;
             Type type = settings.GetType();
             MethodInfo clear = type.GetMethod("ClearFindAssetEntryCache", BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
@@ -207,7 +207,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
             )
                 AddressablesState.Fail(
                     "addressables_api_unsupported",
-                    action + " requires the Addressables 1.x native transient lookup-cache reset API for Undo/Redo."
+                    action + " requires the Addressables 1.x, 3.x or 4.x native transient lookup-cache reset API for Undo/Redo."
                 );
             Prune();
             if (Records.Any(record => record.Settings.TryGetTarget(out UnityEngine.Object owner) && owner == settings))
@@ -224,7 +224,7 @@ namespace MCPForUnity.Editor.Tools.Addressables
                 if (record.Settings.TryGetTarget(out UnityEngine.Object owner) && owner != null)
                     try
                     {
-                        // 1.x restores group maps but can retain cached entries referring to their pre-Undo instances.
+                        // Affected families restore group maps but can retain entries referring to their pre-Undo instances.
                         // Its native hook clears only this nonserialized lookup cache; no asset or hash is rewritten.
                         record.Clear.Invoke(owner, null);
                     }

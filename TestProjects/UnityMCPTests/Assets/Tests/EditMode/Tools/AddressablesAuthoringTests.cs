@@ -26,6 +26,19 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("2.0.0", true)]
         [TestCase("2.7.6", true)]
         [TestCase("2.8.0", true)]
+        [TestCase("3.1.0", true)]
+        [TestCase("3.2.0", true)]
+        [TestCase("4.1.1", true)]
+        [TestCase("4.1.2", true)]
+        [TestCase("4.2.0", true)]
+        [TestCase("3.0.9", false)]
+        [TestCase("4.0.9", false)]
+        [TestCase("4.1.0", false)]
+        [TestCase("5.0.0", false)]
+        [TestCase("3.1.0-pre.1", false)]
+        [TestCase("4.1.1+metadata", false)]
+        [TestCase("3.01.0", false)]
+        [TestCase("4.1.01", false)]
         [TestCase("1.27.0", false)]
         [TestCase("3.0.0", false)]
         [TestCase("2.7.6-pre.1", false)]
@@ -37,6 +50,82 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("2.7.2147483648", false)]
         [TestCase(null, false)]
         public void StableFamiliesRequireStrictPackageVersions(string version, bool expected) => Assert.AreEqual(expected, Policy("SupportsVersion", version));
+
+        [TestCase("1.28.2", true)]
+        [TestCase("2.7.6", false)]
+        [TestCase("3.1.0", true)]
+        [TestCase("4.1.1", true)]
+        [TestCase("3.0.0", false)]
+        [TestCase("4.1.0", false)]
+        [TestCase("5.0.0", false)]
+        public void LookupCacheResetIsRequiredOnlyForCompatibleAffectedFamilies(string version, bool expected) =>
+            Assert.AreEqual(expected, Policy("RequiresLookupCacheReset", version));
+
+        private static void ReportShape(JObject report, bool modern)
+        {
+            Type type = Type.GetType("MCPForUnity.Editor.Tools.Addressables.AddressablesLayout, MCPForUnity.Editor", true);
+            type.GetMethod("RequireSupportedReportShape", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { report, modern });
+        }
+
+        [TestCase(null, false, true)]
+        [TestCase(null, true, false)]
+        [TestCase("[]", true, true)]
+        [TestCase("[]", false, true)]
+        [TestCase("null", true, false)]
+        [TestCase("{}", true, false)]
+        [TestCase("[{}]", true, false)]
+        [TestCase("[{}]", false, false)]
+        [TestCase("\"unsupported\"", true, false)]
+        public void ContentDirectoryReportShapeRequiresEmptySupportedEvidence(string contentDirectories, bool modern, bool accepted)
+        {
+            var report = new JObject { ["DuplicatedAssets"] = new JArray(), ["Groups"] = new JArray() };
+            if (contentDirectories != null)
+                report["ContentDirectories"] = JToken.Parse(contentDirectories);
+            if (accepted)
+                Assert.DoesNotThrow(() => ReportShape(report, modern));
+            else
+            {
+                var error = Assert.Throws<TargetInvocationException>(() => ReportShape(report, modern));
+                Assert.AreEqual(
+                    "addressables_layout_schema_unsupported",
+                    error.InnerException.GetType().GetField("Code", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(error.InnerException)
+                );
+            }
+        }
+
+        [TestCase(null, true)]
+        [TestCase("\"\"", true)]
+        [TestCase("\"owned-directory\"", false)]
+        [TestCase("1", false)]
+        [TestCase("{}", false)]
+        [TestCase("false", false)]
+        public void GroupContentDirectoryCoverageIsCheckedInlineAndInManagedReferences(string value, bool accepted)
+        {
+            foreach (bool referenced in new[] { false, true })
+            {
+                var group = new JObject { ["ContentDirectoryName"] = value == null ? JValue.CreateNull() : JToken.Parse(value) };
+                var report = new JObject
+                {
+                    ["DuplicatedAssets"] = new JArray(),
+                    ["Groups"] = new JArray(),
+                    ["ContentDirectories"] = new JArray(),
+                };
+                if (referenced)
+                    report["references"] = new JObject { ["RefIds"] = new JArray(new JObject { ["data"] = group }) };
+                else
+                    ((JArray)report["Groups"]).Add(group);
+                if (accepted)
+                    Assert.DoesNotThrow(() => ReportShape(report, true));
+                else
+                {
+                    var error = Assert.Throws<TargetInvocationException>(() => ReportShape(report, true));
+                    Assert.AreEqual(
+                        "addressables_layout_schema_unsupported",
+                        error.InnerException.GetType().GetField("Code", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(error.InnerException)
+                    );
+                }
+            }
+        }
 
         private sealed class EditApi
         {
@@ -121,6 +210,11 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.Ignore("A supported real Addressables package is required.");
             Type adapter = Type.GetType("MCPForUnity.Editor.Tools.Addressables.AddressablesLayout, MCPForUnity.Editor", true);
             Assert.DoesNotThrow(() => adapter.GetMethod("RequireSchema", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { layout }));
+            string version = UnityEditor.PackageManager.PackageInfo.FindForAssembly(layout.Assembly)?.version;
+            if ((bool)Policy("UsesContentDirectories", version))
+                Assert.DoesNotThrow(() =>
+                    adapter.GetMethod("RequireModernSchema", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { layout })
+                );
         }
     }
 
@@ -351,6 +445,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsTrue(response.Value<bool>("success"), response.ToString());
                 Assert.AreEqual(version, response["data"].Value<string>("package_version"));
                 Assert.AreEqual(0, response["data"].Value<int>("total"));
+                Assert.IsTrue(response["data"].Value<bool>("analysis_complete"), "An empty compatible native report has complete legacy duplication evidence.");
                 Assert.IsFalse(response["data"].Value<bool>("content_build_started"));
                 Assert.AreEqual(json, File.ReadAllText(path), "Existing reports are read-only.");
 
@@ -361,6 +456,75 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
                 Assert.AreEqual("addressables_layout_version_unsupported", response.Value<string>("code"));
                 Assert.AreEqual(json, File.ReadAllText(path));
+            }
+            finally
+            {
+                File.Delete(path);
+                Directory.Delete(directory);
+            }
+        }
+
+        [Test]
+        public void ContentDirectoryReportsRefuseWithoutCompleteCoverageAndPreserveStoredBytes()
+        {
+            string version = UnityEditor.PackageManager.PackageInfo.FindForAssembly(settingsType.Assembly).version;
+            Type layoutType = settingsType.Assembly.GetType("UnityEditor.AddressableAssets.Build.Layout.BuildLayout", true);
+            object layout = Activator.CreateInstance(layoutType);
+            layoutType.GetField("PackageVersion").SetValue(layout, "com.unity.addressables: " + version);
+            layoutType.GetField("BuildTarget").SetValue(layout, EditorUserBuildSettings.activeBuildTarget);
+            layoutType.GetField("UnityVersion").SetValue(layout, Application.unityVersion);
+            JObject baseline = JObject.Parse(EditorJsonUtility.ToJson(layout));
+            var reports = new List<JObject>();
+            foreach (JToken value in new JToken[] { new JArray(new JObject()), new JObject(), new JValue("unsupported"), JValue.CreateNull() })
+            {
+                var report = (JObject)baseline.DeepClone();
+                report["ContentDirectories"] = value;
+                reports.Add(report);
+            }
+            foreach (bool referenced in new[] { false, true })
+            foreach (JToken value in new JToken[] { new JValue("owned-directory"), new JValue(1), new JObject() })
+            {
+                var report = (JObject)baseline.DeepClone();
+                report["ContentDirectories"] = new JArray();
+                var group = new JObject { ["ContentDirectoryName"] = value };
+                if (referenced)
+                    report["references"] = new JObject { ["RefIds"] = new JArray(new JObject { ["data"] = group }) };
+                else
+                    report["Groups"] = new JArray(group);
+                reports.Add(report);
+            }
+            if (version.StartsWith("3.", StringComparison.Ordinal) || version.StartsWith("4.", StringComparison.Ordinal))
+            {
+                var missing = (JObject)baseline.DeepClone();
+                missing.Remove("ContentDirectories");
+                reports.Add(missing);
+            }
+            string directory = "Library/MCPForUnity/Addressables/compat-content-" + Guid.NewGuid().ToString("N");
+            string path = directory + "/layout.json";
+            Assert.IsFalse(Directory.Exists(directory));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                Type handler = Type.GetType("MCPForUnity.Editor.Tools.Addressables.ManageAddressables, MCPForUnity.Editor", true);
+                foreach (JObject report in reports)
+                {
+                    File.WriteAllText(path, report.ToString());
+                    byte[] before = File.ReadAllBytes(path);
+                    JObject response = JObject.FromObject(
+                        handler
+                            .GetMethod("HandleCommand")
+                            .Invoke(
+                                null,
+                                new object[]
+                                {
+                                    new JObject { ["action"] = "analyze_layout", ["layout_path"] = path },
+                                }
+                            )
+                    );
+                    Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                    Assert.AreEqual("addressables_layout_schema_unsupported", response.Value<string>("code"), response.ToString());
+                    CollectionAssert.AreEqual(before, File.ReadAllBytes(path), "Unsupported reports must remain byte-for-byte unchanged.");
+                }
             }
             finally
             {
