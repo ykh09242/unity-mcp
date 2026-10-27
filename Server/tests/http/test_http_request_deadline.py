@@ -41,10 +41,12 @@ def request_server():
     from services.tools.blender_bridge import blender_bridge
     from services.tools.manage_play_scenario import manage_play_scenario
     from services.tools.manage_build import manage_build
+    from services.tools.get_compile_job import get_compile_job
 
     server.tool(blender_bridge)
     server.tool(manage_play_scenario)
     server.tool(manage_build)
+    server.tool(get_compile_job)
 
     @server.tool
     async def request_probe(ctx: Context) -> dict:
@@ -62,6 +64,272 @@ async def answer(hub, websocket, message):
     await hub.endpoint._handle_command_result(
         websocket, CommandResultMessage(id=message["id"], result={"success": True})
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["legacy", "2026-07-28"])
+@pytest.mark.parametrize("other_connected", [False, True])
+@pytest.mark.parametrize("selector", ["Main@99a6a4da94b65b84", "99a6a4da94b65b84"])
+async def test_sdk_explicit_compile_poll_recovers_registry_gap(
+    command_hub, monkeypatch, protocol, other_connected, selector
+):
+    from tests.test_compile_job_contracts import native_job
+
+    target_hash = "99a6a4da94b65b84"
+    compile_id = "a" * 32
+    expected = native_job(compile_id)
+    if not other_connected:
+        await command_hub.registry.unregister("session")
+    waiting = asyncio.Event()
+    wait_for_change = command_hub.registry.wait_for_change
+
+    async def observe_wait(changed, timeout):
+        waiting.set()
+        return await wait_for_change(changed, timeout)
+
+    monkeypatch.setattr(command_hub.registry, "wait_for_change", observe_wait)
+    monkeypatch.setenv("UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", "30")
+
+    async def compile_result(message):
+        command_hub.sent.append(message)
+        assert message["name"] == "get_compile_job"
+        assert message["params"] == {"compile_id": compile_id}
+        await command_hub.endpoint._handle_command_result(
+            command_hub.websocket,
+            CommandResultMessage(id=message["id"], result={"success": True, "data": expected}),
+        )
+
+    command_hub.websocket.send_json = compile_result
+    async with Client(request_server(), mode=protocol) as client:
+        task = asyncio.create_task(
+            client.call_tool(
+                "get_compile_job", {"compile_id": compile_id, "unity_instance": selector}
+            )
+        )
+        try:
+            await await_signal(waiting, "explicit target reconnect wait", producers=(task,))
+            assert command_hub.sent == []
+            # A different project's presence must never redirect the compile observation.
+            await command_hub.registry.register("reconnected", "Main", target_hash, "6000")
+            command_hub.websocket.state.plugin_session_id = "reconnected"
+            PluginHub._connections["reconnected"] = command_hub.websocket
+            result = await await_completion(task, "compile poll after reconnect")
+            assert result.structured_content["success"] is True
+            assert result.structured_content["data"] == expected
+            assert len(command_hub.sent) == 1
+            assert PluginHub._pending == {}
+        finally:
+            if not task.done():
+                task.cancel()
+            await await_completion(
+                asyncio.gather(task, return_exceptions=True), "compile poll teardown"
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["legacy", "2026-07-28"])
+@pytest.mark.parametrize("stop", ["deadline", "cancel"])
+async def test_sdk_explicit_reconnect_stops_before_dispatch(
+    command_hub, monkeypatch, protocol, stop
+):
+    await command_hub.registry.unregister("session")
+    monkeypatch.setenv("UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", "30")
+    waiting, stopped = asyncio.Event(), asyncio.Event()
+    wait_for_change = command_hub.registry.wait_for_change
+    budgets = []
+
+    async def observe_wait(changed, timeout):
+        budgets.append(http_request_budget.get())
+        waiting.set()
+        try:
+            return await wait_for_change(changed, timeout)
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(command_hub.registry, "wait_for_change", observe_wait)
+    async with Client(request_server(), mode=protocol) as client:
+        task = asyncio.create_task(
+            client.call_tool(
+                "get_compile_job",
+                {"compile_id": "a" * 32, "unity_instance": "Main@99a6a4da94b65b84"},
+                raise_on_error=False,
+            )
+        )
+        try:
+            await await_signal(waiting, "explicit reconnect wait", producers=(task,))
+            assert len(budgets) == 1
+            if stop == "deadline":
+                budgets[0].scope.reschedule(asyncio.get_running_loop().time())
+                result = await await_completion(task, "expired explicit selection")
+                assert result.is_error
+                assert result.structured_content["data"]["reason"] == "command_deadline_exceeded"
+                assert result.structured_content["data"]["phase"] == "session_selection"
+                assert result.structured_content["hint"] == "retry"
+            else:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            await await_signal(stopped, "reconnect wait stopped")
+            assert command_hub.sent == []
+            assert PluginHub._pending == {}
+        finally:
+            if not task.done():
+                task.cancel()
+            await await_completion(
+                asyncio.gather(task, return_exceptions=True), "explicit selection teardown"
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selector,error",
+    [
+        ("WrongName@99a6a4da94b65b84", "not found"),
+        ("abc", "No running Unity instance"),
+        ("99a6", "ambiguous"),
+    ],
+)
+async def test_sdk_explicit_reconnect_preserves_selector_validation(
+    command_hub, monkeypatch, selector, error
+):
+    from unittest.mock import AsyncMock
+    from mcp.shared.exceptions import MCPError
+
+    await command_hub.registry.register("session", "Main", "99a6a4da94b65b84", "6000")
+    await command_hub.registry.register("other", "Other", "99a6000000000000", "6000")
+    wait = AsyncMock(side_effect=AssertionError("Invalid selectors must not wait"))
+    monkeypatch.setattr(command_hub.registry, "wait_for_change", wait)
+    async with Client(request_server(), mode="legacy") as client:
+        with pytest.raises(MCPError, match=error):
+            await client.call_tool(
+                "get_compile_job", {"compile_id": "a" * 32, "unity_instance": selector}
+            )
+    wait.assert_not_awaited()
+    assert command_hub.sent == []
+
+
+@pytest.mark.asyncio
+async def test_explicit_reconnect_wait_is_scoped_to_authenticated_user(command_hub, monkeypatch):
+    from core.config import config
+    from tests.integration.test_helpers import DummyContext
+    from transport.plugin_hub import _CommandBudget, _HttpRequestBudget
+
+    await command_hub.registry.unregister("session")
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    monkeypatch.setenv("UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", "30")
+    target_hash = "99a6a4da94b65b84"
+    await command_hub.registry.register("foreign", "Main", target_hash, "6000", user_id="other")
+    waiting = asyncio.Event()
+    wait_for_change = command_hub.registry.wait_for_change
+
+    async def observe_wait(changed, timeout):
+        waiting.set()
+        return await wait_for_change(changed, timeout)
+
+    monkeypatch.setattr(command_hub.registry, "wait_for_change", observe_wait)
+    ctx = DummyContext()
+    context = SimpleNamespace(
+        fastmcp_context=ctx,
+        message=SimpleNamespace(arguments={"unity_instance": f"Main@{target_hash}"}),
+    )
+    started = asyncio.get_running_loop().time()
+    budget = _CommandBudget(started + watchdog_timeout())
+    async with asyncio.timeout_at(budget.expires_at) as scope:
+        token = http_request_budget.set(_HttpRequestBudget(started, budget, scope))
+        task = asyncio.create_task(
+            UnityInstanceMiddleware()._inject_unity_instance(context, authenticated_user_id="owner")
+        )
+        try:
+            await await_signal(waiting, "own user's reconnect wait", producers=(task,))
+            assert await ctx.get_state("unity_instance") is None
+            assert await ctx.get_state("unity_session_id") is None
+            await command_hub.registry.register(
+                "owned", "Main", target_hash, "6000", user_id="owner"
+            )
+            await await_completion(task, "own user's instance selection")
+            assert await ctx.get_state("unity_instance") == f"Main@{target_hash}"
+            assert await ctx.get_state("unity_session_id") == "owned"
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            http_request_budget.reset(token)
+    assert command_hub.sent == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["resource", "no_reconnect", "unbudgeted", "renamed"])
+async def test_explicit_reconnect_keeps_discovery_bounds_and_exact_name(
+    command_hub, monkeypatch, case
+):
+    from tests.integration.test_helpers import DummyContext
+    from transport.plugin_hub import _CommandBudget, _HttpRequestBudget
+
+    await command_hub.registry.unregister("session")
+    selector = "Main@99a6a4da94b65b84"
+    ctx = DummyContext(unity_instance=selector)
+    context = SimpleNamespace(
+        fastmcp_context=ctx,
+        message=SimpleNamespace(uri="mcpforunity://capabilities")
+        if case == "resource"
+        else SimpleNamespace(arguments={"unity_instance": selector}),
+    )
+    waits = []
+
+    async def reconnect(changed, timeout):
+        assert case == "renamed", "Discovery must not acquire an unbounded reconnect wait"
+        waits.append(changed)
+        await command_hub.registry.register("renamed", "Renamed", "99a6a4da94b65b84", "6000")
+        return True
+
+    monkeypatch.setattr(command_hub.registry, "wait_for_change", reconnect)
+    monkeypatch.setenv("UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", "30")
+    started = asyncio.get_running_loop().time()
+    budget = _CommandBudget(started + watchdog_timeout())
+    async with asyncio.timeout_at(budget.expires_at) as scope:
+        token = http_request_budget.set(
+            None if case == "unbudgeted" else _HttpRequestBudget(started, budget, scope)
+        )
+        try:
+            with pytest.raises(ValueError, match="not found"):
+                await UnityInstanceMiddleware()._inject_unity_instance(
+                    context, allow_reconnect=case != "no_reconnect"
+                )
+        finally:
+            http_request_budget.reset(token)
+    assert len(waits) == (1 if case == "renamed" else 0)
+    assert await ctx.get_state("unity_instance") is None
+    assert command_hub.sent == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["legacy", "2026-07-28"])
+async def test_sdk_explicit_nonretrying_tool_does_not_acquire_compile_reconnect_wait(
+    command_hub, monkeypatch, protocol
+):
+    from mcp.shared.exceptions import MCPError
+
+    await command_hub.registry.unregister("session")
+    monkeypatch.setenv("UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", "30")
+    waits = []
+
+    async def reconnect(changed, timeout):
+        waits.append(changed)
+        await command_hub.registry.register("session", "Main", "99a6a4da94b65b84", "6000")
+        return True
+
+    monkeypatch.setattr(command_hub.registry, "wait_for_change", reconnect)
+    async with Client(request_server(), mode=protocol) as client:
+        # Modern SDK responses mask selection ValueErrors; both protocols must
+        # still reject this request without acquiring or dispatching a new route.
+        error = "not found" if protocol == "legacy" else "Internal server error"
+        with pytest.raises(MCPError, match=error):
+            await client.call_tool(
+                "manage_scene",
+                {"unity_instance": "Main@99a6a4da94b65b84", "retry_on_reload": False},
+            )
+    assert waits == []
+    assert command_hub.sent == []
 
 
 @pytest.mark.asyncio

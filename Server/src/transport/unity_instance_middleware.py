@@ -197,7 +197,9 @@ class UnityInstanceMiddleware(Middleware):
 
         return results
 
-    async def _resolve_instance_value(self, value: str, ctx) -> str:
+    async def _resolve_instance_value(
+        self, value: str, ctx, *, allow_reconnect: bool = False
+    ) -> str:
         """
         Resolve a unity_instance string to a validated instance identifier.
 
@@ -255,6 +257,25 @@ class UnityInstanceMiddleware(Middleware):
             raise ValueError(f"No Unity instance found on port {value}. Available: {available}.")
 
         if instances is None:
+            instances = await self._discover_instances(ctx)
+        target_hash = full_hash(value)
+        if (
+            allow_reconnect
+            and transport == "http"
+            and PluginHub.is_configured()
+            and http_request_budget.get() is not None
+            and target_hash is not None
+            and not any(getattr(inst, "hash", "").lower() == target_hash for inst in instances)
+        ):
+            # Reload removes the registry entry before the plugin reconnects.
+            # Wait only for a complete identity, within the tool's existing
+            # deadline; prefixes and resource discovery must remain fail-fast.
+            user_id = await ctx.get_state("user_id") if config.http_remote_hosted else None
+            try:
+                await PluginHub._resolve_session_id(target_hash, user_id=user_id)
+            except NoUnitySessionError:
+                pass  # Preserve the current inventory's selection error below.
+            # Recheck the full Name@hash and tenant-visible catalog after waiting.
             instances = await self._discover_instances(ctx)
         ids = {getattr(inst, "id", None): inst for inst in instances if getattr(inst, "id", None)}
 
@@ -441,7 +462,9 @@ class UnityInstanceMiddleware(Middleware):
                 raw_str = str(raw).strip()
                 if raw_str:
                     # Raises ValueError with a user-friendly message on invalid input.
-                    active_instance = await self._resolve_instance_value(raw_str, ctx)
+                    active_instance = await self._resolve_instance_value(
+                        raw_str, ctx, allow_reconnect=allow_reconnect
+                    )
                     logger.debug("Per-call unity_instance resolved to: %s", active_instance)
 
         if msg_args is None:
@@ -680,7 +703,13 @@ class UnityInstanceMiddleware(Middleware):
         receipt: PreparedExecution | None = None,
     ):
         ctx = context.fastmcp_context
-        await self._inject_unity_instance(context, authenticated_user_id=user_id)
+        # Compile polling already permits transport reconnects. Other handlers
+        # may deliberately disable them, so do not add a wait before their policy.
+        await self._inject_unity_instance(
+            context,
+            authenticated_user_id=user_id,
+            allow_reconnect=public_name == "get_compile_job",
+        )
         if config.http_remote_hosted:
             session_id = await ctx.get_state("unity_session_id")
             identity = (
