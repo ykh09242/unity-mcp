@@ -1,5 +1,6 @@
 """Owned launcher cleanup remains bounded when process reaps and daemons stall."""
 
+import asyncio
 from pathlib import Path
 import json
 import subprocess
@@ -10,7 +11,10 @@ import pytest
 
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
+sys.path.insert(0, str(TOOLS.parent))
 import local_harness as lh
+from owned_process import drain_owned_process
+from Server.tests.timing import await_completion, watchdog_timeout
 
 
 @pytest.mark.parametrize("phase", ["warmup", "teardown"])
@@ -163,7 +167,8 @@ def test_docker_cli_observes_bounded_reap_without_piped_output(monkeypatch, resu
             lh._run_docker(["owned-cli"], timeout=1, check=True)
 
 
-def test_powershell_postkill_wait_is_bounded_and_preserves_logs(tmp_path):
+@pytest.mark.asyncio
+async def test_powershell_postkill_wait_is_bounded_and_preserves_logs(tmp_path):
     # Given: execute the actual timeout block against an owned fake process.
     import shutil
 
@@ -208,11 +213,24 @@ try {
     runner = tmp_path / "exercise.ps1"
     runner.write_text(script)
     # When: both the execution wait and force-kill reap stall.
-    result = subprocess.run(
-        [shell, "-NoProfile", "-File", str(runner), str(fixture), str(tmp_path)],
-        capture_output=True,
-        text=True,
-        timeout=10,
+    command = [shell, "-NoProfile", "-File", str(runner), str(fixture), str(tmp_path)]
+    allowance = watchdog_timeout()
+    process = await asyncio.create_subprocess_exec(
+        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    # PowerShell cold startup is correctness setup, separate from the 1/2-ms
+    # process/post-kill bounds exercised inside the unchanged fixture block.
+    # The existing scaled watchdog returns immediately on success; owned child
+    # cleanup remains bounded and keeps draining pipes if this watchdog fails.
+    async with drain_owned_process(process, allowance) as output:
+        stdout, stderr = await await_completion(
+            output, "PowerShell fixture startup and execution", timeout=allowance
+        )
+    result = subprocess.CompletedProcess(
+        command,
+        process.returncode,
+        stdout.decode("utf-8", errors="replace"),
+        stderr.decode("utf-8", errors="replace"),
     )
     # Then: post-kill observation is bounded and both original logs are present.
     assert result.returncode == 0, result.stdout + result.stderr
