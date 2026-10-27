@@ -876,7 +876,7 @@ class TestEditorDiagnostics:
             assert kwargs["timeout"] == 10
             return SimpleNamespace(returncode=0, stdout="Scene(s) Have Been Modified\n", stderr="")
 
-        monkeypatch.setattr(lh.subprocess, "run", run)
+        monkeypatch.setattr(lh, "_run_docker", run)
         launcher = lh.DockerLauncher(SimpleNamespace())
         handle = lh.Handle(container="owned-editor", log_path="/root/.config/unity3d/Editor.log")
         assert "Scene(s)" in launcher.tail_log(handle, 30)
@@ -893,7 +893,7 @@ class TestEditorDiagnostics:
                 return SimpleNamespace(returncode=1, stdout="", stderr="file missing")
             return SimpleNamespace(returncode=0, stdout="Editor startup failed", stderr="")
 
-        monkeypatch.setattr(lh.subprocess, "run", run)
+        monkeypatch.setattr(lh, "_run_docker", run)
         launcher = lh.DockerLauncher(SimpleNamespace())
         handle = lh.Handle(container="owned-editor", log_path="/root/Editor.log")
         assert launcher.tail_log(handle, 30) == "Editor startup failed"
