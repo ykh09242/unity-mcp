@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  UNITY_IMAGE: unityci/editor:ubuntu-2021.3.45f2-linux-il2cpp-3
+  UNITY_IMAGE: unityci/editor:ubuntu-2021.3.45f2-linux-il2cpp-3@sha256:903ced48a1d4f415b597280b76c4f01f1bd38f66c654805fb3ffd16874d7d2ee
 
 jobs:
   license-free:
@@ -71,6 +71,22 @@ jobs:
           version: "0.13.5"
           python-version: "3.14"
           enable-cache: false
+
+      - name: Prepare version-specific test packages
+        id: packages
+        run: |
+          set -euo pipefail
+          python3 tools/unity_ci_packages.py prepare \
+            --unity-version 2021.3.45f2 --image "$UNITY_IMAGE" \
+            --output .unity-ci/claude-nl
+
+      - name: Select prepared Unity project
+        id: project
+        env:
+          PREPARED_PROJECT: ${{ steps.packages.outputs.project_path }}
+        run: |
+          set -euo pipefail
+          echo "UNITY_PROJECT_ROOT=$GITHUB_WORKSPACE/$PREPARED_PROJECT" >> "$GITHUB_ENV"
 
       - name: Install MCP server
         run: |
@@ -201,7 +217,7 @@ jobs:
             -v "$RUNNER_TEMP/unity-local:/root/.local/share/unity3d" \
             -v "$RUNNER_TEMP/unity-cache:/root/.cache/unity3d" \
             "$UNITY_IMAGE" /opt/unity/Editor/Unity -batchmode -nographics -logFile - \
-              -projectPath "${{ github.workspace }}/TestProjects/UnityMCPTests" \
+              -projectPath "$UNITY_PROJECT_ROOT" \
               "${manual_args[@]}" \
               -quit
 
@@ -239,7 +255,7 @@ jobs:
             -v "$RUNNER_TEMP/unity-cache:/root/.cache/unity3d" \
             "$UNITY_IMAGE" /opt/unity/Editor/Unity -batchmode -nographics -logFile /root/.config/unity3d/Editor.log \
               -stackTraceLogType Full \
-              -projectPath "${{ github.workspace }}/TestProjects/UnityMCPTests" \
+              -projectPath "$UNITY_PROJECT_ROOT" \
               "${manual_args[@]}" \
               -executeMethod MCPForUnity.Editor.McpCiBoot.StartStdioForCi
 
@@ -445,7 +461,7 @@ jobs:
                       "env": {
                           "PYTHONUNBUFFERED": "1",
                           "MCP_LOG_LEVEL": "debug",
-                          "UNITY_PROJECT_ROOT": f"{workspace}/TestProjects/UnityMCPTests",
+                          "UNITY_PROJECT_ROOT": os.environ["UNITY_PROJECT_ROOT"],
                           "UNITY_MCP_STATUS_DIR": f"{workspace}/.unity-mcp",
                           "UNITY_MCP_HOST": "127.0.0.1",
                       },
@@ -502,7 +518,6 @@ jobs:
           set -euxo pipefail
           export PYTHONUNBUFFERED=1
           export MCP_LOG_LEVEL=debug
-          export UNITY_PROJECT_ROOT="$GITHUB_WORKSPACE/TestProjects/UnityMCPTests"
           export UNITY_MCP_STATUS_DIR="$GITHUB_WORKSPACE/.unity-mcp"
           export UNITY_MCP_HOST=127.0.0.1
           if [[ -n "${UNITY_MCP_DEFAULT_INSTANCE:-}" ]]; then
@@ -583,7 +598,6 @@ jobs:
         run: |
           set -euxo pipefail
           export PYTHONUNBUFFERED=1 MCP_LOG_LEVEL=debug
-          export UNITY_PROJECT_ROOT="$GITHUB_WORKSPACE/TestProjects/UnityMCPTests"
           export UNITY_MCP_STATUS_DIR="$GITHUB_WORKSPACE/.unity-mcp"
           export UNITY_MCP_HOST=127.0.0.1
           if [[ -n "${UNITY_MCP_DEFAULT_INSTANCE:-}" ]]; then
@@ -666,7 +680,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run Claude NL pass
-        uses: anthropics/claude-code-action@ae68417a745a5df4b2124873632bd73a2255e6f6 # v1.0.259
+        uses: anthropics/claude-code-action@8041f1d17e0e7d2f2cfe35002962e9f26237c0bb # v1.0.263
         if: steps.detect.outputs.anthropic_ok == 'true' && steps.detect.outputs.unity_ok == 'true'
         continue-on-error: true
         env:
@@ -728,7 +742,7 @@ jobs:
 
       - name: Retry NL pass (Sonnet) if incomplete or failed
         if: steps.nl_cov.outputs.missing != '0' || steps.nl_cov.outputs.failed != '0'
-        uses: anthropics/claude-code-action@ae68417a745a5df4b2124873632bd73a2255e6f6 # v1.0.259
+        uses: anthropics/claude-code-action@8041f1d17e0e7d2f2cfe35002962e9f26237c0bb # v1.0.263
         continue-on-error: true
         env:
           UNITY_MCP_DEFAULT_INSTANCE: ${{ env.UNITY_MCP_DEFAULT_INSTANCE }}
@@ -790,7 +804,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run Claude T pass A-J
-        uses: anthropics/claude-code-action@ae68417a745a5df4b2124873632bd73a2255e6f6 # v1.0.259
+        uses: anthropics/claude-code-action@8041f1d17e0e7d2f2cfe35002962e9f26237c0bb # v1.0.263
         if: steps.detect.outputs.anthropic_ok == 'true' && steps.detect.outputs.unity_ok == 'true'
         continue-on-error: true
         env:
@@ -831,7 +845,7 @@ jobs:
 
       - name: Retry T pass (Sonnet) if incomplete
         if: steps.t_cov.outputs.missing != '0'
-        uses: anthropics/claude-code-action@ae68417a745a5df4b2124873632bd73a2255e6f6 # v1.0.259
+        uses: anthropics/claude-code-action@8041f1d17e0e7d2f2cfe35002962e9f26237c0bb # v1.0.263
         env:
           GITHUB_STEP_SUMMARY: /dev/null
         with:
@@ -904,7 +918,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run Claude GO pass
-        uses: anthropics/claude-code-action@ae68417a745a5df4b2124873632bd73a2255e6f6 # v1.0.259
+        uses: anthropics/claude-code-action@8041f1d17e0e7d2f2cfe35002962e9f26237c0bb # v1.0.263
         if: steps.detect.outputs.anthropic_ok == 'true' && steps.detect.outputs.unity_ok == 'true'
         continue-on-error: true
         env:
@@ -943,7 +957,7 @@ jobs:
 
       - name: Retry GO pass (Sonnet) if incomplete
         if: steps.go_cov.outputs.missing != '0'
-        uses: anthropics/claude-code-action@ae68417a745a5df4b2124873632bd73a2255e6f6 # v1.0.259
+        uses: anthropics/claude-code-action@8041f1d17e0e7d2f2cfe35002962e9f26237c0bb # v1.0.263
         env:
           GITHUB_STEP_SUMMARY: /dev/null
         with:

@@ -91,6 +91,15 @@ def test_optional_module_ci_selection_follows_boundary_paths(tmp_path, event, pa
     jobs = workflow("compile-check.yml")["jobs"]
     selection = next(step for step in jobs["matrix"]["steps"] if step.get("id") == "optional")
     script = selection["run"].replace("$(git diff --name-only HEAD^ HEAD)", "$CHANGED_PATHS")
+    # Emulate the LF boundary input read by this workflow on its Linux runner.
+    # A Windows checkout may have CRLF while the parsed YAML script already has LF.
+    boundaries = tmp_path / "optional-module-paths.txt"
+    boundaries.write_bytes(
+        (ROOT / "tools/optional-module-paths.txt").read_bytes().replace(b"\r\n", b"\n")
+    )
+    script = script.replace(
+        "done < tools/optional-module-paths.txt", f'done < "{boundaries.as_posix()}"'
+    )
     output = tmp_path / "selected.txt"
     result = subprocess.run(
         [bash, "-c", script],

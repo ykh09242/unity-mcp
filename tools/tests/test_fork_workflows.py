@@ -2,7 +2,12 @@
 
 from pathlib import Path
 from fnmatch import fnmatchcase
+import json
+import os
 import re
+import shutil
+import subprocess
+import sys
 
 import pytest
 import yaml
@@ -648,7 +653,10 @@ def test_latest_manual_runner_preserves_unity_compatibility_fixture(name: str, j
     # When: the host runner is upgraded to the current generally available Ubuntu release.
     assert config["jobs"][job]["runs-on"] == "ubuntu-26.04"
     # Then: the minimum Unity fixture is preserved, including disk-backed cache mounts.
-    assert config["env"]["UNITY_IMAGE"] == "unityci/editor:ubuntu-2021.3.45f2-linux-il2cpp-3"
+    versions = json.loads((ROOT / "tools/unity-versions.json").read_text(encoding="utf-8"))
+    floor = next(row for row in versions["versions"] if row["role"] == "floor")
+    assert floor["id"] == "2021.3.45f2"
+    assert config["env"]["UNITY_IMAGE"] == floor["testImage"]
     commands = "\n".join(step.get("run", "") for step in config["jobs"][job]["steps"])
     assert "$RUNNER_TEMP/unity-config:/root/.config/unity3d" in commands
     assert "$RUNNER_TEMP/unity-cache:/root/.cache/unity3d" in commands
@@ -662,3 +670,112 @@ def test_actionlint_accepts_only_the_verified_new_runner_label() -> None:
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     # Then: only that known label is added, without disabling any lint rules.
     assert config == {"self-hosted-runner": {"labels": ["ubuntu-26.04"]}}
+
+
+@pytest.mark.parametrize(
+    "name,job,output",
+    [
+        ("claude-nl-suite.yml", "nl-suite", ".unity-ci/claude-nl"),
+        ("e2e-bridge.yml", "e2e-bridge", ".unity-ci/e2e-bridge"),
+    ],
+)
+def test_manual_workflow_prepares_and_propagates_the_floor_project(
+    name: str, job: str, output: str, tmp_path: Path
+) -> None:
+    # Given: a prepared project path distinct from the raw checked-in Unity fixture.
+    steps = workflow(name)["jobs"][job]["steps"]
+    prepare = next(step for step in steps if step.get("id") == "packages")
+    select = next(step for step in steps if step.get("id") == "project")
+    assert "if" not in prepare and "if" not in select
+    assert steps.index(prepare) < steps.index(select)
+    assert "tools/unity_ci_packages.py prepare" in prepare["run"]
+    assert '--unity-version 2021.3.45f2 --image "$UNITY_IMAGE"' in prepare["run"]
+    assert f"--output {output}" in prepare["run"]
+    assert "--include-optional" not in prepare["run"]
+    assert select["env"]["PREPARED_PROJECT"] == "${{ steps.packages.outputs.project_path }}"
+    workspace = tmp_path / "workspace with spaces"
+    prepared = ".unity-ci/sentinel-prepared/project"
+    bash = "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else shutil.which("bash")
+    if not bash or not Path(bash).is_file():
+        pytest.skip("bash unavailable")
+    environment = {
+        key: os.environ[key] for key in ("PATH", "SYSTEMROOT", "TEMP", "TMP") if key in os.environ
+    }
+    environment.update(
+        GITHUB_WORKSPACE=workspace.as_posix(),
+        PREPARED_PROJECT=prepared,
+        GITHUB_ENV=(tmp_path / "github-env").as_posix(),
+    )
+    # When: the actual root-selection shell step exports its prepared path.
+    result = subprocess.run(
+        [bash, "--noprofile", "--norc", "-c", select["run"]],
+        cwd=tmp_path,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    # Then: every runtime consumer receives that path without resetting it to raw inputs.
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "github-env").read_text(encoding="utf-8") == (
+        f"UNITY_PROJECT_ROOT={workspace.as_posix()}/{prepared}\n"
+    )
+    commands = "\n".join(step.get("run", "") for step in steps)
+    assert "TestProjects/UnityMCPTests" not in commands
+    project_paths = re.findall(r'-projectPath\s+"([^\"]+)"', commands)
+    assert project_paths == ["$UNITY_PROJECT_ROOT"] * (2 if job == "nl-suite" else 1)
+    if job == "e2e-bridge":
+        assert '--project-path "$UNITY_PROJECT_ROOT"' in commands
+    for step in steps[steps.index(select) + 1 :]:
+        assert not re.search(r"(?:^|\n)\s*(?:export\s+)?UNITY_PROJECT_ROOT=", step.get("run", ""))
+
+
+def test_claude_mcp_config_uses_the_selected_prepared_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: the selected root differs from both the checkout and the historical fixture.
+    prepared = tmp_path / "selected project with spaces"
+    monkeypatch.setenv("UNITY_PROJECT_ROOT", str(prepared))
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    monkeypatch.delenv("UNITY_MCP_DEFAULT_INSTANCE", raising=False)
+    (tmp_path / ".claude").mkdir()
+    steps = workflow("claude-nl-suite.yml")["jobs"]["nl-suite"]["steps"]
+    command = next(
+        step["run"] for step in steps if step.get("name") == "Write MCP config (.claude/mcp.json)"
+    )
+    script = command.split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    # When: the workflow's actual Python config writer runs without a server or LLM.
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    # Then: the child MCP process receives the prepared root unchanged.
+    assert result.returncode == 0, result.stdout + result.stderr
+    config = json.loads((tmp_path / ".claude/mcp.json").read_text(encoding="utf-8"))
+    assert config["mcpServers"]["unity"]["env"]["UNITY_PROJECT_ROOT"] == str(prepared)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        "tools/unity_ci_packages.py",
+        "tools/unity_ci_package_cache.py",
+        "tools/unity-ci-packages.json",
+        "tools/unity-versions.json",
+        "tools/unity-ci/ProjectSettings/ProjectSettings.asset",
+        "tools/tests/test_unity_ci_packages.py",
+    ],
+)
+def test_e2e_bridge_changes_to_prepared_inputs_select_validation(changed: str) -> None:
+    # Given: package preparation or its pinned inputs change on a pull request.
+    config = workflow("e2e-bridge.yml")
+    triggers = config.get("on", config.get(True))
+    # When: the actual PR path filters are evaluated.
+    selected = any(fnmatchcase(changed, pattern) for pattern in triggers["pull_request"]["paths"])
+    # Then: the workflow consuming those prepared packages is selected for validation.
+    assert selected
