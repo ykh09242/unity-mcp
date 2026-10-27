@@ -1,6 +1,6 @@
 """The real SDK tool path shares selection and transport execution deadlines."""
 
-from tests.timing import await_signal, watchdog_timeout
+from tests.timing import await_completion, await_signal, watchdog_timeout
 
 import asyncio
 from types import SimpleNamespace
@@ -141,10 +141,21 @@ async def test_sdk_long_budget_preserves_timeout_alias_and_request_isolation(
 async def test_sdk_stale_cleanup_survives_deadline_and_preserves_replacement(
     command_hub, monkeypatch
 ):
+    import transport.unity_instance_middleware as middleware_module
+
     async with Client(request_server(), mode="legacy") as client:
         await client.call_tool("select_fixture")
-        monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 0.06)
+        monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", watchdog_timeout())
         entered, release = asyncio.Event(), asyncio.Event()
+        budgets = []
+        request_budget = middleware_module._HttpRequestBudget
+
+        def capture_budget(*args, **kwargs):
+            budget = request_budget(*args, **kwargs)
+            budgets.append(budget)
+            return budget
+
+        monkeypatch.setattr(middleware_module, "_HttpRequestBudget", capture_budget)
         old = command_hub.websocket
         old.client_state = WebSocketState.DISCONNECTED
 
@@ -155,8 +166,12 @@ async def test_sdk_stale_cleanup_survives_deadline_and_preserves_replacement(
         old.close = blocked_close
         task = asyncio.create_task(client.call_tool("manage_scene", raise_on_error=False))
         try:
-            await entered.wait()
-            failed = await asyncio.wait_for(task, watchdog_timeout())
+            await await_signal(entered, "stale socket close", producers=(task,))
+            assert len(budgets) == 1
+            # Expire the real SDK scope only after server-owned cleanup starts.
+            budgets[0].scope.reschedule(asyncio.get_running_loop().time())
+            failed = await await_completion(task, "expired SDK request")
+            assert budgets[0].scope.expired()
             assert failed.structured_content["data"]["reason"] == "command_deadline_exceeded"
             replacement = SimpleNamespace(
                 state=SimpleNamespace(
@@ -179,14 +194,20 @@ async def test_sdk_stale_cleanup_survives_deadline_and_preserves_replacement(
             await command_hub.registry.register("replacement", "Fixture", "hash", "6000")
             PluginHub._connections["replacement"] = replacement
             release.set()
-            await asyncio.gather(*list(PluginHub._eviction_tasks.values()))
+            await await_completion(
+                asyncio.gather(*list(PluginHub._eviction_tasks.values())), "stale socket cleanup"
+            )
             result = await client.call_tool("manage_scene")
             assert result.structured_content["success"] is True
             assert PluginHub._connections["replacement"] is replacement
             assert len([m for m in command_hub.sent if m["type"] == "execute"]) == 1
         finally:
             release.set()
-            await asyncio.gather(task, return_exceptions=True)
+            if not task.done():
+                task.cancel()
+            await await_completion(
+                asyncio.gather(task, return_exceptions=True), "SDK request teardown"
+            )
 
 
 @pytest.mark.asyncio

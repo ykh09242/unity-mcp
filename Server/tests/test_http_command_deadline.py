@@ -1,8 +1,9 @@
 """A command's HTTP selection, readiness and I/O share one elapsed budget."""
 
-from tests.timing import await_signal, watchdog_timeout
+from tests.timing import await_completion, await_signal, watchdog_timeout
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from starlette.websockets import WebSocketState
@@ -283,15 +284,40 @@ async def test_shared_state_owner_expires_before_admission_without_dispatch(
 async def test_earlier_deadline_follower_uses_the_shared_flights_dispatch_evidence(
     command_hub, monkeypatch, dispatched
 ):
-    monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", 0.16)
+    import transport.plugin_hub as hub_module
+    from services.tools.shared_tool_reads import SharedRead
+
+    monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", watchdog_timeout())
     resolve = PluginHub._resolve_session_id
     get_connection = PluginHub._get_connection
     early_waiting = asyncio.Event()
     release_early = asyncio.Event()
     owner_waiting = asyncio.Event()
+    follower_joined = asyncio.Event()
     release_owner = asyncio.Event()
     captured = []
     first = True
+    scopes = {}
+    fetch = SharedRead.fetch
+
+    def capture_deadline(when):
+        scope = asyncio.timeout_at(when)
+        scopes.setdefault(asyncio.current_task(), scope)
+        return scope
+
+    async def observe_fetch(read, factory, *, on_flight=None):
+        def observe(flight):
+            assert on_flight is not None
+            on_flight(flight)
+            if asyncio.current_task() is early:
+                follower_joined.set()
+
+        return await fetch(read, factory, on_flight=observe)
+
+    local_asyncio = SimpleNamespace(**vars(asyncio))
+    local_asyncio.timeout_at = capture_deadline
+    monkeypatch.setattr(hub_module, "asyncio", local_asyncio)
+    monkeypatch.setattr(SharedRead, "fetch", observe_fetch)
 
     async def delayed_first_selection(*args, **kwargs):
         nonlocal first
@@ -332,12 +358,19 @@ async def test_earlier_deadline_follower_uses_the_shared_flights_dispatch_eviden
     early = asyncio.create_task(read())
     owner = None
     try:
-        await early_waiting.wait()
-        await asyncio.sleep(0.06)
+        await await_signal(early_waiting, "early caller selection", producers=(early,))
+        # Give the later owner a strictly later installed deadline even on a
+        # coarse monotonic clock; neither setup budget is a speed assertion.
+        monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", watchdog_timeout(120))
         owner = asyncio.create_task(read())
-        await owner_waiting.wait()
+        await await_signal(owner_waiting, "shared read owner", producers=(early, owner))
+        assert scopes[early].when() < scopes[owner].when()
         release_early.set()
-        result = await early
+        await await_signal(follower_joined, "follower joined owner", producers=(early, owner))
+        # Keep the real earlier caller's timeout while the joined owner stays live.
+        scopes[early].reschedule(asyncio.get_running_loop().time())
+        result = await await_completion(early, "earlier follower deadline")
+        assert scopes[early].expired()
         if dispatched:
             assert result["data"]["reason"] == "outcome_unknown"
             assert result["data"]["command_id"] == captured[0]["id"]
@@ -348,10 +381,14 @@ async def test_earlier_deadline_follower_uses_the_shared_flights_dispatch_eviden
             assert command_hub.sent == []
         assert not owner.done()
         release_owner.set()
-        assert (await owner)["success"] is True
+        assert (await await_completion(owner, "shared read owner result"))["success"] is True
     finally:
         release_early.set()
         release_owner.set()
-        await asyncio.gather(early, *([owner] if owner else []), return_exceptions=True)
+        tasks = (early, *([owner] if owner else []))
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await await_completion(asyncio.gather(*tasks, return_exceptions=True), "read teardown")
     assert len([m for m in command_hub.sent if m["type"] == "execute"]) == 1
     assert PluginHub._pending == {}
