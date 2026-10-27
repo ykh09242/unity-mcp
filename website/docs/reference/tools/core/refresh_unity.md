@@ -12,7 +12,7 @@ description: "Request a Unity asset database refresh and optionally a script com
 
 ## Description
 
-Request a Unity asset database refresh and optionally a script compilation. Can wait for native Editor readiness, independently of background file scan coverage. Readiness timeout preserves the latest compilation snapshot and reports readiness blockers separately; compilation_observation_age_seconds describes snapshot age. A timeout never replays the refresh or cancels native compilation.
+Request a Unity asset database refresh and optionally a script compilation. Can wait for native Editor readiness, independently of background file scan coverage. Readiness timeout preserves the latest compilation snapshot and reports readiness blockers separately; compilation_observation_age_seconds describes snapshot age. Response summaries follow the latest observed Editor phase and compilation evidence. compilation_goal_satisfied means a matching pipeline cycle was observed, not compiler success; source_revision_confirmed remains false without source-to-assembly proof. A timeout never replays the refresh or cancels native compilation.
 
 ## Parameters
 

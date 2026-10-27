@@ -39,6 +39,27 @@ Status and cancellation remain available through the reviewed control commands.
   lost event context across reload also requires recovery. Synchronous refresh without
   an explicit compilation request does not leave a speculative pending reservation.
 
+## Refresh response observations
+
+When `refresh_unity` waits for readiness, `resulting_state` follows the latest
+available Editor activity phase. The top-level `native_coordination` follows the
+latest validated compilation coordination snapshot. A compiler finish can precede
+native release, so the server observes the job once more at the ready transition,
+within the original remaining timeout. An unavailable final read preserves known
+evidence and reports `compilation_observation_error` and the snapshot age; readiness
+alone never fabricates a native release witness. If readiness was observed before
+the deadline, a final status-read timeout does not erase it. That read is cancelled
+within the original budget, and its unavailable observation remains explicit.
+
+`compilation_goal_satisfied` means a request-associated pipeline cycle was observed.
+It can be true when `compilation.outcome` is `failed`, or when a cycle with no compiled
+assemblies leaves that outcome `unknown`. Inspect the outcome and diagnostics for
+compiler success. `source_revision_confirmed` remains false because these pipeline
+events do not identify the exact source revision loaded by the Editor. Readiness,
+compiler outcome and source identity are separate facts. Dispatch fields such as
+`refresh_triggered`, `compile_requested`, `compile_started` and `compilation_trigger`
+retain their original meaning even after later observations update the summaries.
+
 `native_job_active`, `editor_compiling` and `editor_importing` are temporary blockers.
 `recovery_required` is not automatically retryable: inspect the job and Editor state,
 allow real native completion to be observed where possible, or restart the Editor

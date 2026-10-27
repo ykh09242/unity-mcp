@@ -79,13 +79,20 @@ async def wait_for_editor_ready(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
+        advice = (data or {}).get("advice") if isinstance(data, dict) else None
+        observed_ready = isinstance(advice, dict) and advice.get("ready_for_tools") is True
         if on_observation is not None:
-            await asyncio.wait_for(on_observation(data), timeout=remaining)
+            try:
+                await asyncio.wait_for(on_observation(data), timeout=remaining)
+            except TimeoutError:
+                if not observed_ready:
+                    raise
+                # Optional evidence collection cannot erase readiness already
+                # observed before the deadline. Its work is cancelled and drained.
+        if observed_ready:
+            return (True, time.monotonic() - start)
         if time.monotonic() >= deadline:
             break
-        advice = (data or {}).get("advice") if isinstance(data, dict) else None
-        if isinstance(advice, dict) and advice.get("ready_for_tools") is True:
-            return (True, time.monotonic() - start)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
@@ -284,6 +291,9 @@ async def verify_edit_by_sha(
         "Can wait for native Editor readiness, independently of background file scan coverage. "
         "Readiness timeout preserves the latest compilation snapshot and reports readiness "
         "blockers separately; compilation_observation_age_seconds describes snapshot age. "
+        "Response summaries follow the latest observed Editor phase and compilation evidence. "
+        "compilation_goal_satisfied means a matching pipeline cycle was observed, not compiler "
+        "success; source_revision_confirmed remains false without source-to-assembly proof. "
         "A timeout never replays the refresh or cancels native compilation."
     ),
     annotations=ToolAnnotations(
@@ -349,6 +359,7 @@ async def refresh_unity(
     compilation_observed_at = None
     compilation_observation_error = None
     readiness = None
+    resulting_state = None
 
     def with_compilation(value):
         if compile_id is None and readiness is None:
@@ -357,9 +368,33 @@ async def refresh_unity(
         data = dict(payload["data"]) if isinstance(payload.get("data"), dict) else {}
         if readiness is not None:
             data["readiness"] = readiness
+            if resulting_state is not None:
+                data["resulting_state"] = resulting_state
+            if readiness["ready"]:
+                data["hint"] = (
+                    "Editor is ready for tools. Inspect compilation.outcome for compiler status; "
+                    "readiness does not confirm a source revision."
+                    if compile_id is not None
+                    else "Editor is ready for tools."
+                )
         if compile_id is not None:
             data["compilation"] = compilation
             data["source_revision_confirmed"] = False
+            # The goal is an observed request-associated pipeline cycle, not a
+            # successful compiler outcome or proof of the loaded source revision.
+            if (
+                compilation["state"] in ("running", "finished")
+                and compilation["attribution"] == "observed_after_request"
+                and compilation["session_id"] is not None
+                and compilation["generation"] is not None
+                and compilation["candidate_generations"] == [compilation["generation"]]
+                and compilation["requested_at_unix_ms"] is not None
+                and compilation["started_at_unix_ms"] is not None
+                and compilation["requested_at_unix_ms"] <= compilation["started_at_unix_ms"]
+            ):
+                data["compilation_goal_satisfied"] = True
+            if compilation["native_coordination"] is not None:
+                data["native_coordination"] = compilation["native_coordination"]
             data["compilation_observation_age_seconds"] = (
                 max(0.0, time.monotonic() - compilation_observed_at)
                 if compilation_observed_at is not None
@@ -439,25 +474,38 @@ async def refresh_unity(
 
     async def observe_refresh(state):
         nonlocal compilation, compilation_observed_at, compilation_observation_error
-        nonlocal readiness, compile_polled, last_compile_poll
+        nonlocal readiness, resulting_state, compile_polled, last_compile_poll
         advice = state.get("advice") if isinstance(state, dict) else None
+        observed_ready = isinstance(advice, dict) and advice.get("ready_for_tools") is True
         if isinstance(advice, dict):
             readiness = {
-                "ready": advice.get("ready_for_tools") is True,
+                "ready": observed_ready,
                 "blocking_reasons": advice.get("blocking_reasons"),
                 "warnings": advice.get("warnings", []),
             }
+            activity = state.get("activity")
+            phase = activity.get("phase") if isinstance(activity, dict) else None
+            if isinstance(phase, str) and phase:
+                resulting_state = phase
         if (
             compile_id is None
             or (not recovered_from_disconnect and compilation["reason"] == "tracking_unsupported")
-            or (compile_polled and compilation["state"] == "finished")
-            or (last_compile_poll is not None and time.monotonic() - last_compile_poll < 1.0)
+            # A compiler finish can precede native release. At the ready edge,
+            # observe that status once more within the same remaining budget.
+            or (not observed_ready and compile_polled and compilation["state"] == "finished")
+            or (
+                not observed_ready
+                and last_compile_poll is not None
+                and time.monotonic() - last_compile_poll < 1.0
+            )
         ):
             return
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return
         last_compile_poll = time.monotonic()
+        # Also retain this marker if the outer readiness budget cancels the read.
+        compilation_observation_error = "observation_unavailable"
         try:
             observed = await asyncio.wait_for(
                 read_compile_job(unity_instance, compile_id), timeout=min(1.0, remaining)
