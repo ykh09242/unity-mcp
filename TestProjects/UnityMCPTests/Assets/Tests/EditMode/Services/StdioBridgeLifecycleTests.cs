@@ -15,6 +15,7 @@ using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -129,6 +130,62 @@ namespace MCPForUnityTests.Editor.Services
                 StdioBridgeHost.Stop();
                 PumpUntil(() => StdioBridgeHost.QueuedCommandCount == 0 && StdioBridgeHost.ReservedInputBytes == 0);
                 handlers.Remove(name);
+            }
+        }
+
+        [Test]
+        public void Stop_RetiresDeferredInitializationEvenWithoutListener()
+        {
+            AssertIdle();
+            // Reconstruct initial domain-load intent without touching Editor preferences.
+            typeof(StdioBridgeHost).GetField("explicitlyStopped", Static)?.SetValue(null, false);
+            typeof(StdioBridgeHost).GetMethod("ScheduleInitRetry", Static, null, Type.EmptyTypes, null).Invoke(null, null);
+            var delayed = EditorApplication.delayCall?.GetInvocationList().Where(item => item.Method.DeclaringType == typeof(StdioBridgeHost)).ToArray();
+            // Lambdas capture the generation in a compiler-generated nested type.
+            if (delayed == null || delayed.Length == 0)
+                delayed = EditorApplication
+                    .delayCall?.GetInvocationList()
+                    .Where(item => item.Method.DeclaringType?.DeclaringType == typeof(StdioBridgeHost))
+                    .ToArray();
+            var updates = EditorApplication
+                .update?.GetInvocationList()
+                .Where(item =>
+                    item.Method.DeclaringType == typeof(StdioBridgeHost) && item.Method.Name == "EnsureStartedOnEditorIdle"
+                    || item.Method.DeclaringType?.DeclaringType == typeof(StdioBridgeHost)
+                )
+                .ToArray();
+            Assert.IsNotEmpty(delayed, "The actual host delay subscription must be armed.");
+            Assert.IsNotEmpty(updates, "The actual host idle retry subscription must be armed.");
+            Assert.IsTrue((bool)typeof(StdioBridgeHost).GetField("initScheduled", Static).GetValue(null));
+            int heartbeat = (int)typeof(StdioBridgeHost).GetField("heartbeatSeq", Static).GetValue(null);
+            try
+            {
+                StdioBridgeHost.Stop();
+                Assert.IsFalse(
+                    (bool)typeof(StdioBridgeHost).GetField("initScheduled", Static).GetValue(null),
+                    "Stop must retire startup while no listener exists."
+                );
+                Assert.IsFalse((bool)typeof(StdioBridgeHost).GetField("ensureUpdateHooked", Static).GetValue(null));
+                foreach (Delegate callback in delayed.Concat(updates))
+                    callback.DynamicInvoke();
+                Assert.IsFalse(StdioBridgeHost.IsRunning);
+                Assert.IsNull(typeof(StdioBridgeHost).GetField("authentication", Static).GetValue(null));
+                Assert.AreEqual(heartbeat, (int)typeof(StdioBridgeHost).GetField("heartbeatSeq", Static).GetValue(null));
+
+                StdioBridgeHost.StartOwned(0, new string('b', 64));
+                Assert.IsTrue(StdioBridgeHost.IsRunning, "Internal startup cleanup must preserve a newer explicit start.");
+                object launch = typeof(StdioBridgeHost).GetField("authentication", Static).GetValue(null);
+                foreach (Delegate callback in delayed.Concat(updates))
+                    callback.DynamicInvoke();
+                Assert.AreSame(launch, typeof(StdioBridgeHost).GetField("authentication", Static).GetValue(null));
+            }
+            finally
+            {
+                StdioBridgeHost.Stop();
+                foreach (Delegate callback in delayed)
+                    EditorApplication.delayCall -= (EditorApplication.CallbackFunction)callback;
+                foreach (Delegate callback in updates)
+                    EditorApplication.update -= (EditorApplication.CallbackFunction)callback;
             }
         }
 

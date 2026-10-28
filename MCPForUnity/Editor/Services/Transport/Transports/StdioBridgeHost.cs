@@ -73,6 +73,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private static bool initScheduled = false;
         private static bool ensureUpdateHooked = false;
         private static bool isStarting = false;
+        private static long startIntentEpoch;
+        private static bool startRequested;
+        private static bool explicitlyStopped;
+        private static int? requestedOwnedPort;
+        private static string requestedOwnedToken;
+        private static EditorApplication.CallbackFunction initializationCallback;
+        private static EditorApplication.CallbackFunction startUpdateCallback;
         private static double nextStartAt = 0.0f;
         private static double nextHeartbeatAt = 0.0f;
 
@@ -256,11 +263,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             if (ShouldAutoStartBridge())
             {
                 ScheduleInitRetry();
-                if (!ensureUpdateHooked)
-                {
-                    ensureUpdateHooked = true;
-                    EditorApplication.update += EnsureStartedOnEditorIdle;
-                }
             }
             EditorApplication.quitting += Stop;
             EditorApplication.playModeStateChanged += _ =>
@@ -272,40 +274,97 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             };
         }
 
-        private static void InitializeAfterCompilation()
+        private static bool IsCurrentStart(long intent) => startRequested && intent == startIntentEpoch;
+
+        private static void CancelStartupCallbacks()
         {
+            if (initializationCallback != null)
+                EditorApplication.delayCall -= initializationCallback;
+            if (startUpdateCallback != null)
+                EditorApplication.update -= startUpdateCallback;
+            initializationCallback = null;
+            startUpdateCallback = null;
             initScheduled = false;
+            ensureUpdateHooked = false;
+        }
 
-            if (IsCompiling())
+        private static void RetireStartup()
+        {
+            startRequested = false;
+            startIntentEpoch++;
+            requestedOwnedPort = null;
+            requestedOwnedToken = null;
+            CancelStartupCallbacks();
+            nextStartAt = 0;
+            _portBusySince = 0;
+        }
+
+        private static bool CanResumeStart(long intent)
+        {
+            if (!IsCurrentStart(intent))
+                return false;
+            if (!requestedOwnedPort.HasValue && !ShouldAutoStartBridge())
             {
-                ScheduleInitRetry();
-                return;
+                RetireStartup();
+                return false;
             }
+            return true;
+        }
 
-            if (!isRunning)
+        private static void InitializeAfterCompilation(long intent)
+        {
+            lock (startStopLock)
             {
-                Start();
-                if (!isRunning)
+                if (!CanResumeStart(intent))
+                    return;
+                EditorApplication.delayCall -= initializationCallback;
+                initializationCallback = null;
+                initScheduled = false;
+                if (IsCompiling())
                 {
-                    ScheduleInitRetry();
+                    ScheduleInitRetry(intent);
+                    return;
                 }
+                StartBridge(requestedOwnedPort, requestedOwnedToken, intent);
+                if (!isRunning)
+                    ScheduleInitRetry(intent);
             }
         }
 
         private static void ScheduleInitRetry()
         {
-            if (initScheduled)
+            lock (startStopLock)
             {
-                return;
+                if (explicitlyStopped)
+                    return;
+                if (!startRequested)
+                {
+                    startRequested = true;
+                    startIntentEpoch++;
+                }
+                ScheduleInitRetry(startIntentEpoch);
             }
+        }
+
+        private static void ScheduleInitRetry(long intent)
+        {
+            if (!IsCurrentStart(intent) || initScheduled)
+                return;
             initScheduled = true;
             nextStartAt = EditorApplication.timeSinceStartup + 0.20f;
+            EnsureStartUpdateHooked(intent);
+            initializationCallback = () => InitializeAfterCompilation(intent);
+            EditorApplication.delayCall += initializationCallback;
+        }
+
+        private static void EnsureStartUpdateHooked(long intent)
+        {
             if (!ensureUpdateHooked)
             {
                 ensureUpdateHooked = true;
-                EditorApplication.update += EnsureStartedOnEditorIdle;
+                startUpdateCallback = () => EnsureStartedOnEditorIdle(intent);
+                EditorApplication.update += startUpdateCallback;
             }
-            EditorApplication.delayCall += InitializeAfterCompilation;
         }
 
         private static bool ShouldAutoStartBridge()
@@ -321,43 +380,28 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
         }
 
-        private static void EnsureStartedOnEditorIdle()
+        private static void EnsureStartedOnEditorIdle(long intent)
         {
-            if (IsCompiling())
+            lock (startStopLock)
             {
-                return;
-            }
-
-            if (isRunning)
-            {
-                EditorApplication.update -= EnsureStartedOnEditorIdle;
-                ensureUpdateHooked = false;
-                return;
-            }
-
-            if (nextStartAt > 0 && EditorApplication.timeSinceStartup < nextStartAt)
-            {
-                return;
-            }
-
-            if (isStarting)
-            {
-                return;
-            }
-
-            isStarting = true;
-            try
-            {
-                Start();
-            }
-            finally
-            {
-                isStarting = false;
-            }
-            if (isRunning)
-            {
-                EditorApplication.update -= EnsureStartedOnEditorIdle;
-                ensureUpdateHooked = false;
+                if (!CanResumeStart(intent) || IsCompiling())
+                    return;
+                if (isRunning)
+                {
+                    CancelStartupCallbacks();
+                    return;
+                }
+                if (nextStartAt > 0 && EditorApplication.timeSinceStartup < nextStartAt || isStarting)
+                    return;
+                isStarting = true;
+                try
+                {
+                    StartBridge(requestedOwnedPort, requestedOwnedToken, intent);
+                }
+                finally
+                {
+                    isStarting = false;
+                }
             }
         }
 
@@ -451,20 +495,35 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private static bool IsCompiling() => EditorStateCache.GetActualIsCompiling();
 
-        public static void Start() => StartBridge(null, null);
+        public static void Start() => RequestStart(null, null);
 
         /// <summary>Owned ephemeral QA endpoint; no discovery files or EditorPrefs access.</summary>
         internal static void StartOwned(int port, string token)
         {
             if (port < 0 || port > 65535 || token == null)
                 throw new ArgumentException("Invalid owned endpoint");
-            StartBridge(port, token);
+            RequestStart(port, token);
         }
 
-        private static void StartBridge(int? ownedPort, string ownedToken)
+        private static void RequestStart(int? ownedPort, string ownedToken)
         {
             lock (startStopLock)
             {
+                CancelStartupCallbacks();
+                startRequested = true;
+                explicitlyStopped = false;
+                requestedOwnedPort = ownedPort;
+                requestedOwnedToken = ownedToken;
+                StartBridge(ownedPort, ownedToken, ++startIntentEpoch);
+            }
+        }
+
+        private static void StartBridge(int? ownedPort, string ownedToken, long intent)
+        {
+            lock (startStopLock)
+            {
+                if (!IsCurrentStart(intent))
+                    return;
                 if (isRunning && listener != null)
                 {
                     if (!ownedPort.HasValue && IsDebugEnabled())
@@ -474,12 +533,17 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     return;
                 }
 
-                Stop();
+                StopBridge(false);
                 lifecycleEpoch++;
+                ownedEndpoint = ownedPort.HasValue;
+                if (IsCompiling())
+                {
+                    ScheduleInitRetry(intent);
+                    return;
+                }
 
                 try
                 {
-                    ownedEndpoint = ownedPort.HasValue;
                     currentUnityPort = ownedPort ?? PortManager.GetPortWithFallback();
 
                     // Clear any stale "reloading" heartbeat from a previous domain reload.
@@ -534,11 +598,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             // Arm the editor-idle retry even when Start() was called directly
                             // (e.g. StartAutoConnect), not only during reload resume — so a transient
                             // AddressAlreadyInUse can never leave the bridge permanently stopped.
-                            if (!ensureUpdateHooked)
-                            {
-                                ensureUpdateHooked = true;
-                                EditorApplication.update += EnsureStartedOnEditorIdle;
-                            }
+                            EnsureStartUpdateHooked(intent);
                             return;
                         }
 
@@ -596,11 +656,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     heartbeatSeq++;
                     WriteHeartbeat(false, "ready");
                     nextHeartbeatAt = EditorApplication.timeSinceStartup + 0.5f;
+                    CancelStartupCallbacks();
                 }
                 catch (Exception ex)
                 {
                     if (isRunning)
-                        Stop();
+                        StopBridge(false);
                     else
                     {
                         listener?.Stop();
@@ -638,7 +699,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             return newListener;
         }
 
-        public static void Stop()
+        public static void Stop() => StopBridge(true);
+
+        private static void StopBridge(bool retireStartup)
         {
             Task toWait;
             CancellationTokenSource cancel;
@@ -649,7 +712,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             bool wasOwned;
             lock (startStopLock)
             {
-                if (!isRunning)
+                bool hadStartup = startRequested;
+                if (retireStartup)
+                {
+                    explicitlyStopped = true;
+                    RetireStartup();
+                }
+                if (!isRunning && listener == null && cts == null && (!retireStartup || !hadStartup))
                     return;
                 stoppedEpoch = ++lifecycleEpoch;
                 wasOwned = ownedEndpoint;
