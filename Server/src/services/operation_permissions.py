@@ -480,6 +480,46 @@ def required_permissions(
         # authority for generic content/tree edits; labels and empty-folder
         # creation retain the narrower edit grant.
         return CUSTOM_GRANTS
+    if name == "manage_build":
+        if action == "settings":
+            # Null/missing values read; an explicit empty string still writes.
+            if params.get("value") is None:
+                return frozenset({Permission.READ})
+            property_name = params.get("property")
+            # Only these known metadata setters are inert. Defines, backend,
+            # architecture and unknown future settings need compile authority.
+            if isinstance(property_name, str) and property_name.lower() in {
+                "product_name",
+                "company_name",
+                "version",
+                "bundle_id",
+            }:
+                return frozenset({Permission.EDIT})
+            return CUSTOM_GRANTS
+        if action == "platform":
+            # The native handler ignores subtarget without a nonempty target.
+            return (
+                frozenset({Permission.READ})
+                if params.get("target") in (None, "")
+                else CUSTOM_GRANTS
+            )
+        if action == "profiles":
+            from services.tools.utils import coerce_bool
+
+            try:
+                activate = coerce_bool(params.get("activate"), default=False)
+            except ValueError as error:
+                raise OperationPermissionError() from error
+            if activate and params.get("profile") not in (None, ""):
+                return CUSTOM_GRANTS
+            return frozenset({Permission.READ})
+        # Target batches switch the active platform. Individual builds can
+        # also persist a backend; match ToolParams' snake/camel precedence.
+        backend = params.get("scripting_backend", params.get("scriptingBackend"))
+        if action == "batch" or (
+            action in {"build", "build_from_plan"} and backend not in (None, "")
+        ):
+            return CUSTOM_GRANTS
     if name == "manage_animation" and action == "animator_set_parameter":
         # Only this explicit top-level flag reduces authority. Native execution
         # refuses Edit mode for it rather than trusting a client's mode claim.
