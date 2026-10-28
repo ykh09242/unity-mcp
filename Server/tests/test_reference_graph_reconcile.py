@@ -394,6 +394,75 @@ def setup(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("coalesced", [False, True])
+async def test_same_path_guid_replacement_retires_identity_and_survives_reopen(setup, coalesced):
+    from services.reference_graph.store import Edge
+
+    store, workspace, editor, engine = setup
+    path = "Assets/Resources/One.prefab"
+    old = editor.add(1, path, keys=[{"scheme": "resources", "value": "One"}])
+    caller = editor.add(
+        2, "Assets/Caller.cs", 'class C { void M() { UnityEngine.Resources.Load("One"); } }'
+    )
+    assert await engine.reconcile()
+    assert {edge["target"] for edge in store.query(caller)["edges"]} == {old}
+    store.put_declaration("kept", old, Edge(caller, "manual"), expected_version=0)
+    dangling = store.observe("dangling-owner", "unity", "old-guid")
+    store.publish("dangling-owner", "unity", dangling, [Edge(old, "unity_dependency")])
+    del editor.assets[old[6:]]
+    if not coalesced:
+        editor.event(path, deleted=True)
+    replacement = editor.add(3, path, keys=[{"scheme": "resources", "value": "One"}])
+    if coalesced:
+        # ReferenceGraphJournal.Record applies imported paths after deleted paths
+        # in one batch, producing one deleted=False row with the current stamp.
+        editor.events[-1]["file_stamp"] = "replacement-stamp"
+    assert await engine.reconcile()
+    assert {item["guid"] for item in workspace.catalog()} == {caller[6:], replacement[6:]}
+    assert {edge["target"] for edge in store.query(caller)["edges"]} == {replacement}
+    assert store.query(old)["edges"][0]["provider"] == "manual"
+    assert store.query("dangling-owner")["edges"][0]["target_exists"] is False
+    restored_store = GraphStore(store.path, store.scope)
+    restored = GraphWorkspace(restored_store)
+    assert await Reconciler(restored, editor, allowed).reconcile()
+    assert {item["guid"] for item in restored.catalog()} == {caller[6:], replacement[6:]}
+    assert {edge["target"] for edge in restored_store.query(caller)["edges"]} == {replacement}
+
+
+@pytest.mark.asyncio
+async def test_replaced_script_cannot_republish_retired_facts_or_wrapper_definitions(setup):
+    store, workspace, editor, engine = setup
+    one = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    two = editor.add(
+        2, "Assets/Resources/Two.prefab", keys=[{"scheme": "resources", "value": "Two"}]
+    )
+    old = editor.add(
+        3,
+        "Assets/Keys.cs",
+        'class Keys { public const string Value = "One"; void M() { UnityEngine.Resources.Load("One"); } }',
+    )
+    caller = editor.add(
+        4, "Assets/Caller.cs", "class C { void M() { UnityEngine.Resources.Load(Keys.Value); } }"
+    )
+    assert await engine.reconcile()
+    assert {edge["target"] for edge in store.query(caller)["edges"]} == {one}
+    del editor.assets[old[6:]]
+    replacement = editor.add(
+        5, "Assets/Keys.cs", 'class Keys { public const string Value = "Two"; }'
+    )
+    assert await engine.reconcile()
+    assert not workspace.documents([old])
+    assert not store.query(old)["edges"]
+    assert {edge["target"] for edge in store.query(caller)["edges"]} == {two}
+    restored = GraphWorkspace(GraphStore(store.path, store.scope))
+    assert await Reconciler(restored, editor, allowed).reconcile()
+    assert {edge["target"] for edge in store.query(caller)["edges"]} == {two}
+    assert set(restored.document_manifest()) == {replacement, caller}
+
+
+@pytest.mark.asyncio
 async def test_compiler_context_change_reparses_same_bytes_without_import_or_repeated_idle_reads(
     setup,
 ):

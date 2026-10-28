@@ -34,6 +34,10 @@ Use the returned `next_cursor` to continue the same query. A graph change invali
 the cursor; restart the page instead of combining different revisions. Outgoing
 queries use the same node ID with `direction:"outgoing"`. Asset IDs are Unity GUIDs,
 so renames preserve their identity. Deleted targets remain visible as missing.
+Replacing an asset's GUID at the same path retires the former catalog identity
+and generated source facts in the same transaction. Key-based references are
+reanalyzed against the replacement; explicit GUID references and manual
+declarations retain their original identities and can remain dangling.
 
 `diagnostics` accepts `node`, `limit`, and `offset`. Supply the returned `revision`
 for nonzero offsets. It reports unresolved keys, dynamic expressions, ambiguity,

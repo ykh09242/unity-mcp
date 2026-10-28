@@ -33,6 +33,20 @@ def row(guid="a" * 32, path="Assets/Resources/Fixture.prefab"):
     }
 
 
+def test_same_path_replacement_rolls_back_identity_retirement_with_failed_page(workspace):
+    original = row()
+    workspace.record_page("worker", [original], {}, "before")
+
+    def interrupted():
+        yield row("b" * 32, original["path"])
+        raise OSError("interrupted page")
+
+    with pytest.raises(OSError, match="interrupted page"):
+        workspace.record_page("worker", interrupted(), {}, "after")
+    assert workspace.catalog() == [original]
+    assert workspace.dirty_assets() == [original]
+
+
 def test_legacy_external_diagnostics_redact_raw_keys_without_changing_native_issues(workspace):
     # Given old persisted external diagnostics and ordinary native diagnostics.
     with workspace.store._connect(write=True) as connection:

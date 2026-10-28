@@ -646,6 +646,18 @@ class GraphWorkspace:
             catalog_changed = False
             for asset in assets:
                 owner = "asset:" + asset["guid"]
+                displaced = connection.execute(
+                    "SELECT guid FROM graph_assets WHERE path=? AND guid<>? UNION SELECT guid FROM graph_asset_paths WHERE path=? AND guid<>?",
+                    (asset["path"], asset["guid"], asset["path"], asset["guid"]),
+                ).fetchall()
+                if displaced:
+                    displaced_owners = ["asset:" + item[0] for item in displaced]
+                    self._invalidate(connection, displaced_owners)
+                    for displaced_owner in displaced_owners:
+                        self._delete(connection, displaced_owner)
+                    for table in ("graph_assets", "graph_asset_paths", "graph_blocked_keys"):
+                        connection.executemany("DELETE FROM " + table + " WHERE guid=?", displaced)
+                    catalog_changed = True
                 connection.execute(
                     "INSERT OR REPLACE INTO graph_asset_paths VALUES (?,?,?)",
                     (asset["guid"], asset["path"], seen),
