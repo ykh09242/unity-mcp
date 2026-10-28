@@ -9,6 +9,12 @@ In the Tools panel, enabling an unconsented tool asks for one of two scopes:
 
 Cancel leaves the tool unchanged. **Choose consent scope** explicitly replaces the previous scope; choosing a session grant removes any remembered project grant. **Revoke consent** clears both scopes and disables the tool. Bulk enable does not create dangerous grants or retry a failed grant. Bulk disable revokes them.
 
+The `manage_editor` actions `deploy_package` and `restore_package` require the
+current enabled explicit `manage_packages` consent grant. They check that live
+grant before entering deployment/restoration, creating backups, writing deployment
+preferences or replacing package files. Granting consent in the Tools panel makes
+the actions available; remote calls cannot create or renew the grant.
+
 Project scope uses the normalized absolute project root, independently of the transport's project hash or connection/session identifiers. Opening another root or moving/copying the project requires new consent. A reconnect, tool rescan, settings retry or execution-receipt lookup cannot create or renew a grant. Old global consent and enablement preferences are preserved for inspection but do not authorize the scoped policy; choose a scope again for the current project.
 
 Consent and dangerous-tool enablement publish together. The service first denies the project/tool, verifies each scope and enablement write or deletion, then publishes only the fully verified state. Failed publication stays denied in the current managed domain. The compatibility `SetToolEnabled(name, true)` can create a session grant only for a clean first enable; after a failed grant or revoke, it performs no implicit retry. Recovery requires a new explicit scope choice.

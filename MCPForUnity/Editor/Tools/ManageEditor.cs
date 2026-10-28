@@ -463,6 +463,8 @@ namespace MCPForUnity.Editor.Tools
         {
             try
             {
+                if (!HasPackageReplacementConsent())
+                    return new ErrorResponse("Package deployment requires an enabled explicit manage_packages consent grant in the Tools panel.");
                 var result = MCPServiceLocator.Deployment.DeployFromStoredSource();
                 if (!result.Success)
                     return new ErrorResponse(result.Message);
@@ -487,6 +489,8 @@ namespace MCPForUnity.Editor.Tools
         {
             try
             {
+                if (!HasPackageReplacementConsent())
+                    return new ErrorResponse("Package restoration requires an enabled explicit manage_packages consent grant in the Tools panel.");
                 var result = MCPServiceLocator.Deployment.RestoreLastBackup();
                 if (!result.Success)
                     return new ErrorResponse(result.Message);
@@ -497,6 +501,14 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse($"Restore failed: {e.Message}");
             }
+        }
+
+        private static bool HasPackageReplacementConsent()
+        {
+            // These actions replace executable package code through an otherwise ordinary
+            // editor tool. Reuse the package-management consent without granting it here.
+            var status = MCPServiceLocator.ToolConsent.GetStatus("manage_packages");
+            return status.HasGrant && status.Enabled && !status.RequiresExplicitGrant && status.ErrorCode == null;
         }
 
         // --- Helper Methods ---
