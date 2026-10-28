@@ -19,6 +19,12 @@ Read the ancestor workspace guidance and any guide on the target file's ancestor
 
 Use the existing Python environment and relevant checks. `tools/lint_python.py` runs correctness lint; formatting does not replace it. Compilation is distinct from native Unity execution. Do not launch Unity, install optional packages, or mutate sibling projects merely to verify formatting or documentation.
 
+## Tool guidance
+
+- Put reusable decision rules in shared server instructions: scope, ownership/lifetime, state preservation, bounded observation and recovery after uncertain results. Keep tool descriptions focused on their capabilities and actual contracts.
+- Generalize lessons from individual failures when the same principle applies elsewhere. Keep case-specific recipes and longer examples in the relevant skill reference, loaded when needed. Do not turn one example into an unconditional create/reset/cleanup sequence.
+- Preserve concrete parameter names, limits, prerequisites and failure semantics needed for correct calls. Avoid unsupported performance claims and repeated common guidance that inflates every tool description.
+
 ## Task coordination
 
 Use the applicable installed Superpowers skills for general workflow: `superpowers:writing-plans`, `superpowers:executing-plans`, `superpowers:requesting-code-review`, `superpowers:verification-before-completion` and `superpowers:finishing-a-development-branch`. Preserve existing user authorization and task scope; do not add redundant approval or tracking steps. Keep checks proportionate and reuse evidence whose inputs are unchanged.

@@ -17,6 +17,7 @@ This is a focused routing reference, not an exhaustive frozen schema. Discover t
 | 2D sprite animation | `manage_sprite` | Inspect sheet dimensions and slices before reslicing; see the staged workflow below |
 | UI | `manage_ui`, `manage_ugui`, `manage_gameobject`, `manage_components` | UI Toolkit and uGUI use different asset/component workflows |
 | Tests/input | `run_tests`, `get_test_job`, `manage_input` | Input simulation belongs to `testing`; direct uGUI event dispatch does not test raycast occlusion |
+| Tests in the current Play state | `manage_input`, `manage_components`, `execute_code` | Prefer a suitable dedicated tool; proactively use exposed, enabled and consented code execution for game-specific runtime work while preserving the session. See [current-state workflow](workflows.md#tests-in-the-current-play-state) |
 | Video capture | `manage_recording` | Query capabilities; start returns a job ID, status/stop require that ID; silent MP4 on supported interactive Windows/macOS Editors |
 | Build/package jobs | `manage_build`, `manage_packages` | Poll returned identity; consent and optional installation scope still apply |
 | ProBuilder | `manage_probuilder` | Installed package required; [topology guide](probuilder-guide.md) |
@@ -60,7 +61,7 @@ For multiple components of one type, use the discovered zero-based `component_in
 
 ## Batches
 
-Batching reduces round trips for repetitive independent commands; it has no guaranteed speedup factor or transactional rollback. The default configured limit is 25 commands and the hard ceiling is 100. Read `data.settings.batch_execute_max_commands` from Editor state if the limit matters.
+Batching reduces round trips for independent commands with known inputs; it has no guaranteed speedup factor or transactional rollback. Use small bounded batches and inspect `data.settings.batch_execute_max_commands` in Editor state for the selected instance's configured limit. The current fallback is 100 commands and the hard ceiling is 1000; these are limits, not recommended batch sizes.
 
 ```json
 {"tool":"batch_execute","params":{"commands":[{"tool":"manage_gameobject","params":{"action":"create","name":"Block_A","primitive_type":"Cube","position":[0,0,0]}},{"tool":"manage_gameobject","params":{"action":"create","name":"Block_B","primitive_type":"Cube","position":[2,0,0]}}],"fail_fast":true,"parallel":false}}
@@ -76,7 +77,9 @@ Capture visual changes with the actual camera/capture capability:
 {"tool":"manage_camera","params":{"action":"screenshot","capture_source":"scene_view","view_target":"Player","include_image":true,"max_resolution":512}}
 ```
 
-Image inclusion and file-output behavior depend on the chosen capture route. Inspect the returned image; a path/metadata acknowledgement does not prove the scene looks correct. Resolve an ID when names are ambiguous. Do not invent `screenshot_multiview` actions or pass camera capture parameters to the current `manage_scene` schema.
+Image inclusion and file-output behavior depend on the chosen capture route. Inspect the returned image; a path/metadata acknowledgement does not prove the scene looks correct. Resolve an ID when names are ambiguous. Select actions and parameters from the exposed tool's schema; focused and legacy capture tools may differ.
+
+Prefer these capture tools to ad hoc `execute_code` screenshots. If custom rendering is required, follow [temporary rendering cleanup](workflows.md#temporary-rendering-resources); never destroy a texture while it is still assigned to a camera.
 
 Use `manage_editor(action="get_game_view_size")` to inspect the open Game View. Explicit `set_game_view_size` accepts fixed width/height, an aspect ratio, or a discovered preset. Retain the returned `restore_token` for `restore_game_view_size`; screenshots do not resize the view. `manage_recording` captures a visible view over time and scales frames to its output dimensions; it does not set the Game View size.
 

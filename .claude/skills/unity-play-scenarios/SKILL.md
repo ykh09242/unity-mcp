@@ -7,6 +7,8 @@ description: Author, save and run repeatable Unity Play Mode scenarios using man
 
 Translate the user's requested game flow into a saved scenario using real project paths. Complete authoring and saving within that scope. Run when execution is requested or implied; reuse existing authorization.
 
+First distinguish a reproducible scenario from a test that must preserve an already-running game's state. Saved scenarios require an initial scene load. For current-state tests, preserve the Play session and use suitable dedicated tools; proactively use exposed, enabled and consented `execute_code` for authorized runtime work those tools cannot express. The user need not name that tool again. Inspect targets/APIs, keep code bounded, verify outcomes and distinguish code-based setup from actual UI/input coverage. Do not create/load a scenario or restart Play just to satisfy this template, and never bypass disabled tools or missing consent.
+
 ## Discover the actual flow
 
 - Select the intended Unity instance. If the tool is hidden, inspect `manage_tools(action="list_groups")` and activate `testing` in a stateful MCP session. Activation cannot enable a tool disabled in Unity; after Editor tool-setting changes, sync and refresh available tools.

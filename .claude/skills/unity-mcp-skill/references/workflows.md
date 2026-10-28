@@ -78,6 +78,53 @@ Use the existing Animator/controller/clip identity. Imported clips do not imply 
 
 For physics, choose 2D or 3D explicitly in the action's schema. Inspect collision layers/masks and body/joint references before changing settings or queuing forces. Trigger callbacks require the appropriate collider/rigidbody setup, enabled simulation and compatible filtering; adding a body alone is not proof of correct interaction. Edit-mode simulation is a mutation, not a harmless query.
 
+## Tests In The Current Play State
+
+Use this workflow when the requested test depends on the game as it is currently playing: the current battle, open UI, spawned objects or other live state. Read `mcpforunity://editor/state` for the selected instance and inspect the relevant target before acting. Preserve the current Play session, loaded scenes, pause state and unrelated runtime state. If the Editor is not playing or a transition/reload has lost the required state, report that precondition instead of silently starting a new session.
+
+Choose the narrowest suitable operation:
+
+1. Use available dedicated tools for supported component changes, UI interactions and input. Discover project-specific tools when relevant.
+2. For runtime inspection, test setup, state changes or game-specific method calls that those tools cannot express, proactively select `execute_code` when exposed, enabled in Unity and execution consent is granted. An already-authorized test does not need another request naming this tool. Visibility or group activation alone does not establish native permission. If unavailable or consent-blocked, explain the missing capability or request the missing consent; never alter preferences or use another handler to bypass the restriction.
+3. Inspect the actual runtime target, component and API first, using available object queries, project source or API inspection. Use the selected instance and resolved target identity. Keep code short, bounded and limited to the requested runtime work, with `safety_checks=true`. Check that Play Mode and the expected target/state still hold at execution time; stop on a missing, replaced or ambiguous target rather than mutating a namesake. Return concise observations and before/after values.
+4. Verify the outcome with fresh state reads and relevant UI/Console evidence. For changes that finish over later frames, return promptly and use bounded follow-up observations. Do not block the Editor with sleeps, busy-waits or unbounded loops. If the call times out or reconnects with an uncertain outcome, inspect the existing state before repeating a mutation or using `replay`.
+
+`execute_code` compiles the snippet in memory. Do not create temporary scripts, refresh/recompile the project, restart Play or reload scenes as a workaround for this workflow. Saved `manage_play_scenario` definitions require an initial scene load, and test-runner workflows can change lifecycle state; use those only when their setup/reset matches the request. In-memory code can still have lasting effects: persistent assets, save data and external-service writes need their own authorized scope. Restore only test-owned temporary changes when appropriate and the target is still valid; do not reset unrelated progress or undo the requested final state.
+
+Separate test setup from the path being verified. For example, use code to prepare a known health value, then use the appropriate UI/input tool to exercise the requested healing interaction and observe the result. Calling the healing method directly proves only that method path, not a button, raycast or physical-input path. A successful execution response alone does not establish that asynchronous gameplay or visual behavior completed.
+
+Track ownership and lifetime for temporary resources and state changes. Arrange restoration and cleanup even on failure, using `try/finally` or the appropriate lifecycle callback. Restore borrowed state after use; release only resources created for this operation, once all consumers finish. Preserve the requested final state and unrelated objects. For operations spanning frames, cleanup belongs after completion or cancellation, not when the initiating call returns.
+
+## Temporary Rendering Resources
+
+Prefer `manage_camera` capture or the UI rendering tool for supported screenshots. A warning such as `Releasing render texture that is set as Camera.targetTexture!` with `MCPDynamicCode.Execute` identifies cleanup in the submitted code; a successful tool response does not make that cleanup valid. Inspect available execution history and Console evidence without assuming the original snippet is retained.
+
+When custom rendering is required, inspect the actual camera and render pipeline first. Save the camera's existing target and `RenderTexture.active`, then restore both in `finally` **before** releasing the texture. This synchronous ownership pattern is a cleanup template, not a complete capture implementation:
+
+```csharp
+// camera is the already-resolved, valid target; preserve the existing Play state.
+var previousTarget = camera.targetTexture;
+var previousActive = RenderTexture.active;
+var temporary = RenderTexture.GetTemporary(256, 256, 24);
+try
+{
+    camera.targetTexture = temporary;
+    // Perform the bounded render/readback supported by this project's pipeline.
+    // Do not yield, expose this temporary to other owners, or return the texture.
+}
+finally
+{
+    if (camera != null)
+        camera.targetTexture = previousTarget;
+    RenderTexture.active = previousActive;
+    RenderTexture.ReleaseTemporary(temporary);
+}
+```
+
+Pair `GetTemporary` with `ReleaseTemporary`; do not call `Destroy` or `DestroyImmediate` on a pooled texture. For an explicitly created, test-owned texture, detach/restore every binding changed by the test before releasing and disposing it using the appropriate Play/Edit-mode API. Never release the borrowed previous target, broadly clear other cameras, or destroy live game objects with `DestroyImmediate`. Async readback requires retaining ownership until completion; the synchronous template must not release a still-in-use texture.
+
+Unity 6 references: [Camera.targetTexture](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Camera-targetTexture.html), [RenderTexture.active](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/RenderTexture-active.html), [ReleaseTemporary](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/RenderTexture.ReleaseTemporary.html).
+
 ## Tests And Long-Running Jobs
 
 When Play readiness matters, use `manage_editor(action="play", wait_until="scene_loaded")` or `"first_frame"` and retain its returned job ID. Poll `get_play_mode_job` with a bounded deadline. `first_frame` observes simulation progress; it does not establish rendered pixels or completion of application-specific async loading. `cancel_play_mode_job` cancels monitoring without stopping Play Mode.
