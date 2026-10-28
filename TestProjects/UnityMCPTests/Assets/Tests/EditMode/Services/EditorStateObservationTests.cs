@@ -1,16 +1,100 @@
 using System;
+using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using Unity.Profiling;
 using UnityEditor;
+using UnityEditor.TestTools.TestRunner.Api;
 
 namespace MCPForUnityTests.Editor.Services
 {
     // The nested JSON helper has no Unity dependency or outer-cache initialization.
     public class EditorStateObservationTests
     {
+        [Test]
+        public void MissingCacheRebuildsBeforeObservingUnchangedState()
+        {
+            EditorStateCache.GetSnapshot();
+            var cached = typeof(EditorStateCache).GetField("_cached", BindingFlags.NonPublic | BindingFlags.Static);
+            var previous = cached.GetValue(null);
+            try
+            {
+                cached.SetValue(null, null);
+                Assert.AreEqual("unity-mcp/editor_state@2", (string)EditorStateCache.GetSnapshot()["schema_version"]);
+            }
+            finally
+            {
+                cached.SetValue(null, previous);
+            }
+        }
+
+        [TestCase(false, "native_job_active")]
+        [TestCase(true, "recovery_required")]
+        public void CachedReadObservesNativeReservationWithoutWaitingForAnEditorTick(bool expired, string reason)
+        {
+            var owner = CompilationJobTracker.Reservation;
+            Assert.IsNull(owner.State, "This isolated test requires no existing compile owner.");
+            EditorStateCache.GetSnapshot();
+            owner.Reserve("state-observation-test", expired ? 0 : EditorApplication.timeSinceStartup + 600);
+            var context = new object();
+            owner.Started(context);
+            try
+            {
+                var snapshot = EditorStateCache.GetSnapshot();
+                Assert.AreEqual(reason, (string)snapshot["native_coordination"]?["reason"]);
+                Assert.IsTrue((bool)snapshot["native_coordination"]["blocked"]);
+                Assert.AreEqual(!expired, (bool)snapshot["native_coordination"]["retryable"]);
+                Assert.IsNotNull(owner.State, "Observing readiness must not release native ownership.");
+            }
+            finally
+            {
+                owner.Finished(context);
+                owner.ObserveQuiescence(true);
+                owner.ObserveQuiescence(true);
+            }
+            Assert.IsFalse((bool)EditorStateCache.GetSnapshot()["native_coordination"]["blocked"]);
+        }
+
+        [TestCase(66, 0, "Passed", "passed")]
+        [TestCase(65, 1, "Failed", "failed")]
+        public void CompletedRunSummaryReachesStateAndSurvivesCleanup(int passed, int failed, string nativeResult, string result)
+        {
+            var fields = typeof(TestRunStatus).GetFields(BindingFlags.NonPublic | BindingFlags.Static).Where(field => !field.IsInitOnly).ToArray();
+            var previous = fields.Select(field => field.GetValue(null)).ToArray();
+            var complete = typeof(TestRunnerService).GetMethod("CompleteRun", BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                using (var runner = new TestRunnerService())
+                {
+                    TestRunStatus.MarkStarted(TestMode.EditMode);
+                    var payload = new TestRunResult(new TestRunSummary(66, passed, failed, 0, 1.5, nativeResult), Array.Empty<TestRunTestResult>());
+                    complete.Invoke(runner, new object[] { payload, null });
+                    long? finished = TestRunStatus.FinishedUnixMs;
+                    TestRunStatus.MarkFinished();
+                    Assert.AreEqual(finished, TestRunStatus.FinishedUnixMs, "Duplicate cleanup must preserve the actual completion time.");
+                    var lastRun = EditorStateCache.GetSnapshot()["tests"]["last_run"];
+                    Assert.AreEqual(result, (string)lastRun?["result"]);
+                    Assert.AreEqual(66, (int)lastRun["counts"]["total"]);
+                    Assert.AreEqual(passed, (int)lastRun["counts"]["passed"]);
+                    Assert.AreEqual(failed, (int)lastRun["counts"]["failed"]);
+                    Assert.AreEqual(0, (int)lastRun["counts"]["skipped"]);
+
+                    TestRunStatus.MarkStarted(TestMode.EditMode);
+                    TestRunStatus.MarkFinished();
+                    lastRun = EditorStateCache.GetSnapshot()["tests"]["last_run"];
+                    Assert.AreEqual("unknown", (string)lastRun["result"]);
+                    Assert.AreEqual(JTokenType.Null, lastRun["counts"].Type, "Unobserved results must not borrow a previous run's counts.");
+                }
+            }
+            finally
+            {
+                for (int i = 0; i < fields.Length; i++)
+                    fields[i].SetValue(null, previous[i]);
+            }
+        }
+
         [Test]
         public void ObservationRefreshPreservesSequenceActivityAndEveryOtherField()
         {

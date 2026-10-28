@@ -373,7 +373,8 @@ def _compose(
         blocking_reasons=reasons,
         next_action=action
         if isinstance(action, str)
-        and action in {"none", "retry_later", "inspect_editor"}
+        and action
+        in {"none", "retry_later", "inspect_editor", "inspect_native_work_then_restart_editor"}
         and ready is not None
         else "read_editor_state",
     )

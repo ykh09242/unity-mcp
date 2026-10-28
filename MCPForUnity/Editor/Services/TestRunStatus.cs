@@ -15,6 +15,16 @@ namespace MCPForUnity.Editor.Services
         private static TestMode? _mode;
         private static long? _startedUnixMs;
         private static long? _finishedUnixMs;
+        private static TestRunSummary _summary;
+
+        public static TestRunSummary Summary
+        {
+            get
+            {
+                lock (LockObj)
+                    return _summary;
+            }
+        }
 
         public static bool IsRunning
         {
@@ -60,15 +70,19 @@ namespace MCPForUnity.Editor.Services
                 _mode = mode;
                 _startedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 _finishedUnixMs = null;
+                _summary = null;
             }
         }
 
-        public static void MarkFinished()
+        public static void MarkFinished(TestRunSummary summary = null)
         {
             lock (LockObj)
             {
                 _isRunning = false;
-                _finishedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                // Completion callbacks and finally/cleanup can both arrive for a run.
+                // Retain the observed result and time until the next MarkStarted.
+                _finishedUnixMs ??= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                _summary ??= summary;
                 _mode = null;
             }
         }

@@ -131,8 +131,13 @@ async def query_doctor(ctx: Context) -> DoctorReceipt:
                 status="passed", reason="observed", next_action="none"
             )
         case "blocked":
+            recovery_required = "recovery_required" in capabilities.readiness.blocking_reasons
             checks["readiness"] = DoctorCheck(
-                status="not_checked", reason="readiness_blocked", next_action="inspect_editor"
+                status="not_checked",
+                reason="recovery_required" if recovery_required else "readiness_blocked",
+                next_action="inspect_native_work_then_restart_editor"
+                if recovery_required
+                else "inspect_editor",
             )
         case "unknown":
             pass

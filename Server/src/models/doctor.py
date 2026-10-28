@@ -30,6 +30,7 @@ class DoctorCheck(DoctorModel):
         "capacity",
         "connection_changed",
         "readiness_blocked",
+        "recovery_required",
         "readiness_unknown",
         "auth_required",
     ]
@@ -39,6 +40,7 @@ class DoctorCheck(DoctorModel):
         "select_instance",
         "reconnect_unity",
         "inspect_editor",
+        "inspect_native_work_then_restart_editor",
         "restart_client_server",
         "verify_selected_source",
         "use_authenticated_client",

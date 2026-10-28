@@ -124,6 +124,13 @@ class EditorStateTransport(BaseModel):
     last_message_unix_ms: int | None = None
 
 
+class EditorStateNativeCoordination(BaseModel):
+    blocked: bool | None = None
+    reason: str | None = None
+    retryable: bool | None = None
+    recovery_action: str | None = None
+
+
 class EditorStateSettings(BaseModel):
     batch_execute_max_commands: int | None = None
 
@@ -160,6 +167,7 @@ class EditorStateData(BaseModel):
     compilation: EditorStateCompilation | None = None
     assets: EditorStateAssets | None = None
     tests: EditorStateTests | None = None
+    native_coordination: EditorStateNativeCoordination | None = None
     transport: EditorStateTransport | None = None
     settings: EditorStateSettings | None = None
     advice: EditorStateAdvice | None = None
@@ -257,6 +265,39 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
     refresh = (assets.get("refresh") or {}) if isinstance(assets, dict) else {}
 
     blocking: list[str] = []
+    native = state_v2.get("native_coordination")
+    recovery_required = False
+    if native is not None:
+        # Derive bounded guidance from the same native admission reason, never
+        # from an arbitrary peer-provided action or a coerced boolean.
+        known_reasons = {
+            "recovery_required",
+            "native_job_active",
+            "editor_compiling",
+            "editor_importing",
+        }
+        blocked = native.get("blocked") if isinstance(native, dict) else None
+        reason = native.get("reason") if isinstance(native, dict) else None
+        if blocked is True and isinstance(reason, str) and reason in known_reasons:
+            blocking.append(reason)
+            recovery_required = reason == "recovery_required"
+            state_v2["native_coordination"] = {
+                "blocked": True,
+                "reason": reason,
+                "retryable": not recovery_required,
+                "recovery_action": "inspect_native_work_then_restart_editor"
+                if recovery_required
+                else None,
+            }
+        elif blocked is False and reason is None:
+            state_v2["native_coordination"] = {"blocked": False, "reason": None, "retryable": False}
+        else:
+            blocking.append("native_coordination_unknown")
+            state_v2["native_coordination"] = {
+                "blocked": None,
+                "reason": "unknown",
+                "retryable": None,
+            }
     if compilation.get("is_compiling") is True:
         blocking.append("compiling")
     if compilation.get("is_domain_reload_pending") is True:
@@ -331,8 +372,16 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
         "ready_for_tools": ready_for_tools,
         "blocking_reasons": blocking,
         "warnings": warnings,
-        "recommended_retry_after_ms": 0 if ready_for_tools else 5000 if inspect_editor else 500,
-        "recommended_next_action": "inspect_editor"
+        "recommended_retry_after_ms": None
+        if recovery_required
+        else 0
+        if ready_for_tools
+        else 5000
+        if inspect_editor
+        else 500,
+        "recommended_next_action": "inspect_native_work_then_restart_editor"
+        if recovery_required
+        else "inspect_editor"
         if inspect_editor
         else "inspect_scan_scope"
         if assets.get("external_changes_scan_limited") is True
@@ -349,7 +398,9 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
     name="editor_state",
     description=(
         "Canonical editor readiness snapshot. Includes advice, server-computed staleness, "
-        "and assets.external_changes_scan_complete/limited coverage. scan_in_progress "
+        "and native_coordination from native admission. recovery_required blocks readiness "
+        "even when compilation is idle; follow its recovery action instead of polling blindly. "
+        "Also includes assets.external_changes_scan_complete/limited coverage. scan_in_progress "
         "distinguishes a routine recheck from verified coverage. Pending or limited local "
         "coverage is reported in advice.warnings without blocking native readiness; "
         "ready_for_tools does not certify that all external changes were scanned or imported. "

@@ -90,6 +90,32 @@ async def test_same_semver_does_not_replace_source_comparison(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+async def test_idle_editor_with_native_recovery_never_passes_readiness(command_hub, mode):
+    replies = observations()
+    replies["get_editor_state"]["native_coordination"] = {
+        "blocked": True,
+        "reason": "recovery_required",
+        "retryable": False,
+        "recovery_action": "inspect_native_work_then_restart_editor",
+    }
+    await install_native_replies(command_hub, replies)
+    async with Client(doctor_server(), mode=mode, cache=False) as client:
+        await client.call_tool("select_fixture")
+        data = await read_doctor(client)
+        capabilities = await read_capabilities(client)
+    assert data["connection_verified"] is True
+    assert data["checks"]["readiness"] == {
+        "status": "not_checked",
+        "reason": "recovery_required",
+        "next_action": "inspect_native_work_then_restart_editor",
+    }
+    assert capabilities["readiness"]["status"] == "blocked"
+    assert "recovery_required" in capabilities["readiness"]["blocking_reasons"]
+    assert capabilities["readiness"]["next_action"] == "inspect_native_work_then_restart_editor"
+
+
+@pytest.mark.asyncio
 async def test_ambiguous_source_failure_remains_unknown_without_raw_error(command_hub):
     await install_native_replies(command_hub, {})
     async with Client(doctor_server(), mode="legacy") as client:

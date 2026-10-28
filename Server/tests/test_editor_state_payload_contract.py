@@ -72,6 +72,37 @@ def test_editor_state_rejects_missing_payload_without_fabricating_readiness():
                         assert response["success"] is False and response["error"] == "native failure", response
                         assert response["data"] == raw["data"], response
 
+                    for reason, retryable in (("recovery_required", False), ("native_job_active", True)):
+                        data = {
+                            "observed_at_unix_ms": 5000, "sequence": 1,
+                            "activity": {"phase": "idle"},
+                            "compilation": {"is_compiling": False, "is_domain_reload_pending": False},
+                            "tests": {"is_running": False}, "assets": {"is_updating": False},
+                            "native_coordination": {"blocked": True, "reason": reason, "retryable": retryable},
+                        }
+                        state.unity_transport.send_with_unity_instance = AsyncMock(return_value={"success": True, "data": data})
+                        response = json.loads((await client.read_resource("mcpforunity://editor/state"))[0].text)
+                        advice = response["data"]["advice"]
+                        assert advice["ready_for_tools"] is False, response
+                        assert reason in advice["blocking_reasons"], response
+                        assert response["data"]["native_coordination"]["retryable"] is retryable, response
+                        if not retryable:
+                            assert advice["recommended_next_action"] == "inspect_native_work_then_restart_editor", response
+                            assert advice["recommended_retry_after_ms"] is None, response
+
+                    for native in ([], "invalid", {"blocked": "false"}, {"blocked": True, "reason": []},
+                                   {"blocked": True, "reason": "untrusted"}, {"blocked": False, "reason": "recovery_required"}):
+                        data = {"observed_at_unix_ms": 5000, "native_coordination": native}
+                        state.unity_transport.send_with_unity_instance = AsyncMock(return_value={"success": True, "data": data})
+                        response = json.loads((await client.read_resource("mcpforunity://editor/state"))[0].text)
+                        assert response["success"] is True, response
+                        assert response["data"]["advice"]["ready_for_tools"] is False, response
+                        assert "native_coordination_unknown" in response["data"]["advice"]["blocking_reasons"], response
+                    data = {"observed_at_unix_ms": 5000, "native_coordination": {"blocked": False}}
+                    state.unity_transport.send_with_unity_instance = AsyncMock(return_value={"success": True, "data": data})
+                    response = json.loads((await client.read_resource("mcpforunity://editor/state"))[0].text)
+                    assert response["data"]["advice"]["ready_for_tools"] is True, response
+
         asyncio.run(scenario())
     """
     _run_sdk_regression(source)

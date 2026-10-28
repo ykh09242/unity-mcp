@@ -28,10 +28,20 @@ namespace MCPForUnity.Editor.Services.Transport
         internal static bool TryGetBlocker(string commandName, JObject parameters, out NativeAdmissionBlocker blocker) =>
             Evaluate(commandName, parameters, Capture(), out blocker);
 
-        private static NativeBarrierState Capture() =>
+        // General readiness shares ordinary-read admission. Read-only UPM queries
+        // still fence Client calls/execute_code, but do not block every tool.
+        internal static NativeAdmissionBlocker ObserveReadiness(bool compiling)
+        {
+            Evaluate("read_console", null, Capture(compiling), out var blocker);
+            return blocker;
+        }
+
+        private static NativeBarrierState Capture(bool? compiling = null) =>
             new NativeBarrierState
             {
-                Compiling = EditorStateCache.GetActualIsCompiling(),
+                // Event snapshots already know this flag. Do not reenter the native
+                // compilation pipeline from an AssemblyBuilder completion callback.
+                Compiling = compiling ?? EditorStateCache.GetActualIsCompiling(),
                 Importing = EditorApplication.isUpdating,
                 Transitioning = EditorStateCache.IsDomainReloadPending || EditorStateCache.IsPlayModeTransition || PlayModeReadiness.HasPendingPlayRequest,
                 OwnedJob =

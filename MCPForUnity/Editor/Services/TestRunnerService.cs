@@ -445,7 +445,7 @@ namespace MCPForUnity.Editor.Services
             bool canCleanUp = ownsCurrentJob || !TestJobManager.HasRunningJob;
             if (canCleanUp)
             {
-                TestRunStatus.MarkFinished();
+                TestRunStatus.MarkFinished(error == null ? payload?.Summary : null);
             }
             if (ownsCurrentJob)
             {

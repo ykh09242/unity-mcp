@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Threading;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -31,6 +32,8 @@ namespace MCPForUnity.Editor.Services
         private static long _observedUnixMs;
 
         private static bool _lastIsCompiling;
+        private static string _lastTrackedNativeBarrierReason;
+        private static TestRunSummary _lastTrackedTestSummary;
         private const string PlayTransitionKey = "MCPForUnity.EditorState.PlayTransition";
         internal static bool IsPlayModeTransition =>
             SessionState.GetBool(PlayTransitionKey, false) || EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode;
@@ -116,6 +119,9 @@ namespace MCPForUnity.Editor.Services
 
             [JsonProperty("tests")]
             public EditorStateTests Tests { get; set; }
+
+            [JsonProperty("native_coordination")]
+            public EditorStateNativeCoordination NativeCoordination { get; set; }
 
             [JsonProperty("transport")]
             public EditorStateTransport Transport { get; set; }
@@ -283,6 +289,21 @@ namespace MCPForUnity.Editor.Services
             public object Counts { get; set; }
         }
 
+        private sealed class EditorStateNativeCoordination
+        {
+            [JsonProperty("blocked")]
+            public bool Blocked { get; set; }
+
+            [JsonProperty("reason")]
+            public string Reason { get; set; }
+
+            [JsonProperty("retryable")]
+            public bool Retryable { get; set; }
+
+            [JsonProperty("recovery_action")]
+            public string RecoveryAction { get; set; }
+        }
+
         private sealed class EditorStateTransport
         {
             [JsonProperty("unity_bridge_connected")]
@@ -360,7 +381,9 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        private static void OnUpdate()
+        private static void OnUpdate() => ObserveState(false);
+
+        private static void ObserveState(bool force)
         {
             // Throttle to reduce overhead while keeping the snapshot fresh enough for polling clients.
             double now = EditorApplication.timeSinceStartup;
@@ -370,7 +393,7 @@ namespace MCPForUnity.Editor.Services
             // Check for compilation edge transitions (always update on these)
             bool compilationEdge = isCompiling != _lastIsCompiling;
 
-            if (!compilationEdge && now - _lastUpdateTimeSinceStartup < MinUpdateIntervalSeconds)
+            if (!force && !compilationEdge && now - _lastUpdateTimeSinceStartup < MinUpdateIntervalSeconds)
             {
                 return;
             }
@@ -390,6 +413,7 @@ namespace MCPForUnity.Editor.Services
             bool isUpdating = EditorApplication.isUpdating;
             bool testsRunning = TestRunStatus.IsRunning;
             bool nativeControlUnreleased = TestJobManager.NativeAdmissionBlocked;
+            var nativeBarrier = NativeOperationBarriers.ObserveReadiness(isCompiling);
             string testsMode = TestRunStatus.Mode?.ToString();
             string testJobId = TestJobManager.CurrentJobId;
             int batchLimit = Tools.BatchExecute.GetMaxCommandsPerBatch();
@@ -419,9 +443,14 @@ namespace MCPForUnity.Editor.Services
             {
                 activityPhase = "playmode_transition";
             }
+            else if (nativeBarrier.Reason != null)
+            {
+                activityPhase = nativeBarrier.Reason == "recovery_required" ? "native_recovery_required" : "native_job_active";
+            }
 
             bool hasChanges =
-                compilationEdge
+                _cached == null
+                || compilationEdge
                 || _lastTrackedScenePath != scenePath
                 || _lastTrackedSceneName != sceneName
                 || _lastTrackedIsFocused != isFocused
@@ -431,6 +460,8 @@ namespace MCPForUnity.Editor.Services
                 || _lastTrackedIsUpdating != isUpdating
                 || _lastTrackedTestsRunning != testsRunning
                 || _lastTrackedNativeControlUnreleased != nativeControlUnreleased
+                || _lastTrackedNativeBarrierReason != nativeBarrier.Reason
+                || _lastTrackedTestSummary != TestRunStatus.Summary
                 || _lastTrackedTestsMode != testsMode
                 || _lastTrackedTestJobId != testJobId
                 || _lastTrackedTestStartedMs != TestRunStatus.StartedUnixMs
@@ -451,7 +482,7 @@ namespace MCPForUnity.Editor.Services
                 return;
             }
 
-            ForceUpdate("tick");
+            ForceUpdate(force ? "read" : "tick", isCompiling);
         }
 
         // A successful unchanged observation refreshes liveness without changing content.
@@ -589,6 +620,8 @@ namespace MCPForUnity.Editor.Services
 
             bool testsRunning = TestRunStatus.IsRunning;
             bool nativeControlUnreleased = TestJobManager.NativeAdmissionBlocked;
+            var nativeBarrier = NativeOperationBarriers.ObserveReadiness(isCompiling);
+            var testSummary = TestRunStatus.Summary;
             var testsMode = TestRunStatus.Mode?.ToString();
             string currentJobId = TestJobManager.CurrentJobId;
             bool isFocused = InternalEditorUtility.isApplicationActive;
@@ -617,6 +650,10 @@ namespace MCPForUnity.Editor.Services
             else if (IsPlayModeTransition)
             {
                 activityPhase = "playmode_transition";
+            }
+            else if (nativeBarrier.Reason != null)
+            {
+                activityPhase = nativeBarrier.Reason == "recovery_required" ? "native_recovery_required" : "native_job_active";
             }
 
             if (_activitySinceUnixMs == 0 || activityPhase != _lastTrackedActivityPhase)
@@ -693,10 +730,26 @@ namespace MCPForUnity.Editor.Services
                         ? new EditorStateLastRun
                         {
                             FinishedUnixMs = TestRunStatus.FinishedUnixMs,
-                            Result = "unknown",
-                            Counts = null,
+                            Result = testSummary?.ResultState?.ToLowerInvariant() ?? "unknown",
+                            Counts =
+                                testSummary == null
+                                    ? null
+                                    : new
+                                    {
+                                        total = testSummary.Total,
+                                        passed = testSummary.Passed,
+                                        failed = testSummary.Failed,
+                                        skipped = testSummary.Skipped,
+                                    },
                         }
                         : null,
+                },
+                NativeCoordination = new EditorStateNativeCoordination
+                {
+                    Blocked = nativeBarrier.Reason != null,
+                    Reason = nativeBarrier.Reason,
+                    Retryable = nativeBarrier.Reason != null && nativeBarrier.Retryable,
+                    RecoveryAction = nativeBarrier.Reason == "recovery_required" ? "inspect_native_work_then_restart_editor" : null,
                 },
                 Transport = new EditorStateTransport { UnityBridgeConnected = null, LastMessageUnixMs = null },
                 Settings = new EditorStateSettings { BatchExecuteMaxCommands = Tools.BatchExecute.GetMaxCommandsPerBatch() },
@@ -714,6 +767,8 @@ namespace MCPForUnity.Editor.Services
             _lastTrackedIsUpdating = snapshot.Assets.IsUpdating == true;
             _lastTrackedTestsRunning = testsRunning;
             _lastTrackedNativeControlUnreleased = nativeControlUnreleased;
+            _lastTrackedNativeBarrierReason = nativeBarrier.Reason;
+            _lastTrackedTestSummary = testSummary;
             _lastTrackedTestsMode = testsMode;
             _lastTrackedTestJobId = currentJobId;
             _lastTrackedTestStartedMs = TestRunStatus.StartedUnixMs;
@@ -725,6 +780,10 @@ namespace MCPForUnity.Editor.Services
 
         public static JObject GetSnapshot()
         {
+            // A background Editor may not tick between a native admission change and
+            // this RPC. Observe on the main thread before returning the cached content.
+            if (Thread.CurrentThread.ManagedThreadId == MainThreadId)
+                ObserveState(true);
             lock (LockObj)
             {
                 // Defensive: if something went wrong early, rebuild once.
@@ -736,18 +795,7 @@ namespace MCPForUnity.Editor.Services
                 // Always return a fresh clone to prevent mutation bugs.
                 // The main GC optimization comes from state-change detection (OnUpdate)
                 // which prevents unnecessary _cached rebuilds, not from caching the clone.
-                var clone = (JObject)_cached.DeepClone();
-
-                // When Unity is backgrounded, OnUpdate is throttled and the
-                // cached timestamp grows stale even though the data is current.
-                // Re-stamp only in that case so the server-side staleness check
-                // still fires for genuinely unresponsive editors when focused.
-                if (!InternalEditorUtility.isApplicationActive)
-                {
-                    clone["observed_at_unix_ms"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                }
-
-                return clone;
+                return (JObject)_cached.DeepClone();
             }
         }
 
