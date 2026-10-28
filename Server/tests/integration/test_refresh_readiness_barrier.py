@@ -14,6 +14,52 @@ from .test_helpers import DummyContext
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("compile_mode", ["none", "request"])
+async def test_refresh_reports_native_recovery_without_polling_to_timeout(
+    monkeypatch, compile_mode
+):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(refresh_module, "_in_pytest", lambda: False)
+    monkeypatch.setattr(
+        refresh_module, "get_unity_instance_from_context", AsyncMock(return_value="Fixture@hash")
+    )
+    calls = []
+
+    async def transport(send, target, command, params, **kwargs):
+        calls.append(command)
+        assert command == "refresh_unity", (
+            "Do not replay the mutation or invent another compile job."
+        )
+        return {"success": True, "data": {"refresh_triggered": True}}
+
+    state = editor_state._enrich_advice_and_staleness(
+        {
+            "native_coordination": {
+                "blocked": True,
+                "reason": "recovery_required",
+                "retryable": False,
+            },
+            "activity": {"phase": "native_recovery_required"},
+        }
+    )
+    read = AsyncMock(return_value={"success": True, "data": state})
+    monkeypatch.setattr(refresh_module.unity_transport, "send_with_unity_instance", transport)
+    monkeypatch.setattr(editor_state, "get_editor_state_authoritative", read)
+    response = await refresh_module.refresh_unity(
+        DummyContext(), compile=compile_mode, timeout_seconds=1.0
+    )
+    assert response.success is False
+    assert response.data["reason"] == "recovery_required"
+    assert response.data["timeout"] is False
+    assert response.data["retryable"] is False
+    assert response.data["readiness"]["ready"] is False
+    assert response.data["readiness"]["next_action"] == "inspect_native_work_then_restart_editor"
+    assert read.await_count == 1
+    assert calls == ["refresh_unity"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("compile_mode", ["none", "request"])
 @pytest.mark.parametrize(
     "busy_polls,stale,expected_success,expected_polls",
     [

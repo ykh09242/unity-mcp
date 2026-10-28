@@ -43,7 +43,8 @@ async def wait_for_editor_ready(
 ) -> tuple[bool, float]:
     """Poll editor_state until Unity is ready for tool calls.
 
-    Returns (ready, elapsed_seconds).  Treats exceptions from
+    Returns (ready, elapsed_seconds), stopping early on native recovery_required.
+    Treats exceptions from
     get_editor_state as "not ready yet" so the loop survives transient
     connection errors during domain reload.
     """
@@ -89,6 +90,10 @@ async def wait_for_editor_ready(
                     raise
                 # Optional evidence collection cannot erase readiness already
                 # observed before the deadline. Its work is cancelled and drained.
+        if isinstance(advice, dict) and "recovery_required" in (
+            advice.get("blocking_reasons") or []
+        ):
+            return (False, time.monotonic() - start)
         if observed_ready:
             return (True, time.monotonic() - start)
         if time.monotonic() >= deadline:
@@ -483,6 +488,8 @@ async def refresh_unity(
                 "blocking_reasons": advice.get("blocking_reasons"),
                 "warnings": advice.get("warnings", []),
             }
+            if "recovery_required" in (advice.get("blocking_reasons") or []):
+                readiness["next_action"] = "inspect_native_work_then_restart_editor"
             activity = state.get("activity")
             phase = activity.get("phase") if isinstance(activity, dict) else None
             if isinstance(phase, str) and phase:
@@ -539,6 +546,25 @@ async def refresh_unity(
             except TimeoutError:
                 pass  # The observer shares the readiness deadline; never extend it.
         readiness["ready"] = ready_confirmed
+
+        if (
+            not ready_confirmed
+            and readiness.get("next_action") == "inspect_native_work_then_restart_editor"
+        ):
+            return with_compilation(
+                MCPResponse(
+                    success=False,
+                    error="recovery_required",
+                    message="Editor readiness is blocked by native work requiring recovery. Inspect native work before restarting the Editor; do not repeat the refresh.",
+                    data={
+                        **(native_data if isinstance(native_data, dict) else {}),
+                        "reason": "recovery_required",
+                        "timeout": False,
+                        "retryable": False,
+                        "recovery_action": "inspect_native_work_then_restart_editor",
+                    },
+                )
+            )
 
         # If we timed out without confirming readiness, log and return failure
         if not ready_confirmed:

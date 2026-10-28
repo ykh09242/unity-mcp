@@ -93,6 +93,32 @@ ACKNOWLEDGED = {
 }
 
 
+def test_refresh_native_recovery_is_reported_without_waiting_to_deadline(refresh_cli):
+    invoke, requests, now = refresh_cli
+    blocked = ready_state()
+    blocked["data"]["native_coordination"] = {
+        "blocked": True,
+        "reason": "recovery_required",
+        "retryable": False,
+    }
+
+    def handler(payload):
+        return httpx.Response(
+            200, json=ACKNOWLEDGED if payload["type"] == "refresh_unity" else blocked
+        )
+
+    result = invoke(handler)
+    assert result.exit_code == 1, result.output
+    response = json.loads(result.stdout)
+    assert response["error"] == "recovery_required"
+    assert response["data"]["timeout"] is False
+    assert response["data"]["retryable"] is False
+    assert response["data"]["refresh_response"] == ACKNOWLEDGED
+    assert response["data"]["recovery_action"] == "inspect_native_work_then_restart_editor"
+    assert len(requests) == 2
+    assert now[0] == 0
+
+
 def test_refresh_stable_play_polls_canonical_state_without_native_wait(refresh_cli):
     invoke, requests, _ = refresh_cli
 
