@@ -1,6 +1,6 @@
 [project]
 name = "ykh09242-unity-mcp-server"
-version = "2.1.6"
+version = "2.1.7"
 description = "Unity MCP (ykh09242): Unity Editor integration via the Model Context Protocol (MCP)."
 readme = "README.md"
 license = "MIT"
