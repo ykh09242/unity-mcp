@@ -39,6 +39,73 @@ def keys(index, owner="caller"):
     return {edge.key for edge in index.analyze(owner).edges}
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        'foreach (var Resources in values) Resources.Load("one");',
+        'foreach (var (Resources, other) in values) Resources.Load("one");',
+        'if (value is Custom Resources && Resources.Load("one") != null) {}',
+        'if (value is Custom { } Resources && Resources.Load("one") != null) {}',
+        'if (value is Custom { Item: var Resources } && Resources.Load("one") != null) {}',
+        'var result = value is Custom Resources ? Resources.Load("one") : null;',
+        'switch (value) { case Custom Resources when Resources.Load("one") != null: break; }',
+    ],
+)
+def test_iteration_and_pattern_receivers_are_not_bound_to_unity_types(body):
+    item = facts("caller", "using UnityEngine; class Use { void Run() { " + body + " } }")
+    result = AnalysisIndex([item], catalog()).analyze("caller")
+    assert not result.edges
+    assert any(issue["reason"] == "unresolved_receiver" for issue in result.unresolved)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "foreach (var Key in values) Resources.Load(Key);",
+        "foreach (var (Key, other) in values) Resources.Load(Key);",
+        "if (value is string Key && Resources.Load(Key) != null) {}",
+        "if (value is Custom { Item: var Key } && Resources.Load(Key) != null) {}",
+        "var result = value is string Key ? Resources.Load(Key) : null;",
+        "switch (value) { case string Key: Resources.Load(Key); break; }",
+    ],
+)
+def test_iteration_and_pattern_values_do_not_resolve_shadowed_constants(body):
+    item = facts(
+        "caller",
+        'using UnityEngine; class Use { const string Key="one"; void Run() { ' + body + " } }",
+    )
+    result = AnalysisIndex([item], catalog()).analyze("caller")
+    assert not result.edges
+    assert any(issue["reason"] == "dynamic_key" for issue in result.unresolved)
+
+
+def test_binding_uncertainty_keeps_explicit_global_loader_evidence_in_other_methods():
+    item = facts(
+        "caller",
+        """using UnityEngine;
+class Use {
+void Shadowed() { foreach (var Resources in values) Resources.Load("one"); }
+void Ordinary() { Resources.Load("two"); }
+void Explicit() { foreach (var Resources in values) global::UnityEngine.Resources.Load("three"); }
+}""",
+    )
+    result = AnalysisIndex([item], catalog()).analyze("caller")
+    assert {edge.key for edge in result.edges} == {"two", "three"}
+    assert any(issue["reason"] == "unresolved_receiver" for issue in result.unresolved)
+
+
+def test_conditional_pattern_keeps_explicit_global_loader_evidence():
+    item = facts(
+        "caller",
+        """class Use { void Run() {
+var result = value is Custom Resources ? global::UnityEngine.Resources.Load("one") : null;
+} }""",
+    )
+    result = AnalysisIndex([item], catalog()).analyze("caller")
+    assert {edge.key for edge in result.edges} == {"one"}
+    assert not result.unresolved
+
+
 def test_preprocessor_uses_actual_defines_preserves_lines_and_ignores_literal_directives():
     source = """using UnityEngine;
 class Use {

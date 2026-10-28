@@ -573,12 +573,37 @@ def parse_csharp(
                 and tokens[i].kind == "id"
                 and (
                     tokens[i - 1].kind == "id"
-                    or tokens[i - 1].text in (">", "]", "?", "*", ",", ")")
+                    or tokens[i - 1].text in (">", "]", "}", "?", "*", ",", ")")
                 )
                 and tokens[i - 1].text not in ("return", "throw", "await", "new")
-                and tokens[i + 1].text in ("=", ";", ",", ")", "=>")
+                and tokens[i + 1].text
+                in (
+                    "=",
+                    ";",
+                    ",",
+                    ")",
+                    "=>",
+                    "in",
+                    "&",
+                    "|",
+                    "?",
+                    "when",
+                    ":",
+                    "}",
+                    "]",
+                    "and",
+                    "or",
+                )
             ):
                 names.add(tokens[i].text)
+            if tokens[i].text == "var" and i + 1 in pairs and tokens[i + 1].text == "(":
+                # Tuple designations and nested patterns are not type names.
+                # Keep their names uncertain for this method, just like other
+                # local bindings; do not guess a constant or static receiver.
+                for position in range(i + 2, pairs[i + 1]):
+                    check()
+                    if tokens[position].kind == "id":
+                        names.add(tokens[position].text)
         local_names[method[0]] = frozenset(names)
         tainted = set()
         for i in range(method[3] + 1, min(method[4], len(tokens) - 2)):
