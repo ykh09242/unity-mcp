@@ -442,7 +442,7 @@ namespace MCPForUnity.Editor.Tools
         /// <param name="commandName">The command name to execute</param>
         /// <param name="params">Command parameters</param>
         /// <param name="tcs">TaskCompletionSource to complete when async operation finishes</param>
-        /// <returns>The result for synchronous commands, or null for async commands (TCS will be completed later)</returns>
+        /// <returns>A non-null synchronous result, or null when the result is delivered through the TCS.</returns>
         public static object ExecuteCommand(string commandName, JObject @params, TaskCompletionSource<string> tcs) =>
             ExecuteCommand(commandName, @params, tcs, CancellationToken.None);
 
@@ -491,6 +491,11 @@ namespace MCPForUnity.Editor.Tools
                 ExecuteAsyncHandler(new HandlerInfo(commandName, null, _ => returnedTask), @params, tcs, cancellationToken, progress, outcome);
                 return null;
             }
+
+            // Null also selects the TCS response path. A synchronous null is already
+            // settled; leaving the TCS pending would retain its execution lease forever.
+            if (result == null)
+                CompleteAsyncCommand(commandName, tcs, null, outcome);
 
             return result;
         }

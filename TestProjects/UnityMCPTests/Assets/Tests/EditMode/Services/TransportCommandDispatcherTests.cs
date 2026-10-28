@@ -264,6 +264,54 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
+        [Test]
+        public void SynchronousNullResult_SettlesResponseAndExecutionAndAllowsNextMutation()
+        {
+            const string name = "__dispatcher_null_sync";
+            using var handlers = new ProgressHandlerScope();
+            int calls = 0;
+            handlers.Set(
+                name,
+                new HandlerInfo(
+                    name,
+                    _ =>
+                    {
+                        calls++;
+                        return null;
+                    },
+                    null
+                )
+            );
+            TransportCommandOperation first = null;
+            try
+            {
+                first = TransportCommandDispatcher.ExecuteCommandAsync(new Command { type = name }, CancellationToken.None);
+                Assert.IsTrue(first.Response.Wait(TimeSpan.FromSeconds(1)), "A synchronous null result is settled work, not an asynchronous continuation.");
+                Assert.IsTrue(first.Completion.Wait(TimeSpan.FromSeconds(1)));
+                var payload = JObject.Parse(first.Response.Result.ToJson());
+                Assert.AreEqual("success", (string)payload["status"]);
+                Assert.IsTrue(payload["result"] == null || payload["result"].Type == JTokenType.Null);
+                var next = TransportCommandDispatcher.ExecuteCommandAsync(new Command { type = name }, CancellationToken.None);
+                Assert.IsTrue(next.Response.Wait(TimeSpan.FromSeconds(1)));
+                Assert.IsTrue(next.Completion.Wait(TimeSpan.FromSeconds(1)));
+                Assert.AreEqual(2, calls, "Null-result completion must release the native mutation lease.");
+            }
+            finally
+            {
+                // Even a failing regression must release this fixture's already-returned
+                // synchronous handler before another Editor test tries to mutate state.
+                lock (PendingLock)
+                    foreach (var pending in Pending.Values)
+                    {
+                        if (((Command)pending.GetType().GetProperty("Command").GetValue(pending))?.type == name)
+                            ((TaskCompletionSource<string>)pending.GetType().GetProperty("CompletionSource").GetValue(pending)).TrySetResult(
+                                "{\"status\":\"success\",\"result\":null}"
+                            );
+                    }
+                first?.Completion.Wait(TimeSpan.FromSeconds(5));
+            }
+        }
+
         private static Task<string> Dispatch(string json, CancellationToken token) => (Task<string>)Execute.Invoke(null, new object[] { json, token });
 
         [Test]
