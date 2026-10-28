@@ -424,7 +424,11 @@ unity-mcp --instance "MyProject@09abcc51" -f json instance current
 
 `instance current` reports the CLI option or environment value; JSON contains
 `{"success": true, "data": {"instance": "MyProject@09abcc51"}}`. With no explicit
-selector, `instance` is `null` and requests use the default instance selection.
+selector, `instance` is `null`. Local commands automatically select the sole
+connected Editor. With multiple Editors, a missing selector or ambiguous project
+name is refused before dispatch; the response lists available `Name@hash` IDs.
+Exact hashes take precedence over project names, and a stale explicit hash never
+falls back to a same-name project.
 An explicit `--instance` option takes precedence over `UNITY_MCP_INSTANCE`.
 
 `instance set` cannot persist a selection across stateless CLI requests. It

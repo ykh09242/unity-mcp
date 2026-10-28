@@ -499,19 +499,53 @@ def _normalize_instance_token(instance_token: str | None) -> tuple[str | None, s
 
 def _select_local_session(
     sessions: SessionList,
-    instance_token: str,
+    instance_token: str | None,
 ) -> tuple[str | None, SessionDetails | None]:
-    """Prefer a concrete hash over every project-name match in the catalog."""
+    """Resolve one unique target, preferring exact hashes over project names."""
+    if not instance_token:
+        return (
+            next(iter(sessions.sessions.items())) if len(sessions.sessions) == 1 else (None, None)
+        )
     instance_name, instance_hash = _normalize_instance_token(instance_token)
-    for session_id, details in sessions.sessions.items():
-        if details.hash == instance_hash:
-            return session_id, details
-    if instance_hash and "@" in instance_token:
+    matches = [pair for pair in sessions.sessions.items() if pair[1].hash == instance_hash]
+    if matches:
+        return matches[0] if len(matches) == 1 else (None, None)
+    if "@" in instance_token:
         return None, None
-    for session_id, details in sessions.sessions.items():
-        if details.project in (instance_name, instance_token):
-            return session_id, details
-    return None, None
+    matches = [
+        pair
+        for pair in sessions.sessions.items()
+        if pair[1].project in (instance_name, instance_token)
+    ]
+    return matches[0] if len(matches) == 1 else (None, None)
+
+
+def _local_target_refusal(sessions: SessionList, instance_token: str | None) -> JSONResponse:
+    """Expose selectable IDs without dispatching an ambiguous or absent target."""
+    _, target_hash = _normalize_instance_token(instance_token)
+    exists = not instance_token or any(
+        details.hash == target_hash
+        or ("@" not in instance_token and details.project == instance_token)
+        for details in sessions.sessions.values()
+    )
+    error = (
+        "Multiple Unity instances match or no target was selected; supply an exact --instance hash."
+        if exists
+        else f"Unity instance '{instance_token}' not found"
+    )
+    return JSONResponse(
+        {
+            "success": False,
+            "error": error,
+            "data": {
+                "dispatch": "not_dispatched",
+                "available_instances": [
+                    f"{details.project}@{details.hash}" for details in sessions.sessions.values()
+                ],
+            },
+        },
+        status_code=409 if exists else 404,
+    )
 
 
 class UnityMCP(FastMCP):
@@ -859,39 +893,9 @@ def create_mcp_server(
                         status_code=503,
                     )
 
-                # Find target session
-                session_id = None
-                session_details = None
-                if unity_instance:
-                    session_id, session_details = _select_local_session(sessions, unity_instance)
-
-                # If a specific unity_instance was requested but not found, return an error
-                # (Check done here so execute_custom_tool can also validate the instance)
-                if unity_instance and not session_id:
-                    return JSONResponse(
-                        {
-                            "success": False,
-                            "error": f"Unity instance '{unity_instance}' not found",
-                        },
-                        status_code=404,
-                    )
-
-                # If no specific unity_instance requested, use first available session
-                # (Must be done before execute_custom_tool check so all command types benefit)
+                session_id, session_details = _select_local_session(sessions, unity_instance)
                 if not session_id:
-                    try:
-                        session_id = next(iter(sessions.sessions.keys()))
-                        session_details = sessions.sessions.get(session_id)
-                    except StopIteration:
-                        # No sessions available - sessions.sessions is empty
-                        # This should not happen since we checked at line 378, but handle gracefully
-                        return JSONResponse(
-                            {
-                                "success": False,
-                                "error": "No Unity instances connected. Make sure Unity is running with MCP plugin.",
-                            },
-                            status_code=503,
-                        )
+                    return _local_target_refusal(sessions, unity_instance)
 
             # Custom tool execution - must be checked BEFORE the final PluginHub.send_command call
             # This applies to both cases: with or without explicit unity_instance
@@ -1011,20 +1015,9 @@ def create_mcp_server(
                         status_code=503,
                     )
 
-                session_details = None
-                if unity_instance:
-                    _, session_details = _select_local_session(sessions, unity_instance)
-                    if not session_details:
-                        return JSONResponse(
-                            {
-                                "success": False,
-                                "error": f"Unity instance '{unity_instance}' not found",
-                            },
-                            status_code=404,
-                        )
-                else:
-                    # No specific unity_instance requested: use first available session
-                    session_details = next(iter(sessions.sessions.values()))
+                _, session_details = _select_local_session(sessions, unity_instance)
+                if not session_details:
+                    return _local_target_refusal(sessions, unity_instance)
 
                 unity_instance_hint = unity_instance
                 if session_details and session_details.hash:

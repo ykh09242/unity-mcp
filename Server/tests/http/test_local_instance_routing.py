@@ -37,7 +37,7 @@ def routing_client(monkeypatch: pytest.MonkeyPatch, prepared_tool_factory) -> Te
 
 @pytest.mark.parametrize(
     "selector, expected",
-    [("SameName@bbbb2222", "second"), ("bbbb2222", "second"), ("SameName", "first")],
+    [("SameName@bbbb2222", "second"), ("bbbb2222", "second")],
 )
 def test_command_routes_by_explicit_hash_with_duplicate_names(
     routing_client: TestClient, monkeypatch: pytest.MonkeyPatch, selector: str, expected: str
@@ -49,10 +49,66 @@ def test_command_routes_by_explicit_hash_with_duplicate_names(
     response = routing_client.post(
         "/api/command", json={"type": "manage_scene", "params": {}, "unity_instance": selector}
     )
-    # Then the hash selects its matching session, preserving bare-name selection.
+    # Then the hash selects its matching session.
     assert response.status_code == 200
     dispatch.assert_awaited_once()
     assert dispatch.await_args.args == (expected, "manage_scene", {})
+
+
+@pytest.mark.parametrize("route", ["command", "custom-tools", "custom-command"])
+@pytest.mark.parametrize("selector", [None, "", "SameName"])
+def test_multiple_editors_refuse_missing_or_ambiguous_target(
+    routing_client, monkeypatch, route, selector
+):
+    dispatch = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(PluginHub, "send_command", dispatch)
+    listing = AsyncMock(return_value=[])
+    execute = AsyncMock()
+    service = CustomToolService.get_instance()
+    monkeypatch.setattr(service, "list_registered_tools", listing)
+    monkeypatch.setattr(service, "execute_tool", execute)
+    if route == "custom-tools":
+        response = routing_client.get(
+            "/api/custom-tools", params={"instance": selector} if selector else {}
+        )
+    else:
+        response = routing_client.post(
+            "/api/command",
+            json={
+                "type": "execute_custom_tool" if route == "custom-command" else "manage_scene",
+                "params": {"tool_name": "OwnedMutation"},
+                "unity_instance": selector,
+            },
+        )
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["success"] is False
+    assert body["data"]["dispatch"] == "not_dispatched"
+    assert set(body["data"]["available_instances"]) == {"SameName@aaaa1111", "SameName@bbbb2222"}
+    dispatch.assert_not_awaited()
+    listing.assert_not_awaited()
+    execute.assert_not_awaited()
+
+
+@pytest.mark.parametrize("selector", [None, "SameName"])
+def test_one_editor_preserves_implicit_and_unique_name_selection(
+    routing_client, monkeypatch, selector
+):
+    sessions = SessionList(
+        sessions={
+            "only": SessionDetails(
+                project="SameName", hash="aaaa1111", unity_version="6000", connected_at="now"
+            )
+        }
+    )
+    monkeypatch.setattr(PluginHub, "get_sessions", AsyncMock(return_value=sessions))
+    dispatch = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(PluginHub, "send_command", dispatch)
+    response = routing_client.post(
+        "/api/command", json={"type": "manage_scene", "params": {}, "unity_instance": selector}
+    )
+    assert response.status_code == 200
+    assert dispatch.await_args.args == ("only", "manage_scene", {})
 
 
 def test_custom_tools_routes_by_explicit_hash_with_duplicate_names(
@@ -124,3 +180,56 @@ def test_bare_hash_takes_precedence_over_another_project_name(
         assert dispatch.await_args.args == ("second", "manage_scene", {})
     else:
         listing.assert_awaited_once_with("bbbb2222")
+
+
+@pytest.mark.parametrize("route", ["command", "custom-tools"])
+def test_unique_name_with_multiple_editors_selects_only_that_editor(
+    routing_client, monkeypatch, route
+):
+    sessions = SessionList(
+        sessions={
+            "first": SessionDetails(
+                project="First", hash="aaaa1111", unity_version="6000", connected_at="now"
+            ),
+            "second": SessionDetails(
+                project="Second", hash="bbbb2222", unity_version="6000", connected_at="now"
+            ),
+        }
+    )
+    monkeypatch.setattr(PluginHub, "get_sessions", AsyncMock(return_value=sessions))
+    dispatch = AsyncMock(return_value={"success": True})
+    listing = AsyncMock(return_value=[])
+    monkeypatch.setattr(PluginHub, "send_command", dispatch)
+    monkeypatch.setattr(CustomToolService.get_instance(), "list_registered_tools", listing)
+    if route == "command":
+        response = routing_client.post(
+            "/api/command", json={"type": "manage_scene", "unity_instance": "Second"}
+        )
+        assert dispatch.await_args.args == ("second", "manage_scene", {})
+    else:
+        response = routing_client.get("/api/custom-tools", params={"instance": "Second"})
+        listing.assert_awaited_once_with("bbbb2222")
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize("selector", ["aaaa1111", "SameName@aaaa1111", "SameName@"])
+def test_duplicate_exact_hash_or_incomplete_selector_never_dispatches(
+    routing_client, monkeypatch, selector
+):
+    sessions = SessionList(
+        sessions={
+            sid: SessionDetails(
+                project="SameName", hash="aaaa1111", unity_version="6000", connected_at="now"
+            )
+            for sid in ("first", "second")
+        }
+    )
+    monkeypatch.setattr(PluginHub, "get_sessions", AsyncMock(return_value=sessions))
+    dispatch = AsyncMock()
+    monkeypatch.setattr(PluginHub, "send_command", dispatch)
+    response = routing_client.post(
+        "/api/command", json={"type": "manage_scene", "unity_instance": selector}
+    )
+    assert response.status_code in (404, 409)
+    assert response.json()["success"] is False
+    dispatch.assert_not_awaited()
