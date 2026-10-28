@@ -349,6 +349,22 @@ async def test_replacement_discards_old_response_and_shares_current_stdio_job(mo
     )
     entered, release = asyncio.Event(), asyncio.Event()
     replacement_entered, release_replacement = asyncio.Event(), asyncio.Event()
+    replacement_joined = asyncio.Event()
+    replacement_flights = []
+    original_fetch = sharing.SharedRead.fetch
+
+    async def observed_fetch(read, factory, *, on_flight=None):
+        def observe(flight):
+            if on_flight is not None:
+                on_flight(flight)
+            if generation == "authenticated-replacement":
+                replacement_flights.append(flight)
+                if len(replacement_flights) == 2:
+                    replacement_joined.set()
+
+        return await original_fetch(read, factory, on_flight=observe)
+
+    monkeypatch.setattr(sharing.SharedRead, "fetch", observed_fetch)
     calls = []
 
     async def send(*_):
@@ -375,6 +391,8 @@ async def test_replacement_discards_old_response_and_shares_current_stdio_job(mo
         await await_signal(replacement_entered, "independent replacement-generation status fetch")
         assert not old.done() and not fresh.done()
         release.set()
+        await await_signal(replacement_joined, "both callers joined the replacement flight")
+        assert replacement_flights[0] is replacement_flights[1]
         release_replacement.set()
         old_response = await await_completion(old, "old-generation status completion")
         fresh_response = await await_completion(fresh, "replacement-generation status completion")
