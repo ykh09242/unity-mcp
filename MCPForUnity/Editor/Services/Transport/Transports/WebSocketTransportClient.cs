@@ -43,6 +43,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private readonly IToolDiscoveryService _toolDiscoveryService;
         private readonly object _ownershipLock = new object();
+        private long _startVersion;
         private readonly Dictionary<CancellationTokenSource, Task> _cancellations = new Dictionary<CancellationTokenSource, Task>();
         private ClientWebSocket _socket;
         private CancellationTokenSource _lifecycleCts;
@@ -168,6 +169,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         public async Task<bool> StartAsync()
         {
+            long startVersion;
+            lock (_ownershipLock)
+                startVersion = ++_startVersion;
+
             // Capture identity values on the main thread before any async context switching
             _projectName = _ownedConnection?.ProjectName ?? ProjectIdentityUtility.GetProjectName();
             _projectHash = _ownedConnection?.ProjectHash ?? ProjectIdentityUtility.GetProjectHash();
@@ -200,19 +205,31 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
             }
 
-            await StopAsync();
-
-            var lifecycleCts = new CancellationTokenSource();
-            CancellationToken lifecycleToken = lifecycleCts.Token;
-            Uri endpointUri = _ownedConnection?.Endpoint ?? BuildWebSocketUri(HttpEndpointUtility.GetBaseUrl());
+            Task previousStop;
             lock (_ownershipLock)
             {
+                if (startVersion != _startVersion)
+                    return false;
+                // Internal restart cleanup must not invalidate this or a newer start intent.
+                previousStop = StopOwnedAsync(null);
+            }
+            await previousStop;
+
+            CancellationTokenSource lifecycleCts;
+            CancellationToken lifecycleToken;
+            lock (_ownershipLock)
+            {
+                // Stop can run while the old drain or this continuation is pending.
+                if (startVersion != _startVersion)
+                    return false;
                 if (!_stopSettlement.IsCompletedSuccessfully || !_forcedCommandSettlement.IsCompletedSuccessfully)
                 {
-                    lifecycleCts.Dispose();
                     PublishUnsettledState();
                     return false;
                 }
+                Uri endpointUri = _ownedConnection?.Endpoint ?? BuildWebSocketUri(HttpEndpointUtility.GetBaseUrl());
+                lifecycleCts = new CancellationTokenSource();
+                lifecycleToken = lifecycleCts.Token;
                 _lifecycleCts = lifecycleCts;
                 _endpointUri = endpointUri;
                 _sessionId = null;
@@ -227,22 +244,24 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             // State is connected but session ID might be pending until 'registered' message
             lock (_ownershipLock)
             {
-                if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || lifecycleCts.IsCancellationRequested)
+                if (startVersion != _startVersion || !ReferenceEquals(_lifecycleCts, lifecycleCts) || lifecycleCts.IsCancellationRequested)
                     return false;
-                _state = TransportState.Connected(TransportDisplayName, sessionId: "pending", details: _endpointUri.ToString());
+                _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
                 _isConnected = true;
             }
             return true;
         }
 
-        public Task StopAsync() => StopOwnedAsync(null);
+        public Task StopAsync() => StopOwnedAsync(null, invalidateStart: true);
 
-        private async Task StopOwnedAsync(CancellationTokenSource expectedLifecycle)
+        private async Task StopOwnedAsync(CancellationTokenSource expectedLifecycle, bool invalidateStart = false)
         {
             CancellationTokenSource lifecycleCts;
             Task observation;
             lock (_ownershipLock)
             {
+                if (invalidateStart)
+                    ++_startVersion;
                 lifecycleCts = _lifecycleCts;
                 if (expectedLifecycle != null && !ReferenceEquals(lifecycleCts, expectedLifecycle))
                     return;
@@ -386,6 +405,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             TaskCompletionSource<bool> settlement = null;
             lock (_ownershipLock)
             {
+                ++_startVersion;
                 lifecycleCts = _lifecycleCts;
                 loops = CaptureConnectionLoops();
                 if (
@@ -589,10 +609,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             bool ownsLifecycle;
             lock (_ownershipLock)
             {
-                ownsLifecycle = ReferenceEquals(_lifecycleCts, lifecycleCts) && !token.IsCancellationRequested;
+                ownsLifecycle =
+                    ReferenceEquals(_lifecycleCts, lifecycleCts) && !ReferenceEquals(_stoppingLifecycle, lifecycleCts) && !token.IsCancellationRequested;
                 if (ownsLifecycle)
                 {
                     _connectionCts = connectionCts;
+                    // A registered reply can arrive before the Start/reconnect continuation.
+                    _sessionId = "pending";
                     _commandWork = new ConnectionCommandWork(connectionToken);
                     _largeResultNegotiated = false;
                     _commandCancellationNegotiated = false;
@@ -635,7 +658,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 ClientWebSocket previousSocket;
                 lock (_ownershipLock)
                 {
-                    ownsLifecycle = ReferenceEquals(_connectionCts, connectionCts) && !connectionToken.IsCancellationRequested;
+                    ownsLifecycle =
+                        ReferenceEquals(_connectionCts, connectionCts)
+                        && !ReferenceEquals(_stoppingLifecycle, lifecycleCts)
+                        && !connectionToken.IsCancellationRequested;
                     previousSocket = ownsLifecycle ? _socket : null;
                     if (ownsLifecycle)
                         _socket = socket;
