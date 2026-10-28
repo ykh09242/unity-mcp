@@ -237,11 +237,19 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
 
         public void Dispose()
         {
-            Interlocked.Exchange(ref stream, null)?.Dispose();
-            // DeleteOnClose normally removes the staging file. If deletion fails, its
-            // reservation remains held rather than making remaining bytes invisible.
-            if (AssetDiskBudget.FileIsGone(Path))
-                Interlocked.Exchange(ref lease, null)?.Dispose();
+            try
+            {
+                Interlocked.Exchange(ref stream, null)?.Dispose();
+            }
+            finally
+            {
+                // DeleteOnClose normally removes the staging file. If deletion fails, its
+                // reservation remains held rather than making remaining bytes invisible.
+                if (AssetDiskBudget.FileIsGone(Path))
+                    Interlocked.Exchange(ref lease, null)?.Dispose();
+                else
+                    lease?.RetainUntilFileRemoved(Path);
+            }
         }
 
         internal static async Task<DownloadedArtifact> ReadAsync(
@@ -326,6 +334,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                         lease.CompleteTransfer();
                         if (AssetDiskBudget.FileIsGone(path))
                             lease.Dispose();
+                        else
+                            lease.RetainUntilFileRemoved(path);
                     }
                 }
             }

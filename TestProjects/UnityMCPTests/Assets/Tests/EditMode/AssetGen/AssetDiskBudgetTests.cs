@@ -1,7 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.AssetGen;
@@ -30,6 +32,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         public void TearDown()
         {
             PreparedArtifact.DeleteStageOverrideForTests = null;
+            LocalAssetCopy.DeleteForTests = null;
             Assert.Zero(AssetDiskBudget.ReservedBytesForTests(project));
             AssetDiskBudget.FreeBytesForTests = null;
             AssetDiskBudget.ProbeFreeBytesForTests = null;
@@ -245,6 +248,240 @@ namespace MCPForUnityTests.Editor.AssetGen
             }
             Assert.IsFalse(File.Exists(stage));
             Assert.Zero(AssetDiskBudget.ReservedBytesForTests(project));
+        }
+
+        [Test]
+        public void AdmissionReclaimsFailedCleanupAfterTerminalOwnerIsDroppedAndOwnedFileIsRemoved()
+        {
+            var lease = AssetDiskBudget.ReserveDownloadAsync(project, 12, CancellationToken.None).GetAwaiter().GetResult();
+            string stage = Path.Combine(project, "owned.part");
+            File.WriteAllBytes(stage, new byte[12]);
+            lease.RecordWritten(12);
+            lease.CompleteTransfer();
+            const BindingFlags instance = BindingFlags.NonPublic | BindingFlags.Instance;
+            var prepared = (PreparedArtifact)Activator.CreateInstance(typeof(PreparedArtifact), instance, null, new object[] { project }, null);
+            typeof(PreparedArtifact).GetField("path", instance).SetValue(prepared, stage);
+            typeof(PreparedArtifact).GetField("lease", instance).SetValue(prepared, lease);
+            try
+            {
+                PreparedArtifact.DeleteStageOverrideForTests = _ => throw new IOException("transient deletion failure");
+                prepared.Dispose();
+                prepared = null;
+                Assert.IsTrue(File.Exists(stage));
+                Assert.AreEqual(12, AssetDiskBudget.ReservedBytesForTests(project));
+                Assert.ThrowsAsync<IOException>(async () => await AssetDiskBudget.ReserveDownloadAsync(project, 9, CancellationToken.None));
+
+                File.Delete(stage);
+                using var next = AssetDiskBudget.ReserveDownloadAsync(project, 9, CancellationToken.None).GetAwaiter().GetResult();
+                Assert.AreEqual(9, AssetDiskBudget.ReservedBytesForTests(project));
+            }
+            finally
+            {
+                PreparedArtifact.DeleteStageOverrideForTests = null;
+                File.Delete(stage);
+                prepared?.Dispose();
+                lease.Dispose();
+            }
+        }
+
+        [Test]
+        public void AdmissionRetainsOrphanCreditWhenItsDirectoryIsReplacedByAFile()
+        {
+            string original = Path.Combine(project, "orphan");
+            string moved = Path.Combine(project, "moved");
+            Directory.CreateDirectory(original);
+            string stage = Path.Combine(original, "owned.part");
+            File.WriteAllBytes(stage, new byte[12]);
+            var lease = AssetDiskBudget.ReserveDownloadAsync(project, 12, CancellationToken.None).GetAwaiter().GetResult();
+            lease.RecordWritten(12);
+            lease.RetainUntilFileRemoved(stage);
+            Directory.Move(original, moved);
+            File.WriteAllText(original, "replacement");
+            try
+            {
+                AssertAdmissionRemainsBlocked();
+                Assert.IsFalse(AssetDiskBudget.FileIsGone(stage));
+                Assert.AreEqual(12, AssetDiskBudget.ReservedBytesForTests(project));
+                Assert.AreEqual(12, new FileInfo(Path.Combine(moved, "owned.part")).Length);
+            }
+            finally
+            {
+                File.Delete(original);
+                Directory.Move(moved, original);
+                File.Delete(stage);
+                lease.Dispose();
+            }
+        }
+
+        [Test]
+        public void AdmissionRetainsOrphanCreditWhenItsDirectoryIsMissingUntilVerifiedFileRemoval()
+        {
+            string original = Path.Combine(project, "orphan");
+            string moved = Path.Combine(project, "moved");
+            Directory.CreateDirectory(original);
+            string stage = Path.Combine(original, "owned.part");
+            File.WriteAllBytes(stage, new byte[12]);
+            var lease = AssetDiskBudget.ReserveDownloadAsync(project, 12, CancellationToken.None).GetAwaiter().GetResult();
+            lease.RecordWritten(12);
+            lease.RetainUntilFileRemoved(stage);
+            Directory.Move(original, moved);
+            try
+            {
+                AssertAdmissionRemainsBlocked();
+                Assert.IsFalse(AssetDiskBudget.FileIsGone(stage));
+                Assert.AreEqual(12, AssetDiskBudget.ReservedBytesForTests(project));
+                Directory.Move(moved, original);
+                File.Delete(stage);
+                using var next = AssetDiskBudget.ReserveDownloadAsync(project, 9, CancellationToken.None).GetAwaiter().GetResult();
+                Assert.AreEqual(9, AssetDiskBudget.ReservedBytesForTests(project));
+            }
+            finally
+            {
+                if (Directory.Exists(moved))
+                    Directory.Move(moved, original);
+                File.Delete(stage);
+                lease.Dispose();
+            }
+        }
+
+        [Test]
+        public void AdmissionRetainsOrphanCreditWhenDirectoryReplacementIsALink() => AssertLinkedOrphanRemainsReserved(false);
+
+        [Test]
+        public void AdmissionRetainsOrphanCreditWhenDirectoryReplacementIsADanglingLink() => AssertLinkedOrphanRemainsReserved(true);
+
+        private void AssertLinkedOrphanRemainsReserved(bool dangling)
+        {
+            string original = Path.Combine(project, "orphan");
+            string moved = Path.Combine(project, "moved");
+            string target = Path.Combine(project, "empty-target");
+            Directory.CreateDirectory(original);
+            Directory.CreateDirectory(target);
+            string stage = Path.Combine(original, "owned.part");
+            File.WriteAllBytes(stage, new byte[12]);
+            var lease = AssetDiskBudget.ReserveDownloadAsync(project, 12, CancellationToken.None).GetAwaiter().GetResult();
+            lease.RecordWritten(12);
+            lease.RetainUntilFileRemoved(stage);
+            Directory.Move(original, moved);
+            bool linked = false;
+            try
+            {
+                if (Path.DirectorySeparatorChar == '\\')
+                {
+                    using var process = Process.Start(
+                        new ProcessStartInfo
+                        {
+                            FileName = "cmd.exe",
+                            Arguments = $"/c mklink /J \"{original}\" \"{target}\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                        }
+                    );
+                    Assert.IsTrue(process.WaitForExit(5000), "Owned junction creation did not finish.");
+                    Assert.Zero(process.ExitCode, process.StandardError.ReadToEnd());
+                    linked = true;
+                }
+                else
+                {
+                    Assert.Zero(symlink(target, original), "Owned symlink creation failed: " + Marshal.GetLastWin32Error());
+                    linked = true;
+                }
+                if (dangling)
+                    Directory.Delete(target);
+                AssertAdmissionRemainsBlocked();
+                Assert.IsFalse(AssetDiskBudget.FileIsGone(stage));
+                Assert.AreEqual(12, AssetDiskBudget.ReservedBytesForTests(project));
+                Assert.AreEqual(12, new FileInfo(Path.Combine(moved, "owned.part")).Length);
+            }
+            finally
+            {
+                if (linked)
+                    Directory.Delete(original);
+                Directory.Move(moved, original);
+                File.Delete(stage);
+                lease.Dispose();
+            }
+        }
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int symlink(string target, string link);
+
+        private void AssertAdmissionRemainsBlocked()
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            Assert.ThrowsAsync<IOException>(async () =>
+            {
+                using var unexpected = await AssetDiskBudget.ReserveDownloadAsync(project, 9, timeout.Token);
+            });
+        }
+
+        [Test]
+        public void AdmissionWaitsForEveryFailedLocalCopyOutputAfterOwnerLoss()
+        {
+            string source = Path.Combine(project, "source");
+            string first = Path.Combine(project, "first");
+            string second = Path.Combine(project, "second");
+            File.WriteAllBytes(source, new byte[6]);
+            var copying = new LocalAssetCopy(project, 12, CancellationToken.None);
+            try
+            {
+                copying.Copy(source, first, 6);
+                copying.Copy(source, second, 6);
+                LocalAssetCopy.DeleteForTests = _ => throw new IOException("transient deletion failure");
+                copying.Dispose();
+                copying = null;
+                File.Delete(first);
+                Assert.ThrowsAsync<IOException>(async () => await AssetDiskBudget.ReserveDownloadAsync(project, 9, CancellationToken.None));
+                Assert.IsTrue(File.Exists(second));
+                File.Delete(second);
+                using var next = AssetDiskBudget.ReserveDownloadAsync(project, 9, CancellationToken.None).GetAwaiter().GetResult();
+                Assert.AreEqual(9, AssetDiskBudget.ReservedBytesForTests(project));
+            }
+            finally
+            {
+                LocalAssetCopy.DeleteForTests = null;
+                File.Delete(first);
+                File.Delete(second);
+                copying?.Dispose();
+            }
+        }
+
+        [Test]
+        public void AdmissionReclaimsDownloadedStageAfterDeleteOnCloseFailsAndOwnerIsDropped()
+        {
+            var lease = AssetDiskBudget.ReserveDownloadAsync(project, 12, CancellationToken.None).GetAwaiter().GetResult();
+            string stage = Path.Combine(project, "download.part");
+            var stream = new FileStream(stage, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+            stream.Write(new byte[12], 0, 12);
+            lease.RecordWritten(12);
+            lease.CompleteTransfer();
+            var artifact = (DownloadedArtifact)
+                Activator.CreateInstance(
+                    typeof(DownloadedArtifact),
+                    BindingFlags.NonPublic | BindingFlags.Instance,
+                    null,
+                    new object[] { stream, stage, "unused", lease },
+                    null
+                );
+            try
+            {
+                artifact.Dispose();
+                artifact = null;
+                Assert.IsTrue(File.Exists(stage));
+                Assert.ThrowsAsync<IOException>(async () => await AssetDiskBudget.ReserveDownloadAsync(project, 9, CancellationToken.None));
+                File.Delete(stage);
+                using var next = AssetDiskBudget.ReserveDownloadAsync(project, 9, CancellationToken.None).GetAwaiter().GetResult();
+                Assert.AreEqual(9, AssetDiskBudget.ReservedBytesForTests(project));
+            }
+            finally
+            {
+                stream.Dispose();
+                File.Delete(stage);
+                artifact?.Dispose();
+                lease.Dispose();
+            }
         }
 
         [Test]

@@ -77,7 +77,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
             if (complete || created.TrueForAll(AssetDiskBudget.FileIsGone))
                 lease.Dispose();
             else
-                lease.CompleteTransfer();
+                lease.RetainUntilFilesRemoved(created);
         }
     }
 }

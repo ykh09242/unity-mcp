@@ -199,7 +199,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     if (completed || createdFiles.TrueForAll(AssetDiskBudget.FileIsGone))
                         reservation.Dispose();
                     else
-                        reservation.CompleteTransfer();
+                        reservation.RetainUntilFilesRemoved(createdFiles);
                 }
             }
         }

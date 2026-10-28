@@ -215,7 +215,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     path = null;
                 }
                 else
-                    lease?.CompleteTransfer();
+                    lease?.RetainUntilFileRemoved(path);
             }
         }
     }

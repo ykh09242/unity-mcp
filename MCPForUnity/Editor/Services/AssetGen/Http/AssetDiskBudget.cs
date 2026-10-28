@@ -35,6 +35,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
             internal long Reserved;
             internal long Written;
             internal int ActiveLeases;
+            internal readonly Dictionary<Lease, List<string>> PendingCleanup = new();
         }
 
         private static string ProjectKey(string path)
@@ -147,21 +148,51 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 return true;
             try
             {
-                File.GetAttributes(path);
-                return false;
-            }
-            catch (FileNotFoundException)
-            {
-                return true;
-            }
-            catch (DirectoryNotFoundException)
-            {
-                return true;
+                if (!Path.IsPathRooted(path))
+                    return false;
+                string full = Path.GetFullPath(path);
+                string parent = Path.GetDirectoryName(full);
+                // A failed lookup through a missing, replaced or linked ancestor does not
+                // prove deletion: the owned directory may have been moved with its bytes.
+                if (parent == null || !DirectoryChainIsRegular(parent))
+                    return false;
+                try
+                {
+                    File.GetAttributes(full);
+                    return false;
+                }
+                catch (FileNotFoundException) { }
+                catch (DirectoryNotFoundException) { }
+
+                string name = Path.GetFileName(full);
+                if (string.IsNullOrEmpty(name))
+                    return false;
+                var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                // Some Mono versions report dangling links as missing targets. Verify the
+                // directory entry too, and retain credit when either inspection is uncertain.
+                foreach (string entry in Directory.EnumerateFileSystemEntries(parent, name))
+                    if (string.Equals(Path.GetFileName(entry), name, comparison))
+                        return false;
+                return DirectoryChainIsRegular(parent);
             }
             catch
             {
                 return false; // Unknown cleanup state must retain its credit.
             }
+        }
+
+        private static bool DirectoryChainIsRegular(string directory)
+        {
+            var ancestors = new Stack<string>();
+            for (string current = directory; current != null; current = Path.GetDirectoryName(current))
+                ancestors.Push(current);
+            foreach (string ancestor in ancestors)
+            {
+                FileAttributes attributes = File.GetAttributes(ancestor);
+                if ((attributes & FileAttributes.Directory) == 0 || (attributes & FileAttributes.ReparsePoint) != 0)
+                    return false;
+            }
+            return true;
         }
 
         internal static long ReservedBytesForTests(string project)
@@ -229,6 +260,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 {
                     if (disposed)
                         throw new ObjectDisposedException(nameof(Lease));
+                    ReconcileCleanup(project);
                     bool existing = Projects.TryGetValue(project, out Totals totals);
                     totals ??= new Totals();
                     long aggregate = AggregateBytesForTests ?? Setting(AggregateSetting, DefaultAggregateBytes);
@@ -281,16 +313,44 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 current?.Release();
             }
 
+            // Keep ownership in the ledger if a terminal caller cannot remove its stage.
+            // Admission only verifies absence; it never deletes a path on another owner's behalf.
+            internal void RetainUntilFileRemoved(string path) => RetainUntilFilesRemoved(new[] { path });
+
+            internal void RetainUntilFilesRemoved(IEnumerable<string> paths)
+            {
+                var owned = new List<string>();
+                foreach (string path in paths)
+                {
+                    if (string.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path))
+                        throw new ArgumentException("Absolute owned stage paths are required.", nameof(paths));
+                    owned.Add(Path.GetFullPath(path));
+                }
+                lock (Sync)
+                {
+                    if (disposed)
+                        return;
+                    Projects[project].PendingCleanup[this] = owned;
+                }
+                CompleteTransfer();
+            }
+
             public void Dispose()
             {
                 lock (Sync)
                 {
                     if (disposed)
                         return;
+                    if (registered && Projects[project].PendingCleanup.TryGetValue(this, out List<string> paths) && !paths.TrueForAll(FileIsGone))
+                    {
+                        CompleteTransfer();
+                        return;
+                    }
                     disposed = true;
                     if (registered)
                     {
                         Totals totals = Projects[project];
+                        totals.PendingCleanup.Remove(this);
                         totals.Reserved -= reserved;
                         totals.Written -= written;
                         totals.ActiveLeases--;
@@ -300,6 +360,15 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 }
                 CompleteTransfer();
             }
+        }
+
+        private static void ReconcileCleanup(string project)
+        {
+            if (!Projects.TryGetValue(project, out Totals totals) || totals.PendingCleanup.Count == 0)
+                return;
+            foreach (var entry in new List<KeyValuePair<Lease, List<string>>>(totals.PendingCleanup))
+                if (entry.Value.TrueForAll(FileIsGone))
+                    entry.Key.Dispose();
         }
     }
 }
