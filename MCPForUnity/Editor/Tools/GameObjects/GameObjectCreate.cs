@@ -57,7 +57,16 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     if (!prefabPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
                         prefabPath += ".prefab";
                     prefabPath = AssetPathUtility.GetContainedAssetPath(prefabPath);
-                    AssetPathUtility.GetFullAssetPath(prefabPath);
+                    string fullPath = AssetPathUtility.GetFullAssetPath(prefabPath);
+                    if (
+                        System.IO.File.Exists(fullPath)
+                        || System.IO.Directory.Exists(fullPath)
+                        || System.IO.File.Exists(fullPath + ".meta")
+                        || AssetDatabase.LoadMainAssetAtPath(prefabPath) != null
+                    )
+                        return new ErrorResponse(
+                            $"Prefab destination '{prefabPath}' already exists. Choose an unused path or use the dedicated prefab tool for replacement."
+                        );
                 }
                 catch (Exception e)
                 {

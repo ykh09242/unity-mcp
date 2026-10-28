@@ -188,6 +188,41 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void CreateAndSavePrefab_OccupiedPath_PreservesAssetAndScene()
+        {
+            var source = new GameObject("PreservedPrefab");
+            new GameObject("DistinctiveChild").transform.SetParent(source.transform);
+            source.AddComponent<BoxCollider>().size = new Vector3(2, 3, 4);
+            string path = assetRoot + "/Occupied.prefab";
+            try
+            {
+                PrefabUtility.SaveAsPrefabAsset(source, path);
+            }
+            finally
+            {
+                Object.DestroyImmediate(source);
+            }
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            var roots = ownedScene.GetRootGameObjects();
+            bool wasDirty = ownedScene.isDirty;
+            var request = Request();
+            request["saveAsPrefab"] = true;
+            request["prefabPath"] = path;
+
+            var response = JObject.FromObject(ManageGameObject.HandleCommand(request));
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("already exists", response.ToString());
+            CollectionAssert.AreEquivalent(roots, ownedScene.GetRootGameObjects());
+            Assert.AreEqual(wasDirty, ownedScene.isDirty);
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+            var preserved = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            Assert.AreEqual("PreservedPrefab", preserved.name);
+            Assert.IsNotNull(preserved.transform.Find("DistinctiveChild"));
+            Assert.AreEqual(new Vector3(2, 3, 4), preserved.GetComponent<BoxCollider>().size);
+        }
+
+        [Test]
         public void CreateAndSavePrefab_StoresRequestedActiveStateInAsset()
         {
             var request = Request();
