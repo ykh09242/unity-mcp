@@ -335,7 +335,7 @@ async def test_stdio_job_waiters_share_status_but_replacement_and_legacy_stay_pr
 
 
 @pytest.mark.asyncio
-async def test_replacement_does_not_join_old_active_stdio_job(monkeypatch, budget):
+async def test_replacement_discards_old_response_and_shares_current_stdio_job(monkeypatch, budget):
     jobs = importlib.import_module("services.tools.run_tests")
     monkeypatch.setattr(jobs.config, "transport_mode", "stdio")
     monkeypatch.setattr(jobs.config, "http_remote_hosted", False)
@@ -375,11 +375,12 @@ async def test_replacement_does_not_join_old_active_stdio_job(monkeypatch, budge
         await await_signal(replacement_entered, "independent replacement-generation status fetch")
         assert not old.done() and not fresh.done()
         release.set()
-        old_response = await await_completion(old, "old-generation status completion")
-        assert old_response.success and old_response.data is not None
-        assert old_response.data.status == "succeeded"
         release_replacement.set()
+        old_response = await await_completion(old, "old-generation status completion")
         fresh_response = await await_completion(fresh, "replacement-generation status completion")
+        # The late old-generation success cannot become a current observation.
+        # Both callers follow the replacement without starting the tests again.
+        assert old_response.success is False and "replacement" in old_response.error
         assert fresh_response.success is False and "replacement" in fresh_response.error
     finally:
         release.set()

@@ -12,10 +12,12 @@ from transport.plugin_hub import PluginHub
 
 def test_default_command_budget_leaves_room_for_large_project_work(monkeypatch):
     monkeypatch.delenv("UNITY_MCP_TIMEOUT", raising=False)
+    monkeypatch.delenv("UNITY_MCP_STATE_TIMEOUT", raising=False)
     assert CLIConfig().timeout == 300
     assert CLIConfig.from_env().timeout == 300
     assert PluginHub._command_timeouts("manage_scene", {}) == (300, 300)
-    assert PluginHub._command_timeouts("get_editor_state", {}) == (2, 2)
+    assert PluginHub._command_timeouts("get_editor_state", {}) == (30, 30)
+    assert PluginHub._command_timeouts("ping", {}) == (2, 2)
 
 
 @pytest.mark.parametrize("key", ["timeout_seconds", "timeoutSeconds"])

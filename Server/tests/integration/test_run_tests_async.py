@@ -253,7 +253,7 @@ async def test_get_test_job_forwards_job_id(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["start", "clear", "poll", "wait"])
-async def test_test_tools_preserve_structured_stdio_reload_errors(monkeypatch, operation):
+async def test_test_tools_report_structured_stdio_reload_state(monkeypatch, operation):
     import services.tools.run_tests as mod
     from core.config import config
 
@@ -279,6 +279,19 @@ async def test_test_tools_preserve_structured_stdio_reload_errors(monkeypatch, o
             wait_timeout=1 if operation == "wait" else None,
         )
 
-    # Then: callers retain the actionable error, hint, and retry delay.
-    assert response.model_dump() == failure.model_dump()
+    # Then: one-shot calls preserve the native failure; a bounded wait reports
+    # unavailable observation rather than treating a reload as a failed test run.
+    if operation == "wait":
+        assert not response.success and response.hint == "retry"
+        assert response.data == {
+            "reason": "reloading",
+            "job_id": "job-1",
+            "job_status": "unknown",
+            "status": "unavailable",
+            "last_known_status": False,
+            "next_action": "poll_same_job",
+            "retry_after_ms": 500,
+        }
+    else:
+        assert response.model_dump() == failure.model_dump()
     sender.assert_awaited_once()

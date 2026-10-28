@@ -446,6 +446,7 @@ async def test_task_preserves_ordinary_status_read_reconnect_policy_without_star
         "asyncio",
         SimpleNamespace(
             get_event_loop=asyncio.get_event_loop,
+            timeout=asyncio.timeout,
             wait_for=asyncio.wait_for,
             TimeoutError=asyncio.TimeoutError,
             sleep=short_poll_sleep,
@@ -489,6 +490,7 @@ async def test_task_preserves_ordinary_status_read_reconnect_policy_without_star
         params = {"name": "get_test_job", "arguments": {"job_id": "reload-read", "wait_timeout": 3}}
         ordinary = (await bound_call(client, "tools/call", params))["result"]
         assert [sid for sid, _ in sent] == ["session", "replacement"]
+        assert ordinary["structuredContent"]["result"]["data"]["status"] == "succeeded"
         await command_hub.registry.register("session", "Fixture", "hash", "fixture")
         PluginHub._connections.pop("replacement", None)
         PluginHub._connections["session"] = source
@@ -500,7 +502,9 @@ async def test_task_preserves_ordinary_status_read_reconnect_policy_without_star
         assert record.operation.session_id == "session"
         assert record.operation.instance == "Fixture@hash"
 
-        assert poll_delays == [2.0, 2.0]
+        # A reply from a replaced generation is discarded immediately, so both
+        # bindings fetch the current generation without a normal polling delay.
+        assert poll_delays == []
         assert asyncio.sleep is real_sleep
 
 

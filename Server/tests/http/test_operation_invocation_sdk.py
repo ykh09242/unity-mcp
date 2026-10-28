@@ -274,6 +274,7 @@ async def test_queued_sdk_callback_rechecks_authority_and_enabled_state(sdk_boun
                 "SDK call queued before authority change",
                 timeout=watchdog_timeout(10),
             )
+            assert state.auth_calls["queued"] == 2
             # When
             if change == "revoke":
                 state.denied.add("queued")
@@ -283,7 +284,7 @@ async def test_queued_sdk_callback_rechecks_authority_and_enabled_state(sdk_boun
             refused = await completed(queued, "queued SDK revalidation")
             # Then
             assert not state.entered["queued"].is_set()
-            assert state.auth_calls["queued"] == 2
+            assert state.auth_calls["queued"] == 3
             if change == "revoke":
                 assert refused.is_error
             else:
