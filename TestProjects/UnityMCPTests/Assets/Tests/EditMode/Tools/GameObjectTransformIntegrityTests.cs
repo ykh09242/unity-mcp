@@ -103,6 +103,115 @@ namespace MCPForUnityTests.Editor.Tools
             return JObject.FromObject(ManageGameObject.HandleCommand(options));
         }
 
+        [Test]
+        public void NestedLocalPosition_WritebackSupportsUndoRedo()
+        {
+            target.transform.localPosition = new Vector3(1, 2, 3);
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            var result = GameObjectComponentHelpers.SetComponentPropertiesInternal(
+                target,
+                "Transform",
+                new JObject { ["localPosition.x"] = 7f },
+                target.transform
+            );
+            Assert.IsNull(result);
+            Assert.AreEqual(new Vector3(7, 2, 3), target.transform.localPosition);
+            Undo.FlushUndoRecordObjects();
+            Undo.CollapseUndoOperations(group);
+            Undo.PerformUndo();
+            Assert.AreEqual(new Vector3(1, 2, 3), target.transform.localPosition);
+            Undo.PerformRedo();
+            Assert.AreEqual(new Vector3(7, 2, 3), target.transform.localPosition);
+        }
+
+        [Test]
+        public void NestedSharedMeshVertices_WritesNativeArrayBackAndSupportsUndoRedo()
+        {
+            var mesh = new Mesh { vertices = new[] { new Vector3(1, 2, 3) } };
+            var filter = target.AddComponent<MeshFilter>();
+            filter.sharedMesh = mesh;
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            try
+            {
+                var result = GameObjectComponentHelpers.SetComponentPropertiesInternal(
+                    target,
+                    "MeshFilter",
+                    new JObject { ["sharedMesh.vertices[0].x"] = 7f },
+                    filter
+                );
+                Assert.IsNull(result);
+                Assert.AreEqual(new Vector3(7, 2, 3), mesh.vertices[0]);
+                Assert.AreSame(mesh, filter.sharedMesh);
+                Undo.FlushUndoRecordObjects();
+                Undo.CollapseUndoOperations(group);
+                Undo.PerformUndo();
+                Assert.AreEqual(new Vector3(1, 2, 3), mesh.vertices[0]);
+                Undo.PerformRedo();
+                Assert.AreEqual(new Vector3(7, 2, 3), mesh.vertices[0]);
+            }
+            finally
+            {
+                Undo.ClearUndo(mesh);
+                Undo.ClearUndo(filter);
+                filter.sharedMesh = null;
+                UnityEngine.Object.DestroyImmediate(mesh);
+            }
+        }
+
+        [Test]
+        public void NestedSharedMaterial_UndoRedoRestoresActualOwnerForBothRenderers()
+        {
+            var shader = Shader.Find("Standard");
+            Assert.IsNotNull(shader);
+            var material = new Material(shader);
+            AssetDatabase.CreateAsset(material, assetRoot + "/Shared.mat");
+            Assert.IsTrue(material.HasProperty("_Color"));
+            var first = target.AddComponent<MeshRenderer>();
+            var second = reference.AddComponent<MeshRenderer>();
+            first.sharedMaterial = material;
+            second.sharedMaterial = material;
+            Color before = material.color;
+            Color after = before == Color.red ? Color.blue : Color.red;
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            try
+            {
+                var result = GameObjectComponentHelpers.SetComponentPropertiesInternal(
+                    target,
+                    "MeshRenderer",
+                    new JObject
+                    {
+                        ["sharedMaterial.color"] = new JObject
+                        {
+                            ["r"] = after.r,
+                            ["g"] = after.g,
+                            ["b"] = after.b,
+                            ["a"] = after.a,
+                        },
+                    },
+                    first
+                );
+                Assert.IsNull(result);
+                Assert.AreEqual(after, second.sharedMaterial.color);
+                Assert.AreSame(material, first.sharedMaterial);
+                Undo.FlushUndoRecordObjects();
+                Undo.CollapseUndoOperations(group);
+                Undo.PerformUndo();
+                Assert.AreEqual(before, first.sharedMaterial.color);
+                Assert.AreEqual(before, second.sharedMaterial.color);
+                Undo.PerformRedo();
+                Assert.AreEqual(after, material.color);
+            }
+            finally
+            {
+                Undo.ClearUndo(material);
+                Undo.ClearUndo(first);
+                Undo.ClearUndo(second);
+            }
+        }
+
         private JObject Snapshot()
         {
             return new JObject

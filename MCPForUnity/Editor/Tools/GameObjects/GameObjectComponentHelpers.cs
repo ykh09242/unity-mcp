@@ -522,7 +522,11 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             if (anyPropertySet)
+            {
                 EditorUtility.SetDirty(targetComponent);
+                if (PrefabUtility.IsPartOfPrefabInstance(targetComponent))
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(targetComponent);
+            }
             return failures.Count == 0 ? null : new ErrorResponse($"One or more properties failed on '{componentTypeName}'.", new { errors = failures });
         }
 
@@ -580,13 +584,26 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 }
                 if (i == parts.Length - 1)
                 {
-                    if ((property != null && !property.CanWrite) || indexed)
+                    if ((property != null && !property.CanWrite) || (field != null && field.IsInitOnly) || indexed)
                     {
                         error = $"Property '{name}' is not writable in path '{path}'.";
                         return false;
                     }
                     prepared = ComponentOps.TryPreparePropertyValue(memberType, value, out converted, out error);
                     return prepared;
+                }
+                if (
+                    (property != null && (!property.CanRead || property.GetIndexParameters().Length != 0))
+                    || (
+                        (
+                            (memberType.IsValueType && !IsParticleSystemModuleAccessor((MemberInfo)property ?? field))
+                            || (indexed && IsDetachedNativeArrayMember(property))
+                        ) && !CanWriteNestedMember((MemberInfo)property ?? field)
+                    )
+                )
+                {
+                    error = $"Property or field '{name}' requires writable value-type parents in path '{path}'.";
+                    return false;
                 }
                 materialGetter |=
                     typeof(Renderer).IsAssignableFrom(type)
@@ -658,6 +675,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 object currentObject = target;
                 Type currentType = currentObject.GetType();
                 BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase;
+                var writebacks = new List<Action>();
+                UnityEngine.Object undoOwner = target as UnityEngine.Object;
 
                 for (int i = 0; i < pathParts.Length - 1; i++)
                 {
@@ -684,7 +703,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     FieldInfo fieldInfo = null;
                     if (propInfo == null)
                     {
-                        fieldInfo = currentType.GetField(part, flags);
+                        fieldInfo = currentType.GetField(part, flags) ?? ComponentOps.FindSerializedFieldInHierarchy(currentType, part);
                         if (fieldInfo == null)
                         {
                             error = $"Could not find property or field '{part}' on type '{currentType.Name}' in path '{path}'.";
@@ -737,31 +756,32 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                             return false;
                     }
 
-                    currentObject = propInfo != null ? propInfo.GetValue(currentObject) : fieldInfo.GetValue(currentObject);
+                    object memberOwner = currentObject;
+                    MemberInfo member = (MemberInfo)propInfo ?? fieldInfo;
+                    currentObject = propInfo != null ? propInfo.GetValue(memberOwner) : fieldInfo.GetValue(memberOwner);
                     if (currentObject == null)
                     {
                         error = $"Property '{part}' is null in path '{path}', cannot access nested properties.";
                         return false;
                     }
 
+                    // Reflection boxes structs, and native array getters return detached arrays.
+                    // Retain each required assignment, but validate all of them before the leaf changes.
+                    bool nativeArray = isArray && IsDetachedNativeArrayMember(propInfo);
+                    if ((currentObject.GetType().IsValueType && !IsParticleSystemModuleAccessor(member)) || nativeArray)
+                    {
+                        if (!CanWriteNestedMember(member))
+                        {
+                            error = $"Property or field '{part}' is not writable in path '{path}'.";
+                            return false;
+                        }
+                        object memberValue = currentObject;
+                        writebacks.Add(() => WriteNestedMember(memberOwner, member, memberValue));
+                    }
+
                     if (isArray)
                     {
-                        if (currentObject is Material[])
-                        {
-                            var materials = currentObject as Material[];
-                            if (materials.Length == 0)
-                            {
-                                error = $"Material array is empty in path '{path}', cannot access index {arrayIndex}.";
-                                return false;
-                            }
-                            if (arrayIndex < 0 || arrayIndex >= materials.Length)
-                            {
-                                error = $"Material index {arrayIndex} out of range (0-{materials.Length - 1}) in path '{path}'.";
-                                return false;
-                            }
-                            currentObject = materials[arrayIndex];
-                        }
-                        else if (currentObject is System.Collections.IList)
+                        if (currentObject is System.Collections.IList)
                         {
                             var list = currentObject as System.Collections.IList;
                             if (list.Count == 0)
@@ -775,6 +795,17 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                                 return false;
                             }
                             currentObject = list[arrayIndex];
+                            if (currentObject != null && currentObject.GetType().IsValueType)
+                            {
+                                if (list.IsReadOnly)
+                                {
+                                    error = $"List '{part}' is not writable in path '{path}'.";
+                                    return false;
+                                }
+                                int capturedIndex = arrayIndex;
+                                object elementValue = currentObject;
+                                writebacks.Add(() => list[capturedIndex] = elementValue);
+                            }
                         }
                         else
                         {
@@ -782,7 +813,13 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                             return false;
                         }
                     }
-
+                    if (currentObject == null)
+                    {
+                        error = $"Property '{part}' is null in path '{path}', cannot access nested properties.";
+                        return false;
+                    }
+                    if (currentObject is UnityEngine.Object nativeOwner)
+                        undoOwner = nativeOwner;
                     currentType = currentObject.GetType();
                 }
 
@@ -790,11 +827,18 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
                 if (currentObject is Material material && finalPart.StartsWith("_"))
                 {
+                    if (!MaterialOps.TryPrepareShaderProperty(material, finalPart, value, inputSerializer, out _))
+                    {
+                        error = $"Invalid shader property or value '{finalPart}' in path '{path}'.";
+                        return false;
+                    }
+                    RecordNestedUndo(undoOwner);
                     if (!MaterialOps.TrySetShaderProperty(material, finalPart, value, inputSerializer))
                     {
                         error = $"Failed to set shader property '{finalPart}' on material '{material.name}' in path '{path}'.";
                         return false;
                     }
+                    CompleteNestedWrite(writebacks, undoOwner);
                     return true;
                 }
 
@@ -804,7 +848,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     object convertedValue = prepared ? preparedValue : ConvertJTokenToType(value, finalPropInfo.PropertyType, inputSerializer);
                     if (convertedValue != null || value.Type == JTokenType.Null)
                     {
+                        RecordNestedUndo(undoOwner);
                         finalPropInfo.SetValue(currentObject, convertedValue);
+                        CompleteNestedWrite(writebacks, undoOwner);
                         return true;
                     }
                     error = $"Failed to convert value for '{finalPart}' to type '{finalPropInfo.PropertyType.Name}' in path '{path}'.";
@@ -812,12 +858,14 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 }
 
                 FieldInfo finalFieldInfo = currentType.GetField(finalPart, flags);
-                if (finalFieldInfo != null)
+                if (finalFieldInfo != null && !finalFieldInfo.IsInitOnly)
                 {
                     object convertedValue = prepared ? preparedValue : ConvertJTokenToType(value, finalFieldInfo.FieldType, inputSerializer);
                     if (convertedValue != null || value.Type == JTokenType.Null)
                     {
+                        RecordNestedUndo(undoOwner);
                         finalFieldInfo.SetValue(currentObject, convertedValue);
+                        CompleteNestedWrite(writebacks, undoOwner);
                         return true;
                     }
                     error = $"Failed to convert value for '{finalPart}' to type '{finalFieldInfo.FieldType.Name}' in path '{path}'.";
@@ -826,12 +874,14 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
                 // Try non-public [SerializeField] fields (nested paths need this too)
                 FieldInfo serializedField = ComponentOps.FindSerializedFieldInHierarchy(currentType, finalPart);
-                if (serializedField != null)
+                if (serializedField != null && !serializedField.IsInitOnly)
                 {
                     object convertedValue = prepared ? preparedValue : ConvertJTokenToType(value, serializedField.FieldType, inputSerializer);
                     if (convertedValue != null || value.Type == JTokenType.Null)
                     {
+                        RecordNestedUndo(undoOwner);
                         serializedField.SetValue(currentObject, convertedValue);
+                        CompleteNestedWrite(writebacks, undoOwner);
                         return true;
                     }
                     error = $"Failed to convert value for '{finalPart}' to type '{serializedField.FieldType.Name}' in path '{path}'.";
@@ -846,6 +896,62 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             return false;
+        }
+
+        private static bool CanWriteNestedMember(MemberInfo member) =>
+            member is PropertyInfo property ? property.CanWrite && property.GetIndexParameters().Length == 0 : member is FieldInfo field && !field.IsInitOnly;
+
+        private static bool IsParticleSystemModuleAccessor(MemberInfo member)
+        {
+            if (!(member is PropertyInfo property) || property.DeclaringType != typeof(ParticleSystem))
+                return false;
+            Type type = property.PropertyType;
+            // Unity's module structs proxy a ParticleSystem; their setters apply directly to that native owner.
+            return type.IsValueType
+                && type.DeclaringType == typeof(ParticleSystem)
+                && type.Name.EndsWith("Module", StringComparison.Ordinal)
+                && type.GetField("m_ParticleSystem", BindingFlags.Instance | BindingFlags.NonPublic)?.FieldType == typeof(ParticleSystem);
+        }
+
+        private static bool IsDetachedNativeArrayMember(PropertyInfo property)
+        {
+            if (property == null || !property.PropertyType.IsArray || !property.PropertyType.GetElementType().IsValueType)
+                return false;
+            // Curve and gradient wrappers expose copied native key arrays without deriving from Unity Object.
+            if (
+                (property.DeclaringType == typeof(AnimationCurve) && property.Name == nameof(AnimationCurve.keys))
+                || (property.DeclaringType == typeof(Gradient) && (property.Name == nameof(Gradient.colorKeys) || property.Name == nameof(Gradient.alphaKeys)))
+            )
+                return true;
+            string assembly = property.DeclaringType.Assembly.GetName().Name;
+            return typeof(UnityEngine.Object).IsAssignableFrom(property.DeclaringType)
+                && (assembly == "UnityEngine" || assembly.StartsWith("UnityEngine.", StringComparison.Ordinal));
+        }
+
+        private static void WriteNestedMember(object owner, MemberInfo member, object value)
+        {
+            if (member is PropertyInfo property)
+                property.SetValue(owner, value);
+            else
+                ((FieldInfo)member).SetValue(owner, value);
+        }
+
+        private static void RecordNestedUndo(UnityEngine.Object owner)
+        {
+            if (owner != null)
+                Undo.RecordObject(owner, "Set Nested Component Property");
+        }
+
+        private static void CompleteNestedWrite(List<Action> writebacks, UnityEngine.Object owner)
+        {
+            for (int i = writebacks.Count - 1; i >= 0; i--)
+                writebacks[i]();
+            if (owner != null)
+            {
+                EditorUtility.SetDirty(owner);
+                if (PrefabUtility.IsPartOfPrefabInstance(owner))
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(owner);
+            }
         }
 
         private static bool ValidateBorrowedMeshIndices(Mesh mesh, string[] parts, int start, out string error)
