@@ -1,6 +1,7 @@
 """Derived state and recovery share the graph's identity and SQLite transaction."""
 
 import time
+from contextlib import contextmanager
 
 import pytest
 
@@ -31,6 +32,74 @@ def row(guid="a" * 32, path="Assets/Resources/Fixture.prefab"):
         "source_format": "none",
         "keys": [{"scheme": "resources", "value": "Fixture"}],
     }
+
+
+@pytest.mark.parametrize("path", ["Assets/Root", "Assets/한글", "Assets/🎮"])
+def test_remove_path_uses_indexed_exact_and_descendant_ranges(workspace, monkeypatch, path):
+    paths = [
+        path,
+        path + "/child.prefab",
+        path + "/deep/child.prefab",
+        path + "Sibling/a.prefab",
+        path + "0/a.prefab",
+    ]
+    workspace.record_page(
+        "worker", [row(f"{i:032x}", value) for i, value in enumerate(paths)], {}, "scan"
+    )
+    workspace.record_page(
+        "worker",
+        [row(f"{i:032x}", f"Assets/Noise/{i}.prefab") for i in range(10, 2010)],
+        {},
+        "scan",
+    )
+    statements = []
+    connect = workspace.store._connect
+    with connect(write=True) as connection:
+        # A policy-hidden identity can exist only in the path catalog.
+        connection.execute("DELETE FROM graph_assets WHERE guid=?", (f"{1:032x}",))
+
+    @contextmanager
+    def capture(**kwargs):
+        with connect(**kwargs) as connection:
+            connection.set_trace_callback(statements.append)
+            yield connection
+
+    monkeypatch.setattr(workspace.store, "_connect", capture)
+    workspace.remove_path("worker", path)
+    with connect(write=True) as connection:
+        remaining = {item[0] for item in connection.execute("SELECT path FROM graph_asset_paths")}
+        assert not set(paths[:3]) & remaining
+        assert set(paths[3:]) <= remaining
+        selection = next(
+            sql for sql in statements if sql.startswith("SELECT guid FROM graph_assets WHERE path=")
+        )
+        plan = [item[3] for item in connection.execute("EXPLAIN QUERY PLAN " + selection)]
+        assert not any(
+            "SCAN graph_assets" in item or "SCAN graph_asset_paths" in item for item in plan
+        ), plan
+        assert sum("SEARCH" in item for item in plan) >= 4, plan
+        steps = 0
+
+        def tick():
+            nonlocal steps
+            steps += 1
+            return 0
+
+        connection.set_progress_handler(tick, 1)
+        assert not connection.execute(selection).fetchall()
+        connection.set_progress_handler(None, 0)
+        assert steps < 200, steps
+        large_steps = steps
+        for table in ("graph_assets", "graph_asset_paths"):
+            connection.execute(
+                "DELETE FROM " + table + " WHERE path>=? AND path<?",
+                ("Assets/Noise/", "Assets/Noise0"),
+            )
+        steps = 0
+        connection.set_progress_handler(tick, 1)
+        assert not connection.execute(selection).fetchall()
+        connection.set_progress_handler(None, 0)
+        assert large_steps <= steps + 20, (large_steps, steps)
 
 
 def test_same_path_replacement_rolls_back_identity_retirement_with_failed_page(workspace):

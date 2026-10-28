@@ -783,8 +783,8 @@ class GraphWorkspace:
     def remove_path(self, worker: str, path: str) -> None:
         with self._write(worker) as connection:
             rows = connection.execute(
-                "SELECT guid FROM graph_assets WHERE path=? OR substr(path,1,?)=? UNION SELECT guid FROM graph_asset_paths WHERE path=? OR substr(path,1,?)=?",
-                (path, len(path) + 1, path + "/", path, len(path) + 1, path + "/"),
+                "SELECT guid FROM graph_assets WHERE path=? UNION SELECT guid FROM graph_assets WHERE path>=? AND path<? UNION SELECT guid FROM graph_asset_paths WHERE path=? UNION SELECT guid FROM graph_asset_paths WHERE path>=? AND path<?",
+                (path, path + "/", path + "0", path, path + "/", path + "0"),
             ).fetchall()
             owners = ["asset:" + row[0] for row in rows]
             self._invalidate(connection, owners)
