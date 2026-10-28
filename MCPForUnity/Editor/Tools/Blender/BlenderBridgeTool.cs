@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Services.Blender;
 using MCPForUnity.Editor.Services.Transport;
@@ -345,26 +346,18 @@ namespace MCPForUnity.Editor.Tools.Blender
 
             // The public importer only accepts Assets-contained sources. Stage this bridge's
             // own export there without broadening that boundary to arbitrary local files.
-            string stagedExport = StageExportForImport(exportPath, cancellationToken);
+            using var stagedExport = StageExportForImport(exportPath, cancellationToken);
             JObject importResult;
             try
             {
-                importParams["sourcePath"] = stagedExport;
+                importParams["sourcePath"] = stagedExport.Path;
                 cancellationToken.ThrowIfCancellationRequested();
                 // Once admitted, the shared synchronous import may finish. Keep its published asset.
                 importResult = JObject.FromObject(ImportModelFile.HandleCommand(importParams));
             }
             finally
             {
-                try
-                {
-                    File.Delete(stagedExport);
-                    Directory.Delete(Path.GetDirectoryName(stagedExport));
-                }
-                catch (Exception ex) when (cancellationToken.IsCancellationRequested)
-                {
-                    McpLog.Warn($"Could not remove canceled Blender staging directory ({ex.GetType().Name}).");
-                }
+                stagedExport.Dispose();
             }
             cancellationToken.ThrowIfCancellationRequested();
             if (!(importResult.Value<bool?>("success") ?? false))
@@ -1405,52 +1398,124 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
             }
         }
 
-        internal static string StageExportForImport(string exportPath, CancellationToken cancellationToken = default)
+        internal static StagedBlenderExport StageExportForImport(string exportPath, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string relative = "Assets/.BlenderBridge/" + Guid.NewGuid().ToString("N") + "/" + Path.GetFileName(exportPath);
-            string staged = AssetGenPaths.ToAbsolute(relative);
-            string stagingDirectory = Path.GetDirectoryName(staged);
-            string stagingRoot = Path.GetDirectoryName(stagingDirectory);
-            bool ownsRoot = false;
-            bool ownsDirectory = false;
+            using var source = new FileStream(exportPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return StageExportForImport(source, Path.GetFileName(exportPath), ProjectRoot(), cancellationToken);
+        }
+
+        internal static StagedBlenderExport StageExportForImport(Stream source, string exportName, string projectRoot, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            long length = source.Length;
+            if (length <= 0 || length > AssetDownloadTransport.MaxDownloadBytes)
+                throw new IOException("Blender export exceeds the 8 GiB artifact limit or is empty.");
+            string relative = "Assets/.BlenderBridge/" + Guid.NewGuid().ToString("N") + "/" + Path.GetFileName(exportName);
+            string staged = SafePathUtility.ResolveWithinRoot(projectRoot, relative);
+            var lease = AssetDiskBudget.ReserveDownloadAsync(projectRoot, length, cancellationToken).GetAwaiter().GetResult();
+            var result = new StagedBlenderExport(projectRoot, staged, lease);
             try
             {
-                if (!Directory.Exists(stagingRoot))
+                if (!Directory.Exists(result.StagingRoot))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    Directory.CreateDirectory(stagingRoot);
-                    ownsRoot = true;
+                    Directory.CreateDirectory(result.StagingRoot);
+                    result.OwnsRoot = true;
                 }
-                if (Directory.Exists(stagingDirectory) || File.Exists(stagingDirectory))
+                if (Directory.Exists(result.StagingDirectory) || File.Exists(result.StagingDirectory))
                     throw new IOException("The Blender staging directory already exists.");
                 cancellationToken.ThrowIfCancellationRequested();
-                Directory.CreateDirectory(stagingDirectory);
-                ownsDirectory = true;
-                staged = AssetGenPaths.ToAbsolute(relative);
+                Directory.CreateDirectory(result.StagingDirectory);
+                result.OwnsDirectory = true;
+                staged = SafePathUtility.ResolveWithinRoot(projectRoot, staged);
+                using (var output = new FileStream(staged, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    result.OwnsFile = true;
+                    var buffer = new byte[81920];
+                    long copied = 0;
+                    int count;
+                    while ((count = source.Read(buffer, 0, buffer.Length)) != 0)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (count > length - copied)
+                            throw new IOException("Blender export grew beyond its inspected byte budget.");
+                        output.Write(buffer, 0, count);
+                        lease.RecordWritten(count);
+                        copied += count;
+                    }
+                    if (copied != length)
+                        throw new IOException("Blender export ended before its inspected byte length.");
+                }
                 cancellationToken.ThrowIfCancellationRequested();
-                File.Copy(exportPath, staged);
-                cancellationToken.ThrowIfCancellationRequested();
-                return staged;
+                // Nested ImportModelFile claims its own copy. Keep these bytes reserved,
+                // but never hold the transfer slot while waiting for that import.
+                lease.CompleteTransfer();
+                return result;
             }
             catch
             {
+                result.Dispose();
+                throw;
+            }
+        }
+
+        internal sealed class StagedBlenderExport : IDisposable
+        {
+            private readonly string root;
+            private AssetDiskBudget.Lease lease;
+            internal string Path { get; }
+            internal string StagingDirectory { get; }
+            internal string StagingRoot { get; }
+            internal bool OwnsRoot;
+            internal bool OwnsDirectory;
+            internal bool OwnsFile;
+
+            internal StagedBlenderExport(string root, string path, AssetDiskBudget.Lease lease)
+            {
+                this.root = root;
+                this.lease = lease;
+                Path = path;
+                StagingDirectory = System.IO.Path.GetDirectoryName(path);
+                StagingRoot = System.IO.Path.GetDirectoryName(StagingDirectory);
+            }
+
+            public void Dispose()
+            {
+                if (lease == null)
+                    return;
                 try
                 {
-                    staged = AssetGenPaths.ToAbsolute(relative);
-                    if (ownsDirectory)
-                    {
-                        File.Delete(staged);
-                        Directory.Delete(stagingDirectory);
-                    }
-                    if (ownsRoot)
-                        Directory.Delete(stagingRoot);
+                    if (OwnsFile)
+                        File.Delete(SafePathUtility.ResolveWithinRoot(root, Path));
                 }
-                catch (Exception ex)
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                catch (InvalidOperationException) { }
+                if (!OwnsFile || AssetDiskBudget.FileIsGone(Path))
                 {
-                    McpLog.Warn($"Could not remove failed Blender staging directory ({ex.GetType().Name}).");
+                    lease.Dispose();
+                    lease = null;
+                    OwnsFile = false;
                 }
-                throw;
+                else
+                    lease.RetainUntilFileRemoved(Path);
+                try
+                {
+                    if (OwnsDirectory)
+                    {
+                        Directory.Delete(SafePathUtility.ResolveWithinRoot(root, StagingDirectory));
+                        OwnsDirectory = false;
+                    }
+                    if (OwnsRoot)
+                    {
+                        Directory.Delete(SafePathUtility.ResolveWithinRoot(root, StagingRoot));
+                        OwnsRoot = false;
+                    }
+                }
+                catch (IOException) { /* Only empty owned directories may be removed. */ }
+                catch (UnauthorizedAccessException) { }
+                catch (InvalidOperationException) { }
             }
         }
 

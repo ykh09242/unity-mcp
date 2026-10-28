@@ -8,6 +8,7 @@ using System.Threading;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Tools.Blender;
 using Newtonsoft.Json;
@@ -293,23 +294,19 @@ namespace MCPForUnityTests.Editor.Blender
         public void StageExportForImport_ProducesAssetsContainedCopy()
         {
             string source = Path.Combine(Path.GetTempPath(), "blender-stage-" + Guid.NewGuid().ToString("N") + ".fbx");
-            string staged = null;
+            BlenderBridgeTool.StagedBlenderExport staged = null;
             try
             {
                 File.WriteAllBytes(source, new byte[] { 1, 2, 3 });
                 staged = BlenderBridgeTool.StageExportForImport(source);
-                Assert.IsTrue(MCPForUnity.Editor.Helpers.AssetGenPaths.TryGetAssetsRelativePath(staged, out string relative));
+                Assert.IsTrue(MCPForUnity.Editor.Helpers.AssetGenPaths.TryGetAssetsRelativePath(staged.Path, out string relative));
                 StringAssert.StartsWith("Assets/.BlenderBridge/", relative);
-                CollectionAssert.AreEqual(File.ReadAllBytes(source), File.ReadAllBytes(staged));
+                CollectionAssert.AreEqual(File.ReadAllBytes(source), File.ReadAllBytes(staged.Path));
             }
             finally
             {
                 File.Delete(source);
-                if (staged != null)
-                {
-                    File.Delete(staged);
-                    Directory.Delete(Path.GetDirectoryName(staged));
-                }
+                staged?.Dispose();
             }
         }
 
@@ -469,6 +466,142 @@ namespace MCPForUnityTests.Editor.Blender
             Assert.AreEqual(0, ((JArray)cfg["names"]).Count);
             Assert.AreEqual(true, (bool)cfg["selection_only"]);
             Assert.AreEqual(false, (bool)cfg["apply_modifiers"]);
+        }
+    }
+
+    [Parallelizable(ParallelScope.None)]
+    public class BlenderStagingBudgetTests
+    {
+        private string project;
+
+        [SetUp]
+        public void SetUp()
+        {
+            project = Path.Combine(Path.GetTempPath(), "mcp_blender_budget_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Path.Combine(project, "Assets"));
+            AssetDiskBudget.FreeBytesForTests = _ => 1000;
+            AssetDiskBudget.AggregateBytesForTests = 20;
+            AssetDiskBudget.HeadroomBytesForTests = 1;
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            Assert.Zero(AssetDiskBudget.ReservedBytesForTests(project));
+            AssetDiskBudget.FreeBytesForTests = null;
+            AssetDiskBudget.AggregateBytesForTests = null;
+            AssetDiskBudget.HeadroomBytesForTests = null;
+            Directory.Delete(project, true);
+        }
+
+        [Test]
+        public void BlenderRejectsInsufficientCapacityBeforeCreatingStagingFiles()
+        {
+            AssetDiskBudget.AggregateBytesForTests = 11;
+            using var source = new ObservedExport();
+            Assert.Throws<IOException>(() => Stage(source));
+            Assert.IsFalse(source.ReadRequested);
+            Assert.IsEmpty(Directory.GetFileSystemEntries(Path.Combine(project, "Assets")));
+        }
+
+        [Test]
+        public void BlenderPreservesDiskHeadroomBeforeReadingOrCreatingStagingFiles()
+        {
+            AssetDiskBudget.FreeBytesForTests = _ => 12;
+            using var source = new ObservedExport();
+            Assert.Throws<IOException>(() => Stage(source));
+            Assert.IsFalse(source.ReadRequested);
+            Assert.IsEmpty(Directory.GetFileSystemEntries(Path.Combine(project, "Assets")));
+        }
+
+        [Test]
+        public void BlenderRejectsOversizedSourceBeforeReadingOrCreatingStagingFiles()
+        {
+            using var source = new OversizedExport();
+            Assert.Throws<IOException>(() => Stage(source));
+            Assert.IsEmpty(Directory.GetFileSystemEntries(Path.Combine(project, "Assets")));
+        }
+
+        [Test]
+        [Platform("Win")]
+        public void BlenderFailedCleanupKeepsCreditAfterOwnerLossUntilFileIsRemoved()
+        {
+            using var source = new MemoryStream(new byte[12]);
+            var stage = Stage(source);
+            string path = stage.Path;
+            try
+            {
+                File.SetAttributes(path, FileAttributes.ReadOnly);
+                stage.Dispose();
+                stage = null;
+                Assert.IsTrue(File.Exists(path));
+                Assert.AreEqual(12, AssetDiskBudget.ReservedBytesForTests(project));
+                Assert.ThrowsAsync<IOException>(async () => await AssetDiskBudget.ReserveDownloadAsync(project, 9, CancellationToken.None));
+                File.SetAttributes(path, FileAttributes.Normal);
+                File.Delete(path);
+                using var next = AssetDiskBudget.ReserveDownloadAsync(project, 9, CancellationToken.None).GetAwaiter().GetResult();
+                Assert.AreEqual(9, AssetDiskBudget.ReservedBytesForTests(project));
+            }
+            finally
+            {
+                if (File.Exists(path))
+                {
+                    File.SetAttributes(path, FileAttributes.Normal);
+                    File.Delete(path);
+                }
+                stage?.Dispose();
+                using var reconciliation = AssetDiskBudget.ReserveDownloadAsync(project, 0, CancellationToken.None).GetAwaiter().GetResult();
+            }
+        }
+
+        [Test]
+        public void BlenderHoldsByteCreditWhileNestedImportCanAcquireBothTransferSlots()
+        {
+            using var source = new MemoryStream(new byte[12]);
+            var stage = Stage(source);
+            string path = stage.Path;
+            try
+            {
+                Assert.IsTrue(File.Exists(path));
+                Assert.AreEqual(12, AssetDiskBudget.ReservedBytesForTests(project));
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                using var first = AssetDiskBudget.ReserveDownloadAsync(project, 0, timeout.Token).GetAwaiter().GetResult();
+                using var second = AssetDiskBudget.ReserveDownloadAsync(project, 0, timeout.Token).GetAwaiter().GetResult();
+                first.CompleteTransfer();
+                second.CompleteTransfer();
+                Assert.ThrowsAsync<IOException>(async () => await AssetDiskBudget.ReserveDownloadAsync(project, 9, CancellationToken.None));
+                CollectionAssert.AreEqual(new byte[12], File.ReadAllBytes(path));
+            }
+            finally
+            {
+                stage.Dispose();
+            }
+            Assert.IsFalse(File.Exists(path));
+            Assert.Zero(AssetDiskBudget.ReservedBytesForTests(project));
+        }
+
+        private BlenderBridgeTool.StagedBlenderExport Stage(Stream source) =>
+            BlenderBridgeTool.StageExportForImport(source, "export.fbx", project, CancellationToken.None);
+
+        private sealed class ObservedExport : MemoryStream
+        {
+            internal bool ReadRequested;
+
+            internal ObservedExport()
+                : base(new byte[12]) { }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                ReadRequested = true;
+                return base.Read(buffer, offset, count);
+            }
+        }
+
+        private sealed class OversizedExport : MemoryStream
+        {
+            public override long Length => AssetDownloadTransport.MaxDownloadBytes + 1;
+
+            public override int Read(byte[] buffer, int offset, int count) => throw new InvalidOperationException("Oversized export must not be read.");
         }
     }
 
