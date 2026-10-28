@@ -42,6 +42,7 @@ async def test_read_console_full_default(monkeypatch):
     )
 
     resp = await read_console(ctx=DummyContext(), action="get", count=10)
+    assert resp.pop("observation") == {"status": "available"}
     assert resp == {
         "success": True,
         "data": {"lines": [{"level": "error", "message": "oops", "time": "t"}]},
@@ -74,6 +75,7 @@ async def test_read_console_truncated(monkeypatch):
     )
 
     resp = await read_console(ctx=DummyContext(), action="get", count=10, include_stacktrace=False)
+    assert resp.pop("observation") == {"status": "available"}
     assert resp == {"success": True, "data": {"lines": [{"level": "error", "message": "oops"}]}}
     assert captured["params"]["includeStacktrace"] is False
 

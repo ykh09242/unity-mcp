@@ -116,7 +116,7 @@ async def test_public_readiness_exposes_scan_coverage(monkeypatch, complete, lim
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("has_root", [False, True])
-async def test_scan_readiness_distinguishes_unavailable_root_from_pending_scan(
+async def test_scan_readiness_distinguishes_unavailable_root_from_unstarted_scan(
     monkeypatch, tmp_path, has_root
 ):
     from unittest.mock import AsyncMock
@@ -153,4 +153,6 @@ async def test_scan_readiness_distinguishes_unavailable_root_from_pending_scan(
     assert assets["external_changes_scan_limited"] is (False if has_root else None)
     assert advice["ready_for_tools"] is True
     assert advice["blocking_reasons"] == []
-    assert advice["warnings"] == (["external_changes_scan_pending"] if has_root else [])
+    assert advice["warnings"] == ["external_changes_scan_unknown"]
+    assert advice["recommended_next_action"] == "inspect_scan_scope"
+    assert advice["recommended_retry_after_ms"] is None

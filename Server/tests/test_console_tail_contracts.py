@@ -83,7 +83,7 @@ async def test_malformed_tail_cursor_rejects_before_lookup(console, token):
 
 
 @pytest.mark.asyncio
-async def test_omitted_tail_preserves_plain_ten_and_legacy_retry_shape(console):
+async def test_omitted_tail_preserves_plain_ten_with_bounded_recovery(console):
     # Given an existing caller.
     module, _, send = console
     # When the caller omits all new options.
@@ -99,7 +99,7 @@ async def test_omitted_tail_preserves_plain_ten_and_legacy_retry_shape(console):
             "includeStacktrace": False,
         },
     )
-    assert send.call_args.kwargs == {}
+    assert send.call_args.kwargs == {"retry_on_reload": False}
 
 
 def page(module, *, cursor="begin", items=None, **changes):
@@ -150,7 +150,7 @@ async def test_console_source_diagnostics_survive_public_tail_validation(console
     }
     send.return_value = page(module, cursor=token, items=[{"sequence": 1, "entry": entry}])
     result = await module.read_console(SimpleNamespace(), tail_cursor=token)
-    assert result == send.return_value
+    assert result == {**send.return_value, "observation": {"status": "available"}}
     assert result["data"]["items"][0]["entry"]["diagnostics"] == entry["diagnostics"]
 
 
@@ -186,7 +186,7 @@ async def test_begin_accepts_only_empty_watermark_and_preserves_loss_disclosure(
     # When the response crosses the Python contract boundary.
     result = await module.read_console(SimpleNamespace(), tail_cursor="begin")
     # Then zero history is claimed and native evidence remains intact.
-    assert result == send.return_value
+    assert result == {**send.return_value, "observation": {"status": "available"}}
     assert result["data"]["loss_unknown"] is True
 
 

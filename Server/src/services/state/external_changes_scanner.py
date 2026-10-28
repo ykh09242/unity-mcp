@@ -28,6 +28,11 @@ _EMPTY_RESULT = {
     "external_changes_scan_limited": None,
     "external_changes_scan_in_progress": None,
     "external_changes_scan_limited_reason": None,
+    "external_changes_scan_started_unix_ms": None,
+    "external_changes_scan_processed_entries": None,
+    "external_changes_scan_processed_bytes": None,
+    "external_changes_scan_elapsed_ms": None,
+    "external_changes_scan_retry_after_ms": None,
 }
 
 
@@ -62,6 +67,10 @@ class ExternalChangesState:
     scan_complete: bool | None = None
     scan_limited: bool | None = None
     scan_limited_reason: str | None = None
+    scan_started_unix_ms: int | None = None
+    scan_updated_unix_ms: int | None = None
+    scan_processed_entries: int = 0
+    scan_processed_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -239,7 +248,14 @@ class ExternalChangesScanner:
             cursor = ScanCursor(roots, watched)
             if state is not None:
                 state.cursor = cursor
+                state.scan_started_unix_ms = _now_unix_ms()
+                state.scan_processed_entries = 0
+                state.scan_processed_bytes = 0
         cursor.advance(self._max_entries, self._max_scan_bytes, self._scan_stopped)
+        if state is not None:
+            state.scan_updated_unix_ms = _now_unix_ms()
+            state.scan_processed_entries = cursor.count
+            state.scan_processed_bytes += cursor.bytes_read
         if state is None:
             cursor.close()
         else:
@@ -482,6 +498,28 @@ class ExternalChangesScanner:
             if self._progress_task is asyncio.current_task():
                 self._progress_task = None
 
+    @staticmethod
+    def _scan_progress(st: ExternalChangesState) -> dict[str, int | None]:
+        started = st.scan_started_unix_ms
+        end = _now_unix_ms() if st.cursor is not None else st.scan_updated_unix_ms
+        return {
+            "external_changes_scan_started_unix_ms": started,
+            "external_changes_scan_processed_entries": st.scan_processed_entries
+            if started is not None
+            else None,
+            "external_changes_scan_processed_bytes": st.scan_processed_bytes
+            if started is not None
+            else None,
+            "external_changes_scan_elapsed_ms": max(0, end - started)
+            if end is not None and started is not None
+            else None,
+            "external_changes_scan_retry_after_ms": 500
+            if st.cursor is not None
+            else 0
+            if st.scan_complete is True
+            else None,
+        }
+
     def _cached_result(self, instance_id: str) -> dict[str, int | bool | str | None]:
         with self._state_lock:
             st = self._states.get(instance_id)
@@ -496,6 +534,7 @@ class ExternalChangesScanner:
                 "external_changes_scan_limited": st.scan_limited,
                 "external_changes_scan_in_progress": st.cursor is not None,
                 "external_changes_scan_limited_reason": st.scan_limited_reason,
+                **self._scan_progress(st),
             }
 
     def _run_update_locked(
@@ -546,6 +585,7 @@ class ExternalChangesScanner:
                 "external_changes_scan_limited": st.scan_limited,
                 "external_changes_scan_in_progress": st.cursor is not None,
                 "external_changes_scan_limited_reason": st.scan_limited_reason,
+                **self._scan_progress(st),
             }
 
         now = _now_unix_ms()
@@ -563,6 +603,7 @@ class ExternalChangesScanner:
                 "external_changes_scan_limited": st.scan_limited,
                 "external_changes_scan_in_progress": st.cursor is not None,
                 "external_changes_scan_limited_reason": st.scan_limited_reason,
+                **self._scan_progress(st),
             }
 
         st.last_scan_unix_ms = now
@@ -578,6 +619,7 @@ class ExternalChangesScanner:
                 "external_changes_scan_limited": st.scan_limited,
                 "external_changes_scan_in_progress": st.cursor is not None,
                 "external_changes_scan_limited_reason": st.scan_limited_reason,
+                **self._scan_progress(st),
             }
 
         root = Path(project_root)
@@ -633,6 +675,7 @@ class ExternalChangesScanner:
             "external_changes_scan_limited": st.scan_limited,
             "external_changes_scan_in_progress": st.cursor is not None,
             "external_changes_scan_limited_reason": st.scan_limited_reason,
+            **self._scan_progress(st),
         }
 
 

@@ -18,6 +18,7 @@ namespace MCPForUnity.Editor.Tools
             // Older servers strictly validate data as compile_job@1. Keep diagnostics
             // outside that ledger so a new native peer preserves their compiler result.
             response["native_coordination"] = JObject.FromObject(CompilationJobTracker.CoordinationStatus(token.Value<string>()));
+            response["last_successful_compilation"] = CompilationJobTracker.Ledger.LastSuccessfulCompilation();
             return response;
         }
     }

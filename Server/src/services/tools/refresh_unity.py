@@ -292,14 +292,10 @@ async def verify_edit_by_sha(
 
 @mcp_for_unity_tool(
     description=(
-        "Request a Unity asset database refresh and optionally a script compilation. "
-        "Can wait for native Editor readiness, independently of background file scan coverage. "
-        "Readiness timeout preserves the latest compilation snapshot and reports readiness "
-        "blockers separately; compilation_observation_age_seconds describes snapshot age. "
-        "Response summaries follow the latest observed Editor phase and compilation evidence. "
-        "compilation_goal_satisfied means a matching pipeline cycle was observed, not compiler "
-        "success; source_revision_confirmed remains false without source-to-assembly proof. "
-        "A timeout never replays the refresh or cancels native compilation."
+        "Refresh assets and optionally request compilation. Reports no_op when nothing was dispatched, "
+        "compilation.status and last_successful_compilation separately from Editor readiness. "
+        "wait_for_ready waits for native readiness, not background scan coverage or source-revision proof. "
+        "Timeout retains the latest evidence and its age; it does not replay or cancel native work."
     ),
     annotations=ToolAnnotations(
         title="Refresh Unity",
@@ -367,22 +363,52 @@ async def refresh_unity(
     resulting_state = None
 
     def with_compilation(value):
-        if compile_id is None and readiness is None:
-            return value
         payload = value.model_dump() if isinstance(value, MCPResponse) else dict(value)
         data = dict(payload["data"]) if isinstance(payload.get("data"), dict) else {}
+        if (
+            payload.get("success") is True
+            and data.get("refresh_triggered") is False
+            and data.get("compile_requested") is False
+            and data.get("compilation_goal_satisfied") is not True
+        ):
+            data["no_op"] = True
+            data.setdefault(
+                "reason",
+                "scripts_scope_without_compile_request"
+                if scope == "scripts" and compile == "none"
+                else "no_work_dispatched",
+            )
+            payload["message"] = "No refresh or compilation was dispatched."
         if readiness is not None:
             data["readiness"] = readiness
             if resulting_state is not None:
                 data["resulting_state"] = resulting_state
             if readiness["ready"]:
                 data["hint"] = (
-                    "Editor is ready for tools. Inspect compilation.outcome for compiler status; "
+                    "Editor is ready for tools. Inspect compilation.status for compiler status; "
                     "readiness does not confirm a source revision."
                     if compile_id is not None
                     else "Editor is ready for tools."
                 )
         if compile_id is not None:
+            history = compilation["last_successful_compilation"]
+            if compilation["outcome"] == "success" and (
+                history is None or history["generation"] < compilation["generation"]
+            ):
+                # Native v1 peers can prove success without supplying optional history.
+                history = {
+                    key: compilation[key]
+                    for key in (
+                        "session_id",
+                        "generation",
+                        "started_at_unix_ms",
+                        "finished_at_unix_ms",
+                        "assembly_count",
+                        "warning_count",
+                    )
+                }
+                compilation["last_successful_compilation"] = history
+            data["last_successful_compilation"] = history
             data["compilation"] = compilation
             data["source_revision_confirmed"] = False
             # The goal is an observed request-associated pipeline cycle, not a
@@ -454,7 +480,11 @@ async def refresh_unity(
     )
     native_data = response_dict.get("data")
     if compile_id and isinstance(native_data, dict):
-        compilation = parse_compile_job(native_data.get("compilation"), compile_id)
+        compilation = parse_compile_job(
+            native_data.get("compilation"),
+            compile_id,
+            last_successful_compilation=native_data.get("last_successful_compilation"),
+        )
         if compilation["reason"] != "tracking_unsupported":
             compilation_observed_at = time.monotonic()
     if not response_dict.get("success", True):
@@ -524,6 +554,13 @@ async def refresh_unity(
             ):
                 compilation_observation_error = observed["reason"]
                 return
+            if (
+                observed["last_successful_compilation"] is None
+                and observed["session_id"] == compilation["session_id"]
+            ):
+                # Older v1 peers omit history; retain already validated evidence only
+                # within the same compilation session, never across an Editor restart.
+                observed["last_successful_compilation"] = compilation["last_successful_compilation"]
             compilation = observed
             compilation_observed_at = time.monotonic()
             compilation_observation_error = None
@@ -575,7 +612,7 @@ async def refresh_unity(
             return with_compilation(
                 MCPResponse(
                     success=False,
-                    message=f"Refresh triggered but timed out after {timeout_seconds:g}s waiting for editor readiness.",
+                    message=f"Timed out after {timeout_seconds:g}s waiting for editor readiness; inspect dispatch and compilation evidence.",
                     data={
                         **(native_data if isinstance(native_data, dict) else {}),
                         "timeout": True,

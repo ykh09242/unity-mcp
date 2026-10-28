@@ -27,6 +27,8 @@ import pytest
         "invalid_init_timeout",
         "dirty_assets_ready",
         "dirty_script_compiles",
+        "reload_after_first_ready",
+        "import_after_first_ready",
     ],
 )
 def test_preflight_public_contract(case, tmp_path):
@@ -115,7 +117,10 @@ async def _scenario(case):
         )
 
         async def external_changes(instance):
-            return {"external_changes_dirty": dirty}
+            return {
+                "external_changes_dirty": dirty and not refresh_started,
+                "external_changes_scan_complete": True,
+            }
 
         editor_state.external_changes_scanner.update_and_get_async = external_changes
 
@@ -148,7 +153,12 @@ async def _scenario(case):
                 )
                 index += 1
                 data = {
-                    "compilation": {"is_compiling": compiling, "is_domain_reload_pending": False},
+                    "compilation": {
+                        "is_compiling": compiling,
+                        "is_domain_reload_pending": case == "reload_after_first_ready"
+                        and index == 2,
+                    },
+                    "assets": {"is_updating": case == "import_after_first_ready" and index == 2},
                     "tests": {"is_running": running},
                 }
                 if case == "stale_idle":
@@ -205,6 +215,10 @@ async def _scenario(case):
             assert response["hint"] == "retry"
             assert response["data"] == {"reason": "tests_running", "retry_after_ms": 5000}
             assert "run_tests" not in commands and "refresh_unity" not in commands
+        elif case in ("unknown_state", "malformed_state", "stale_idle"):
+            assert response["success"] is False
+            assert response["error"] == "busy"
+            assert "run_tests" not in commands
         elif case == "unresponsive_idle":
             assert response["success"] is False and response["error"] == "editor_unresponsive"
             assert response["hint"] == "inspect_editor"
@@ -239,10 +253,11 @@ async def _scenario(case):
                     "compile": "none",
                     "wait_for_ready": False,
                 }
-                assert commands.count("get_editor_state") == (
-                    4 if case == "dirty_script_compiles" else 2
-                )
+                assert commands.count("get_editor_state") >= 4
                 assert commands[-1] == "run_tests"
+        if case in ("reload_after_first_ready", "import_after_first_ready"):
+            assert commands.count("get_editor_state") >= 6
+            assert clock[0] >= 1.25
         receipts.append({"protocol": protocol, "response": response, "requests": requests})
     print(json.dumps({"case": case, "receipts": receipts}))
 

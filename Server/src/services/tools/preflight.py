@@ -5,6 +5,7 @@ import os
 import time
 from typing import Any
 
+from core.config import config
 from models import MCPResponse
 from models.response_lifetime import ResponsePollLifetime
 from services.operation_permissions import remote_operation_allowed
@@ -90,6 +91,9 @@ async def _preflight(
     refresh_if_dirty: bool,
     max_wait_s: float,
 ) -> MCPResponse | None:
+    if requires_no_tests and wait_for_no_compile:
+        return await _preflight_test_run(ctx, observations, refresh_if_dirty, max_wait_s)
+
     # Load canonical editor state (server enriches advice + staleness).
     try:
         from services.resources.editor_state import get_editor_state_authoritative
@@ -195,3 +199,153 @@ async def _preflight(
     # Staleness: if the snapshot is stale, proceed (tools will still run), but callers that read resources can back off.
     # In future we may make this strict for some tools.
     return None
+
+
+async def _preflight_test_run(ctx, observations, refresh_if_dirty, max_wait_s):
+    """Require a fresh, stable native-ready window before admitting a new test run."""
+    from services.resources.editor_state import get_editor_state_authoritative
+
+    deadline = time.monotonic() + max_wait_s
+    stable_since = None
+    stable_identity = None
+    refreshed = False
+    reason = "editor_state_unavailable"
+    first = True
+    while first or time.monotonic() < deadline:
+        # A zero wait budget still performs one bounded observation, as before;
+        # it disables subsequent polling rather than fabricating an unknown state.
+        timeout = 1.0 if first and max_wait_s <= 0 else max(0.0, deadline - time.monotonic())
+        first = False
+        data = None
+        try:
+            response = await observations.fetch(
+                get_editor_state_authoritative(ctx), timeout=timeout
+            )
+            value = response.model_dump() if hasattr(response, "model_dump") else response
+            if isinstance(value, dict) and value.get("success") is True:
+                data = value.get("data")
+        except Exception:
+            pass  # Reload may temporarily disconnect observation; it never grants admission.
+        ready = False
+        if isinstance(data, dict):
+            unresponsive = _unresponsive(data)
+            if unresponsive is not None:
+                return unresponsive
+            tests = data.get("tests") if isinstance(data.get("tests"), dict) else {}
+            if tests.get("is_running") is True:
+                return _busy("tests_running", 5000)
+            compilation = data.get("compilation")
+            assets = data.get("assets") if isinstance(data.get("assets"), dict) else {}
+            advice = data.get("advice") if isinstance(data.get("advice"), dict) else {}
+            blocking = advice.get("blocking_reasons") or []
+            if "recovery_required" in blocking:
+                return MCPResponse(
+                    success=False,
+                    error="recovery_required",
+                    hint="inspect_editor",
+                    data={"reason": "recovery_required", "retryable": False},
+                )
+            known = isinstance(compilation, dict) and all(
+                type(compilation.get(key)) is bool
+                for key in ("is_compiling", "is_domain_reload_pending")
+            )
+            ready = (
+                known
+                and not compilation["is_compiling"]
+                and not compilation["is_domain_reload_pending"]
+                and advice.get("ready_for_tools") is True
+            )
+            reason = (
+                blocking[0]
+                if isinstance(blocking, list) and blocking
+                else "editor_state_unavailable"
+            )
+            coverage = assets.get("external_changes_scan_complete")
+            # Hosted servers deliberately cannot traverse the remote Editor's disk.
+            remote_coverage = config.http_remote_hosted and coverage is None
+            if ready and coverage is not True and not remote_coverage:
+                ready = False
+                if assets.get("external_changes_scan_limited") is True:
+                    reason = "external_changes_scan_limited"
+                elif assets.get("external_changes_scan_in_progress") is True:
+                    reason = "external_changes_scan_pending"
+                else:
+                    reason = "external_changes_scan_unknown"
+                if reason != "external_changes_scan_pending":
+                    return MCPResponse(
+                        success=False,
+                        error=reason,
+                        message=(
+                            "Test admission requires verified local scan coverage. Inspect the "
+                            "project path, scan scope and filesystem access; resolve the reported "
+                            "coverage issue before retrying. Waiting alone may not resolve it."
+                        ),
+                        hint="inspect_scan_scope",
+                        data={
+                            "reason": reason,
+                            "retryable": False,
+                            "next_action": "inspect_scan_scope",
+                            "scan": {
+                                key: value
+                                for key, value in assets.items()
+                                if key.startswith("external_changes_scan_")
+                            },
+                        },
+                    )
+            if ready and refresh_if_dirty and assets.get("external_changes_dirty") is True:
+                if refreshed:
+                    return _busy("external_changes_after_refresh", 500)
+                from services.tools.refresh_unity import refresh_unity
+
+                remaining = deadline - time.monotonic()
+                if remaining < 1:
+                    return _busy("external_changes_dirty", 500)
+                try:
+                    result = await refresh_unity(
+                        ctx,
+                        mode="if_dirty",
+                        scope="all",
+                        compile="none",
+                        wait_for_ready=True,
+                        timeout_seconds=remaining,
+                    )
+                    result = result.model_dump() if hasattr(result, "model_dump") else result
+                    if not isinstance(result, dict) or result.get("success") is not True:
+                        observations.discard()
+                        return (
+                            MCPResponse(**result)
+                            if isinstance(result, dict)
+                            else MCPResponse(
+                                success=False,
+                                error="refresh_failed",
+                            )
+                        )
+                except Exception as exc:
+                    return MCPResponse(success=False, error="refresh_failed", message=str(exc))
+                refreshed = True
+                stable_since = None
+                # Always observe again: the snapshot preceding refresh cannot admit tests.
+                continue
+            if ready:
+                latest = compilation.get("latest_job") or {}
+                identity = (
+                    (data.get("unity") or {}).get("instance_id"),
+                    latest.get("session_id"),
+                    latest.get("generation"),
+                    compilation.get("last_compile_started_unix_ms"),
+                    compilation.get("last_compile_finished_unix_ms"),
+                    compilation.get("last_domain_reload_after_unix_ms"),
+                )
+                if stable_since is None or identity != stable_identity:
+                    stable_since = time.monotonic()
+                    stable_identity = identity
+                elif time.monotonic() - stable_since >= 0.75:
+                    return None
+                reason = "editor_stabilizing"
+        if not ready:
+            stable_since = None
+            stable_identity = None
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            await asyncio.sleep(min(0.25, remaining))
+    return _busy(reason, 500)

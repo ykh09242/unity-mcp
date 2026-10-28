@@ -1,7 +1,8 @@
 """Whole public invocation admission before refresh-capable preflight."""
 
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from functools import wraps
 import asyncio  # noqa: ANYIO_OK -- share the existing public request budget.
 import inspect
@@ -33,6 +34,9 @@ from services.registry.operation_target import OperationTarget, capture_target
 P = ParamSpec("P")
 T = TypeVar("T")
 _LOGGER = logging.getLogger("mcp-for-unity-server")
+_console_read_retry: ContextVar[tuple[str, dict[str, JsonValue]] | None] = ContextVar(
+    "console_read_retry", default=None
+)
 
 
 class OperationPolicyViolation(RuntimeError):
@@ -98,10 +102,25 @@ def admission_for(
     )
 
 
+@contextmanager
+def console_read_continuation(name: str, params: dict[str, JsonValue]) -> Iterator[None]:
+    """Permit only the exact read retried by console readiness recovery."""
+    allowed = (name == "read_console" and params.get("action") == "get") or (
+        name == "tail_console" and "action" not in params
+    )
+    token = _console_read_retry.set((name, to_jsonable_python(params)) if allowed else None)
+    try:
+        yield
+    finally:
+        _console_read_retry.reset(token)
+
+
 def is_observational_continuation(
     name: str, params: dict[str, JsonValue], *, public: bool = False
 ) -> bool:
-    """Only these native status reads may cross an owned wrapper's reload fence."""
+    """Only reviewed native observations may cross an owned wrapper's reload fence."""
+    if not public and _console_read_retry.get() == (name, params):
+        return True
     if name in {"ping", "get_editor_state"}:
         return not params
     key = {"get_compile_job": "compile_id", "get_test_job": "job_id"}.get(name)

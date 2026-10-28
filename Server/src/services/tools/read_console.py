@@ -3,6 +3,7 @@ Defines the read_console tool for accessing Unity Editor console messages.
 """
 
 from typing import Annotated, Any, Literal
+import asyncio
 import hashlib
 import json
 import re
@@ -11,6 +12,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
+from models import MCPResponse
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import coerce_int, coerce_bool, parse_json_payload
@@ -130,6 +132,71 @@ def _strip_stacktrace_from_list(items: list) -> None:
     for item in items:
         if isinstance(item, dict) and "stacktrace" in item:
             item.pop("stacktrace", None)
+
+
+async def _send_console_observation(ctx, instance, command, params):
+    """One bounded readiness recovery for reads; clear is never replayed here."""
+    from services.operation_permissions import remote_operation_allowed
+    from services.registry.operation_context import active_operation
+    from services.registry.operation_invocation import console_read_continuation
+    from services.tools.refresh_unity import wait_for_editor_ready
+
+    response = await send_with_unity_instance(
+        async_send_command_with_retry, instance, command, params, retry_on_reload=False
+    )
+    response = response.model_dump() if isinstance(response, MCPResponse) else response
+    detail = response.get("data") if isinstance(response, dict) else None
+    reason = detail.get("reason") if isinstance(detail, dict) else None
+    retryable = reason in {
+        "reloading",
+        "editor_not_ready",
+        "editor_compiling",
+        "editor_importing",
+        "native_job_active",
+        "stale_connection",
+        "no_unity_session",
+    }
+    initial_failure = None
+    if (
+        isinstance(response, dict)
+        and response.get("success") is False
+        and retryable
+        and await remote_operation_allowed("get_editor_state", {}, ctx=ctx)
+    ):
+        owner = active_operation()
+        timeout = 3.0
+        if owner is not None and owner.request.expires_at is not None:
+            timeout = min(timeout, owner.request.expires_at - asyncio.get_running_loop().time())
+        ready = False
+        if timeout > 0:
+            try:
+                ready, _ = await asyncio.wait_for(
+                    wait_for_editor_ready(ctx, timeout_s=timeout), timeout=timeout
+                )
+            except TimeoutError:
+                pass  # Keep the original refusal when its readiness budget expires.
+        if ready:
+            initial_failure = response
+            with console_read_continuation(command, params):
+                response = await send_with_unity_instance(
+                    async_send_command_with_retry, instance, command, params, retry_on_reload=False
+                )
+            response = response.model_dump() if isinstance(response, MCPResponse) else response
+    if not isinstance(response, dict):
+        response = {"success": False, "error": "console_observation_unavailable"}
+    response = dict(response)
+    response["observation"] = (
+        {"status": "available"}
+        if response.get("success") is True
+        else {
+            "status": "unavailable",
+            "next_action": "retry_console_read",
+            "retry_after_ms": 500,
+        }
+    )
+    if initial_failure is not None and response.get("success") is not True:
+        response["observation"]["initial_failure"] = initial_failure
+    return response
 
 
 @mcp_for_unity_tool(
@@ -316,13 +383,7 @@ async def read_console(
         except UnicodeEncodeError:
             return _tail_error("invalid_filter")
         instance = await get_unity_instance_from_context(ctx)
-        response = await send_with_unity_instance(
-            async_send_command_with_retry,
-            instance,
-            "tail_console",
-            tail_params,
-            retry_on_reload=False,
-        )
+        response = await _send_console_observation(ctx, instance, "tail_console", tail_params)
         if not isinstance(response, dict) or response.get("success") is not True:
             return response if isinstance(response, dict) else _tail_error("tail_unsupported")
         try:
@@ -380,9 +441,12 @@ async def read_console(
 
     # Use centralized retry helper with instance routing
     unity_instance = await get_unity_instance_from_context(ctx)
-    resp = await send_with_unity_instance(
-        async_send_command_with_retry, unity_instance, "read_console", params_dict
-    )
+    if action == "get":
+        resp = await _send_console_observation(ctx, unity_instance, "read_console", params_dict)
+    else:
+        resp = await send_with_unity_instance(
+            async_send_command_with_retry, unity_instance, "read_console", params_dict
+        )
     if isinstance(resp, dict) and resp.get("success") and not include_stacktrace:
         # Strip stacktrace fields from returned lines if present
         try:

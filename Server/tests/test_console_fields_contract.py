@@ -142,5 +142,7 @@ async def test_projection_does_not_modify_native_failure_metadata(console):
     send.return_value = failure
     # When the caller requests compact successful log entries.
     result = await module.read_console(SimpleNamespace(), fields=["type", "message"], format="json")
-    # Then the native failure envelope is untouched.
-    assert result == failure
+    # Then all native failure fields survive alongside observation availability.
+    assert {key: result[key] for key in failure} == failure
+    assert result["observation"]["status"] == "unavailable"
+    assert "observation" not in failure

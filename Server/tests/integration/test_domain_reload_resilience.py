@@ -281,3 +281,52 @@ async def test_plugin_hub_respects_unity_instance_preference():
         # Clean up: restore original PluginHub state
         PluginHub._registry = original_registry
         PluginHub._lock = original_lock
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ready", [True, False])
+async def test_console_readiness_failure_is_not_an_empty_console(monkeypatch, ready):
+    from services.tools import read_console as console
+    from services.tools import refresh_unity as refresh
+    from services import operation_permissions
+
+    send = AsyncMock(
+        side_effect=[
+            {"success": False, "data": {"reason": "editor_not_ready"}},
+            {"success": True, "data": []},
+        ]
+    )
+    wait = AsyncMock(return_value=(ready, 0.5))
+    monkeypatch.setattr(
+        console, "get_unity_instance_from_context", AsyncMock(return_value="Fixture@one")
+    )
+    monkeypatch.setattr(console, "send_with_unity_instance", send)
+    monkeypatch.setattr(refresh, "wait_for_editor_ready", wait)
+    monkeypatch.setattr(
+        operation_permissions, "remote_operation_allowed", AsyncMock(return_value=True)
+    )
+    result = await console.read_console(DummyContext(), action="get")
+    assert result["success"] is ready
+    assert result["observation"]["status"] == ("available" if ready else "unavailable")
+    assert send.await_count == (2 if ready else 1)
+    assert wait.await_args.kwargs == {"timeout_s": 3.0}
+    if ready:
+        assert result["data"] == []
+    else:
+        assert result["data"] != []
+
+
+@pytest.mark.asyncio
+async def test_console_clear_never_uses_readiness_replay(monkeypatch):
+    from services.tools import read_console as console
+
+    monkeypatch.setattr(
+        console, "get_unity_instance_from_context", AsyncMock(return_value="Fixture@one")
+    )
+    send = AsyncMock(return_value={"success": False, "data": {"reason": "editor_not_ready"}})
+    monkeypatch.setattr(console, "send_with_unity_instance", send)
+    monkeypatch.setattr(
+        console, "_send_console_observation", AsyncMock(side_effect=AssertionError("clear replay"))
+    )
+    await console.read_console(DummyContext(), action="clear")
+    assert send.await_count == 1

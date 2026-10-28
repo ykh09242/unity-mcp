@@ -127,7 +127,7 @@ def test_changed_root_resets_dirty_timestamps_and_throttle(tmp_path, scanner_mod
     assert scanner.update_and_get("one")["external_changes_dirty"] is True
     scanner.set_project_root("one", str(new_project))
     observed = scanner.update_and_get("one")
-    assert observed == {
+    expected = {
         "external_changes_dirty": False,
         "external_changes_last_seen_unix_ms": None,
         "dirty_since_unix_ms": None,
@@ -137,6 +137,12 @@ def test_changed_root_resets_dirty_timestamps_and_throttle(tmp_path, scanner_mod
         "external_changes_scan_in_progress": False,
         "external_changes_scan_limited_reason": None,
     }
+    assert {key: observed[key] for key in expected} == expected
+    assert observed["external_changes_scan_started_unix_ms"] == now[0]
+    assert observed["external_changes_scan_elapsed_ms"] == 0
+    assert observed["external_changes_scan_processed_entries"] > 0
+    assert observed["external_changes_scan_processed_bytes"] > 0
+    assert observed["external_changes_scan_retry_after_ms"] == 0
     assert scanner._get_state("one").last_seen_mtime_ns == 1_000_000_000
 
 

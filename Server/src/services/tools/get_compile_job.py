@@ -56,6 +56,24 @@ class CompileCoordination(BaseModel):
     completion_requires: Literal["matching_pipeline_finish_and_editor_quiescence"]
 
 
+class SuccessfulCompilation(BaseModel):
+    """Last retained successful assembly compilation; not proof of current sources."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    generation: int = Field(ge=1)
+    started_at_unix_ms: int = Field(ge=0)
+    finished_at_unix_ms: int = Field(ge=0)
+    assembly_count: int = Field(ge=1, le=1000000)
+    warning_count: int = Field(ge=0, le=1000000)
+
+    @model_validator(mode="after")
+    def ordered_events(self):
+        if self.finished_at_unix_ms < self.started_at_unix_ms:
+            raise ValueError("Invalid compilation event order")
+        return self
+
+
 class CompileJob(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     schema_version: Literal["unity-mcp/compile_job@1"]
@@ -78,6 +96,8 @@ class CompileJob(BaseModel):
     omitted_diagnostics: int = Field(default=0, ge=0, le=2000000)
     collection_complete: bool = False
     native_coordination: CompileCoordination | None = None
+    status: Literal["compiled", "already_up_to_date", "failed", "pending", "unknown"] = "unknown"
+    last_successful_compilation: SuccessfulCompilation | None = None
 
     @model_validator(mode="after")
     def truthful_outcome(self):
@@ -113,6 +133,31 @@ class CompileJob(BaseModel):
             or sum(item.severity == "warning" for item in self.diagnostics) > self.warning_count
         ):
             raise ValueError("Diagnostic totals disagree")
+        # Derive the display status from evidence, never from a peer's status label.
+        self.status = "unknown"
+        if self.outcome in ("success", "failed"):
+            self.status = "compiled" if self.outcome == "success" else "failed"
+        elif self.state in ("requested", "running"):
+            self.status = "pending"
+        elif (
+            self.reason == "no_assembly_compilation"
+            and self.attribution == "observed_after_request"
+            and self.collection_complete
+            and self.session_id is not None
+            and self.generation is not None
+            and self.candidate_generations == [self.generation]
+            and self.requested_at_unix_ms is not None
+            and self.started_at_unix_ms is not None
+            and self.finished_at_unix_ms is not None
+            and self.requested_at_unix_ms <= self.started_at_unix_ms
+            and self.assembly_count == 0
+            and self.error_count == 0
+        ):
+            self.status = "already_up_to_date"
+        if self.last_successful_compilation is not None and (
+            self.last_successful_compilation.session_id != self.session_id
+        ):
+            self.last_successful_compilation = None
         if len(json.dumps(self.model_dump(), ensure_ascii=False).encode("utf-8")) > 65536:
             raise ValueError("Compilation evidence exceeds its record bound")
         return self
@@ -124,11 +169,18 @@ def unknown_compile_job(compile_id: str, reason: str) -> dict:
     ).model_dump()
 
 
-def parse_compile_job(value, compile_id: str) -> dict:
+def parse_compile_job(value, compile_id: str, *, last_successful_compilation=None) -> dict:
     try:
         job = CompileJob.model_validate(value)
         if job.compile_id != compile_id:
             raise ValueError("Mismatched compilation identity")
+        if last_successful_compilation is not None:
+            try:
+                previous = SuccessfulCompilation.model_validate(last_successful_compilation)
+                if previous.session_id == job.session_id:
+                    job.last_successful_compilation = previous
+            except ValidationError:
+                pass  # Optional history cannot invalidate current compiler evidence.
         return job.model_dump()
     except (ValidationError, ValueError):
         return unknown_compile_job(compile_id, "tracking_unsupported")
@@ -151,7 +203,11 @@ async def read_compile_job(instance: str | None, compile_id: str) -> dict:
         ):
             return unknown_compile_job(compile_id, "observation_unavailable")
         return unknown_compile_job(compile_id, "tracking_unsupported")
-    result = parse_compile_job(value.get("data"), compile_id)
+    result = parse_compile_job(
+        value.get("data"),
+        compile_id,
+        last_successful_compilation=value.get("last_successful_compilation"),
+    )
     # New peers keep diagnostics outside the strict ledger contract so older
     # servers can still read compiler outcomes. Invalid optional diagnostics do
     # not invalidate otherwise complete evidence or establish native completion.
@@ -168,7 +224,7 @@ async def read_compile_job(instance: str | None, compile_id: str) -> dict:
 
 
 @mcp_for_unity_tool(
-    description="Read a compilation request outcome and bounded diagnostics by compile_id. Readiness is not compiler success; unknown means evidence or attribution is incomplete.",
+    description="Read compilation status, bounded diagnostics and the last successful compile by compile_id. Unknown means incomplete evidence; readiness and source-revision proof are separate.",
     annotations=ToolAnnotations(
         title="Get Compile Job", readOnlyHint=True, destructiveHint=False, idempotentHint=True
     ),

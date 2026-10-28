@@ -289,3 +289,89 @@ def test_definitive_outcome_requires_exact_request_candidate_and_chronology(chan
     else:
         job["requested_at_unix_ms"] = 4
     assert parse_compile_job(job, "a" * 32)["reason"] == "tracking_unsupported"
+
+
+@pytest.mark.parametrize(
+    "outcome,assemblies,reason,expected",
+    [
+        ("success", 2, "", "compiled"),
+        ("failed", 2, "", "failed"),
+        ("unknown", 0, "no_assembly_compilation", "already_up_to_date"),
+        ("unknown", 0, "explicit_start_not_observed", "unknown"),
+    ],
+)
+def test_compile_status_distinguishes_incremental_no_work(outcome, assemblies, reason, expected):
+    from services.tools.get_compile_job import parse_compile_job
+
+    evidence = native_job("a" * 32, outcome)
+    evidence.update(assembly_count=assemblies, reason=reason)
+    assert parse_compile_job(evidence, "a" * 32)["status"] == expected
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"collection_complete": False},
+        {"attribution": "ambiguous"},
+        {"session_id": None},
+        {"error_count": 1},
+        {"finished_at_unix_ms": None},
+        {"requested_at_unix_ms": 4},
+    ],
+)
+def test_no_assembly_status_requires_complete_matching_cycle(change):
+    from services.tools.get_compile_job import parse_compile_job
+
+    evidence = native_job("a" * 32, "unknown")
+    evidence.update(assembly_count=0, reason="no_assembly_compilation", **change)
+    assert parse_compile_job(evidence, "a" * 32)["status"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_no_op_refresh_is_reported_without_claiming_import(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        refresh_module, "get_unity_instance_from_context", AsyncMock(return_value="Fixture@one")
+    )
+    monkeypatch.setattr(
+        refresh_module,
+        "external_changes_scanner",
+        SimpleNamespace(capture_dirty_state=lambda _: None),
+    )
+    monkeypatch.setattr(
+        refresh_module.unity_transport,
+        "send_with_unity_instance",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "message": "Refresh requested.",
+                "data": {"refresh_triggered": False, "compile_requested": False},
+            }
+        ),
+    )
+    result = await refresh_module.refresh_unity(
+        None, scope="scripts", compile="none", wait_for_ready=False
+    )
+    assert result.data["no_op"] is True
+    assert result.data["reason"] == "scripts_scope_without_compile_request"
+    assert "No refresh or compilation" in result.message
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_last_successful_compile_is_optional_and_session_scoped(valid):
+    from services.tools.get_compile_job import parse_compile_job
+
+    previous = {
+        "session_id": ("b" if valid else "c") * 32,
+        "generation": 1,
+        "started_at_unix_ms": 1,
+        "finished_at_unix_ms": 2,
+        "assembly_count": 2,
+        "warning_count": 3,
+    }
+    value = parse_compile_job(
+        native_job("a" * 32, "success"), "a" * 32, last_successful_compilation=previous
+    )
+    assert value["status"] == "compiled"
+    assert value["last_successful_compilation"] == (previous if valid else None)

@@ -97,6 +97,12 @@ class EditorStateAssets(BaseModel):
     external_changes_scan_limited: bool | None = None
     external_changes_scan_in_progress: bool | None = None
     external_changes_scan_limited_reason: str | None = None
+    external_changes_scan_started_unix_ms: int | None = None
+    external_changes_scan_processed_entries: int | None = None
+    external_changes_scan_processed_bytes: int | None = None
+    external_changes_scan_elapsed_ms: int | None = None
+    external_changes_scan_retry_after_ms: int | None = None
+
     external_changes_last_seen_unix_ms: int | None = None
     external_changes_dirty_since_unix_ms: int | None = None
     external_changes_last_cleared_unix_ms: int | None = None
@@ -315,8 +321,14 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
     warnings: list[str] = []
     if assets.get("external_changes_scan_limited") is True:
         warnings.append("external_changes_scan_limited")
-    elif assets.get("external_changes_scan_complete") is False:
-        warnings.append("external_changes_scan_pending")
+    elif assets.get("external_changes_scan_complete") is not True and not (
+        config.http_remote_hosted and assets.get("external_changes_scan_complete") is None
+    ):
+        warnings.append(
+            "external_changes_scan_pending"
+            if assets.get("external_changes_scan_in_progress") is True
+            else "external_changes_scan_unknown"
+        )
     activity = state_v2.get("activity") or {}
     phase = activity.get("phase")
     if phase == "playmode_transition":
@@ -374,6 +386,13 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
         "warnings": warnings,
         "recommended_retry_after_ms": None
         if recovery_required
+        or ready_for_tools
+        and any(
+            reason in warnings
+            for reason in ("external_changes_scan_limited", "external_changes_scan_unknown")
+        )
+        else 500
+        if ready_for_tools and "external_changes_scan_pending" in warnings
         else 0
         if ready_for_tools
         else 5000
@@ -384,7 +403,13 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
         else "inspect_editor"
         if inspect_editor
         else "inspect_scan_scope"
-        if assets.get("external_changes_scan_limited") is True
+        if ready_for_tools
+        and any(
+            reason in warnings
+            for reason in ("external_changes_scan_limited", "external_changes_scan_unknown")
+        )
+        else "wait_for_external_changes_scan"
+        if ready_for_tools and "external_changes_scan_pending" in warnings
         else "none"
         if ready_for_tools
         else "retry_later",
@@ -401,9 +426,11 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
         "and native_coordination from native admission. recovery_required blocks readiness "
         "even when compilation is idle; follow its recovery action instead of polling blindly. "
         "Also includes assets.external_changes_scan_complete/limited coverage. scan_in_progress "
-        "distinguishes a routine recheck from verified coverage. Pending or limited local "
-        "coverage is reported in advice.warnings without blocking native readiness; "
-        "ready_for_tools does not certify that all external changes were scanned or imported. "
+        "distinguishes a routine recheck from verified coverage. Pending, limited or unknown "
+        "local coverage is reported in advice.warnings without blocking native readiness; "
+        "test admission requires verified local coverage. Only active scans suggest waiting; "
+        "limited or unknown scans require inspection. ready_for_tools does not certify "
+        "that all external changes were scanned or imported. "
         "Unknown remote coverage remains null."
         "\n\nURI: mcpforunity://editor/state"
     ),
@@ -569,6 +596,15 @@ async def _read_editor_state(
             assets["external_changes_scan_limited_reason"] = ext.get(
                 "external_changes_scan_limited_reason"
             )
+            for suffix in (
+                "started_unix_ms",
+                "processed_entries",
+                "processed_bytes",
+                "elapsed_ms",
+                "retry_after_ms",
+            ):
+                name = "external_changes_scan_" + suffix
+                assets[name] = ext.get(name)
             assets["external_changes_last_seen_unix_ms"] = ext.get(
                 "external_changes_last_seen_unix_ms"
             )

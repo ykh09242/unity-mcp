@@ -76,6 +76,25 @@ namespace MCPForUnityTests.Editor.Services
             Assert.LessOrEqual(System.Text.Encoding.UTF8.GetByteCount(result.ToString()), 65536);
         }
 
+        [Test]
+        public void LastSuccessfulCompilationSurvivesNoOpCyclesAndReload()
+        {
+            var ledger = Ledger();
+            var context = new object();
+            ledger.Started(context);
+            ledger.Assembly("A.dll", Array.Empty<CompilerMessage>());
+            ledger.Finished(context);
+            var success = ledger.LastSuccessfulCompilation();
+            Assert.NotNull(success);
+            for (int i = 0; i < 30; i++)
+            {
+                context = new object();
+                ledger.Started(context);
+                ledger.Finished(context);
+            }
+            Assert.IsTrue(JToken.DeepEquals(success, Ledger(_saved).LastSuccessfulCompilation()));
+        }
+
         private const string Session = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         private const string Id = "11111111111111111111111111111111";
         private const string Other = "22222222222222222222222222222222";

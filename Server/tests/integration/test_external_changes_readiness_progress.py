@@ -47,6 +47,14 @@ async def test_pending_scan_advances_within_the_throttle_window(local_scanner, a
         "A pending cursor must advance even when polls are faster than the rescan interval"
     )
     assert len({id(cursor) for cursor in cursors}) == 1, "Polling must resume the same cursor"
+    assert all(result["external_changes_scan_started_unix_ms"] == 1000 for result in results)
+    amounts = [result["external_changes_scan_processed_bytes"] for result in results]
+    assert amounts == sorted(amounts)
+    assert amounts[-1] >= asset.stat().st_size
+    assert results[0]["external_changes_scan_retry_after_ms"] == 500
+    assert results[-1]["external_changes_scan_retry_after_ms"] == 0
+    assert results[-1]["external_changes_scan_processed_entries"] >= 1
+
     assert all(not result["external_changes_dirty"] for result in results)
 
 
@@ -292,3 +300,23 @@ async def test_continuation_does_not_inherit_request_context(local_scanner, monk
         marker.reset(token)
     assert observed[0] == "request"
     assert observed[1:] and set(observed[1:]) == {"unset"}
+
+
+@pytest.mark.parametrize(
+    "compiling,expected", [(False, "wait_for_external_changes_scan"), (True, "retry_later")]
+)
+def test_scan_guidance_preserves_native_blocker_priority(compiling, expected):
+    from services.resources.editor_state import _enrich_advice_and_staleness
+
+    state = _enrich_advice_and_staleness(
+        {
+            "compilation": {"is_compiling": compiling, "is_domain_reload_pending": False},
+            "assets": {
+                "external_changes_scan_complete": False,
+                "external_changes_scan_in_progress": True,
+            },
+        }
+    )
+    assert state["advice"]["recommended_next_action"] == expected
+    assert state["advice"]["ready_for_tools"] is (not compiling)
+    assert state["advice"]["recommended_retry_after_ms"] > 0

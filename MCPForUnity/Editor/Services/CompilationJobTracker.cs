@@ -344,6 +344,24 @@ namespace MCPForUnity.Editor.Services
             return result;
         }
 
+        private Run LastSuccessfulRun => _runs.LastOrDefault(r => r.Finished != null && r.Complete && r.Assemblies > 0 && r.Errors == 0);
+
+        internal JObject LastSuccessfulCompilation()
+        {
+            var run = LastSuccessfulRun;
+            if (run == null || _persistenceFailed)
+                return null;
+            return new JObject
+            {
+                ["session_id"] = _session,
+                ["generation"] = run.Generation,
+                ["started_at_unix_ms"] = run.Started,
+                ["finished_at_unix_ms"] = run.Finished,
+                ["assembly_count"] = run.Assemblies,
+                ["warning_count"] = run.Warnings,
+            };
+        }
+
         internal JObject Summary()
         {
             var latest = _runs.LastOrDefault(r => r.Generation == _generation);
@@ -426,6 +444,7 @@ namespace MCPForUnity.Editor.Services
 
         private void Trim()
         {
+            var lastSuccess = LastSuccessfulRun;
             while (_requests.Count(r => r.Phase == "closed") + _runs.Count(r => r.Finished != null) > MaxHistory)
             {
                 var request = _requests.FirstOrDefault(r => r.Phase == "closed");
@@ -434,7 +453,7 @@ namespace MCPForUnity.Editor.Services
                     _requests.Remove(request);
                     continue;
                 }
-                var run = _runs.FirstOrDefault(r => r.Finished != null);
+                var run = _runs.FirstOrDefault(r => r.Finished != null && r != lastSuccess);
                 if (run == null)
                     break;
                 if (_requests.Any(r => r.Candidates.Contains(run.Generation)))
@@ -443,7 +462,9 @@ namespace MCPForUnity.Editor.Services
             }
             // Remove unreferenced completed runs first to avoid retaining a job
             // whose evidence was evicted while another terminal job was retained.
-            _runs.RemoveAll(r => r.Finished != null && !_requests.Any(q => q.Candidates.Contains(r.Generation)) && r != _runs.LastOrDefault());
+            _runs.RemoveAll(r =>
+                r.Finished != null && !_requests.Any(q => q.Candidates.Contains(r.Generation)) && r != _runs.LastOrDefault() && r != lastSuccess
+            );
         }
 
         private void Save()

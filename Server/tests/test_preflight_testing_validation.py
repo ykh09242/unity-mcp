@@ -15,7 +15,11 @@ def editor_boundary(monkeypatch):
     state = AsyncMock(
         return_value={
             "success": True,
-            "data": {"advice": {"ready_for_tools": True}},
+            "data": {
+                "advice": {"ready_for_tools": True},
+                "assets": {"external_changes_scan_complete": True},
+                "compilation": {"is_compiling": False, "is_domain_reload_pending": False},
+            },
         }
     )
     send = AsyncMock(
@@ -49,7 +53,8 @@ async def test_valid_initialization_timeout_still_checks_readiness(editor_bounda
     ctx, state, send = editor_boundary
     response = await run_tests.run_tests(ctx, init_timeout=timeout)
     assert response.success is True
-    state.assert_awaited_once_with(ctx)
+    assert state.await_count >= 4
+    assert all(call.args == (ctx,) for call in state.await_args_list)
     params = send.await_args.args[3]
     assert params == (
         {"mode": "EditMode"}

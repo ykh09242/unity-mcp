@@ -245,7 +245,9 @@ namespace MCPForUnity.Editor.Tools
             string resultingState = EditorStateCache.GetActualIsCompiling() ? "compiling" : (EditorApplication.isUpdating ? "asset_import" : "idle");
 
             return new SuccessResponse(
-                "Refresh requested.",
+                !refreshTriggered && !compileRequested && !refreshCycleObserved
+                    ? "No refresh or compilation was dispatched."
+                    : "Refresh or compilation dispatched.",
                 new
                 {
                     compilation = compileId == null ? null : Ledger.Query(compileId),
@@ -253,6 +255,9 @@ namespace MCPForUnity.Editor.Tools
                     compile_requested = compileRequested,
                     compilation_trigger = compilationTrigger,
                     compilation_goal_satisfied = refreshCycleObserved,
+                    no_op = !refreshTriggered && !compileRequested && !refreshCycleObserved,
+                    reason = !refreshTriggered && !compileRequested && !refreshCycleObserved ? "scripts_scope_without_compile_request" : null,
+                    last_successful_compilation = Ledger.LastSuccessfulCompilation(),
                     compile_started = compileStarted,
                     native_coordination = compileId == null ? null : CompilationJobTracker.CoordinationStatus(compileId),
                     resulting_state = resultingState,
