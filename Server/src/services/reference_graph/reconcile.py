@@ -931,6 +931,20 @@ class Reconciler:
                     await self._phase("external")
             except RevisionConflict:
                 raise
+            except CollectionBudgetExceeded as error:
+                scan.update(
+                    state="failed",
+                    error=type(error).__name__ + ": " + str(error),
+                    completed_at=time.time(),
+                )
+                await drained_thread(
+                    self.workspace.external_scan,
+                    self.worker,
+                    source,
+                    scan,
+                    incomplete=str(error),
+                )
+                raise
             except (OSError, ValueError, csv.Error, RecursionError) as error:
                 scan.update(
                     state="failed",
@@ -966,6 +980,7 @@ class Reconciler:
             source["config"],
             respect_gitignore=policy["respect_gitignore"],
             exclude=policy["exclude"],
+            budget=self._budget,
         )
         repository = adapter.repository_revision()
         provider, seen = source["provider"], uuid.uuid4().hex

@@ -102,12 +102,16 @@ class CollectionBudget:
             raise CollectionBudgetExceeded("max_items", self.limits.max_items)
         self.items += count
 
-    def source(self, size: int, accumulated: int) -> None:
+    def check_source(self, size: int, accumulated: int) -> None:
+        """Reject a declared/read size before buffering or decoding, without charging it."""
         self.remaining()
         if size > self.limits.max_source_bytes - accumulated:
             raise CollectionBudgetExceeded("max_source_bytes", self.limits.max_source_bytes)
         if size > self.limits.max_bytes - self.decoded_bytes:
             raise CollectionBudgetExceeded("max_bytes", self.limits.max_bytes)
+
+    def source(self, size: int, accumulated: int) -> None:
+        self.check_source(size, accumulated)
         self.decoded_bytes += size
 
     def dependencies(self, size: int) -> None:

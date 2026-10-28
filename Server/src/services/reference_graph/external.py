@@ -18,10 +18,12 @@ from pathlib import Path
 import re
 import stat
 import threading
+from typing import BinaryIO
 
 from services.reference_graph.analysis import Analysis, Catalog
 from services.reference_graph.store import Edge, check_owned_path
 from services.reference_graph.ignore import GitIgnoreRules
+from services.reference_graph.collection_protocol import CollectionBudget, CollectionLimits
 
 _CSV_LIMIT_LOCK = threading.Lock()
 
@@ -92,12 +94,18 @@ class Document:
 
 class ExternalSource:
     def __init__(
-        self, config: dict, *, respect_gitignore: bool = True, exclude: list[str] | None = None
+        self,
+        config: dict,
+        *,
+        respect_gitignore: bool = True,
+        exclude: list[str] | None = None,
+        budget: CollectionBudget | None = None,
     ):
         root = config.get("root")
         if not isinstance(root, str) or not Path(root).is_absolute():
             raise ValueError("External source requires an absolute local root")
         self.root = check_owned_path(Path(root))
+        self.budget = budget or CollectionBudget(CollectionLimits.from_environment())
         self.include = self._patterns(config.get("include"))
         self.include_paths = tuple(config["include"])
         self.exclude = self._patterns(config.get("exclude", []), allow_empty=True)
@@ -132,18 +140,13 @@ class ExternalSource:
             raise PermissionError(
                 "Ignore rules must be unlinked regular files within the source grant"
             )
-        from services.reference_graph.collection_protocol import CollectionBudget, CollectionLimits
-
-        budget = CollectionBudget(CollectionLimits.from_environment())
-        raw = bytearray()
+        self.budget.check_source(before.st_size, 0)
         descriptor = os.open(
             path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
         )
         with os.fdopen(descriptor, "rb") as stream:
             opened = os.fstat(stream.fileno())
-            while chunk := stream.read(65536):
-                budget.source(len(chunk), len(raw))
-                raw.extend(chunk)
+            raw = self._read_bytes(stream)
             after = os.fstat(stream.fileno())
         current = check_owned_path(path).stat()
         identity = lambda value: (
@@ -162,6 +165,22 @@ class ExternalSource:
             raise PermissionError("Ignore rule file changed while reading")
         self._ignore.add(relative, raw.decode("utf-8-sig"))
         self._ignore_checked.add(directory)
+
+    def _read_bytes(self, stream: BinaryIO) -> bytearray:
+        """Bound each read, including the one-byte overflow probe, before retaining it."""
+        raw = bytearray()
+        while True:
+            self.budget.remaining()
+            size = min(
+                65536,
+                self.budget.limits.max_source_bytes - len(raw) + 1,
+                self.budget.limits.max_bytes - self.budget.decoded_bytes + 1,
+            )
+            chunk = stream.read(size)
+            if not chunk:
+                return raw
+            self.budget.source(len(chunk), len(raw))
+            raw.extend(chunk)
 
     def _ignored(self, relative: str, *, directory: bool = False) -> bool:
         if not self.respect_gitignore:
@@ -335,13 +354,14 @@ class ExternalSource:
         before = path.stat()
         if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
             raise PermissionError("External input must be an unlinked regular file")
+        self.budget.check_source(before.st_size, 0)
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(path, flags)
         with os.fdopen(descriptor, "rb") as stream:
             opened = os.fstat(stream.fileno())
             if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
                 raise PermissionError("External input changed while opening")
-            raw = stream.read()
+            raw = self._read_bytes(stream)
             after = os.fstat(stream.fileno())
         current = check_owned_path(path).stat()
         identity = lambda value: (

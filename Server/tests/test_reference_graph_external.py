@@ -8,6 +8,11 @@ import pytest
 
 from services.reference_graph.analysis import Catalog
 from services.reference_graph.external import ExternalSource, analyze_document
+from services.reference_graph.collection_protocol import (
+    CollectionBudget,
+    CollectionBudgetExceeded,
+    CollectionLimits,
+)
 
 
 def assets():
@@ -50,6 +55,68 @@ def test_default_exact_matches_are_candidates_not_proven_schema_contracts():
     assert len(result.edges) == 1
     assert result.edges[0].confidence == "possible"
     assert result.coverage == "exact_catalog_strings"
+
+
+@pytest.mark.parametrize("extension", ["json", "csv"])
+def test_external_source_budget_rejects_document_before_reading(tmp_path, monkeypatch, extension):
+    path = tmp_path / ("large." + extension)
+    path.write_bytes(b"x" * 1024)
+    source = ExternalSource({"root": str(tmp_path), "include": ["*." + extension]})
+    source.budget = CollectionBudget(CollectionLimits(max_source_bytes=1))
+    monkeypatch.setattr(
+        os, "fdopen", lambda *_: pytest.fail("Oversized source was opened for read")
+    )
+    with pytest.raises(CollectionBudgetExceeded, match="max_source_bytes=1"):
+        source.read(path.name)
+
+
+def test_external_documents_and_nested_ignore_files_share_aggregate_budget(tmp_path):
+    (tmp_path / "nested").mkdir()
+    (tmp_path / ".gitignore").write_bytes(b"#root\n")
+    (tmp_path / "nested" / ".gitignore").write_bytes(b"#nested\n")
+    (tmp_path / "nested" / "data.json").write_bytes(b"{}")
+    budget = CollectionBudget(CollectionLimits(max_source_bytes=10, max_bytes=15))
+    source = ExternalSource({"root": str(tmp_path), "include": ["**/*.json"]})
+    source.budget = budget
+    assert list(source.files()) == ["nested/data.json"]
+    assert budget.decoded_bytes == 14
+    with pytest.raises(CollectionBudgetExceeded, match="max_bytes=15"):
+        source.read("nested/data.json")
+
+
+def test_external_growth_reads_only_remaining_budget_plus_overflow_probe(tmp_path, monkeypatch):
+    path = tmp_path / "data.json"
+    path.write_bytes(b"{}")
+    source = ExternalSource({"root": str(tmp_path), "include": ["*.json"]})
+    source.budget = CollectionBudget(CollectionLimits(max_source_bytes=7))
+    fdopen = os.fdopen
+    reads = []
+
+    class GrowingStream:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            self.stream.__enter__()
+            path.write_bytes(b"x" * 100_000)
+            return self
+
+        def __exit__(self, *args):
+            return self.stream.__exit__(*args)
+
+        def fileno(self):
+            return self.stream.fileno()
+
+        def read(self, size=-1):
+            reads.append(size)
+            assert 0 < size <= 8
+            return self.stream.read(size)
+
+    monkeypatch.setattr(os, "fdopen", lambda *args: GrowingStream(fdopen(*args)))
+    with pytest.raises(CollectionBudgetExceeded, match="max_source_bytes=7"):
+        source.read(path.name)
+    assert reads == [8]
+    assert source.budget.decoded_bytes == 0
 
 
 def test_allowlist_exclusion_and_links(tmp_path):

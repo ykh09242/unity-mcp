@@ -224,6 +224,10 @@ a complete census. Incomplete dependency/source streams never publish a partial
 replacement or mark the asset clean: previous evidence remains available and
 stale. Retry, narrow the requested work, or have the operator provision larger
 budgets and restart. A failed or partial scan is not current evidence.
+External JSON/CSV documents and external ignore-rule files use these same
+per-document and per-attempt decoded-byte budgets. Size checks and bounded reads
+precede decoding. Exhausting an external scan retains its previous evidence as
+stale until a successful retry verifies that source again.
 
 ### Durable state
 

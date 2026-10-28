@@ -1451,13 +1451,21 @@ class GraphWorkspace:
                 }
             return result
 
-    def external_scan(self, worker: str, source: dict, values: dict) -> None:
+    def external_scan(
+        self, worker: str, source: dict, values: dict, *, incomplete: str | None = None
+    ) -> None:
         with self._write(worker) as connection:
             self._set(
                 connection,
                 "external_scan:" + source["provider"],
                 {**values, "source_version": source["version"]},
             )
+            if incomplete is not None:
+                connection.execute(
+                    "UPDATE observations SET generation=generation+1,state='pending',error=? WHERE provider=? AND state<>'deleted'",
+                    (incomplete, source["provider"]),
+                )
+                self.store._bump(connection)
 
     def record_external(
         self,

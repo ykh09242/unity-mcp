@@ -463,6 +463,54 @@ async def test_replaced_script_cannot_republish_retired_facts_or_wrapper_definit
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("overflow", ["document", "aggregate", "ignore"])
+async def test_external_budget_failure_keeps_stale_evidence_and_recovers(setup, tmp_path, overflow):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    store, workspace, editor, engine = setup
+    target = editor.add(1, "Assets/One.prefab")
+    root = tmp_path / "external"
+    root.mkdir()
+    document = root / "a.json"
+    document.write_text('{"asset":"' + target[6:] + '"}', encoding="utf-8")
+    workspace.set_source(
+        "external:bounded", {"root": str(root), "include": ["*.json"]}, expected_version=0
+    )
+    assert await engine.reconcile()
+    before = store.query(target, direction="incoming")["edges"]
+    assert len(before) == 1
+    if overflow == "document":
+        document.write_bytes(b" " * 80 + document.read_bytes())
+        limits = CollectionLimits(max_source_bytes=64)
+        match = "max_source_bytes=64"
+    elif overflow == "ignore":
+        (root / ".gitignore").write_bytes(b"#" * 80)
+        limits = CollectionLimits(max_source_bytes=64)
+        match = "max_source_bytes=64"
+    else:
+        (root / "b.json").write_bytes(document.read_bytes())
+        # Native metadata consumes response bytes separately; decoded input bytes
+        # across both external documents must still share this attempt's counter.
+        limits = CollectionLimits(max_bytes=80_000)
+        document.write_bytes(b" " * 44_000 + document.read_bytes())
+        (root / "b.json").write_bytes(document.read_bytes())
+        match = "max_bytes=80000"
+    bounded = Reconciler(workspace, editor, allowed, limits=limits)
+    with pytest.raises(CollectionBudgetExceeded, match=match):
+        await bounded.reconcile(force_external=True)
+    remaining = store.query(target, direction="incoming")["edges"]
+    assert {edge["id"] for edge in before} <= {edge["id"] for edge in remaining}
+    assert all(edge["stale"] for edge in remaining)
+    assert workspace.provider_status()["external:bounded"]["state"] == "failed"
+    restored = GraphWorkspace(GraphStore(store.path, store.scope))
+    assert await Reconciler(restored, editor, allowed).reconcile(force_external=True)
+    assert all(not edge["stale"] for edge in store.query(target, direction="incoming")["edges"])
+
+
+@pytest.mark.asyncio
 async def test_compiler_context_change_reparses_same_bytes_without_import_or_repeated_idle_reads(
     setup,
 ):
