@@ -17,7 +17,7 @@ def pool_connection(monkeypatch):
     monkeypatch.setattr(uc, "_unity_connection_pool", pool)
     target = SimpleNamespace(id="Main@deadbeef", port=6400)
     monkeypatch.setattr(pool, "resolve_instance", lambda _: target)
-    monkeypatch.setattr(uc.UnityConnection, "connect", lambda _: True)
+    monkeypatch.setattr(uc.UnityConnection, "connect", lambda _, **kwargs: True)
     conn = pool.get_connection(target.id)
     monkeypatch.setattr(uc, "get_unity_connection_pool", lambda: pool)
     return pool, conn
@@ -316,7 +316,7 @@ async def test_late_published_connection_is_sealed_before_final_disposal(monkeyp
     release = threading.Event()
     real_connect = uc.UnityConnection.connect
     monkeypatch.setattr(pool, "resolve_instance", lambda _: target)
-    monkeypatch.setattr(uc.UnityConnection, "connect", lambda _: True)
+    monkeypatch.setattr(uc.UnityConnection, "connect", lambda _, **kwargs: True)
     source, first_line = inspect.getsourcelines(uc.UnityConnectionPool.get_connection)
     publication_line = first_line + next(
         index for index, line in enumerate(source) if "self._connections[target.id] = conn" in line

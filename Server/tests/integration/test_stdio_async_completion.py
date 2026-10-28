@@ -49,7 +49,7 @@ async def test_completed_command_does_not_rediscover_expired_target(
 
     def send(*args, **kwargs):
         # Model a >5s command without adding a long delay to the regression.
-        pool._target_refreshes[conn.instance_id] = time.time() - 6
+        pool._target_refreshes[conn.instance_id] = time.monotonic() - 6
         return {"success": True, "data": "same reply"}
 
     monkeypatch.setattr(conn, "send_command", send)
@@ -73,14 +73,14 @@ async def test_async_discovery_probes_only_in_executor_when_command_expires_cach
         return True
 
     def send(*args, **kwargs):
-        pool._target_refreshes[conn.instance_id] = time.time() - 6
+        pool._target_refreshes[conn.instance_id] = time.monotonic() - 6
         return {"success": True}
 
     monkeypatch.setattr(conn, "send_command", send)
     monkeypatch.setattr(PortDiscovery, "_try_probe_unity_mcp", probe)
     # Force dispatch discovery too, so this checks both the required worker
     # probe and the absence of a second probe on async completion.
-    pool._target_refreshes[conn.instance_id] = time.time() - 6
+    pool._target_refreshes[conn.instance_id] = time.monotonic() - 6
     assert (
         await uc.async_send_command_with_retry("manage_scene", {}, instance_id=conn.instance_id)
     )["success"]

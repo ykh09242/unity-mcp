@@ -162,7 +162,7 @@ def test_cached_port_change_reconnects_with_framing(tmp_path, changed):
         pool = module.UnityConnectionPool()
         target = UnityInstanceInfo(id="Selected@aaaa1111", name="Selected", hash="aaaa1111",
                                    path="owned-fixture/Assets", port={2222 if changed else 1111}, status="running")
-        pool._known_instances, pool._last_full_scan = {{target.id: target}}, time.time()
+        pool._known_instances, pool._last_full_scan = {{target.id: target}}, time.monotonic()
         conn = module.UnityConnection(port=1111, instance_id=target.id, allow_legacy_auth=True)
         old = FramedSocket(1111)
         conn.sock, conn.use_framing = old, True

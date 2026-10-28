@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 _resync_pool: ContextVar["UnityConnectionPool | None"] = ContextVar(
     "stdio_resync_pool", default=None
 )
+_connection_selection: ContextVar["_ConnectionSelection | None"] = ContextVar(
+    "stdio_connection_selection", default=None
+)
 
 from models.models import MCPResponse, UnityInstanceInfo
 from services.command_progress import (
@@ -72,6 +75,59 @@ _connection_lock = threading.Lock()
 
 # Maximum allowed framed payload size (128 MiB, including envelope overhead)
 FRAMED_MAX = 128 * 1024 * 1024
+
+
+class _ConnectionSelection:
+    """Carry one caller's budget and cancellation through its blocking selection."""
+
+    def __init__(self, deadline: float | None):
+        self.deadline = deadline
+        self.cancelled = threading.Event()
+        self._publication_lock = threading.Lock()
+
+    def cancel(self) -> None:
+        with self._publication_lock:
+            self.cancelled.set()
+
+    @contextlib.contextmanager
+    def publication(self):
+        """Let cancellation and the brief publication transaction have one winner."""
+        with self._publication_lock:
+            self.check()
+            yield
+
+    def check(self) -> None:
+        if self.cancelled.is_set():
+            raise ConnectionError("Unity connection selection was cancelled")
+        if self.deadline is not None and time.monotonic() >= self.deadline:
+            raise TimeoutError("Unity command exceeded total deadline during connection selection")
+
+    def wait_timeout(self) -> float:
+        self.check()
+        return (
+            min(0.05, max(0.0, self.deadline - time.monotonic()))
+            if self.deadline is not None
+            else 0.05
+        )
+
+    @contextlib.contextmanager
+    def lock(self, lock):
+        """Bound lock waits and notice abandonment without releasing another owner."""
+        while not lock.acquire(timeout=self.wait_timeout()):
+            pass
+        try:
+            self.check()
+            yield
+        finally:
+            lock.release()
+
+    def run(self, getter: Callable[[str | None], "UnityConnection"], instance_id: str | None):
+        token = _connection_selection.set(self)
+        try:
+            self.check()
+            return getter(instance_id)
+        finally:
+            _connection_selection.reset(token)
 
 
 class _UnityProtocolError(ValueError):
@@ -1133,6 +1189,8 @@ class UnityConnectionPool:
         self._scan_interval: float = 5.0  # Cache for 5 seconds
         self._pool_lock = threading.Lock()
         self._scan_lock = threading.Lock()
+        self._selection_owners: dict[str, threading.Event] = {}
+        self._selection_epoch = 0
         self._default_instance_id: str | None = None
         self._last_used: dict[str, float] = {}
         self._missing_since: dict[str, float] = {}
@@ -1151,7 +1209,8 @@ class UnityConnectionPool:
         """Reclaim proven-missing, unused generations while holding the pool lock."""
         for instance_id, missing_at in list(self._missing_since.items()):
             if (
-                now - missing_at < self.MISSING_GRACE_SECONDS
+                instance_id in self._selection_owners
+                or now - missing_at < self.MISSING_GRACE_SECONDS
                 or now - self._last_used.get(instance_id, missing_at) < self.MISSING_GRACE_SECONDS
             ):
                 continue
@@ -1178,8 +1237,9 @@ class UnityConnectionPool:
         Returns:
             List of UnityInstanceInfo objects
         """
-        with self._scan_lock:
-            now = time.time()
+        selection = _connection_selection.get() or _ConnectionSelection(None)
+        with selection.lock(self._scan_lock):
+            now = time.monotonic()
 
             # Return cached results if valid
             if (
@@ -1195,11 +1255,12 @@ class UnityConnectionPool:
             # Scan for instances
             logger.debug("Scanning for Unity instances...")
             instances = PortDiscovery.discover_all_unity_instances()
+            selection.check()
 
             # Update cache
             with self._pool_lock:
                 self._known_instances = {inst.id: inst for inst in instances}
-                self._last_full_scan = time.time()
+                self._last_full_scan = time.monotonic()
                 self._target_refreshes.clear()
                 now_monotonic = time.monotonic()
                 for instance_id in self._connections:
@@ -1231,8 +1292,9 @@ class UnityConnectionPool:
             raise RuntimeError("Legacy Unity connections are disabled in remote-hosted mode")
         if self.is_exact_instance_id(instance_identifier):
             identifier = instance_identifier.strip()
-            with self._scan_lock:
-                now = time.time()
+            selection = _connection_selection.get() or _ConnectionSelection(None)
+            with selection.lock(self._scan_lock):
+                now = time.monotonic()
                 if (
                     not force_refresh
                     and self._last_full_scan is not None
@@ -1249,6 +1311,7 @@ class UnityConnectionPool:
                 ):
                     return self._known_instances[identifier]
                 target = PortDiscovery.discover_unity_instance(identifier)
+                selection.check()
                 if target is not None:
                     with self._pool_lock:
                         # A refreshed port owner displaces stale metadata, while
@@ -1271,7 +1334,7 @@ class UnityConnectionPool:
                         # Publish atomically for resource readers that iterate
                         # metadata without holding the pool's internal locks.
                         self._known_instances = known_instances
-                        self._target_refreshes[target.id] = time.time()
+                        self._target_refreshes[target.id] = time.monotonic()
                         self._missing_since.pop(target.id, None)
                         # A partial refresh cannot certify a global inventory.
                         self._last_full_scan = None
@@ -1413,79 +1476,118 @@ class UnityConnectionPool:
         Raises:
             ConnectionError: If instance cannot be found or connected
         """
-        if self._retired:
-            raise ConnectionError("Unity connection pool is retired")
+        selection = _connection_selection.get() or _ConnectionSelection(None)
+        selection.check()
+        with selection.lock(self._pool_lock):
+            epoch = self._selection_epoch
+            self._check_selection_epoch(epoch)
         target = self.resolve_instance(instance_identifier)
+        selection.check()
 
-        # An exact-ID lookup may have refreshed only one target for a long time.
-        # At capacity, obtain a complete inventory before deciding admission.
-        with self._pool_lock:
-            needs_scan = (
-                target.id not in self._connections
-                and len(self._connections) >= self.MAX_CONNECTIONS
-            )
+        # At capacity, certify missing targets with a complete inventory before
+        # admission. Pending connects reserve capacity just like published ones.
+        with selection.lock(self._pool_lock):
+            occupied = self._connections.keys() | self._selection_owners.keys()
+            needs_scan = target.id not in occupied and len(occupied) >= self.MAX_CONNECTIONS
         if needs_scan:
             self.discover_all_instances(force_refresh=True)
 
-        # Return existing connection or create new one
-        with self._pool_lock:
-            if self._retired:
-                raise ConnectionError("Unity connection pool is retired")
-            now = time.monotonic()
-            self._missing_since.pop(target.id, None)
-            self._retire_missing_locked(now)
-            if target.id not in self._connections:
-                if len(self._connections) >= self.MAX_CONNECTIONS:
-                    raise ConnectionError(
-                        "Unity connection pool capacity reached; close unused editors and "
-                        "retry after discovery's idle grace period"
-                    )
-                logger.info(
-                    f"Creating new connection to Unity instance: {target.id} (port {target.port})"
-                )
-                conn = UnityConnection(port=target.port, instance_id=target.id)
-                if not conn.connect():
-                    raise ConnectionError(
-                        f"Failed to connect to Unity instance '{target.id}' on port {target.port}. "
-                        f"Ensure the Unity Editor is running."
-                    )
-                if self._retired:
-                    # Retirement may race the blocking initial connection.
-                    conn._retired = True
-                    conn.disconnect()
-                    raise ConnectionError("Unity connection pool is retired")
-                self._connections[target.id] = conn
-            else:
-                # Update existing connection with instance_id and port if changed
-                conn = self._connections[target.id]
-                conn.instance_id = target.id
-                if conn.port != target.port:
-                    logger.info(
-                        f"Updating cached port for {target.id}: {conn.port} -> {target.port}"
-                    )
-                    with conn._io_lock:
-                        conn.disconnect()
-                        conn.port = target.port
-                # Discard an already-closed idle socket before callers capture its
-                # operation generation. Otherwise the first send discovers the FIN
-                # and incorrectly refuses this new invocation as a changed target.
-                # Never wait for an in-flight command here: its captured generation
-                # must remain fenced until the existing wire owner has settled.
-                if conn._io_lock.acquire(blocking=False):
-                    try:
-                        conn._ensure_live_connection()
-                        if not conn.sock and not conn.connect():
+        while True:
+            with selection.lock(self._pool_lock):
+                self._check_selection_epoch(epoch)
+                pending = self._selection_owners.get(target.id)
+                if pending is None:
+                    self._missing_since.pop(target.id, None)
+                    self._retire_missing_locked(time.monotonic())
+                    conn = self._connections.get(target.id)
+                    created = conn is None
+                    if created:
+                        occupied = self._connections.keys() | self._selection_owners.keys()
+                        if len(occupied) >= self.MAX_CONNECTIONS:
                             raise ConnectionError(
-                                f"Failed to reconnect to Unity instance '{target.id}' "
+                                "Unity connection pool capacity reached; close unused editors and "
+                                "retry after discovery's idle grace period"
+                            )
+                        conn = UnityConnection(port=target.port, instance_id=target.id)
+                    owner = threading.Event()
+                    self._selection_owners[target.id] = owner
+                    break
+            # A cancelled waiter never removes the actual owner's reservation.
+            while not pending.wait(selection.wait_timeout()):
+                self._check_selection_epoch(epoch)
+            selection.check()
+            # Metadata may have changed while this caller waited for its target.
+            target = self.resolve_instance(instance_identifier)
+
+        published = False
+        try:
+            changing_port = conn.port != target.port
+            # Stable busy connections retain their existing wire generation. A
+            # changed port must wait for that generation's command to settle.
+            with contextlib.ExitStack() as ownership:
+                acquired = conn._io_lock.acquire(blocking=False)
+                if acquired:
+                    ownership.callback(conn._io_lock.release)
+                elif created or changing_port:
+                    ownership.enter_context(selection.lock(conn._io_lock))
+                reconnecting = False
+                try:
+                    if created or changing_port or acquired:
+                        selection.check()
+                        self._check_selection_epoch(epoch)
+                        if conn._retired:
+                            raise ConnectionError("Unity connection was retired")
+                        if changing_port:
+                            logger.info(
+                                "Updating cached port for %s: %s -> %s",
+                                target.id,
+                                conn.port,
+                                target.port,
+                            )
+                            conn.disconnect()
+                            conn.port = target.port
+                        conn._ensure_live_connection()
+                        reconnecting = not conn.sock
+                        if reconnecting and not conn.connect(
+                            **(
+                                {"deadline": selection.deadline}
+                                if selection.deadline is not None
+                                else {}
+                            )
+                        ):
+                            selection.check()
+                            raise ConnectionError(
+                                f"Failed to connect to Unity instance '{target.id}' "
                                 f"on port {target.port}. Ensure the Unity Editor is running."
                             )
-                    finally:
-                        conn._io_lock.release()
-                logger.debug(f"Reusing existing connection to: {target.id}")
+                    # Retain I/O ownership until a newly opened socket is
+                    # published or disposed, including cancellation at this lock.
+                    with selection.lock(self._pool_lock), selection.publication():
+                        self._check_selection_epoch(epoch)
+                        if conn._retired:
+                            raise ConnectionError("Unity connection was retired")
+                        conn.instance_id = target.id
+                        self._connections[target.id] = conn
+                        self._last_used[target.id] = time.monotonic()
+                        conn._pool_owner = weakref.ref(self)
+                        published = True
+                        return conn
+                finally:
+                    if reconnecting and not created and not published:
+                        conn.disconnect()
+        finally:
+            if created and not published:
+                conn._retired = True
+                conn.disconnect()
+            with self._pool_lock:
+                if self._selection_owners.get(target.id) is owner:
+                    del self._selection_owners[target.id]
+                owner.set()
 
-            self._last_used[target.id] = now
-            self._connections[target.id]._pool_owner = weakref.ref(self)
-            return self._connections[target.id]
+    def _check_selection_epoch(self, epoch: int) -> None:
+        """Fence selectors admitted before reset or retirement, including pending I/O."""
+        if self._retired or epoch != self._selection_epoch:
+            raise ConnectionError("Unity connection pool generation was retired")
 
     def schedule_tool_resync(self, connection: UnityConnection) -> bool:
         """Own reconnect metadata in the selected pool's event-loop lifetime."""
@@ -1514,8 +1616,8 @@ class UnityConnectionPool:
 
         self._retired = True
         for connection in tuple(self._connections.values()):
-            # Seal reconnect/retry without taking the I/O lock or disposing a
-            # running command's socket. Actual disposal follows the drain.
+            # Never wait on a threading lock in the loop. Final disposal seals
+            # any publication that passed its final check before retirement.
             connection._retired = True
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._close_generation(), context=Context())
@@ -1543,26 +1645,38 @@ class UnityConnectionPool:
 
     def disconnect_all(self):
         """Disconnect all active connections and release this pool's discovery generation."""
+        # Async retirement owns pending selectors through their actual exit.
+        # A reusable synchronous reset instead fences them with a new epoch.
+        if self._retired:
+            with self._pool_lock:
+                pending = tuple(self._selection_owners.values())
+            for owner in pending:
+                owner.wait()
         # Discovery publishes under scan -> pool locks. Teardown uses the same
         # order so a scan already in progress cannot repopulate closed metadata.
         with self._scan_lock, self._pool_lock:
-            for instance_id, conn in self._connections.items():
-                try:
-                    logger.info(f"Disconnecting from Unity instance: {instance_id}")
-                    if self._retired:
-                        # A selector can publish after aclose's initial snapshot.
-                        # Seal under the publication lock before final disposal.
-                        conn._retired = True
-                    conn.disconnect()
-                except Exception:
-                    logger.exception(f"Error disconnecting from {instance_id}")
+            self._selection_epoch += 1
+            connections = tuple(self._connections.items())
+            for _, conn in connections:
+                conn._retired = True
             self._connections.clear()
+            for owner in self._selection_owners.values():
+                owner.set()
+            self._selection_owners.clear()
             self._last_used.clear()
             self._missing_since.clear()
             # Replace metadata rather than mutating an existing resource reader's snapshot.
             self._known_instances = {}
             self._target_refreshes.clear()
             self._last_full_scan = None
+        # Disposal can wait for a command. Never hold pool/scan coordination
+        # while an individual connection's owner settles its I/O.
+        for instance_id, conn in connections:
+            try:
+                logger.info(f"Disconnecting from Unity instance: {instance_id}")
+                conn.disconnect()
+            except Exception:
+                logger.exception(f"Error disconnecting from {instance_id}")
 
 
 # Global Unity connection pool
@@ -1822,7 +1936,10 @@ def send_command_with_retry(
             except NativeNotStarted as refusal:
                 if not may_retry_wire_attempt(command_type, refusal.reply):
                     return refusal.reply.payload
-                connection = get_unity_connection(instance_id) if connection is None else connection
+                if connection is None:
+                    connection = _ConnectionSelection(deadline).run(
+                        get_unity_connection, instance_id
+                    )
                 expected_generation = refusal.transport_generation
                 params = refusal.params
                 if deadline is not None and time.monotonic() >= deadline:
@@ -1883,7 +2000,12 @@ def _send_command_with_retry(
     t_retry_start = time.time()
     logger.info("[TIMING-STDIO] send_command_with_retry START command=%s", command_type)
     t_get_conn = time.time()
-    conn = _connection if _connection is not None else get_unity_connection(instance_id)
+    deadline = _deadline if _deadline is not None else _command_deadline(command_type, params)
+    conn = (
+        _connection
+        if _connection is not None
+        else _ConnectionSelection(deadline).run(get_unity_connection, instance_id)
+    )
     logger.info(
         "[TIMING-STDIO] get_unity_connection took %.3fs command=%s",
         time.time() - t_get_conn,
@@ -1896,8 +2018,6 @@ def _send_command_with_retry(
     # Only explicit pre-dispatch reload refusals are replayed. A slow compilation
     # can consume this configurable window, still bounded by the parent command.
     max_wait_s = configured_wait_timeout("UNITY_MCP_RELOAD_MAX_WAIT_S", 300.0)
-
-    deadline = _deadline if _deadline is not None else _command_deadline(command_type, params)
 
     # If retry_on_reload=False, disable connection-level retries too (issue #577)
     # Commands that trigger compilation/reload shouldn't retry on disconnect
@@ -2048,6 +2168,33 @@ def _consume_async_exception(future: "asyncio.Future") -> None:
         future.exception()
 
 
+async def _select_connection(
+    instance_id: str | None, deadline: float | None, owner_pool: UnityConnectionPool | None
+) -> UnityConnection:
+    """Keep cancelled selectors owned until their actual blocking worker settles."""
+    import asyncio  # noqa: ANYIO_OK -- preserve existing shielded executor ownership.
+
+    selection = _ConnectionSelection(deadline)
+    future = submit_owned_executor(
+        asyncio.get_running_loop(),
+        None,
+        selection.run,
+        owner_pool.get_connection if owner_pool is not None else get_unity_connection,
+        instance_id,
+    )
+    if owner_pool is not None:
+        owner_pool._resync_workers.add(future)
+        future.add_done_callback(owner_pool._resync_workers.discard)
+    future.add_done_callback(_consume_async_exception)
+    try:
+        async with asyncio.timeout_at(deadline):
+            return await asyncio.shield(future)
+    finally:
+        # A queued or running worker must observe abandonment itself. Cancelling
+        # its Future would lose the real ownership/drain boundary.
+        selection.cancel()
+
+
 async def async_send_command_with_retry(
     command_type: str,
     params: dict[str, Any],
@@ -2124,18 +2271,7 @@ async def _async_send_command_response(
         owner_pool = _resync_pool.get()
         if owner_pool is not None and owner_pool._retired:
             raise asyncio.CancelledError
-        selection = submit_owned_executor(
-            asyncio.get_running_loop(),
-            None,
-            owner_pool.get_connection if owner_pool is not None else get_unity_connection,
-            instance_id,
-        )
-        if owner_pool is not None:
-            owner_pool._resync_workers.add(selection)
-            selection.add_done_callback(owner_pool._resync_workers.discard)
-        selection.add_done_callback(_consume_async_exception)
-        async with asyncio.timeout_at(deadline):
-            connection = await asyncio.shield(selection)
+        connection = await _select_connection(instance_id, deadline, owner_pool)
         target = capture_stdio_target(connection)
         operation_guard = target.is_current if connection.session_generation is not None else None
         policy = resolve_operation_policy(
@@ -2264,18 +2400,7 @@ async def _async_send_command_attempt(
         if _connection is not None:
             conn = _connection
         else:
-            selection = submit(
-                resync_pool.get_connection if resync_pool is not None else get_unity_connection,
-                instance_id,
-            )
-            selection.add_done_callback(_consume_async_exception)
-            try:
-                async with asyncio.timeout_at(deadline):
-                    conn = await asyncio.shield(selection)
-            except TimeoutError as exc:
-                raise TimeoutError(
-                    "Unity command exceeded total deadline during connection selection"
-                ) from exc
+            conn = await _select_connection(instance_id, deadline, resync_pool)
 
         if _catalog_guard is not None:
             _catalog_guard.select_stdio(conn)

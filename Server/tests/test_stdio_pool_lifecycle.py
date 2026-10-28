@@ -28,8 +28,8 @@ def test_explicit_pool_teardown_releases_metadata_and_forces_next_discovery(monk
     observed = instance()
     snapshot = {observed.id: observed}
     pool._known_instances = snapshot
-    pool._target_refreshes = {observed.id: connections.time.time()}
-    pool._last_full_scan = connections.time.time()
+    pool._target_refreshes = {observed.id: connections.time.monotonic()}
+    pool._last_full_scan = connections.time.monotonic()
     connection = Mock()
     pool._connections = {observed.id: connection}
     discover = Mock(return_value=[])

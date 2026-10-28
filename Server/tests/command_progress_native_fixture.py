@@ -51,7 +51,7 @@ async def probe(settings: dict, control_root: Path, mode: str) -> None:
     parameters = {"commands": [{"tool": first, "params": {}}, {"tool": second, "params": {}}]}
     pool = uc.UnityConnectionPool()
     pool._default_instance_id = identity
-    pool._last_full_scan = time.time()
+    pool._last_full_scan = time.monotonic()
     connection = uc.UnityConnection(
         host="127.0.0.1",
         port=settings["port"],

@@ -206,7 +206,7 @@ async def pooled_connection(monkeypatch):
     pool = unity_connection.UnityConnectionPool()
     target = SimpleNamespace(id="Project@deadbeef", port=6400)
     monkeypatch.setattr(pool, "resolve_instance", lambda _: target)
-    monkeypatch.setattr(UnityConnection, "connect", lambda _: True)
+    monkeypatch.setattr(UnityConnection, "connect", lambda _, **kwargs: True)
     monkeypatch.setattr(unity_connection, "_unity_connection_pool", pool)
     connection = pool.get_connection(target.id)
     try:

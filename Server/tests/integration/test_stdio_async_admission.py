@@ -107,7 +107,7 @@ def environment(monkeypatch):
         pool._connections[identity] = uc.UnityConnection(
             port=info.port, instance_id=identity, sock=sock, use_framing=True
         )
-    pool._last_full_scan = time.time()
+    pool._last_full_scan = time.monotonic()
     sockets["Other@cafebabe"].release.set()
     monkeypatch.setattr(uc, "get_unity_connection_pool", lambda: pool)
     try:

@@ -24,7 +24,7 @@ def target_environment(monkeypatch, tmp_path):
     monkeypatch.setattr(uc.UnityConnection, "connect", lambda *args, **kwargs: True)
     monkeypatch.setattr(config, "http_remote_hosted", False)
     clock = [100.0]
-    monkeypatch.setattr(uc.time, "time", lambda: clock[0])
+    monkeypatch.setattr(uc.time, "monotonic", lambda: clock[0])
     available = {6400, 6402}
     probes = []
     monkeypatch.setattr(

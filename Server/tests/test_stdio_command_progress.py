@@ -205,7 +205,7 @@ def environment(monkeypatch):
     pool = uc.UnityConnectionPool()
     monkeypatch.setattr(uc, "_unity_connection_pool", pool)
     pool._default_instance_id = IDENTITY
-    pool._last_full_scan = time.time()
+    pool._last_full_scan = time.monotonic()
     monkeypatch.setattr(uc, "get_unity_connection_pool", lambda: pool)
     yield pool
     for connection in pool._connections.values():
