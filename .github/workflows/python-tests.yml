@@ -44,6 +44,41 @@ env:
   UV_HTTP_TIMEOUT: "60"
 
 jobs:
+  windows_hermetic:
+    name: Windows hermetic process and Player file contracts
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.13.5"
+          python-version: "3.14"
+          enable-cache: false
+      - name: Install locked test dependencies
+        working-directory: Server
+        run: uv sync --python 3.14 --locked --extra dev
+      - name: Execute owned synthetic process and file-sharing cases (zero skips)
+        shell: pwsh
+        env:
+          UNITY_MCP_DISABLE_TELEMETRY: "1"
+        run: |
+          uv run --project Server --python 3.14 --locked --extra dev python tools/check_windows_regressions.py --output .tmp/windows-hermetic
+      - name: Upload Windows regression execution evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-hermetic-results
+          path: .tmp/windows-hermetic/results.xml
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
   reference_graph:
     name: Reference graph (${{ matrix.os }}, Python ${{ matrix.python }})
     if: inputs.validation_profile != 'tools-only'
