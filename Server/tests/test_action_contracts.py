@@ -36,7 +36,7 @@ def test_action_schemas_preserve_valid_requests_and_refuse_invalid_before_dispat
                 tools = {tool.name: tool for tool in await client.list_tools()}
                 for name in ("asset_edit", "prefab_contents", "asset_bundles"):
                     schema = tools[name].input_schema
-                    assert schema["allOf"], (name, schema)
+                    assert schema["oneOf" if name == "asset_edit" else "allOf"], (name, schema)
                     validator = Draft202012Validator(schema)
                     for example in schema["examples"]:
                         validator.validate(example)
@@ -46,6 +46,8 @@ def test_action_schemas_preserve_valid_requests_and_refuse_invalid_before_dispat
                     ("asset_edit", {"action": "move", "path": "Assets/a.mat"}),
                     ("asset_edit", {"action": "create", "path": "Assets/a.mat"}),
                     ("asset_edit", {"action": "modify", "path": "Assets/a.mat"}),
+                    *[("asset_edit", {"action": "modify", "path": "Assets/a.mat", "properties": value})
+                      for value in (None, "", " ", "".join(map(chr, (9, 13, 10))))],
                     ("prefab_contents", {"action": "apply_preview", "preview_id": "plan", "position": [1,2,3]}),
                     ("prefab_contents", {"action": "modify_contents", "prefab_path": "Assets/a.prefab", "preview_id": "plan"}),
                     ("prefab_contents", {"action": "preview_modify_contents", "prefab_path": "Assets/a.prefab", "target": "Child"}),
@@ -61,13 +63,16 @@ def test_action_schemas_preserve_valid_requests_and_refuse_invalid_before_dispat
                 for arguments in (
                     {"action": "duplicate", "path": "Assets/a.mat"},
                     {"action": "modify", "path": "Assets/a.mat", "properties": '{"name":"New"}'},
+                    {"action": "modify", "path": "Assets/a.mat", "properties": {"name": "New"}},
+                    {"action": "modify", "path": "Assets/a.mat", "properties": {}},
                     {"action": "create", "path": "Assets/New", "asset_type": "Folder"},
                     {"action": "rename", "path": "Assets/a.mat", "destination": "Assets/b.mat"},
                 ):
                     Draft202012Validator(tools["asset_edit"].input_schema).validate(arguments)
                     result = await client.call_tool("asset_edit", arguments)
                     assert not result.is_error, result
-                assert asset.send_with_unity_instance.await_count == 4
+                    assert result.structured_content == {"success": True, "data": {"path": "Assets/item.mat"}}
+                assert asset.send_with_unity_instance.await_count == 6
         asyncio.run(scenario())
     """.replace("MODE", repr(mode))
     )
@@ -172,6 +177,7 @@ def test_positioning_conditional_schema_requires_the_action_reference(mode):
                     validator.validate(arguments)
                     result = await client.call_tool(tool.name, arguments)
                     assert not result.is_error, result
+                    assert result.structured_content.get("success") is True, result.structured_content
                 assert send.await_count == 2
         asyncio.run(scenario())
         """.replace("MODE", repr(mode))

@@ -47,6 +47,7 @@
   const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
   const integer = value => number(value) && Number.isInteger(value);
   const id = value => text(value) || (typeof value === 'number' && Number.isFinite(value));
+  const routingSelector = value => value === null || text(value) || Number.isInteger(value);
   const summaryKeys = ['total', 'passed', 'failed', 'skipped'];
   let phase = 'initializing';
   let jobId = null;
@@ -196,7 +197,9 @@
       if (message.method === 'ui/notifications/tool-input') {
         const args = message.params?.arguments;
         if (phase !== 'ready' || !record(args) || !text(args.job_id) || !args.job_id
-          || args.job_id.length > 256 || Object.keys(args).some(key => key !== 'job_id')) {
+          || args.job_id.length > 256
+          || Object.keys(args).some(key => !['job_id', 'unity_instance'].includes(key))
+          || (Object.hasOwn(args, 'unity_instance') && !routingSelector(args.unity_instance))) {
           stop('Invalid, premature, or duplicate tool input.');
           return;
         }

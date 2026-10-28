@@ -50,6 +50,13 @@ def test_real_catalog_advertises_strict_routing_with_action_contracts():
                 assert len(catalog) >= 100
                 for name, tool in catalog.items():
                     assert ("unity_instance" in tool.input_schema.get("properties", {})) == (name != "get_execution_receipt"), name
+                for name in ("refresh_unity", "run_tests", "get_test_job", "read_console"):
+                    schema = catalog[name].output_schema
+                    assert not schema.get("x-fastmcp-wrap-result"), (name, schema)
+                    assert "result" not in schema.get("properties", {}), (name, schema)
+                asset_schema = catalog["asset_edit"].input_schema
+                assert "allOf" not in asset_schema
+                assert all(branch["type"] == "object" for branch in asset_schema["oneOf"])
                 validator = Draft202012Validator(catalog["read_console"].input_schema)
                 assert not list(validator.iter_errors({"action": "get", "unity_instance": "Project@hash"}))
                 assert list(validator.iter_errors({"action": "get", "unexpected": 1}))

@@ -92,7 +92,7 @@ async def test_sdk_detailed_same_job_reads_reconnected_peer(peer, monkeypatch, m
         )
         result = await asyncio.wait_for(task, watchdog_timeout())
     assert not result.is_error
-    payload = result.structured_content["result"]
+    payload = result.structured_content
     assert payload["success"] is True
     data = payload["data"]
     assert data["job_id"] == "saved-job" and data["result_page"]["passed"] == 272

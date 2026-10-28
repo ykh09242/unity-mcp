@@ -4,6 +4,8 @@ import copy
 import importlib
 import json
 from pathlib import Path
+import shutil
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -337,7 +339,10 @@ class Projection(Middleware):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["legacy", "2026-07-28"])
 @pytest.mark.parametrize("mime", [APP_MIME_TYPE, "text/html", None])
-async def test_public_modern_and_legacy_capability_metadata_and_fallback(monkeypatch, mode, mime):
+@pytest.mark.parametrize("registration", ["production", "sdk"])
+async def test_public_modern_and_legacy_capability_metadata_and_fallback(
+    monkeypatch, mode, mime, registration
+):
     # Given a real server and public client negotiation with explicit MIME support or fallback.
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(
@@ -349,10 +354,24 @@ async def test_public_modern_and_legacy_capability_metadata_and_fallback(monkeyp
     app = FastMCP("test-results-app-contract")
     app.add_middleware(Projection())
     install_test_results_app(app)
-    app.tool(
-        name="view_test_results",
-        meta={"ui": {"resourceUri": TEST_RESULTS_URI, "visibility": ["model"]}},
-    )(view.view_test_results)
+    if registration == "production":
+        from services.registry import get_registered_tools
+        import services.tools as tools_package
+
+        definitions = [
+            item for item in get_registered_tools() if item["name"] == "view_test_results"
+        ]
+        assert len(definitions) == 1
+        monkeypatch.setenv("UNITY_MCP_TOOL_PROFILE", "full")
+        monkeypatch.setattr(config, "transport_mode", "stdio")
+        monkeypatch.setattr(tools_package, "discover_modules", lambda *args, **kwargs: iter(()))
+        monkeypatch.setattr(tools_package, "get_registered_tools", lambda: definitions)
+        tools_package.register_all_tools(app, project_scoped_tools=False)
+    else:
+        app.tool(
+            name="view_test_results",
+            meta={"ui": {"resourceUri": TEST_RESULTS_URI, "visibility": ["model"]}},
+        )(view.view_test_results)
     registered = await app.get_tool("view_test_results")
     metadata = copy.deepcopy(registered.meta)
     extensions = [AppsClient(mime)] if mime is not None else []
@@ -380,3 +399,118 @@ def test_package_declares_static_html():
     # When packaging metadata is read, then the HTML is an explicit package asset.
     data = tomllib.loads(manifest.read_text(encoding="utf-8"))
     assert "test_results_view.html" in data["tool"]["setuptools"]["package-data"]["services"]
+
+
+def run_packaged_app(packets):
+    """Run the package's JavaScript; the fixture only supplies host and DOM seams."""
+    node = shutil.which("node")
+    assert node is not None, "Packaged App lifecycle regressions require the installed Node runtime"
+    source = Path(__file__).parents[1] / "src/services/test_results_view.html"
+    fixture = Path(__file__).parent / "fixtures/test_results_app_vm.cjs"
+    process = subprocess.run(
+        [node, str(fixture), str(source)],
+        input=json.dumps({"packets": packets}),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+    )
+    assert process.returncode == 0, process.stdout + process.stderr
+    return json.loads(process.stdout)
+
+
+def app_input(arguments):
+    return {"method": "ui/notifications/tool-input", "params": {"arguments": arguments}}
+
+
+def app_result(job_id="owned-job"):
+    envelope = completed()
+    envelope["data"]["job_id"] = job_id
+    return {"method": "ui/notifications/tool-result", "params": {"structuredContent": envelope}}
+
+
+@pytest.mark.parametrize(
+    "routing",
+    [
+        {},
+        {"unity_instance": "Game@owned"},
+        {"unity_instance": 6400},
+        {"unity_instance": -1},
+        {"unity_instance": None},
+    ],
+)
+def test_packaged_app_accepts_advertised_routing_selectors(routing):
+    # Given input containing one of the routing schema's selector forms.
+    packets = [app_input({"job_id": "owned-job", **routing}), app_result()]
+    # When the actual packaged script receives input and a matching completed result.
+    result = run_packaged_app(packets)
+    # Then the completed page renders, without initiating any further tool calls.
+    assert result["states"][-1]["visible"] is True
+    assert result["states"][-1]["rowCount"] == 1
+    assert result["states"][-1]["summaryCount"] == 4
+    assert all(
+        packet.get("method") not in {"tools/call", "resources/read"}
+        for packet in result["outbound"]
+    )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"unity_instance": "Game@owned", "unexpected": True},
+        {"job_id": ""},
+        {"job_id": None},
+        {"job_id": 4},
+        {"job_id": "x" * 257},
+        {"unity_instance": True},
+        {"unity_instance": 1.5},
+        {"unity_instance": []},
+        {"unity_instance": {}},
+    ],
+)
+def test_packaged_app_rejects_unknown_fields_and_invalid_input_values(extra):
+    # Given unknown input, an invalid job identity, or an invalid routing selector.
+    packets = [app_input({"job_id": "owned-job", **extra}), app_result()]
+    # When the packaged script consumes those host packets.
+    state = run_packaged_app(packets)["states"][-1]
+    # Then it closes and detaches rather than displaying the following result.
+    assert state["visible"] is False
+    assert state["listening"] is False
+    assert state["rowCount"] == 0
+
+
+@pytest.mark.parametrize(
+    "ending", ["mismatch", "duplicate_input", "duplicate_result", "cancel", "teardown"]
+)
+def test_packaged_app_retains_job_identity_and_lifecycle_guards_with_routing(ending):
+    # Given a routed invocation and the lifecycle event under test.
+    packets = [app_input({"job_id": "owned-job", "unity_instance": "Game@owned"})]
+    endings = {
+        "mismatch": [app_result("another-job")],
+        "duplicate_input": [app_input({"job_id": "owned-job", "unity_instance": 6400})],
+        "duplicate_result": [app_result(), app_result()],
+        "cancel": [app_result(), {"method": "ui/notifications/tool-cancelled", "params": {}}],
+        "teardown": [
+            app_result(),
+            {"id": "teardown", "method": "ui/resource-teardown", "params": {}},
+        ],
+    }
+    packets.extend(endings[ending])
+    # When the packaged script executes the complete lifecycle.
+    result = run_packaged_app(packets)
+    assert result["states"][0]["listening"] is True
+    if ending in {"duplicate_result", "cancel", "teardown"}:
+        assert result["states"][1]["visible"] is True
+    state = result["states"][-1]
+    # Then old job data, callbacks and pending timers are discarded.
+    assert state == {
+        "visible": False,
+        "rowCount": 0,
+        "summaryCount": 0,
+        "listening": False,
+        "filterListening": False,
+        "timerCount": 0,
+        "disconnected": True,
+    }
+    if ending == "teardown":
+        assert {"jsonrpc": "2.0", "id": "teardown", "result": {}} in result["outbound"]

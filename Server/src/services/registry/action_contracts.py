@@ -129,6 +129,32 @@ def action_input_schema(name: str, schema: dict) -> dict:
     rules = ACTION_RULES.get(name, ())
     if not rules:
         return schema
+    if name == "asset_edit":
+        # Typed action alternatives render as concrete objects in clients which
+        # cannot express if/then schema intersections. Runtime rules stay shared.
+        variants = []
+        for rule in rules:
+            properties = {"action": {"type": "string", "const": rule.action}}
+            for field in rule.required:
+                declared = deepcopy(schema["properties"][field])
+                declared.pop("default", None)
+                if "anyOf" in declared:
+                    alternatives = [v for v in declared.pop("anyOf") if v.get("type") != "null"]
+                    declared.update(
+                        alternatives[0] if len(alternatives) == 1 else {"anyOf": alternatives}
+                    )
+                # String keywords apply only to string instances, including those
+                # selected by anyOf. Objects retain their declared constraints.
+                declared.update(minLength=1, pattern=r"\S")
+                properties[field] = declared
+            variants.append(
+                {"type": "object", "properties": properties, "required": ["action", *rule.required]}
+            )
+        return {
+            **schema,
+            "oneOf": variants,
+            "examples": [rule.example_arguments() for rule in rules],
+        }
     conditions = []
     for rule in rules:
         properties = {
