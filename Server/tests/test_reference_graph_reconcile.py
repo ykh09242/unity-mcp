@@ -799,6 +799,78 @@ async def test_cancel_waits_for_owned_thread_before_returning():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", ["cancel", "deadline", "budget"])
+async def test_parser_cancellation_drains_owned_work_without_saving_facts(
+    setup, monkeypatch, trigger
+):
+    import services.reference_graph.analysis as analysis
+    from services.reference_graph.collection_protocol import CollectionBudgetExceeded
+
+    _, workspace, editor, engine = setup
+    editor.add(1, "Assets/Keys.cs", 'class Keys { const string Key="value"; }')
+    entered, release, observed, exited = (threading.Event() for _ in range(4))
+    tokenize, saved = analysis._tokens, []
+    real_timeout, deadline = asyncio.timeout, None
+
+    def capture_timeout(delay):
+        nonlocal deadline
+        deadline = real_timeout(delay)
+        return deadline
+
+    def held_tokens(source, check=lambda: None):
+        calls = 0
+
+        def checkpoint():
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                entered.set()
+                assert release.wait(watchdog_timeout())
+            try:
+                check()
+            except (RuntimeError, CollectionBudgetExceeded):
+                observed.set()
+                raise
+
+        try:
+            return tokenize(source, checkpoint)
+        finally:
+            exited.set()
+
+    monkeypatch.setattr(analysis, "_tokens", held_tokens)
+    monkeypatch.setattr(asyncio, "timeout", capture_timeout)
+    monkeypatch.setattr(workspace, "save_document", lambda *args: saved.append(args))
+    attempt = asyncio.create_task(engine.reconcile())
+    try:
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
+        if trigger == "budget":
+            engine._budget.started -= engine.limits.max_seconds + 1
+        elif trigger == "deadline":
+            deadline.reschedule(asyncio.get_running_loop().time())
+        else:
+            attempt.cancel()
+        if trigger != "budget":
+            assert await asyncio.to_thread(engine.stopped.wait, watchdog_timeout())
+            # A repeated cancellation must not abandon the held physical parser.
+            if trigger == "cancel":
+                attempt.cancel()
+                await asyncio.sleep(0)
+        assert not attempt.done()
+        assert not workspace.acquire("replacement")
+        assert not saved
+    finally:
+        release.set()
+        result = await asyncio.gather(attempt, return_exceptions=True)
+    assert isinstance(
+        result[0], asyncio.CancelledError if trigger == "cancel" else CollectionBudgetExceeded
+    )
+    assert observed.is_set() and exited.is_set()
+    assert not saved
+    assert workspace.acquire("replacement")
+    workspace.release("replacement")
+
+
+@pytest.mark.asyncio
 async def test_replaced_worker_cannot_readmit_completed_analysis(setup):
     store, workspace, editor, engine = setup
     owner = editor.add(1, "Assets/A.cs", 'class C { void M() { Resources.Load("missing"); } }')

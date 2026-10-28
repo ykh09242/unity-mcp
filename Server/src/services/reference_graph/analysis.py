@@ -85,6 +85,7 @@ LOADERS = {
 }
 _LOADER_METHODS = frozenset(name.rpartition(".")[2] for name in LOADERS)
 _IDENT = re.compile(r"@?[^\W\d]\w*", re.UNICODE)
+_STRING_PREFIX = re.compile(r'(?:\$+@?|@\$?)?("{3,}|"|\')')
 _GUID = re.compile(r"^[0-9a-fA-F]{32}$")
 _CONTROL = {
     "if",
@@ -112,7 +113,7 @@ class Token:
     value: str | None = None
 
 
-def _string_value(value: str) -> str | None:
+def _string_value(value: str, check: Callable[[], None] = lambda: None) -> str | None:
     escapes = {
         "0": "\0",
         "a": "\a",
@@ -129,6 +130,7 @@ def _string_value(value: str) -> str | None:
     output = []
     offset = 0
     while offset < len(value):
+        check()
         char = value[offset]
         offset += 1
         if char != "\\":
@@ -162,10 +164,11 @@ def _string_value(value: str) -> str | None:
         return None
 
 
-def _tokens(source: str) -> list[Token]:
+def _tokens(source: str, check: Callable[[], None] = lambda: None) -> list[Token]:
     result = []
     offset, line = 0, 1
     while offset < len(source):
+        check()
         start, start_line = offset, line
         char = source[offset]
         if char.isspace():
@@ -181,9 +184,7 @@ def _tokens(source: str) -> list[Token]:
             offset = len(source) if end < 0 else end + 2
             line += source[start:offset].count("\n")
             continue
-        prefix = (
-            re.match(r'(?:\$+@?|@\$?)?("{3,}|"|\')', source[offset:]) if char in "$@\"'" else None
-        )
+        prefix = _STRING_PREFIX.match(source, offset) if char in "$@\"'" else None
         if prefix:
             marker = prefix[1]
             head = prefix[0]
@@ -201,6 +202,7 @@ def _tokens(source: str) -> list[Token]:
             else:
                 end = -1
                 while offset < len(source):
+                    check()
                     if source[offset] == marker:
                         if verbatim and source.startswith(marker * 2, offset):
                             offset += 2
@@ -214,7 +216,7 @@ def _tokens(source: str) -> list[Token]:
                         offset += 1
                 raw = source[content:end] if end >= 0 else ""
                 value = (
-                    (raw.replace('""', '"') if verbatim else _string_value(raw))
+                    (raw.replace('""', '"') if verbatim else _string_value(raw, check))
                     if end >= 0
                     else None
                 )
@@ -243,10 +245,11 @@ def _tokens(source: str) -> list[Token]:
     return result
 
 
-def _pairs(tokens: list[Token]) -> dict[int, int]:
+def _pairs(tokens: list[Token], check: Callable[[], None] = lambda: None) -> dict[int, int]:
     stack, result = [], {}
     closes = {")": "(", "}": "{", "]": "["}
     for i, token in enumerate(tokens):
+        check()
         if token.text in ("(", "{", "["):
             stack.append((token.text, i))
         elif token.text in closes and stack and stack[-1][0] == closes[token.text]:
@@ -255,9 +258,12 @@ def _pairs(tokens: list[Token]) -> dict[int, int]:
     return result
 
 
-def _split(tokens: list[Token], separator: str) -> list[list[Token]]:
+def _split(
+    tokens: list[Token], separator: str, check: Callable[[], None] = lambda: None
+) -> list[list[Token]]:
     result, start, depth = [], 0, 0
     for i, token in enumerate(tokens):
+        check()
         if token.text in ("(", "[", "{", "<"):
             depth += 1
         elif token.text in (")", "]", "}", ">"):
@@ -274,13 +280,22 @@ def _expression(
     parameters: tuple[str, ...],
     locals_: frozenset[str] = frozenset(),
     import_scope: str = "",
+    check: Callable[[], None] = lambda: None,
+    depth: int = 0,
 ) -> Expr:
-    while tokens and tokens[0].text == "(" and _pairs(tokens).get(0) == len(tokens) - 1:
+    check()
+    if depth >= 128:
+        return UNKNOWN
+    while tokens and tokens[0].text == "(" and _pairs(tokens, check).get(0) == len(tokens) - 1:
         tokens = tokens[1:-1]
-    parts = _split(tokens, "+")
+        depth += 1
+        if depth >= 128:
+            return UNKNOWN
+    parts = _split(tokens, "+", check)
     if len(parts) > 1:
         return _compose(
-            _expression(part, scope, parameters, locals_, import_scope) for part in parts
+            _expression(part, scope, parameters, locals_, import_scope, check, depth + 1)
+            for part in parts
         )
     if len(tokens) == 1 and tokens[0].kind == "string":
         return (("literal", tokens[0].value),) if tokens[0].value is not None else UNKNOWN
@@ -384,10 +399,18 @@ class Facts:
         )
 
 
-def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = None) -> Facts:
-    source, build, diagnostics = source_for_build(source, context)
-    tokens = _tokens(source)
-    pairs = _pairs(tokens)
+def parse_csharp(
+    owner: str,
+    path: str,
+    source: str,
+    *,
+    context: dict | None = None,
+    check: Callable[[], None] = lambda: None,
+) -> Facts:
+    check()
+    source, build, diagnostics = source_for_build(source, context, check=check)
+    tokens = _tokens(source, check)
+    pairs = _pairs(tokens, check)
     scopes = [""] * len(tokens)
     import_scopes = [""] * len(tokens)
     imports = {"": {"usings": [], "statics": [], "aliases": {}, "alias_scopes": {}}}
@@ -396,6 +419,7 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
     types, usings, aliases, constants = [], [], {}, {}
     active: list[tuple[int, str, str]] = []
     for i, token in enumerate(tokens):
+        check()
         while active and active[-1][0] <= i:
             active.pop()
         while active_imports and active_imports[-1][0] <= i:
@@ -407,12 +431,14 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
         if token.text in ("namespace", "class", "struct", "record") and i + 1 < len(tokens):
             end = i + 1
             while end < len(tokens) and tokens[end].text not in ("{", ";", "(", ":", "<"):
+                check()
                 end += 1
             name = "".join(t.text for t in tokens[i + 1 : end])
             if not name:
                 continue
             full = (scope + "." if scope else "") + name
             while end < len(tokens) and tokens[end].text not in ("{", ";"):
+                check()
                 end += 1
             if end < len(tokens):
                 stop = pairs.get(end, len(tokens)) if tokens[end].text == "{" else len(tokens)
@@ -432,6 +458,7 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
         elif token.text == "using" and (not active or active[-1][2] == "namespace"):
             end = i + 1
             while end < len(tokens) and tokens[end].text not in (";", "(", "{"):
+                check()
                 end += 1
             parts = tokens[i + 1 : end]
             if end < len(tokens) and tokens[end].text == ";" and parts:
@@ -449,6 +476,7 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
     # Each namespace occurrence has its own import scope, including reopened
     # namespaces with the same qualified name. Imports are inherited lexically.
     for identity, parent in import_parents.items():
+        check()
         imports[identity] = {
             "usings": list(
                 dict.fromkeys([*imports[parent]["usings"], *imports[identity]["usings"]])
@@ -466,6 +494,7 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
     candidates = []
     declarations = {}
     for i, token in enumerate(tokens):
+        check()
         if token.text != "(" or i not in pairs:
             continue
         name_end = i - 1
@@ -473,6 +502,7 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
             depth = 1
             name_end -= 1
             while name_end >= 0 and depth:
+                check()
                 depth += (tokens[name_end].text == ">") - (tokens[name_end].text == "<")
                 name_end -= 1
         if name_end < 0 or tokens[name_end].kind != "id" or tokens[name_end].text in _CONTROL:
@@ -483,26 +513,31 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
             and tokens[start - 1].text in (".", "::", "?.")
             and tokens[start - 2].kind == "id"
         ):
+            check()
             start -= 2
         name = "".join(t.text for t in tokens[start : name_end + 1])
         end = pairs[i]
         after = end + 1
         if after < len(tokens) and tokens[after].text == "where":
             while after < len(tokens) and tokens[after].text not in ("{", "=>", ";"):
+                check()
                 after += 1
         is_definition = (
             after < len(tokens) and tokens[after].text in ("{", "=>") and "." not in name
         )
         if is_definition:
             parameters, parameter_types, defaults = [], [], []
-            for part in _split(tokens[i + 1 : end], ","):
-                pieces = _split(part, "=")
+            for part in _split(tokens[i + 1 : end], ",", check):
+                check()
+                pieces = _split(part, "=", check)
                 before_default = pieces[0]
                 names = [t.text for t in before_default if t.kind == "id"]
                 parameters.append(names[-1] if names else "?")
                 parameter_types.append("".join(t.text for t in before_default[:-1]))
                 defaults.append(
-                    _expression(pieces[1], scopes[i], (), import_scope=import_scopes[i])
+                    _expression(
+                        pieces[1], scopes[i], (), import_scope=import_scopes[i], check=check
+                    )
                     if len(pieces) == 2
                     else None
                 )
@@ -510,6 +545,7 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
             if tokens[after].text == "=>":
                 stop = after + 1
                 while stop < len(tokens) and tokens[stop].text != ";":
+                    check()
                     stop += 1
             identity = owner + ":" + str(i)
             declarations[i] = (
@@ -527,18 +563,26 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
     local_names = {}
     inside_method = [False] * len(tokens)
     for method in method_ranges:
+        check()
+        names = set()
         for i in range(method[3] + 1, min(method[4], len(tokens))):
+            check()
             inside_method[i] = True
-        local_names[method[0]] = frozenset(
-            tokens[i].text
-            for i in range(method[3] + 1, min(method[4], len(tokens) - 1))
-            if tokens[i].kind == "id"
-            and (tokens[i - 1].kind == "id" or tokens[i - 1].text in (">", "]", "?", "*", ",", ")"))
-            and tokens[i - 1].text not in ("return", "throw", "await", "new")
-            and tokens[i + 1].text in ("=", ";", ",", ")", "=>")
-        )
+            if (
+                i + 1 < len(tokens)
+                and tokens[i].kind == "id"
+                and (
+                    tokens[i - 1].kind == "id"
+                    or tokens[i - 1].text in (">", "]", "?", "*", ",", ")")
+                )
+                and tokens[i - 1].text not in ("return", "throw", "await", "new")
+                and tokens[i + 1].text in ("=", ";", ",", ")", "=>")
+            ):
+                names.add(tokens[i].text)
+        local_names[method[0]] = frozenset(names)
         tainted = set()
         for i in range(method[3] + 1, min(method[4], len(tokens) - 2)):
+            check()
             if tokens[i].text in method[2] and (
                 tokens[i - 1].text in ("ref", "out")
                 or tokens[i + 1].text == "="
@@ -549,6 +593,7 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
                 tainted.add(tokens[i].text)
         local_names[method[0]] |= frozenset(tainted)
         for i in range(method[3] + 1, min(method[4], len(tokens) - 1)):
+            check()
             if tokens[i].text == "=" and tokens[i - 1].text == ")" and tokens[i + 1].text != "=":
                 start = pairs.get(i - 1, i)
                 tainted.update(
@@ -556,10 +601,13 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
                 )
         local_names[method[0]] |= frozenset(tainted)
     fields = defaultdict(set)
-    parameter_positions = {
-        position for start in declarations for position in range(start, pairs[start] + 1)
-    }
+    parameter_positions = set()
+    for start in declarations:
+        for position in range(start, pairs[start] + 1):
+            check()
+            parameter_positions.add(position)
     for i in range(1, len(tokens) - 1):
+        check()
         if (
             not inside_method[i]
             and i not in parameter_positions
@@ -585,6 +633,7 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
     active_methods = []
     cursor = 0
     for i, name, start, end in candidates:
+        check()
         while cursor < len(method_ranges) and method_ranges[cursor][3] < i:
             active_methods.append(method_ranges[cursor])
             cursor += 1
@@ -596,7 +645,7 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
         locals_ = local_names.get(identity, frozenset()) | fields[scopes[i]]
         receiver = name.partition(".")[0]
         argument_parts, argument_names = [], []
-        for part in _split(tokens[i + 1 : end], ","):
+        for part in _split(tokens[i + 1 : end], ",", check):
             named = len(part) >= 2 and part[0].kind == "id" and part[1].text == ":"
             argument_names.append(part[0].text if named else "")
             argument_parts.append(part[2:] if named else part)
@@ -604,7 +653,7 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
         call = Call(
             name,
             tuple(
-                _expression(part, scopes[i], parameters, locals_, import_scopes[i])
+                _expression(part, scopes[i], parameters, locals_, import_scopes[i], check)
                 for part in argument_parts
             ),
             tokens[start].line,
@@ -616,11 +665,12 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
             import_scopes[i],
             tuple(argument_names),
             tuple(_argument_type(part, parameter_types) for part in argument_parts),
-            _generic_type(tokens, i),
+            _generic_type(tokens, i, check),
         )
         method_calls[identity].append(len(calls))
         calls.append(call)
     for i, token in enumerate(tokens):
+        check()
         if token.text != "const" or i + 3 >= len(tokens) or tokens[i + 1].text != "string":
             continue
         name, end = tokens[i + 2].text, i + 3
@@ -629,16 +679,18 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
         end += 1
         stop = end
         while stop < len(tokens) and tokens[stop].text != ";":
+            check()
             stop += 1
         # Local declarations do not become class-wide constants.
-        if any(m[3] < i < m[4] for m in method_ranges):
+        if inside_method[i]:
             continue
         constants[(scopes[i] + "." if scopes[i] else "") + name] = _expression(
-            tokens[end:stop], scopes[i], (), import_scope=import_scopes[i]
+            tokens[end:stop], scopes[i], (), import_scope=import_scopes[i], check=check
         )
     methods = tuple(
         Method(m[0], m[1], m[2], tuple(method_calls[m[0]]), m[5], m[6]) for m in method_ranges
     )
+    check()
     return Facts(
         owner,
         path,
@@ -654,15 +706,22 @@ def parse_csharp(owner: str, path: str, source: str, *, context: dict | None = N
     )
 
 
-def _generic_type(tokens: list[Token], opening: int) -> str:
+def _generic_type(
+    tokens: list[Token], opening: int, check: Callable[[], None] = lambda: None
+) -> str:
     if not opening or tokens[opening - 1].text != ">":
         return ""
     depth, start = 1, opening - 2
     while start >= 0:
+        check()
         depth += (tokens[start].text == ">") - (tokens[start].text == "<")
         if not depth:
             parts = tokens[start + 1 : opening - 1]
-            return "".join(token.text for token in parts) if len(_split(parts, ",")) == 1 else ""
+            return (
+                "".join(token.text for token in parts)
+                if len(_split(parts, ",", check)) == 1
+                else ""
+            )
         start -= 1
     return ""
 

@@ -3,6 +3,7 @@
 from dataclasses import asdict
 from itertools import product
 import tracemalloc
+import builtins
 
 import pytest
 
@@ -91,6 +92,103 @@ def test_expanding_nonempty_constants_stays_within_expression_budget():
         for cache in index.constant_cache.values()
         for expr in cache.values()
     )
+
+
+def test_constant_method_membership_does_not_scan_every_method(monkeypatch):
+    import services.reference_graph.analysis as module
+
+    comparisons = 0
+
+    def counted_any(values):
+        def counted():
+            nonlocal comparisons
+            for value in values:
+                comparisons += 1
+                yield value
+
+        return builtins.any(counted())
+
+    monkeypatch.setattr(module, "any", counted_any, raising=False)
+    count = 256
+    source = (
+        "class Keys {"
+        + "".join(
+            f'const string K{i}="key"; void M{i}() {{ const string Local="ignored"; }}'
+            for i in range(count)
+        )
+        + "}"
+    )
+    facts = parse_csharp("script", "Assets/Keys.cs", source)
+    assert len(facts.constants) == count
+    assert comparisons < count * 16
+
+
+@pytest.mark.parametrize("stage", ["tokens", "declarations", "expression", "preprocessor"])
+def test_parser_cooperatively_checks_cancellation_inside_work(stage, monkeypatch):
+    import services.reference_graph.analysis as module
+
+    checking = stage == "tokens" or stage == "preprocessor"
+    calls = 0
+    source = "class Keys {" + "".join(f'const string K{i}="key";' for i in range(500)) + "}"
+    if stage == "preprocessor":
+        source = "#if PLATFORM\n" + source + "\n#endif"
+    if stage == "expression":
+        source = "class Use { void M() { UnityEngine.Resources.Load(" + '"x"+' * 2000 + '"x"); }}'
+        original = module._expression
+
+        def expression(*args, **kwargs):
+            nonlocal checking
+            checking = True
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(module, "_expression", expression)
+    elif stage == "declarations":
+        original = module._pairs
+
+        def pairs(*args, **kwargs):
+            nonlocal checking
+            result = original(*args, **kwargs)
+            checking = True
+            return result
+
+        monkeypatch.setattr(module, "_pairs", pairs)
+
+    def check():
+        nonlocal calls
+        if checking:
+            calls += 1
+            if calls == 8:
+                raise InterruptedError("parser checkpoint")
+
+    with pytest.raises(InterruptedError, match="parser checkpoint"):
+        parse_csharp("script", "Assets/Keys.cs", source, check=check)
+    assert calls == 8
+
+
+@pytest.mark.parametrize("operation", ["condition", "inactive_line", "string_literal"])
+def test_long_parser_fragments_remain_cooperatively_interruptible(operation):
+    from services.reference_graph import analysis, compilation
+
+    calls = 0
+
+    def check():
+        nonlocal calls
+        calls += 1
+        if calls == 8:
+            raise InterruptedError("fragment checkpoint")
+
+    with pytest.raises(InterruptedError, match="fragment checkpoint"):
+        if operation == "condition":
+            compilation.condition(" || ".join(["FLAG"] * 1000), set(), check=check)
+        elif operation == "inactive_line":
+            compilation.source_for_build(
+                "#if FLAG\n" + "ignored" * 10000 + "\n#endif",
+                {"state": "available", "assembly": "Game", "defines": []},
+                check=check,
+            )
+        else:
+            analysis._tokens('"' + "x" * 10000 + '"', check)
+    assert calls == 8
 
 
 def test_unused_branching_wrappers_do_not_materialize_exponential_summaries():

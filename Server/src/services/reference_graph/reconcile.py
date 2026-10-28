@@ -57,6 +57,11 @@ async def drained_task(task: asyncio.Future, *, _cancel_event: threading.Event |
             cancelled = True
             if _cancel_event is not None:
                 _cancel_event.set()
+        except Exception:
+            if not cancelled:
+                raise
+            # Cooperative work can fail as it observes the stop request. The
+            # owner's cancellation/deadline remains authoritative after draining.
     if cancelled:
         # Retrieve any exception before propagating the owning cancellation.
         if not task.cancelled():
@@ -681,7 +686,12 @@ class Reconciler:
             offset = following
             if offset is None:
                 format_, payload, fingerprint = await drained_thread(
-                    self._parse, asset, content, context
+                    self._parse,
+                    asset,
+                    content,
+                    context,
+                    check=self._check_thread,
+                    _cancel_event=self.stopped,
                 )
                 break
         await drained_thread(
@@ -694,13 +704,23 @@ class Reconciler:
         )
 
     @staticmethod
-    def _parse(asset: dict, content: bytes, context: dict | None = None) -> tuple:
+    def _parse(
+        asset: dict,
+        content: bytes,
+        context: dict | None = None,
+        *,
+        check: Callable[[], None] = lambda: None,
+    ) -> tuple:
+        check()
         text = content.decode(
             "utf-16" if content[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
         )
         fingerprint = hashlib.sha256(content).hexdigest()
         if asset["source_format"] == "csharp":
-            facts = parse_csharp("asset:" + asset["guid"], asset["path"], text, context=context)
+            facts = parse_csharp(
+                "asset:" + asset["guid"], asset["path"], text, context=context, check=check
+            )
+            check()
             return (
                 "csharp",
                 asdict(facts),

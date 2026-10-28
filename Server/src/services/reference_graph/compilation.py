@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 _WORD = re.compile(r"[^\W\d]\w*", re.UNICODE)
 _CONDITION = re.compile(r"\s*(&&|\|\||==|!=|[!()]|[^\W\d]\w*)", re.UNICODE)
 _PRECEDENCE = {"||": 1, "&&": 2, "==": 3, "!=": 3, "!": 4}
+_STRING_PREFIX = re.compile(r'(?:\$+@?|@\$?)?("{3,}|"|\')')
 
 
-def condition(text: str, defines: set[str]) -> bool:
+def condition(text: str, defines: set[str], *, check: Callable[[], None] = lambda: None) -> bool:
     """Evaluate C# conditional symbols with an iterative boolean parser."""
     values, operators = [], []
     offset, operand = 0, True
 
     def apply():
+        check()
         operator = operators.pop()
         if operator == "!":
             values.append(not values.pop())
@@ -33,6 +36,7 @@ def condition(text: str, defines: set[str]) -> bool:
     text = text.split("//", 1)[0].strip()
     try:
         while offset < len(text):
+            check()
             match = _CONDITION.match(text, offset)
             if match is None:
                 raise ValueError("Unsupported conditional expression")
@@ -75,10 +79,11 @@ def condition(text: str, defines: set[str]) -> bool:
         raise ValueError("Invalid conditional expression") from error
 
 
-def _lexical_state(line: str, state: str) -> str:
+def _lexical_state(line: str, state: str, check: Callable[[], None] = lambda: None) -> str:
     """Only active source can start a multi-line literal or comment."""
     offset = 0
     while offset < len(line):
+        check()
         if state == "/*":
             end = line.find("*/", offset)
             if end < 0:
@@ -103,9 +108,7 @@ def _lexical_state(line: str, state: str) -> str:
             return ""
         elif line.startswith("/*", offset):
             state, offset = "/*", offset + 2
-        elif line[offset] in "$@\"'" and (
-            match := re.match(r'(?:\$+@?|@\$?)?("{3,}|"|\')', line[offset:])
-        ):
+        elif line[offset] in "$@\"'" and (match := _STRING_PREFIX.match(line, offset)):
             marker = match[1]
             state = '@"' if marker == '"' and "@" in match[0] else marker
             offset += len(match[0])
@@ -114,8 +117,21 @@ def _lexical_state(line: str, state: str) -> str:
     return state
 
 
-def source_for_build(source: str, context: dict | None) -> tuple[str, dict, tuple[dict, ...]]:
+def _blank_line(line: str, check: Callable[[], None]) -> str:
+    chunks = []
+    for offset in range(0, len(line), 4096):
+        check()
+        chunks.append(
+            "".join(char if char in "\r\n" else " " for char in line[offset : offset + 4096])
+        )
+    return "".join(chunks)
+
+
+def source_for_build(
+    source: str, context: dict | None, *, check: Callable[[], None] = lambda: None
+) -> tuple[str, dict, tuple[dict, ...]]:
     """Preserve source lines and disclose fallback/inactive coverage explicitly."""
+    check()
     if context is not None and not isinstance(context, dict):
         raise ValueError("Invalid native compilation context")
     context = context or {}
@@ -173,6 +189,7 @@ def source_for_build(source: str, context: dict | None) -> tuple[str, dict, tupl
     defines, stack, output = set(supplied) if known else set(), [], []
     active, state, conditional = True, "", False
     for number, line in enumerate(source.splitlines(keepends=True), 1):
+        check()
         directive = re.match(r"\s*#\s*(\w+)\b(.*)", line) if not state or not active else None
         if directive:
             kind, text = directive[1], directive[2].strip()
@@ -181,14 +198,14 @@ def source_for_build(source: str, context: dict | None) -> tuple[str, dict, tupl
                 output.append(line)
                 continue
             if kind == "if":
-                selected = condition(text, defines)
+                selected = condition(text, defines, check=check)
                 stack.append([active, selected, False])
                 active = active and selected
             elif kind in {"elif", "else"}:
                 if not stack or stack[-1][2]:
                     raise ValueError(f"Invalid conditional branch at line {number}")
                 parent, taken, _ = stack[-1]
-                selected = condition(text, defines) if kind == "elif" else True
+                selected = condition(text, defines, check=check) if kind == "elif" else True
                 active = parent and not taken and selected
                 stack[-1][1] |= selected
                 stack[-1][2] = kind == "else"
@@ -204,12 +221,12 @@ def source_for_build(source: str, context: dict | None) -> tuple[str, dict, tupl
                     defines.add(symbol)
                 else:
                     defines.discard(symbol)
-            output.append("".join(char if char in "\r\n" else " " for char in line))
+            output.append(_blank_line(line, check))
         elif active:
             output.append(line)
-            state = _lexical_state(line, state)
+            state = _lexical_state(line, state, check)
         else:
-            output.append("".join(char if char in "\r\n" else " " for char in line))
+            output.append(_blank_line(line, check))
     if known and stack:
         raise ValueError("Unclosed conditional compilation block")
     issues = (
