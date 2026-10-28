@@ -93,5 +93,45 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsTrue(File.Exists(file));
             StringAssert.DoesNotContain("PLAINTEXT_SECRET_XYZ", File.ReadAllText(file));
         }
+
+        [TestCase("secret.bin")]
+        [TestCase("salt.bin")]
+        public void MalformedExistingDerivationMaterialIsPreservedAndWriteRefused(string file)
+        {
+            byte[] malformed = { 1, 2, 3 };
+            string path = Path.Combine(_dir, file);
+            File.WriteAllBytes(path, malformed);
+            Assert.Throws<System.Security.Cryptography.CryptographicException>(() => _store.Set("fixture", "synthetic-value"));
+            CollectionAssert.AreEqual(malformed, File.ReadAllBytes(path));
+            Assert.IsFalse(_store.Has("fixture"));
+        }
+
+        [Test]
+        public void MissingDerivationMaterialReadDoesNotCreateReplacement()
+        {
+            _store.Set("fixture", "synthetic-value");
+            string secret = Path.Combine(_dir, "secret.bin");
+            File.Delete(secret);
+            Assert.IsFalse(_store.TryGet("fixture", out _));
+            Assert.IsFalse(File.Exists(secret));
+        }
+
+        [Test]
+        public void SecondStoreAndOverwritePreserveDerivationMaterialAndRemainReadable()
+        {
+            _store.Set("first", "synthetic-first");
+            byte[] secret = File.ReadAllBytes(Path.Combine(_dir, "secret.bin"));
+            byte[] salt = File.ReadAllBytes(Path.Combine(_dir, "salt.bin"));
+            var second = new EncryptedFileKeyStore(_dir);
+            second.Set("second", "synthetic-second");
+            second.Set("first", "synthetic-replacement");
+            CollectionAssert.AreEqual(secret, File.ReadAllBytes(Path.Combine(_dir, "secret.bin")));
+            CollectionAssert.AreEqual(salt, File.ReadAllBytes(Path.Combine(_dir, "salt.bin")));
+            Assert.IsTrue(_store.TryGet("first", out string first));
+            Assert.AreEqual("synthetic-replacement", first);
+            Assert.IsTrue(_store.TryGet("second", out string other));
+            Assert.AreEqual("synthetic-second", other);
+            Assert.IsEmpty(Directory.GetFiles(_dir, "*.tmp"));
+        }
     }
 }

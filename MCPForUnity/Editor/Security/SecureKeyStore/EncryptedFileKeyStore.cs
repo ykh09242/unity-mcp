@@ -56,7 +56,10 @@ namespace MCPForUnity.Editor.Security
                 return false;
             try
             {
-                byte[] blob = Convert.FromBase64String(File.ReadAllText(path).Trim());
+                // Readers retain the old complete file while a writer publishes its replacement.
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                byte[] blob = Convert.FromBase64String(reader.ReadToEnd().Trim());
                 apiKey = Encoding.UTF8.GetString(Decrypt(blob));
                 return true;
             }
@@ -77,8 +80,22 @@ namespace MCPForUnity.Editor.Security
             }
             byte[] blob = Encrypt(Encoding.UTF8.GetBytes(apiKey));
             string path = KeyFile(providerId);
-            File.WriteAllText(path, Convert.ToBase64String(blob));
-            TryChmod(path, "600");
+            string temporary = WriteTemporary(path, Encoding.UTF8.GetBytes(Convert.ToBase64String(blob)));
+            try
+            {
+                try
+                {
+                    File.Move(temporary, path);
+                }
+                catch (IOException) when (File.Exists(path))
+                {
+                    File.Replace(temporary, path, null);
+                }
+            }
+            finally
+            {
+                File.Delete(temporary);
+            }
         }
 
         public void Delete(string providerId)
@@ -91,10 +108,10 @@ namespace MCPForUnity.Editor.Security
 
         // ---------- crypto ----------
 
-        private void DeriveKeys(out byte[] encKey, out byte[] macKey)
+        private void DeriveKeys(out byte[] encKey, out byte[] macKey, bool create = true)
         {
-            byte[] master = LoadOrCreate(Path.Combine(_dir, "secret.bin"), 32);
-            byte[] salt = LoadOrCreate(Path.Combine(_dir, "salt.bin"), 16);
+            byte[] master = LoadOrCreate(Path.Combine(_dir, "secret.bin"), 32, create);
+            byte[] salt = LoadOrCreate(Path.Combine(_dir, "salt.bin"), 16, create);
             string password = Convert.ToBase64String(master) + "|" + MachineId();
             using (var kdf = new Rfc2898DeriveBytes(password, salt, Iterations, HashAlgorithmName.SHA256))
             {
@@ -130,7 +147,7 @@ namespace MCPForUnity.Editor.Security
         {
             if (blob.Length < 48)
                 throw new CryptographicException("ciphertext too short");
-            DeriveKeys(out byte[] encKey, out byte[] macKey);
+            DeriveKeys(out byte[] encKey, out byte[] macKey, create: false);
             byte[] iv = new byte[16];
             byte[] mac = new byte[32];
             byte[] ct = new byte[blob.Length - 48];
@@ -156,18 +173,58 @@ namespace MCPForUnity.Editor.Security
 
         // ---------- helpers ----------
 
-        private byte[] LoadOrCreate(string path, int len)
+        private byte[] LoadOrCreate(string path, int len, bool create)
         {
-            if (File.Exists(path))
+            try
             {
-                byte[] existing = File.ReadAllBytes(path);
-                if (existing.Length == len)
-                    return existing;
+                return ReadMaterial(path, len);
             }
-            byte[] fresh = RandomBytes(len);
-            File.WriteAllBytes(path, fresh);
-            TryChmod(path, "600");
-            return fresh;
+            catch (FileNotFoundException) when (create)
+            {
+                // Publish a complete candidate without overwriting another process's winner.
+                // Reading the winner also rejects malformed existing material without rotation.
+                string temporary = WriteTemporary(path, RandomBytes(len));
+                try
+                {
+                    try
+                    {
+                        File.Move(temporary, path);
+                    }
+                    catch (IOException) when (File.Exists(path))
+                    { /* Another initializer published first. */
+                    }
+                    return ReadMaterial(path, len);
+                }
+                finally
+                {
+                    File.Delete(temporary);
+                }
+            }
+        }
+
+        private static byte[] ReadMaterial(string path, int len)
+        {
+            byte[] existing = File.ReadAllBytes(path);
+            if (existing.Length != len)
+                throw new CryptographicException("Invalid fallback key derivation material; existing bytes were preserved.");
+            return existing;
+        }
+
+        private static string WriteTemporary(string path, byte[] content)
+        {
+            string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    stream.Write(content, 0, content.Length);
+                TryChmod(temporary, "600");
+                return temporary;
+            }
+            catch
+            {
+                File.Delete(temporary);
+                throw;
+            }
         }
 
         private static string MachineId()
