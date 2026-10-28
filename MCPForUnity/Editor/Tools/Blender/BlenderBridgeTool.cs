@@ -12,6 +12,7 @@ using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.AssetGen.Import;
 using MCPForUnity.Editor.Services.Blender;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Tools.AssetGen;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json;
@@ -74,6 +75,7 @@ namespace MCPForUnity.Editor.Tools.Blender
         public static async Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var parentLease = NativeCommandArbitrator.TakeCompositionLease();
             if (@params == null)
                 return new ErrorResponse("Parameters cannot be null.");
             // Panel/menu callers and direct registry dispatch must enforce the same grant.
@@ -127,12 +129,12 @@ namespace MCPForUnity.Editor.Tools.Blender
                         return new SuccessResponse("Executed Python in Blender.", new { stdout });
                     }
                     case "import_model":
-                        return await ImportModelAsync(p, timeout, cancellationToken);
+                        return await ImportModelAsync(p, timeout, cancellationToken, parentLease);
                     case "compare_screenshot":
-                        return await CompareScreenshotAsync(p, timeout, cancellationToken);
+                        return await CompareScreenshotAsync(p, timeout, cancellationToken, parentLease);
                     case "setup_bloom":
                     {
-                        JObject bloom = await SetupBloomAsync(cancellationToken);
+                        JObject bloom = await SetupBloomAsync(cancellationToken, parentLease);
                         cancellationToken.ThrowIfCancellationRequested();
                         return ToBloomResponse(bloom);
                     }
@@ -281,7 +283,12 @@ namespace MCPForUnity.Editor.Tools.Blender
         // ------------------------------------------------------------ import_model
 
         /// <summary>Exports from Blender, imports through the shared normalization policy, then places the resulting asset.</summary>
-        private static async Task<object> ImportModelAsync(ToolParams p, int timeout, CancellationToken cancellationToken)
+        private static async Task<object> ImportModelAsync(
+            ToolParams p,
+            int timeout,
+            CancellationToken cancellationToken,
+            NativeCommandArbitrator.Lease parentLease
+        )
         {
             string fmt = (p.Get("format") ?? "glb").Trim().ToLowerInvariant();
             if (fmt != "glb" && fmt != "fbx")
@@ -421,7 +428,7 @@ namespace MCPForUnity.Editor.Tools.Blender
                 data["prefab_path"] = SavePrefabWithCancellation(go, assetPath, name, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (ensureBloom && HasEmissiveMaterial(go))
-                data["bloom"] = await SetupBloomAsync(cancellationToken);
+                data["bloom"] = await SetupBloomAsync(cancellationToken, parentLease);
 
             cancellationToken.ThrowIfCancellationRequested();
             return export.Preserve(new SuccessResponse($"Imported {assetPath} and placed '{go.name}' in the scene.", data));
@@ -731,7 +738,7 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         /// global Volume with a Bloom override exists (reusing the scene's global volume when it has one).
         /// Goes through manage_graphics so the Volume/Bloom reflection lives in one place.
         /// </summary>
-        private static async Task<JObject> SetupBloomAsync(CancellationToken cancellationToken)
+        private static async Task<JObject> SetupBloomAsync(CancellationToken cancellationToken, NativeCommandArbitrator.Lease parentLease)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var result = new JObject();
@@ -790,7 +797,8 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                             ["target"] = globalVolume.gameObject.name,
                             ["effect"] = "Bloom",
                         },
-                        cancellationToken
+                        cancellationToken,
+                        parentLease
                     )
                 );
                 cancellationToken.ThrowIfCancellationRequested();
@@ -805,7 +813,8 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                             ["effect"] = "Bloom",
                             ["parameters"] = new JObject { ["intensity"] = 1.0f, ["threshold"] = 0.9f },
                         },
-                        cancellationToken
+                        cancellationToken,
+                        parentLease
                     );
                 }
                 result["volume"] = globalVolume.gameObject.name;
@@ -829,7 +838,8 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                                 }
                             ),
                         },
-                        cancellationToken
+                        cancellationToken,
+                        parentLease
                     )
                 );
                 result["volume"] = "Global Volume (Blender Bridge)";
@@ -852,7 +862,12 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
         // -------------------------------------------------------- compare_screenshot
 
         /// <summary>Puts a Blender viewport capture and a Unity capture of a placed object side by side in one PNG.</summary>
-        private static async Task<object> CompareScreenshotAsync(ToolParams p, int timeout, CancellationToken cancellationToken)
+        private static async Task<object> CompareScreenshotAsync(
+            ToolParams p,
+            int timeout,
+            CancellationToken cancellationToken,
+            NativeCommandArbitrator.Lease parentLease
+        )
         {
             string target = p.Get("game_object");
             if (string.IsNullOrWhiteSpace(target))
@@ -900,7 +915,8 @@ print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': 
                         ["fileName"] = Path.GetFileName(unityPng),
                         ["output_folder"] = Path.GetDirectoryName(unityPng),
                     },
-                    cancellationToken
+                    cancellationToken,
+                    parentLease
                 )
             );
             cancellationToken.ThrowIfCancellationRequested();

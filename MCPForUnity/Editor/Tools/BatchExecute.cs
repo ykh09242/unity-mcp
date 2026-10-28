@@ -309,7 +309,7 @@ namespace MCPForUnity.Editor.Tools
         public static async Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken, ICommandProgress progress)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var parentLease = NativeCommandArbitrator.TakeBatchLease();
+            var parentLease = NativeCommandArbitrator.TakeCompositionLease();
             object rejected = ReadEnvelope(@params, false, out var commandsToken, out bool failFast, out bool parallelRequested, out int? maxParallel);
             if (rejected != null)
                 return rejected;

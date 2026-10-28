@@ -27,18 +27,18 @@ namespace MCPForUnity.Editor.Services.Transport
             (command, parameters) =>
                 NativeOperationBarriers.TryGetBlocker(command, parameters, out NativeAdmissionBlocker reason) ? reason : (NativeAdmissionBlocker?)null
         );
-        private static readonly AsyncLocal<Lease> BatchContext = new AsyncLocal<Lease>();
+        private static readonly AsyncLocal<Lease> CompositionContext = new AsyncLocal<Lease>();
         private readonly object gate = new object();
         private readonly HashSet<Lease> active = new HashSet<Lease>();
         private readonly Func<string, JObject, NativeAdmissionBlocker?> blocker;
         internal string Generation { get; } = Guid.NewGuid().ToString("N");
 
-        // The trusted batch consumes the handoff before its first await. Child/custom tasks
+        // The trusted composer consumes the handoff before its first await. Child/custom tasks
         // cannot inherit a reentrancy capability from the surrounding ExecutionContext.
-        internal static Lease TakeBatchLease()
+        internal static Lease TakeCompositionLease()
         {
-            var lease = BatchContext.Value;
-            BatchContext.Value = null;
+            var lease = CompositionContext.Value;
+            CompositionContext.Value = null;
             return lease;
         }
 
@@ -113,20 +113,20 @@ namespace MCPForUnity.Editor.Services.Transport
             }
         }
 
-        internal static IDisposable EnterBatch(Lease lease)
+        internal static IDisposable EnterComposition(Lease lease)
         {
-            var previous = BatchContext.Value;
-            BatchContext.Value = lease;
-            return new BatchScope(previous);
+            var previous = CompositionContext.Value;
+            CompositionContext.Value = lease;
+            return new CompositionScope(previous);
         }
 
-        private sealed class BatchScope : IDisposable
+        private sealed class CompositionScope : IDisposable
         {
             private readonly Lease previous;
 
-            internal BatchScope(Lease previous) => this.previous = previous;
+            internal CompositionScope(Lease previous) => this.previous = previous;
 
-            public void Dispose() => BatchContext.Value = previous;
+            public void Dispose() => CompositionContext.Value = previous;
         }
 
         internal sealed class Lease : IDisposable

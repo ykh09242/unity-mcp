@@ -137,11 +137,11 @@ namespace MCPForUnityTests.Editor.Services
             var guard = new NativeCommandArbitrator((_, __) => null);
             Assert.IsTrue(guard.TryAcquire(ToolOperationMode.Exclusive, "batch_execute", null, null, out var parent, out _));
             using (parent)
-            using (NativeCommandArbitrator.EnterBatch(parent))
+            using (NativeCommandArbitrator.EnterComposition(parent))
             {
-                Assert.AreSame(parent, NativeCommandArbitrator.TakeBatchLease());
-                Assert.IsNull(Task.Run(() => NativeCommandArbitrator.TakeBatchLease()).GetAwaiter().GetResult());
-                Assert.IsNull(NativeCommandArbitrator.TakeBatchLease());
+                Assert.AreSame(parent, NativeCommandArbitrator.TakeCompositionLease());
+                Assert.IsNull(Task.Run(() => NativeCommandArbitrator.TakeCompositionLease()).GetAwaiter().GetResult());
+                Assert.IsNull(NativeCommandArbitrator.TakeCompositionLease());
             }
         }
 

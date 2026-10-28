@@ -351,6 +351,15 @@ namespace MCPForUnity.Editor.Tools
             && (handler.AliasOwner ?? handler).HasTrustedRegistration
             && (handler.AliasOwner ?? handler).SourceType == typeof(BatchExecute);
 
+        internal static bool IsTrustedCompositionHandler(string commandName) =>
+            (commandName != "batch_validate" && IsTrustedBatchHandler(commandName))
+            || (
+                commandName == "blender_bridge"
+                && _handlers.TryGetValue(commandName, out var handler)
+                && handler.HasTrustedRegistration
+                && handler.SourceType == typeof(Blender.BlenderBridgeTool)
+            );
+
         internal static string GetAdmissionName(string commandName) =>
             _handlers.TryGetValue(commandName, out var handler) && handler.AliasOwner != null && IsCurrentAlias(handler) ? "batch_execute" : commandName;
 
@@ -522,6 +531,7 @@ namespace MCPForUnity.Editor.Tools
                 throw new NativeCommandBlockedException(blocker);
             try
             {
+                using var composition = NativeCommandArbitrator.EnterComposition(IsTrustedCompositionHandler(commandName) ? parent ?? lease : null);
                 var task = InvokeCommandCoreAsync(commandName, @params, cancellationToken);
                 if (task.IsCompleted)
                 {

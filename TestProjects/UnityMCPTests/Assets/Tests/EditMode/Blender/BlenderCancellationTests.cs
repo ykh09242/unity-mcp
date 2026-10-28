@@ -578,6 +578,72 @@ namespace MCPForUnityTests.Editor.Blender
         }
 
         [UnityTest]
+        public IEnumerator DispatchedComparison_AndBatchComposition_KeepUnrelatedWritesExcluded()
+        {
+            var target = new GameObject(unique);
+            SceneManager.MoveGameObjectToScene(target, scene);
+            int unrelatedWrites = 0;
+            ReplaceHandler(
+                "gen08_following",
+                _ =>
+                {
+                    unrelatedWrites++;
+                    return new { success = true };
+                }
+            );
+            replacedHandlers["manage_scene"] = handlers["manage_scene"];
+            foreach (bool batch in new[] { false, true })
+            {
+                string unityPath = null;
+                handlers["manage_scene"] = HandlerInfo.Cooperative(
+                    "manage_scene",
+                    (parameters, token) =>
+                    {
+                        Assert.IsNull(NativeCommandArbitrator.TakeCompositionLease(), "Custom child callbacks cannot inherit admission authority.");
+                        var blocked = Assert.Throws<NativeCommandBlockedException>(() =>
+                            CommandRegistry.InvokeCommandAsync("gen08_following", new JObject(), token)
+                        );
+                        Assert.AreEqual("operation_busy", blocked.Reason);
+                        unityPath = Path.Combine((string)parameters["output_folder"], "unity.png");
+                        StringAssert.Contains("Library/BlenderBridge/", unityPath.Replace('\\', '/'));
+                        File.WriteAllBytes(
+                            unityPath,
+                            Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==")
+                        );
+                        return Task.FromResult<object>(new { success = true, data = new { fullPath = unityPath } });
+                    }
+                );
+                var peer = NewPeer(screenshot: true);
+                var parameters = new JObject { ["action"] = "compare_screenshot", ["game_object"] = unique };
+                var operation = Dispatch(
+                    batch ? "batch_execute" : "blender_bridge",
+                    batch ? new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "blender_bridge", ["params"] = parameters }) } : parameters,
+                    CancellationToken.None
+                );
+                yield return Until(() => peer.Request.Task.IsCompleted);
+                peer.Release.Set();
+                yield return Until(() => operation.Completion.IsCompleted && peer.Completion.IsCompleted);
+                peer.AssertCompleted();
+                JObject response = JObject.FromObject(operation.Response.Result.Payload);
+                Assert.AreEqual("success", (string)response["status"], response.ToString());
+                JToken result = response["result"] ?? response;
+                Assert.IsTrue((bool)result["success"], response.ToString());
+                JToken data = batch ? result["data"]["results"][0]["result"]["data"] : result["data"];
+                Assert.IsNotEmpty(unityPath, response.ToString());
+                Assert.IsFalse(File.Exists(unityPath));
+                foreach (string key in new[] { "path", "blender_path" })
+                {
+                    string returned = (string)data[key];
+                    Assert.AreEqual(Path.GetDirectoryName(unityPath), Path.GetDirectoryName(returned));
+                    Assert.IsTrue(File.Exists(returned));
+                    File.Delete(returned);
+                }
+                Directory.Delete(Path.GetDirectoryName(unityPath));
+            }
+            Assert.AreEqual(0, unrelatedWrites);
+        }
+
+        [UnityTest]
         public IEnumerator Bloom_CancelBetweenNestedCommands_DoesNotStartSecondMutation()
         {
             Type volumeType = Type.GetType("UnityEngine.Rendering.Volume, Unity.RenderPipelines.Core.Runtime");

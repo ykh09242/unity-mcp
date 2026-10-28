@@ -596,11 +596,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 pending.Timing?.Start(CommandPhaseTiming.Phase.Handler);
                 object result;
                 using (CommandPhaseTiming.EnterHandler(pending.Timing))
-                using (
-                    NativeCommandArbitrator.EnterBatch(
-                        command.type != "batch_validate" && CommandRegistry.IsTrustedBatchHandler(command.type) ? pending.Lease : null
-                    )
-                )
+                using (NativeCommandArbitrator.EnterComposition(CommandRegistry.IsTrustedCompositionHandler(command.type) ? pending.Lease : null))
                 {
                     result = CommandRegistry.ExecuteCommand(
                         command.type,
