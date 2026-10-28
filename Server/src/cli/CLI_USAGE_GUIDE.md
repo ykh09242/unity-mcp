@@ -1082,6 +1082,9 @@ unity-mcp reflect member Physics Raycast       # One member in detail
 unity-mcp docs get Physics Raycast             # Unity documentation page
 ```
 
+Documentation network and HTTP failures exit with code 1. A completed lookup
+that reports `found: false` remains successful and exits with code 0.
+
 ### Asset Generation and Blender Commands
 
 ```bash

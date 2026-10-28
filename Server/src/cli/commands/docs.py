@@ -31,3 +31,5 @@ def get_doc(class_name: str, member_name: str | None, version: str | None):
     config = get_config()
     result = asyncio.run(_get_doc(class_name, member_name, version))
     click.echo(format_output(result, config.format))
+    if result.get("success") is False:
+        raise click.exceptions.Exit(1)
