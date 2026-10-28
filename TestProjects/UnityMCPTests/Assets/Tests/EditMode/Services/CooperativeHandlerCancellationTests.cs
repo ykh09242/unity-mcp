@@ -172,6 +172,7 @@ namespace MCPForUnityTests.Editor.Services
                 )
             );
             Assert.IsTrue(owner.TryCancel("queued"));
+            Assert.IsTrue(SpinWait.SpinUntil(() => request.IsCancellationRequested, TimeSpan.FromSeconds(5)));
             Assert.IsFalse(invoked);
             // Skipping the queued command may settle its own task, but the following
             // command must still wait for the earlier mutation to finish.
@@ -256,6 +257,7 @@ namespace MCPForUnityTests.Editor.Services
                 )
             );
             Assert.IsTrue(owner.TryCancel("first"));
+            Assert.AreSame(active.Response, await Task.WhenAny(active.Response, Task.Delay(5000)));
             Assert.IsTrue(active.Response.IsCanceled);
             Assert.IsFalse(active.Completion.IsCompleted);
             Assert.IsFalse(nextInvoked);

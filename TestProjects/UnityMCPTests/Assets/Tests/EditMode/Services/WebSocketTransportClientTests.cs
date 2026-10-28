@@ -811,6 +811,8 @@ namespace MCPForUnityTests.Editor.Services
 
         [TestCase("force")]
         [TestCase("disconnect")]
+        [TestCase("wire")]
+        [TestCase("wire_throw")]
         public async Task HeldCancellationCallback_RetainsOwnershipWithoutBlockingControl(string transition)
         {
             RequireOwnedProgressEditor();
@@ -834,6 +836,8 @@ namespace MCPForUnityTests.Editor.Services
                         {
                             callbackEntered.TrySetResult(true);
                             releaseCallback.Wait();
+                            if (transition == "wire_throw")
+                                throw new InvalidOperationException("test cancellation callback failure");
                         });
                         entered.TrySetResult(true);
                         return await release.Task;
@@ -856,6 +860,8 @@ namespace MCPForUnityTests.Editor.Services
                 var work = (ConnectionCommandWork)GetField(client, "_commandWork");
                 if (transition == "force")
                     force = Task.Run(() => client.ForceStop());
+                else if (transition.StartsWith("wire", StringComparison.Ordinal))
+                    peer.Send(new JObject { ["type"] = "cancel", ["id"] = id });
                 else
                     peer.DropConnection();
                 await NativeProgressProbe.AwaitOwned(callbackEntered.Task);
@@ -865,9 +871,16 @@ namespace MCPForUnityTests.Editor.Services
                     Assert.AreNotEqual(WebSocketState.Open, oldSocket.State, "Abort must not wait for user callbacks.");
                     await NativeProgressProbe.AwaitOwned(client.StopAsync());
                 }
-                else
+                else if (transition == "disconnect")
                     await AwaitControlCondition(() => client.State.Error?.Contains("execution_unsettled") == true);
-                StringAssert.Contains("execution_unsettled", client.State.Error);
+                else
+                {
+                    await peer.Barrier();
+                    Assert.IsTrue(client.IsConnected, "A held wire-cancel callback cannot block ping or close the receive loop.");
+                    Assert.IsNull(client.State.Error);
+                }
+                if (!transition.StartsWith("wire", StringComparison.Ordinal))
+                    StringAssert.Contains("execution_unsettled", client.State.Error);
                 Assert.IsFalse(work.DrainAsync().IsCompleted);
                 Assert.DoesNotThrow(() =>
                 {
@@ -885,7 +898,8 @@ namespace MCPForUnityTests.Editor.Services
                     await client.StopAsync();
                     Assert.IsTrue(await client.StartAsync());
                 }
-                await peer.WaitRegistered(2);
+                if (!transition.StartsWith("wire", StringComparison.Ordinal))
+                    await peer.WaitRegistered(2);
                 await peer.Barrier();
                 Assert.IsTrue(client.IsConnected);
                 Assert.AreEqual(1, calls, "An uncertain mutation cannot be replayed.");

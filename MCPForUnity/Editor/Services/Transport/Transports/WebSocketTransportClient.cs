@@ -1251,7 +1251,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             // Only negotiated peers can relax the legacy FIFO predecessor. Native admission
             // still rechecks the actual handler identity and all current owner barriers.
             bool bypass = AllowsArbitrationBypass(arbitrationNegotiated, command);
-            string rejection = work.TryStart(commandId, previous => ExecuteQueuedCommandAsync(previous, request, token), request.Cancel, bypass);
+            string rejection = work.TryStartWithAsyncCancellation(
+                commandId,
+                previous => ExecuteQueuedCommandAsync(previous, request, token),
+                request.CancelAsync,
+                bypass,
+                deadline.Dispose
+            );
             if (rejection != null)
             {
                 request.Progress?.Dispose();
@@ -1304,11 +1310,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             private int _cancelRequested;
             public bool CancelRequested => Volatile.Read(ref _cancelRequested) != 0;
 
-            public void Cancel()
+            public Task CancelAsync()
             {
                 Interlocked.Exchange(ref _cancelRequested, 1);
                 Progress?.Close();
-                Deadline.Cancel();
+                return Task.Run(() => Deadline.Cancel());
             }
         }
 
@@ -1325,6 +1331,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     await ConnectionCommandWork.WaitAsync(previous, request.Deadline.Token).ConfigureAwait(false);
                     request.Deadline.Token.ThrowIfCancellationRequested();
+                    if (request.CancelRequested)
+                        throw new OperationCanceledException();
                     if (request.Progress != null)
                     {
                         progressStop = CancellationTokenSource.CreateLinkedTokenSource(request.Deadline.Token);
@@ -1388,7 +1396,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 catch (OperationCanceledException) { }
                 request.Timing?.ExecutionDone();
-                request.Deadline.Dispose();
             }
         }
 

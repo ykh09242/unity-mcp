@@ -11,7 +11,8 @@ namespace MCPForUnity.Editor.Services.Transport
         public const string CancellationCapability = "command_cancel_v1";
         private readonly object _gate = new object();
         private readonly Dictionary<string, Task> _tasks = new Dictionary<string, Task>(StringComparer.Ordinal);
-        private readonly Dictionary<string, Action> _cancellations = new Dictionary<string, Action>(StringComparer.Ordinal);
+        private readonly Dictionary<string, Func<Task>> _cancellations = new Dictionary<string, Func<Task>>(StringComparer.Ordinal);
+        private readonly Dictionary<string, Task> _cancellationTasks = new Dictionary<string, Task>(StringComparer.Ordinal);
         private readonly CancellationToken _token;
         private readonly int _capacity;
         private Task _tail = Task.CompletedTask;
@@ -24,7 +25,10 @@ namespace MCPForUnity.Editor.Services.Transport
             _capacity = capacity;
         }
 
-        public string TryStart(string id, Func<Task, Task> work, Action cancel = null, bool bypassPredecessor = false)
+        public string TryStart(string id, Func<Task, Task> work, Action cancel = null, bool bypassPredecessor = false) =>
+            TryStartWithAsyncCancellation(id, work, cancel == null ? null : () => Task.Run(cancel), bypassPredecessor);
+
+        public string TryStartWithAsyncCancellation(string id, Func<Task, Task> work, Func<Task> cancel, bool bypassPredecessor = false, Action settled = null)
         {
             var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             Task predecessor;
@@ -54,7 +58,7 @@ namespace MCPForUnity.Editor.Services.Transport
             {
                 operation = Task.FromException(ex);
             }
-            _ = ObserveAsync(id, operation, completion);
+            _ = ObserveAsync(id, operation, completion, settled);
             return null;
         }
 
@@ -62,25 +66,35 @@ namespace MCPForUnity.Editor.Services.Transport
         {
             if (string.IsNullOrEmpty(id))
                 return false;
-            Action cancel;
+            Func<Task> cancel;
+            var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             lock (_gate)
             {
                 if (_token.IsCancellationRequested || !_cancellations.TryGetValue(id, out cancel))
                     return false;
+                _cancellations.Remove(id);
+                _cancellationTasks.Add(id, completion.Task);
             }
-            // Cancellation can run user callbacks synchronously; never invoke under the queue lock.
+            // Publish callback ownership before invoking the request marker. The async
+            // callback must return promptly; user token callbacks run on its owned task.
+            _ = ObserveCancellationAsync(cancel, completion);
+            return true;
+        }
+
+        private static async Task ObserveCancellationAsync(Func<Task> cancel, TaskCompletionSource<bool> completion)
+        {
             try
             {
-                cancel();
-                return true;
+                await cancel().ConfigureAwait(false);
             }
-            catch (ObjectDisposedException)
+            catch (Exception) { /* Cancellation callback failures must not terminate receive-loop control. */ }
+            finally
             {
-                return false;
+                completion.TrySetResult(true);
             }
         }
 
-        private async Task ObserveAsync(string id, Task operation, TaskCompletionSource<bool> completion)
+        private async Task ObserveAsync(string id, Task operation, TaskCompletionSource<bool> completion, Action settled)
         {
             try
             {
@@ -89,12 +103,30 @@ namespace MCPForUnity.Editor.Services.Transport
             catch (Exception) { /* The owning transport reports failures; observe every owned task. */ }
             finally
             {
+                Task cancellation;
                 lock (_gate)
                 {
-                    _tasks.Remove(id);
+                    // Claim settlement before checking callback ownership, so a late
+                    // cancel cannot start after this command has been released.
                     _cancellations.Remove(id);
+                    _cancellationTasks.TryGetValue(id, out cancellation);
                 }
-                completion.TrySetResult(true);
+                if (cancellation != null)
+                    await cancellation.ConfigureAwait(false);
+                try
+                {
+                    settled?.Invoke();
+                }
+                catch (Exception) { /* Resource cleanup must not strand the owned queue entry. */ }
+                finally
+                {
+                    lock (_gate)
+                    {
+                        _tasks.Remove(id);
+                        _cancellationTasks.Remove(id);
+                    }
+                    completion.TrySetResult(true);
+                }
             }
         }
 
