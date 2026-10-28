@@ -1,6 +1,31 @@
-Server/build
-.git
-.venv
-__pycache__
-*.pyc
-.DS_Store
+# Default deny: only reviewed server build/runtime inputs enter the context.
+**
+!Server/pyproject.toml
+!Server/uv.lock
+!Server/README.md
+!Server/LICENSE
+!Server/src/
+!Server/src/**
+!MCPForUnity/package.json
+
+# Exclusions stay last so nested local state cannot override the allowlist.
+**/.*
+**/.*/**
+**/.env*
+**/.git
+**/.work
+**/.tmp
+**/.codex
+**/.agents
+**/.venv
+**/venv
+**/venv/**
+**/__pycache__
+**/__pycache__/**
+**/*.pyc
+**/*.pyo
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/.DS_Store

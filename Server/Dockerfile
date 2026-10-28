@@ -18,7 +18,11 @@ WORKDIR /app
 
 RUN pip install uv
 
-COPY . /app
+# Keep the source layout used by package-source/version resolution, while
+# excluding tests, Unity projects, tooling and all local checkout state.
+COPY Server/pyproject.toml Server/uv.lock Server/README.md Server/LICENSE /app/Server/
+COPY Server/src/ /app/Server/src/
+COPY MCPForUnity/package.json /app/MCPForUnity/package.json
 
 WORKDIR /app/Server
 
