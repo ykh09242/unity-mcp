@@ -23,6 +23,8 @@ python tools/update_versions.py --component server --version A.B.C
 
 After a server version change, test and commit the server files, then manually repin the Unity package and root manifest to that verified server commit using the procedure below. `--component all` is the legacy synchronized upstream mode, explicitly used by the upstream release workflow; use the independent modes for this fork.
 
+When preparing a stable release, also update the current release links and version examples in `README.md` and `website/docs/getting-started/{index,install,migrate}.md`. The version helper does not rewrite these authored pages. Keep historical release references unchanged. Before committing the final package, run `python -m pytest ../tools/tests/test_fork_documentation.py` from `Server/` with the existing development environment; this checks the canonical install tag and pinned launch examples against package metadata.
+
 ## Prepare a pinned source version
 
 1. Verify the server changes and commit them in the fork.
