@@ -140,6 +140,8 @@ class JUnitCase:
     time_s: float = 0.0
     failure: str | None = None
     skipped: bool = False
+    error: str | None = None
+    classname: str | None = None
 
 
 @dataclass
@@ -610,17 +612,19 @@ def _dig(resp: Any, key: str) -> Any:
 def merge_junit(suites: list[JUnitSuite]) -> ET.ElementTree:
     """Merge JUnitSuites into a single <testsuites> ElementTree."""
     root = ET.Element("testsuites")
-    total_tests = total_failures = total_skipped = 0
+    total_tests = total_failures = total_skipped = total_errors = 0
     total_time = 0.0
     for suite in suites:
         if suite is None:
             continue
         s_failures = sum(1 for c in suite.cases if c.failure is not None)
         s_skipped = sum(1 for c in suite.cases if c.skipped)
+        s_errors = sum(1 for c in suite.cases if c.error is not None)
         s_time = sum(c.time_s for c in suite.cases)
         total_tests += len(suite.cases)
         total_failures += s_failures
         total_skipped += s_skipped
+        total_errors += s_errors
         total_time += s_time
         suite_el = ET.SubElement(
             root,
@@ -630,6 +634,7 @@ def merge_junit(suites: list[JUnitSuite]) -> ET.ElementTree:
                 "tests": str(len(suite.cases)),
                 "failures": str(s_failures),
                 "skipped": str(s_skipped),
+                "errors": str(s_errors),
                 "time": f"{s_time:.3f}",
             },
         )
@@ -637,16 +642,24 @@ def merge_junit(suites: list[JUnitSuite]) -> ET.ElementTree:
             case_el = ET.SubElement(
                 suite_el,
                 "testcase",
-                {"name": case.name, "classname": suite.name, "time": f"{case.time_s:.3f}"},
+                {
+                    "name": case.name,
+                    "classname": case.classname or suite.name,
+                    "time": f"{case.time_s:.3f}",
+                },
             )
             if case.skipped:
                 ET.SubElement(case_el, "skipped")
             if case.failure is not None:
                 fail_el = ET.SubElement(case_el, "failure", {"message": case.failure[:200]})
                 fail_el.text = case.failure
+            if case.error is not None:
+                error_el = ET.SubElement(case_el, "error", {"message": case.error[:200]})
+                error_el.text = case.error
     root.set("tests", str(total_tests))
     root.set("failures", str(total_failures))
     root.set("skipped", str(total_skipped))
+    root.set("errors", str(total_errors))
     root.set("time", f"{total_time:.3f}")
     return ET.ElementTree(root)
 
@@ -1410,6 +1423,54 @@ def compile_probe(instance_id: str, max_retries: int, retry_ms: int, send=None) 
     return True
 
 
+def _read_smoke_report(path: Path) -> JUnitSuite:
+    """Read only this subprocess's bounded JUnit artifact, never an older report."""
+    with path.open("rb") as stream:
+        payload = stream.read(1024 * 1024 + 1)
+    if len(payload) > 1024 * 1024:
+        raise ValueError("smoke report exceeds 1 MiB")
+    root = ET.fromstring(payload)
+    suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
+    if root.tag not in ("testsuite", "testsuites") or len(suites) != 1:
+        raise ValueError("expected one smoke test suite")
+    source = suites[0]
+    suite = JUnitSuite(source.get("name") or "smoke")
+    for row in source.findall("testcase"):
+        name = row.get("name")
+        duration = float(row.get("time", "0"))
+        if not name or not math.isfinite(duration) or duration < 0:
+            raise ValueError("invalid smoke test identity or duration")
+        failure = row.find("failure")
+        error = row.find("error")
+        suite.cases.append(
+            JUnitCase(
+                name=name,
+                time_s=duration,
+                classname=row.get("classname"),
+                failure=(failure.text or failure.get("message") or "assertion failed")
+                if failure is not None
+                else None,
+                error=(error.text or error.get("message") or "test error")
+                if error is not None
+                else None,
+                skipped=row.find("skipped") is not None,
+            )
+        )
+    counts = {
+        "tests": len(suite.cases),
+        "failures": sum(case.failure is not None for case in suite.cases),
+        "errors": sum(case.error is not None for case in suite.cases),
+        "skipped": sum(case.skipped for case in suite.cases),
+    }
+    if not suite.cases or all(case.skipped for case in suite.cases):
+        raise ValueError("smoke report contains no executed cases")
+    for key, actual in counts.items():
+        for element in (root, source):
+            if element.get(key) is not None and int(element.get(key)) != actual:
+                raise ValueError(f"smoke report {key} count does not match its cases")
+    return suite
+
+
 def run_smoke_leg(
     instance_id: str,
     junit_path: Path,
@@ -1418,46 +1479,45 @@ def run_smoke_leg(
     deadline: float | None = None,
     python_exe: str | None = None,
 ) -> LegOutcome:
-    """Run bridge_smoke.py as a subprocess; honor its 0/1/2 exit contract.
-
-    Bounded by the overall deadline so a wedged smoke run cannot outlive the
-    --overall-timeout budget (the watchdog is the hard backstop; passing a
-    timeout here reaps the child cleanly first). retry_ms is threaded through so
-    all three legs share the configured reload-retry delay.
-    """
+    """Run a bounded smoke child and retain its fresh cases for both report outputs."""
     smoke = REPO_ROOT / "Server" / "tests" / "e2e" / "bridge_smoke.py"
-    py = python_exe or sys.executable
-    argv = [
-        py,
-        str(smoke),
-        "--instance",
-        instance_id,
-        "--junit",
-        str(junit_path),
-        "--max-retries",
-        str(max_retries),
-        "--retry-ms",
-        str(retry_ms),
-    ]
-    timeout = max(1.0, deadline - time.monotonic()) if deadline is not None else None
-    try:
-        rc = subprocess.run(argv, check=False, timeout=timeout).returncode
-    except subprocess.TimeoutExpired:
-        return LegOutcome(
-            "smoke",
-            "error",
-            blocking=True,
-            detail="bridge smoke timed out (overall budget)",
-            exit_code=2,
-        )
-    if rc == 0:
-        return LegOutcome("smoke", "pass", blocking=True, detail="bridge smoke passed", exit_code=0)
-    if rc == 1:
-        return LegOutcome(
-            "smoke", "fail", blocking=True, detail="bridge smoke assertion regression", exit_code=1
-        )
-    # rc == 2 (or anything else) -> bridge unreachable / setup failure.
-    return LegOutcome("smoke", "error", blocking=True, detail="no bridge reachable", exit_code=2)
+    suite = None
+    detail = ""
+    rc = 2
+    # A unique path prevents a failed child from appearing to pass via stale XML.
+    with tempfile.TemporaryDirectory(prefix="unity-mcp-smoke-") as directory:
+        report = Path(directory) / junit_path.name
+        argv = [
+            python_exe or sys.executable,
+            str(smoke),
+            "--instance",
+            instance_id,
+            "--junit",
+            str(report),
+            "--max-retries",
+            str(max_retries),
+            "--retry-ms",
+            str(retry_ms),
+        ]
+        timeout = max(1.0, deadline - time.monotonic()) if deadline is not None else None
+        try:
+            rc = subprocess.run(argv, check=False, timeout=timeout).returncode
+            suite = _read_smoke_report(report)
+        except subprocess.TimeoutExpired:
+            detail = "bridge smoke timed out (overall budget)"
+        except (OSError, ValueError, ET.ParseError) as error:
+            detail = f"bridge smoke did not produce a valid report: {error}"
+    if suite is not None and not detail:
+        failed = any(case.failure is not None or case.error is not None for case in suite.cases)
+        if rc == 0 and not failed:
+            return LegOutcome("smoke", "pass", True, "bridge smoke passed", 0, suite)
+        if rc == 1 and failed:
+            return LegOutcome("smoke", "fail", True, "bridge smoke assertion regression", 1, suite)
+        detail = f"bridge smoke exit {rc} does not confirm its reported result"
+    if suite is None:
+        suite = JUnitSuite("smoke")
+    suite.cases.append(JUnitCase("smoke_report", error=detail))
+    return LegOutcome("smoke", "error", True, detail, 2, suite)
 
 
 def cleanup_ci_scene(args: argparse.Namespace, project_path: Path) -> None:
@@ -1862,6 +1922,7 @@ def write_reports(junit_path: Path, reports_dir: Path, outcomes: list[LegOutcome
         if o.junit_suite is None:
             continue
         target = per_leg_file.get(o.name, reports_dir / f"junit-{o.name}.xml")
+        target.parent.mkdir(parents=True, exist_ok=True)
         merge_junit([o.junit_suite]).write(str(target), encoding="utf-8", xml_declaration=True)
     # Also write a combined report.
     suites = [o.junit_suite for o in outcomes if o.junit_suite is not None]
