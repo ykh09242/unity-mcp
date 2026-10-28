@@ -1261,60 +1261,32 @@ async def _ordered_script_edits(ctx: Context, request: _OrderedScriptRequest) ->
     name="script_apply_edits",
     unity_target="manage_script",
     description=(
-        """Structured C# edits (methods/classes) with safer boundaries - prefer this over raw text.
-    Best practices:
-    - Method/class edits adapt to local indentation and line endings without changing string values.
-    - Range, anchor, regex, prepend and append payloads are literal: include all desired whitespace/newlines.
-    - options.preview=true prepares complete proposed contents, target paths and hashes without applying changes.
-    - options.mixed_order='request' prepares mixed edits in request order against the current buffer.
-    - Ordered apply requires precondition_bytes_sha256 and candidate_bytes_sha256 from its preview; it commits once.
-    - Omitted or text_first mixed_order preserves text-first execution and unsupported mixed preview.
-    - For Codex-native file visibility, verify local target/workspace and original SHA, use an exposed native file tool only if it preserves exact candidate bytes, then verify candidate_bytes_sha256 before Unity validate/refresh.
-    - Native patch capabilities vary: CRLF, BOM and missing final newline may require a byte-preserving tool or direct Unity edit fallback. Never normalize string bytes or fabricate file events.
-    - Prefer anchor_* ops for pattern-based insert/replace near stable markers
-    - Use replace_method/delete_method for whole-method changes (keeps signatures balanced)
-    - Avoid whole-file regex deletes; validators will guard unbalanced braces
-    - For tail insertions, prefer anchor/regex_replace on final brace (class closing)
-    - Pass options.validate='standard' for structural checks; 'basic' for interior-only edits
-    Canonical fields (use these exact keys):
-    - op: replace_method | insert_method | delete_method | anchor_insert | anchor_delete | anchor_replace
-    - className: string (defaults to 'name' if omitted on method/class ops)
-    - methodName: string (required for replace_method, delete_method)
-    - replacement: string (required for replace_method, insert_method)
-    - position: start | end | after | before (insert_method only)
-    - afterMethodName / beforeMethodName: string (required when position='after'/'before')
-    - anchor: regex string (for anchor_* ops)
-    - text: string (for anchor_insert/anchor_replace)
-    Examples:
-    1) Replace a method:
-    {
-        "name": "SmartReach",
-        "path": "Assets/Scripts/Interaction",
-        "edits": [
-        {
-        "op": "replace_method",
-        "className": "SmartReach",
-        "methodName": "HasTarget",
-        "replacement": "public bool HasTarget(){ return currentTarget!=null; }"
-        }
-    ],
-    "options": {"validate": "standard", "refresh": "immediate"}
-    }
-    "2) Insert a method after another:
-    {
-        "name": "SmartReach",
-        "path": "Assets/Scripts/Interaction",
-        "edits": [
-        {
-        "op": "insert_method",
-        "className": "SmartReach",
-        "replacement": "public void PrintSeries(){ Debug.Log(seriesName); }",
-        "position": "after",
-        "afterMethodName": "GetCurrentTarget"
-        }
-    ],
-    }
-    ]"""
+        "Edit C# source using operations scoped to the intended members or text.\n    Choose "
+        "operations from the inspected source:\n    - Method/class edits adapt to local indentation "
+        "and line endings without changing string values.\n    - Range, anchor, regex, prepend and "
+        "append payloads are literal: include all desired whitespace/newlines.\n    - "
+        "options.preview=true prepares complete proposed contents, target paths and hashes without "
+        "applying changes.\n    - options.mixed_order='request' prepares mixed edits in request "
+        "order against the current buffer.\n    - Ordered apply requires precondition_bytes_sha256 "
+        "and candidate_bytes_sha256 from its preview; it commits once.\n    - Omitted or text_first "
+        "mixed_order preserves text-first execution and unsupported mixed preview.\n    - For "
+        "Codex-native file visibility, verify local target/workspace and original SHA, use an "
+        "exposed native file tool only if it preserves exact candidate bytes, then verify "
+        "candidate_bytes_sha256 before Unity validate/refresh.\n    - Native patch capabilities "
+        "vary: CRLF, BOM and missing final newline may require a byte-preserving tool or direct "
+        "Unity edit fallback. Never normalize string bytes or fabricate file events.\n    - Use "
+        "member operations for whole-method changes; use text/anchor operations for precise literal"
+        " edits.\n    - Verify anchor uniqueness and enclosing scope. Do not assume a file's final "
+        "brace belongs to the intended class.\n    - Validate structural changes; syntax checks do "
+        "not establish runtime behavior.\n    - Pass options.validate='standard' for structural "
+        "checks; 'basic' for interior-only edits\n    Canonical fields (use these exact keys):\n    -"
+        " op: replace_method | insert_method | delete_method | anchor_insert | anchor_delete | "
+        "anchor_replace\n    - className: string (defaults to 'name' if omitted on method/class ops)"
+        "\n    - methodName: string (required for replace_method, delete_method)\n    - replacement: "
+        "string (required for replace_method, insert_method)\n    - position: start | end | after | "
+        "before (insert_method only)\n    - afterMethodName / beforeMethodName: string (required "
+        "when position='after'/'before')\n    - anchor: regex string (for anchor_* ops)\n    - text: "
+        "string (for anchor_insert/anchor_replace)"
     ),
     annotations=ToolAnnotations(
         title="Script Apply Edits",

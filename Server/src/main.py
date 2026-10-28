@@ -458,90 +458,33 @@ async def _shutdown_server_resources(
 
 
 def _build_instructions(project_scoped_tools: bool) -> str:
-    from services.tool_discovery import SETUP_GUIDANCE
+    # Some clients repeat initialize instructions beside each tool. Keep shared
+    # rules compact; detailed procedures live in the on-demand skill resources.
+    custom_tools_note = (
+        "Read mcpforunity://custom-tools only when project-specific capabilities are needed."
+        if project_scoped_tools
+        else "Custom tools appear as standard tools after Unity connects."
+    )
+    return f"""Unity Editor tools. Use the live schema and the smallest relevant observation before acting.
 
-    if project_scoped_tools:
-        custom_tools_note = (
-            "I have a dynamic tool system. Always check the mcpforunity://custom-tools resource first "
-            "to see what special capabilities are available for the current project."
-        )
-    else:
-        custom_tools_note = (
-            "Custom tools are registered as standard tools when Unity connects. "
-            "No project-scoped custom tools resource is available."
-        )
+Targeting and discovery:
+- Resolve the project through mcpforunity://instances. For ambiguous/multiple Editors, pass unity_instance=Name@hash on tools and _meta.unity_instance on resource reads. Modern sessionless clients require per-request targeting; only supported stateful clients can pin a default with set_active_instance.
+- Resources use exact listed URIs, never names converted to paths. Unity payloads are normally under data. In Codex the resource server key is unityMCP; use the inventory's actual key in other clients.
+- Use the client's exposed tool inventory. For missing optional tools, inspect manage_tools(action="list_groups").discovery before selection; it requires supported client scope/project binding. Static UNITY_MCP_TOOL_PROFILE=full is a configuration option, not permission to change setup. Editor toggles and consent still apply. {custom_tools_note}
 
-    return f"""
-This server provides tools to interact with the Unity Game Engine Editor.
+State and execution:
+- Read mcpforunity://editor/state when lifecycle readiness matters. data.advice.ready_for_tools is readiness, not compilation success. Check the job's compilation outcome/source confirmation and Console diagnostics before using new types. A refresh acknowledgement alone proves neither.
+- Preserve job IDs across reconnects. On uncertain results inspect the job/target before repeating a mutation; never automatically replay. Follow retry/recovery guidance; recovery_required is not a transient wait. Keep dependent edits/validation ordered and inspect each batch result (not transactional).
+- For tests in the current Play state, preserve the session/scenes/runtime objects: no restart, scene reload, temporary scripts or project refresh. Prefer dedicated tools; proactively use execute_code for authorized runtime work they cannot express when exposed, enabled and consented. Keep safety_checks=true, verify target/API and Play state, return bounded before/after values, and observe async effects without blocking waits. Verify input/UI paths with interaction tools. Never bypass consent or extend scope to persistent/external writes.
+- For temporary state/resources, track ownership and lifetime. Arrange exception-safe restoration/cleanup after their last use with lifecycle-appropriate APIs; preserve requested results and unrelated runtime state.
 
-{custom_tools_note}
+Source edits:
+- Native application of script_apply_edits(options.preview=true) requires proven same-host/workspace provenance, a complete candidate, fresh original hash and exact UTF-8 candidate bytes. Read skill://unity-mcp-orchestrator/references/scripts.md for the full handoff if available; otherwise use direct Unity edits. Verify raw bytes and get_sha before validation/refresh; never apply a truncated diff or fabricate file events. After edits, wait for verified compilation and inspect read_console.
+- Verify installed Unity/package APIs and actual assets before writing code; use unity_reflect/unity_docs when available. Use exact returned targets, forward-slash asset paths and explicit save scope.
 
-Tool discovery setup:
-{SETUP_GUIDANCE}
-
-Targeting Unity instances:
-- Use the resource mcpforunity://instances to list active Unity sessions (Name@hash).
-- When multiple instances are connected, specify the target for each request. Pass unity_instance as a tool argument (e.g. unity_instance="MyGame@abc123", unity_instance="abc" for a hash prefix, or unity_instance="6401" for a port number in stdio mode).
-- For resource reads, set request metadata _meta.unity_instance to the same identifier (FastMCP Python client: read_resource(uri, meta={{"unity_instance": "MyGame@abc123"}})). Per-request targeting does not change the session default.
-- Clients using a stateful legacy MCP protocol can call set_active_instance with an exact Name@hash to pin a session default. Modern sessionless clients must use per-request targeting; set_active_instance is unavailable. manage_tools selection requires a trusted client scope and resolved project; clients without one can use the static UNITY_MCP_TOOL_PROFILE=full profile.
-
-Important Workflows:
-
-Resources vs Tools:
-- Use RESOURCES to read editor state (mcpforunity://editor/state, mcpforunity://project/info, mcpforunity://project/tags, mcpforunity://tests, etc)
-- Use TOOLS to perform actions and mutations (manage_editor for play mode control, tag/layer management, etc)
-- Always check related resources before modifying the engine state with tools
-
-Reading resources (read this before using ANY resource named below):
-- Resources are addressed by URI, never by name. A resource's name and URI are NOT interchangeable: names use underscores (e.g. editor_state) while URIs use slashes (e.g. mcpforunity://editor/state). Do NOT build a URI by swapping separators in the name — you will 404.
-- These instructions always spell resources as full mcpforunity:// URIs — read one exactly as written. If you only have a name (from resources/list or another tool's output), look its URI up in resources/list rather than guessing it.
-- Resource payloads are wrapped: the content lives under a top-level `data` object, so field paths are `data.<section>.<field>` (e.g. `data.advice.ready_for_tools`), not bare top-level fields.
-- The mcpforunity:// URI names the resource, not the server. Some clients take a separate server key on a resource read — in Codex, tools are exposed as mcp__unityMCP__* but resources/read wants server: "unityMCP". If a read fails with an unknown-server error, list resources first and use the key exactly as returned.
-
-Script Management:
-- For a Codex-native file edit workflow, first call script_apply_edits with options.preview=true and the selected unity_instance. Preparation returns complete new_contents, authoritative project_root/absolute_path, original_sha256, candidate_sha256 and candidate_bytes_sha256; it applies no edits or refresh. Mixed text/structured preparation is unsupported; split the request or use direct Unity editing.
-- Before a native edit, prove the selected Unity session is on the same local host and its project_root is the permitted current workspace. A matching path/hash alone does not prove local provenance; never map a remote Unity path onto a local namesake. Require a complete untruncated candidate and independently hash new_contents encoded as UTF-8 without BOM. A truncated diff is only a summary, never the apply payload.
-- Read the actual target bytes, strictly decode UTF-8 (strip only an encoding BOM), and check original_sha256 immediately before writing. Abort and prepare again on drift. Choose an actually exposed native file-edit tool that can preserve all candidate bytes; apply_patch implementations may rewrite CRLF, retain BOM or add final newlines. If that byte shape is unsupported, use a capable native editor or the original direct Unity edit request without preview. Never normalize protected string bytes or add shell repairs/fake patches to manufacture file events.
-- After genuine native application, compare exact resulting raw bytes with new_contents encoded as UTF-8 without BOM and candidate_bytes_sha256, then verify get_sha against candidate_sha256 on the same unity_instance. Only after an exact match call validate_script, refresh_unity and read_console for that target. A no_op proposal needs no native write. If local provenance or exact application is unavailable, use the direct Unity edit workflow; this server cannot fabricate Codex Last turn/file-list events or guarantee a particular client UI.
-- After creating or modifying scripts (by your own tools or the `manage_script` tool) use `read_console` to check for compilation errors before proceeding
-- Only after successful compilation can new components/types be used
-- You can poll mcpforunity://editor/state and read `data.compilation.is_compiling` to check if the domain reload is complete, or `data.advice.ready_for_tools` for overall readiness
-
-Scene Setup:
-- Always include a Camera and main Light (Directional Light) in new scenes
-- Create prefabs with `manage_asset` for reusable GameObjects
-- Use `manage_scene` to load, save, and query scene information
-
-Path Conventions:
-- Unless specified otherwise, all paths are relative to the project's `Assets/` folder
-- Use forward slashes (/) in paths for cross-platform compatibility
-
-Console Monitoring:
-- Check `read_console` regularly to catch errors, warnings, and compilation status
-- Filter by log type (Error, Warning, Log) to focus on specific issues
-
-Menu Items:
-- Use `execute_menu_item` when you have read the mcpforunity://menu-items resource
-- This lets you interact with Unity's menu system and third-party tools
-
-Unity API Verification (requires 'docs' tool group):
-- When the 'docs' tool group is active, use `unity_reflect` and `unity_docs` to verify Unity API details before answering questions or writing C# code. LLM training data frequently contains incorrect, outdated, or hallucinated Unity APIs.
-- BEFORE answering Unity API questions: search the project's assets (`manage_asset`) and reflect the API (`unity_reflect`) to verify. Do NOT rely on training data alone.
-- Common hallucination areas: shaders and materials (always search assets for actual shader names), package-specific APIs (Input System, Cinemachine, ProBuilder, NavMesh, URP/HDRP), and APIs that changed between Unity versions.
-- Workflow: `unity_reflect search` → `unity_reflect get_type` → `unity_reflect get_member` → `unity_docs get_doc` (if you need examples/caveats).
-- For shader/material questions: use `manage_asset(action="search", filter_type="Shader")` to find actual shaders in the project before recommending one.
-
-Payload sizing & paging (important):
-- Many Unity queries can return very large JSON. Prefer **paged + summary-first** calls.
-- `manage_scene(action="get_hierarchy")`:
-  - Use `page_size` + `cursor` and follow `next_cursor` until null.
-  - `page_size` is **items per page**; recommended starting point: **50**.
-- `manage_gameobject(action="get_components")`:
-  - Start with `include_properties=false` (metadata-only) and small `page_size` (e.g. **10-25**).
-  - Only request `include_properties=true` when needed; keep `page_size` small (e.g. **3-10**) to bound payloads.
-- `manage_asset(action="search")`:
-  - Use paging (`page_size`, `page_number`) and keep `page_size` modest (e.g. **25-50**) to avoid token-heavy responses.
-  - Keep `generate_preview=false` unless you explicitly need thumbnails (previews may include large base64 payloads).
+Keep context bounded:
+- Read only relevant skill references via the advertised skill://unity-mcp-orchestrator/SKILL.md resource when available. Do not dump every tool schema or whole project catalog.
+- Start with summaries and stop paging once the target is found: hierarchy page_size=50; components include_properties=false/page_size=10; asset search page_size=25/generate_preview=false. Fetch detailed properties, stacks, test failures or images only as needed. Prefer bounded Console reads and job summaries over repeatedly fetching full results; retain IDs/cursors for follow-up.
 """
 
 

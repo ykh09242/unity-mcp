@@ -1,7 +1,7 @@
 ---
 title: script_apply_edits
 sidebar_label: script_apply_edits
-description: "Structured C# edits (methods/classes) with safer boundaries - prefer this over raw text."
+description: "Edit C# source using operations scoped to the intended members or text."
 ---
 
 # `script_apply_edits`
@@ -12,8 +12,8 @@ description: "Structured C# edits (methods/classes) with safer boundaries - pref
 
 ## Description
 
-Structured C# edits (methods/classes) with safer boundaries - prefer this over raw text.
-    Best practices:
+Edit C# source using operations scoped to the intended members or text.
+    Choose operations from the inspected source:
     - Method/class edits adapt to local indentation and line endings without changing string values.
     - Range, anchor, regex, prepend and append payloads are literal: include all desired whitespace/newlines.
     - options.preview=true prepares complete proposed contents, target paths and hashes without applying changes.
@@ -22,10 +22,9 @@ Structured C# edits (methods/classes) with safer boundaries - prefer this over r
     - Omitted or text_first mixed_order preserves text-first execution and unsupported mixed preview.
     - For Codex-native file visibility, verify local target/workspace and original SHA, use an exposed native file tool only if it preserves exact candidate bytes, then verify candidate_bytes_sha256 before Unity validate/refresh.
     - Native patch capabilities vary: CRLF, BOM and missing final newline may require a byte-preserving tool or direct Unity edit fallback. Never normalize string bytes or fabricate file events.
-    - Prefer anchor_* ops for pattern-based insert/replace near stable markers
-    - Use replace_method/delete_method for whole-method changes (keeps signatures balanced)
-    - Avoid whole-file regex deletes; validators will guard unbalanced braces
-    - For tail insertions, prefer anchor/regex_replace on final brace (class closing)
+    - Use member operations for whole-method changes; use text/anchor operations for precise literal edits.
+    - Verify anchor uniqueness and enclosing scope. Do not assume a file's final brace belongs to the intended class.
+    - Validate structural changes; syntax checks do not establish runtime behavior.
     - Pass options.validate='standard' for structural checks; 'basic' for interior-only edits
     Canonical fields (use these exact keys):
     - op: replace_method | insert_method | delete_method | anchor_insert | anchor_delete | anchor_replace
@@ -36,36 +35,6 @@ Structured C# edits (methods/classes) with safer boundaries - prefer this over r
     - afterMethodName / beforeMethodName: string (required when position='after'/'before')
     - anchor: regex string (for anchor_* ops)
     - text: string (for anchor_insert/anchor_replace)
-    Examples:
-    1) Replace a method:
-    {
-        "name": "SmartReach",
-        "path": "Assets/Scripts/Interaction",
-        "edits": [
-        {
-        "op": "replace_method",
-        "className": "SmartReach",
-        "methodName": "HasTarget",
-        "replacement": "public bool HasTarget(){ return currentTarget!=null; }"
-        }
-    ],
-    "options": {"validate": "standard", "refresh": "immediate"}
-    }
-    "2) Insert a method after another:
-    {
-        "name": "SmartReach",
-        "path": "Assets/Scripts/Interaction",
-        "edits": [
-        {
-        "op": "insert_method",
-        "className": "SmartReach",
-        "replacement": "public void PrintSeries(){ Debug.Log(seriesName); }",
-        "position": "after",
-        "afterMethodName": "GetCurrentTarget"
-        }
-    ],
-    }
-    ]
 
 ## Parameters
 

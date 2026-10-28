@@ -18,26 +18,8 @@ Visual actions: render_ui (captures UI panel to a PNG screenshot for self-evalua
 Structural actions: link_stylesheet (adds a Style src reference to a UXML file).
 patch_source previews narrow existing source attribute/declaration edits; preview=false requires expected_source_hash and persists source separately from live UI.
 
-UI Toolkit workflow:
-1. Use list to discover existing UI assets
-2. Create a UXML file (structure, like HTML)
-3. Create a USS file (styling, like CSS)
-4. Link stylesheet to UXML via link_stylesheet
-5. Attach a UI component with the UXML source via attach_ui_document and component_type
-   - auto (default) preserves existing UIDocument; new objects prefer PanelRenderer when available.
-   - ui_document explicitly selects UIDocument; panel_renderer requires Unity 6.5+ API support.
-6. Use get_visual_tree to inspect the result
-7. Use modify_visual_element to change text, classes, or inline styles on live elements. Legacy element_name selects the first match; strict_name=true requires uniqueness. Use element_path for current child indices or element_id from a snapshot for explicit selection. Explicit selectors never fall back to a name.
-8. Use render_ui to capture a visual preview for self-evaluation
-   - In play mode: first call queues a WaitForEndOfFrame screen capture and returns pending=true;
-     resume with capture_id from that response to retrieve the PNG. Cancel with that ID and cancel_capture=true.
-     ID-less calls always start separate requests, including identical settings; another live owner is rejected.
-   - In editor mode: immediate panel readback is best-effort; warmup_updates=1..4 opts into bounded deferred readback using capture_id.
-     Results report capture source, readiness and full-image alpha occupancy; opaque pixels do not prove UI presence.
-9. Use detach_ui_document to remove the selected UI component from a GameObject
-10. Use delete to remove .uxml/.uss files
-
-Important: Always use <ui:Style> (with the ui: namespace prefix) in UXML, not bare <Style>. UI Builder will fail to open files that use <Style> without the prefix.
+Inspect existing assets and the live visual tree before choosing source edits or runtime changes. Create, attach, detach or delete only when required by the requested change; preserve unrelated UI. For attach_ui_document, component_type=auto preserves existing UIDocument and prefers available PanelRenderer for new objects; ui_document selects UIDocument, while panel_renderer requires Unity 6.5+ support. modify_visual_element changes live text/classes/styles, not persisted source. Legacy element_name selects the first match; strict_name=true requires uniqueness. element_path selects current child indices; element_id selects a snapshot identity. Explicit selectors do not fall back to names.
+For render_ui, Play Mode queues end-of-frame capture and returns pending=true. Resume with its capture_id; cancel with that ID and cancel_capture=true. ID-less calls start new requests; another live owner is rejected. Edit-mode readback is best-effort; warmup_updates=1..4 enables bounded deferred readback with capture_id. Inspect returned images and readiness; full-image alpha occupancy does not establish UI presence. Use namespace-qualified ui:Style elements for stylesheet links so UI Builder can read the UXML.
 
 ## Parameters
 

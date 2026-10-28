@@ -1,7 +1,7 @@
 ---
 title: batch_execute
 sidebar_label: batch_execute
-description: "Executes multiple MCP commands in a single batch for dramatically better performance."
+description: "Execute multiple native MCP commands in one request."
 ---
 
 # `batch_execute`
@@ -12,7 +12,7 @@ description: "Executes multiple MCP commands in a single batch for dramatically 
 
 ## Description
 
-Executes multiple MCP commands in a single batch for dramatically better performance. STRONGLY RECOMMENDED when creating/modifying multiple objects, adding components to multiple targets, or performing any repetitive operations. Reduces latency and token costs by 10-100x compared to sequential tool calls. The max commands per batch is configurable in the Unity MCP Tools window (default 100, hard max 1000). Example: creating 5 cubes → use 1 batch_execute with 5 create commands instead of 5 separate calls.
+Execute multiple native MCP commands in one request. Batch independent operations whose inputs are already known; keep operations needing earlier returned IDs/results in separate calls. Batching reduces round trips, with no guaranteed latency or token savings. It is not transactional: inspect each indexed outcome, and observe uncertain writes before retrying. The command limit is configurable in the Unity MCP Tools window (default 100, hard max 1000). Use small bounded batches. Preview validates supported scope without running children; applying a target guard rechecks targets/permissions without a rollback guarantee.
 
 ## Parameters
 

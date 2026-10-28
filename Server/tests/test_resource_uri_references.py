@@ -134,7 +134,7 @@ def test_tool_descriptions_reference_resources_by_uri(resource_uris_by_name: dic
         name = tool["name"]
         func = tool["func"]
         offenders += _offenders(
-            tool.get("kwargs", {}).get("description"),
+            tool.get("description"),
             f"tool '{name}' description",
             resource_uris_by_name,
         )

@@ -171,14 +171,20 @@ def test_cli_passes_startup_snapshot_without_rereading_or_logging_it(
         assert custom not in captured
 
 
-def test_server_appends_guidance_to_actual_fastmcp_instructions(entry, monkeypatch):
+@pytest.mark.parametrize("project_scoped_tools", [False, True])
+def test_server_appends_guidance_to_actual_fastmcp_instructions(
+    entry, monkeypatch, project_scoped_tools
+):
     monkeypatch.setattr(entry, "custom_tool_service", entry.custom_tool_service)
     monkeypatch.setattr(entry.CustomToolService, "_instance", entry.CustomToolService._instance)
     monkeypatch.setattr(entry, "register_all_tools", lambda *args, **kwargs: None)
     monkeypatch.setattr(entry, "register_all_resources", lambda *args, **kwargs: None)
     monkeypatch.setattr(entry.config, "http_remote_hosted", False)
-    baseline = entry._build_instructions(False)
-    default = entry.create_mcp_server(False)
-    custom = entry.create_mcp_server(False, custom_instructions="Project guidance.")
+    baseline = entry._build_instructions(project_scoped_tools)
+    default = entry.create_mcp_server(project_scoped_tools)
+    custom = entry.create_mcp_server(project_scoped_tools, custom_instructions="Project guidance.")
     assert default.instructions == baseline
+    # Clients may repeat initialize instructions beside every discovered tool.
+    # Keep common guidance bounded; task-specific recipes belong in skill resources.
+    assert len(default.instructions.encode("utf-8")) <= 4000
     assert custom.instructions == append_custom_instructions(baseline, "Project guidance.")

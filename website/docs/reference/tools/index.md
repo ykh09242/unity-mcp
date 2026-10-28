@@ -46,7 +46,7 @@ Camera setup, Cinemachine and view capture
 Essential scene, script, asset, editor & view recording tools (always on by default)
 - **[`apply_text_edits`](./core/apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`asset_inspect`](./core/asset_inspect.md)** — Search assets or inspect their metadata and components.
-- **[`batch_execute`](./core/batch_execute.md)** — Executes multiple MCP commands in a single batch for dramatically better performance.
+- **[`batch_execute`](./core/batch_execute.md)** — Execute multiple native MCP commands in one request.
 - **[`create_script`](./core/create_script.md)** — Create a new C# script at the given project path.
 - **[`debug_request_context`](./core/debug_request_context.md)** — Return the current FastMCP request context details (client_id, session_id, and meta dump).
 - **[`delete_script`](./core/delete_script.md)** — Delete a C# script by URI or Assets-relative path.
@@ -81,7 +81,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`refresh_unity`](./core/refresh_unity.md)** — Request a Unity asset database refresh and optionally a script compilation.
 - **[`scene_inspect`](./core/scene_inspect.md)** — Inspect loaded scenes, hierarchy and build settings, or frame the Scene view.
 - **[`scene_lifecycle`](./core/scene_lifecycle.md)** — Create, load, save or close scenes and organize loaded scene objects.
-- **[`script_apply_edits`](./core/script_apply_edits.md)** — Structured C# edits (methods/classes) with safer boundaries - prefer this over raw text.
+- **[`script_apply_edits`](./core/script_apply_edits.md)** — Edit C# source using operations scoped to the intended members or text.
 - **[`script_change_set`](./core/script_change_set.md)** — Prepare, apply, inspect or recover 1–256 existing C# source replacements as one bounded change set.
 - **[`set_active_instance`](./core/set_active_instance.md)** — Set the active Unity instance for this client/session.
 - **[`validate_script`](./core/validate_script.md)** — Validate a C# script and report diagnostics, the effective validation engine, and context limitations.
