@@ -65,6 +65,12 @@ def test_editor_state_rejects_missing_payload_without_fabricating_readiness():
                     response = json.loads((await client.read_resource("mcpforunity://editor/state"))[0].text)
                     assert response["success"] is False and response["error"] == "busy", response
                     assert response["data"]["retry_after_ms"] == 25, response
+                    for reason in ([], {}, "permission_denied"):
+                        raw = {"success": False, "error": "native failure", "data": {"reason": reason}}
+                        state.unity_transport.send_with_unity_instance = AsyncMock(return_value=copy.deepcopy(raw))
+                        response = json.loads((await client.read_resource("mcpforunity://editor/state"))[0].text)
+                        assert response["success"] is False and response["error"] == "native failure", response
+                        assert response["data"] == raw["data"], response
 
         asyncio.run(scenario())
     """
@@ -95,6 +101,7 @@ def test_editor_state_preserves_typed_transport_success_and_retry_metadata():
             resources.register_all_resources(server)
             replies = (
                 MCPResponse(success=False, error="busy", hint="retry", data={"reason": "reloading", "retry_after_ms": 25}),
+                MCPResponse(success=False, error="State deadline expired", hint="retry", data={"reason": "command_deadline_exceeded", "phase": "readiness"}),
                 MCPResponse(success=True, data={"observed_at_unix_ms": 5000, "sequence": 3}),
             )
             for mode in ("2026-07-28", "legacy"):
@@ -111,7 +118,11 @@ def test_editor_state_preserves_typed_transport_success_and_retry_metadata():
                         else:
                             assert result["error"] == reply.error, result
                             assert result["hint"] == reply.hint, result
-                            assert result["data"] == reply.data, result
+                            assert all(result["data"][k] == v for k, v in reply.data.items()), result
+                            assert result["data"]["observation"]["status"] == "unavailable", result
+                            assert result["data"]["observation"]["editor_health"] == "unknown", result
+                            assert result["data"]["observation"]["next_action"] == "retry_editor_state", result
+                            assert "advice" not in result["data"], result
         anyio.run(scenario)
     """)
 

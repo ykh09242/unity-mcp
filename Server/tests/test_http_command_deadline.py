@@ -253,7 +253,7 @@ async def test_socket_write_and_response_share_the_remaining_budget(command_hub,
 async def test_shared_state_owner_expires_before_admission_without_dispatch(
     command_hub, monkeypatch
 ):
-    monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", 0.06)
+    monkeypatch.setenv("UNITY_MCP_STATE_TIMEOUT", "0.06")
     read_identity = PluginHub._read_identity
     held = False
 
@@ -287,7 +287,7 @@ async def test_earlier_deadline_follower_uses_the_shared_flights_dispatch_eviden
     import transport.plugin_hub as hub_module
     from services.tools.shared_tool_reads import SharedRead
 
-    monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", watchdog_timeout())
+    monkeypatch.setenv("UNITY_MCP_STATE_TIMEOUT", str(watchdog_timeout()))
     resolve = PluginHub._resolve_session_id
     get_connection = PluginHub._get_connection
     early_waiting = asyncio.Event()
@@ -361,7 +361,7 @@ async def test_earlier_deadline_follower_uses_the_shared_flights_dispatch_eviden
         await await_signal(early_waiting, "early caller selection", producers=(early,))
         # Give the later owner a strictly later installed deadline even on a
         # coarse monotonic clock; neither setup budget is a speed assertion.
-        monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", watchdog_timeout(120))
+        monkeypatch.setenv("UNITY_MCP_STATE_TIMEOUT", str(watchdog_timeout(120)))
         owner = asyncio.create_task(read())
         await await_signal(owner_waiting, "shared read owner", producers=(early, owner))
         assert scopes[early].when() < scopes[owner].when()

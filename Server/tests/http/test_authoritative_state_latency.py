@@ -11,11 +11,22 @@ from tests.timing import watchdog_timeout
 from transport.plugin_hub import PluginHub
 
 
+@pytest.mark.parametrize(
+    "configured,expected", [(None, 30), ("90", 90), ("nan", 30), ("999999", 300)]
+)
+def test_state_budget_is_separate_from_short_ping(configured, expected, monkeypatch):
+    if configured is None:
+        monkeypatch.delenv("UNITY_MCP_STATE_TIMEOUT", raising=False)
+    else:
+        monkeypatch.setenv("UNITY_MCP_STATE_TIMEOUT", configured)
+    assert PluginHub._command_timeouts("get_editor_state", {}) == (expected, expected)
+    assert PluginHub._command_timeouts("ping", {}) == (2, 2)
+
+
 @pytest.mark.asyncio
-async def test_authoritative_state_waits_for_actual_state_and_propagates_busy(peer):
-    caller = asyncio.create_task(
-        read(peer, "get_editor_state", editor_state_read_mode="authoritative")
-    )
+@pytest.mark.parametrize("mode", ["ordinary", "authoritative"])
+async def test_state_waits_for_actual_state_and_propagates_busy(peer, mode):
+    caller = asyncio.create_task(read(peer, "get_editor_state", editor_state_read_mode=mode))
     command = await peer.next_command()
     assert command["name"] == "get_editor_state"
     assert not caller.done()
@@ -45,7 +56,7 @@ async def test_authoritative_state_failure_does_not_poison_next_fresh_read(peer)
 
 @pytest.mark.asyncio
 async def test_authoritative_state_deadline_cancels_pending_read(peer, monkeypatch):
-    monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", 0.03)
+    monkeypatch.setenv("UNITY_MCP_STATE_TIMEOUT", "0.03")
     caller = asyncio.create_task(
         read(peer, "get_editor_state", editor_state_read_mode="authoritative")
     )

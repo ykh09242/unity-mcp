@@ -432,6 +432,37 @@ async def _read_editor_state(
     # If Unity returns a structured retry hint or error, surface it directly.
     if isinstance(response, dict) and not response.get("success", True):
         await _stdio_state_reads.invalidate(stdio_key)
+        detail = response.get("data")
+        reason = detail.get("reason") if isinstance(detail, dict) else None
+        if isinstance(reason, str) and reason in {
+            "command_deadline_exceeded",
+            "job_observation_timeout",
+            "operation_target_changed",
+            "no_unity_session",
+            "stale_connection",
+            "read_invalidated",
+            "reloading",
+            "editor_not_ready",
+            "outcome_unknown",
+        }:
+            response = {
+                **response,
+                "message": (
+                    "A current Editor state snapshot could not be obtained. This is an observation "
+                    "failure, not evidence that the Editor or compilation failed. Retry only "
+                    "mcpforunity://editor/state after reconnect/reload; if it persists, inspect "
+                    "the Editor and Editor.log. Do not repeat preceding mutations."
+                ),
+                "data": {
+                    **detail,
+                    "observation": {
+                        "status": "unavailable",
+                        "editor_health": "unknown",
+                        "next_action": "retry_editor_state",
+                        "retry_after_ms": detail.get("retry_after_ms", 500),
+                    },
+                },
+            }
         return MCPResponse(**response)
 
     if not isinstance(response, dict) or not isinstance(response.get("data"), dict):

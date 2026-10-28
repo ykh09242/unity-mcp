@@ -807,6 +807,7 @@ async def test_sdk_refresh_retains_declared_and_prepared_readiness_policy(
         await client.call_tool("select_fixture")
         monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 0.05)
         monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", 0.02)
+        monkeypatch.setenv("UNITY_MCP_STATE_TIMEOUT", "0.02")
         release = None
         if entry == "refresh_unity":
             await command_hub.registry._lock.acquire()

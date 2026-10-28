@@ -265,24 +265,20 @@ async def test_ordinary_state_fallback_is_shared_and_next_read_is_fresh(peer):
         asyncio.create_task(read(peer, "get_editor_state", editor_state_read_mode="ordinary"))
         for _ in range(6)
     ]
-    probe = await peer.next_command()
-    await yield_callers()
-    await peer.reply(probe)
     command = await peer.next_command()
     await yield_callers()
     assert command["name"] == "get_editor_state"
     await peer.reply(command)
     results = await asyncio.gather(*callers)
-    # Then: both raw readiness and state fetch are single flights, without TTL.
+    # Then: the state fetch itself proves responsiveness, in one flight without TTL.
     assert all(result["data"]["value"] == 7 for result in results)
-    assert peer.counts() == {"ping": 1, "get_editor_state": 1}
+    assert peer.counts() == {"get_editor_state": 1}
     following = asyncio.create_task(
         read(peer, "get_editor_state", editor_state_read_mode="ordinary")
     )
     await peer.reply(await peer.next_command())
-    await peer.reply(await peer.next_command())
     assert (await following)["success"]
-    assert peer.counts() == {"ping": 2, "get_editor_state": 2}
+    assert peer.counts() == {"get_editor_state": 2}
 
 
 @pytest.mark.asyncio
@@ -298,7 +294,6 @@ async def test_state_source_and_consumer_copies_keep_separate_delivery_budgets(p
             response_owner.reset(token)
 
     callers = [asyncio.create_task(owned_read(owner)) for owner in owners]
-    await peer.reply(await peer.next_command())
     command = await peer.next_command()
     await yield_callers()
     # When: a state result creates detached consumer copies.
@@ -317,13 +312,11 @@ async def test_state_source_and_consumer_copies_keep_separate_delivery_budgets(p
 async def test_mutation_admission_separates_pending_state_flights(peer, command):
     # Given: an ordinary state observation still executing in the editor.
     old = asyncio.create_task(read(peer, "get_editor_state", editor_state_read_mode="ordinary"))
-    await peer.reply(await peer.next_command())
     old_command = await peer.next_command()
     # When: mutation admission occurs before a second ordinary observation.
     mutation = asyncio.create_task(read(peer, command))
     mutation_command = await peer.next_command()
     fresh = asyncio.create_task(read(peer, "get_editor_state", editor_state_read_mode="ordinary"))
-    await peer.reply(await peer.next_command())
     fresh_command = await peer.next_command()
     await peer.reply(mutation_command)
     await peer.reply(fresh_command, {"success": True, "data": {"value": 9}})
@@ -339,7 +332,6 @@ async def test_mutation_admission_separates_pending_state_flights(peer, command)
 async def test_authoritative_state_separates_ordinary_flights_before_private_rpc(peer):
     # Given: an older ordinary state source remains pending.
     old = asyncio.create_task(read(peer, "get_editor_state", editor_state_read_mode="ordinary"))
-    await peer.reply(await peer.next_command())
     old_command = await peer.next_command()
     # When: strict preflight begins, then another ordinary resource is read.
     strict = asyncio.create_task(
@@ -347,7 +339,6 @@ async def test_authoritative_state_separates_ordinary_flights_before_private_rpc
     )
     strict_command = await peer.next_command()
     fresh = asyncio.create_task(read(peer, "get_editor_state", editor_state_read_mode="ordinary"))
-    await peer.reply(await peer.next_command())
     fresh_command = await peer.next_command()
     await peer.reply(fresh_command, {"success": True, "data": {"value": 11}})
     await peer.reply(strict_command, {"success": True, "data": {"value": 9}})
@@ -505,7 +496,6 @@ async def test_state_copy_capacity_is_reserved_before_fanout_without_another_rpc
             response_owner.reset(token)
 
     callers = [asyncio.create_task(owned_read(owner)) for owner in owners]
-    await peer.reply(await peer.next_command())
     command = await peer.next_command()
     await yield_callers()
     result = {"success": True, "data": {"value": "x" * 1000}}
@@ -521,7 +511,7 @@ async def test_state_copy_capacity_is_reserved_before_fanout_without_another_rpc
         next(value for value in results if not value["success"])["data"]["reason"]
         == "result_capacity"
     )
-    assert peer.counts() == {"ping": 1, "get_editor_state": 1}
+    assert peer.counts() == {"get_editor_state": 1}
     assert len(PluginHub._retained_results) == 1
     for owner in owners:
         owner.release()
@@ -541,10 +531,8 @@ async def test_cancelled_state_first_owner_does_not_own_the_late_shared_result(p
             response_owner.reset(token)
 
     first = asyncio.create_task(owned_read(first_owner))
-    await peer.reply(await peer.next_command())
     source = await peer.next_command()
     second = asyncio.create_task(owned_read(second_owner))
-    await peer.reply(await peer.next_command())
     await yield_callers()
     # When: the first request ends before the shared Unity result arrives.
     first.cancel()
@@ -596,7 +584,6 @@ async def test_actual_ordinary_resource_coalesces_raw_fallback_before_private_en
     )
     ctx = SimpleNamespace(get_state=AsyncMock(return_value="owned-user"))
     callers = [asyncio.create_task(peer.request(state.get_editor_state, ctx)) for _ in range(6)]
-    await peer.reply(await peer.next_command())
     source = await peer.next_command()
     await yield_callers()
     # When: one raw state RPC completes for all ordinary resource callers.
@@ -616,7 +603,7 @@ async def test_actual_ordinary_resource_coalesces_raw_fallback_before_private_en
     results = await asyncio.gather(*callers)
     # Then: raw RPC counts shrink, while each caller receives private enriched data.
     assert all(result.success and result.data["sequence"] == 7 for result in results)
-    assert peer.counts() == {"ping": 1, "get_editor_state": 1}
+    assert peer.counts() == {"get_editor_state": 1}
     results[0].data["settings"]["batch_execute_max_commands"] = 1
     assert results[1].data["settings"]["batch_execute_max_commands"] == 25
 
@@ -898,11 +885,11 @@ async def test_two_private_state_reads_succeed_after_both_identity_captures(
     await entered.wait()
     # When: another fresh private read advances the epoch before first admission.
     second = asyncio.create_task(private_read())
-    if mode != "authoritative":
+    if params:
         await peer.reply(await peer.next_command())
     second_command = await peer.next_command()
     release.set()
-    if mode != "authoritative":
+    if params:
         await peer.reply(await peer.next_command())
     first_command = await peer.next_command()
     await peer.reply(second_command, {"success": True, "data": {"value": 9}})
@@ -911,7 +898,7 @@ async def test_two_private_state_reads_succeed_after_both_identity_captures(
     assert (await first)["data"]["value"] == 11
     assert (await second)["data"]["value"] == 9
     expected = {"get_editor_state": 2}
-    if mode != "authoritative":
+    if params:
         expected["ping"] = 2
     assert peer.counts() == expected
 
@@ -1013,7 +1000,6 @@ async def test_actual_sdk_delivery_retains_shared_state_copy_until_flush(
         ]
         tasks = [asyncio.create_task(request.run()) for request in requests]
         try:
-            await peer.reply(await peer.next_command())
             source = await peer.next_command()
             await yield_callers()
             # When: one state source completes but both actual sends are blocked.
@@ -1032,7 +1018,7 @@ async def test_actual_sdk_delivery_retains_shared_state_copy_until_flush(
             for request in requests:
                 body = b"".join(message.get("body", b"") for message in request.sent)
                 assert json.loads(body)["result"]["structuredContent"] == result
-            assert peer.counts() == {"ping": 1, "get_editor_state": 1}
+            assert peer.counts() == {"get_editor_state": 1}
             if cancel:
                 tasks[0].cancel()
             else:

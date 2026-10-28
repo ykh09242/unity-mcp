@@ -1316,6 +1316,11 @@ class PluginHub(WebSocketEndpoint):
             # Importing/placing its result in Unity happens after that socket call.
             unity_timeout_s = blender_command_timeout(params)
             server_wait_s = unity_timeout_s + SERVER_RESPONSE_GRACE
+        elif command_type == "get_editor_state":
+            # A state snapshot may wait for a large project's reload/main thread.
+            # Keep heartbeat probes short and cap this separate observation budget.
+            unity_timeout_s = configured_wait_timeout("UNITY_MCP_STATE_TIMEOUT", 30.0, 300.0)
+            server_wait_s = unity_timeout_s
         elif command_type in cls._FAST_FAIL_COMMANDS:
             fast_timeout = float(cls.FAST_FAIL_TIMEOUT)
             unity_timeout_s = fast_timeout
@@ -3507,20 +3512,16 @@ class PluginHub(WebSocketEndpoint):
         # the Unity Editor is unfocused). For fast-path commands, we do a bounded readiness probe using
         # a main-thread ping command (handled by TransportCommandDispatcher) rather than waiting on
         # register_tools (which can be delayed by EditorApplication.delayCall).
-        # A strict empty-param state RPC itself runs on that same main thread and
+        # An empty-param state RPC itself runs on that same main thread and
         # supplies the readiness advice. Keep its fresh, identity-pinned RPC while
         # avoiding a second main-thread roundtrip before every readiness poll.
-        authoritative_state = (
-            command_type == "get_editor_state"
-            and editor_state_read_mode == "authoritative"
-            and not params
-        )
+        state_observation = command_type == "get_editor_state" and not params
         if (
             retry_on_reload
             and probe_allowed
             and command_type in cls._FAST_FAIL_COMMANDS
             and command_type != "ping"
-            and not authoritative_state
+            and not state_observation
         ):
             max_wait_s = _read_bounded_wait_env(
                 "UNITY_MCP_SESSION_READY_WAIT_SECONDS", default_s=6.0, max_s=MAX_COMMAND_TIMEOUT
