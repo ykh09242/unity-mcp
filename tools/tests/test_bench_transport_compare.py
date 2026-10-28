@@ -19,7 +19,9 @@ from tools.bench_transport_resource import normalize_resource
 from tools.bench_transport_report import fingerprint
 
 
-def resource_report(report: Capture, authoritative_pings: int) -> Capture:
+def resource_report(
+    report: Capture, authoritative_pings: int, *, ordinary_pings: int = 1
+) -> Capture:
     """Build exact ordinary/shared and authoritative/private resource cohorts."""
     raw = report.model_dump(mode="json")
     raw["options"]["resource_contract"] = True
@@ -43,7 +45,10 @@ def resource_report(report: Capture, authoritative_pings: int) -> Capture:
             "normalization_paths": list(comparator.NORMALIZATION_PATHS),
         }
         for mode, commands in (
-            ("ordinary", {"get_editor_state": 1, "ping": 1}),
+            (
+                "ordinary",
+                {"get_editor_state": 1, **({"ping": ordinary_pings} if ordinary_pings else {})},
+            ),
             (
                 "authoritative",
                 {
@@ -56,11 +61,15 @@ def resource_report(report: Capture, authoritative_pings: int) -> Capture:
     return Capture.model_validate(raw)
 
 
-def test_authoritative_state_rpc_replaces_exact_legacy_ping_cohort(report: Capture) -> None:
-    # Older captures retain their exact two-ping contract for version comparison.
-    baseline, candidate = resource_report(report, 2), resource_report(report, 0)
+@pytest.mark.parametrize("mode", ["ordinary", "authoritative"])
+def test_state_rpc_replaces_exact_legacy_ping_cohort(report: Capture, mode: str) -> None:
+    # Historical captures remain comparable, but restoring removed pings is a regression.
+    baseline = resource_report(report, 2)
+    candidate = resource_report(
+        report, 0 if mode == "authoritative" else 2, ordinary_pings=0 if mode == "ordinary" else 1
+    )
     assert compare(baseline, candidate)["semantic_parity"] is True
-    with pytest.raises(ValueError, match="increased authoritative"):
+    with pytest.raises(ValueError, match=f"increased {mode}"):
         compare(candidate, baseline)
 
 
@@ -73,7 +82,9 @@ def test_authoritative_state_rpc_replaces_exact_legacy_ping_cohort(report: Captu
         ("authoritative", {"get_editor_state": 2, "ping": 1}),
         ("authoritative", {"get_editor_state": 2, "ping": 3}),
         ("authoritative", {"get_editor_state": 2, "unknown": 1}),
-        ("ordinary", {"get_editor_state": 1}),
+        ("ordinary", {}),
+        ("ordinary", {"get_editor_state": 2}),
+        ("ordinary", {"get_editor_state": 1, "unknown": 1}),
         ("ordinary", {"get_editor_state": 1, "ping": 2}),
     ],
 )

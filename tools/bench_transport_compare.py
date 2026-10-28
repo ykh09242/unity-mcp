@@ -155,10 +155,10 @@ def check_resources(row: ModeCapture) -> None:
         }
         delta = {name: count for name, count in delta.items() if count}
         expected_calls = {"get_editor_state": expected, "ping": expected}
-        # Older products probe before each authoritative RPC; newer products
-        # use the fresh main-thread state itself. Both still require two private
-        # state producers. Ordinary resources keep their existing ping contract.
-        if cohort.mode == "authoritative" and "ping" not in delta:
+        # Older products probe before each state RPC; newer products use the
+        # main-thread state itself. Preserve exact producer counts in both modes
+        # while accepting either no probe or exactly one probe per producer.
+        if "ping" not in delta:
             expected_calls = {"get_editor_state": expected}
         if delta != expected_calls:
             raise ValueError("Resource source/readiness RPC contract changed")
@@ -370,8 +370,8 @@ def compare(baseline: Capture, candidate: Capture) -> dict[str, JsonValue]:
                 after_pings = after.after.commands.get("ping", 0) - after.before.commands.get(
                     "ping", 0
                 )
-                if after.mode == "authoritative" and after_pings > before_pings:
-                    raise ValueError("Candidate increased authoritative readiness RPC count")
+                if after_pings > before_pings:
+                    raise ValueError(f"Candidate increased {after.mode} readiness RPC count")
             if [cohort.normalized_sha256 for cohort in left.resource_contract] != [
                 cohort.normalized_sha256 for cohort in right.resource_contract
             ]:
