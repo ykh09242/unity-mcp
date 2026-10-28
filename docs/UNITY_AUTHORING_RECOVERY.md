@@ -107,6 +107,41 @@ Check `data.compilation.outcome`, readiness, and native coordination separately.
 `failed` or `unknown` is not compiler success; `source_revision_confirmed` is a
 separate source-to-assembly attribution result.
 
+## Distinguish idle flags from native readiness
+
+`editor/state.data.native_coordination` observes the same native ownership barriers
+used to admit ordinary tool calls. `blocked`, `reason`, `retryable` and
+`recovery_action` remain meaningful even when `is_compiling`, `is_updating` and
+`tests.is_running` are all false. Main-thread state reads observe changes before
+returning cached content, including when background Editor ticks are infrequent.
+Read-only package queries retain their command-specific restrictions; they do not
+make every ordinary scene or Console read unavailable.
+
+- `native_job_active` is a transient ownership barrier. Wait for the current native
+  work to finish without starting it again.
+- `recovery_required` means native ownership cannot safely be released from the
+  available evidence. Advice reports `ready_for_tools=false`, no automatic retry
+  interval, and `inspect_native_work_then_restart_editor`. Capability discovery and
+  doctor's readiness check report the same condition. A verified connection alone
+  does not establish readiness.
+- `refresh_unity` and CLI `editor refresh` stop waiting when recovery is observed.
+  They return `recovery_required`, `retryable=false` and `timeout=false`, preserving
+  the acknowledged refresh/available compile evidence. They do not replay refresh
+  or restart Unity automatically.
+
+Inspect the active Test Runner, build, import or compilation work and save relevant
+logs before deciding to restart the Editor. An idle sample does not prove that an
+interrupted native operation released its resources. Likewise, multiple candidate
+compile cycles remain ambiguous; readiness does not turn `unknown` into a successful
+or source-confirmed compilation.
+
+`tests.last_run` retains the observed test result and total/passed/failed/skipped
+counts when a completion callback supplies them. Duplicate cleanup preserves that
+result and completion time. A new run clears the prior summary; without an observed
+result (including interruption or loss of managed state), the summary remains
+unknown rather than borrowing old counts. Use `get_test_job` with its existing ID
+for retained job history and detailed results.
+
 ## Recursive runtime data during hot reload
 
 Unity hot reload serializes eligible private fields and auto-property backing
