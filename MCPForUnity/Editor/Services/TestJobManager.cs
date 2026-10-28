@@ -48,6 +48,8 @@ namespace MCPForUnity.Editor.Services
         public TestRunSummary RetainedSummary { get; set; }
         public JObject ResultArtifact { get; set; }
         public string CompletionKind { get; set; }
+        public bool AwaitingReloadResume { get; set; }
+        public int ReloadGeneration { get; set; }
         public string ResultAvailability { get; set; }
         public JObject NativeControl { get; set; }
         internal NativeTestRunControl Control;
@@ -107,6 +109,12 @@ namespace MCPForUnity.Editor.Services
 
         private static void BeforeAssemblyReload()
         {
+            TestRunnerService.CheckpointBeforeReload();
+            foreach (var job in Jobs.Values.Where(j => j.Status == TestJobStatus.Running))
+            {
+                job.AwaitingReloadResume = true;
+                job.ReloadGeneration++;
+            }
             // Progress callbacks are normally throttled. Flush the last update before the
             // managed domain (and the original RunTestsAsync task) is discarded.
             PersistToSessionState(force: true);
@@ -189,7 +197,7 @@ namespace MCPForUnity.Editor.Services
                     long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     job.Status = TestJobStatus.Failed;
                     job.Error = "Job cleared manually (stuck or orphaned)";
-                    job.CompletionKind = "interrupted";
+                    job.CompletionKind = job.ReloadGeneration > 0 ? "interrupted_by_reload" : "interrupted";
                     job.FinishedUnixMs = now;
                     job.LastUpdateUnixMs = now;
                     McpLog.Warn($"[TestJobManager] Manually cleared stuck job {_currentJobId}");
@@ -230,6 +238,8 @@ namespace MCPForUnity.Editor.Services
             public TestRunSummary summary { get; set; }
             public JObject artifact { get; set; }
             public string completion_kind { get; set; }
+            public bool awaiting_reload_resume { get; set; }
+            public int reload_generation { get; set; }
             public string result_availability { get; set; }
             public int omitted_failure_previews { get; set; }
             public JObject native_control { get; set; }
@@ -407,6 +417,8 @@ namespace MCPForUnity.Editor.Services
                             RetainedSummary = pj.summary,
                             ResultArtifact = pj.artifact,
                             CompletionKind = pj.completion_kind,
+                            AwaitingReloadResume = pj.awaiting_reload_resume,
+                            ReloadGeneration = Math.Max(pj.reload_generation, pj.awaiting_reload_resume ? 1 : 0),
                             ResultAvailability = pj.result_availability ?? "legacy_unavailable",
                             NativeControl = pj.native_control,
                             Result = null,
@@ -447,6 +459,7 @@ namespace MCPForUnity.Editor.Services
                                 );
                                 currentJob.Status = TestJobStatus.Failed;
                                 currentJob.Error = "Job orphaned after domain reload";
+                                currentJob.CompletionKind = "interrupted_by_reload";
                                 currentJob.FinishedUnixMs = now;
                                 _currentJobId = null;
                             }
@@ -517,6 +530,8 @@ namespace MCPForUnity.Editor.Services
                             summary = j.RetainedSummary,
                             artifact = j.ResultArtifact,
                             completion_kind = j.CompletionKind,
+                            awaiting_reload_resume = j.AwaitingReloadResume,
+                            reload_generation = j.ReloadGeneration,
                             result_availability = j.ResultAvailability,
                             native_control = j.NativeControl,
                         })
@@ -660,6 +675,9 @@ namespace MCPForUnity.Editor.Services
                 }
                 if (!control.Released)
                     continue;
+                // Capture leaves before cancellation classification clears CurrentJobId and
+                // ConfirmNativeTermination releases the owning service's result adaptors.
+                TestRunnerService.CheckpointObservedResults(job.JobId);
                 if (control.Requested && job.Status == TestJobStatus.Running)
                 {
                     bool stoppedBeforeStart = control.NativeGuid == null;
@@ -668,6 +686,9 @@ namespace MCPForUnity.Editor.Services
                     // The API bool acknowledges an intent, not the authoritative outcome.
                     // A retained callback summary survives reload even when Result is evicted.
                     var summary = job.RetainedSummary ?? job.Result?.Summary;
+                    bool partial = summary?.ResultState == "Partial";
+                    if (partial)
+                        summary = null;
                     bool cancelledResult = summary != null && new[] { "Canceled", "Cancelled" }.Contains(summary.ResultState, StringComparer.OrdinalIgnoreCase);
                     if (stoppedBeforeStart || cancelledResult || control.CancelAccepted && summary == null)
                     {
@@ -675,13 +696,16 @@ namespace MCPForUnity.Editor.Services
                         job.Status = deadline ? TestJobStatus.Failed : TestJobStatus.Cancelled;
                         job.CompletionKind = deadline ? "deadline_exceeded" : "cancelled";
                         job.Error = deadline ? "Native test job deadline exceeded." : null;
-                        if (summary == null)
+                        if (summary == null && !partial)
                             job.ResultAvailability = "unavailable";
                     }
                     else
                     {
                         job.Status = summary == null || summary.Failed > 0 ? TestJobStatus.Failed : TestJobStatus.Succeeded;
-                        job.CompletionKind = summary == null ? "interrupted" : "completed";
+                        job.CompletionKind =
+                            summary != null ? "completed"
+                            : job.ReloadGeneration > 0 ? "interrupted_by_reload"
+                            : "interrupted";
                     }
                     job.FinishedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     job.LastUpdateUnixMs = job.FinishedUnixMs.Value;
@@ -802,27 +826,74 @@ namespace MCPForUnity.Editor.Services
             return jobId;
         }
 
-        public static void FinalizeCurrentJobFromRunFinished(TestRunResult resultPayload)
+        public static TestRunResult FinalizeCurrentJobFromRunFinished(TestRunResult resultPayload, TestRunResult previous = null)
         {
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             lock (LockObj)
             {
                 if (string.IsNullOrEmpty(_currentJobId) || !Jobs.TryGetValue(_currentJobId, out var job))
-                {
-                    return;
-                }
-
+                    return resultPayload;
                 job.LastUpdateUnixMs = now;
                 job.FinishedUnixMs = now;
-                job.Status = resultPayload != null && resultPayload.Failed > 0 ? TestJobStatus.Failed : TestJobStatus.Succeeded;
-                job.Error = null;
-                job.Result = resultPayload;
-                RetainResult(job, resultPayload);
+                bool interrupted = resultPayload == null;
                 if (resultPayload != null)
                 {
-                    job.TotalTests = resultPayload.Total;
-                    job.CompletedTests = resultPayload.Total;
+                    try
+                    {
+                        previous ??= RestoreResult(job);
+                        if (previous != null || job.ReloadGeneration > 0)
+                        {
+                            var rows = MergeResults(previous?.Results ?? Array.Empty<TestRunTestResult>(), resultPayload.Results);
+                            int total = Math.Max(rows.Count, resultPayload.Total);
+                            int failed = Math.Max(rows.Count(r => r.IsFailure), Math.Max(resultPayload.Failed, previous?.Failed ?? 0));
+                            if (job.FailuresSoFar?.Count > 0)
+                                failed = Math.Max(1, failed);
+                            int skipped = Math.Max(rows.Count(r => r.State == "Skipped"), resultPayload.Skipped);
+                            bool completeRows = rows.Count == job.TotalTests.GetValueOrDefault(rows.Count);
+                            interrupted =
+                                job.TotalTests.HasValue && total != job.TotalTests.Value
+                                || resultPayload.Total < job.TotalTests.GetValueOrDefault() && !completeRows;
+                            var summary = new TestRunSummary(
+                                total,
+                                Math.Max(0, total - failed - skipped),
+                                failed,
+                                skipped,
+                                Math.Max(rows.Sum(r => r.DurationSeconds), resultPayload.Summary.DurationSeconds),
+                                interrupted ? "Partial"
+                                    : failed > 0 ? "Failed"
+                                    : resultPayload.Summary.ResultState
+                            );
+                            string captureFailure = resultPayload.Availability == "available" ? null : resultPayload.Availability;
+                            resultPayload = new TestRunResult(summary, rows)
+                            {
+                                // Keep the capture limit/error visible. Retained pages are still useful,
+                                // but a short checkpoint is not a newly complete detail artifact.
+                                Availability = captureFailure,
+                                Artifact = captureFailure == null ? null : job.ResultArtifact,
+                            };
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        // Missing/expired checkpoint evidence cannot establish a complete resumed run.
+                        interrupted = true;
+                        job.ResultAvailability = "partial_checkpoint_unavailable";
+                        resultPayload = null;
+                    }
                 }
+                job.Status = interrupted || resultPayload?.Failed > 0 ? TestJobStatus.Failed : TestJobStatus.Succeeded;
+                job.Error = interrupted ? "Test execution ended without a complete result." : null;
+                if (resultPayload != null)
+                {
+                    job.Result = resultPayload;
+                    RetainResult(job, resultPayload);
+                    job.TotalTests = Math.Max(job.TotalTests.GetValueOrDefault(), resultPayload.Total);
+                    job.CompletedTests = resultPayload.Total;
+                    if (interrupted && job.ResultArtifact != null && job.ResultAvailability == "available")
+                        job.ResultAvailability = "partial";
+                }
+                if (interrupted)
+                    job.CompletionKind = job.ReloadGeneration > 0 ? "interrupted_by_reload" : "interrupted";
                 job.CurrentTestFullName = null;
                 job.CurrentTestStartedUnixMs = null;
                 if (job.Control?.Requested == true && !job.Control.Released)
@@ -835,6 +906,7 @@ namespace MCPForUnity.Editor.Services
                     _currentJobId = null;
             }
             PersistToSessionState(force: true);
+            return resultPayload;
         }
 
         internal static void FinalizeCurrentJobFromRunError(string message)
@@ -848,7 +920,7 @@ namespace MCPForUnity.Editor.Services
                 }
                 job.Status = TestJobStatus.Failed;
                 job.Error = message;
-                job.CompletionKind = "interrupted";
+                job.CompletionKind = job.ReloadGeneration > 0 ? "interrupted_by_reload" : "interrupted";
                 job.LastUpdateUnixMs = now;
                 job.FinishedUnixMs = now;
                 job.CurrentTestFullName = null;
@@ -869,14 +941,11 @@ namespace MCPForUnity.Editor.Services
                 }
 
                 job.LastUpdateUnixMs = now;
-                job.TotalTests = totalTests;
-                job.CompletedTests = 0;
-                job.CurrentTestFullName = null;
-                job.CurrentTestStartedUnixMs = null;
-                job.LastFinishedTestFullName = null;
-                job.LastFinishedUnixMs = null;
-                job.FailuresSoFar ??= new List<TestJobFailure>();
-                job.FailuresSoFar.Clear();
+                // Expected run size and evidence survive resumed/repeated RunStarted.
+                // The waiting flag describes liveness only, never membership or reload history.
+                if (totalTests.HasValue)
+                    job.TotalTests = Math.Max(job.TotalTests.GetValueOrDefault(), totalTests.Value);
+                job.AwaitingReloadResume = false;
             }
             PersistToSessionState(force: true);
         }
@@ -897,6 +966,7 @@ namespace MCPForUnity.Editor.Services
                 }
 
                 job.LastUpdateUnixMs = now;
+                job.AwaitingReloadResume = false;
                 job.CurrentTestFullName = testFullName;
                 job.CurrentTestStartedUnixMs = now;
             }
@@ -914,6 +984,7 @@ namespace MCPForUnity.Editor.Services
                 }
 
                 job.LastUpdateUnixMs = now;
+                job.AwaitingReloadResume = false;
                 job.CompletedTests = Math.Max(0, job.CompletedTests + 1);
                 job.LastFinishedTestFullName = testFullName;
                 job.LastFinishedUnixMs = now;
@@ -1102,13 +1173,97 @@ namespace MCPForUnity.Editor.Services
             };
         }
 
+        internal static void CheckpointObservedResults(string jobId, IReadOnlyList<UnityEditor.TestTools.TestRunner.Api.ITestResultAdaptor> leaves)
+        {
+            if (jobId == null || !Jobs.TryGetValue(jobId, out var job) || job.CompletionKind == "completed" || leaves.Count == 0)
+                return;
+            try
+            {
+                var previous = RestoreResult(job)?.Results ?? Array.Empty<TestRunTestResult>();
+                var captured = TestRunResult.Create(null, leaves, identityGeneration: job.ReloadGeneration).Results;
+                var rows = MergeResults(previous, captured);
+                var summary = new TestRunSummary(
+                    rows.Count,
+                    rows.Count(r => r.State == "Passed"),
+                    rows.Count(r => r.IsFailure),
+                    rows.Count(r => r.State == "Skipped"),
+                    rows.Sum(r => r.DurationSeconds),
+                    "Partial"
+                );
+                var partial = new TestRunResult(summary, rows);
+                var artifact = ResultStore.Save(job.JobId, job.Mode, partial, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                job.Result = new TestRunResult(summary, ResultStore.Results(job.JobId, artifact));
+                job.RetainedSummary = summary;
+                job.ResultArtifact = artifact;
+                job.ResultAvailability = "partial";
+                job.CompletedTests = rows.Count;
+            }
+            catch (Exception)
+            {
+                job.ResultAvailability = "partial_checkpoint_unavailable";
+            }
+        }
+
+        private static List<TestRunTestResult> MergeResults(IReadOnlyList<TestRunTestResult> previous, IReadOnlyList<TestRunTestResult> captured)
+        {
+            // Id is scoped to the managed generation. Unity's UniqueName is structural
+            // (ancestor path and generated-case index); use it across reload only when
+            // unambiguous in both sets. Never infer identity from the display FullName.
+            var rows = new List<TestRunTestResult>();
+            var identities = new Dictionary<(int Generation, string Id), int>();
+            var priorAliases = previous
+                .Where(r => r.ReloadIdentity != null)
+                .GroupBy(r => r.ReloadIdentity)
+                .Where(g => g.Count() == 1)
+                .ToDictionary(g => g.Key, g => g.Single());
+            var newAliases = captured
+                .Where(r => r.ReloadIdentity != null)
+                .GroupBy(r => r.ReloadIdentity)
+                .Where(g => g.Select(r => r.TestId).Distinct().Count() == 1)
+                .Select(g => g.Key)
+                .ToHashSet();
+            foreach (var row in previous.Concat(captured))
+            {
+                var key = (row.IdentityGeneration, row.TestId);
+                int index = -1;
+                bool found = row.TestId != null && identities.TryGetValue(key, out index);
+                if (
+                    !found
+                    && row.ReloadIdentity != null
+                    && newAliases.Contains(row.ReloadIdentity)
+                    && priorAliases.TryGetValue(row.ReloadIdentity, out var prior)
+                    && prior.IdentityGeneration != row.IdentityGeneration
+                    && prior.TestId != null
+                )
+                    found = identities.TryGetValue((prior.IdentityGeneration, prior.TestId), out index);
+                if (found)
+                {
+                    // A replay cannot turn an observed failure into a pass.
+                    if (!rows[index].IsFailure || row.IsFailure)
+                        rows[index] = row;
+                    if (row.TestId != null)
+                        identities[key] = index;
+                }
+                else
+                {
+                    if (rows.Count >= 10000)
+                        throw new InvalidDataException("quota_exceeded");
+                    if (row.TestId != null)
+                        identities[key] = rows.Count;
+                    rows.Add(row);
+                }
+            }
+            return rows;
+        }
+
         private static void RetainResult(TestJob job, TestRunResult result)
         {
             if (result == null)
             {
-                job.CompletionKind = "interrupted";
+                job.CompletionKind = job.ReloadGeneration > 0 ? "interrupted_by_reload" : "interrupted";
                 return;
             }
+            var previousArtifact = job.ResultArtifact;
             job.CompletionKind = "completed";
             job.RetainedSummary = result.Summary;
             job.ResultArtifact = result.Artifact;
@@ -1122,6 +1277,7 @@ namespace MCPForUnity.Editor.Services
                 }
                 catch (Exception error)
                 {
+                    job.ResultArtifact = previousArtifact;
                     job.ResultAvailability =
                         error is PathTooLongException ? "path_too_long"
                         : error is InvalidDataException && error.Message == "path_limit_exceeded" ? "path_limit_exceeded"
@@ -1151,6 +1307,25 @@ namespace MCPForUnity.Editor.Services
             return new TestRunResult(job.RetainedSummary, ResultStore.Results(job.JobId, job.ResultArtifact));
         }
 
+        internal static TestRunResult SnapshotResultsForCapture(string jobId)
+        {
+            TestRunnerService.CheckpointObservedResults(jobId);
+            if (jobId == null || !Jobs.TryGetValue(jobId, out var job))
+                return null;
+            try
+            {
+                var previous = RestoreResult(job);
+                return previous == null ? null : new TestRunResult(previous.Summary, previous.Results.ToArray());
+            }
+            catch (Exception)
+            {
+                job.ResultAvailability = "partial_checkpoint_unavailable";
+                return null;
+            }
+        }
+
+        internal static int ReloadGenerationForCapture(string jobId) => jobId != null && Jobs.TryGetValue(jobId, out var job) ? job.ReloadGeneration : 0;
+
         internal static string ModeForCapture(string jobId)
         {
             // RunFinished must not call GetJob: polling can expire initialization.
@@ -1158,9 +1333,14 @@ namespace MCPForUnity.Editor.Services
                 return jobId != null && Jobs.TryGetValue(jobId, out var job) ? job.Mode : null;
         }
 
+        internal static bool HasResultPages(TestJob job) =>
+            job.Status != TestJobStatus.Running
+            && job.ResultArtifact != null
+            && (job.CompletionKind == "completed" || job.RetainedSummary?.ResultState == "Partial");
+
         internal static object Page(TestJob job, int size, string cursor, bool failedOnly)
         {
-            if (job.CompletionKind != "completed" || job.ResultArtifact == null)
+            if (!HasResultPages(job))
                 throw new InvalidOperationException("Test result details are unavailable.");
             return ResultStore.ReadPage(job.JobId, job.ResultArtifact, size, cursor, failedOnly);
         }

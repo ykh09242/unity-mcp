@@ -53,10 +53,17 @@ namespace MCPForUnityTests.Editor.Services
         private static void InvokeManager(string name, params object[] args) => typeof(TestJobManager).GetMethod(name, PrivateStatic).Invoke(null, args);
 
         private bool _oldControlDisabled;
+        private object _originalActiveOwner;
+        private string _originalRetired;
+        private const string RetiredKey = "MCPForUnity.TestRunner.RetiredRunJobId";
 
         [SetUp]
         public void SetUp()
         {
+            _originalActiveOwner = typeof(TestRunnerService).GetField("_activeRunOwner", PrivateStatic).GetValue(null);
+            _originalRetired = SessionState.GetString(RetiredKey, "");
+            typeof(TestRunnerService).GetField("_activeRunOwner", PrivateStatic).SetValue(null, null);
+            SessionState.SetString(RetiredKey, "");
             _oldControlDisabled = NativeTestRunControl.DisableForTests;
             NativeTestRunControl.DisableForTests = true;
             _jobs = (Dictionary<string, TestJob>)ManagerField("Jobs").GetValue(null);
@@ -94,6 +101,8 @@ namespace MCPForUnityTests.Editor.Services
             // Do not reset the whole service locator: the outer Editor test run may own it.
             (ServiceField.GetValue(null) as IDisposable)?.Dispose();
             ServiceField.SetValue(null, _originalService);
+            typeof(TestRunnerService).GetField("_activeRunOwner", PrivateStatic).SetValue(null, _originalActiveOwner);
+            SessionState.SetString(RetiredKey, _originalRetired);
             _jobs.Clear();
             foreach (var entry in _originalJobs)
                 _jobs.Add(entry.Key, entry.Value);
@@ -165,6 +174,59 @@ namespace MCPForUnityTests.Editor.Services
         {
             Assert.IsNull(RestoreCallbacks());
             Assert.IsFalse(TestRunStatus.IsRunning);
+        }
+
+        [Test]
+        public void ReloadInterruptionRetainsCompletedLeavesWithoutReportingTestAssertionFailure()
+        {
+            var job = AddJob();
+            job.TotalTests = 82;
+            var service = RestoreCallbacks();
+            service.TestFinished(new ResultStub("Fixture.Completed", "Passed"));
+            InvokeManager("BeforeAssemblyReload");
+            _jobs.Clear();
+            InvokeManager("TryRestoreFromSessionState");
+            service.OnError("Native test execution stopped.");
+            var restored = _jobs[job.JobId];
+            Assert.AreEqual("interrupted_by_reload", restored.CompletionKind);
+            Assert.AreEqual(1, restored.CompletedTests);
+            Assert.AreEqual(82, restored.TotalTests);
+            Assert.AreEqual("partial", restored.ResultAvailability);
+            Assert.AreEqual(1, restored.RetainedSummary.Passed);
+            Assert.AreEqual(0, restored.RetainedSummary.Failed);
+            Assert.NotNull(restored.ResultArtifact);
+            var response = JObject.FromObject(
+                MCPForUnity.Editor.Tools.GetTestJob.HandleCommand(
+                    new JObject
+                    {
+                        ["job_id"] = job.JobId,
+                        ["page_size"] = 10,
+                        ["includeDetails"] = true,
+                    }
+                )
+            );
+            Assert.IsTrue((bool)response["success"], response.ToString());
+            Assert.AreEqual("interrupted_by_reload", (string)response["data"]["completion_kind"]);
+            Assert.AreEqual(82, (int)response["data"]["progress"]["total"]);
+            Assert.AreEqual(1, ((JArray)response["data"]["result_page"]["items"]).Count);
+        }
+
+        [Test]
+        public void ExpectedReloadResumePreservesProgressAndAllowsNormalCompletion()
+        {
+            var job = AddJob();
+            job.TotalTests = 2;
+            var service = RestoreCallbacks();
+            service.TestFinished(new ResultStub("Fixture.Before", "Passed"));
+            InvokeManager("BeforeAssemblyReload");
+            TestJobManager.OnRunStarted(1); // A resumed runner can report only remaining tests.
+            Assert.AreEqual(2, job.TotalTests);
+            Assert.AreEqual(1, job.CompletedTests);
+            service.TestFinished(new ResultStub("Fixture.After", "Passed"));
+            service.RunFinished(ResultStub.Suite(new ResultStub("Fixture.Before", "Passed"), new ResultStub("Fixture.After", "Passed")));
+            Assert.AreEqual(TestJobStatus.Succeeded, job.Status);
+            Assert.AreEqual("completed", job.CompletionKind);
+            Assert.AreEqual(2, job.CompletedTests);
         }
 
         [Test]
@@ -545,6 +607,251 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(1, job.Result.Passed);
         }
 
+        [Test]
+        public void PartialRunFinishedAfterReloadKeepsCheckpointAndExpectedCount()
+        {
+            var job = AddJob();
+            job.TotalTests = 82;
+            var service = RestoreCallbacks();
+            service.TestFinished(new ResultStub("Fixture.Completed", "Passed"));
+            typeof(TestJobManager).GetMethod("BeforeAssemblyReload", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, null);
+            service.RunFinished(ResultStub.Suite(new ResultStub("Fixture.Completed", "Passed")));
+            Assert.AreEqual(TestJobStatus.Failed, job.Status);
+            Assert.AreEqual("interrupted_by_reload", job.CompletionKind);
+            Assert.AreEqual("partial", job.ResultAvailability);
+            Assert.AreEqual(82, job.TotalTests);
+            Assert.AreEqual(1, job.CompletedTests);
+            Assert.AreEqual(0, job.RetainedSummary.Failed);
+        }
+
+        private TestRunnerService ReloadOwner(TestRunnerService service)
+        {
+            InvokeManager("BeforeAssemblyReload");
+            // Model destruction of the managed domain, not user disposal/retirement of a live run.
+            typeof(TestRunnerService).GetField("_activeRunOwner", PrivateStatic).SetValue(null, null);
+            service.Dispose();
+            ServiceField.SetValue(null, null);
+            _jobs.Clear();
+            ManagerField("_currentJobId").SetValue(null, null);
+            InvokeManager("TryRestoreFromSessionState");
+            var resumed = RestoreCallbacks();
+            Assert.AreNotSame(service, resumed);
+            return resumed;
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void FreshOwnerShortTerminalPreservesOriginalRunAndPriorFailure(bool priorFailure)
+        {
+            var job = AddJob();
+            job.TotalTests = 82;
+            var service = RestoreCallbacks();
+            for (int index = 0; index < 81; index++)
+                service.TestFinished(new ResultStub("Fixture.Case" + index, index == 0 && priorFailure ? "Failed" : "Passed"));
+            service = ReloadOwner(service);
+            var replay = new ResultStub("Fixture.Case80", "Passed");
+            service.RunStarted(replay.Test);
+            service.TestStarted(replay.Test);
+            service.TestFinished(replay);
+            service.RunFinished(ResultStub.Suite(replay));
+
+            var restored = _jobs[job.JobId];
+            Assert.AreEqual(TestJobStatus.Failed, restored.Status);
+            Assert.AreEqual("interrupted_by_reload", restored.CompletionKind);
+            Assert.AreEqual(82, restored.TotalTests);
+            Assert.AreEqual(81, restored.CompletedTests);
+            Assert.AreEqual(priorFailure ? 1 : 0, restored.RetainedSummary.Failed);
+            Assert.AreEqual(81, (int)JObject.FromObject(TestJobManager.Page(restored, 100, null, false))["total_count"]);
+            Assert.IsFalse(restored.AwaitingReloadResume, "Callbacks resumed; completeness must not depend on this liveness flag.");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void FreshOwnerRemainingOnlyTerminalReconcilesCompleteRun(bool priorFailure)
+        {
+            var job = AddJob();
+            job.TotalTests = 82;
+            var service = RestoreCallbacks();
+            for (int index = 0; index < 81; index++)
+                service.TestFinished(new ResultStub("Fixture.Case" + index, index == 0 && priorFailure ? "Failed" : "Passed"));
+            service = ReloadOwner(service);
+            var remaining = new ResultStub("Fixture.Case81", "Passed");
+            service.RunStarted(remaining.Test);
+            service.TestStarted(remaining.Test);
+            service.TestFinished(remaining);
+            service.RunFinished(ResultStub.Suite(remaining));
+
+            var restored = _jobs[job.JobId];
+            Assert.AreEqual(priorFailure ? TestJobStatus.Failed : TestJobStatus.Succeeded, restored.Status);
+            Assert.AreEqual("completed", restored.CompletionKind);
+            Assert.AreEqual(82, restored.TotalTests);
+            Assert.AreEqual(82, restored.CompletedTests);
+            Assert.AreEqual(priorFailure ? 1 : 0, restored.RetainedSummary.Failed);
+            Assert.AreEqual(82, restored.Result.Results.Count);
+        }
+
+        [Test]
+        public void FreshOwnerErrorPersistsLeavesObservedAfterCheckpoint()
+        {
+            var job = AddJob();
+            job.TotalTests = 3;
+            var service = RestoreCallbacks();
+            service.TestFinished(new ResultStub("Fixture.A", "Failed"));
+            service = ReloadOwner(service);
+            var next = new ResultStub("Fixture.B", "Passed");
+            service.RunStarted(next.Test);
+            service.TestStarted(next.Test);
+            service.TestFinished(next);
+            service.OnError("Synthetic native failure");
+
+            var restored = _jobs[job.JobId];
+            Assert.AreEqual(TestJobStatus.Failed, restored.Status);
+            Assert.AreEqual("interrupted_by_reload", restored.CompletionKind);
+            Assert.AreEqual(2, restored.CompletedTests);
+            Assert.AreEqual(1, restored.RetainedSummary.Failed);
+            var page = JObject.FromObject(TestJobManager.Page(restored, 100, null, false));
+            CollectionAssert.AreEquivalent(new[] { "Fixture.A", "Fixture.B" }, page["items"].Select(row => (string)row["fullName"]));
+            Assert.AreEqual(0, RetainedResults(service).Count);
+        }
+
+        [Test]
+        public void AcceptedCancellationWithoutRunFinishedPreservesResumedLeaves()
+        {
+            var job = AddJob();
+            job.TotalTests = 3;
+            var service = RestoreCallbacks();
+            service.TestFinished(new ResultStub("Fixture.A", "Passed"));
+            service = ReloadOwner(service);
+            service.TestFinished(new ResultStub("Fixture.B", "Failed"));
+            job = _jobs[job.JobId];
+            const string nativeGuid = "fedcba0987654321fedcba0987654321";
+            var snapshot = new JObject
+            {
+                ["registered"] = new JArray(nativeGuid),
+                ["active"] = new JArray(nativeGuid),
+                ["serialized_active"] = new JArray(nativeGuid),
+                ["global_active"] = true,
+            };
+            using var control = new NativeTestRunControl(job.JobId, 0, () => 10, () => snapshot, _ => true);
+            job.Control = control;
+            job.NativeControl = control.State;
+            control.BindGuid(nativeGuid);
+            control.Request("user");
+            Assert.IsTrue(control.CancelAccepted);
+            control.ObserveFinal(nativeGuid);
+            snapshot = new JObject
+            {
+                ["registered"] = new JArray(),
+                ["active"] = new JArray(),
+                ["serialized_active"] = new JArray(),
+                ["global_active"] = false,
+            };
+            control.NoteEditorUpdate();
+            control.TickFromEditorUpdate();
+            Assert.IsTrue(control.Released);
+            InvokeManager("TickNativeControls");
+
+            Assert.AreEqual(TestJobStatus.Cancelled, job.Status);
+            Assert.AreEqual("cancelled", job.CompletionKind);
+            Assert.AreEqual(2, job.CompletedTests);
+            Assert.AreEqual(1, job.RetainedSummary.Failed);
+            var page = JObject.FromObject(TestJobManager.Page(job, 100, null, false));
+            CollectionAssert.AreEquivalent(new[] { "Fixture.A", "Fixture.B" }, page["items"].Select(row => (string)row["fullName"]));
+            Assert.AreEqual(0, RetainedResults(service).Count);
+            Assert.IsNull(TestJobManager.CurrentJobId);
+            Assert.IsFalse(TestRunnerService.HasOwnedNativeRun);
+        }
+
+        [Test]
+        public void DuplicateDisplayNamesRetainDistinctIdsAndReplayCannotHideFailure()
+        {
+            var job = AddJob();
+            job.TotalTests = 2;
+            var service = RestoreCallbacks();
+            var failed = new ResultStub("Fixture.SameName", "Failed") { TestId = "first", StableIdentity = "parent/case0" };
+            var passed = new ResultStub("Fixture.SameName", "Passed") { TestId = "second", StableIdentity = "parent/case1" };
+            var replay = new ResultStub("Fixture.SameName", "Passed") { TestId = "first", StableIdentity = "parent/case0" };
+            service.TestFinished(failed);
+            service.TestFinished(passed);
+            service.TestFinished(replay);
+            service.RunFinished(ResultStub.Suite(replay, passed));
+            Assert.AreEqual(TestJobStatus.Failed, job.Status);
+            Assert.AreEqual(2, job.CompletedTests);
+            Assert.AreEqual(2, job.Result.Results.Select(row => row.TestId).Distinct().Count());
+            Assert.AreEqual(1, job.RetainedSummary.Failed);
+            Assert.AreEqual(1, job.Result.Results.Count(row => row.State == "Failed"));
+        }
+
+        [Test]
+        public void FreshOwnerChangedNativeIdUsesUniqueStructuralIdentityWithoutHidingFailure()
+        {
+            var job = AddJob();
+            job.TotalTests = 2;
+            var service = RestoreCallbacks();
+            service.TestFinished(new ResultStub("Fixture.SameName", "Failed") { TestId = "old-first", StableIdentity = "parent/case0" });
+            service = ReloadOwner(service);
+            var replay = new ResultStub("Fixture.SameName", "Passed") { TestId = "new-first", StableIdentity = "parent/case0" };
+            var next = new ResultStub("Fixture.SameName", "Passed") { TestId = "new-second", StableIdentity = "parent/case1" };
+            service.RunStarted(next.Test);
+            service.TestStarted(next.Test);
+            service.TestFinished(replay);
+            service.TestFinished(next);
+            service.RunFinished(ResultStub.Suite(replay, next));
+            var restored = _jobs[job.JobId];
+            Assert.AreEqual(TestJobStatus.Failed, restored.Status);
+            Assert.AreEqual("completed", restored.CompletionKind);
+            Assert.AreEqual(2, restored.CompletedTests);
+            Assert.AreEqual(1, restored.RetainedSummary.Failed);
+            Assert.AreEqual(2, restored.Result.Results.Count);
+        }
+
+        [Test]
+        public void TerminalCaptureLimitPreservesFailureReasonAndCheckpointPages()
+        {
+            var job = AddJob();
+            job.TotalTests = 2;
+            var service = RestoreCallbacks();
+            service.TestFinished(new ResultStub("Fixture.A", "Failed"));
+            var previous = TestJobManager.SnapshotResultsForCapture(job.JobId);
+            string generation = (string)job.ResultArtifact["generation"];
+            var unavailable = new TestRunResult(new TestRunSummary(2, 2, 0, 0, 0.2, "Passed"), Array.Empty<TestRunTestResult>())
+            {
+                Availability = "quota_exceeded",
+            };
+            TestJobManager.FinalizeCurrentJobFromRunFinished(unavailable, previous);
+            Assert.AreEqual(TestJobStatus.Failed, job.Status);
+            Assert.AreEqual("quota_exceeded", job.ResultAvailability);
+            Assert.AreEqual(1, job.RetainedSummary.Failed);
+            Assert.AreEqual(generation, (string)job.ResultArtifact["generation"]);
+            Assert.AreEqual(1, (int)JObject.FromObject(TestJobManager.Page(job, 100, null, false))["total_count"]);
+        }
+
+        [Test]
+        public void LegacyRowsWithoutIdentityRemainReadableAndAreNeverCollapsedByName()
+        {
+            var job = AddJob();
+            var summary = new TestRunSummary(2, 1, 1, 0, 0.2, "Partial");
+            var legacy = new TestRunResult(
+                summary,
+                new[]
+                {
+                    new TestRunTestResult("same", "Fixture.SameName", "Failed", 0.1, "failure", null, null),
+                    new TestRunTestResult("same", "Fixture.SameName", "Passed", 0.1, null, null, null),
+                }
+            );
+            job.RetainedSummary = summary;
+            job.ResultArtifact = TestJobManager.ResultStore.Save(job.JobId, job.Mode, legacy, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            var rows = TestJobManager.ResultStore.Results(job.JobId, job.ResultArtifact).ToArray();
+            Assert.AreEqual(2, rows.Length);
+            Assert.IsTrue(rows.All(row => row.TestId == null));
+            var service = RestoreCallbacks();
+            service.TestFinished(new ResultStub("Fixture.SameName", "Passed") { TestId = "new", StableIdentity = "parent/new" });
+            service.OnError("Synthetic stop");
+            Assert.AreEqual(3, job.RetainedSummary.Total);
+            Assert.AreEqual(1, job.RetainedSummary.Failed);
+            Assert.AreEqual(3, (int)JObject.FromObject(TestJobManager.Page(job, 100, null, false))["total_count"]);
+        }
+
         private sealed class ResultStub : ITestResultAdaptor
         {
             private readonly ITestResultAdaptor[] _children;
@@ -553,6 +860,7 @@ namespace MCPForUnityTests.Editor.Services
             public ResultStub(string name, string state, string message = null, params ITestResultAdaptor[] children)
             {
                 _name = FullName = name;
+                TestId = StableIdentity = name;
                 ResultState = state;
                 Message = message;
                 _children = children;
@@ -561,7 +869,9 @@ namespace MCPForUnityTests.Editor.Services
             public static ResultStub Suite(params ITestResultAdaptor[] children) => new ResultStub("Suite", "Failed", null, children);
 
             public bool IsSuite { get; set; }
-            public ITestAdaptor Test => new TestStub(FullName, IsSuite || HasChildren);
+            public string TestId { get; set; }
+            public string StableIdentity { get; set; }
+            public ITestAdaptor Test => new TestStub(FullName, IsSuite || HasChildren, TestId, StableIdentity);
             public int NameReads { get; private set; }
             public string Name
             {
@@ -599,13 +909,15 @@ namespace MCPForUnityTests.Editor.Services
 
         private sealed class TestStub : ITestAdaptor
         {
-            public TestStub(string name, bool isSuite)
+            public TestStub(string name, bool isSuite, string id, string uniqueName)
             {
                 Name = name;
                 IsSuite = isSuite;
+                Id = id;
+                UniqueName = uniqueName;
             }
 
-            public string Id => Name;
+            public string Id { get; }
             public string Name { get; }
             public string FullName => Name;
             public int TestCaseCount => IsSuite ? 0 : 1;
@@ -624,7 +936,7 @@ namespace MCPForUnityTests.Editor.Services
             public string SkipReason => null;
             public string ParentId => null;
             public string ParentFullName => null;
-            public string UniqueName => Name;
+            public string UniqueName { get; }
             public string ParentUniqueName => null;
             public int ChildIndex => 0;
             public TestMode TestMode => TestMode.EditMode;

@@ -309,3 +309,55 @@ def test_wait_whitespace_status_is_invalid_without_sleep(editor_module, monkeypa
     # Then malformed observation fails immediately instead of consuming the wait budget.
     assert result.exit_code == 1
     assert json.loads(result.stdout)["code"] == "invalid_test_job_response"
+
+
+@pytest.mark.parametrize("output_format", ["json", "text", "table"])
+@pytest.mark.parametrize("wait, expected_exit", [(0, 0), (5, 1)])
+def test_partial_reload_completion_preserves_reason_and_counts(
+    editor_module, monkeypatch, output_format, wait, expected_exit
+):
+    monkeypatch.setattr(editor_module, "get_config", lambda: CLIConfig(format=output_format))
+    payload = {
+        "success": True,
+        "data": {
+            "job_id": "job-1",
+            "status": "failed",
+            "completion_kind": "interrupted_by_reload",
+            "error": "Reload ended before the remaining test finished",
+            "progress": {"completed": 81, "total": 82},
+            "result": {
+                "summary": {"total": 81, "passed": 81, "failed": 0, "resultState": "Partial"}
+            },
+            "native_control": {"released": False},
+        },
+    }
+    monkeypatch.setattr(editor_module, "run_command", lambda *a, **kw: payload)
+    diagnostic = Mock()
+    monkeypatch.setattr(editor_module, "print_error", diagnostic)
+    result = CliRunner().invoke(editor_module.editor, ["poll-test", "job-1", "--wait", str(wait)])
+    assert result.exit_code == expected_exit, result.output
+    if output_format == "json":
+        assert json.loads(result.output) == payload
+        diagnostic.assert_not_called()
+    else:
+        diagnostic.assert_called_once()
+        message = diagnostic.call_args.args[0]
+        assert "interrupted_by_reload" in message and "81/82" in message
+        assert payload["data"]["error"] in message
+        assert "poll-test job-1 --wait 0" in result.output
+
+
+def test_completed_assertion_failure_keeps_failure_count(editor_module, monkeypatch):
+    monkeypatch.setattr(editor_module, "get_config", lambda: CLIConfig(format="text"))
+    payload = {
+        "success": True,
+        "data": {
+            "status": "failed",
+            "completion_kind": "completed",
+            "result": {"summary": {"failed": 2, "total": 82, "resultState": "Failed"}},
+        },
+    }
+    monkeypatch.setattr(editor_module, "run_command", lambda *a, **kw: payload)
+    result = CliRunner().invoke(editor_module.editor, ["poll-test", "job-1", "--wait", "5"])
+    assert result.exit_code == 1
+    assert "2 failures" in result.output

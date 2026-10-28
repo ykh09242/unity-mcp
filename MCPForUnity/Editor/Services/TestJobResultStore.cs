@@ -589,7 +589,10 @@ namespace MCPForUnity.Editor.Services
                         (double)row["durationSeconds"],
                         (string)row["message"],
                         (string)row["stackTrace"],
-                        (string)row["output"]
+                        (string)row["output"],
+                        (string)row["testId"],
+                        (string)row["reloadIdentity"],
+                        (int?)row["identityGeneration"] ?? 0
                     );
             }
 

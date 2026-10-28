@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
@@ -81,6 +83,7 @@ namespace MCPForUnity.Editor.Services
             SessionState.SetString(RetiredRunSessionKey, jobId);
             var completion = owner._runCompletionSource;
             owner._runCompletionSource = null;
+            CheckpointObservedResults(jobId);
             owner._leafResults.Clear();
             TestRunnerNoThrottle.RestoreAfterRun();
             if (PlayModeOptionsGuard.IsPending)
@@ -295,6 +298,11 @@ namespace MCPForUnity.Editor.Services
                 TestRunnerNoThrottle.ApplyNoThrottlingPreemptive();
 
                 nativeControl?.CheckAdmission();
+                // Recheck after queued admission and scene preparation, immediately before Execute.
+                if (EditorStateCache.GetActualIsCompiling() || EditorApplication.isUpdating || EditorStateCache.IsDomainReloadPending)
+                    throw new InvalidOperationException(
+                        "Editor became busy before test execution; wait for compilation, import and reload to settle before retrying."
+                    );
                 nativeControl?.MarkExecuting();
                 nativeInvoked = true;
                 string nativeGuid = _testRunnerApi.Execute(settings);
@@ -308,6 +316,7 @@ namespace MCPForUnity.Editor.Services
                 // completion source so a later request can retry instead of staying busy.
                 if (completionSource != null && _runCompletionSource == completionSource)
                 {
+                    CheckpointObservedResults(_trackedJobId);
                     _trackedJobId = null;
                     if (_activeRunOwner == this)
                         _activeRunOwner = null;
@@ -358,6 +367,15 @@ namespace MCPForUnity.Editor.Services
             _lifetimeCancellation.Dispose();
         }
 
+        internal static void CheckpointBeforeReload() => CheckpointObservedResults(TestJobManager.CurrentJobId);
+
+        internal static void CheckpointObservedResults(string jobId)
+        {
+            var owner = _activeRunOwner;
+            if (jobId != null && owner != null && owner._trackedJobId == jobId)
+                TestJobManager.CheckpointObservedResults(jobId, owner._leafResults);
+        }
+
         private void ReleaseApi()
         {
             AssemblyReloadEvents.beforeAssemblyReload -= ReleaseApi;
@@ -388,7 +406,7 @@ namespace MCPForUnity.Editor.Services
         {
             if (!TestJobManager.ControlOwnsCallback(_trackedJobId))
                 return;
-            _leafResults.Clear();
+            // RunStarted may be redelivered during recovery. Admission owns the initial reset.
             if (!IsTrackingCurrentJob)
             {
                 return;
@@ -422,11 +440,20 @@ namespace MCPForUnity.Editor.Services
             // This handles domain reload scenarios (e.g., PlayMode tests) where the TestRunnerService
             // is recreated and _runCompletionSource is lost, but TestJobManager state persists via
             // SessionState and the Test Runner still delivers the RunFinished callback.
+            // Materialize the checkpoint before another immutable generation can evict it.
+            var previous = IsTrackingCurrentJob ? TestJobManager.SnapshotResultsForCapture(_trackedJobId) : null;
             var payload =
                 _runCompletionSource != null || IsTrackingCurrentJob
-                    ? TestRunResult.Create(result, _leafResults, () => TestJobManager.ResultStore, _trackedJobId, TestJobManager.ModeForCapture(_trackedJobId))
+                    ? TestRunResult.Create(
+                        result,
+                        _leafResults,
+                        () => TestJobManager.ResultStore,
+                        _trackedJobId,
+                        TestJobManager.ModeForCapture(_trackedJobId),
+                        TestJobManager.ReloadGenerationForCapture(_trackedJobId)
+                    )
                     : null;
-            CompleteRun(payload, null);
+            CompleteRun(payload, null, previous);
         }
 
         public void OnError(string message)
@@ -437,28 +464,29 @@ namespace MCPForUnity.Editor.Services
             CompleteRun(null, new InvalidOperationException(message ?? "Unity test run failed."));
         }
 
-        private void CompleteRun(TestRunResult payload, Exception error)
+        private void CompleteRun(TestRunResult payload, Exception error, TestRunResult previous = null)
         {
             // A late callback from a cleared job must not finish a newer job or restore
             // settings belonging to it. Callbacks do not contain an MCP job identifier.
+            if (error != null)
+                CheckpointObservedResults(_trackedJobId);
             bool ownsCurrentJob = IsTrackingCurrentJob;
             bool canCleanUp = ownsCurrentJob || !TestJobManager.HasRunningJob;
-            if (canCleanUp)
-            {
-                TestRunStatus.MarkFinished(error == null ? payload?.Summary : null);
-            }
             if (ownsCurrentJob)
             {
                 if (error == null)
                 {
                     TestJobManager.OnRunFinished();
-                    TestJobManager.FinalizeCurrentJobFromRunFinished(payload);
+                    payload = TestJobManager.FinalizeCurrentJobFromRunFinished(payload, previous);
                 }
                 else
                 {
                     TestJobManager.FinalizeCurrentJobFromRunError(error.Message);
                 }
             }
+
+            if (canCleanUp)
+                TestRunStatus.MarkFinished(error == null ? payload?.Summary : null);
 
             // Complete recovery for a run admitted by an older package before the domain reload.
             // New runs retain the project's configured Enter Play Mode settings.
@@ -754,7 +782,8 @@ namespace MCPForUnity.Editor.Services
             IReadOnlyList<ITestResultAdaptor> tests,
             Func<TestJobResultStore> storeFactory = null,
             string jobId = null,
-            string mode = null
+            string mode = null,
+            int identityGeneration = 0
         )
         {
             var authoritative =
@@ -771,7 +800,7 @@ namespace MCPForUnity.Editor.Services
             try
             {
                 var store = storeFactory?.Invoke();
-                var rows = CaptureLeaves(summary, tests);
+                var rows = CaptureLeaves(summary, tests, identityGeneration);
                 if (store != null && jobId != null && authoritative != null)
                 {
                     var descriptor = store.SaveCapture(jobId, mode, authoritative, rows, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -805,7 +834,11 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        private static IEnumerable<TestRunTestResult> CaptureLeaves(ITestResultAdaptor summary, IReadOnlyList<ITestResultAdaptor> fallback)
+        private static IEnumerable<TestRunTestResult> CaptureLeaves(
+            ITestResultAdaptor summary,
+            IReadOnlyList<ITestResultAdaptor> fallback,
+            int identityGeneration
+        )
         {
             // Managed visit/depth limits do not preempt work inside Unity/native getters.
             var stack = new Stack<(IEnumerator<ITestResultAdaptor> Nodes, int Depth)>();
@@ -839,7 +872,7 @@ namespace MCPForUnity.Editor.Services
                     {
                         if (++leaves > 10000)
                             throw new System.IO.InvalidDataException("quota_exceeded");
-                        yield return TestRunTestResult.FromAdaptor(node);
+                        yield return TestRunTestResult.FromAdaptor(node, identityGeneration);
                     }
                 }
             }
@@ -887,7 +920,18 @@ namespace MCPForUnity.Editor.Services
 
     public sealed class TestRunTestResult
     {
-        internal TestRunTestResult(string name, string fullName, string state, double durationSeconds, string message, string stackTrace, string output)
+        internal TestRunTestResult(
+            string name,
+            string fullName,
+            string state,
+            double durationSeconds,
+            string message,
+            string stackTrace,
+            string output,
+            string testId = null,
+            string reloadIdentity = null,
+            int identityGeneration = 0
+        )
         {
             Name = name;
             FullName = fullName;
@@ -896,8 +940,16 @@ namespace MCPForUnity.Editor.Services
             Message = message;
             StackTrace = stackTrace;
             Output = output;
+            TestId = testId;
+            ReloadIdentity = reloadIdentity;
+            IdentityGeneration = identityGeneration;
         }
 
+        public string TestId { get; }
+        internal string ReloadIdentity { get; }
+        internal int IdentityGeneration { get; }
+        internal bool IsFailure =>
+            State?.IndexOf("fail", StringComparison.OrdinalIgnoreCase) >= 0 || State?.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0;
         public string Name { get; }
         public string FullName { get; }
         public string State { get; }
@@ -910,6 +962,9 @@ namespace MCPForUnity.Editor.Services
         {
             return new
             {
+                testId = TestId,
+                reloadIdentity = ReloadIdentity,
+                identityGeneration = IdentityGeneration,
                 name = Name,
                 fullName = FullName,
                 state = State,
@@ -920,7 +975,7 @@ namespace MCPForUnity.Editor.Services
             };
         }
 
-        internal static TestRunTestResult FromAdaptor(ITestResultAdaptor adaptor)
+        internal static TestRunTestResult FromAdaptor(ITestResultAdaptor adaptor, int identityGeneration = 0)
         {
             if (adaptor == null)
             {
@@ -934,8 +989,19 @@ namespace MCPForUnity.Editor.Services
                 adaptor.Duration,
                 adaptor.Message,
                 adaptor.StackTrace,
-                adaptor.Output
+                adaptor.Output,
+                Identity(adaptor.Test?.Id),
+                Identity(adaptor.Test?.UniqueName),
+                identityGeneration
             );
+        }
+
+        private static string Identity(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return null;
+            using var hash = SHA256.Create();
+            return BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(value))).Replace("-", "").ToLowerInvariant();
         }
     }
 }

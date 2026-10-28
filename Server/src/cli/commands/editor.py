@@ -725,12 +725,26 @@ def poll_test(
         status = data.get("status", "unknown")
         if status == "succeeded":
             print_success("Tests completed successfully")
-        elif status == "failed":
+        elif status in ("failed", "cancelled"):
             test_result = data.get("result")
-            if test_result is None:
+            summary = test_result.get("summary", {}) if isinstance(test_result, dict) else {}
+            completion = data.get("completion_kind")
+            interrupted = (
+                completion not in (None, "completed") or summary.get("resultState") == "Partial"
+            )
+            if interrupted or status == "cancelled":
+                progress = data.get("progress") or {}
+                completed = progress.get("completed", summary.get("total", 0))
+                total = progress.get("total", summary.get("total", 0))
+                reason = completion or status
+                detail = data.get("error")
+                print_error(
+                    f"Test run ended: {reason}; {completed}/{total} tests completed"
+                    + (f". {detail}" if detail else "")
+                )
+            elif not isinstance(test_result, dict):
                 print_error(f"Test job failed: {data.get('error') or 'No test results available'}")
             else:
-                summary = test_result.get("summary", {})
                 failed = summary.get("failed", 0)
                 print_error(f"Tests failed: {failed} failures")
         elif status == "running":
@@ -738,6 +752,15 @@ def poll_test(
             completed = progress.get("completed", 0)
             total = progress.get("total", 0)
             print_info(f"Tests running: {completed}/{total}")
+        native_control = data.get("native_control")
+        if (
+            status in ("succeeded", "failed", "cancelled")
+            and isinstance(native_control, dict)
+            and native_control.get("released") is False
+        ):
+            print_info(
+                f"Native cleanup is pending. Observe it with: unity-mcp editor poll-test {job_id} --wait 0"
+            )
 
     if exit_code:
         sys.exit(exit_code)
