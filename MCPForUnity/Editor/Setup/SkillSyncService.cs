@@ -409,7 +409,7 @@ namespace MCPForUnity.Editor.Setup
                 RecoveryPath = (error as SyncApplyException)?.RecoveryPath,
             };
 
-        internal static string DescribeResult(SyncResult result)
+        internal static string DescribeResult(SyncResult result, bool includeSourceDetails = false)
         {
             string summary;
             if (!result.Success)
@@ -438,7 +438,7 @@ namespace MCPForUnity.Editor.Setup
             }
             if (!string.IsNullOrEmpty(result.RecoveryPath))
                 summary += "\nRecovery files retained at: " + result.RecoveryPath;
-            if (!string.IsNullOrEmpty(result.SourceDescription))
+            if (includeSourceDetails && !string.IsNullOrEmpty(result.SourceDescription))
                 summary +=
                     "\n" + result.SourceDescription + "\nResolved commit: " + result.CommitSha + ". Local edits and conflicts can differ from this source.";
             return summary;

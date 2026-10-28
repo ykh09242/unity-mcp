@@ -401,16 +401,8 @@ namespace MCPForUnity.Editor.Clients
 
         public override string GetManualSnippet()
         {
-            try
-            {
-                string uvx = client.SupportsHttpTransport && EditorConfigurationCache.Instance.UseHttpTransport ? null : GetUvxPathOrError();
-                return ConfigJsonBuilder.BuildManualConfigJson(uvx, client);
-            }
-            catch (Exception ex)
-            {
-                var errorObj = new { error = ex.Message };
-                return JsonConvert.SerializeObject(errorObj);
-            }
+            string uvx = client.SupportsHttpTransport && EditorConfigurationCache.Instance.UseHttpTransport ? null : GetUvxPathOrError();
+            return ConfigJsonBuilder.BuildManualConfigJson(uvx, client);
         }
 
         public override IList<string> GetInstallationSteps() => new List<string> { "Configuration steps not available for this client." };

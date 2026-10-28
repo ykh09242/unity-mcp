@@ -199,6 +199,8 @@ namespace MCPForUnityTests.EditMode.Windows
                     string.Join("\n", Enumerable.Repeat("Example redacted Unity MCP entry: existing unrelated settings are preserved.", 40))
                 );
             root.Q<Label>("configuration-change-status").text = "Preview ready. Review the change before applying it.";
+            foreach (string name in new[] { "configuration-preview-scroll", "apply-configuration", "cancel-configuration-preview" })
+                root.Q(name).RemoveFromClassList("initially-hidden");
             root.Q<Button>("apply-configuration").SetEnabled(true);
             root.Q<TextField>("config-path").SetValueWithoutNotify("/example/workspaces/large-project/client/configuration/example-client-settings.json");
             root.Q<TextField>("config-json")

@@ -247,32 +247,50 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
-        public ClientConfigurationChangeResult Apply(ClientConfigurationPreview preview, IMcpClientConfigurator client)
+        internal string ValidatePreview(ClientConfigurationPreview preview, IMcpClientConfigurator client)
         {
-            if (preview == null || !ReferenceEquals(preview, pending) || !ReferenceEquals(preview.Client, client))
-                return Result("stale_handle");
             try
             {
-                var target = resolve(client);
-                if (!SameTarget(preview.Target, preview.TargetHash, target))
-                    return Result("stale_target");
-                var inputs = CaptureInputs(target);
-                if (inputs.Locked)
-                    return Result("locked");
-                string currentContext = inputs.Fingerprint();
-                ValidateInputs(inputs);
-                if (currentContext != preview.ContextHash)
-                    return Result("stale_context");
-                byte[] current = Read(target.Path);
-                if (!SameBytes(current, preview.Original))
-                    return Result("stale_file");
+                return CheckPreview(preview, client, out _);
+            }
+            catch (Exception error)
+            {
+                return Classify(error);
+            }
+        }
+
+        private string CheckPreview(ClientConfigurationPreview preview, IMcpClientConfigurator client, out ClientConfigurationFileTarget target)
+        {
+            target = null;
+            if (preview == null || !ReferenceEquals(preview, pending) || !ReferenceEquals(preview.Client, client))
+                return "stale_handle";
+            target = resolve(client);
+            if (!SameTarget(preview.Target, preview.TargetHash, target))
+                return "stale_target";
+            var inputs = CaptureInputs(target);
+            if (inputs.Locked)
+                return "locked";
+            string currentContext = inputs.Fingerprint();
+            ValidateInputs(inputs);
+            if (currentContext != preview.ContextHash)
+                return "stale_context";
+            return SameBytes(Read(target.Path), preview.Original) ? "prepared" : "stale_file";
+        }
+
+        public ClientConfigurationChangeResult Apply(ClientConfigurationPreview preview, IMcpClientConfigurator client)
+        {
+            try
+            {
+                string code = CheckPreview(preview, client, out var target);
+                if (code != "prepared")
+                    return Result(code);
                 string writtenEntry = Entry(preview.Proposed, target);
                 if (SameEntry(writtenEntry, preview.OriginalEntry, target.Format))
                 {
                     pending = null;
                     return Result("unchanged");
                 }
-                Commit(target.Path, preview.Proposed, preview.Bom, current);
+                Commit(target.Path, preview.Proposed, preview.Bom, preview.Original);
                 undo = new ClientConfigurationReceipt
                 {
                     Target = target,

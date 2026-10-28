@@ -35,7 +35,9 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             restoreConfigurationButton,
             cancelConfigurationPreviewButton;
         private TextField configurationPreviewText;
+        private ScrollView configurationPreviewScroll;
         private Label configurationChangeStatusLabel;
+        private const string EmptyConfigurationReviewMessage = "Choose Preview change to see what will be saved.";
         private DropdownField clientDropdown;
         private Button configureAllButton;
         private Button retryFailedButton;
@@ -57,11 +59,13 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         private Foldout clientDetailsFoldout;
         private Foldout manualConfigFoldout;
         private TextField configPathField;
+        private Label configPathStatusLabel;
         private Button copyPathButton;
         private Button openFileButton;
         private TextField configJsonField;
         private Button copyJsonButton;
         private Label installationStepsLabel;
+        private Action<string> copyToClipboard = value => EditorGUIUtility.systemCopyBuffer = value;
 
         // Data
         private readonly List<IMcpClientConfigurator> configurators;
@@ -258,6 +262,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             restoreConfigurationButton = Root.Q<Button>("restore-configuration");
             cancelConfigurationPreviewButton = Root.Q<Button>("cancel-configuration-preview");
             configurationPreviewText = Root.Q<TextField>("configuration-preview");
+            configurationPreviewScroll = Root.Q<ScrollView>("configuration-preview-scroll");
             configurationChangeStatusLabel = Root.Q<Label>("configuration-change-status");
             configureAllButton = Root.Q<Button>("configure-all-button");
             retryFailedButton = Root.Q<Button>("retry-failed-button");
@@ -276,6 +281,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             clientDetailsFoldout = Root.Q<Foldout>("client-details-foldout");
             manualConfigFoldout = Root.Q<Foldout>("manual-config-foldout");
             configPathField = Root.Q<TextField>("config-path");
+            configPathStatusLabel = Root.Q<Label>("config-path-status");
             copyPathButton = Root.Q<Button>("copy-path-button");
             openFileButton = Root.Q<Button>("open-file-button");
             configJsonField = Root.Q<TextField>("config-json");
@@ -286,8 +292,11 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         private void InitializeUI()
         {
             SetRetryAttempt(null);
+            SetConfigurationPreviewVisible(false);
             applyConfigurationButton?.SetEnabled(false);
             restoreConfigurationButton?.SetEnabled(false);
+            if (configurationChangeStatusLabel != null)
+                configurationChangeStatusLabel.text = EmptyConfigurationReviewMessage;
             // Ensure manual config foldout starts collapsed
             if (manualConfigFoldout != null)
             {
@@ -420,11 +429,15 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 return;
 
             var client = configurators[selectedClientIndex];
+            RefreshConfigurationPreview();
 
             try
             {
-                string configPath = client.GetConfigPath();
-                string configJson = client.GetManualSnippet();
+                var provider = client as IManualConfigurationProvider;
+                bool cliManaged = provider?.IsCliManaged == true;
+                string configPath = cliManaged ? null : client.GetConfigPath();
+                var generated = provider?.GenerateManualConfiguration() ?? ManualConfigurationResult.Generate(client.GetManualSnippet);
+                string configJson = generated.Snippet;
                 var steps = client.GetInstallationSteps();
                 string instructions =
                     steps != null && steps.Count > 0
@@ -433,10 +446,26 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
                 configPathField.value = configPath;
                 configJsonField.value = configJson;
-                installationStepsLabel.text = instructions;
-                copyPathButton.SetEnabled(true);
-                openFileButton.SetEnabled(true);
-                copyJsonButton.SetEnabled(true);
+                installationStepsLabel.text = generated.Error == null ? instructions : $"Configuration unavailable: {generated.Error}";
+                bool hasPath = !string.IsNullOrWhiteSpace(configPath);
+                bool fileExists = hasPath && File.Exists(configPath);
+                copyPathButton.SetEnabled(hasPath);
+                openFileButton.SetEnabled(fileExists);
+                copyJsonButton.SetEnabled(generated.Success);
+                SetConfigPathStatus(
+                    cliManaged
+                        ? generated.Error == null
+                            ? "Managed via Claude CLI. Use Configure or the CLI commands below to register this client."
+                            : "Managed via Claude CLI. Resolve the configuration diagnostic below before registering this client."
+                        : fileExists
+                            ? null
+                            : generated.Error != null
+                                ? "Resolve the configuration diagnostic below before configuring this client."
+                                : hasPath
+                                    ? "The configuration file has not been created. Configure this client or follow the manual instructions below."
+                                    : "This client has no configuration file to open. Follow the manual instructions below."
+                );
+                openFileButton.tooltip = fileExists ? "Open the existing configuration file." : "No configuration file is available to open.";
             }
             catch (Exception ex)
             {
@@ -446,7 +475,28 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 copyPathButton.SetEnabled(false);
                 openFileButton.SetEnabled(false);
                 copyJsonButton.SetEnabled(false);
+                SetConfigPathStatus(null);
             }
+        }
+
+        private void SetConfigPathStatus(string message)
+        {
+            if (configPathStatusLabel == null)
+                return;
+            configPathStatusLabel.text = message ?? "";
+            configPathStatusLabel.EnableInClassList("hidden", string.IsNullOrEmpty(message));
+        }
+
+        private void RefreshConfigurationPreview()
+        {
+            if (configurationPreview == null || applyConfigurationButton?.enabledSelf != true)
+                return;
+            string code = configurationChanges.ValidatePreview(configurationPreview, PreviewClient);
+            if (code == "prepared")
+                return;
+            applyConfigurationButton.SetEnabled(false);
+            if (configurationChangeStatusLabel != null)
+                configurationChangeStatusLabel.text = ConfigurationStatusMessage(code, PreviewClient?.DisplayName);
         }
 
         private void UpdateClaudeCliPathVisibility()
@@ -509,6 +559,14 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         {
             configurationReceipt = configurationChanges?.RestoreReceiptFor(PreviewClient);
             restoreConfigurationButton?.SetEnabled(configurationReceipt != null);
+            restoreConfigurationButton?.EnableInClassList("initially-hidden", configurationReceipt == null);
+        }
+
+        private void SetConfigurationPreviewVisible(bool visible)
+        {
+            configurationPreviewScroll?.EnableInClassList("initially-hidden", !visible);
+            applyConfigurationButton?.EnableInClassList("initially-hidden", !visible);
+            cancelConfigurationPreviewButton?.EnableInClassList("initially-hidden", !visible);
         }
 
         private void OnPreviewConfigurationClicked()
@@ -516,9 +574,8 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
             RefreshRestoreAvailability();
             configurationPreview = configurationChanges.Prepare(PreviewClient);
             if (configurationPreviewText != null)
-                configurationPreviewText.value = configurationPreview.CanApply
-                    ? configurationPreview.DisplayText
-                    : ConfigurationStatusMessage(configurationPreview.Code, PreviewClient?.DisplayName);
+                configurationPreviewText.value = configurationPreview.CanApply ? configurationPreview.DisplayText : "";
+            SetConfigurationPreviewVisible(configurationPreview.CanApply);
             if (configurationChangeStatusLabel != null)
                 configurationChangeStatusLabel.text = ConfigurationStatusMessage(configurationPreview.Code, PreviewClient?.DisplayName);
             applyConfigurationButton?.SetEnabled(configurationPreview.CanApply);
@@ -528,11 +585,12 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
         {
             configurationChanges?.CancelPreview();
             configurationPreview = null;
+            SetConfigurationPreviewVisible(false);
             applyConfigurationButton?.SetEnabled(false);
             if (configurationPreviewText != null)
                 configurationPreviewText.value = "";
             if (configurationChangeStatusLabel != null)
-                configurationChangeStatusLabel.text = "";
+                configurationChangeStatusLabel.text = EmptyConfigurationReviewMessage;
         }
 
         private void OnApplyConfigurationPreviewClicked()
@@ -550,6 +608,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 UpdateManualConfiguration();
             }
             restoreConfigurationButton?.SetEnabled(configurationReceipt != null);
+            restoreConfigurationButton?.EnableInClassList("initially-hidden", configurationReceipt == null);
             if (configurationChangeStatusLabel != null)
                 configurationChangeStatusLabel.text = ConfigurationStatusMessage(result.Code, PreviewClient?.DisplayName);
         }
@@ -566,6 +625,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 UpdateManualConfiguration();
             }
             restoreConfigurationButton?.SetEnabled(configurationReceipt != null);
+            restoreConfigurationButton?.EnableInClassList("initially-hidden", configurationReceipt == null);
             if (configurationChangeStatusLabel != null)
                 configurationChangeStatusLabel.text = ConfigurationStatusMessage(result.Code, PreviewClient?.DisplayName);
         }
@@ -929,13 +989,14 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                     installSkillsButton.text = "Install Skills";
 
                     string summary = SkillSyncService.DescribeResult(result);
+                    string diagnostics = SkillSyncService.DescribeResult(result, includeSourceDetails: true);
                     if (result.Success)
                     {
                         bool needsAttention = result.Conflicts.Length > 0 || !string.IsNullOrEmpty(result.RecoveryPath);
                         if (needsAttention)
-                            McpLog.Warn($"SkillSync: {summary} ({installPath})");
+                            McpLog.Warn($"SkillSync: {diagnostics} ({installPath})");
                         else
-                            McpLog.Info($"SkillSync: {summary} ({installPath})");
+                            McpLog.Info($"SkillSync: {diagnostics} ({installPath})");
                         EditorUtility.DisplayDialog(
                             needsAttention ? "Skills synced with retained changes" : "Install Skills",
                             $"{summary}\n\nInstalled at: {installPath}",
@@ -944,7 +1005,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                     }
                     else
                     {
-                        McpLog.Error($"SkillSync failed: {summary}");
+                        McpLog.Error($"SkillSync failed: {diagnostics}");
                         EditorUtility.DisplayDialog(result.PartialApplication ? "Skill sync requires recovery" : "Install Skills Failed", summary, "OK");
                     }
                 }
@@ -1004,12 +1065,16 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         private void OnCopyPathClicked()
         {
-            EditorGUIUtility.systemCopyBuffer = configPathField.value;
+            if (!copyPathButton.enabledSelf)
+                return;
+            copyToClipboard(configPathField.value);
             McpLog.Info("Config path copied to clipboard");
         }
 
         private void OnOpenFileClicked()
         {
+            if (!openFileButton.enabledSelf)
+                return;
             OnCancelConfigurationPreviewClicked();
             string path = configPathField.value;
             try
@@ -1030,7 +1095,9 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
 
         private void OnCopyJsonClicked()
         {
-            EditorGUIUtility.systemCopyBuffer = configJsonField.value;
+            if (!copyJsonButton.enabledSelf)
+                return;
+            copyToClipboard(configJsonField.value);
             McpLog.Info("Configuration copied to clipboard");
         }
 
@@ -1041,7 +1108,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 var client = configurators[selectedClientIndex];
                 bool refresh = forceImmediate || ShouldRefreshClient(client);
                 RefreshClientStatus(client, refresh);
-                if (refresh && configurationPreview == null)
+                if (refresh)
                 {
                     UpdateManualConfiguration();
                     UpdateClaudeCliPathVisibility();

@@ -19,6 +19,7 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
         private Label summaryLabel;
         private Label noteLabel;
         private TextField searchField;
+        private Button clearSearchButton;
         private Label visibleCountLabel;
         private Label emptyStateLabel;
         private Button enableAllButton;
@@ -52,6 +53,7 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
             summaryLabel = Root.Q<Label>("resources-summary");
             noteLabel = Root.Q<Label>("resources-note");
             searchField = Root.Q<TextField>("resources-search");
+            clearSearchButton = Root.Q<Button>("resources-clear-search");
             visibleCountLabel = Root.Q<Label>("resources-visible-count");
             emptyStateLabel = Root.Q<Label>("resources-empty-state");
             enableAllButton = Root.Q<Button>("enable-all-resources-button");
@@ -66,6 +68,8 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
         private void RegisterCallbacks()
         {
             searchField?.RegisterValueChangedCallback(evt => ApplySearch());
+            if (clearSearchButton != null)
+                clearSearchButton.clicked += ClearSearch;
             if (enableMatchingButton != null)
                 enableMatchingButton.clicked += () => SetResourcesState(MatchingResources(), true);
             if (disableMatchingButton != null)
@@ -270,10 +274,18 @@ namespace MCPForUnity.Editor.Windows.Components.Resources
             ApplySearch();
         }
 
+        private void ClearSearch()
+        {
+            searchField?.SetValueWithoutNotify("");
+            ApplySearch();
+            searchField?.Focus();
+        }
+
         private void ApplySearch()
         {
             string query = (searchField?.value ?? string.Empty).Trim();
             bool searching = query.Length > 0;
+            clearSearchButton?.EnableInClassList("catalog-hidden", !searching);
             int visibleCount = 0;
 
             foreach (var (foldout, resources) in foldoutEntries)

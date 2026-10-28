@@ -42,7 +42,7 @@ namespace MCPForUnity.Editor.Clients
         /// <summary>Label to show on the configure button for the current state.</summary>
         string GetConfigureActionLabel();
 
-        /// <summary>Returns the platform-specific config path (or message for CLI-managed clients).</summary>
+        /// <summary>Returns the platform-specific config file path, or null when configuration is CLI-managed.</summary>
         string GetConfigPath();
 
         /// <summary>Checks and updates status; returns current status.</summary>
@@ -62,7 +62,7 @@ namespace MCPForUnity.Editor.Clients
         /// </summary>
         void Unregister();
 
-        /// <summary>Returns the manual configuration snippet (JSON/TOML/commands).</summary>
+        /// <summary>Returns the manual configuration snippet (JSON/TOML/commands); throws when generation is unavailable.</summary>
         string GetManualSnippet();
 
         /// <summary>Returns ordered human-readable installation steps.</summary>

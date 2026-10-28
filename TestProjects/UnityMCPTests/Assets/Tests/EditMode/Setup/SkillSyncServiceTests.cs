@@ -59,7 +59,38 @@ namespace MCPForUnityTests.Editor.Setup
         [Test]
         public void DescribeResult_NoDifferencesReportsUpToDate()
         {
-            Assert.That(SkillSyncService.DescribeResult(new SkillSyncService.SyncResult { Success = true }), Does.StartWith("Skills are already up to date."));
+            var result = new SkillSyncService.SyncResult
+            {
+                Success = true,
+                SourceDescription = "Installed package example; installation identity SHA256 diagnostic-identity",
+                CommitSha = new string('a', 40),
+            };
+            Assert.AreEqual("Skills are already up to date.", SkillSyncService.DescribeResult(result));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DescribeResult_KeepsRecoveryAndConflictsVisibleWhileSourceDetailsAreOptional(bool success)
+        {
+            var result = new SkillSyncService.SyncResult
+            {
+                Success = success,
+                Error = success ? null : "Could not finish the update.",
+                PartialApplication = !success,
+                Conflicts = success ? new[] { "references/local.md" } : Array.Empty<string>(),
+                RecoveryPath = "example/recovery",
+                SourceDescription = "Installed package example; installation identity SHA256 diagnostic-identity",
+                CommitSha = new string('a', 40),
+            };
+            string summary = SkillSyncService.DescribeResult(result);
+            Assert.That(summary, Does.Contain("Recovery files retained at: example/recovery"));
+            Assert.That(summary, Does.Contain(success ? "references/local.md" : "Some changes remain; recovery is required."));
+            Assert.That(summary, Does.Not.Contain(result.SourceDescription));
+            Assert.That(summary, Does.Not.Contain(result.CommitSha));
+            string diagnostics = SkillSyncService.DescribeResult(result, includeSourceDetails: true);
+            Assert.That(diagnostics, Does.StartWith(summary));
+            Assert.That(diagnostics, Does.Contain(result.SourceDescription));
+            Assert.That(diagnostics, Does.Contain(result.CommitSha));
         }
 
         [Test]

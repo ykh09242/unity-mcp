@@ -8,8 +8,40 @@ using MCPForUnity.Editor.Services;
 
 namespace MCPForUnity.Editor.Clients
 {
+    /// <summary>Optional manual-configuration capabilities, independent of a file destination.</summary>
+    public interface IManualConfigurationProvider
+    {
+        bool IsCliManaged { get; }
+        ManualConfigurationResult GenerateManualConfiguration();
+    }
+
+    public sealed class ManualConfigurationResult
+    {
+        public string Snippet { get; }
+        public string Error { get; }
+        public bool Success => Error == null && !string.IsNullOrWhiteSpace(Snippet);
+
+        private ManualConfigurationResult(string snippet, string error)
+        {
+            Snippet = snippet;
+            Error = error;
+        }
+
+        public static ManualConfigurationResult Generate(Func<string> generate)
+        {
+            try
+            {
+                return new ManualConfigurationResult(generate(), null);
+            }
+            catch (Exception ex)
+            {
+                return new ManualConfigurationResult(null, ex.Message);
+            }
+        }
+    }
+
     /// <summary>Shared base class for MCP configurators.</summary>
-    public abstract class McpClientConfiguratorBase : IMcpClientConfigurator
+    public abstract class McpClientConfiguratorBase : IMcpClientConfigurator, IManualConfigurationProvider
     {
         protected readonly McpClient client;
 
@@ -46,6 +78,10 @@ namespace MCPForUnity.Editor.Clients
         /// <summary>Default Unregister is a no-op. Override in JsonFileMcpConfigurator /
         /// ClaudeCliMcpConfigurator etc. where removal has a concrete implementation.</summary>
         public virtual void Unregister() { }
+
+        public virtual bool IsCliManaged => false;
+
+        public virtual ManualConfigurationResult GenerateManualConfiguration() => ManualConfigurationResult.Generate(GetManualSnippet);
 
         public abstract string GetManualSnippet();
         public abstract IList<string> GetInstallationSteps();

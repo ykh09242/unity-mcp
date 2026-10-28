@@ -1,13 +1,87 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Reflection;
 using MCPForUnity.Editor.Setup;
 using NUnit.Framework;
+using UnityEditor;
+using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Setup
 {
+    [Parallelizable(ParallelScope.None)]
     public class SkillInstallerWindowTests
     {
+        private const BindingFlags PrivateInstance = BindingFlags.NonPublic | BindingFlags.Instance;
+
+        private sealed class EvidenceInstaller : McpForUnitySkillInstaller
+        {
+            private void OnEnable() { }
+
+            private void OnDisable() { }
+
+            private void OnGUI() => typeof(McpForUnitySkillInstaller).GetMethod("OnGUI", PrivateInstance).Invoke(this, null);
+        }
+
+        [UnityTest, Explicit("Owned, synthetic installer UI evidence without preference or installation writes.")]
+        public IEnumerator InstallerReviewKeepsDiagnosticsAndOutputOptional()
+        {
+            Assert.IsTrue(Guid.TryParseExact(Environment.GetEnvironmentVariable("UNITY_MCP_NATIVE_QA_NONCE"), "N", out _));
+            var window = ScriptableObject.CreateInstance<EvidenceInstaller>();
+            try
+            {
+                void Set(string field, object value) => typeof(McpForUnitySkillInstaller).GetField(field, PrivateInstance).SetValue(window, value);
+                Set("_cliType", "codex");
+                Set("_installDir", "/example/skills/unity-mcp-skill");
+                Set("_repoUrl", "https://example.invalid/unity-mcp");
+                Set("_targetBranch", "beta");
+                Set("_latest", true);
+                window.titleContent = new GUIContent("Unity MCP · skill review evidence");
+                window.position = new Rect(30, 30, 480, 600);
+                window.ShowUtility();
+                string directory = Path.GetFullPath(Path.Combine(Application.dataPath, "../Library/McpTestEvidence/installer-" + Guid.NewGuid().ToString("N")));
+                Directory.CreateDirectory(directory);
+                foreach (string state in new[] { "idle", "preview", "source-details", "output" })
+                {
+                    if (state == "preview")
+                    {
+                        typeof(McpForUnitySkillInstaller)
+                            .GetMethod("SetPreview", PrivateInstance)
+                            .Invoke(
+                                window,
+                                new object[] { Preview(new[] { "SKILL.md" }, preserved: new[] { "local.md" }, conflicts: new[] { "references/conflict.md" }) }
+                            );
+                        Set("_status", "Preview ready. Review paths before applying.");
+                    }
+                    Set("_sourceDetails", state == "source-details");
+                    Set("_showOutput", state == "output");
+                    if (state == "output")
+                        typeof(McpForUnitySkillInstaller)
+                            .GetMethod("AppendLineImmediate", PrivateInstance)
+                            .Invoke(window, new object[] { "Synthetic preview complete. Local changes are retained." });
+                    for (int i = 0; i < 12; i++)
+                    {
+                        window.Repaint();
+                        yield return null;
+                    }
+                    Assert.IsNotNull(window.rootVisualElement.panel);
+                    string path = Path.Combine(directory, state + ".png");
+                    typeof(MCPForUnityTests.EditMode.Windows.OperationActivityTests)
+                        .GetMethod("Capture", BindingFlags.NonPublic | BindingFlags.Static)
+                        .Invoke(null, new object[] { window, path });
+                    TestContext.Out.WriteLine("INSTALLER_UX_CAPTURE " + path);
+                }
+            }
+            finally
+            {
+                ((IDisposable)typeof(McpForUnitySkillInstaller).GetField("_operation", PrivateInstance).GetValue(window)).Dispose();
+                window.Close();
+            }
+        }
+
         [Test]
         public void CancellationRetainsOwnershipUntilCompletionAndRejectsDuplicateApply()
         {

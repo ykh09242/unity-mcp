@@ -65,7 +65,9 @@ namespace MCPForUnity.Editor.Clients
 
         public override string GetConfigureActionLabel() => ShouldUnregister ? "Unregister" : "Configure";
 
-        public override string GetConfigPath() => "Managed via Claude CLI";
+        public override bool IsCliManaged => true;
+
+        public override string GetConfigPath() => null;
 
         public override bool IsInstalled => MCPServiceLocator.Paths.IsClaudeCliDetected();
 
@@ -572,7 +574,7 @@ namespace MCPForUnity.Editor.Clients
 
             if (string.IsNullOrEmpty(uvxPath))
             {
-                return "# Error: Configuration not available - check paths in Advanced Settings";
+                throw new InvalidOperationException("uvx not found. Install uv/uvx or set the override in Advanced Settings.");
             }
 
             string devFlags = AssetPathUtility.GetUvxDevFlags();

@@ -30,15 +30,15 @@
                 <ui:Foldout name="client-review-foldout" text="Review configuration changes" value="false" class="settings-group">
                     <ui:VisualElement class="client-configuration-review">
                         <ui:Label text="Review a redacted Unity MCP entry change. Other settings are preserved." class="help-text" />
-                        <ui:ScrollView mode="Vertical" class="config-preview-scroll">
+                        <ui:ScrollView name="configuration-preview-scroll" mode="Vertical" class="config-preview-scroll initially-hidden">
                             <ui:TextField name="configuration-preview" readonly="true" multiline="true" class="config-preview-field" />
                         </ui:ScrollView>
-                        <ui:Label name="configuration-change-status" text="No reviewed change prepared." class="help-text" />
+                        <ui:Label name="configuration-change-status" text="Choose Preview change to see what will be saved." class="help-text" />
                         <ui:VisualElement class="client-configuration-review-actions">
                             <ui:Button name="preview-configuration" text="Preview change" class="action-button" />
-                            <ui:Button name="apply-configuration" text="Apply reviewed change" enabled="false" class="action-button primary-button" />
-                            <ui:Button name="cancel-configuration-preview" text="Cancel preview" class="action-button" />
-                            <ui:Button name="restore-configuration" text="Restore previous Unity entry" enabled="false" class="action-button" />
+                            <ui:Button name="apply-configuration" text="Apply reviewed change" enabled="false" class="action-button primary-button initially-hidden" />
+                            <ui:Button name="cancel-configuration-preview" text="Cancel preview" class="action-button initially-hidden" />
+                            <ui:Button name="restore-configuration" text="Restore previous Unity entry" enabled="false" class="action-button initially-hidden" />
                         </ui:VisualElement>
                     </ui:VisualElement>
                 </ui:Foldout>
@@ -50,6 +50,7 @@
                             <ui:Button name="copy-path-button" text="Copy" class="icon-button" />
                             <ui:Button name="open-file-button" text="Open" class="icon-button" />
                         </ui:VisualElement>
+                        <ui:Label name="config-path-status" class="help-text hidden" />
                         <ui:Label text="Configuration:" class="config-label" />
                         <ui:VisualElement class="config-json-row">
                             <ui:TextField name="config-json" readonly="true" multiline="true" class="config-json-field" />

@@ -113,6 +113,30 @@ namespace MCPForUnityTests.Editor.Windows
         }
 
         [UnityTest]
+        public IEnumerator CliManagedConfigurationKeepsFileActionsDisabledBeforeAndAfterRegistration()
+        {
+            SelectProject(projectB);
+            var section = CreateSection();
+            yield return WaitFor(() => Label(section) == "Not Configured", "Unregistered CLI context");
+            AssertCliManagedActions(section);
+            Invoke(section, "OnConfigureClicked");
+            yield return WaitFor(() => client.Calls.Count > 0 && Label(section) == "Configured", "Registered CLI context");
+            section.UpdateManualConfiguration();
+            AssertCliManagedActions(section);
+        }
+
+        private void AssertCliManagedActions(McpClientConfigSection section)
+        {
+            Assert.IsTrue(client.IsCliManaged);
+            Assert.IsNull(client.GetConfigPath());
+            Assert.IsTrue(string.IsNullOrEmpty(section.Root.Q<TextField>("config-path").value));
+            Assert.IsFalse(section.Root.Q<Button>("copy-path-button").enabledSelf);
+            Assert.IsFalse(section.Root.Q<Button>("open-file-button").enabledSelf);
+            Assert.IsTrue(section.Root.Q<Button>("copy-json-button").enabledSelf);
+            Assert.IsTrue(client.GenerateManualConfiguration().Success);
+        }
+
+        [UnityTest]
         public IEnumerator CompletedProjectStatusIsInvalidatedBeforeTtl()
         {
             var section = CreateSection();
@@ -424,8 +448,6 @@ namespace MCPForUnityTests.Editor.Windows
 
             internal MemoryCli(string config)
                 : base(new McpClient { name = "Synthetic Claude" }) => this.config = config;
-
-            public override string GetManualSnippet() => "synthetic";
 
             protected override bool RunCli(
                 string executable,

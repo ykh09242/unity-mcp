@@ -6,6 +6,7 @@
             <ui:VisualElement class="catalog-toolbar">
                 <ui:TextField name="resources-search" label="Search" class="catalog-search" tooltip="Search resource names, descriptions, and categories." />
                 <ui:Label name="resources-visible-count" class="catalog-count" />
+                <ui:Button name="resources-clear-search" text="Clear search" class="tool-action-button catalog-hidden" tooltip="Show all resources without changing their enabled state." />
             </ui:VisualElement>
             <ui:VisualElement name="resources-actions" class="catalog-toolbar">
                 <ui:Button name="enable-matching-resources" text="Enable matching (0)" class="tool-action-button" enabled="false" />

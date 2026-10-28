@@ -5,6 +5,7 @@ using System.Reflection;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
+using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Windows.Components.Resources;
 using MCPForUnity.Editor.Windows.Components.Tools;
 using NUnit.Framework;
@@ -68,6 +69,42 @@ namespace MCPForUnityTests.EditMode.Windows
 
             Assert.That(row.Query<Label>(className: "tool-tag").ToList()[0].text, Is.EqualTo(expected));
             Assert.That(tools.WriteCalls, Is.Zero);
+        }
+
+        [TestCase("PNG")]
+        [TestCase("RectTransform")]
+        public void CapturePrefabNativeMetadataIsDisplayedAndSearchable(string capability)
+        {
+            var type = typeof(CapturePrefab);
+            var attribute = type.GetCustomAttribute<McpForUnityToolAttribute>();
+            Assert.IsNotNull(attribute);
+            var metadata = (ToolMetadata)
+                typeof(ToolDiscoveryService)
+                    .GetMethod("ExtractToolMetadata", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .Invoke(new ToolDiscoveryService(), new object[] { type, attribute });
+            Assert.IsNotNull(metadata);
+            Assert.That(metadata.Description.IndexOf(capability, StringComparison.OrdinalIgnoreCase), Is.GreaterThanOrEqualTo(0));
+            tools.Items.Add(metadata);
+            tools.Items.Add(
+                new ToolMetadata
+                {
+                    Name = "unrelated_probe",
+                    IsBuiltIn = true,
+                    Group = "core",
+                }
+            );
+            var root = ActualToolsRoot();
+            new McpToolsSection(root).Refresh();
+            var row = root.Query<VisualElement>(className: "tool-item").ToList().Single(item => item.Q<Toggle>("tool-toggle-capture_prefab") != null);
+            var summary = row.Q<Label>(className: "tool-item-description");
+            Assert.IsNotNull(summary, "A useful native description must produce a visible summary row.");
+            Assert.IsNotEmpty(summary.text);
+            Search(root, "tools", capability);
+            Assert.IsFalse(row.ClassListContains("catalog-hidden"));
+            Assert.AreEqual("1 / 2 shown", root.Q<Label>("tools-visible-count").text);
+            Search(root, "tools", "unrelated_probe");
+            Assert.IsTrue(row.ClassListContains("catalog-hidden"));
+            Assert.Zero(tools.WriteCalls);
         }
 
         [TestCase("  CAMERA ", true)]
@@ -155,6 +192,38 @@ namespace MCPForUnityTests.EditMode.Windows
             Assert.That(toolCatalog ? tools.DiscoverCalls : resources.DiscoverCalls, Is.EqualTo(1));
             Assert.That(toolCatalog ? tools.WriteCalls : resources.WriteCalls, Is.Zero);
             Assert.That(toolCatalog ? tools.InvalidateCalls : resources.InvalidateCalls, Is.Zero);
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void ClearFiltersRestoresRowsAndExpansionWithoutChangingSelection(bool toolCatalog)
+        {
+            var (_, root) = CreateCatalog(toolCatalog, actualTemplate: true);
+            string prefix = toolCatalog ? "tools" : "resources";
+            var button = root.Q<Button>(prefix + (toolCatalog ? "-clear-filters" : "-clear-search"));
+            Assert.IsNotNull(button);
+            Assert.IsTrue(button.ClassListContains("catalog-hidden"));
+            var foldouts = root.Query<Foldout>(className: "catalog-category").ToList();
+            foldouts[0].SetValueWithoutNotify(false);
+            foldouts[1].SetValueWithoutNotify(true);
+            var original = root.Query<Toggle>().ToList().Select(toggle => toggle.value).ToArray();
+            Search(root, prefix, "no-match");
+            if (toolCatalog)
+                root.Q<DropdownField>("tools-state-filter").value = "Disabled";
+            Assert.IsFalse(button.ClassListContains("catalog-hidden"));
+            Assert.AreEqual("0 / 2 shown", root.Q<Label>(prefix + "-visible-count").text);
+            Click(button);
+            Assert.AreEqual("", root.Q<TextField>(prefix + "-search").value);
+            if (toolCatalog)
+                Assert.AreEqual("All", root.Q<DropdownField>("tools-state-filter").value);
+            Assert.AreEqual("2 / 2 shown", root.Q<Label>(prefix + "-visible-count").text);
+            Assert.IsTrue(button.ClassListContains("catalog-hidden"));
+            Assert.IsFalse(foldouts[0].value);
+            Assert.IsTrue(foldouts[1].value);
+            CollectionAssert.AreEqual(original, root.Query<Toggle>().ToList().Select(toggle => toggle.value).ToArray());
+            Assert.AreEqual(1, toolCatalog ? tools.DiscoverCalls : resources.DiscoverCalls);
+            Assert.Zero(toolCatalog ? tools.WriteCalls : resources.WriteCalls);
+            Assert.Zero(toolCatalog ? tools.InvalidateCalls : resources.InvalidateCalls);
         }
 
         [TestCase(true)]
@@ -701,7 +770,7 @@ namespace MCPForUnityTests.EditMode.Windows
         private static void Click(Button button) =>
             typeof(Clickable).GetMethod("Invoke", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(button.clickable, new object[] { null });
 
-        private (object section, VisualElement root) CreateCatalog(bool toolCatalog)
+        private (object section, VisualElement root) CreateCatalog(bool toolCatalog, bool actualTemplate = false)
         {
             tools.Items.Add(
                 new ToolMetadata
@@ -736,7 +805,19 @@ namespace MCPForUnityTests.EditMode.Windows
                     IsBuiltIn = false,
                 }
             );
-            VisualElement root = CreateRoot(toolCatalog);
+            VisualElement root;
+            if (actualTemplate)
+            {
+                string sectionName = toolCatalog ? "Tools" : "Resources";
+                var tree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(
+                    $"Packages/com.ykh09242.unity-mcp/Editor/Windows/Components/{sectionName}/Mcp{sectionName}Section.uxml"
+                );
+                Assert.IsNotNull(tree);
+                root = tree.CloneTree();
+                panels.Add(new OwnedPanel(root));
+            }
+            else
+                root = CreateRoot(toolCatalog);
             object section = toolCatalog ? (object)new McpToolsSection(root) : new McpResourcesSection(root);
             Invoke(section, "Refresh");
             return (section, root);

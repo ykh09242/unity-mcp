@@ -45,6 +45,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
         private int statusRenderQueued;
         private CancellationTokenSource sceneViewCapture;
         private TextField searchField;
+        private Button clearFiltersButton;
         private DropdownField stateFilter;
         private Button recommendedButton;
         private Label visibleCountLabel;
@@ -148,6 +149,7 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             applyStatusLabel = Root.Q<Label>("tools-apply-status");
             retryToolsButton = Root.Q<Button>("retry-tools-button");
             searchField = Root.Q<TextField>("tools-search");
+            clearFiltersButton = Root.Q<Button>("tools-clear-filters");
             stateFilter = Root.Q<DropdownField>("tools-state-filter");
             recommendedButton = Root.Q<Button>("recommended-tools-button");
             visibleCountLabel = Root.Q<Label>("tools-visible-count");
@@ -182,6 +184,8 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
                 });
             }
             searchField?.RegisterValueChangedCallback(evt => ApplySearch());
+            if (clearFiltersButton != null)
+                clearFiltersButton.clicked += ClearFilters;
             if (enableMatchingButton != null)
                 enableMatchingButton.clicked += () => SetToolsState(allTools.Where(MatchesFilter).ToList(), true);
             if (disableMatchingButton != null)
@@ -1047,9 +1051,18 @@ namespace MCPForUnity.Editor.Windows.Components.Tools
             }
         }
 
+        private void ClearFilters()
+        {
+            searchField?.SetValueWithoutNotify("");
+            stateFilter?.SetValueWithoutNotify("All");
+            ApplySearch();
+            searchField?.Focus();
+        }
+
         private void ApplySearch()
         {
             bool searching = IsFiltering();
+            clearFiltersButton?.EnableInClassList("catalog-hidden", !searching);
             int visibleCount = 0;
 
             foreach (var (foldout, _, tools) in foldoutEntries)

@@ -30,6 +30,7 @@ namespace MCPForUnity.Editor.Setup
         private Vector2 _formScroll;
         private bool _followOutput = true;
         private bool _sourceDetails;
+        private bool _showOutput;
         private string _status;
         private readonly SkillInstallerOperation _operation = new();
         private readonly SkillInstallerReview _review = new();
@@ -126,8 +127,8 @@ namespace MCPForUnity.Editor.Setup
             _sourceDetails = EditorGUILayout.Foldout(_sourceDetails, "Source details", true);
             if (_sourceDetails)
                 EditorGUILayout.LabelField(
-                    _latest
-                        ? "Resolves the branch at preview time. Compatibility with this package is not verified."
+                    _preview != null ? _preview.SourceDescription + "\nResolved commit: " + _preview.CommitSha
+                        : _latest ? "Resolves the branch at preview time. Compatibility with this package is not verified."
                         : (_packageSource?.Description ?? _packageError) + "\nInstalled files may differ from this source.",
                     EditorStyles.wordWrappedLabel
                 );
@@ -165,28 +166,34 @@ namespace MCPForUnity.Editor.Setup
             {
                 EditorGUILayout.HelpBox(
                     $"Preview: +{_preview.Added.Count} ~{_preview.Updated.Count} -{_preview.Deleted.Count}. "
-                        + $"Local preserved: {_preview.Preserved.Count}. Conflicts retained: {_preview.Conflicts.Count}.\n"
-                        + _preview.SourceDescription
-                        + "\nResolved commit: "
-                        + _preview.CommitSha,
+                        + $"Local preserved: {_preview.Preserved.Count}. Conflicts retained: {_preview.Conflicts.Count}.",
                     _preview.Conflicts.Count > 0 ? MessageType.Warning : MessageType.Info
                 );
                 DrawReview();
             }
 
             EditorGUILayout.Space(8f);
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField("Output", EditorStyles.boldLabel);
-            bool follow = GUILayout.Toggle(_followOutput, "Follow output", GUILayout.Width(105f));
-            if (follow && !_followOutput)
-                _scroll.y = float.MaxValue;
-            _followOutput = follow;
-            if (GUILayout.Button("Clear", GUILayout.Width(55f)))
-                _log.Clear();
-            EditorGUILayout.EndHorizontal();
-            _scroll = EditorGUILayout.BeginScrollView(_scroll, GUILayout.Height(150f));
-            EditorGUILayout.TextArea(_log.Snapshot(), EditorStyles.textArea);
-            EditorGUILayout.EndScrollView();
+            _showOutput = EditorGUILayout.Foldout(_showOutput, "Output", true);
+            if (_showOutput)
+            {
+                string output = _log.Snapshot();
+                if (string.IsNullOrEmpty(output))
+                    EditorGUILayout.LabelField("No output yet. Preview changes to begin.", EditorStyles.wordWrappedLabel);
+                else
+                {
+                    EditorGUILayout.BeginHorizontal();
+                    bool follow = GUILayout.Toggle(_followOutput, "Follow output", GUILayout.Width(105f));
+                    if (follow && !_followOutput)
+                        _scroll.y = float.MaxValue;
+                    _followOutput = follow;
+                    if (GUILayout.Button("Clear", GUILayout.Width(55f)))
+                        _log.Clear();
+                    EditorGUILayout.EndHorizontal();
+                    _scroll = EditorGUILayout.BeginScrollView(_scroll, GUILayout.Height(150f));
+                    EditorGUILayout.TextArea(output, EditorStyles.textArea);
+                    EditorGUILayout.EndScrollView();
+                }
+            }
             EditorGUILayout.EndScrollView();
         }
 
@@ -309,7 +316,7 @@ namespace MCPForUnity.Editor.Setup
                     if (this == null || !_operation.Complete(operation))
                         return;
                     _status = SkillSyncService.DescribeResult(result);
-                    AppendLineImmediate(_status);
+                    AppendLineImmediate(SkillSyncService.DescribeResult(result, includeSourceDetails: true));
                     Repaint();
                 },
                 operation.Token

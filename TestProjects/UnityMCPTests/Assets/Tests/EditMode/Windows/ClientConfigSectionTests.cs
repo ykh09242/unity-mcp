@@ -1,15 +1,20 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.Serialization;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Clients;
+using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Windows.Components.ClientConfig;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.TestTools;
 using UnityEngine.UIElements;
 
 namespace MCPForUnityTests.Editor.Windows
@@ -18,6 +23,79 @@ namespace MCPForUnityTests.Editor.Windows
     public class ClientConfigSectionTests
     {
         private sealed class FoldoutWindow : EditorWindow { }
+
+        [UnityTest]
+        public IEnumerator ConfigurationReviewCollapsesEmptyContentAndRestoresItForAPreview()
+        {
+            var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
+            object previous = slot.GetValue(null);
+            bool hadPreference = EditorPrefs.HasKey(EditorPrefKeys.ClientDetailsFoldoutOpen);
+            bool savedPreference = EditorPrefs.GetBool(EditorPrefKeys.ClientDetailsFoldoutOpen);
+            string directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "unity-mcp-review-layout-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(directory);
+            var window = ScriptableObject.CreateInstance<FoldoutWindow>();
+            try
+            {
+                slot.SetValue(null, new MemoryClientService());
+                string path = System.IO.Path.Combine(directory, "synthetic-config");
+                var client = new ManualClient { ConfigPath = path };
+                System.IO.File.WriteAllText(path, MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Document("json", false));
+                var harness = new MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Harness(path, "json");
+                harness.Target.Value = MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Target(client, path, "json");
+                var root = window.rootVisualElement;
+                AssetDatabase
+                    .LoadAssetAtPath<VisualTreeAsset>("Packages/com.ykh09242.unity-mcp/Editor/Windows/Components/ClientConfig/McpClientConfigSection.uxml")
+                    .CloneTree(root);
+                var section = CreateSection(client);
+                Set(section, "<Root>k__BackingField", root);
+                Set(section, "configurationChanges", harness.Service);
+                Invoke(section, "CacheUIElements");
+                Invoke(section, "InitializeUI");
+                root.Q<Foldout>("client-details-foldout").value = true;
+                root.Q<Foldout>("client-review-foldout").value = true;
+                window.ShowUtility();
+                var scroll = root.Q<ScrollView>(className: "config-preview-scroll");
+                foreach (int width in new[] { 380, 1144 })
+                {
+                    window.position = new Rect(40, 40, width, 700);
+                    yield return null;
+                    yield return null;
+                    Assert.That(root.worldBound.width, Is.GreaterThan(0), "The actual Editor panel must have layout.");
+                    Assert.AreEqual(DisplayStyle.None, scroll.resolvedStyle.display, "An empty preview must not reserve its 160px viewport.");
+                    Assert.AreEqual(DisplayStyle.None, root.Q<Button>("apply-configuration").resolvedStyle.display);
+                    Assert.AreEqual(DisplayStyle.None, root.Q<Button>("cancel-configuration-preview").resolvedStyle.display);
+                    Assert.IsNotEmpty(root.Q<Label>("configuration-change-status").text);
+
+                    Invoke(section, "OnPreviewConfigurationClicked");
+                    yield return null;
+                    yield return null;
+                    Assert.Greater(scroll.worldBound.height, 0);
+                    Assert.IsNotEmpty(root.Q<TextField>("configuration-preview").value);
+                    Assert.IsTrue(root.Q<Button>("apply-configuration").enabledSelf);
+                    Assert.AreEqual(DisplayStyle.Flex, root.Q<Button>("cancel-configuration-preview").resolvedStyle.display);
+
+                    Invoke(section, "OnCancelConfigurationPreviewClicked");
+                    yield return null;
+                    yield return null;
+                    Assert.AreEqual(DisplayStyle.None, scroll.resolvedStyle.display);
+                    Assert.IsEmpty(root.Q<TextField>("configuration-preview").value);
+                    Assert.IsNotEmpty(root.Q<Label>("configuration-change-status").text);
+                    Assert.IsFalse(root.Q<Button>("apply-configuration").enabledSelf);
+                }
+                Assert.Zero(client.ConfigureCalls, "Preparing and cancelling a preview must not configure the client.");
+                Assert.IsFalse(System.IO.File.ReadAllText(path).Contains("unityMCP"));
+            }
+            finally
+            {
+                window.Close();
+                slot.SetValue(null, previous);
+                if (hadPreference)
+                    EditorPrefs.SetBool(EditorPrefKeys.ClientDetailsFoldoutOpen, savedPreference);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.ClientDetailsFoldoutOpen);
+                System.IO.Directory.Delete(directory, true);
+            }
+        }
 
         [Test]
         public void NestedConfigurationFoldoutsPreserveSelectedClientPreference()
@@ -75,10 +153,12 @@ namespace MCPForUnityTests.Editor.Windows
 
             client.FailureStage = failureStage;
             Assert.DoesNotThrow(section.UpdateManualConfiguration);
-            Assert.AreEqual(string.Empty, Get<TextField>(section, "configPathField").value);
-            Assert.AreEqual(string.Empty, Get<TextField>(section, "configJsonField").value);
+            // A generation failure does not invalidate an independently resolved file destination.
+            bool retainsPath = failureStage == "snippet";
+            Assert.AreEqual(retainsPath ? "memory-config" : string.Empty, Get<TextField>(section, "configPathField").value);
+            Assert.IsTrue(string.IsNullOrEmpty(Get<TextField>(section, "configJsonField").value), "A failed generation must clear the stale snippet.");
             StringAssert.Contains("synthetic configuration error", Get<Label>(section, "installationStepsLabel").text);
-            Assert.IsFalse(Get<Button>(section, "copyPathButton").enabledSelf);
+            Assert.AreEqual(retainsPath, Get<Button>(section, "copyPathButton").enabledSelf);
             Assert.IsFalse(Get<Button>(section, "openFileButton").enabledSelf);
             Assert.IsFalse(Get<Button>(section, "copyJsonButton").enabledSelf);
 
@@ -88,8 +168,159 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.AreEqual("memory-json", Get<TextField>(section, "configJsonField").value);
             Assert.AreEqual("1. Install\n2. Configure", Get<Label>(section, "installationStepsLabel").text);
             Assert.IsTrue(Get<Button>(section, "copyPathButton").enabledSelf);
-            Assert.IsTrue(Get<Button>(section, "openFileButton").enabledSelf);
+            Assert.IsFalse(Get<Button>(section, "openFileButton").enabledSelf, "A missing file must not offer Open.");
             Assert.IsTrue(Get<Button>(section, "copyJsonButton").enabledSelf);
+        }
+
+        [Test]
+        public void SnippetFailureRetainsExistingFileActions()
+        {
+            string path = System.IO.Path.GetTempFileName();
+            try
+            {
+                var section = CreateSection(new ManualClient { ConfigPath = path, FailureStage = "snippet" });
+                section.UpdateManualConfiguration();
+                Assert.AreEqual(path, Get<TextField>(section, "configPathField").value);
+                Assert.IsTrue(Get<Button>(section, "copyPathButton").enabledSelf);
+                Assert.IsTrue(Get<Button>(section, "openFileButton").enabledSelf);
+                Assert.IsFalse(Get<Button>(section, "copyJsonButton").enabledSelf);
+                Assert.IsTrue(string.IsNullOrEmpty(Get<TextField>(section, "configJsonField").value));
+            }
+            finally
+            {
+                System.IO.File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void ManualConfigurationActionsFollowAvailableContent()
+        {
+            string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "unity-mcp-manual-ui-" + Guid.NewGuid().ToString("N"));
+            var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
+            object previous = slot.GetValue(null);
+            try
+            {
+                var service = new MemoryClientService();
+                slot.SetValue(null, service);
+                var client = new ManualClient { ConfigPath = path };
+                var section = CreateSection(client);
+                var harness = new MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Harness(path, "json");
+                harness.Target.Value = MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Target(client, path, "json");
+                InitializePreviewUi(section, harness.Service);
+                Set(section, "configPathStatusLabel", new Label());
+                section.RefreshSelectedClient(forceImmediate: true);
+                Assert.IsTrue(Get<Button>(section, "copyPathButton").enabledSelf);
+                Assert.IsFalse(Get<Button>(section, "openFileButton").enabledSelf);
+                StringAssert.Contains("not been created", Get<Label>(section, "configPathStatusLabel").text);
+
+                Invoke(section, "OnPreviewConfigurationClicked");
+                object preview = Get<object>(section, "configurationPreview");
+                System.IO.File.WriteAllText(path, "{}");
+                section.RefreshSelectedClient(forceImmediate: true);
+                Assert.IsTrue(Get<Button>(section, "openFileButton").enabledSelf);
+                Assert.IsTrue(Get<Label>(section, "configPathStatusLabel").ClassListContains("hidden"));
+                Assert.AreSame(preview, Get<object>(section, "configurationPreview"));
+                Assert.IsFalse(Get<Button>(section, "applyConfigurationButton").enabledSelf);
+                StringAssert.Contains("configuration file changed", Get<Label>(section, "configurationChangeStatusLabel").text);
+
+                client.ConfigPath = "";
+                client.Snippet = "";
+                section.UpdateManualConfiguration();
+                Assert.IsFalse(Get<Button>(section, "copyPathButton").enabledSelf);
+                Assert.IsFalse(Get<Button>(section, "openFileButton").enabledSelf);
+                Assert.IsFalse(Get<Button>(section, "copyJsonButton").enabledSelf);
+                StringAssert.Contains("manual instructions", Get<Label>(section, "configPathStatusLabel").text);
+                Assert.IsFalse(service.RequestedRewrite);
+                Assert.Zero(client.ConfigureCalls);
+            }
+            finally
+            {
+                slot.SetValue(null, previous);
+                System.IO.File.Delete(path);
+            }
+        }
+
+        [TestCase("codex", false)]
+        [TestCase("claude", false)]
+        [TestCase("codex", true)]
+        [TestCase("claude", true)]
+        [TestCase("json", true)]
+        public void ActualConfiguratorGenerationFailureDisablesCopyUntilRecovery(string kind, bool missingUvx)
+        {
+            var cache = EditorConfigurationCache.Instance;
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var values = new Dictionary<FieldInfo, object>();
+            var pathsSlot = typeof(MCPServiceLocator).GetField("_pathService", BindingFlags.Static | BindingFlags.NonPublic);
+            object originalPaths = pathsSlot.GetValue(null);
+            var codexProbe = CodexHttpAuth.SupportsHeadersHelper;
+            var claudeProbe = ClaudeHttpAuth.SupportsHeadersHelper;
+            var preferences = new Dictionary<string, string>();
+            foreach (string key in new[] { EditorPrefKeys.HttpBaseUrl, EditorPrefKeys.GitUrlOverride })
+                preferences[key] = EditorPrefs.HasKey(key) ? EditorPrefs.GetString(key) : null;
+            try
+            {
+                foreach (string name in new[] { "_useHttpTransport", "_forceStdioForSession", "_httpTransportScope", "_httpBaseUrl" })
+                {
+                    var field = typeof(EditorConfigurationCache).GetField(name, flags);
+                    values[field] = field.GetValue(cache);
+                }
+                typeof(EditorConfigurationCache).GetField("_useHttpTransport", flags).SetValue(cache, !missingUvx);
+                typeof(EditorConfigurationCache).GetField("_forceStdioForSession", flags).SetValue(cache, false);
+                typeof(EditorConfigurationCache).GetField("_httpTransportScope", flags).SetValue(cache, "local");
+                typeof(EditorConfigurationCache).GetField("_httpBaseUrl", flags).SetValue(cache, "http://127.0.0.1:19040");
+                EditorPrefs.SetString(EditorPrefKeys.HttpBaseUrl, "http://127.0.0.1:19040");
+                EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, "synthetic-package-source");
+                var paths = new ManualPaths();
+                pathsSlot.SetValue(null, paths);
+                CodexHttpAuth.SupportsHeadersHelper = () => false;
+                ClaudeHttpAuth.SupportsHeadersHelper = _ => false;
+                McpClientConfiguratorBase client = kind switch
+                {
+                    "codex" => new CodexConfigurator(),
+                    "claude" => new ClaudeCodeConfigurator(),
+                    _ => new CursorConfigurator(),
+                };
+                var section = CreateSection(client);
+                var copied = new List<string>();
+                Set(section, "copyToClipboard", new Action<string>(copied.Add));
+                section.UpdateManualConfiguration();
+                var failed = client.GenerateManualConfiguration();
+                Assert.IsFalse(failed.Success);
+                Assert.IsNull(failed.Snippet);
+                Assert.IsNotEmpty(failed.Error);
+                Assert.IsFalse(Get<Button>(section, "copyJsonButton").enabledSelf);
+                Assert.IsTrue(string.IsNullOrEmpty(Get<TextField>(section, "configJsonField").value));
+                StringAssert.Contains(failed.Error, Get<Label>(section, "installationStepsLabel").text);
+                // Even stale nonempty display content cannot bypass the disabled action.
+                Get<TextField>(section, "configJsonField").SetValueWithoutNotify("generation-failed-sentinel");
+                Invoke(section, "OnCopyJsonClicked");
+                Assert.IsEmpty(copied, "A generation error must not reach the clipboard write boundary.");
+
+                paths.Uvx = "synthetic-uvx";
+                CodexHttpAuth.SupportsHeadersHelper = () => true;
+                ClaudeHttpAuth.SupportsHeadersHelper = _ => true;
+                section.UpdateManualConfiguration();
+                Assert.IsTrue(client.GenerateManualConfiguration().Success);
+                Assert.IsTrue(Get<Button>(section, "copyJsonButton").enabledSelf);
+                Assert.IsNotEmpty(Get<TextField>(section, "configJsonField").value);
+                Assert.IsFalse(Get<Label>(section, "installationStepsLabel").text.Contains(failed.Error));
+                StringAssert.Contains(client.GetInstallationSteps()[0], Get<Label>(section, "installationStepsLabel").text);
+                Invoke(section, "OnCopyJsonClicked");
+                CollectionAssert.AreEqual(new[] { Get<TextField>(section, "configJsonField").value }, copied);
+            }
+            finally
+            {
+                pathsSlot.SetValue(null, originalPaths);
+                CodexHttpAuth.SupportsHeadersHelper = codexProbe;
+                ClaudeHttpAuth.SupportsHeadersHelper = claudeProbe;
+                foreach (var pair in values)
+                    pair.Key.SetValue(cache, pair.Value);
+                foreach (var preference in preferences)
+                    if (preference.Value == null)
+                        EditorPrefs.DeleteKey(preference.Key);
+                    else
+                        EditorPrefs.SetString(preference.Key, preference.Value);
+            }
         }
 
         [Test]
@@ -461,6 +692,58 @@ namespace MCPForUnityTests.Editor.Windows
             }
         }
 
+        [TestCase("json", "file", "configuration file changed")]
+        [TestCase("toml", "file", "configuration file changed")]
+        [TestCase("json", "context", "Connection settings changed")]
+        [TestCase("toml", "context", "Connection settings changed")]
+        [TestCase("json", "target", "destination changed")]
+        [TestCase("toml", "target", "destination changed")]
+        public void PreviewRefreshExplainsChangedInputsBeforeApply(string format, string changed, string expected)
+        {
+            var slot = typeof(MCPServiceLocator).GetField("_clientService", BindingFlags.Static | BindingFlags.NonPublic);
+            object previous = slot.GetValue(null);
+            string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "unity-mcp-preview-refresh-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var service = new MemoryClientService();
+                slot.SetValue(null, service);
+                System.IO.File.WriteAllText(path, MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Document(format));
+                var client = new ManualClient { ConfigPath = path };
+                var harness = new MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Harness(path, format);
+                harness.Target.Value = MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Target(client, path, format);
+                var section = CreateSection(client);
+                InitializePreviewUi(section, harness.Service);
+                Invoke(section, "OnPreviewConfigurationClicked");
+                object preview = Get<object>(section, "configurationPreview");
+                string review = Get<TextField>(section, "configurationPreviewText").value;
+                section.RefreshSelectedClient(forceImmediate: true);
+                Assert.IsTrue(Get<Button>(section, "applyConfigurationButton").enabledSelf, "Unchanged inputs must retain the prepared review.");
+
+                if (changed == "file")
+                    System.IO.File.AppendAllText(path, "\n ");
+                else if (changed == "context")
+                    harness.ChangeContext("https://example.invalid/changed");
+                else
+                    harness.Target.Value = MCPForUnityTests.Editor.Services.ClientConfigurationChangeTests.Target(client, path + ".next", format);
+                string bytes = System.IO.File.ReadAllText(path);
+                section.RefreshSelectedClient(forceImmediate: true);
+                Assert.IsFalse(Get<Button>(section, "applyConfigurationButton").enabledSelf, "A stale review must explain its state before Apply is clicked.");
+                Assert.AreSame(preview, Get<object>(section, "configurationPreview"));
+                Assert.AreEqual(review, Get<TextField>(section, "configurationPreviewText").value);
+                StringAssert.Contains(expected, Get<Label>(section, "configurationChangeStatusLabel").text);
+                StringAssert.Contains("Preview again", Get<Label>(section, "configurationChangeStatusLabel").text);
+                Assert.AreEqual(bytes, System.IO.File.ReadAllText(path));
+                Assert.IsFalse(System.IO.File.Exists(path + ".next"));
+                Assert.IsFalse(service.RequestedRewrite);
+                Assert.Zero(client.ConfigureCalls);
+            }
+            finally
+            {
+                slot.SetValue(null, previous);
+                System.IO.File.Delete(path);
+            }
+        }
+
         [Test]
         public void ChangedConfigFileInvalidatesStatusBeforeTtlExpires()
         {
@@ -522,6 +805,7 @@ namespace MCPForUnityTests.Editor.Windows
             Set(section, "clientStatusIndicator", new VisualElement());
             Set(section, "clientStatusLabel", new Label());
             Set(section, "lastStatusChecks", new Dictionary<IMcpClientConfigurator, DateTime>());
+            Set(section, "copyToClipboard", new Action<string>(_ => throw new InvalidOperationException("Unexpected clipboard write.")));
             return section;
         }
 
@@ -530,6 +814,39 @@ namespace MCPForUnityTests.Editor.Windows
 
         private static void Set(McpClientConfigSection section, string field, object value) =>
             typeof(McpClientConfigSection).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(section, value);
+
+        private sealed class ManualPaths : IPathResolverService
+        {
+            internal string Uvx;
+
+            public string GetUvxPath() => Uvx;
+
+            public string GetClaudeCliPath() => "synthetic-claude";
+
+            public bool IsPythonDetected() => false;
+
+            public bool IsClaudeCliDetected() => true;
+
+            public bool HasUvxPathOverride => true;
+            public bool HasClaudeCliPathOverride => true;
+            public bool HasUvxPathFallback => false;
+
+            public void SetUvxPathOverride(string path) => Uvx = path;
+
+            public void SetClaudeCliPathOverride(string path) { }
+
+            public void ClearUvxPathOverride() => Uvx = null;
+
+            public void ClearClaudeCliPathOverride() { }
+
+            public bool TryValidateUvxExecutable(string path, out string version)
+            {
+                version = null;
+                return false;
+            }
+
+            public Task<string> ValidateUvxExecutableAsync(string path) => Task.FromResult<string>(null);
+        }
 
         private sealed class MemoryCodexClient : CodexMcpConfigurator
         {
@@ -578,6 +895,7 @@ namespace MCPForUnityTests.Editor.Windows
         {
             public string FailureStage;
             public string ConfigPath = "memory-config";
+            public string Snippet = "memory-json";
             public string ClientId = "memory-client";
             public bool AllowConfigure;
             public bool ConfigureFails;
@@ -607,7 +925,7 @@ namespace MCPForUnityTests.Editor.Windows
             public string GetManualSnippet()
             {
                 ThrowIf("snippet");
-                return "memory-json";
+                return Snippet;
             }
 
             public IList<string> GetInstallationSteps()

@@ -185,15 +185,8 @@ namespace MCPForUnity.Editor.Clients
 
         public override string GetManualSnippet()
         {
-            try
-            {
-                string uvx = EditorConfigurationCache.Instance.UseHttpTransport ? null : GetUvxPathOrError();
-                return CodexConfigHelper.BuildCodexServerBlock(uvx);
-            }
-            catch (Exception ex)
-            {
-                return $"# error: {ex.Message}";
-            }
+            string uvx = EditorConfigurationCache.Instance.UseHttpTransport ? null : GetUvxPathOrError();
+            return CodexConfigHelper.BuildCodexServerBlock(uvx);
         }
 
         public override IList<string> GetInstallationSteps() =>
