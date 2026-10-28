@@ -20,12 +20,12 @@
 # Notes:
 # - PyPI does not allow overwriting an existing version; bump the version in Server/pyproject.toml first.
 # - This script clears Server/dist/*.whl and Server/dist/*.tar.gz before building.
-# - Only artifacts matching the current version in Server/pyproject.toml are uploaded.
+# - Only artifacts matching the name and exact version in Server/pyproject.toml are uploaded.
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && (pwd -W 2>/dev/null || pwd))"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && (pwd -W 2>/dev/null || pwd))"
 
 REPOSITORY="pypi"
 
@@ -73,10 +73,11 @@ if [[ ! -d "$DIST_DIR" ]]; then
   exit 2
 fi
 
-shopt -s nullglob
-VERSION="$(python3 -c 'import tomllib, pathlib; p = pathlib.Path("'"$ROOT_DIR"'/Server/pyproject.toml"); print(tomllib.loads(p.read_text(encoding="utf-8"))["project"]["version"])')"
-FILES=("$DIST_DIR"/mcpforunityserver-"$VERSION"*)
-shopt -u nullglob
+ARTIFACT_NAMES="$(python3 "$SCRIPT_DIR/python_distribution_files.py" "$ROOT_DIR/Server/pyproject.toml" "$DIST_DIR")"
+FILES=()
+while IFS= read -r filename; do
+  [[ -n "$filename" ]] && FILES+=("$DIST_DIR/$filename")
+done <<< "$ARTIFACT_NAMES"
 
 if (( ${#FILES[@]} == 0 )); then
   echo "Error: no files found in $DIST_DIR" >&2
