@@ -20,7 +20,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`find_in_file`](./find_in_file.md)** — Searches a C# script with a regex pattern and returns line numbers and excerpts.
 - **[`gameobject_create`](./gameobject_create.md)** — Create a GameObject with transform, components and optional prefab output.
 - **[`gameobject_edit`](./gameobject_edit.md)** — Modify or delete an existing GameObject and its components.
-- **[`get_compile_job`](./get_compile_job.md)** — Read a compilation request outcome and bounded diagnostics by compile_id.
+- **[`get_compile_job`](./get_compile_job.md)** — Read compilation status, bounded diagnostics and the last successful compile by compile_id.
 - **[`get_sha`](./get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`manage_addressables`](./manage_addressables.md)** — Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), run bounded preflight for duplicate addresses/missing references/profile issues, or analyze an existing native build-layout report for duplicate…
 - **[`manage_audio`](./manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
@@ -42,7 +42,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_tools`](./manage_tools.md)** — Manage visible groups or individual feature tools in this session.
 - **[`prefab_inspect`](./prefab_inspect.md)** — Inspect prefab metadata or a bounded hierarchy page.
 - **[`read_console`](./read_console.md)** — Gets messages from or clears the Unity Editor console.
-- **[`refresh_unity`](./refresh_unity.md)** — Request a Unity asset database refresh and optionally a script compilation.
+- **[`refresh_unity`](./refresh_unity.md)** — Refresh assets and optionally request compilation.
 - **[`scene_inspect`](./scene_inspect.md)** — Inspect loaded scenes, hierarchy and build settings, or frame the Scene view.
 - **[`scene_lifecycle`](./scene_lifecycle.md)** — Create, load, save or close scenes and organize loaded scene objects.
 - **[`script_apply_edits`](./script_apply_edits.md)** — Edit C# source using operations scoped to the intended members or text.

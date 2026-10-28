@@ -67,7 +67,7 @@ URI: mcpforunity://editor/selection
 
 **URI:** `mcpforunity://editor/state`
 
-Canonical editor readiness snapshot. Includes advice, server-computed staleness, and native_coordination from native admission. recovery_required blocks readiness even when compilation is idle; follow its recovery action instead of polling blindly. Also includes assets.external_changes_scan_complete/limited coverage. scan_in_progress distinguishes a routine recheck from verified coverage. Pending or limited local coverage is reported in advice.warnings without blocking native readiness; ready_for_tools does not certify that all external changes were scanned or imported. Unknown remote coverage remains null.
+Canonical editor readiness snapshot. Includes advice, server-computed staleness, and native_coordination from native admission. recovery_required blocks readiness even when compilation is idle; follow its recovery action instead of polling blindly. Also includes assets.external_changes_scan_complete/limited coverage. scan_in_progress distinguishes a routine recheck from verified coverage. Pending, limited or unknown local coverage is reported in advice.warnings without blocking native readiness; test admission requires verified local coverage. Only active scans suggest waiting; limited or unknown scans require inspection. ready_for_tools does not certify that all external changes were scanned or imported. Unknown remote coverage remains null.
 
 URI: mcpforunity://editor/state
 

@@ -1,7 +1,7 @@
 ---
 title: get_compile_job
 sidebar_label: get_compile_job
-description: "Read a compilation request outcome and bounded diagnostics by compile_id."
+description: "Read compilation status, bounded diagnostics and the last successful compile by compile_id."
 ---
 
 # `get_compile_job`
@@ -12,7 +12,7 @@ description: "Read a compilation request outcome and bounded diagnostics by comp
 
 ## Description
 
-Read a compilation request outcome and bounded diagnostics by compile_id. Readiness is not compiler success; unknown means evidence or attribution is incomplete.
+Read compilation status, bounded diagnostics and the last successful compile by compile_id. Unknown means incomplete evidence; readiness and source-revision proof are separate.
 
 ## Parameters
 

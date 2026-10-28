@@ -56,7 +56,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`find_in_file`](./core/find_in_file.md)** — Searches a C# script with a regex pattern and returns line numbers and excerpts.
 - **[`gameobject_create`](./core/gameobject_create.md)** — Create a GameObject with transform, components and optional prefab output.
 - **[`gameobject_edit`](./core/gameobject_edit.md)** — Modify or delete an existing GameObject and its components.
-- **[`get_compile_job`](./core/get_compile_job.md)** — Read a compilation request outcome and bounded diagnostics by compile_id.
+- **[`get_compile_job`](./core/get_compile_job.md)** — Read compilation status, bounded diagnostics and the last successful compile by compile_id.
 - **[`get_sha`](./core/get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`manage_addressables`](./core/manage_addressables.md)** — Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), run bounded preflight for duplicate addresses/missing references/profile issues, or analyze an existing native build-layout report for duplicate…
 - **[`manage_audio`](./core/manage_audio.md)** — Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies.
@@ -78,7 +78,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_tools`](./core/manage_tools.md)** — Manage visible groups or individual feature tools in this session.
 - **[`prefab_inspect`](./core/prefab_inspect.md)** — Inspect prefab metadata or a bounded hierarchy page.
 - **[`read_console`](./core/read_console.md)** — Gets messages from or clears the Unity Editor console.
-- **[`refresh_unity`](./core/refresh_unity.md)** — Request a Unity asset database refresh and optionally a script compilation.
+- **[`refresh_unity`](./core/refresh_unity.md)** — Refresh assets and optionally request compilation.
 - **[`scene_inspect`](./core/scene_inspect.md)** — Inspect loaded scenes, hierarchy and build settings, or frame the Scene view.
 - **[`scene_lifecycle`](./core/scene_lifecycle.md)** — Create, load, save or close scenes and organize loaded scene objects.
 - **[`script_apply_edits`](./core/script_apply_edits.md)** — Edit C# source using operations scoped to the intended members or text.
@@ -125,8 +125,9 @@ Compatibility: full combined schemas for existing clients; prefer focused tools
 - **[`query_physics`](./physics/query_physics.md)** — Run ray, shape and overlap queries in 2D or 3D.
 - **[`simulate_physics`](./physics/simulate_physics.md)** — Advance physics by a bounded number of explicit simulation steps.
 
-## `prefabs` &nbsp; (4 tools)
+## `prefabs` &nbsp; (5 tools)
 Prefab creation, contents, stages and overrides
+- **[`capture_prefab`](./prefabs/capture_prefab.md)** — Render a prefab asset to PNG in an isolated preview scene, then clean up.
 - **[`prefab_contents`](./prefabs/prefab_contents.md)** — Edit prefab contents, inspect changes without saving with modify_contents preview_only, or preview and apply a guarded transform change.
 - **[`prefab_create`](./prefabs/prefab_create.md)** — Create a prefab asset from an existing GameObject.
 - **[`prefab_overrides`](./prefabs/prefab_overrides.md)** — List, apply or revert explicitly selected prefab overrides.
