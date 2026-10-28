@@ -213,13 +213,35 @@ def _deadline(
     return min([deadline, *ceilings]) if deadline is not None else min(ceilings, default=None)
 
 
-def _refusal(reason: str) -> dict[str, JsonValue]:
-    return {
+def _refusal(reason: str, *, invocation_started: bool = False) -> dict[str, JsonValue]:
+    result = {
         "success": False,
         "error": reason,
         "hint": "select_instance" if reason == "operation_target_changed" else "retry",
         "data": {"reason": reason, "dispatch": "not_dispatched"},
     }
+    if reason == "operation_target_changed":
+        result["message"] = (
+            "The Editor connection or operation generation changed, which can happen when the "
+            "same project reconnects or reloads. Read mcpforunity://instances and confirm the "
+            "intended project before selecting its current instance. "
+        )
+        result["data"]["automatic_retry"] = False
+        if invocation_started:
+            # A wrapper may already have refreshed or edited before a later nested
+            # command sees the fence. Its exception alone cannot prove non-dispatch.
+            result["data"]["dispatch"] = "unknown"
+            result["hint"] = "inspect_state_before_retry"
+            result["message"] += (
+                "The tool had started; inspect its target state before retrying because earlier "
+                "steps may have executed. No automatic replay was performed."
+            )
+        else:
+            result["message"] += (
+                "This tool was rejected before it started. After the Editor is ready, submit "
+                "the request again against the confirmed instance."
+            )
+    return result
 
 
 def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> Callable:
@@ -295,6 +317,7 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
             return refusal_result(_refusal("operation_payload_limit"))
         policy = resolve_operation_policy(name, params, trusted_builtin=trusted)
         request = admission_for(target, policy.mode, expires_at=expires_at, retained_bytes=charge)
+        invocation_started = False
         try:
             async with operation_session(request):
                 await authorize_remote_operation(name, params, ctx=ctx)
@@ -311,9 +334,12 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                     return refusal_result(_refusal("operation_tool_unavailable"))
                 if not target.is_current():
                     raise OperationScopeChanged()
+                invocation_started = True
                 return await call()
         except OperationScopeChanged:
-            return refusal_result(_refusal("operation_target_changed"))
+            return refusal_result(
+                _refusal("operation_target_changed", invocation_started=invocation_started)
+            )
         except OperationCapacityError:
             return refusal_result(_refusal("operation_capacity"))
 

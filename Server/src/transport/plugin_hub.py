@@ -75,6 +75,7 @@ from transport.command_timeout import (
 
 # Compatibility facade: all callers share the same ContextVar and evidence types.
 from transport.command_budget import (
+    console_readiness_refusal,
     _CommandBudget as _CommandBudget,
     _HttpRequestBudget as _HttpRequestBudget,
     CommandEvidenceSnapshot as CommandEvidenceSnapshot,
@@ -3544,6 +3545,13 @@ class PluginHub(WebSocketEndpoint):
                     await asyncio.sleep(0.1)
                 else:
                     # Not ready within the bounded window: return retry hint without sending.
+                    if command_type in {"read_console", "tail_console"}:
+                        return console_readiness_refusal(
+                            command_type,
+                            "editor_not_ready",
+                            f"Unity session not ready for '{command_type}' (ping not answered)",
+                            phase="readiness",
+                        )
                     return MCPResponse(
                         success=False,
                         error=f"Unity session not ready for '{command_type}' (ping not answered); please retry",

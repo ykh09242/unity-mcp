@@ -28,6 +28,32 @@ def command_outcome_unknown(command: str, detail: str, **context: Any) -> dict[s
     ).model_dump()
 
 
+def console_readiness_refusal(
+    command: str, reason: str, error: str, **context: Any
+) -> dict[str, Any]:
+    """Explain a pre-dispatch wait without claiming an unobserved Editor phase."""
+    return MCPResponse(
+        success=False,
+        error=error,
+        hint="retry",
+        message=(
+            "Console access was not dispatched because Editor readiness was not confirmed. "
+            "If a Play Mode stop is pending, wait for it to finish. Read "
+            "mcpforunity://editor/state until data.advice.ready_for_tools is true, then retry "
+            "the Console request. If the Editor remains unresponsive, inspect it for a dialog "
+            "or blocked work. This response does not confirm why the Editor is busy."
+        ),
+        data={
+            "reason": reason,
+            "command": command,
+            **context,
+            "dispatch": "not_dispatched",
+            "next_action": "wait_for_editor_ready",
+            "retry_after_ms": 500,
+        },
+    ).model_dump()
+
+
 @dataclass(slots=True)
 class _CommandBudget:
     expires_at: float
@@ -56,6 +82,13 @@ class _CommandBudget:
         if self.dispatched:
             return command_outcome_unknown(
                 command, detail, **context, command_id=self.command_id, cause="timeout"
+            )
+        if self.phase == "readiness" and command in {"read_console", "tail_console"}:
+            return console_readiness_refusal(
+                command,
+                "command_deadline_exceeded",
+                f"Unity command was not dispatched: {detail}",
+                **context,
             )
         return MCPResponse(
             success=False,
