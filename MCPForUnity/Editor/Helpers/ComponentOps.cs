@@ -1101,6 +1101,20 @@ namespace MCPForUnity.Editor.Helpers
                     case SerializedPropertyType.Enum:
                         return SetEnum(prop, value, out error);
 
+                    case SerializedPropertyType.Vector2:
+                        if (
+                            value is not JObject vector
+                            || vector.Count != 2
+                            || !FiniteVectorComponent(vector["x"], out float x)
+                            || !FiniteVectorComponent(vector["y"], out float y)
+                        )
+                        {
+                            error = "Expected a Vector2 object with finite numeric x and y components.";
+                            return false;
+                        }
+                        prop.vector2Value = new Vector2(x, y);
+                        return true;
+
                     default:
                         error = $"Unsupported SerializedPropertyType: {prop.propertyType} at '{prop.propertyPath}'.";
                         return false;
@@ -1111,6 +1125,18 @@ namespace MCPForUnity.Editor.Helpers
                 error = $"Error setting '{prop.propertyPath}': {ex.Message}";
                 return false;
             }
+        }
+
+        private static bool FiniteVectorComponent(JToken token, out float number)
+        {
+            number = 0;
+            if (token == null || (token.Type != JTokenType.Float && token.Type != JTokenType.Integer))
+                return false;
+            double value = token.Value<double>();
+            if (double.IsNaN(value) || double.IsInfinity(value) || value < -float.MaxValue || value > float.MaxValue)
+                return false;
+            number = (float)value;
+            return true;
         }
 
         internal static bool SetObjectReference(SerializedProperty prop, JToken value, out string error)

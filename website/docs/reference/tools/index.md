@@ -127,7 +127,7 @@ Compatibility: full combined schemas for existing clients; prefer focused tools
 
 ## `prefabs` &nbsp; (4 tools)
 Prefab creation, contents, stages and overrides
-- **[`prefab_contents`](./prefabs/prefab_contents.md)** — Edit prefab contents or preview and apply a guarded transform change.
+- **[`prefab_contents`](./prefabs/prefab_contents.md)** — Edit prefab contents, inspect changes without saving with modify_contents preview_only, or preview and apply a guarded transform change.
 - **[`prefab_create`](./prefabs/prefab_create.md)** — Create a prefab asset from an existing GameObject.
 - **[`prefab_overrides`](./prefabs/prefab_overrides.md)** — List, apply or revert explicitly selected prefab overrides.
 - **[`prefab_stage`](./prefabs/prefab_stage.md)** — Open, save or close the Prefab Stage.

@@ -1,7 +1,7 @@
 ---
 title: prefab_contents
 sidebar_label: prefab_contents
-description: "Edit prefab contents or preview and apply a guarded transform change."
+description: "Edit prefab contents, inspect changes without saving with modify_contents preview_only, or preview and apply a guarded transform change."
 ---
 
 # `prefab_contents`
@@ -12,7 +12,7 @@ description: "Edit prefab contents or preview and apply a guarded transform chan
 
 ## Description
 
-Edit prefab contents or preview and apply a guarded transform change. Action inputs: modify_contents: requires prefab_path; excludes non-null preview_id. preview_modify_contents: requires prefab_path; excludes non-null target, name, tag, layer, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties, preview_id. apply_preview: requires preview_id; excludes non-null prefab_path, target, position, rotation, scale, name, tag, layer, set_active, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties.
+Edit prefab contents, inspect changes without saving with modify_contents preview_only, or preview and apply a guarded transform change. Action inputs: modify_contents: requires prefab_path; excludes non-null preview_id. preview_modify_contents: requires prefab_path; excludes non-null target, name, tag, layer, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties, preview_only, preview_id. apply_preview: requires preview_id; excludes non-null prefab_path, target, position, rotation, scale, name, tag, layer, set_active, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties, preview_only.
 
 ## Parameters
 
@@ -35,6 +35,7 @@ Edit prefab contents or preview and apply a guarded transform change. Action inp
 | `delete_child` | `str \| list[str] \| None` | — | Child name(s) or path(s) to remove from the prefab. Supports single string or array for batch deletion (e.g. 'Child1' or ['Child1', 'Child1/Grandchild']). |
 | `component_properties` | `dict[str, dict[str, Any]] \| None` | — | Set properties on existing components in modify_contents. Keys are component type names, values are dicts of property name to value. Example: {"Rigidbody": {"mass": 5.0}, "MyScript": {"health": 100}}. Supports object references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. For Sprite sub-assets: {"guid": "...", "spriteName": "<name>"}. Single-sprite textures auto-resolve. |
 | `preview_id` | `str \| None` | — | One-attempt token from preview_modify_contents, valid 10 minutes. |
+| `preview_only` | `bool \| None` | — | modify_contents only: inspect changes without saving; includes load/edit side effects, not save callbacks. No apply token; inspect complete/truncated coverage in data.preview. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

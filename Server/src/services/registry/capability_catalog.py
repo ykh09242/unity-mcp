@@ -287,7 +287,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "prefabs",
         "Prefab Contents & Previews",
         "modify_contents preview_modify_contents apply_preview",
-        "prefab_path target position rotation scale name tag layer set_active parent components_to_add components_to_remove create_child delete_child component_properties preview_id",
+        "prefab_path target position rotation scale name tag layer set_active parent components_to_add components_to_remove create_child delete_child component_properties preview_id preview_only",
     ),
     _feature(
         "prefab_stage",
@@ -461,7 +461,7 @@ CAPABILITY_DESCRIPTIONS = {
     "gameobject_placement": "Preview or apply alignment and distribution of selected GameObjects.",
     "prefab_inspect": "Inspect prefab metadata or a bounded hierarchy page.",
     "prefab_create": "Create a prefab asset from an existing GameObject.",
-    "prefab_contents": "Edit prefab contents or preview and apply a guarded transform change.",
+    "prefab_contents": "Edit prefab contents, inspect changes without saving with modify_contents preview_only, or preview and apply a guarded transform change.",
     "prefab_stage": "Open, save or close the Prefab Stage.",
     "prefab_overrides": "List, apply or revert explicitly selected prefab overrides.",
     "scene_lifecycle": "Create, load, save or close scenes and organize loaded scene objects.",

@@ -52,6 +52,11 @@ REQUIRED_PARAMS = {
         'Example: delete_child=["Child1", "Child2/Grandchild"]). '
         "Use component_properties with modify_contents to set serialized fields on existing components "
         '(e.g. component_properties={"Rigidbody": {"mass": 5.0}, "MyScript": {"health": 100}}). '
+        "Set preview_only=true with modify_contents to inspect a bounded serialized-field diff "
+        "from the imported source asset to modified isolated contents without saving. This includes "
+        "observed load/edit layout changes, supports component references and child edits, and reports "
+        "unsupported fields and truncation. It does not issue an automatic refresh or create an apply token. "
+        "Save-time callbacks and a later run may differ; custom callbacks can have external side effects. "
         'Supports object references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. '
         "Use manage_asset action=search filterType=Prefab to list prefabs. "
         "preview_modify_contents supports only root local position/rotation/scale and set_active "
@@ -166,12 +171,18 @@ async def manage_prefabs(
     preview_id: Annotated[
         str | None, "One-attempt token from preview_modify_contents, valid 10 minutes."
     ] = None,
+    preview_only: Annotated[
+        bool | None,
+        "modify_contents only: inspect changes without saving; includes load/edit side effects, not save callbacks. No apply token; inspect complete/truncated coverage in data.preview.",
+    ] = None,
     max_depth: Annotated[
         int, "get_hierarchy inclusive depth scope, root=0; default 64, maximum 128."
     ] = 64,
 ) -> dict[str, Any]:
     if action not in {*REQUIRED_PARAMS, "save_prefab_stage", "close_prefab_stage"}:
         return {"success": False, "message": f"Unknown prefab action: '{action}'."}
+    if preview_only is not None and (action != "modify_contents" or type(preview_only) is not bool):
+        return {"success": False, "message": "preview_only is a boolean for modify_contents only."}
     if preview_id is not None and (
         action != "apply_preview"
         or type(preview_id) is not str
@@ -360,6 +371,8 @@ async def manage_prefabs(
             params["unlinkIfInstance"] = unlink_if_instance_val
 
         # modify_contents parameters
+        if preview_only is not None:
+            params["previewOnly"] = preview_only
         if position is not None:
             position_value, position_error = normalize_vector3(position, "position")
             if position_error:
@@ -487,7 +500,7 @@ async def manage_prefabs(
         # Send command to Unity
         unity_instance = await get_unity_instance_from_context(ctx)
         try:
-            gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)
+            gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=not preview_only)
             if gate is not None:
                 return gate.model_dump()
         except Exception as exc:

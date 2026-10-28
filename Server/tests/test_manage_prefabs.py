@@ -12,6 +12,36 @@ from services.registry import get_registered_tools
 
 
 @pytest.mark.asyncio
+async def test_contents_preview_forwards_flag_and_preserves_edit_payload(mock_unity):
+    properties = {"RectTransform": {"m_AnchoredPosition": {"x": 12, "y": 34}}}
+    result = await manage_prefabs(
+        SimpleNamespace(),
+        action="modify_contents",
+        prefab_path="Assets/Panel.prefab",
+        component_properties=properties,
+        preview_only=True,
+    )
+    assert result["success"] is True
+    assert mock_unity["params"]["previewOnly"] is True
+    assert mock_unity["params"]["componentProperties"] == properties
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action", ["save_prefab_stage", "apply_preview", "preview_modify_contents"]
+)
+async def test_contents_preview_flag_cannot_accidentally_select_a_saving_action(mock_unity, action):
+    result = await manage_prefabs(
+        SimpleNamespace(),
+        action=action,
+        prefab_path="Assets/Panel.prefab",
+        preview_only=True,
+    )
+    assert result["success"] is False
+    assert "params" not in mock_unity
+
+
+@pytest.mark.asyncio
 async def test_override_listing_forwards_filters_and_paging(mock_unity):
     result = await manage_prefabs(
         SimpleNamespace(),

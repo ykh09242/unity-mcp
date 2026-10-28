@@ -33,7 +33,7 @@ _ASSET_EXAMPLES = {
     "destination": "Assets/Materials/Renamed.mat",
 }
 _PREFAB_EDITS = tuple(
-    "prefab_path target position rotation scale name tag layer set_active parent components_to_add components_to_remove create_child delete_child component_properties".split()
+    "prefab_path target position rotation scale name tag layer set_active parent components_to_add components_to_remove create_child delete_child component_properties preview_only".split()
 )
 _PREVIEW_FORBIDDEN = tuple(
     name

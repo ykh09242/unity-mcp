@@ -344,7 +344,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("prefab_contents", AutoRegister = false, Group = "prefabs",
-        DisplayName = "Prefab Contents & Previews", Description = "Edit prefab contents or preview and apply a guarded transform change. Action inputs: modify_contents: requires prefab_path; excludes non-null preview_id. preview_modify_contents: requires prefab_path; excludes non-null target, name, tag, layer, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties, preview_id. apply_preview: requires preview_id; excludes non-null prefab_path, target, position, rotation, scale, name, tag, layer, set_active, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties.")]
+        DisplayName = "Prefab Contents & Previews", Description = "Edit prefab contents, inspect changes without saving with modify_contents preview_only, or preview and apply a guarded transform change. Action inputs: modify_contents: requires prefab_path; excludes non-null preview_id. preview_modify_contents: requires prefab_path; excludes non-null target, name, tag, layer, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties, preview_only, preview_id. apply_preview: requires preview_id; excludes non-null prefab_path, target, position, rotation, scale, name, tag, layer, set_active, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties, preview_only.")]
     public static class PrefabContents
     {
         private static readonly string[] Actions = { "modify_contents", "preview_modify_contents", "apply_preview" };

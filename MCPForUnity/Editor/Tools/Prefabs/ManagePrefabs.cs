@@ -87,6 +87,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             {
                 return new ErrorResponse($"Action parameter is required. Valid actions are: {SupportedActions}.");
             }
+            if ((@params["previewOnly"] != null || @params["preview_only"] != null) && action != ACTION_MODIFY_CONTENTS)
+                return new ErrorResponse("preview_only is supported only for modify_contents; no action was performed.");
 
             try
             {
@@ -138,7 +140,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             {
                 throw;
             }
-            catch (ArgumentException e) when (action == ACTION_GET_HIERARCHY || action == "preview_modify_contents" || action == "apply_preview")
+            catch (ArgumentException e)
+                when (action == ACTION_GET_HIERARCHY || action == ACTION_MODIFY_CONTENTS || action == "preview_modify_contents" || action == "apply_preview")
             {
                 return new ErrorResponse(e.Message);
             }
@@ -839,6 +842,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// </summary>
         private static object ModifyContents(JObject @params)
         {
+            JToken previewToken = @params["previewOnly"] ?? @params["preview_only"];
+            if (previewToken != null && previewToken.Type != JTokenType.Boolean)
+                return new ErrorResponse("preview_only must be a boolean.");
+            bool previewOnly = previewToken?.Value<bool>() == true;
             string prefabPath = @params["prefabPath"]?.ToString() ?? @params["path"]?.ToString();
             if (string.IsNullOrEmpty(prefabPath))
             {
@@ -854,6 +861,17 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             string stringError = ValidateModificationStringTokens(@params);
             if (stringError != null)
                 return new ErrorResponse(stringError);
+
+            PrefabContentsPreview.Snapshot baseline = null;
+            if (previewOnly)
+            {
+                if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlayingOrWillChangePlaymode)
+                    return new ErrorResponse("Prefab preview requires an idle Edit Mode Editor. Wait for editor/state readiness, then retry.");
+                GameObject source = AssetDatabase.LoadAssetAtPath<GameObject>(sanitizedPath);
+                if (source == null)
+                    return new ErrorResponse($"Prefab asset '{sanitizedPath}' was not found.");
+                baseline = PrefabContentsPreview.Capture(source);
+            }
 
             // Load prefab contents in isolated context (no UI)
             GameObject prefabContents = PrefabUtility.LoadPrefabContents(sanitizedPath);
@@ -880,6 +898,19 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 {
                     return modifyResult.error;
                 }
+
+                if (previewOnly)
+                    return new SuccessResponse(
+                        "Prefab changes previewed without saving. Includes observed load/edit side effects; save callbacks and later runs may differ. Custom callbacks can have external side effects.",
+                        new
+                        {
+                            prefabPath = sanitizedPath,
+                            targetName = targetGo.name,
+                            modified = modifyResult.modified,
+                            saved = false,
+                            preview = PrefabContentsPreview.Compare(baseline, PrefabContentsPreview.Capture(prefabContents)),
+                        }
+                    );
 
                 // Skip saving when no modifications were made to avoid unnecessary asset writes
                 if (!modifyResult.modified)
