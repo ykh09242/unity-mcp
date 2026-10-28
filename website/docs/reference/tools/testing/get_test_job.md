@@ -21,7 +21,7 @@ Polls an async Unity test job by job_id.
 | `job_id` | `str` | yes | Job id returned by run_tests |
 | `include_failed_tests` | `bool` | — | Include details for failed/skipped tests only (default: false) |
 | `include_details` | `bool` | — | Include details for all tests (default: false) |
-| `wait_timeout` | `int \| None` | — | If set, wait up to this many seconds for tests and native cleanup to complete. Reduces polling frequency and avoids client-side loop detection. Recommended: 30-60 seconds. On expiry results remain available with native_cleanup_pending and retry guidance. Older packages without release evidence return on terminal test status. |
+| `wait_timeout` | `int \| None` | — | If set, wait up to this many seconds for tests and native cleanup to complete. Reduces polling frequency and avoids client-side loop detection. Recommended: 30-60 seconds, or 300+ for large projects. Transient reload failures are observed within this one wait budget without restarting the job. On expiry results remain available with native_cleanup_pending and retry guidance. Older packages without release evidence return on terminal test status. |
 | `page_size` | `int \| None` | — | Terminal detail page size; requires a detail flag. Running jobs return progress until results are available. |
 | `cursor` | `str \| None` | — | Opaque next_cursor from a result page |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |

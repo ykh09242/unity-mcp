@@ -1,6 +1,8 @@
 """Test-job long polling must obey the caller's complete wait budget."""
 
 import asyncio
+from contextlib import asynccontextmanager
+import gc
 import importlib
 from collections import OrderedDict
 from copy import deepcopy
@@ -8,10 +10,33 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import weakref
 
 from tests.timing import await_completion, await_signal, watchdog_timeout
 
 jobs = importlib.import_module("services.tools.run_tests")
+
+
+class TrackedPayload(dict):
+    """A JSON object whose collection is observable independently of charges."""
+
+    __slots__ = ("__weakref__",)
+
+
+class DirectObservations:
+    """Omit cache copies when checking the waiter's response/traceback lifetime."""
+
+    @asynccontextmanager
+    async def session(self, key):
+        yield self
+
+    async def fetch(self, factory):
+        return await factory()
+
+    async def invalidate(self, key):
+        pass
+
+
 RUNNING = {
     "success": True,
     "data": {
@@ -236,6 +261,271 @@ async def test_nonpositive_wait_preserves_single_status_fetch(job_transport, wai
     # Then: it fetches once and preserves the running result shape.
     assert response.success and response.data.status == "running"
     assert job_transport.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "operation_target_changed",
+        "no_unity_session",
+        "command_deadline_exceeded",
+        "read_invalidated",
+        "reloading",
+    ],
+)
+async def test_large_project_wait_survives_transient_reload(job_transport, monkeypatch, reason):
+    from services.tools.shared_tool_reads import SharedToolReads
+
+    monkeypatch.setattr(jobs, "_job_status_reads", SharedToolReads(freshness_s=0))
+    now = [0.0]
+    monkeypatch.setattr(
+        jobs.asyncio, "get_event_loop", lambda: SimpleNamespace(time=lambda: now[0])
+    )
+
+    async def advance(seconds):
+        now[0] += seconds
+
+    monkeypatch.setattr(jobs.asyncio, "sleep", advance)
+    count = 0
+
+    async def fetch(*args, **kwargs):
+        nonlocal count
+        count += 1
+        if count <= 90:  # A three-minute reload is longer than ordinary status budgets.
+            return {"success": False, "data": {"reason": reason}}
+        return {
+            "success": True,
+            "data": {"job_id": "job", "status": "succeeded", "native_control": {"released": True}},
+        }
+
+    job_transport.side_effect = fetch
+    result = await jobs.get_test_job(
+        AsyncMock(), "job", wait_timeout=300, include_details=True, page_size=10
+    )
+    assert result.success and result.data.status == "succeeded"
+    assert 180 <= now[0] < 300
+    assert count == 91
+    assert all(
+        c.args[2] == "get_test_job"
+        and c.args[3] == {"job_id": "job", "includeDetails": True, "page_size": 10}
+        for c in job_transport.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_reload_wait_expiry_preserves_last_status_as_stale(job_transport, monkeypatch):
+    from services.tools.shared_tool_reads import SharedToolReads
+
+    monkeypatch.setattr(jobs, "_job_status_reads", SharedToolReads(freshness_s=0))
+    now = [0.0]
+    monkeypatch.setattr(
+        jobs.asyncio, "get_event_loop", lambda: SimpleNamespace(time=lambda: now[0])
+    )
+
+    async def advance(seconds):
+        now[0] += seconds
+
+    monkeypatch.setattr(jobs.asyncio, "sleep", advance)
+    job_transport.side_effect = [
+        deepcopy(RUNNING),
+        {"success": False, "data": {"reason": "reloading"}},
+    ]
+    result = await jobs.get_test_job(AsyncMock(), "job", wait_timeout=4)
+    assert result.success and result.data.status == "running"
+    assert result.data.observation["status"] == "unavailable"
+    assert result.data.observation["last_known_status"] is True
+    assert result.data.observation["next_action"] == "poll_same_job"
+    assert now[0] == 4
+
+
+@pytest.mark.asyncio
+async def test_last_status_keeps_response_reservation_during_reload(job_transport, monkeypatch):
+    from models.response_limits import ResponseOwner, response_owner
+
+    now, ledger = [0.0], {}
+    reservations = 0
+
+    def reserve(owner):
+        nonlocal reservations
+        reservations += 1
+        key = str(reservations)
+        ledger[key] = 1
+        owner.entries.append((ledger, key))
+        owner.copy_reservations.append(reserve)
+        return True
+
+    monkeypatch.setattr(
+        jobs.asyncio, "get_event_loop", lambda: SimpleNamespace(time=lambda: now[0])
+    )
+
+    async def advance(seconds):
+        assert ledger, "Last valid result must remain accounted until delivery"
+        now[0] += seconds
+
+    monkeypatch.setattr(jobs.asyncio, "sleep", advance)
+    count = 0
+
+    async def fetch(*args, **kwargs):
+        nonlocal count
+        count += 1
+        if count == 1:
+            reserve(response_owner.get())
+            return deepcopy(RUNNING)
+        return {"success": False, "data": {"reason": "reloading"}}
+
+    job_transport.side_effect = fetch
+    consumer = ResponseOwner()
+    token = response_owner.set(consumer)
+    try:
+        result = await jobs.get_test_job(AsyncMock(), "job", wait_timeout=4)
+        assert result.data.status == "running" and ledger
+    finally:
+        response_owner.reset(token)
+        consumer.release()
+    assert ledger == {}
+
+
+@pytest.mark.asyncio
+async def test_generation_check_timeout_retains_old_payload_and_marks_it_stale(
+    job_transport, monkeypatch
+):
+    from models.response_limits import ResponseOwner, response_owner
+    from services.tools import test_job_wait
+
+    ledger, now = {}, [0.0]
+    reservation = 0
+
+    def reserve(owner, status):
+        nonlocal reservation
+        reservation += 1
+        key = str(reservation)
+        ledger[key] = status
+        owner.entries.append((ledger, key))
+        owner.copy_reservations.append(lambda other: reserve(other, status))
+        return True
+
+    calls = 0
+    blocked = asyncio.Event()
+
+    async def generation(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 5:
+            blocked.set()
+            await asyncio.Future()
+        return "same-generation"
+
+    monkeypatch.setattr(test_job_wait, "_poll_generation", generation)
+    monkeypatch.setattr(
+        jobs.asyncio, "get_event_loop", lambda: SimpleNamespace(time=lambda: now[0])
+    )
+
+    async def advance(seconds):
+        now[0] = 0.75
+
+    monkeypatch.setattr(jobs.asyncio, "sleep", advance)
+    sent = 0
+
+    async def fetch(*args, **kwargs):
+        nonlocal sent
+        sent += 1
+        status = "running" if sent == 1 else "succeeded"
+        reserve(response_owner.get(), status)
+        return {"success": True, "data": {"job_id": "job", "status": status}}
+
+    job_transport.side_effect = fetch
+    consumer = ResponseOwner()
+    token = response_owner.set(consumer)
+    try:
+        result = await jobs.get_test_job(AsyncMock(), "job", wait_timeout=1)
+        assert blocked.is_set() and result.data.status == "running"
+        assert result.data.observation["status"] == "unavailable"
+        assert list(ledger.values()) == ["running"]
+    finally:
+        response_owner.reset(token)
+        consumer.release()
+    assert ledger == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason", ["auth_required", "permission_denied", "job_not_found", "outcome_unknown"]
+)
+async def test_long_wait_does_not_replay_authorization_or_uncertain_failure(job_transport, reason):
+    job_transport.return_value = {"success": False, "data": {"reason": reason}}
+    result = await jobs.get_test_job(AsyncMock(), "job", wait_timeout=300)
+    assert not result.success and result.data["reason"] == reason
+    assert job_transport.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_payload_is_collected_before_recovery_sleep(job_transport, monkeypatch):
+    monkeypatch.setattr(jobs, "_job_status_reads", DirectObservations())
+    now, references = [0.0], []
+    monkeypatch.setattr(
+        jobs.asyncio, "get_event_loop", lambda: SimpleNamespace(time=lambda: now[0])
+    )
+
+    async def fetch(*args, **kwargs):
+        value = TrackedPayload(
+            success=False, data={"reason": "reloading", "oversized_detail": "x" * 100000}
+        )
+        references.append(weakref.ref(value))
+        return value
+
+    job_transport.side_effect = fetch
+
+    async def advance(seconds):
+        gc.collect()
+        assert references[-1]() is None, "Failed response is still held by an uncharged traceback"
+        now[0] += seconds
+
+    monkeypatch.setattr(jobs.asyncio, "sleep", advance)
+    result = await jobs.get_test_job(AsyncMock(), "job", wait_timeout=1)
+    assert not result.success and result.data["job_status"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_old_generation_payload_is_collected_before_replacement_fetch(
+    job_transport, monkeypatch
+):
+    from services.tools import test_job_wait
+
+    monkeypatch.setattr(jobs, "_job_status_reads", DirectObservations())
+    now, references = [0.0], []
+    monkeypatch.setattr(
+        jobs.asyncio, "get_event_loop", lambda: SimpleNamespace(time=lambda: now[0])
+    )
+
+    async def advance(seconds):
+        now[0] += seconds
+
+    monkeypatch.setattr(jobs.asyncio, "sleep", advance)
+    generation_calls = 0
+
+    async def generation(*args):
+        nonlocal generation_calls
+        generation_calls += 1
+        return "old" if generation_calls <= 3 else "new"
+
+    monkeypatch.setattr(test_job_wait, "_poll_generation", generation)
+
+    async def fetch(*args, **kwargs):
+        if not references:
+            data = TrackedPayload(job_id="job", status="running")
+            value = TrackedPayload(success=True, data=data)
+            references.extend([weakref.ref(value), weakref.ref(data)])
+            return value
+        gc.collect()
+        assert all(ref() is None for ref in references), (
+            "Old-generation graph outlived its reservation"
+        )
+        return {"success": True, "data": {"job_id": "job", "status": "succeeded"}}
+
+    job_transport.side_effect = fetch
+    result = await jobs.get_test_job(AsyncMock(), "job", wait_timeout=10)
+    assert result.success and result.data.status == "succeeded"
 
 
 @pytest.mark.asyncio

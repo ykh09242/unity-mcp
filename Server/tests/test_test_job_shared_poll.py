@@ -423,6 +423,33 @@ async def test_unknown_http_session_keeps_waits_private(transport, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_reconnect_during_wait_discards_old_generation_snapshot(transport, monkeypatch):
+    import services.tools.test_job_wait as waits
+
+    generation = "old"
+
+    async def current(*_args):
+        return generation
+
+    async def fetch(*_args, **_kwargs):
+        nonlocal generation
+        if generation == "old":
+            generation = "new"
+            return {
+                "success": True,
+                "data": {"job_id": "job", "status": "failed", "error": "old-generation"},
+            }
+        return deepcopy(DONE)
+
+    monkeypatch.setattr(waits, "_poll_generation", current, raising=False)
+    transport.side_effect = fetch
+    response = await jobs.get_test_job(context(), "job", wait_timeout=5)
+    assert response.data.status == "succeeded"
+    assert response.data.error is None
+    assert transport.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_copy_capacity_returns_bounded_error_without_transport_retry(transport, monkeypatch):
     from services.tools.shared_tool_reads import SharedRead, SharedReadCapacityError
 

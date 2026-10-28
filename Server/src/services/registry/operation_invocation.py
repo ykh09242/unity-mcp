@@ -98,17 +98,44 @@ def admission_for(
     )
 
 
-def is_observational_continuation(name: str, params: dict[str, JsonValue]) -> bool:
+def is_observational_continuation(
+    name: str, params: dict[str, JsonValue], *, public: bool = False
+) -> bool:
     """Only these native status reads may cross an owned wrapper's reload fence."""
     if name in {"ping", "get_editor_state"}:
         return not params
     key = {"get_compile_job": "compile_id", "get_test_job": "job_id"}.get(name)
     value = params.get(key) if key is not None else None
+    if not (key is not None and isinstance(value, str) and 0 < len(value) <= 128):
+        return False
+    if name == "get_compile_job":
+        return set(params) == {key}
+    booleans = (
+        {"include_failed_tests", "include_details"}
+        if public
+        else {"includeFailedTests", "includeDetails"}
+    )
+    allowed = {key, *booleans, "page_size", "cursor"}
+    if public:
+        allowed.add("wait_timeout")
     return (
-        key is not None
-        and isinstance(value, str)
-        and 0 < len(value) <= 128
-        and set(params) == {key}
+        set(params) <= allowed
+        and all(type(params[field]) is bool for field in booleans & params.keys())
+        and (
+            params.get("page_size") is None
+            or type(params["page_size"]) is int
+            and 1 <= params["page_size"] <= 100
+        )
+        and (
+            params.get("cursor") is None
+            or isinstance(params["cursor"], str)
+            and 0 < len(params["cursor"]) <= 4096
+        )
+        and (
+            params.get("wait_timeout") is None
+            or type(params["wait_timeout"]) is int
+            and params["wait_timeout"] >= 0
+        )
     )
 
 
@@ -302,24 +329,23 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
             # Unselected/unavailable instances keep their existing selection
             # refusal path. Native admission still applies if a target is resolved.
             return await call()
-        if target.authorize_public is not None:
-            await target.authorize_public(name, params)
-        if target.capacity_error is not None:
-            refusal = target.capacity_error()
-            if refusal is not None:
-                return refusal_result(refusal)
-        if target.public_available is not None and not await target.public_available(
-            (name, unity_target), getattr(ctx, "fastmcp", None)
-        ):
-            return refusal_result(_refusal("operation_tool_unavailable"))
         charge = operation_payload_charge(params)
         if charge is None:
             return refusal_result(_refusal("operation_payload_limit"))
         policy = resolve_operation_policy(name, params, trusted_builtin=trusted)
-        request = admission_for(target, policy.mode, expires_at=expires_at, retained_bytes=charge)
+        observation = (
+            trusted
+            and name in {"get_test_job", "get_compile_job"}
+            and is_observational_continuation(name, params, public=True)
+        )
+        original_scope = target.scope.key
         invocation_started = False
-        try:
-            async with operation_session(request):
+        # Rebind at most once, before the callback starts. An active mutating
+        # wrapper keeps its original fence; only reviewed job observations cross it.
+        for attempt in range(2):
+            try:
+                if not target.is_current():
+                    raise OperationScopeChanged()
                 await authorize_remote_operation(name, params, ctx=ctx)
                 if target.authorize_public is not None:
                     await target.authorize_public(name, params)
@@ -327,20 +353,49 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                     refusal = target.capacity_error()
                     if refusal is not None:
                         return refusal_result(refusal)
-                await validate_enabled()
                 if target.public_available is not None and not await target.public_available(
                     (name, unity_target), getattr(ctx, "fastmcp", None)
                 ):
+                    if not target.is_current():
+                        raise OperationScopeChanged()
                     return refusal_result(_refusal("operation_tool_unavailable"))
-                if not target.is_current():
-                    raise OperationScopeChanged()
-                invocation_started = True
-                return await call()
-        except OperationScopeChanged:
-            return refusal_result(
-                _refusal("operation_target_changed", invocation_started=invocation_started)
-            )
-        except OperationCapacityError:
-            return refusal_result(_refusal("operation_capacity"))
+                request = admission_for(
+                    target,
+                    policy.mode,
+                    expires_at=expires_at,
+                    retained_bytes=charge,
+                    observational_continuation=observation,
+                )
+                async with operation_session(request):
+                    await authorize_remote_operation(name, params, ctx=ctx)
+                    if target.authorize_public is not None:
+                        await target.authorize_public(name, params)
+                    if target.capacity_error is not None:
+                        refusal = target.capacity_error()
+                        if refusal is not None:
+                            return refusal_result(refusal)
+                    await validate_enabled()
+                    if target.public_available is not None and not await target.public_available(
+                        (name, unity_target), getattr(ctx, "fastmcp", None)
+                    ):
+                        if not target.is_current():
+                            raise OperationScopeChanged()
+                        return refusal_result(_refusal("operation_tool_unavailable"))
+                    if not target.is_current():
+                        raise OperationScopeChanged()
+                    invocation_started = True
+                    return await call()
+            except OperationScopeChanged:
+                if observation and not invocation_started and attempt == 0:
+                    async with asyncio.timeout_at(expires_at):
+                        fresh = await capture_target(instance, user_id=user)
+                    if fresh is not None and fresh.scope.key == original_scope:
+                        target = fresh
+                        continue
+                return refusal_result(
+                    _refusal("operation_target_changed", invocation_started=invocation_started)
+                )
+            except OperationCapacityError:
+                return refusal_result(_refusal("operation_capacity"))
 
     return invoke

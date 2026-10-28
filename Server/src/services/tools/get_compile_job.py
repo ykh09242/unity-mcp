@@ -137,13 +137,19 @@ def parse_compile_job(value, compile_id: str) -> dict:
 async def read_compile_job(instance: str | None, compile_id: str) -> dict:
     # This command is safe even on old peers: NEVER fall back to refresh_unity.
     try:
-        response = await unity_transport.send_with_unity_instance(
+        response = await unity_transport.send_job_observation(
             async_send_command_with_retry, instance, "get_compile_job", {"compile_id": compile_id}
         )
     except Exception:
         return unknown_compile_job(compile_id, "observation_unavailable")
     value = response.model_dump() if isinstance(response, MCPResponse) else response
     if not isinstance(value, dict) or value.get("success") is not True:
+        if (
+            isinstance(value, dict)
+            and isinstance(value.get("data"), dict)
+            and value["data"].get("next_action") == "poll_same_job"
+        ):
+            return unknown_compile_job(compile_id, "observation_unavailable")
         return unknown_compile_job(compile_id, "tracking_unsupported")
     result = parse_compile_job(value.get("data"), compile_id)
     # New peers keep diagnostics outside the strict ledger contract so older

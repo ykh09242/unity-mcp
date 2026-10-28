@@ -416,6 +416,7 @@ class NoThrottleDiagnostics(BaseModel):
 class GetTestJobData(BaseModel):
     job_id: str
     status: str
+    observation: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: value is None)
     mode: str | None = None
     started_unix_ms: int | None = None
     finished_unix_ms: int | None = None
@@ -604,7 +605,8 @@ async def get_test_job(
         int | None,
         "If set, wait up to this many seconds for tests and native cleanup to complete. "
         "Reduces polling frequency and avoids client-side loop detection. "
-        "Recommended: 30-60 seconds. On expiry results remain available with "
+        "Recommended: 30-60 seconds, or 300+ for large projects. Transient reload failures "
+        "are observed within this one wait budget without restarting the job. On expiry results remain available with "
         "native_cleanup_pending and retry guidance. Older packages without release evidence "
         "return on terminal test status.",
     ] = None,
@@ -643,7 +645,7 @@ async def get_test_job(
 
     async def _fetch_status() -> tuple[Any, int]:
         observation_order = next(_poll_observation_order)
-        response = await unity_transport.send_with_unity_instance(
+        response = await unity_transport.send_job_observation(
             async_send_command_with_retry,
             unity_instance,
             "get_test_job",

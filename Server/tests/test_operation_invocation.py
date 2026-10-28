@@ -187,6 +187,21 @@ def test_ingress_sized_argument_retention_does_not_inherit_http_command_ceiling(
         ("get_editor_state", {}, True),
         ("ping", {}, True),
         ("get_compile_job", {"compile_id": "owned-exact"}, True),
+        ("get_test_job", {"job_id": "owned-exact", "includeDetails": True}, True),
+        (
+            "get_test_job",
+            {
+                "job_id": "owned-exact",
+                "includeFailedTests": True,
+                "page_size": 100,
+                "cursor": "page-2",
+            },
+            True,
+        ),
+        ("get_test_job", {"job_id": "owned-exact", "action": "cancel"}, False),
+        ("get_test_job", {"job_id": "owned-exact", "includeDetails": "true"}, False),
+        ("get_test_job", {"job_id": "owned-exact", "page_size": True}, False),
+        ("get_test_job", {"job_id": "owned-exact", "page_size": 101}, False),
         ("get_compile_job", {}, False),
         ("cancel_compile_job", {"compile_id": "owned-exact"}, False),
         ("manage_packages", {"action": "list"}, False),
@@ -216,7 +231,74 @@ async def test_reload_allows_only_exact_observational_continuations(name, params
                     pytest.fail("Dependent operation crossed the immutable generation fence")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", ["generation", "project", "principal"])
+async def test_job_read_rebinds_only_same_project_before_callback(boundary, monkeypatch, changed):
+    old = OperationTarget(OperationScope("local", "deadbeef", "old"), lambda: False, True)
+    fresh = OperationTarget(
+        OperationScope(
+            "other" if changed == "principal" else "local",
+            "different" if changed == "project" else "deadbeef",
+            "new",
+        ),
+        lambda: True,
+        True,
+    )
+    captures, effects = [], []
+
+    async def capture(instance, **_kwargs):
+        captures.append(instance)
+        return old if len(captures) == 1 else fresh
+
+    async def get_test_job(
+        ctx, job_id, include_details=False, wait_timeout=None, page_size=None, cursor=None
+    ):
+        effects.append((job_id, include_details, page_size, cursor))
+        return {"success": True, "data": {"passed": 272}}
+
+    monkeypatch.setattr(mod, "capture_target", capture)
+    result = await mod.wrap_tool(get_test_job, "get_test_job", "get_test_job")(
+        Context(), "kept-job", include_details=True, page_size=100, cursor="page-2"
+    )
+    if changed == "generation":
+        assert result["success"] is True
+        assert effects == [("kept-job", True, 100, "page-2")]
+        assert len(captures) == 2
+    else:
+        assert result["error"] == "operation_target_changed"
+        assert effects == []
+    assert scheduler().snapshot()["active"] == 0
+
+
 _OMITTED_MARKER = object()
+
+
+@pytest.mark.asyncio
+async def test_observation_rebind_rechecks_new_plugin_authority(boundary, monkeypatch):
+    old = OperationTarget(OperationScope("local", "deadbeef", "old"), lambda: False, True)
+    effects, captures = [], []
+
+    async def denied(name, params):
+        raise PermissionError("new plugin authority denied")
+
+    fresh = OperationTarget(
+        OperationScope("local", "deadbeef", "new"), lambda: True, True, authorize_public=denied
+    )
+
+    async def capture(*args, **kwargs):
+        captures.append(True)
+        return old if len(captures) == 1 else fresh
+
+    async def get_test_job(ctx, job_id):
+        effects.append(job_id)
+
+    monkeypatch.setattr(mod, "capture_target", capture)
+    with pytest.raises(PermissionError, match="new plugin authority denied"):
+        await mod.wrap_tool(get_test_job, "get_test_job", "get_test_job")(Context(), "saved-job")
+    assert len(captures) == 2 and effects == []
+    assert scheduler().snapshot()["active"] == 0
+
+
 _MARKER_DEFAULT = Field(default_factory=lambda: _OMITTED_MARKER)
 _UNRELATED_SENTINEL = sentinel("UNRELATED")
 

@@ -1505,7 +1505,8 @@ class PluginHub(WebSocketEndpoint):
                 target,
                 policy.mode,
                 expires_at=budget.expires_at,
-                observational_continuation=is_observational_continuation(command_type, params),
+                observational_continuation=_catalog_guard is None
+                and is_observational_continuation(command_type, params),
                 retained_bytes=charge,
             )
         ):

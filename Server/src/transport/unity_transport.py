@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 from typing import Awaitable, Callable, TypeVar
 
 from transport.plugin_hub import (
@@ -24,6 +25,98 @@ from models.unity_response import normalize_unity_response
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
+
+
+async def send_job_observation(send_fn, unity_instance, command, params, **kwargs):
+    """Retry one refused job read on the same owner, never a started/unknown command.
+
+    Each transport still checks credentials, catalog and native admission. The
+    public operation's original project/principal and elapsed budget stay pinned.
+    """
+    from services.registry.operation_context import active_operation
+    from services.registry.operation_invocation import is_observational_continuation
+    from services.registry.operation_target import capture_target
+    from transport.command_budget import http_request_budget
+    from transport.legacy.unity_connection import _command_deadline
+
+    owner = active_operation()
+    if (
+        owner is None
+        or not unity_instance
+        or command not in {"get_test_job", "get_compile_job"}
+        or not is_observational_continuation(command, params)
+    ):
+        return await send_with_unity_instance(send_fn, unity_instance, command, params, **kwargs)
+    scope = owner.request.scope.key
+    deadline = _command_deadline(command, params)
+    if _is_http_transport():
+        ceiling = (
+            asyncio.get_running_loop().time() + PluginHub._command_timeouts(command, params)[1]
+        )
+        deadline = min(deadline, ceiling) if deadline is not None else ceiling
+    request = http_request_budget.get()
+    if request is not None:
+        deadline = (
+            min(deadline, request.budget.expires_at)
+            if deadline is not None
+            else request.budget.expires_at
+        )
+    result = None
+    sending = False
+    try:
+        async with asyncio.timeout_at(deadline):
+            for attempt in range(2):
+                sending = True
+                result = await send_with_unity_instance(
+                    send_fn, unity_instance, command, params, **kwargs, _deadline=deadline
+                )
+                sending = False
+                value = result.model_dump() if isinstance(result, MCPResponse) else result
+                if not isinstance(value, dict) or value.get("success", True):
+                    return result
+                data = value.get("data") or {}
+                reason = data.get("reason", value.get("error")) if isinstance(data, dict) else None
+                if not isinstance(reason, str) or reason not in {
+                    "operation_target_changed",
+                    "read_invalidated",
+                    "no_unity_session",
+                    "stale_connection",
+                    "command_not_dispatched",
+                }:
+                    return result
+                if attempt == 1:
+                    break
+                target = await capture_target(unity_instance, user_id=kwargs.get("user_id"))
+                if target is None or target.scope.key != scope or not target.is_current():
+                    break
+                await asyncio.sleep(0.1)
+    except TimeoutError:
+        if sending:
+            # A previous refusal says nothing about this attempt's dispatch.
+            result = command_outcome_unknown(
+                command, "job observation deadline expired", cause="timeout"
+            )
+        elif result is None:
+            result = {
+                "success": False,
+                "error": "Job status observation timed out",
+                "data": {"reason": "job_observation_timeout"},
+            }
+    value = result.model_dump() if isinstance(result, MCPResponse) else dict(result)
+    value["message"] = (
+        "The job status could not be observed during connection recovery. "
+        "This does not mean the job failed. Retry the same job ID after the Editor reconnects; "
+        "do not start the tests or compilation again."
+    )
+    value["hint"] = "retry"
+    value["data"] = {
+        **(value.get("data") or {}),
+        **{key: params[key] for key in ("job_id", "compile_id") if key in params},
+        "job_status": "unknown",
+        "next_action": "poll_same_job",
+        "retry_after_ms": 500,
+    }
+    return MCPResponse(**value) if isinstance(result, MCPResponse) else value
 
 
 def _is_http_transport() -> bool:
