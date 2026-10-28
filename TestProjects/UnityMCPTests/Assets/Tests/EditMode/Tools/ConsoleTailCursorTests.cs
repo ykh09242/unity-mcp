@@ -69,6 +69,38 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static string Token(JObject response) => (string)response["data"]["next_cursor"];
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void TailSourceDiagnosticsPreserveExplicitProjection(bool projected)
+        {
+            const string stack = "Fixture.Method () (at Fixture.cs:7)";
+            var row = new ConsoleTailRow
+            {
+                GlobalIndex = 1,
+                Message = "body\n" + stack,
+                StackStart = 5,
+                File = "Fixture.cs",
+                Line = 7,
+            };
+            var parameters = new JObject { ["tail_cursor"] = "begin", ["includeStacktrace"] = true };
+            if (projected)
+                parameters["fields"] = new JArray("type", "message", "stackTrace");
+            var state = new ConsoleTailCursor();
+            var begin = JObject.FromObject(state.Read(ConsoleTailQuery.Parse(parameters), new Snapshot(new List<ConsoleTailRow>())));
+            parameters["tail_cursor"] = Token(begin);
+            var result = JObject.FromObject(state.Read(ConsoleTailQuery.Parse(parameters), new Snapshot(new List<ConsoleTailRow> { row })));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            var entry = (JObject)result["data"]["items"][0]["entry"];
+            Assert.AreEqual(stack, (string)entry["stackTrace"]);
+            if (projected)
+                CollectionAssert.AreEqual(new[] { "type", "message", "stackTrace" }, entry.Properties().Select(p => p.Name));
+            else
+            {
+                Assert.AreEqual("available", (string)entry["diagnostics"]["location"]);
+                Assert.AreEqual("available", (string)entry["diagnostics"]["stack_trace"]);
+            }
+        }
+
         private static void Reason(JObject response, string reason)
         {
             Assert.IsFalse((bool)response["success"]);

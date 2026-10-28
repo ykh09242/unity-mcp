@@ -77,11 +77,16 @@ namespace MCPForUnityTests.Editor.Tools
                     }
                 )
             );
-            // Then all five legacy keys remain, including the null stack placeholder.
+            // Then all legacy keys remain, with explicit source/omission diagnostics.
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             var item = (JObject)response["data"]["items"][0];
-            CollectionAssert.AreEqual(new[] { "type", "message", "file", "line", "stackTrace" }, item.Properties().Select(p => p.Name).ToArray());
+            CollectionAssert.AreEqual(
+                new[] { "type", "message", "file", "line", "stackTrace", "diagnostics" },
+                item.Properties().Select(p => p.Name).ToArray()
+            );
             Assert.AreEqual(JTokenType.Null, item["stackTrace"].Type);
+            Assert.AreEqual("not_requested", (string)item["diagnostics"]["stack_trace"]);
+            Assert.AreEqual("unity_console", (string)item["diagnostics"]["source"]);
         }
     }
 }

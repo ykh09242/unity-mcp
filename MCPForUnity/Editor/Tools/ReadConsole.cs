@@ -501,13 +501,16 @@ namespace MCPForUnity.Editor.Tools
                             }
                             else
                             {
+                                string file = (string)_fileField.GetValue(logEntryInstance);
+                                int line = (int)_lineField.GetValue(logEntryInstance);
                                 formattedEntry = new
                                 {
                                     type = unityType.ToString(),
                                     message = messageOnly,
-                                    file = (string)_fileField.GetValue(logEntryInstance),
-                                    line = (int)_lineField.GetValue(logEntryInstance),
+                                    file,
+                                    line,
                                     stackTrace = stackTrace, // null if not requested or unavailable
+                                    diagnostics = SourceDiagnostics(message, callstackStart, file, line, includeStacktrace, stackTrace),
                                 };
                             }
                             break;
@@ -784,6 +787,28 @@ namespace MCPForUnity.Editor.Tools
         /// </summary>
         /// <param name="fullMessage">The complete log message including any appended stack trace.</param>
         /// <returns>The message body (line endings normalized to "\n", internal blank lines preserved) and the stack trace, or null when none is found.</returns>
+        internal static JObject SourceDiagnostics(string message, int? stackStart, string file, int line, bool includeStack, string stackTrace)
+        {
+            // A valid native UTF-16 boundary is authoritative. The compatibility
+            // heuristic cannot prove Unity supplied no stack when it finds none.
+            bool nativeBoundary = stackStart.HasValue && stackStart.Value >= 0 && stackStart.Value <= (message?.Length ?? 0);
+            bool hasFile = !string.IsNullOrWhiteSpace(file);
+            return new JObject
+            {
+                ["source"] = "unity_console",
+                ["location"] =
+                    hasFile && line > 0 ? "available"
+                    : hasFile || line > 0 ? "partial"
+                    : "not_provided_by_unity",
+                ["stack_trace"] =
+                    !includeStack ? "not_requested"
+                    : !string.IsNullOrWhiteSpace(stackTrace) ? "available"
+                    : nativeBoundary ? "not_provided_by_unity"
+                    : "unavailable",
+                ["stack_trace_source"] = nativeBoundary ? "unity_utf16_boundary" : "frame_heuristic",
+            };
+        }
+
         internal static (string body, string stackTrace) SplitMessageAndStackTrace(string fullMessage, int? callstackStart = null)
         {
             if (string.IsNullOrEmpty(fullMessage))

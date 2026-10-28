@@ -1,6 +1,7 @@
 using System;
 using System.Reflection;
 using MCPForUnity.Editor.Tools;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 
@@ -36,6 +37,22 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(method);
             Assert.AreEqual(2, method.GetParameters().Length, "Native-boundary splitter must accept the supplied UTF-16 offset.");
             return ((string body, string stackTrace))method.Invoke(null, new object[] { text, offset });
+        }
+
+        [TestCase(5, true, "not_provided_by_unity", "unity_utf16_boundary")]
+        [TestCase(null, true, "unavailable", "frame_heuristic")]
+        [TestCase(999, true, "unavailable", "frame_heuristic")]
+        [TestCase(5, false, "not_requested", "unity_utf16_boundary")]
+        public void MissingSourceDiagnosticsDistinguishNativeAbsenceFromOmission(int? offset, bool includeStack, string expected, string source)
+        {
+            const string text = "body\n\n";
+            MethodInfo method = typeof(ReadConsole).GetMethod("SourceDiagnostics", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(method, "Structured entries need explicit native source availability.");
+            var result = (JObject)method.Invoke(null, new object[] { text, offset, "", 0, includeStack, Split(text, offset).stackTrace });
+            Assert.AreEqual("unity_console", (string)result["source"]);
+            Assert.AreEqual("not_provided_by_unity", (string)result["location"]);
+            Assert.AreEqual(expected, (string)result["stack_trace"]);
+            Assert.AreEqual(source, (string)result["stack_trace_source"]);
         }
 
         [TestCase("LogError documentation")]

@@ -363,6 +363,8 @@ namespace MCPForUnity.Editor.Tools
                 entry["stackTrace"] = query.IncludeStack ? Limit(split.stackTrace, 16384, "stackTrace", truncated) : null;
             if (truncated.Count > 0)
                 entry["truncated_fields"] = truncated;
+            if (query.Fields == null)
+                entry["diagnostics"] = ReadConsole.SourceDiagnostics(row.Message, row.StackStart, row.File, row.Line, query.IncludeStack, split.stackTrace);
             return entry;
         }
 

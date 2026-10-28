@@ -21,6 +21,14 @@ ConsoleField = Literal["type", "message", "file", "line", "stackTrace"]
 _CONSOLE_FIELDS = TypeAdapter(list[ConsoleField])
 
 
+class ConsoleSourceDiagnostics(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    source: Literal["unity_console"]
+    location: Literal["available", "partial", "not_provided_by_unity"]
+    stack_trace: Literal["available", "not_requested", "not_provided_by_unity", "unavailable"]
+    stack_trace_source: Literal["unity_utf16_boundary", "frame_heuristic"]
+
+
 class ConsoleTailEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     type: Literal["Error", "Assert", "Warning", "Log", "Exception"]
@@ -28,6 +36,7 @@ class ConsoleTailEntry(BaseModel):
     file: str | None = Field(default=None, max_length=1024)
     line: int | None = None
     stackTrace: str | None = Field(default=None, max_length=16384)
+    diagnostics: ConsoleSourceDiagnostics | None = None
     truncated_fields: list[Literal["message", "file", "stackTrace"]] = Field(
         default_factory=list, max_length=3
     )

@@ -132,6 +132,53 @@ def page(module, *, cursor="begin", items=None, **changes):
 
 
 @pytest.mark.asyncio
+async def test_console_source_diagnostics_survive_public_tail_validation(console):
+    module, _, send = console
+    token = f"ct1.{'a' * 32}.{'d' * 32}"
+    entry = {
+        "type": "Error",
+        "message": "domain backup",
+        "file": "",
+        "line": 0,
+        "stackTrace": None,
+        "diagnostics": {
+            "source": "unity_console",
+            "location": "not_provided_by_unity",
+            "stack_trace": "not_requested",
+            "stack_trace_source": "unity_utf16_boundary",
+        },
+    }
+    send.return_value = page(module, cursor=token, items=[{"sequence": 1, "entry": entry}])
+    result = await module.read_console(SimpleNamespace(), tail_cursor=token)
+    assert result == send.return_value
+    assert result["data"]["items"][0]["entry"]["diagnostics"] == entry["diagnostics"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("source", "made_up"),
+        ("location", "x" * 1000),
+        ("stack_trace", "invented"),
+        ("extra", "bad"),
+    ],
+)
+def test_console_source_diagnostics_are_bounded_and_known(console, field, value):
+    from pydantic import ValidationError
+
+    module, _, _ = console
+    data = {
+        "source": "unity_console",
+        "location": "partial",
+        "stack_trace": "unavailable",
+        "stack_trace_source": "frame_heuristic",
+        field: value,
+    }
+    with pytest.raises(ValidationError):
+        module.ConsoleSourceDiagnostics.model_validate(data)
+
+
+@pytest.mark.asyncio
 async def test_begin_accepts_only_empty_watermark_and_preserves_loss_disclosure(console):
     # Given a bounded native begin watermark.
     module, _, send = console
