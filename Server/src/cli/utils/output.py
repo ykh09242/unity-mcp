@@ -46,7 +46,16 @@ def format_as_text(data: Any, indent: int = 0) -> str:
         # Check for error response
         if "success" in data and not data.get("success"):
             error = data.get("error") or data.get("message") or "Unknown error"
-            return f"{prefix}❌ Error: {error}"
+            lines = [f"{prefix}❌ Error: {_bounded_detail(error)}"]
+            details = {key: value for key, value in data.items() if key not in ("success", "error")}
+            rendered = list(islice(_failure_detail_lines(details, indent), 81))
+            lines.extend(rendered[:80])
+            if len(rendered) > 80:
+                lines.append(f"{prefix}... (more details omitted; use --format json)")
+            text = "\n".join(lines)
+            if len(text) > 12000:
+                text = text[:12000] + "\n... (more details omitted; use --format json)"
+            return text
 
         # Check for success response with data
         if "success" in data and data.get("success"):
@@ -89,6 +98,45 @@ def format_as_text(data: Any, indent: int = 0) -> str:
     return f"{prefix}{data}"
 
 
+def _bounded_detail(value: Any) -> str:
+    """Keep human-readable diagnostic values finite; JSON stays lossless."""
+    text = str(value)
+    return text if len(text) <= 300 else text[:300] + "... (truncated; use --format json)"
+
+
+def _failure_detail_lines(value: Any, indent: int, depth: int = 0):
+    """Render structured outcomes with indices instead of list-item summaries."""
+    prefix = "  " * indent
+    if depth >= 8:
+        yield f"{prefix}... (nested details omitted; use --format json)"
+    elif isinstance(value, dict):
+        # Keep execution/rollback summaries visible before large collections.
+        items = sorted(
+            value.items(),
+            key=lambda pair: isinstance(pair[1], dict) + 2 * isinstance(pair[1], list),
+        )
+        for key, item in islice(items, 30):
+            label = _bounded_detail(key)
+            if isinstance(item, (dict, list)):
+                yield f"{prefix}{label}:"
+                yield from _failure_detail_lines(item, indent + 1, depth + 1)
+            else:
+                yield f"{prefix}{label}: {_bounded_detail(item)}"
+        if len(value) > 30:
+            yield f"{prefix}... ({len(value) - 30} fields omitted; use --format json)"
+    elif isinstance(value, list):
+        for index, item in enumerate(value[:20]):
+            if isinstance(item, (dict, list)):
+                yield f"{prefix}[{index}]:"
+                yield from _failure_detail_lines(item, indent + 1, depth + 1)
+            else:
+                yield f"{prefix}[{index}]: {_bounded_detail(item)}"
+        if len(value) > 20:
+            yield f"{prefix}... ({len(value) - 20} items omitted; use --format json)"
+    else:
+        yield f"{prefix}{_bounded_detail(value)}"
+
+
 def _format_list_item(item: Any) -> str:
     """Format a single list item."""
     if isinstance(item, dict):
@@ -117,7 +165,10 @@ def format_as_table(data: Any) -> str:
 
         # Single dict as key-value table
         rows = [[str(k), str(v)[:60]] for k, v in islice(data.items(), _TABLE_ROW_LIMIT)]
-        return _build_table(rows, headers=["Key", "Value"], total_rows=len(data))
+        rendered = _build_table(rows, headers=["Key", "Value"], total_rows=len(data))
+        if data.get("success") is False:
+            rendered += "\n\n" + format_as_text(data)
+        return rendered
 
     if isinstance(data, list):
         return _build_table(data)

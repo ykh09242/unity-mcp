@@ -709,6 +709,10 @@ unity-mcp batch inline '[{"tool": "manage_scene", "params": {"action": "get_acti
 unity-mcp batch template > my_commands.json
 ```
 
+Failed commands exit with code 1. Text failures include bounded structured
+details, including indexed batch outcomes and any reported partial execution or
+rollback state. Use `--format json` for the full response without truncation.
+
 ### Prefab Commands
 
 ```bash

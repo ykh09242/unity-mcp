@@ -92,6 +92,18 @@ def _server_url(config: CLIConfig, path: str) -> str:
     return f"http://{host}:{config.port}{path}"
 
 
+def _raise_structured_target_refusal(response: httpx.Response) -> None:
+    """Preserve completed target-selection refusals for commands and inventory."""
+    if response.status_code not in (404, 409):
+        return
+    try:
+        failure = response.json()
+    except ValueError:
+        return
+    if isinstance(failure, dict) and failure.get("success") is False:
+        raise UnityCommandError(failure)
+
+
 async def send_command(
     command_type: str,
     params: Dict[str, Any],
@@ -171,6 +183,7 @@ async def send_command(
             raise UnityConnectionError(
                 "Project context request refused; verify the selected local server supports guarded commands."
             ) from None
+        _raise_structured_target_refusal(e.response)
         raise UnityConnectionError(
             f"HTTP error from server: {e.response.status_code} - {e.response.text}"
         )
@@ -307,6 +320,7 @@ async def list_custom_tools(config: Optional[CLIConfig] = None) -> Dict[str, Any
             f"Unity may be busy or unresponsive."
         )
     except httpx.HTTPStatusError as e:
+        _raise_structured_target_refusal(e.response)
         raise UnityConnectionError(
             f"HTTP error from server: {e.response.status_code} - {e.response.text}"
         )

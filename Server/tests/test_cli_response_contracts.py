@@ -254,3 +254,191 @@ def test_transport_errors_still_exit_nonzero(monkeypatch, failure):
     assert {"http": "HTTP error", "connect": "Cannot connect", "timeout": "timed out"}[
         failure
     ] in result.output
+
+
+@pytest.mark.parametrize("mode", ["run", "inline"])
+@pytest.mark.parametrize("output_format", ["text", "table"])
+def test_batch_text_failure_shows_indexed_execution_and_rollback(
+    command_response, tmp_path, mode, output_format
+):
+    response, _ = command_response
+    response.clear()
+    response.update(
+        {
+            "success": False,
+            "error": "Batch partially executed",
+            "data": {
+                "partialExecution": True,
+                "rollbackStatus": "failed",
+                "results": [
+                    {
+                        "index": 0,
+                        "tool": "owned_mutation",
+                        "callSucceeded": True,
+                        "result": {"success": True},
+                    },
+                    {
+                        "index": 1,
+                        "tool": "owned_mutation",
+                        "callSucceeded": False,
+                        "result": {
+                            "success": False,
+                            "error": "The second mutation failed after dispatch",
+                        },
+                    },
+                ],
+            },
+        }
+    )
+    commands = [{"tool": "owned_mutation", "params": {}}] * 2
+    path = tmp_path / "commands.json"
+    path.write_text(json.dumps(commands))
+    argument = str(path) if mode == "run" else json.dumps(commands)
+    result = CliRunner().invoke(cli, ["--format", output_format, "batch", mode, argument])
+    assert result.exit_code == 1
+    for detail in (
+        "partialExecution: True",
+        "rollbackStatus: failed",
+        "[0]",
+        "[1]",
+        "callSucceeded: True",
+        "callSucceeded: False",
+        "The second mutation failed after dispatch",
+    ):
+        assert detail in result.output, result.output
+
+
+def test_failure_details_are_bounded_and_json_remains_lossless():
+    from cli.utils.output import format_output
+
+    failure = {
+        "success": False,
+        "error": "failed",
+        "data": {
+            "rows": [{"error": "x" * 10000, "nested": {"deeper": {"value": "y" * 10000}}}] * 200
+        },
+    }
+    rendered = format_output(failure)
+    assert "rows" in rendered
+    assert "omitted" in rendered or "more" in rendered
+    assert len(rendered) < 20000
+    assert json.loads(format_output(failure, "json")) == failure
+
+
+@pytest.mark.parametrize("output_format", ["text", "json"])
+@pytest.mark.parametrize("command", [["scene", "save"], ["tool", "list"]])
+@pytest.mark.parametrize("status_code", [404, 409])
+@pytest.mark.parametrize("selector", [None, "Same@aaa"])
+def test_target_refusal_preserves_available_instances_and_failure_status(
+    monkeypatch, output_format, command, status_code, selector
+):
+    failure = {
+        "success": False,
+        "error": "Select an exact target",
+        "data": {"dispatch": "not_dispatched", "available_instances": ["Same@aaa", "Same@bbb"]},
+    }
+    client_type = httpx.AsyncClient
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(status_code, json=failure)
+
+    monkeypatch.setattr(
+        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+    )
+    monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
+    arguments = ["--no-project-context", "--format", output_format]
+    if selector:
+        arguments.extend(["--instance", selector])
+    result = CliRunner().invoke(cli, [*arguments, *command])
+    assert result.exit_code == 1
+    assert len(requests) == 1
+    if command[0] == "tool":
+        assert requests[0].url.path == "/api/custom-tools"
+        assert requests[0].url.params.get("instance") == selector
+    if output_format == "json":
+        assert json.loads(result.stdout) == failure
+    else:
+        assert "Same@aaa" in result.output and "Same@bbb" in result.output
+        assert "not_dispatched" in result.output
+
+
+def test_tool_inventory_success_retains_json_and_explicit_target(monkeypatch):
+    inventory = {"success": True, "project_id": "aaa", "tools": [{"name": "OwnedTool"}]}
+    requests = []
+    client_type = httpx.AsyncClient
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json=inventory)
+
+    monkeypatch.setattr(
+        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+    )
+    monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
+    result = CliRunner().invoke(
+        cli, ["--no-project-context", "--format", "json", "--instance", "Same@aaa", "tool", "list"]
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == inventory
+    assert len(requests) == 1
+    assert requests[0].url.path == "/api/custom-tools"
+    assert requests[0].url.params.get("instance") == "Same@aaa"
+
+
+@pytest.mark.parametrize("failure", ["http", "non_json_refusal", "connect", "timeout"])
+def test_tool_inventory_transport_errors_remain_failures(monkeypatch, failure):
+    requests = []
+    client_type = httpx.AsyncClient
+
+    def respond(request):
+        requests.append(request)
+        if failure == "connect":
+            raise httpx.ConnectError("Unavailable", request=request)
+        if failure == "timeout":
+            raise httpx.ReadTimeout("Too slow", request=request)
+        if failure == "non_json_refusal":
+            return httpx.Response(409, text="Server unavailable")
+        return httpx.Response(503, json={"success": False, "error": "No Unity connected"})
+
+    monkeypatch.setattr(
+        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+    )
+    monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
+    result = CliRunner().invoke(cli, ["--no-project-context", "--format", "json", "tool", "list"])
+    assert result.exit_code == 1
+    assert len(requests) == 1
+    assert result.stdout == ""
+    assert {
+        "http": "HTTP error",
+        "non_json_refusal": "HTTP error",
+        "connect": "Cannot connect",
+        "timeout": "timed out",
+    }[failure] in result.stderr
+
+
+def test_large_batch_failure_keeps_execution_summary_before_bounded_outcomes():
+    from cli.utils.output import format_output
+
+    response = {
+        "success": False,
+        "error": "Partial batch",
+        "data": {
+            "results": [
+                {
+                    "index": index,
+                    "callSucceeded": False,
+                    "result": {"success": False, "error": "Owned failure"},
+                }
+                for index in range(100)
+            ],
+            "partialExecution": True,
+            "rollbackStatus": "not_attempted",
+        },
+    }
+    rendered = format_output(response)
+    assert "partialExecution: True" in rendered
+    assert "rollbackStatus: not_attempted" in rendered
+    assert "[0]" in rendered
+    assert "omitted" in rendered
