@@ -360,6 +360,7 @@ _PUBLIC_SCRIPT_WRAPPERS: Final = _names(
 _COMPILING_SCRIPT_ACTIONS: Final = _names(
     "create delete edit apply_text_edits apply_prepared_script apply_change_set recover_change_set"
 )
+_COMPILING_ASSET_ACTIONS: Final = _names("import create modify delete duplicate move rename")
 _CAPABILITIES: Final = {feature.name: feature for feature in CAPABILITIES}
 
 # BatchExecute dispatches canonical native tools, not Python convenience wrappers.
@@ -469,6 +470,15 @@ def required_permissions(
     action = action.strip().lower()
     if name == "manage_packages" and action in _ACTIONS[name][Permission.EDIT]:
         # Every mutation can resolve/import package code or trigger compilation.
+        return CUSTOM_GRANTS
+    if name == "manage_editor" and action in {"deploy_package", "restore_package"}:
+        # Replacing this package's Editor/Runtime trees imports executable code.
+        return CUSTOM_GRANTS
+    if name == "manage_asset" and action in _COMPILING_ASSET_ACTIONS:
+        # Client paths/extensions cannot prove the resolved object, folder subtree,
+        # importer or dependent generated source is inert. Require compilation
+        # authority for generic content/tree edits; labels and empty-folder
+        # creation retain the narrower edit grant.
         return CUSTOM_GRANTS
     if name == "manage_animation" and action == "animator_set_parameter":
         # Only this explicit top-level flag reduces authority. Native execution

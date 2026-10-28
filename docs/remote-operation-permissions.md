@@ -70,6 +70,14 @@ of the existing job record.
 All `manage_packages` mutations (add, remove, embed, resolve and registry changes)
 require `edit` and `run`: Unity may import, re-resolve or compile package code.
 Queries/status remain reads. Explicit Editor consent remains necessary separately.
+`manage_editor` deployment/restoration also requires both grants because it replaces
+the package's executable code. Generic `manage_asset` content/tree mutations
+(`import`, `create`, `modify`, `delete`, `duplicate`, `move`, `rename`), including
+the `asset_edit` alias and batch members, require both grants. The server cannot
+prove from a caller's path, extension or asset type that the resolved object,
+folder subtree, importer or dependent generated source is inert. This conservative
+floor also applies to ordinary texture/content changes through that generic API;
+label changes and empty-folder creation retain `edit` alone.
 Package inputs reject HTTP(S) userinfo, SSH passwords and arbitrary URL queries;
 credential-free SSH/scp Git references and Git `?path=` selectors remain supported.
 Use Git/UPM's external authentication. Responses redact all URL userinfo, queries
