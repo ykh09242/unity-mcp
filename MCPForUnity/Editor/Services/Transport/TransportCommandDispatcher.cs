@@ -34,7 +34,9 @@ namespace MCPForUnity.Editor.Services.Transport
                 TransportMode? origin,
                 CommandPhaseTiming timing,
                 bool ownsTiming,
-                ICommandProgress progress
+                ICommandProgress progress,
+                CancellationToken admissionCancellation,
+                CancellationToken requestCancellation
             )
             {
                 CommandJson = commandJson;
@@ -46,6 +48,8 @@ namespace MCPForUnity.Editor.Services.Transport
                 OwnsTiming = ownsTiming;
                 Progress = progress;
                 CancellationToken = cancellationToken;
+                AdmissionCancellation = admissionCancellation;
+                RequestCancellation = requestCancellation;
                 CancellationRegistration = registration;
                 QueuedAt = DateTime.UtcNow;
             }
@@ -61,6 +65,11 @@ namespace MCPForUnity.Editor.Services.Transport
             public TaskCompletionSource<bool> ExecutionSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public TaskCompletionSource<string> JsonResponseSource { get; }
             public CancellationToken CancellationToken { get; }
+
+            // A transport/request may retire admission before its callback worker runs.
+            // These tokens are observed only; they are never registered or given to a handler.
+            public CancellationToken AdmissionCancellation { get; }
+            public CancellationToken RequestCancellation { get; }
             public CancellationTokenRegistration CancellationRegistration { get; }
             public bool IsExecuting { get; set; }
             public LinkedListNode<string> QueueNode { get; set; }
@@ -192,11 +201,21 @@ namespace MCPForUnity.Editor.Services.Transport
             TransportMode? origin,
             CommandPhaseTiming timing,
             ICommandProgress progress
+        ) => ExecuteTimedCommandAsync(command, cancellationToken, origin, timing, progress, CancellationToken.None);
+
+        internal static TransportCommandOperation ExecuteTimedCommandAsync(
+            Command command,
+            CancellationToken cancellationToken,
+            TransportMode? origin,
+            CommandPhaseTiming timing,
+            ICommandProgress progress,
+            CancellationToken admissionCancellation,
+            CancellationToken requestCancellation = default
         )
         {
             if (command == null)
                 throw new ArgumentNullException(nameof(command));
-            return Enqueue(null, command, cancellationToken, origin, timing, true, progress);
+            return Enqueue(null, command, cancellationToken, origin, timing, true, progress, admissionCancellation, requestCancellation);
         }
 
         private static TransportCommandOperation Enqueue(
@@ -206,7 +225,9 @@ namespace MCPForUnity.Editor.Services.Transport
             TransportMode? origin = null,
             CommandPhaseTiming timing = null,
             bool transportOwnsTiming = false,
-            ICommandProgress progress = null
+            ICommandProgress progress = null,
+            CancellationToken admissionCancellation = default,
+            CancellationToken requestCancellation = default
         )
         {
             EnsureInitialised();
@@ -219,7 +240,18 @@ namespace MCPForUnity.Editor.Services.Transport
             if (ownsTiming)
                 timing = CommandPhaseTiming.Create(McpLogRecord.IsEnabled, CommandPhaseTiming.Transport.Direct);
             timing?.Start(CommandPhaseTiming.Phase.Queue);
-            var pending = new PendingCommand(commandJson, command, cancellationToken, registration, origin, timing, ownsTiming, progress);
+            var pending = new PendingCommand(
+                commandJson,
+                command,
+                cancellationToken,
+                registration,
+                origin,
+                timing,
+                ownsTiming,
+                progress,
+                admissionCancellation,
+                requestCancellation
+            );
             var operation = new TransportCommandOperation(pending.ResponseSource.Task, pending.ExecutionSource.Task, pending.JsonResponseSource?.Task);
 
             lock (PendingLock)
@@ -230,7 +262,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
             // Register can invoke cancellation before the pending entry is inserted.
             // Recheck after insertion so cancellation never depends on an editor frame.
-            if (cancellationToken.IsCancellationRequested)
+            if (cancellationToken.IsCancellationRequested || admissionCancellation.IsCancellationRequested || requestCancellation.IsCancellationRequested)
             {
                 CancelPending(id, cancellationToken);
                 return operation;
@@ -441,7 +473,11 @@ namespace MCPForUnity.Editor.Services.Transport
 
         private static void ProcessCommand(string id, PendingCommand pending)
         {
-            if (pending.CancellationToken.IsCancellationRequested)
+            if (
+                pending.CancellationToken.IsCancellationRequested
+                || pending.AdmissionCancellation.IsCancellationRequested
+                || pending.RequestCancellation.IsCancellationRequested
+            )
             {
                 RemovePending(id, pending);
                 pending.TrySetCanceled();
@@ -598,6 +634,8 @@ namespace MCPForUnity.Editor.Services.Transport
                 using (CommandPhaseTiming.EnterHandler(pending.Timing))
                 using (NativeCommandArbitrator.EnterComposition(CommandRegistry.IsTrustedCompositionHandler(command.type) ? pending.Lease : null))
                 {
+                    pending.AdmissionCancellation.ThrowIfCancellationRequested();
+                    pending.RequestCancellation.ThrowIfCancellationRequested();
                     result = CommandRegistry.ExecuteCommand(
                         command.type,
                         parameters,
@@ -655,7 +693,11 @@ namespace MCPForUnity.Editor.Services.Transport
                     McpLogRecord.Log(logName, null, logType, OutcomeStatus(CommandOutcomeMetadata.FromResult(result)), sw?.ElapsedMilliseconds ?? 0);
                 RemovePending(id, pending);
             }
-            catch (OperationCanceledException) when (pending.CancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException)
+                when (pending.CancellationToken.IsCancellationRequested
+                    || pending.AdmissionCancellation.IsCancellationRequested
+                    || pending.RequestCancellation.IsCancellationRequested
+                )
             {
                 pending.Timing?.Stop(CommandPhaseTiming.Phase.Handler);
                 pending.TrySetCanceled();

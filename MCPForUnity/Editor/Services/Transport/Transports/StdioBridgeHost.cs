@@ -29,6 +29,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         public long EnqueuedAtMs;
         public int TimeoutMs;
         public CancellationToken OwnerCancellation;
+        public CancellationToken AdmissionCancellation;
         public CancellationToken ConnectionCancellation;
         public string RequestNonce;
 
@@ -64,6 +65,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private static StdioBridgeAuthentication authentication;
         private static bool ownedEndpoint;
         private static CancellationTokenSource cts;
+
+        // Observation only: never register callbacks or pass this token to a handler.
+        private static CancellationTokenSource commandAdmission;
         private static Task listenerTask;
         private static int processingCommands = 0;
         private static bool initScheduled = false;
@@ -562,6 +566,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     lock (clientsLock)
                     {
                         authentication = launch;
+                        commandAdmission = new CancellationTokenSource();
                         isRunning = true;
                     }
                     isAutoConnectMode = false;
@@ -637,6 +642,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             Task toWait;
             CancellationTokenSource cancel;
+            CancellationTokenSource retiredAdmission;
             StdioBridgeAuthentication launch;
             TcpClient[] toClose;
             long stoppedEpoch;
@@ -652,6 +658,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 lock (clientsLock)
                 {
                     isRunning = false;
+                    retiredAdmission = commandAdmission;
+                    commandAdmission = null;
+                    // Admission retirement is synchronous and callback-free. Queued work
+                    // must be fenced before the asynchronous cancellation worker can run.
+                    retiredAdmission?.Cancel();
                     launch = authentication;
                     authentication = null;
                     toClose = activeClients.Concat(authenticatingClients).ToArray();
@@ -670,11 +681,24 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 catch { }
             }
-            try
-            {
-                cancel?.Cancel();
-            }
-            catch { }
+            // Cancel runs registered callbacks synchronously. The Editor's stop/reload
+            // thread must not execute them, and the source stays owned until they finish.
+            if (cancel != null)
+                _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        cancel.Cancel();
+                    }
+                    catch { }
+                    finally
+                    {
+                        cancel.Dispose();
+                        retiredAdmission?.Dispose();
+                    }
+                });
+            else
+                retiredAdmission?.Dispose();
             foreach (var client in toClose)
             {
                 try
@@ -692,7 +716,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 catch { }
             }
-            cancel?.Dispose();
             lock (startStopLock)
             {
                 if (lifecycleEpoch != stoppedEpoch)
@@ -1112,6 +1135,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                 TimeoutMs = timeoutMs,
                                 Owner = client,
                                 OwnerCancellation = commandLifetime.Token,
+                                AdmissionCancellation = commandAdmission.Token,
                                 ConnectionCancellation = connectionLifetime.Token,
                                 RequestNonce = requestNonce,
                                 InputReservation = frame.TakeReservation(),
@@ -1564,7 +1588,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     {
                         if (item.Value.IsExecuting)
                             hasExecuting = true;
-                        else if (item.Value.OwnerCancellation.IsCancellationRequested)
+                        else if (item.Value.OwnerCancellation.IsCancellationRequested || item.Value.AdmissionCancellation.IsCancellationRequested)
                             canceledCommandIds.Add(item.Key);
                     }
                     foreach (var id in canceledCommandIds)
@@ -1660,6 +1684,61 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
         }
 
+        private sealed class CommandCancellation
+        {
+            private readonly object gate = new();
+            private readonly CancellationTokenSource source = new();
+            private readonly CancellationTokenRegistration parent;
+            private readonly Timer deadline;
+            private Task cancellation;
+            private bool finished;
+
+            internal CancellationToken Token => source.Token;
+
+            internal CommandCancellation(CancellationToken owner, int remainingMs)
+            {
+                // Linking the execution source directly lets an upstream Cancel run
+                // arbitrary handler callbacks and makes callback settlement unobservable.
+                parent = owner.Register(RequestCancellation);
+                if (remainingMs == 0)
+                    RequestCancellation();
+                else
+                    deadline = new Timer(_ => RequestCancellation(), null, remainingMs, Timeout.Infinite);
+            }
+
+            private void RequestCancellation()
+            {
+                lock (gate)
+                {
+                    if (finished || cancellation != null)
+                        return;
+                    cancellation = Task.Run(() => source.Cancel());
+                }
+            }
+
+            internal async Task CompleteAsync()
+            {
+                deadline?.Dispose();
+                parent.Dispose();
+                Task pending;
+                lock (gate)
+                {
+                    finished = true;
+                    pending = cancellation;
+                }
+                try
+                {
+                    if (pending != null)
+                        await pending.ConfigureAwait(false);
+                }
+                catch (Exception) { /* Cancellation callback failures do not abandon the owner. */ }
+                finally
+                {
+                    source.Dispose();
+                }
+            }
+        }
+
         private static void ExecuteQueuedCommand(string commandId, QueuedCommand queuedCommand)
         {
             string payload = queuedCommand.CommandJson.Trim();
@@ -1669,26 +1748,28 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             async void Runner()
             {
                 TransportCommandOperation operation = null;
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(queuedCommand.OwnerCancellation);
                 int remainingMs =
                     queuedCommand.DeadlineAtMs == 0
                         ? commandTimeoutMs
                         : (int)Math.Max(0, Math.Min(int.MaxValue, queuedCommand.DeadlineAtMs - _uptime.ElapsedMilliseconds));
-                if (remainingMs == 0)
-                    cts.Cancel();
-                else
-                    cts.CancelAfter(remainingMs);
+                var cancellation = new CommandCancellation(queuedCommand.OwnerCancellation, remainingMs);
                 try
                 {
+                    queuedCommand.OwnerCancellation.ThrowIfCancellationRequested();
+                    queuedCommand.AdmissionCancellation.ThrowIfCancellationRequested();
+                    if (remainingMs == 0)
+                        throw new OperationCanceledException(cancellation.Token);
                     var command = TransportJson.DeserializeCommand(payload);
                     if (queuedCommand.Session == null || !queuedCommand.Session.Capabilities.Contains(NativeCommandArbitrator.Capability))
                         command.arbitration = null;
                     operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(
                         command,
-                        cts.Token,
+                        cancellation.Token,
                         TransportMode.Stdio,
                         queuedCommand.Timing,
-                        queuedCommand.Progress
+                        queuedCommand.Progress,
+                        queuedCommand.AdmissionCancellation,
+                        queuedCommand.OwnerCancellation
                     );
                     command = null;
                     // Dispatch above runs on the Editor thread. Below, only frozen responses,
@@ -1739,6 +1820,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             PostEditorDiagnostic(editorContext, $"Stdio command settlement: {ex.GetType().Name}", false);
                         }
                     }
+                    // The queue and its input lease own both execution and callbacks.
+                    await cancellation.CompleteAsync().ConfigureAwait(false);
                     lock (lockObj)
                     {
                         commandQueue.Remove(commandId);

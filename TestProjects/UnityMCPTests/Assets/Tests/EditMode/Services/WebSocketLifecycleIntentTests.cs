@@ -8,7 +8,7 @@ using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Services
 {
-    [NonParallelizable]
+    [Parallelizable(ParallelScope.None)]
     public class WebSocketLifecycleIntentTests
     {
         private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
