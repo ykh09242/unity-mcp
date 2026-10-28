@@ -1088,11 +1088,17 @@ unity-mcp docs get Physics Raycast             # Unity documentation page
 unity-mcp asset-gen list-models --kind image
 unity-mcp asset-gen generate-image --provider fal --prompt "a stone texture"
 unity-mcp asset-gen generate-model --provider tripo --mode text --prompt "a red chair"
-unity-mcp asset-gen status --job-id abc123
+unity-mcp asset-gen status --kind image --job-id abc123
 unity-mcp asset-gen import-model-file --source-path "C:/exports/house.fbx" --output-folder Assets/Models
 unity-mcp blender status                       # Is Blender reachable?
 unity-mcp blender import-model --selection-only --target-size 2
 ```
+
+Poll with the originating `--kind image`, `--kind audio`, or `--kind model`.
+Model imports also use `model`; omitting `--kind` retains legacy model polling.
+Generation hints preserve the kind and configured host, port, timeout, instance,
+and expected project root. Keep those explicit values when polling from another
+directory.
 
 ### Raw Commands
 

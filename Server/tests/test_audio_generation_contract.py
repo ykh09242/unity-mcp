@@ -10,6 +10,7 @@ import textwrap
 def test_audio_generation_sdk_and_cli_response_contracts():
     source = """
         import json
+        import shlex
         import sys
         from unittest.mock import AsyncMock
         import anyio
@@ -20,6 +21,7 @@ def test_audio_generation_sdk_and_cli_response_contracts():
         import services.tools.generate_audio as audio
         from services.registry import get_registered_tools
         from cli.commands.asset_gen import asset_gen
+        from cli.main import cli
         from cli.utils import connection
         from cli.utils.config import CLIConfig, set_config
 
@@ -56,8 +58,10 @@ def test_audio_generation_sdk_and_cli_response_contracts():
                     response = pending
         anyio.run(scenario)
 
+        cli_targets = []
         async def cli_send(command, params, config, timeout):
             captured.append((command, params))
+            cli_targets.append(config.unity_instance)
             return response
         connection.send_command = cli_send
         runner = CliRunner()
@@ -76,9 +80,14 @@ def test_audio_generation_sdk_and_cli_response_contracts():
         result = runner.invoke(asset_gen, ["generate-audio", "--prompt", "owned sound"])
         assert result.exit_code == 0 and json.loads(result.output) == response
         response = pending
-        set_config(CLIConfig(format="text"))
+        set_config(CLIConfig(format="text", unity_instance="Selected@hash"))
         result = runner.invoke(asset_gen, ["generate-audio", "--prompt", "owned sound"])
-        assert result.exit_code == 0 and "unity-mcp asset-gen status --job-id owned-job" in result.output
+        assert result.exit_code == 0, result.output
+        hint = result.output.split("Poll with: ", 1)[1].splitlines()[0]
+        polled = runner.invoke(cli, shlex.split(hint)[1:])
+        assert polled.exit_code == 0, polled.output
+        assert captured[-1] == ("generate_audio", {"action": "status", "jobId": "owned-job"})
+        assert cli_targets[-1] == "Selected@hash"
     """
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(source)],

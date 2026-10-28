@@ -675,11 +675,12 @@ List compatible models, capabilities, and catalog freshness. If catalogs[].refre
 
 ## `unity-mcp asset-gen status`
 
-Check the status of an asset generation/import job. Examples: unity-mcp asset-gen status --job-id abc123
+Check the status of an asset generation/import job. Examples: unity-mcp asset-gen status --kind image --job-id abc123
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | --job-id | text | required | nargs=1 | — | — | Job id returned by a generate/import command. |
+| --kind | choice: model, image, audio | optional | nargs=1 | "model" | — | Originating generation capability; model also handles model imports. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp audio`

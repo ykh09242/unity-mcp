@@ -6,6 +6,7 @@ the provider call, and imports the result.
 """
 
 import click
+import shlex
 from typing import Optional, Any
 
 from cli.utils.config import get_config
@@ -19,13 +20,28 @@ def asset_gen():
     pass
 
 
-def _emit(result, config, verb):
+def _emit(result, config, verb, kind):
     """Echo the command result, then (on success with a job_id) print the status-poll hint."""
     click.echo(format_output(result, config.format))
     if config.format != "json" and result.get("success"):
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
-            print_info(f"{verb} started. Poll with: unity-mcp asset-gen status --job-id {job_id}")
+            command = [
+                "unity-mcp",
+                "--no-project-context",
+                "--host",
+                config.host,
+                "--port",
+                str(config.port),
+                "--timeout",
+                str(config.timeout),
+            ]
+            if config.unity_instance:
+                command.extend(["--instance", config.unity_instance])
+            if config.expected_project_root is not None:
+                command.extend(["--expect-project", config.expected_project_root])
+            command.extend(["asset-gen", "status", "--kind", kind, "--job-id", job_id])
+            print_info(f"{verb} started. Poll with: {shlex.join(command)}")
 
 
 @asset_gen.command("list-models")
@@ -152,7 +168,7 @@ def generate_model(
         params["allowImageUpload"] = True
 
     result = run_command("generate_model", params, config)
-    _emit(result, config, "Generation")
+    _emit(result, config, "Generation", "model")
 
 
 @asset_gen.command("import-model")
@@ -194,7 +210,7 @@ def import_model(
     params.update({k: v for k, v in optional.items() if v is not None})
 
     result = run_command("import_model", params, config)
-    _emit(result, config, "Import")
+    _emit(result, config, "Import", "model")
 
 
 @asset_gen.command("import-model-file")
@@ -295,7 +311,7 @@ def generate_image(
     params.update({k: v for k, v in optional.items() if v is not None})
 
     result = run_command("generate_image", params, config)
-    _emit(result, config, "Generation")
+    _emit(result, config, "Generation", "image")
 
 
 @asset_gen.command("generate-audio")
@@ -340,21 +356,36 @@ def generate_audio(
     params.update({k: v for k, v in optional.items() if v is not None})
 
     result = run_command("generate_audio", params, config)
-    _emit(result, config, "Generation")
+    _emit(result, config, "Generation", "audio")
 
 
 @asset_gen.command("status")
 @click.option(
     "--job-id", "job_id", required=True, help="Job id returned by a generate/import command."
 )
+@click.option(
+    "--kind",
+    type=click.Choice(["model", "image", "audio"]),
+    default="model",
+    show_default=True,
+    help="Originating generation capability; model also handles model imports.",
+)
 @handle_unity_errors
-def status(job_id: str):
+def status(job_id: str, kind: str):
     """Check the status of an asset generation/import job.
 
     \b
     Examples:
-        unity-mcp asset-gen status --job-id abc123
+        unity-mcp asset-gen status --kind image --job-id abc123
     """
     config = get_config()
-    result = run_command("generate_model", {"action": "status", "jobId": job_id}, config)
+    if (
+        click.get_current_context().get_parameter_source("kind")
+        == click.core.ParameterSource.DEFAULT
+    ):
+        print_info(
+            "Using legacy model polling. Image/audio jobs require --kind image or --kind audio.",
+            err=True,
+        )
+    result = run_command(f"generate_{kind}", {"action": "status", "jobId": job_id}, config)
     click.echo(format_output(result, config.format))
