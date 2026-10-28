@@ -32,7 +32,45 @@ from services.reference_graph.store import Edge
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
-ANALYSIS_VERSION = 6
+ANALYSIS_VERSION = 7
+# Limit both the semantic value and nonliteral representation before allocating
+# expanded storage. Source size alone cannot bound repeated constant expansion.
+MAX_EXPRESSION_CHARS = 65536
+MAX_EXPRESSION_ATOMS = 4096
+
+
+def _compose(expressions: Iterable[Expr]) -> Expr:
+    output, literals = [], []
+    size, invalid = 0, False
+    for expression in expressions:
+        for kind, value in expression:
+            if invalid:
+                continue
+            size += len(value)
+            if kind == "unknown" or size > MAX_EXPRESSION_CHARS:
+                invalid = True
+                output.clear()
+                literals.clear()
+            elif kind == "literal":
+                if value:
+                    literals.append(value)
+            else:
+                if len(output) + bool(literals) + 1 > MAX_EXPRESSION_ATOMS:
+                    invalid = True
+                    output.clear()
+                    literals.clear()
+                    continue
+                if literals:
+                    output.append(("literal", "".join(literals)))
+                    literals.clear()
+                output.append((kind, value))
+    if invalid or len(output) + bool(literals) > MAX_EXPRESSION_ATOMS:
+        return UNKNOWN
+    if literals or not output:
+        output.append(("literal", "".join(literals)))
+    return tuple(output)
+
+
 # Registry version follows the fact/analysis version. Values describe the string
 # key overload; object/location/AssetReference expressions stay unresolved unless
 # a later semantic provider can prove their identity.
@@ -241,12 +279,9 @@ def _expression(
         tokens = tokens[1:-1]
     parts = _split(tokens, "+")
     if len(parts) > 1:
-        atoms = tuple(
-            atom
-            for part in parts
-            for atom in _expression(part, scope, parameters, locals_, import_scope)
+        return _compose(
+            _expression(part, scope, parameters, locals_, import_scope) for part in parts
         )
-        return UNKNOWN if any(kind == "unknown" for kind, _ in atoms) else atoms
     if len(tokens) == 1 and tokens[0].kind == "string":
         return (("literal", tokens[0].value),) if tokens[0].value is not None else UNKNOWN
     if (
@@ -1113,24 +1148,25 @@ class AnalysisIndex:
     def _expand(
         self, item: Facts, expr: Expr, arguments: dict[str, Expr], active: set[str] | None = None
     ) -> Expr:
-        output = []
-        for kind, value in expr:
-            self.check()
-            if kind == "symbol":
-                scope, name, *imports = value.split("|", 2)
-                try:
-                    output.extend(
-                        self._constant(
+        def pieces():
+            for kind, value in expr:
+                self.check()
+                if kind == "symbol":
+                    scope, name, *imports = value.split("|", 2)
+                    try:
+                        yield self._constant(
                             item, scope, name, active or set(), imports[0] if imports else ""
                         )
-                    )
-                except RecursionError:
-                    output.extend(UNKNOWN)
-            elif kind == "parameter":
-                output.extend(arguments.get(value, ((kind, value),)))
-            else:
-                output.append((kind, value))
-        return UNKNOWN if any(kind == "unknown" for kind, _ in output) else tuple(output)
+                    except RecursionError:
+                        yield UNKNOWN
+                elif kind == "parameter":
+                    yield arguments.get(value, ((kind, value),))
+                else:
+                    yield ((kind, value),)
+
+        # Consume every piece even after a limit/unknown result, preserving the
+        # symbol dependencies needed to invalidate cached uncertainty later.
+        return _compose(pieces())
 
     def _bind(self, item: Facts, call: Call, owner: str, method: Method) -> tuple[Expr, ...] | None:
         if len(call.arguments) > len(method.parameters):

@@ -58,6 +58,41 @@ def catalog():
     )
 
 
+def test_empty_constant_doubling_is_coalesced_without_losing_dependency_evidence():
+    source = 'class Keys { public const string K0="";'
+    for level in range(1, 19):
+        source += f"public const string K{level}=K{level - 1}+K{level - 1};"
+    constants = parse_csharp("keys", "Assets/Keys.cs", source + "}")
+    caller = parse_csharp(
+        "caller",
+        "Assets/Use.cs",
+        'class Use { void Go() { UnityEngine.Resources.Load(Keys.K18 + "UI/Menu"); } }',
+    )
+    index = AnalysisIndex([constants, caller], catalog())
+    result = index.analyze("caller")
+    assert {edge.key for edge in result.edges} == {"UI/Menu"}
+    assert "keys" in result.dependencies
+    assert all(len(expr) <= 1 for cache in index.constant_cache.values() for expr in cache.values())
+
+
+def test_expanding_nonempty_constants_stays_within_expression_budget():
+    from services.reference_graph.analysis import MAX_EXPRESSION_CHARS
+
+    source = 'using UnityEngine; class Use { const string K0="x";'
+    for level in range(1, 21):
+        source += f"const string K{level}=K{level - 1}+K{level - 1};"
+    facts = parse_csharp("script", "Assets/Use.cs", source + "void Go() { Resources.Load(K20); }}")
+    index = AnalysisIndex([facts], catalog())
+    result = index.analyze("script")
+    assert not result.edges
+    assert any(issue["reason"] == "dynamic_key" for issue in result.unresolved)
+    assert all(
+        sum(len(value) for _, value in expr) <= MAX_EXPRESSION_CHARS
+        for cache in index.constant_cache.values()
+        for expr in cache.values()
+    )
+
+
 def test_unused_branching_wrappers_do_not_materialize_exponential_summaries():
     source = "using UnityEngine; class Loader { static void W0(string x) { Resources.Load(x); }"
     for level in range(1, 14):
