@@ -55,7 +55,43 @@ intended project, and select its current instance. `data.dispatch=not_dispatched
 means the tool was refused before its callback started. Once the callback has
 started, earlier steps may have executed: `dispatch=unknown` and
 `hint=inspect_state_before_retry` require checking the target before retrying.
-The server does not automatically replay the operation.
+The server does not automatically replay mutations. Reviewed `get_test_job` and
+`get_compile_job` observations can continue across a connection generation change
+for the same project and authenticated principal. Test detail flags, page size,
+cursor and job ID remain unchanged. The server rechecks authorization and native
+admission, and discards shared snapshots from the old connection generation.
+
+Use the existing job ID after reload; do not start tests or compilation again just
+because a status query failed. A positive `get_test_job.wait_timeout` keeps polling
+through recognized temporary reload/connection refusals within that original
+budget. Permission failures, unknown jobs and uncertain dispatch outcomes are
+returned without automatic replay. On expiry, a last observed status is preserved
+with `data.observation.status="unavailable"` and `last_known_status=true`; if no
+status was received, the response says `job_status="unknown"`. Neither means the
+tests failed. Poll the same ID after reconnection, preserving any result cursor.
+
+## Observation budgets for large projects
+
+HTTP `editor/state` uses its own main-thread RPC without an additional ping. Its
+default observation budget is **30 seconds**, separate from the **2-second** ping
+budget. Set the server environment variable `UNITY_MCP_STATE_TIMEOUT` to a finite
+number of seconds to adjust it (0 disables waiting, maximum 300; invalid/nonfinite
+values fall back to 30). This changes HTTP state observations only. The existing
+stdio command budget remains unchanged. Cached ordinary state can still return
+earlier; authoritative reads require a fresh RPC.
+
+An unavailable state response retains the transport reason/phase and includes
+`data.observation.editor_health="unknown"` with `next_action="retry_editor_state"`.
+It does not establish Editor failure, compiler failure or readiness.
+
+For slow imports/reloads, use `refresh_unity(timeout_seconds=900)` or a suitable
+explicit duration (default 300, maximum 86400 seconds). This is a complete refresh
+wait budget, not proof of compilation success. Existing mutation readiness waits
+use `UNITY_MCP_EDITOR_READY_TIMEOUT` (default 300 seconds). For a test job that is
+already running, `get_test_job(wait_timeout=300)` or longer controls the observation
+wait, not test execution. A caller/client may impose a shorter deadline. Recovery
+and individual polls never renew the caller's elapsed budget. A very long reload
+can outlast any finite request; continue with the same job ID afterwards.
 
 ## Wait for Play Mode exit before reading Console
 
@@ -83,3 +119,23 @@ to hide a warning from a transient cache. See the
 The separate "Objects are trying to be loaded during a domain backup" message
 does not identify its caller when Unity supplies no stack. Check the reload log
 and serialization callbacks before attributing it to MCP or to background focus.
+
+## Understand missing Console locations
+
+Unprojected structured Console entries (`json`/`detailed`, including tail entries)
+include `diagnostics` alongside the original fields. Explicit `fields` projections
+and plain messages retain their existing shape. Source values come directly from
+Unity's `LogEntry.file`, `line` and message/UTF-16 stack boundary; see the
+[Unity 6000.0 source](https://raw.githubusercontent.com/Unity-Technologies/UnityCsReference/6000.0/Editor/Mono/LogEntries.bindings.cs).
+
+- `location`: `available`, `partial`, or `not_provided_by_unity`.
+- `stack_trace`: `available`, `not_requested`, `not_provided_by_unity`, or
+  `unavailable`. The last value means the compatibility heuristic found no frames
+  without a valid native boundary; it cannot establish absence in Unity.
+- `stack_trace_source`: `unity_utf16_boundary` or `frame_heuristic`.
+
+A whitespace-only stack counts as missing diagnostics, while the original
+`stackTrace` value is preserved. For `not_requested`, request
+`include_stacktrace=true`. When Unity provides no source, MCP cannot reconstruct
+the caller; inspect Editor.log and the surrounding reload activity. This metadata
+does not change Unity's global stack-trace logging settings or suppress errors.
