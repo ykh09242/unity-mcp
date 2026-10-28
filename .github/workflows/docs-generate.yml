@@ -17,6 +17,18 @@ on:
       - Server/src/services/tools/**
       - Server/src/services/resources/**
       - Server/src/services/registry/**
+      - Server/src/cli/**
+      # CLI ranges and registration depend on shared models; version metadata
+      # is resolved through core.telemetry and the Server project metadata.
+      - Server/src/models/**
+      - Server/src/core/telemetry.py
+      - Server/pyproject.toml
+      - Server/uv.lock
+      - tools/cli_reference.py
+      - tools/cli_example_validation.py
+      - website/docs/guides/cli.md
+      - website/docs/guides/cli-examples.md
+      - website/docs/guides/multi-instance.md
       - website/docs/reference/**
       - tools/generate_docs_reference.py
       - tools/generate_tool_capabilities.py
@@ -28,6 +40,17 @@ on:
       - Server/src/services/tools/**
       - Server/src/services/resources/**
       - Server/src/services/registry/**
+      - Server/src/cli/**
+      # Keep shared CLI metadata inputs aligned with the PR trigger above.
+      - Server/src/models/**
+      - Server/src/core/telemetry.py
+      - Server/pyproject.toml
+      - Server/uv.lock
+      - tools/cli_reference.py
+      - tools/cli_example_validation.py
+      - website/docs/guides/cli.md
+      - website/docs/guides/cli-examples.md
+      - website/docs/guides/multi-instance.md
       - website/docs/reference/**
       - tools/generate_docs_reference.py
       - tools/generate_tool_capabilities.py
