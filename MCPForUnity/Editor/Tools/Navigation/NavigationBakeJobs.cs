@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
@@ -18,41 +19,36 @@ namespace MCPForUnity.Editor.Tools.Navigation
     {
         private const string Key = "MCPForUnity.Navigation.BakeJobs.v1";
         private const int MaxJobs = 32;
+        private static readonly Dictionary<string, (Component Surface, string Snapshot)> RuntimeTargets = new();
         private static readonly List<JObject> Jobs = Restore();
 
-        static NavigationBakeJobs() { }
+        static NavigationBakeJobs()
+        {
+            EditorApplication.update += Pump;
+        }
 
         private static List<JObject> Restore()
         {
-            var jobs = new List<JObject>();
-            try
-            {
-                jobs = JArray.Parse(SessionState.GetString(Key, "[]")).OfType<JObject>().TakeLast(MaxJobs).ToList();
-                foreach (JObject job in jobs)
-                    if ((string)job["state"] == "queued" || (string)job["state"] == "running")
-                    {
-                        job["state"] = "interrupted";
-                        job["detail"] = "Domain reload interrupted tracking. Native completion is unconfirmed; inspect surface data before another bake.";
-                    }
-                SessionState.SetString(Key, new JArray(jobs).ToString(Formatting.None));
-            }
-            catch (JsonException)
-            {
-                // Session-local corrupt job metadata never grants permission to resume a native bake.
-                jobs.Add(
-                    new JObject
-                    {
-                        ["job_id"] = "recovery",
-                        ["state"] = "unavailable",
-                        ["detail"] = "Bake job metadata was corrupt; no work resumed.",
-                    }
-                );
-            }
+            var jobs = NavigationBakeCheckpoint.Restore(SessionState.GetString(Key, "[]")).OfType<JObject>().ToList();
+            SessionState.SetString(Key, new JArray(jobs).ToString(Formatting.None));
             return jobs;
         }
 
         internal static bool Busy(Component c) =>
-            Jobs.Any(j => (int?)j["component_id"] == c.GetInstanceIDCompat() && ((string)j["state"] == "queued" || (string)j["state"] == "running"));
+            Jobs.Any(j =>
+                ((string)j["state"] == "queued" || (string)j["state"] == "running")
+                && (
+                    RuntimeTargets.TryGetValue((string)j["job_id"], out var runtime) && runtime.Surface == c
+                    || (string)j["checkpoint"]?["target"] == GlobalObjectId.GetGlobalObjectIdSlow(c).ToString()
+                )
+            );
+
+        private static void Pump()
+        {
+            JObject job = Jobs.FirstOrDefault(j => (string)j["state"] == "queued");
+            if (job != null)
+                Run(job);
+        }
 
         internal static object Request(JObject p)
         {
@@ -66,34 +62,36 @@ namespace MCPForUnity.Editor.Tools.Navigation
             if (Jobs.Count(j => (string)j["state"] == "queued") >= 8)
                 throw new InvalidOperationException("Navigation bake queue is full (8 pending jobs).");
             if (Jobs.Count >= MaxJobs)
-                Jobs.RemoveAt(Jobs.FindIndex(j => (string)j["state"] != "queued" && (string)j["state"] != "running"));
+            {
+                int expired = Jobs.FindIndex(j => (string)j["state"] != "queued" && (string)j["state"] != "running");
+                if (expired < 0)
+                    throw new InvalidOperationException("Navigation bake history is full of active reservations.");
+                Jobs.RemoveAt(expired);
+            }
             JObject job = new JObject
             {
                 ["job_id"] = Guid.NewGuid().ToString("N"),
                 ["state"] = "queued",
-                ["component_id"] = surface.GetInstanceIDCompat(),
-                ["scene_handle"] = NavigationAccess.SceneHandle(surface.gameObject.scene),
                 ["scene_path"] = surface.gameObject.scene.path,
                 ["agent_type_id"] = (int)NavigationAccess.Get(surface, "agentTypeID"),
                 ["queued_utc"] = DateTime.UtcNow.ToString("O"),
                 ["native_bake_interruptible"] = false,
+                ["native_invoked"] = false,
+                ["deadline_utc"] = DateTime.UtcNow.AddMinutes(10).ToString("O"),
                 ["detail"] =
-                    "Requested only. One synchronous native BuildNavMesh call runs on the next editor update; no deadline or mid-call cancellation is possible.",
-                ["surface_snapshot"] = EditorJsonUtility.ToJson(surface),
+                    "Requested only. The queue waits up to ten minutes for native admission. Native BuildNavMesh is synchronous; no mid-call cancellation is possible.",
             };
+            try
+            {
+                job["checkpoint"] = NavigationBakeTargets.Capture(surface);
+            }
+            catch (Exception ex)
+            {
+                job["resume_refusal"] = "Unstarted bake cannot safely resume after reload: " + ex.Message;
+            }
+            RuntimeTargets[(string)job["job_id"]] = (surface, EditorJsonUtility.ToJson(surface));
             Jobs.Add(job);
             Save();
-            bool executed = false;
-            void RunOnce()
-            {
-                if (executed)
-                    return;
-                executed = true;
-                EditorApplication.update -= RunOnce;
-                Run(job);
-            }
-            // Baking is editor-update work; delayCall depends on inspector updates, which headless editors need not perform.
-            EditorApplication.update += RunOnce;
             return new SuccessResponse("Navigation bake requested.", Public(job));
         }
 
@@ -112,33 +110,55 @@ namespace MCPForUnity.Editor.Tools.Navigation
 
         private static void Run(JObject job)
         {
-            if ((string)job["state"] != "queued")
-                return;
             Component surface = null;
+            NavigationBakeCheckpoint.Advance(
+                job,
+                DateTime.UtcNow,
+                () =>
+                {
+                    NavigationObjects.RequireEditMode();
+                    if (job["checkpoint"] is JObject checkpoint)
+                        surface = NavigationBakeTargets.Resolve(checkpoint);
+                    else if (RuntimeTargets.TryGetValue((string)job["job_id"], out var runtime))
+                    {
+                        surface = runtime.Surface;
+                        if (surface == null || EditorJsonUtility.ToJson(surface) != runtime.Snapshot)
+                            throw new InvalidOperationException("Surface configuration changed after request; no bake performed.");
+                    }
+                    else
+                        throw new InvalidOperationException(
+                            (string)job["resume_refusal"] ?? "Safe bake target is unavailable; inspect and request another bake explicitly."
+                        );
+                    ValidateSurface(surface);
+                },
+                () => Bake(job, surface),
+                () =>
+                {
+                    return NativeOperationBarriers.TryGetBlocker("manage_navigation", new JObject { ["action"] = "bake" }, out var blocker)
+                        ? blocker.Reason
+                        : null;
+                },
+                Save
+            );
+            if ((string)job["state"] != "queued")
+                RuntimeTargets.Remove((string)job["job_id"]);
+        }
+
+        private static void Bake(JObject job, Component surface)
+        {
             NavMeshData previous = null;
             int group = -1;
+            bool nativeEntered = false;
             try
             {
-                NavigationObjects.RequireEditMode();
-                surface = NavigationAccess.Component(
-                    new JObject
-                    {
-                        ["scene_handle"] = job["scene_handle"],
-                        ["kind"] = "surface",
-                        ["target"] = job["component_id"],
-                    }
-                );
-                ValidateSurface(surface);
-                if (EditorJsonUtility.ToJson(surface) != (string)job["surface_snapshot"])
-                    throw new InvalidOperationException("Surface configuration changed after request; no bake performed.");
-                job["state"] = "running";
-                job["started_utc"] = DateTime.UtcNow.ToString("O");
-                Save();
                 previous = NavigationAccess.Get(surface, "navMeshData") as NavMeshData;
                 Undo.IncrementCurrentGroup();
                 group = Undo.GetCurrentGroup();
                 Undo.SetCurrentGroupName("Bake Navigation Surface");
                 Undo.RecordObject(surface, "Bake Navigation Surface");
+                if (NativeOperationBarriers.TryGetBlocker("manage_navigation", new JObject { ["action"] = "bake" }, out var blocker))
+                    throw new InvalidOperationException("Native navigation bake admission blocked before invocation: " + blocker.Reason);
+                nativeEntered = true;
                 surface.GetType().GetMethod("BuildNavMesh", Type.EmptyTypes).Invoke(surface, null);
                 NavMeshData data = NavigationAccess.Get(surface, "navMeshData") as NavMeshData;
                 if (data == null)
@@ -153,11 +173,9 @@ namespace MCPForUnity.Editor.Tools.Navigation
                 job["detail"] =
                     "Native BuildNavMesh returned with data. Path connectivity must be queried separately. Save scene/data explicitly for persistence; configuration Undo does not guarantee native data registration rollback.";
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                job["state"] = "failed";
-                job["detail"] = ex.InnerException?.Message ?? ex.Message;
-                if (surface != null && group >= 0)
+                if (nativeEntered && surface != null && group >= 0)
                 {
                     try
                     {
@@ -174,10 +192,8 @@ namespace MCPForUnity.Editor.Tools.Navigation
                         job["restoration_error"] = restore.InnerException?.Message ?? restore.Message;
                     }
                 }
+                throw;
             }
-            job["finished_utc"] = DateTime.UtcNow.ToString("O");
-            job.Remove("surface_snapshot");
-            Save();
         }
 
         internal static object Status(JObject p)
@@ -196,6 +212,7 @@ namespace MCPForUnity.Editor.Tools.Navigation
                 job["finished_utc"] = DateTime.UtcNow.ToString("O");
                 job["detail"] = "Cancelled before native BuildNavMesh started; no bake performed.";
                 job.Remove("surface_snapshot");
+                RuntimeTargets.Remove((string)job["job_id"]);
                 Save();
             }
             else
@@ -214,6 +231,7 @@ namespace MCPForUnity.Editor.Tools.Navigation
         {
             JObject result = (JObject)job.DeepClone();
             result.Remove("surface_snapshot");
+            result.Remove("checkpoint");
             return result;
         }
 
