@@ -813,6 +813,12 @@ class Reconciler:
                     check=self._check_thread,
                 )
                 affected = index.affected(changed_inputs)
+                if changed_inputs:
+                    # A fresh index has no former symbol lookups. Changed declarations
+                    # can rebind ready callers without a persisted dependency on them.
+                    affected.update(
+                        owner for owner, row in manifest.items() if row["format"] == "csharp"
+                    )
             else:
                 index = cache[3]
                 if assets is not None:

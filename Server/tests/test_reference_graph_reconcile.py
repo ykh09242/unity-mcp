@@ -20,6 +20,52 @@ from services.reference_graph.workspace import GraphWorkspace
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cache_state", ["warm", "cleared", "reopened"])
+async def test_partial_declaration_rebinding_refreshes_ready_callers(setup, cache_state):
+    store, workspace, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    caller = editor.add(
+        2,
+        "Assets/Caller.cs",
+        'using static Lib; partial class C { void M() { Load("One"); } }',
+    )
+    library = editor.add(
+        3,
+        "Assets/Lib.cs",
+        "class Lib { public static void Load(string key) { UnityEngine.Resources.Load(key); } }",
+    )
+    changed = editor.add(4, "Assets/Part.cs", "partial class C { }")
+    assert await engine.reconcile()
+    assert {edge["target"] for edge in store.query(caller)["edges"]} == {target}
+    assert engine._analysis_cache[3].analyze(caller).dependencies == {library}
+    assert workspace.diagnostics(caller)["issues"] == []
+
+    if cache_state == "cleared":
+        engine.clear_caches()
+    elif cache_state == "reopened":
+        store = GraphStore(store.path, store.scope)
+        workspace = GraphWorkspace(store)
+        engine = Reconciler(workspace, editor, allowed)
+    editor.add(4, "Assets/Part.cs", "partial class C { void Load(object key) { } }")
+    assert await engine.reconcile()
+
+    assert store.query(caller)["edges"] == []
+    diagnostics = workspace.diagnostics(caller)
+    assert diagnostics["issues"] == [
+        {"provider": "code", "call": "Load", "line": 1, "reason": "unsupported_call_binding"}
+    ]
+    assert [row["state"] for row in diagnostics["coverage"] if row["provider"] == "code"] == [
+        "ready"
+    ]
+    assert workspace.document_manifest()[changed]["state"] == "ready"
+    assert await engine.reconcile()
+    assert store.query(caller)["edges"] == []
+    assert workspace.diagnostics(caller)["issues"] == diagnostics["issues"]
+
+
+@pytest.mark.asyncio
 async def test_analysis_reuses_unchanged_facts_and_reloads_after_cache_eviction(setup, monkeypatch):
     store, workspace, editor, engine = setup
     target = editor.add(
