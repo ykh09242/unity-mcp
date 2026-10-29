@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -706,7 +707,9 @@ namespace MCPForUnity.Editor.Services
 
         internal static object CoordinationStatus(string compileId)
         {
-            string reason = Reservation.Blocker(EditorApplication.timeSinceStartup);
+            double now = EditorApplication.timeSinceStartup;
+            string reason = Reservation.Blocker(now);
+            NativeRecoveryDetails recovery = Reservation.Recovery(now);
             var state = Reservation.State;
             return new
             {
@@ -716,7 +719,8 @@ namespace MCPForUnity.Editor.Services
                 : "other_owned_reservation",
                 reason,
                 retryable = reason == "native_job_active",
-                recovery_action = reason == "recovery_required" ? "inspect_native_work_then_restart_editor" : null,
+                recovery_action = recovery?.Action,
+                recovery,
                 completion_requires = "matching_pipeline_finish_and_editor_quiescence",
             };
         }

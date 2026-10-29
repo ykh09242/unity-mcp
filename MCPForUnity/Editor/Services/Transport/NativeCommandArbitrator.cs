@@ -2,18 +2,82 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using MCPForUnity.Editor.Services;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace MCPForUnity.Editor.Services.Transport
 {
+    // Diagnostics describe retained ownership; they never authorize release or replay.
+    internal sealed class NativeRecoveryDetails
+    {
+        [JsonProperty("source")]
+        public string Source { get; }
+
+        [JsonProperty("phase")]
+        public string Phase { get; }
+
+        [JsonProperty("reason")]
+        public string Reason { get; }
+
+        [JsonProperty("mode")]
+        public string Mode { get; }
+
+        [JsonProperty("message")]
+        public string Message { get; }
+
+        [JsonProperty("job_id", NullValueHandling = NullValueHandling.Ignore)]
+        public string JobId { get; }
+
+        [JsonProperty("generation", NullValueHandling = NullValueHandling.Ignore)]
+        public string Generation { get; }
+
+        [JsonIgnore]
+        internal string Action { get; }
+
+        internal NativeRecoveryDetails(
+            string source,
+            string phase,
+            string reason,
+            string mode,
+            string action,
+            string message,
+            string jobId = null,
+            string generation = null
+        )
+        {
+            Source = source;
+            Phase = phase;
+            Reason = reason;
+            Mode = mode;
+            Action = action;
+            Message = message;
+            JobId = jobId;
+            Generation = generation;
+        }
+
+        internal bool Matches(NativeRecoveryDetails other) =>
+            other != null
+            && Source == other.Source
+            && Phase == other.Phase
+            && Reason == other.Reason
+            && Mode == other.Mode
+            && Action == other.Action
+            && Message == other.Message
+            && JobId == other.JobId
+            && Generation == other.Generation;
+    }
+
     internal readonly struct NativeAdmissionBlocker
     {
         internal string Reason { get; }
         internal bool Retryable { get; }
+        internal NativeRecoveryDetails Recovery { get; }
+        internal string RecoveryAction => Recovery?.Action ?? (Reason == "recovery_required" ? "inspect_native_work" : null);
 
-        internal NativeAdmissionBlocker(string reason, bool retryable)
+        internal NativeAdmissionBlocker(string reason, bool retryable, NativeRecoveryDetails recovery = null)
         {
             Reason = reason;
+            Recovery = recovery;
             Retryable =
                 retryable && (reason == "operation_busy" || reason == "editor_compiling" || reason == "editor_importing" || reason == "native_job_active");
         }
