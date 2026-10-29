@@ -6,6 +6,7 @@ import asyncio
 import base64
 import gc
 import importlib
+from functools import wraps
 import json
 import weakref
 from concurrent.futures import ThreadPoolExecutor
@@ -320,7 +321,14 @@ async def test_sdk_reports_busy_and_recovers_with_the_same_search_result(routing
         for i in range(2)
     ]
     app = FastMCP("bounded-file-search")
-    app.tool(search.find_in_file)
+
+    # SDK registration rewrites callable metadata; keep the shared implementation
+    # intact for subsequent direct invocation and native-admission tests.
+    @wraps(search.find_in_file)
+    async def sdk_search(*args, **kwargs):
+        return await search.find_in_file(*args, **kwargs)
+
+    app.tool(sdk_search)
     try:
         await until(lambda: all(event.is_set() for event in entered))
         async with Client(app, mode=mode) as client:
