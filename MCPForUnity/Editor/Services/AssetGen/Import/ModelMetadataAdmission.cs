@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -25,7 +26,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             );
         }
 
-        internal static void Inspect(
+        /// <returns>The aggregate number of base64 characters validated, including padding.</returns>
+        internal static long Inspect(
             Stream stream,
             long length,
             string extension,
@@ -56,13 +58,26 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             string text;
             using (var slice = new Slice(stream, jsonOffset, jsonLength))
             using (var reader = new StreamReader(slice, new UTF8Encoding(false, true), false, 4096))
-                text = reader.ReadToEnd();
+            {
+                var content = new StringBuilder();
+                var characters = new char[4096];
+                int read;
+                while ((read = reader.Read(characters, 0, characters.Length)) != 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    content.Append(characters, 0, read);
+                }
+                text = content.ToString();
+            }
+            cancellationToken.ThrowIfCancellationRequested();
             JObject document = BoundedJson.ParseObject(text, BoundedJson.ModelLimits());
+            cancellationToken.ThrowIfCancellationRequested();
             if (glb)
             {
                 long offset = jsonOffset + jsonLength;
                 for (int chunks = 0; offset < length; chunks++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (chunks > 65536 || length - offset < 8)
                         throw new InvalidDataException("Invalid GLB chunk table.");
                     stream.Position = offset;
@@ -82,9 +97,13 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 }
             }
             if (!(document["images"] is JArray resources))
-                return;
+                return 0;
             if (resources.Count > 8192)
                 throw new InvalidDataException("Model image count exceeds the dependency limit.");
+            // Descriptors retain only existing JSON strings, never decoded buffers or open files.
+            // Each referenced buffer is scanned once, so aggregate validation is bounded by JSON size.
+            var embeddedBuffers = new Dictionary<int, Base64Resource>();
+            long validatedCharacters = 0;
             foreach (JToken image in resources)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -93,7 +112,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 {
                     if (uri.StartsWith("data:", StringComparison.Ordinal))
                     {
-                        using var data = Data(uri, out string mime);
+                        using var data = Data(uri, out string mime, cancellationToken, ref validatedCharacters).Open();
                         images.Inspect(data, data.Length, Extension(mime), token: cancellationToken);
                     }
                     else
@@ -131,18 +150,27 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     using var slice = new Slice(stream, binaryOffset + start, bytesInView, binaryOffset + binaryLength);
                     images.Inspect(slice, slice.Length, imageExtension, token: cancellationToken);
                 }
+                else if (bufferUri != null && bufferUri.StartsWith("data:", StringComparison.Ordinal))
+                {
+                    if (!embeddedBuffers.TryGetValue(bufferIndex, out Base64Resource resource))
+                    {
+                        resource = Data(bufferUri, out _, cancellationToken, ref validatedCharacters);
+                        embeddedBuffers.Add(bufferIndex, resource);
+                    }
+                    using var buffer = resource.Open();
+                    using var slice = new Slice(buffer, start, bytesInView);
+                    images.Inspect(slice, slice.Length, imageExtension, token: cancellationToken);
+                }
                 else
                 {
-                    using Stream buffer =
-                        bufferUri != null && bufferUri.StartsWith("data:", StringComparison.Ordinal)
-                            ? Data(bufferUri, out _)
-                            : openResource?.Invoke(LocalUri(bufferUri));
+                    using Stream buffer = openResource?.Invoke(LocalUri(bufferUri));
                     if (buffer == null || !buffer.CanSeek)
                         throw new InvalidDataException("Embedded image needs a bounded seekable local buffer.");
                     using var slice = new Slice(buffer, start, bytesInView);
                     images.Inspect(slice, slice.Length, imageExtension, token: cancellationToken);
                 }
             }
+            return validatedCharacters;
         }
 
         internal static string LocalUri(string uri)
@@ -172,14 +200,55 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 _ => throw new InvalidDataException("Embedded model image has an unsupported MIME type; export PNG, JPEG, WebP or KTX2."),
             };
 
-        private static Stream Data(string uri, out string mime)
+        private static Base64Resource Data(string uri, out string mime, CancellationToken cancellationToken, ref long validatedCharacters)
         {
             int comma = uri.IndexOf(',');
             if (comma < 12 || !uri.Substring(0, comma).EndsWith(";base64", StringComparison.Ordinal))
                 throw new InvalidDataException("Embedded image/buffer requires a base64 data URI.");
             mime = uri.Substring(5, comma - 5 - 7);
-            return new Base64Data(uri, comma + 1);
+            var resource = new Base64Resource(uri, comma + 1, cancellationToken);
+            validatedCharacters += uri.Length - comma - 1;
+            return resource;
         }
+
+        private sealed class Base64Resource
+        {
+            internal readonly string Data;
+            internal readonly int Start;
+            internal readonly long Length;
+
+            internal Base64Resource(string data, int start, CancellationToken cancellationToken)
+            {
+                Data = data;
+                Start = start;
+                int characters = data.Length - start;
+                if (characters == 0 || characters % 4 != 0)
+                    throw new InvalidDataException("Malformed base64 model resource.");
+                int padding =
+                    data.EndsWith("==", StringComparison.Ordinal) ? 2
+                    : data.EndsWith("=", StringComparison.Ordinal) ? 1
+                    : 0;
+                for (int i = start; i < data.Length - padding; i++)
+                {
+                    if ((i - start) % 4096 == 0)
+                        cancellationToken.ThrowIfCancellationRequested();
+                    if (Value(data[i]) < 0)
+                        throw new InvalidDataException("Malformed base64 model resource.");
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                Length = (long)characters / 4 * 3 - padding;
+            }
+
+            internal Stream Open() => new Base64Data(this);
+        }
+
+        private static int Value(char c) =>
+            c >= 'A' && c <= 'Z' ? c - 'A'
+            : c >= 'a' && c <= 'z' ? c - 'a' + 26
+            : c >= '0' && c <= '9' ? c - '0' + 52
+            : c == '+' ? 62
+            : c == '/' ? 63
+            : -1;
 
         /// <summary>Seekable base64 view with constant memory, including the image-header probe/rewind.</summary>
         private sealed class Base64Data : Stream
@@ -189,30 +258,12 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             private long position;
             private readonly long length;
 
-            internal Base64Data(string data, int start)
+            internal Base64Data(Base64Resource resource)
             {
-                this.data = data;
-                this.start = start;
-                int characters = data.Length - start;
-                if (characters == 0 || characters % 4 != 0)
-                    throw new InvalidDataException("Malformed base64 model resource.");
-                int padding =
-                    data.EndsWith("==", StringComparison.Ordinal) ? 2
-                    : data.EndsWith("=", StringComparison.Ordinal) ? 1
-                    : 0;
-                for (int i = start; i < data.Length - padding; i++)
-                    if (Value(data[i]) < 0)
-                        throw new InvalidDataException("Malformed base64 model resource.");
-                length = (long)characters / 4 * 3 - padding;
+                data = resource.Data;
+                start = resource.Start;
+                length = resource.Length;
             }
-
-            private static int Value(char c) =>
-                c >= 'A' && c <= 'Z' ? c - 'A'
-                : c >= 'a' && c <= 'z' ? c - 'a' + 26
-                : c >= '0' && c <= '9' ? c - '0' + 52
-                : c == '+' ? 62
-                : c == '/' ? 63
-                : -1;
 
             public override int Read(byte[] buffer, int offset, int count)
             {
