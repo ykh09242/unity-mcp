@@ -3,8 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Text;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
@@ -239,18 +237,11 @@ namespace MCPForUnity.Editor.Clients
 
         // No fingerprint migration is inferred from an existing command shape: legacy
         // entries remain user-owned until an explicit Configure succeeds in this editor.
-        internal static string GeneratedOwnershipKey(string path) => "MCPForUnity.GeneratedJsonConfig." + Fingerprint(path);
-
-        private static string Fingerprint(string value)
-        {
-            using var sha = SHA256.Create();
-            return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(value))).Replace("-", string.Empty);
-        }
+        internal static string GeneratedOwnershipKey(string path) => GeneratedClientConfigOwnership.Key("Json", path);
 
         private static bool OwnsGeneratedEntry(string path, JObject entry)
         {
-            string stored = EditorPrefs.GetString(GeneratedOwnershipKey(path), string.Empty);
-            return !string.IsNullOrEmpty(stored) && stored == Fingerprint(entry.ToString(Formatting.None));
+            return GeneratedClientConfigOwnership.Owns("Json", path, entry.ToString(Formatting.None));
         }
 
         private string WriteGeneratedConfiguration(string path)
@@ -262,11 +253,7 @@ namespace MCPForUnity.Editor.Clients
             string containerKey = string.IsNullOrEmpty(client.ServerContainerKey) ? "mcpServers" : client.ServerContainerKey;
             var entry =
                 (client.IsVsCodeLayout ? root["servers"]?["unityMCP"] ?? root["mcp"]?["servers"]?["unityMCP"] : root[containerKey]?["unityMCP"]) as JObject;
-            string key = GeneratedOwnershipKey(path);
-            if (IsGeneratedStdioEntry(entry))
-                EditorPrefs.SetString(key, Fingerprint(entry.ToString(Formatting.None)));
-            else
-                EditorPrefs.DeleteKey(key);
+            GeneratedClientConfigOwnership.Record("Json", path, IsGeneratedStdioEntry(entry) ? entry.ToString(Formatting.None) : null);
             return result;
         }
 
@@ -274,6 +261,8 @@ namespace MCPForUnity.Editor.Clients
         {
             if (
                 entry?["command"]?.Type != JTokenType.String
+                || entry["disabled"] != null && (entry["disabled"].Type != JTokenType.Boolean || (bool)entry["disabled"])
+                || entry["enabled"] != null && (entry["enabled"].Type != JTokenType.Boolean || !(bool)entry["enabled"])
                 || !(entry["args"] is JArray array)
                 || entry["url"] != null
                 || entry["serverUrl"] != null
@@ -313,6 +302,10 @@ namespace MCPForUnity.Editor.Clients
                 || source.StartsWith("mcpforunity==", StringComparison.Ordinal)
                 || source.StartsWith("mcpforunity>=", StringComparison.Ordinal)
                 || source.StartsWith("git+https://github.com/CoplayDev/unity-mcp@", StringComparison.OrdinalIgnoreCase)
+                || System.Text.RegularExpressions.Regex.IsMatch(
+                    source,
+                    @"\Agit\+https://github\.com/ykh09242/unity-mcp\.git@[0-9a-fA-F]{40}#subdirectory=Server\z"
+                )
                 || source.StartsWith("https://github.com/ykh09242/unity-mcp/archive/", StringComparison.OrdinalIgnoreCase)
                     && source.EndsWith(".zip#subdirectory=Server", StringComparison.Ordinal);
             if (!knownSource)
@@ -321,7 +314,11 @@ namespace MCPForUnity.Editor.Clients
                 index += 2;
             if (index >= args.Length || args[index++] != "mcp-for-unity")
                 return false;
-            return index == args.Length || index + 2 == args.Length && args[index] == "--transport" && args[index + 1] == "stdio";
+            if (index + 1 < args.Length && args[index] == "--transport" && args[index + 1] == "stdio")
+                index += 2;
+            if (index + 1 < args.Length && args[index] == "--tool-profile" && args[index + 1] is "core" or "minimal" or "full")
+                index += 2;
+            return index == args.Length;
         }
 
         public override void Configure()

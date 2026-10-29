@@ -3,9 +3,13 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.External.Tommy;
+using Newtonsoft.Json.Linq;
+using UnityEditor;
 
 namespace MCPForUnity.Editor.Clients
 {
@@ -32,6 +36,10 @@ namespace MCPForUnity.Editor.Clients
                 }
 
                 string toml = File.ReadAllText(path);
+                bool canAutoRewrite =
+                    attemptAutoRewrite
+                    && GeneratedClientConfigOwnership.Owns("Codex", path, GeneratedStdioEntry(toml))
+                    && EditorPrefs.GetBool(EditorPrefKeys.AutoRegisterEnabled, true);
                 if (CodexConfigHelper.TryParseCodexServer(toml, out _, out var args, out var url))
                 {
                     // Determine and set the configured transport type
@@ -63,7 +71,7 @@ namespace MCPForUnity.Editor.Clients
 
                     if (client.configuredTransport != HttpEndpointUtility.GetCurrentServerTransport())
                     {
-                        if (!attemptAutoRewrite)
+                        if (!canAutoRewrite)
                         {
                             client.SetStatus(
                                 McpStatus.IncorrectPath,
@@ -109,13 +117,10 @@ namespace MCPForUnity.Editor.Clients
 
                     if (hasVersionMismatch)
                     {
-                        if (attemptAutoRewrite)
+                        if (canAutoRewrite)
                         {
-                            string result = McpConfigurationHelper.ConfigureCodexClient(path, client);
-                            if (result == "Configured successfully")
-                            {
-                                return CheckStatus(attemptAutoRewrite: false);
-                            }
+                            Configure();
+                            return client.status;
                         }
                         client.SetStatus(McpStatus.VersionMismatch, mismatchReason);
                         return client.status;
@@ -126,17 +131,9 @@ namespace MCPForUnity.Editor.Clients
                     client.configuredTransport = Models.ConfiguredTransport.Unknown;
                 }
 
-                if (attemptAutoRewrite)
+                if (canAutoRewrite)
                 {
-                    string result = McpConfigurationHelper.ConfigureCodexClient(path, client);
-                    if (result == "Configured successfully")
-                    {
-                        return CheckStatus(attemptAutoRewrite: false);
-                    }
-                    else
-                    {
-                        client.SetStatus(McpStatus.IncorrectPath);
-                    }
+                    Configure();
                 }
                 else
                 {
@@ -158,6 +155,7 @@ namespace MCPForUnity.Editor.Clients
             string result = McpConfigurationHelper.ConfigureCodexClient(path, client);
             if (result == "Configured successfully")
             {
+                GeneratedClientConfigOwnership.Record("Codex", path, GeneratedStdioEntry(File.ReadAllText(path)));
                 CheckStatus(attemptAutoRewrite: false);
             }
             else
@@ -166,12 +164,43 @@ namespace MCPForUnity.Editor.Clients
             }
         }
 
+        private static string GeneratedStdioEntry(string document)
+        {
+            var root = CodexConfigHelper.ParseConfiguration(document);
+            if (
+                root.TryGetNode("mcpServers", out _)
+                || !root.TryGetNode("mcp_servers", out var serversNode)
+                || serversNode is not TomlTable servers
+                || !servers.TryGetNode("unityMCP", out var entryNode)
+                || entryNode is not TomlTable entry
+                || entry.Keys.Any(key => key != "command" && key != "args" && key != "env" && key != "startup_timeout_sec" && key != "enabled")
+                || !entry.TryGetNode("command", out var commandNode)
+                || commandNode is not TomlString command
+                || !entry.TryGetNode("args", out var argsNode)
+                || argsNode is not TomlArray args
+                || args.Children.Any(arg => arg is not TomlString)
+            )
+                return null;
+            if (entry.TryGetNode("enabled", out var enabled) && (enabled is not TomlBoolean flag || !flag.Value))
+                return null;
+            if (entry.TryGetNode("startup_timeout_sec", out var timeout) && (timeout is not TomlInteger seconds || seconds.Value != 300))
+                return null;
+            if (
+                entry.TryGetNode("env", out var environment)
+                && (environment is not TomlTable env || env.Keys.Any(key => key != "SystemRoot" || env[key] is not TomlString))
+            )
+                return null;
+            var launch = new JObject { ["command"] = command.Value, ["args"] = new JArray(args.Children.Select(arg => ((TomlString)arg).Value)) };
+            return JsonFileMcpConfigurator.IsGeneratedStdioEntry(launch) ? entry.ToInlineToml() : null;
+        }
+
         public override void Unregister()
         {
             string path = GetConfigPath();
             try
             {
                 ClientConfigurationChangeService.Shared.MutateFile(path, CodexConfigHelper.RemoveCodexServerBlock);
+                GeneratedClientConfigOwnership.Record("Codex", path, null);
                 client.SetStatus(McpStatus.NotConfigured);
                 client.configuredTransport = Models.ConfiguredTransport.Unknown;
             }

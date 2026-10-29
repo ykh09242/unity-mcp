@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using UnityEditor;
 
 namespace MCPForUnity.Editor.Clients.Configurators
 {
@@ -99,7 +102,11 @@ namespace MCPForUnity.Editor.Clients.Configurators
                     client.SetStatus(McpStatus.Configured);
                     client.configuredTransport = HttpEndpointUtility.GetCurrentServerTransport();
                 }
-                else if (attemptAutoRewrite)
+                else if (
+                    attemptAutoRewrite
+                    && GeneratedClientConfigOwnership.Owns("OpenCode", path, GeneratedStdioEntry(unityMcp))
+                    && EditorPrefs.GetBool(EditorPrefKeys.AutoRegisterEnabled, true)
+                )
                 {
                     Configure();
                 }
@@ -147,6 +154,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 mcpSection[ServerName] = BuildServerEntry();
 
                 McpConfigurationHelper.WriteAtomicFile(path, JsonConvert.SerializeObject(config, Formatting.Indented));
+                GeneratedClientConfigOwnership.Record("OpenCode", path, GeneratedStdioEntry((JObject)mcpSection[ServerName]));
                 CheckStatus(attemptAutoRewrite: false);
             }
             catch (Exception ex)
@@ -154,6 +162,22 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 client.SetStatus(McpStatus.Error, ex.Message);
                 throw;
             }
+        }
+
+        private static string GeneratedStdioEntry(JObject entry)
+        {
+            if (
+                entry?["type"]?.Value<string>() != LocalType
+                || entry["enabled"]?.Type != JTokenType.Boolean
+                || !(bool)entry["enabled"]
+                || entry.Properties().Any(property => property.Name != "type" && property.Name != "command" && property.Name != "enabled")
+                || entry["command"] is not JArray command
+                || command.Count == 0
+                || command.Any(token => token.Type != JTokenType.String)
+            )
+                return null;
+            var launch = new JObject { ["command"] = command[0].DeepClone(), ["args"] = new JArray(command.Skip(1)) };
+            return JsonFileMcpConfigurator.IsGeneratedStdioEntry(launch) ? entry.ToString(Formatting.None) : null;
         }
 
         public override string GetManualSnippet()
