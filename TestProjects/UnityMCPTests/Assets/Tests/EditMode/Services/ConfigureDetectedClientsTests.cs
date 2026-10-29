@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Clients;
+using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
 using NUnit.Framework;
@@ -66,6 +67,72 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(0, failed.ConfigureCalls);
             Assert.AreEqual(1, peer.ConfigureCalls);
             Assert.IsTrue(store.UseHttp);
+        }
+
+        [Test]
+        public void BulkSkipsManualOnlyClientsAndRetriesOnlyAutomaticFailures()
+        {
+            var manual = new FakeClient("manual", store)
+            {
+                SupportsAutoConfigure = false,
+                FailConfigure = true,
+                FailStatus = true,
+            };
+            var success = new FakeClient("success", store);
+            var failure = new FakeClient("failure", store) { FailConfigure = true };
+            var service = CreateService(manual, success, failure);
+
+            var summary = service.ConfigureAllDetectedClients();
+
+            Assert.AreEqual(1, summary.SkippedCount);
+            Assert.AreEqual(1, summary.SuccessCount);
+            Assert.AreEqual(1, summary.FailureCount);
+            Assert.Zero(manual.StatusCalls);
+            Assert.Zero(manual.ConfigureCalls);
+            CollectionAssert.AreEqual(new[] { "failure" }, summary.Attempt.Failures.Select(row => row.ClientId));
+            failure.FailConfigure = false;
+            var retry = service.RetryFailedClients(summary.Attempt);
+            Assert.AreEqual(1, retry.Summary.SuccessCount);
+            Assert.Zero(retry.Summary.FailureCount);
+            Assert.IsFalse(retry.Attempt.CanRetry);
+            Assert.Zero(manual.StatusCalls);
+            Assert.Zero(manual.ConfigureCalls);
+            Assert.AreEqual(1, success.ConfigureCalls);
+            Assert.AreEqual(2, failure.ConfigureCalls);
+        }
+
+        [Test]
+        public void RetryDropsTargetThatNowRequiresManualConfiguration()
+        {
+            var client = new FakeClient("client", store) { FailConfigure = true };
+            var service = CreateService(client);
+            var summary = service.ConfigureAllDetectedClients();
+            client.SupportsAutoConfigure = false;
+
+            var retry = service.RetryFailedClients(summary.Attempt);
+
+            Assert.AreEqual(1, retry.Summary.SkippedCount);
+            Assert.Zero(retry.Summary.SuccessCount);
+            Assert.Zero(retry.Summary.FailureCount);
+            Assert.IsEmpty(retry.Attempt.Failures);
+            Assert.IsFalse(retry.Attempt.CanRetry);
+            Assert.AreEqual(1, client.StatusCalls);
+            Assert.AreEqual(1, client.ConfigureCalls);
+        }
+
+        [Test]
+        public void InstalledCherryStudioIsSkippedAndKeepsManualInstructions()
+        {
+            var manual = new InstalledCherryStudio();
+
+            var summary = CreateService(manual).ConfigureAllDetectedClients();
+
+            Assert.AreEqual(1, summary.SkippedCount);
+            Assert.Zero(summary.SuccessCount);
+            Assert.Zero(summary.FailureCount);
+            Assert.IsEmpty(summary.Attempt.Failures);
+            Assert.IsFalse(summary.Attempt.CanRetry);
+            StringAssert.Contains("UI-based configuration", string.Join("\n", manual.GetInstallationSteps()));
         }
 
         [Test]
@@ -439,7 +506,7 @@ namespace MCPForUnityTests.Editor.Services
 
         private static T Read<T>(object target, string property) => (T)target.GetType().GetProperty(property).GetValue(target);
 
-        private ClientConfigurationService CreateService(params FakeClient[] clients) =>
+        private ClientConfigurationService CreateService(params IMcpClientConfigurator[] clients) =>
             new ClientConfigurationService(clients, () => store.UseHttp, value => store.UseHttp = value, () => preparations++, transportMessages.Add);
 
         private sealed class TemporaryStore : IDisposable
@@ -468,6 +535,11 @@ namespace MCPForUnityTests.Editor.Services
             public void Dispose() => Directory.Delete(Root, recursive: true);
         }
 
+        private sealed class InstalledCherryStudio : CherryStudioConfigurator
+        {
+            public override bool IsInstalled => true;
+        }
+
         private sealed class FakeClient : IMcpClientConfigurator
         {
             private readonly TemporaryStore store;
@@ -478,7 +550,7 @@ namespace MCPForUnityTests.Editor.Services
             public string DisplayName => FailDisplay ? throw new IOException("owned-sensitive-display-marker") : Identity;
             public McpStatus Status => McpStatus.NotConfigured;
             public ConfiguredTransport ConfiguredTransport => ConfiguredTransport.Unknown;
-            public bool SupportsAutoConfigure => true;
+            public bool SupportsAutoConfigure { get; set; } = true;
             public bool SupportsSkills => false;
             private bool installed = true;
             public bool FailDetection { get; set; }

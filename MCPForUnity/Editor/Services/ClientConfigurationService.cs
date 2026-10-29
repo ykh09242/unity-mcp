@@ -63,7 +63,7 @@ namespace MCPForUnity.Editor.Services
             var rows = new List<ClientConfigurationFailure>();
             foreach (var configurator in configurators)
             {
-                string code = ConfigureDetected(configurator, summary);
+                string code = ConfigureDetected(configurator, summary, out _);
                 if (code != null)
                 {
                     var target = catalog?.FirstOrDefault(entry => ReferenceEquals(entry.Client, configurator));
@@ -114,23 +114,29 @@ namespace MCPForUnity.Editor.Services
 
             foreach (var target in attempt.FailedTargets)
             {
-                int skippedBefore = summary.SkippedCount;
-                string code = ConfigureDetected(target.Client, summary);
-                if (code != null || summary.SkippedCount != skippedBefore)
+                string code = ConfigureDetected(target.Client, summary, out bool retainUnavailableTarget);
+                if (code != null || retainUnavailableTarget)
                     RetainFailure(target, target.Client, code ?? "unavailable:not_installed", failed, rows);
             }
             summary.Attempt = PublishAttempt(catalog, failed, rows, failed.Count, null);
             return new ClientConfigurationRetryResult("completed", summary, summary.Attempt);
         }
 
-        private string ConfigureDetected(IMcpClientConfigurator configurator, ClientConfigurationSummary summary)
+        private string ConfigureDetected(IMcpClientConfigurator configurator, ClientConfigurationSummary summary, out bool retainUnavailableTarget)
         {
+            retainUnavailableTarget = false;
             string stage = "detection";
             try
             {
+                if (!configurator.SupportsAutoConfigure)
+                {
+                    summary.SkippedCount++;
+                    return null;
+                }
                 if (!configurator.IsInstalled)
                 {
                     summary.SkippedCount++;
+                    retainUnavailableTarget = true;
                     return null;
                 }
                 stage = "status";
