@@ -61,6 +61,8 @@ READ_ONLY = {
 }
 
 NON_DESTRUCTIVE = {
+    # Owns a temporary preview scene; no prefab save, but edit-time callbacks may execute.
+    "capture_prefab",
     # Cancels an already owned native job; session control, no test start or project-asset writes.
     "cancel_test_job",
     # preflight(refresh_if_dirty=True) at find_gameobjects.py can refresh assets,

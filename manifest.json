@@ -75,6 +75,10 @@
       "description": "Capture Game or Scene views, including surround and orbit batches."
     },
     {
+      "name": "capture_prefab",
+      "description": "Render a prefab to PNG in an isolated preview scene and clean up; does not save the prefab, but edit-time callbacks may execute."
+    },
+    {
       "name": "capture_ui_snapshot",
       "description": "Read bounded semantic uGUI or UI Toolkit snapshots without changing layout, resolution or project files (group: ui)"
     },
