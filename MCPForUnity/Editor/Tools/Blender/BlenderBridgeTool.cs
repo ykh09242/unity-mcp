@@ -497,40 +497,77 @@ names = cfg['names']
 selection_only = cfg['selection_only']
 apply_mods = cfg['apply_modifiers']
 fmt = cfg['format']
-os.makedirs(os.path.dirname(out), exist_ok=True)
+missing = [n for n in names if bpy.data.objects.get(n) is None]
+if missing:
+    raise Exception('Objects not found in Blender: ' + ', '.join(missing))
+saved_selection = list(bpy.context.selected_objects)
+saved_active = bpy.context.view_layer.objects.active
+saved_mode = saved_active.mode if saved_active else 'OBJECT'
+if not names and selection_only and not saved_selection:
+    raise Exception('Nothing is selected in Blender and no object_names were given.')
+use_sel = bool(names) or selection_only
+
+def available(obj):
+    try:
+        return obj is not None and bpy.context.view_layer.objects.get(obj.name) == obj
+    except ReferenceError:
+        return False
+
+export_error = None
 try:
+    os.makedirs(os.path.dirname(out), exist_ok=True)
     if bpy.context.object and bpy.context.object.mode != 'OBJECT':
         bpy.ops.object.mode_set(mode='OBJECT')
-except Exception:
-    pass
-use_sel = False
-if names:
-    missing = [n for n in names if bpy.data.objects.get(n) is None]
-    if missing:
-        raise Exception('Objects not found in Blender: ' + ', '.join(missing))
-    bpy.ops.object.select_all(action='DESELECT')
-    for n in names:
-        o = bpy.data.objects[n]
-        o.select_set(True)
-        for c in o.children_recursive:
-            c.select_set(True)
-    bpy.context.view_layer.objects.active = bpy.data.objects[names[0]]
-    use_sel = True
-elif selection_only:
-    if not bpy.context.selected_objects:
-        raise Exception('Nothing is selected in Blender and no object_names were given.')
-    use_sel = True
-if fmt == 'glb':
-    bpy.ops.export_scene.gltf(filepath=out, export_format='GLB', use_selection=use_sel,
-                              use_active_scene=True, export_apply=apply_mods,
-                              export_animations=True, export_skins=True, export_morph=True,
-                              export_yup=True)
-else:
-    bpy.ops.export_scene.fbx(filepath=out, use_selection=use_sel, apply_unit_scale=True,
-                             bake_space_transform=apply_mods, use_mesh_modifiers=apply_mods,
-                             path_mode='COPY', embed_textures=True)
-print(json.dumps({'path': out, 'bytes': os.path.getsize(out), 'selection_only': use_sel,
-                  'exported': [o.name for o in (bpy.context.selected_objects if use_sel else bpy.context.scene.objects)]}))
+    if names:
+        bpy.ops.object.select_all(action='DESELECT')
+        for n in names:
+            o = bpy.data.objects[n]
+            o.select_set(True)
+            for c in o.children_recursive:
+                c.select_set(True)
+        bpy.context.view_layer.objects.active = bpy.data.objects[names[0]]
+    if fmt == 'glb':
+        bpy.ops.export_scene.gltf(filepath=out, export_format='GLB', use_selection=use_sel,
+                                  use_active_scene=True, export_apply=apply_mods,
+                                  export_animations=True, export_skins=True, export_morph=True,
+                                  export_yup=True)
+    else:
+        bpy.ops.export_scene.fbx(filepath=out, use_selection=use_sel, apply_unit_scale=True,
+                                 bake_space_transform=apply_mods, use_mesh_modifiers=apply_mods,
+                                 path_mode='COPY', embed_textures=True)
+    result = {'path': out, 'bytes': os.path.getsize(out), 'selection_only': use_sel,
+              'exported': [o.name for o in (bpy.context.selected_objects if use_sel else bpy.context.scene.objects)]}
+except BaseException as error:
+    export_error = error
+    raise
+finally:
+    restoration_errors = []
+    # Blender requires Object mode for selection, then the original active object for mode.
+    # Each native boundary may fail independently; still attempt the remaining restoration.
+    try:
+        if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.select_all(action='DESELECT')
+    except Exception as error:
+        restoration_errors.append(str(error))
+    for obj in saved_selection:
+        try:
+            if available(obj):
+                obj.select_set(True)
+        except Exception as error:
+            restoration_errors.append(str(error))
+    try:
+        bpy.context.view_layer.objects.active = saved_active if available(saved_active) else None
+        if saved_mode != 'OBJECT' and bpy.context.view_layer.objects.active is not None:
+            bpy.ops.object.mode_set(mode=saved_mode)
+    except Exception as error:
+        restoration_errors.append(str(error))
+    if restoration_errors:
+        restoration_error = RuntimeError('Blender export state restoration failed: ' + '; '.join(restoration_errors))
+        if export_error is not None:
+            raise export_error from restoration_error
+        raise restoration_error
+print(json.dumps(result))
 ";
             // Verbatim strings take the checkout's line endings; normalize so the script (and tests) are
             // byte-identical whether the file was checked out with LF or CRLF.
