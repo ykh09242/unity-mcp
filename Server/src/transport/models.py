@@ -40,6 +40,9 @@ class RegisteredMessage(BaseModel):
     arbitration_generation: str | None = Field(
         default=None, pattern=r"^[0-9a-f]{32}$", exclude_if=lambda value: value is None
     )
+    resume_generation: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{32}$", exclude_if=lambda value: value is None
+    )
 
 
 class CommandProgressRequest(BaseModel):
@@ -87,6 +90,7 @@ class RegisterMessage(BaseModel):
     project_path: str | None = Field(default=None, max_length=4096)
     capabilities: list[PluginCapability] = Field(default_factory=list, max_length=16)
     arbitration_generation: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    resume_generation: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
 
     @field_validator("project_name", "project_hash")
     @classmethod

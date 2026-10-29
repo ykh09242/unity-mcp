@@ -22,5 +22,8 @@ namespace MCPForUnity.Editor.Models
 
         /// <summary>Optional transport negotiation binding; never a handler concurrency hint.</summary>
         public JObject arbitration { get; set; }
+
+        public JObject resume { get; set; }
+        internal Services.Transport.CommandResumeJournal.Ticket ResumeTicket { get; set; }
     }
 }

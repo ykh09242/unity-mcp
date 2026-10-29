@@ -93,6 +93,17 @@ namespace MCPForUnity.Editor.Services.Transport
                 try
                 {
                     response = TransportCommandResponse.FromObject(payload).WithAdmission(Arbitration, notStarted, blocker);
+                    if (Command?.ResumeTicket != null)
+                    {
+                        var receipt =
+                            notStarted && blocker.Retryable
+                                ? Command.ResumeTicket.Owner.Inspect(Command.ResumeTicket)
+                                : Command.ResumeTicket.Owner.Complete(Command.ResumeTicket, response.BusinessPayload, notStarted, blocker.Reason);
+                        if (receipt.State == "unavailable" || receipt.State == "canceled")
+                            response = receipt.Response(null);
+                        response.WithResume(receipt.Receipt);
+                    }
+                    response.WithAdmission(Arbitration, notStarted, blocker);
                 }
                 finally
                 {
@@ -121,7 +132,15 @@ namespace MCPForUnity.Editor.Services.Transport
                 TransportCommandResponse response;
                 try
                 {
-                    response = TransportCommandResponse.FromJson(payload).WithAdmission(Arbitration);
+                    response = TransportCommandResponse.FromJson(payload);
+                    if (Command?.ResumeTicket != null)
+                    {
+                        var receipt = Command.ResumeTicket.Owner.Complete(Command.ResumeTicket, response.BusinessPayload);
+                        if (receipt.State == "unavailable" || receipt.State == "canceled")
+                            response = receipt.Response(null);
+                        response.WithResume(receipt.Receipt);
+                    }
+                    response.WithAdmission(Arbitration);
                 }
                 finally
                 {
@@ -636,6 +655,12 @@ namespace MCPForUnity.Editor.Services.Transport
                 {
                     pending.AdmissionCancellation.ThrowIfCancellationRequested();
                     pending.RequestCancellation.ThrowIfCancellationRequested();
+                    if (command.ResumeTicket != null && !command.ResumeTicket.Owner.TryStart(command.ResumeTicket))
+                    {
+                        pending.ResponseSource.TrySetResult(command.ResumeTicket.Owner.Inspect(command.ResumeTicket).Response(command.arbitration));
+                        RemovePending(id, pending);
+                        return;
+                    }
                     result = CommandRegistry.ExecuteCommand(
                         command.type,
                         parameters,
@@ -651,17 +676,27 @@ namespace MCPForUnity.Editor.Services.Transport
                     // Async cleanup only touches locked managed state; no editor frame is needed.
                     var capturedType = logName;
                     var capturedLogType = logType;
-                    void Complete(Task<string> t)
+                    void CompleteOnMain(Task<string> t)
                     {
                         pending.Timing?.Stop(CommandPhaseTiming.Phase.Handler);
                         if (t.IsCanceled)
-                            pending.TrySetCanceled();
+                        {
+                            if (command.ResumeTicket != null)
+                                pending.TrySetResult(new { status = "error", error = "Command execution canceled" });
+                            else
+                                pending.TrySetCanceled();
+                        }
                         else if (t.IsFaulted)
                         {
-                            pending.ResponseSource.TrySetException(t.Exception.InnerExceptions);
-                            pending.JsonResponseSource?.TrySetException(t.Exception.InnerExceptions);
-                            if (pending.OwnsTiming)
-                                pending.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Failed);
+                            if (command.ResumeTicket != null)
+                                pending.TrySetResult(new { status = "error", error = t.Exception.GetBaseException().Message });
+                            else
+                            {
+                                pending.ResponseSource.TrySetException(t.Exception.InnerExceptions);
+                                pending.JsonResponseSource?.TrySetException(t.Exception.InnerExceptions);
+                                if (pending.OwnsTiming)
+                                    pending.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Failed);
+                            }
                         }
                         else
                             pending.TrySetJsonResult(t.Result);
@@ -677,6 +712,20 @@ namespace MCPForUnity.Editor.Services.Transport
                         RemovePending(id, pending);
                     }
                     var task = pending.CompletionSource.Task;
+                    void Complete(Task<string> t)
+                    {
+                        if (command.ResumeTicket != null && Thread.CurrentThread.ManagedThreadId != _mainThreadId)
+                            _ = RunOnMainThreadAsync(
+                                () =>
+                                {
+                                    CompleteOnMain(t);
+                                    return true;
+                                },
+                                CancellationToken.None
+                            );
+                        else
+                            CompleteOnMain(t);
+                    }
                     if (task.IsCompleted)
                         Complete(task);
                     else

@@ -170,13 +170,21 @@ lost. Supported job observations keep the original job ID and wait deadline.
 
 Connection shutdown retires queued WebSocket commands before cancellation callbacks
 finish. Work that already entered its handler retains its normal completion and
-native-ownership rules. Build callbacks queued in the old domain cannot survive a
-reload, so they do not create a persistent native-build fence until the native build
-is invoked. An interrupted invoked build remains uncertain and keeps its fence.
+native-ownership rules. With negotiated command continuation, queued requests keep
+their identity and deadline and can be re-admitted after validation. Completed
+requests return retained results; started requests whose outcome is unknown are
+never replayed. Explicit cancellation is a separate terminal state.
+
+Built-in queued builds and test admissions retain declarative checkpoints under
+their original job IDs. Native invocation is fenced before it starts, so a reload
+cannot cause an invoked build or test to run again. An interrupted invoked build
+remains uncertain and keeps its native fence. See
+[command continuation](reload-continuation.md) for the state rules, validation,
+transport compatibility and bounded-result behavior.
 
 Repeated reloads preserve a pending stdio bridge resume even when the bridge has not
 restarted between passes. An explicit stop or transport switch still clears that
-intent. Connection recovery does not replay the interrupted tool operation.
+intent. Connection recovery does not replay a possibly started tool operation.
 
 ## Recursive runtime data during hot reload
 

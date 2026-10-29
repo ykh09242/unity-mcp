@@ -24,6 +24,7 @@ class OperationTarget:
     capacity_error: Callable[[], dict[str, JsonValue] | None] | None = field(
         default=None, repr=False, compare=False
     )
+    resume_generation: str | None = None
 
 
 async def capture_target(
@@ -63,6 +64,7 @@ def capture_stdio_target(connection) -> OperationTarget:
         if connection is not None and connection.authenticated_session is not None
         else None
     )
+    resume = getattr(connection.authenticated_session, "resume_generation", None)
     scope = OperationScope(
         "local",
         instance.rsplit("@", 1)[-1].lower(),
@@ -83,6 +85,7 @@ def capture_stdio_target(connection) -> OperationTarget:
                     else None
                 )
                 == native
+                and getattr(connection.authenticated_session, "resume_generation", None) == resume
             )
         )
 
@@ -101,7 +104,18 @@ def capture_stdio_target(connection) -> OperationTarget:
         return catalog is None or any(name in catalog for name in names)
 
     return OperationTarget(
-        scope, current, negotiated, transport_generation=generation, public_available=available
+        scope,
+        current,
+        negotiated,
+        transport_generation=generation,
+        public_available=available,
+        resume_generation=(
+            resume
+            if negotiated
+            and "command_resume_v1" in session.capabilities
+            and valid_generation(resume)
+            else None
+        ),
     )
 
 
@@ -118,6 +132,7 @@ async def capture_http_target(session_id: str, *, hub=None) -> OperationTarget |
         return None
     generation = getattr(socket.state, "plugin_generation", None)
     native = getattr(socket.state, "plugin_arbitration_generation", None)
+    resume = getattr(socket.state, "plugin_resume_generation", None)
     scope = OperationScope(
         "remote:" + session.user_id if session.user_id is not None else "local",
         session.project_hash,
@@ -130,6 +145,7 @@ async def capture_http_target(session_id: str, *, hub=None) -> OperationTarget |
             and hub._connections.get(session_id) is socket
             and getattr(socket.state, "plugin_generation", None) == generation
             and getattr(socket.state, "plugin_arbitration_generation", None) == native
+            and getattr(socket.state, "plugin_resume_generation", None) == resume
             and getattr(socket.state, "user_id", None) == session.user_id
         )
 
@@ -160,4 +176,5 @@ async def capture_http_target(session_id: str, *, hub=None) -> OperationTarget |
         generation,
         available,
         lambda: hub._pending_capacity_error(session_id, session.user_id),
+        resume if hub._supports(socket, "command_resume_v1") and valid_generation(resume) else None,
     )

@@ -95,6 +95,34 @@ class LocalProjectContext:
     refusal: str | None = None
     job_id: str | None = None
 
+    def rebind(
+        self, registry: PluginRegistry, session: PluginSession, websocket: WebSocket
+    ) -> bool:
+        """Called under the Hub lock after a negotiated same-process continuation check."""
+        original = self.selection
+        generation = getattr(websocket.state, "plugin_generation", None)
+        if (
+            original is None
+            or registry is not original.registry
+            or session.project_hash != original.project_hash
+            or session.user_id != original.user_id
+            or normalized_root(session.project_path) != original.root
+            or not isinstance(generation, str)
+            or websocket.client_state != WebSocketState.CONNECTED
+            or websocket.application_state != WebSocketState.CONNECTED
+        ):
+            return False
+        self.selection = ProjectSelection(
+            registry,
+            session.session_id,
+            websocket,
+            generation,
+            original.root,
+            original.project_hash,
+            original.user_id,
+        )
+        return True
+
     def refuse(
         self, reason: str, params: dict[str, JsonValue] | None = None
     ) -> dict[str, JsonValue]:

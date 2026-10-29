@@ -12,7 +12,7 @@ import weakref
 from hashlib import sha256
 from collections.abc import Coroutine, Mapping
 from dataclasses import dataclass, replace
-from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext, suppress
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from collections.abc import Callable
 
@@ -46,7 +46,7 @@ from models.response_limits import (
     ResponseOwner,
     response_owner,
 )
-from transport.plugin_registry import PluginRegistry, ToolSettingsConflict
+from transport.plugin_registry import PluginRegistry, PluginSession, ToolSettingsConflict
 from transport.local_project_context import (
     local_project_context,
     full_hash,
@@ -88,6 +88,7 @@ from transport.command_budget import (
 )
 from services.api_key_service import ApiKeyService
 from services.operation_permissions import (
+    JsonValue,
     OperationPermissionError,
     authorize_operation,
     required_permissions,
@@ -113,6 +114,12 @@ from transport.native_arbitration import (
     decode_native_reply,
     valid_generation,
     may_retry_wire_attempt,
+)
+from transport.command_resume import (
+    CAPABILITY as RESUME_CAPABILITY,
+    CommandResumeInvocation,
+    CommandResumeInterrupted,
+    resume_eligible,
 )
 
 if TYPE_CHECKING:
@@ -294,6 +301,7 @@ class PluginHub(WebSocketEndpoint):
             PROGRESS_CAPABILITY,
             phase_diagnostics.CAPABILITY,
             ARBITRATION_CAPABILITY,
+            RESUME_CAPABILITY,
         }
     )
     _editor_states: ClassVar[EditorStateStore] = EditorStateStore()
@@ -1573,6 +1581,25 @@ class PluginHub(WebSocketEndpoint):
         budget.command_id = None
         budget.session_id = session_id
         lease = await require_credential_lease() if config.http_remote_hosted else None
+        registry = cls._registry
+        original_session = await registry.get_session(session_id) if registry is not None else None
+        socket = cls._connections.get(session_id)
+        resume_generation = (
+            getattr(socket.state, "plugin_resume_generation", None) if socket is not None else None
+        )
+        resume = (
+            CommandResumeInvocation.create(resume_generation, budget.expires_at)
+            if socket is not None
+            and cls._supports(socket, RESUME_CAPABILITY)
+            and valid_generation(resume_generation)
+            and resume_eligible(command_type, params, custom=_catalog_guard is not None)
+            and _expected_read is None
+            else None
+        )
+        if resume is not None:
+            # Snapshot the admitted JSON once; every wire continuation carries
+            # exactly the same values, even if caller-owned dictionaries change.
+            params = json.loads(json.dumps(params))
         try:
             async with lease.own() if lease is not None else nullcontext():
                 while True:
@@ -1589,18 +1616,44 @@ class PluginHub(WebSocketEndpoint):
                                 else {}
                             ),
                             _catalog_guard=_catalog_guard,
+                            **({"_resume": resume} if resume is not None else {}),
                             **({"_progress": _progress} if _progress is not None else {}),
                         )
                     except NativeNotStarted as refusal:
                         # Only an exact transport-owned pre-handler receipt
                         # can clear this attempt's dispatch uncertainty.
-                        budget.dispatched = False
-                        if not may_retry_wire_attempt(command_type, refusal.reply):
+                        budget.dispatched = resume is not None and resume.state == "executing"
+                        if not (
+                            resume is not None
+                            and resume.waiting
+                            or may_retry_wire_attempt(command_type, refusal.reply)
+                        ):
                             return refusal.reply.payload
                         params = refusal.params
                         _expected_generation = refusal.transport_generation
                         budget.phase = "native_admission"
                         await asyncio.sleep(min(0.1, budget.remaining()))
+                    except (CommandResumeInterrupted, CommandNotDispatchedError):
+                        if resume is None or original_session is None:
+                            raise
+                        resume.interrupted()
+                        budget.phase = "reload_wait"
+                        resumed = await cls._resume_http_session(
+                            registry, original_session, resume, budget
+                        )
+                        if resumed is None:
+                            return command_outcome_unknown(
+                                command_type,
+                                "Original Editor continuation is unavailable",
+                                session_id=session_id,
+                                command_id=budget.command_id,
+                                phase=budget.phase,
+                                cause="resume_target_changed",
+                            )
+                        session_id = resumed
+                        budget.session_id = session_id
+                        socket = cls._connections.get(session_id)
+                        _expected_generation = getattr(socket.state, "plugin_generation", None)
         except OperationPermissionError:
             if budget.dispatched:
                 return command_outcome_unknown(
@@ -1625,6 +1678,111 @@ class PluginHub(WebSocketEndpoint):
             return MCPResponse(success=False, error="auth_required").model_dump()
         except TimeoutError:
             return budget.timeout_response(command_type)
+        finally:
+            if resume is not None and (
+                asyncio.current_task().cancelling() or budget.remaining() <= 0
+            ):
+                resume.cancel()
+                if original_session is not None:
+                    with anyio.move_on_after(cls.CANCEL_TIMEOUT, shield=True):
+                        with suppress(
+                            OSError, RuntimeError, OperationPermissionError, CredentialLeaseError
+                        ):
+                            await cls._cancel_resumable_command(
+                                registry,
+                                original_session,
+                                resume,
+                                command_type,
+                                params,
+                                budget.command_id,
+                            )
+
+    @classmethod
+    async def _resume_http_session(
+        cls,
+        registry: PluginRegistry,
+        original: PluginSession,
+        resume: CommandResumeInvocation,
+        budget: _CommandBudget,
+    ) -> str | None:
+        """Rebind only the original authenticated project and domain-stable Editor process."""
+        while budget.remaining() > 0 and not resume.cancelled.is_set():
+            if cls._registry is not registry or cls._shutdown_requested:
+                return None
+            try:
+                session_id = await cls._resolve_session_id(
+                    original.project_hash, user_id=original.user_id, retry_on_reload=False
+                )
+            except NoUnitySessionError:
+                await asyncio.sleep(min(0.1, budget.remaining()))
+                continue
+            lock = cls._lock
+            if lock is None:
+                return None
+            async with lock:
+                session = await registry.get_session(session_id)
+                socket = cls._connections.get(session_id)
+                if session is not None and socket is not None:
+                    if (
+                        session.user_id != original.user_id
+                        or session.project_hash != original.project_hash
+                        or not cls._supports(socket, RESUME_CAPABILITY)
+                        or getattr(socket.state, "plugin_resume_generation", None)
+                        != resume.editor_session_id
+                        or normalized_root(session.project_path)
+                        != normalized_root(original.project_path)
+                    ):
+                        return None
+                    context = local_project_context.get()
+                    if context is not None and not context.rebind(registry, session, socket):
+                        return None
+                    return session_id
+            await asyncio.sleep(min(0.1, budget.remaining()))
+        return None
+
+    @classmethod
+    async def _cancel_resumable_command(
+        cls,
+        registry: PluginRegistry,
+        original: PluginSession,
+        resume: CommandResumeInvocation,
+        command: str,
+        params: dict[str, JsonValue],
+        command_id: str | None,
+    ) -> None:
+        """A live sender's explicit cancellation may tombstone its original invocation only."""
+        if cls._registry is not registry:
+            return
+        session_id = await registry.get_session_id_by_hash(original.project_hash, original.user_id)
+        session = await registry.get_session(session_id) if session_id is not None else None
+        socket = cls._connections.get(session_id)
+        if (
+            socket is None
+            or session is None
+            or session.project_hash != original.project_hash
+            or session.user_id != original.user_id
+            or normalized_root(session.project_path) != normalized_root(original.project_path)
+            or not cls._supports(socket, RESUME_CAPABILITY)
+            or getattr(socket.state, "plugin_resume_generation", None) != resume.editor_session_id
+            or getattr(socket.state, "user_id", None) != original.user_id
+        ):
+            return
+        requester = (
+            await require_credential_lease(original.user_id) if config.http_remote_hosted else None
+        )
+        for authority in (requester, cls._socket_lease(socket)):
+            if authority is not None:
+                await authority.check()
+                authorize_operation(authority.permissions, command, params, native=True)
+        await socket.send_json(
+            {
+                "type": "cancel",
+                "id": command_id or resume.invocation_id,
+                "name": command,
+                "params": params,
+                "resume": resume.to_wire(),
+            }
+        )
 
     @classmethod
     async def _send_command(
@@ -1638,6 +1796,7 @@ class PluginHub(WebSocketEndpoint):
         _expected_generation: str | None = None,
         _catalog_guard=None,
         _progress: ProgressSink | None = None,
+        _resume: CommandResumeInvocation | None = None,
     ) -> dict[str, Any]:
         requester = await require_credential_lease() if config.http_remote_hosted else None
         context = local_project_context.get()
@@ -1648,6 +1807,8 @@ class PluginHub(WebSocketEndpoint):
         try:
             websocket = await cls._get_connection(session_id)
         except RuntimeError as exc:
+            if _resume is not None:
+                raise CommandResumeInterrupted() from exc
             if context is not None:
                 return context.refuse("project_context_changed", params)
             if _expected_read is not None:
@@ -1679,6 +1840,8 @@ class PluginHub(WebSocketEndpoint):
                 return custom_catalog_changed().model_dump()
             # Disconnect can run between the initial lookup and this lock.
             if cls._connections.get(session_id) is not websocket:
+                if _resume is not None:
+                    raise CommandResumeInterrupted()
                 if _expected_read is not None:
                     return cls._unavailable_retry_response("read_invalidated")
                 raise CommandNotDispatchedError(f"Plugin session {session_id} not connected")
@@ -1686,6 +1849,8 @@ class PluginHub(WebSocketEndpoint):
                 _expected_generation is not None
                 and getattr(websocket.state, "plugin_generation", None) != _expected_generation
             ):
+                if _resume is not None:
+                    raise CommandResumeInterrupted()
                 return cls._unavailable_retry_response("observation_generation_changed")
             if _expected_read is not None and not cls._matches_read_identity(
                 websocket, user_id, _expected_read
@@ -1765,6 +1930,8 @@ class PluginHub(WebSocketEndpoint):
                 # Keep only the admitted scalar deadline, not its request/dispatch graph.
                 "result_deadline": budget.expires_at,
                 "arbitration": arbitration,
+                "resume": _resume,
+                "command_type": command_type,
             }
             generation = getattr(websocket.state, "plugin_generation", None)
 
@@ -1783,6 +1950,8 @@ class PluginHub(WebSocketEndpoint):
             if arbitration is not None:
                 payload["arbitration"] = arbitration.to_wire()
                 cls._pending[command_id]["arbitration_params"] = payload["params"]
+            if _resume is not None:
+                payload["resume"] = _resume.to_wire()
             diagnostic = phase_diagnostics.request(
                 command_type, cls._supports(websocket, phase_diagnostics.CAPABILITY)
             )
@@ -1982,6 +2151,8 @@ class PluginHub(WebSocketEndpoint):
                     return True
 
                 def dispatch_write() -> None:
+                    if _resume is not None:
+                        _resume.dispatch()
                     receipt = execution_owner.get()
                     if receipt is not None:
                         receipt.dispatch_started(
@@ -2057,6 +2228,22 @@ class PluginHub(WebSocketEndpoint):
                     phase=phase,
                     cause="authentication_ended",
                 )
+            except (PluginDisconnectedError, OSError) as exc:
+                if (
+                    _resume is not None
+                    and not _resume.cancelled.is_set()
+                    and not isinstance(exc, TimeoutError)
+                ):
+                    raise CommandResumeInterrupted() from exc
+                canceled = True
+                return command_outcome_unknown(
+                    command_type,
+                    str(exc) or type(exc).__name__,
+                    session_id=session_id,
+                    command_id=command_id,
+                    phase=phase,
+                    cause="timeout" if isinstance(exc, TimeoutError) else "disconnected",
+                )
             except asyncio.CancelledError:
                 # Preserve cancellation of the caller. Cancellation of just the
                 # socket writer is instead an uncertain transport outcome.
@@ -2114,7 +2301,7 @@ class PluginHub(WebSocketEndpoint):
                         if not send_task.done():
                             send_task.cancel()
                         await asyncio.gather(send_task, return_exceptions=True)
-                        if canceled:
+                        if canceled and _resume is None:
                             await cls._cancel_command_on_owner(
                                 websocket, session_id, generation, command_id
                             )
@@ -2412,6 +2599,14 @@ class PluginHub(WebSocketEndpoint):
             websocket.state.plugin_arbitration_generation = (
                 native_generation if ARBITRATION_CAPABILITY in accepted else None
             )
+            resume_generation = payload.resume_generation
+            if RESUME_CAPABILITY in accepted and (
+                ARBITRATION_CAPABILITY not in accepted or not valid_generation(resume_generation)
+            ):
+                accepted = accepted - {RESUME_CAPABILITY}
+            websocket.state.plugin_resume_generation = (
+                resume_generation if RESUME_CAPABILITY in accepted else None
+            )
             if LARGE_RESULT_CAPABILITY not in accepted:
                 accepted = accepted - {COMPRESSION_CAPABILITY}
             if "editor_state_v1" in accepted:
@@ -2434,6 +2629,7 @@ class PluginHub(WebSocketEndpoint):
                 session_id=session_id,
                 capabilities=sorted(accepted),
                 arbitration_generation=websocket.state.plugin_arbitration_generation,
+                resume_generation=websocket.state.plugin_resume_generation,
             )
             await websocket.send_json(response.model_dump())
         finally:
@@ -2904,7 +3100,13 @@ class PluginHub(WebSocketEndpoint):
             future = entry.get("future")
             if future and not future.done():
                 try:
+                    resume = entry.get("resume")
+                    if resume is not None:
+                        result = resume.unwrap(result)
                     reply = decode_native_reply(result, entry.get("arbitration"))
+                    if resume is not None:
+                        resume.validate_reply(reply)
+                        reply = resume.normalize_reply(entry["command_type"], reply)
                 except ValueError:
                     future.set_exception(RuntimeError("invalid_native_arbitration_response"))
                     return

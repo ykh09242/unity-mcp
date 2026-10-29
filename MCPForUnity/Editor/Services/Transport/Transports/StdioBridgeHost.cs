@@ -41,6 +41,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         public string ProgressId;
         public StdioAuthenticatedSession Session;
         public long DeadlineAtMs;
+        public Command ResumeCommand;
 
         /// <summary>
         /// Connection that queued this command. Payload equality alone does not prove retry intent.
@@ -1112,6 +1113,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             using var stopProgress = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
             Task progressPump = Task.CompletedTask;
             CancellationTokenSource commandLifetime = null;
+            Command resumeCommand = null;
             try
             {
                 long frameReadStartedAt = _uptime.ElapsedMilliseconds;
@@ -1149,6 +1151,31 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     return;
                 }
                 LogReceivedCommand(commandText);
+                try
+                {
+                    resumeCommand = TransportJson.DeserializeCommand(commandText);
+                }
+                catch (JsonException) { /* Preserve the legacy invalid-command response path. */ }
+                if (resumeCommand?.resume != null)
+                {
+                    if (!session.Capabilities.Contains(CommandResumeJournal.Capability))
+                        throw new IOException("Command continuation was not negotiated");
+                    var admission = await TransportCommandDispatcher
+                        .RunOnMainThreadAsync(
+                            () => CommandResumeState.Journal.Admit(resumeCommand.resume, resumeCommand.type, resumeCommand.@params),
+                            CancellationToken.None
+                        )
+                        .ConfigureAwait(false);
+                    if (admission.Ticket == null)
+                    {
+                        string reply = admission.Response(resumeCommand.arbitration).ToJson();
+                        await writer.WriteResultAsync(System.Text.Encoding.UTF8.GetBytes(reply), connectionLifetime.Token).ConfigureAwait(false);
+                        return;
+                    }
+                    resumeCommand.ResumeTicket = admission.Ticket;
+                }
+                else
+                    resumeCommand = null;
                 string commandId = Guid.NewGuid().ToString();
                 var result = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
                 TaskCompletionSource<string> pending = result;
@@ -1160,6 +1187,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     out string requestNonce
                 );
                 bool optedIn = prelude == ProgressPrelude.Accepted;
+                if (resumeCommand != null)
+                    timeoutMs = (int)
+                        Math.Max(1, Math.Min(timeoutMs, resumeCommand.resume.Value<long>("deadline_unix_ms") - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
                 int remainingMs = optedIn ? RemainingCommandMs(admittedAt, timeoutMs) : timeoutMs;
                 if (remainingMs == 0)
                     throw new IOException("Stdio progress command deadline expired");
@@ -1212,7 +1242,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                 Progress = optedIn ? new CommandProgressBuffer() : null,
                                 ProgressId = optedIn ? progressId : null,
                                 Session = session,
-                                DeadlineAtMs = optedIn ? admittedAt + timeoutMs : 0,
+                                DeadlineAtMs = optedIn || resumeCommand != null ? admittedAt + timeoutMs : 0,
+                                ResumeCommand = resumeCommand,
                             };
                             commandQueue[commandId] = owned;
                         }
@@ -1288,6 +1319,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             finally
             {
+                if (owned == null)
+                    resumeCommand?.ResumeTicket?.Owner.Release(resumeCommand.ResumeTicket);
                 if (observed != null)
                     Interlocked.Decrement(ref observed.IdentifiedResponseWaiters);
                 frame?.Dispose();
@@ -1578,6 +1611,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private static void ReleaseInput(QueuedCommand command)
         {
+            if (!command.IsExecuting)
+                command.ResumeCommand?.ResumeTicket?.Owner.Release(command.ResumeCommand.ResumeTicket);
             command.CommandJson = null;
             Interlocked.Exchange(ref command.InputReservation, null)?.Dispose();
         }
@@ -1775,7 +1810,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     deadline = new Timer(_ => RequestCancellation(), null, remainingMs, Timeout.Infinite);
             }
 
-            private void RequestCancellation()
+            internal void RequestCancellation()
             {
                 lock (gate)
                 {
@@ -1822,13 +1857,14 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         ? commandTimeoutMs
                         : (int)Math.Max(0, Math.Min(int.MaxValue, queuedCommand.DeadlineAtMs - _uptime.ElapsedMilliseconds));
                 var cancellation = new CommandCancellation(queuedCommand.OwnerCancellation, remainingMs);
+                queuedCommand.ResumeCommand?.ResumeTicket?.Owner.BindCancellation(queuedCommand.ResumeCommand.ResumeTicket, cancellation.RequestCancellation);
                 try
                 {
                     queuedCommand.OwnerCancellation.ThrowIfCancellationRequested();
                     queuedCommand.AdmissionCancellation.ThrowIfCancellationRequested();
                     if (remainingMs == 0)
                         throw new OperationCanceledException(cancellation.Token);
-                    var command = TransportJson.DeserializeCommand(payload);
+                    var command = queuedCommand.ResumeCommand ?? TransportJson.DeserializeCommand(payload);
                     if (queuedCommand.Session == null || !queuedCommand.Session.Capabilities.Contains(NativeCommandArbitrator.Capability))
                         command.arbitration = null;
                     operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(
@@ -1891,6 +1927,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     }
                     // The queue and its input lease own both execution and callbacks.
                     await cancellation.CompleteAsync().ConfigureAwait(false);
+                    queuedCommand.ResumeCommand?.ResumeTicket?.Owner.Release(queuedCommand.ResumeCommand.ResumeTicket);
                     lock (lockObj)
                     {
                         commandQueue.Remove(commandId);

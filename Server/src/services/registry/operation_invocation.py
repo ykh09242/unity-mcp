@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from dataclasses import replace
 from functools import wraps
 import asyncio  # noqa: ANYIO_OK -- share the existing public request budget.
 import inspect
@@ -290,6 +291,28 @@ def _refusal(reason: str, *, invocation_started: bool = False) -> dict[str, Json
     return result
 
 
+async def _wait_for_pending_target(
+    instance: str | None,
+    user: str | None,
+    original: OperationTarget,
+    expires_at: float,
+) -> OperationTarget | None:
+    """Rebind only an uninvoked callback to the same negotiated Editor process."""
+    _LOGGER.debug("Unity operation waiting_for_reload before callback admission")
+    async with asyncio.timeout_at(expires_at):
+        while True:
+            fresh = await capture_target(instance, user_id=user)
+            if fresh is not None:
+                if (
+                    fresh.scope.key != original.scope.key
+                    or fresh.resume_generation != original.resume_generation
+                ):
+                    return None
+                if fresh.is_current():
+                    return fresh
+            await asyncio.sleep(0.1)
+
+
 def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> Callable:
     """Wrap once at registration; direct native senders retain their own admission."""
     signature = inspect.signature(function)
@@ -358,26 +381,105 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
             and is_observational_continuation(name, params, public=True)
         )
         original_scope = target.scope.key
+        original_target = target
+        # Even an otherwise unbounded operation gets a bounded reconnect wait.
+        # This value is fixed once; repeated reloads cannot extend it.
+        resume_expires_at = expires_at if expires_at is not None else time.monotonic() + 30.0
         invocation_started = False
-        # Rebind at most once, before the callback starts. An active mutating
-        # wrapper keeps its original fence; only reviewed job observations cross it.
-        for attempt in range(2):
+        observation_rebound = False
+
+        async def validate_target():
+            if not target.is_current():
+                raise OperationScopeChanged()
+            await authorize_remote_operation(name, params, ctx=ctx)
+            if target.authorize_public is not None:
+                await target.authorize_public(name, params)
+            if target.capacity_error is not None:
+                refusal = target.capacity_error()
+                if refusal is not None:
+                    return refusal
             try:
+                await validate_enabled()
+            except OperationScopeChanged:
+                if target.is_current():
+                    return _refusal("operation_tool_unavailable")
+                raise
+            if target.public_available is not None and not await target.public_available(
+                (name, unity_target), getattr(ctx, "fastmcp", None)
+            ):
                 if not target.is_current():
                     raise OperationScopeChanged()
-                await authorize_remote_operation(name, params, ctx=ctx)
-                if target.authorize_public is not None:
-                    await target.authorize_public(name, params)
-                if target.capacity_error is not None:
-                    refusal = target.capacity_error()
+                return _refusal("operation_tool_unavailable")
+            if not target.is_current():
+                raise OperationScopeChanged()
+            return None
+
+        if original_target.resume_generation is not None and active_operation() is None:
+            try:
+                try:
+                    async with asyncio.timeout_at(resume_expires_at):
+                        refusal = await validate_target()
                     if refusal is not None:
                         return refusal_result(refusal)
-                if target.public_available is not None and not await target.public_available(
-                    (name, unity_target), getattr(ctx, "fastmcp", None)
-                ):
-                    if not target.is_current():
-                        raise OperationScopeChanged()
-                    return refusal_result(_refusal("operation_tool_unavailable"))
+                except OperationScopeChanged:
+                    if target.is_current():
+                        raise
+                    pass
+                request = admission_for(
+                    target,
+                    policy.mode,
+                    expires_at=expires_at,
+                    retained_bytes=charge,
+                    observational_continuation=observation,
+                )
+                # Reserve the original FIFO position through reload. This grants
+                # no callback authority: the target is checked again below. Only
+                # a top-level, uninvoked owner may replace its generation fence.
+                async with operation_session(replace(request, is_current=lambda: True)) as owner:
+                    while True:
+                        if time.monotonic() >= resume_expires_at:
+                            raise TimeoutError(
+                                "Operation deadline expired before callback admission"
+                            )
+                        if not target.is_current():
+                            fresh = await _wait_for_pending_target(
+                                instance, user, original_target, resume_expires_at
+                            )
+                            if fresh is None:
+                                return refusal_result(_refusal("operation_target_changed"))
+                            target = fresh
+                        try:
+                            async with asyncio.timeout_at(resume_expires_at):
+                                refusal = await validate_target()
+                        except OperationScopeChanged:
+                            if target.is_current():
+                                raise
+                            continue
+                        if refusal is not None:
+                            return refusal_result(refusal)
+                        owner.request = admission_for(
+                            target,
+                            policy.mode,
+                            expires_at=expires_at,
+                            retained_bytes=charge,
+                            observational_continuation=observation,
+                        )
+                        invocation_started = True
+                        return await call()
+            except OperationScopeChanged:
+                return refusal_result(
+                    _refusal("operation_target_changed", invocation_started=invocation_started)
+                )
+            except OperationCapacityError:
+                return refusal_result(_refusal("operation_capacity"))
+
+        # Only an uninvoked callback may wait for a replacement connection. An
+        # active wrapper keeps its original fence and is never replayed here.
+        while True:
+            try:
+                refusal = await validate_target()
+                if refusal is not None:
+                    return refusal_result(refusal)
                 request = admission_for(
                     target,
                     policy.mode,
@@ -386,26 +488,14 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                     observational_continuation=observation,
                 )
                 async with operation_session(request):
-                    await authorize_remote_operation(name, params, ctx=ctx)
-                    if target.authorize_public is not None:
-                        await target.authorize_public(name, params)
-                    if target.capacity_error is not None:
-                        refusal = target.capacity_error()
-                        if refusal is not None:
-                            return refusal_result(refusal)
-                    await validate_enabled()
-                    if target.public_available is not None and not await target.public_available(
-                        (name, unity_target), getattr(ctx, "fastmcp", None)
-                    ):
-                        if not target.is_current():
-                            raise OperationScopeChanged()
-                        return refusal_result(_refusal("operation_tool_unavailable"))
-                    if not target.is_current():
-                        raise OperationScopeChanged()
+                    refusal = await validate_target()
+                    if refusal is not None:
+                        return refusal_result(refusal)
                     invocation_started = True
                     return await call()
             except OperationScopeChanged:
-                if observation and not invocation_started and attempt == 0:
+                if observation and not invocation_started and not observation_rebound:
+                    observation_rebound = True
                     async with asyncio.timeout_at(expires_at):
                         fresh = await capture_target(instance, user_id=user)
                     if fresh is not None and fresh.scope.key == original_scope:

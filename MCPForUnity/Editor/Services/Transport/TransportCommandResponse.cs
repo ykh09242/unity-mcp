@@ -12,7 +12,22 @@ namespace MCPForUnity.Editor.Services.Transport
 
         private object payload;
         private JObject admission;
-        public object Payload => admission == null ? payload : new { native_arbitration = admission, payload };
+        private JObject resume;
+        internal JToken BusinessPayload => payload as JToken;
+        public object Payload
+        {
+            get
+            {
+                object inner = admission == null ? payload : new { native_arbitration = admission, payload };
+                return resume == null ? inner : new { command_resume = resume, payload = inner };
+            }
+        }
+
+        internal TransportCommandResponse WithResume(JObject receipt)
+        {
+            resume = receipt;
+            return this;
+        }
 
         // Only the dispatcher attaches provenance, after checking the transport-owned request binding.
         internal TransportCommandResponse WithAdmission(JObject request, bool notStarted = false, NativeAdmissionBlocker blocker = default)

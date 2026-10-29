@@ -86,6 +86,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private bool _phaseTimingNegotiated;
         private bool _arbitrationOffered;
         private bool _arbitrationNegotiated;
+        private bool _resumeNegotiated;
+        private bool _resumeOffered;
         private bool _commandProgressOffered;
         private bool _commandProgressNegotiated;
 
@@ -442,6 +444,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 _largeResultNegotiated = false;
                 _arbitrationOffered = false;
                 _arbitrationNegotiated = false;
+                _resumeNegotiated = false;
+                _resumeOffered = false;
                 _phaseTimingOffered = false;
                 _phaseTimingNegotiated = false;
                 _commandProgressOffered = false;
@@ -628,6 +632,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _compressionNegotiated = false;
                     _arbitrationOffered = false;
                     _arbitrationNegotiated = false;
+                    _resumeNegotiated = false;
+                    _resumeOffered = false;
                     _phaseTimingOffered = false;
                     _phaseTimingNegotiated = false;
                     _commandProgressOffered = false;
@@ -1000,6 +1006,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             break;
                         work = _commandWork;
                     }
+                    if (_resumeNegotiated && payload["resume"] is JObject cancelResume)
+                        await TransportCommandDispatcher
+                            .RunOnMainThreadAsync(
+                                () =>
+                                    CommandResumeState.Journal.Admit(
+                                        cancelResume,
+                                        payload.Value<string>("name"),
+                                        payload["params"] as JObject ?? new JObject()
+                                    ),
+                                CancellationToken.None
+                            )
+                            .ConfigureAwait(false);
                     work?.TryCancel(payload.Value<string>("id"));
                     break;
                 case "ping":
@@ -1020,6 +1038,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 if (!IsCurrentConnectionToken(token))
                     return;
                 _arbitrationOffered = HasCapability(payload, NativeCommandArbitrator.Capability);
+                _resumeOffered = HasCapability(payload, CommandResumeJournal.Capability);
+                if (!_resumeOffered)
+                    _resumeNegotiated = false;
                 if (!_arbitrationOffered)
                     _arbitrationNegotiated = false;
                 _phaseTimingOffered = HasCapability(payload, CommandPhaseTiming.Capability);
@@ -1070,6 +1091,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _compressionNegotiated = _largeResultNegotiated && HasCapability(payload, LargeResultWriter.CompressionCapability);
                     _commandCancellationNegotiated = HasCapability(payload, ConnectionCommandWork.CancellationCapability);
                     _arbitrationNegotiated = _arbitrationOffered && HasCapability(payload, NativeCommandArbitrator.Capability);
+                    _resumeNegotiated = _resumeOffered && HasCapability(payload, CommandResumeJournal.Capability);
                     _phaseTimingNegotiated = _phaseTimingOffered && HasCapability(payload, CommandPhaseTiming.Capability);
                     _commandProgressNegotiated = _commandProgressOffered && HasCommandProgressCapability(payload);
                     _statePublisher?.Dispose();
@@ -1271,6 +1293,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private async Task HandleExecuteAsync(JObject payload, CancellationToken token)
         {
+            if (payload["resume"] != null && !(payload["resume"] is JObject))
+                throw new InvalidOperationException("Invalid command continuation envelope");
             string commandId = payload.Value<string>("id");
             string commandName = payload.Value<string>("name");
             JObject parameters = payload.Value<JObject>("params") ?? new JObject();
@@ -1288,6 +1312,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             bool progressNegotiated;
             bool phaseTimingNegotiated;
             bool arbitrationNegotiated;
+            bool resumeNegotiated;
             lock (_ownershipLock)
             {
                 if (!IsCurrentConnectionToken(token))
@@ -1298,6 +1323,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 progressNegotiated = _commandProgressNegotiated;
                 phaseTimingNegotiated = _phaseTimingNegotiated;
                 arbitrationNegotiated = _arbitrationNegotiated;
+                resumeNegotiated = _resumeNegotiated;
             }
             if (work == null)
                 return;
@@ -1309,7 +1335,30 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 @params = parameters,
                 arbitration = arbitrationNegotiated ? payload["arbitration"] as JObject : null,
                 server_info = payload["server_info"],
+                resume = payload["resume"] as JObject,
             };
+            if (command.resume != null)
+            {
+                if (!resumeNegotiated)
+                {
+                    deadline.Dispose();
+                    await SendCommandResultAsync(commandId, new { status = "error", error = "Command continuation was not negotiated" }, token)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                var admitted = await TransportCommandDispatcher
+                    .RunOnMainThreadAsync(() => CommandResumeState.Journal.Admit(command.resume, command.type, command.@params), CancellationToken.None)
+                    .ConfigureAwait(false);
+                if (admitted.Ticket == null)
+                {
+                    deadline.Dispose();
+                    await SendCommandResultAsync(commandId, admitted.Response(command.arbitration).Payload, token).ConfigureAwait(false);
+                    return;
+                }
+                command.ResumeTicket = admitted.Ticket;
+                long remaining = command.resume.Value<long>("deadline_unix_ms") - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                deadline.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(1, Math.Min(int.MaxValue, remaining))));
+            }
             var request = new QueuedCommand
             {
                 Id = commandId,
@@ -1322,6 +1371,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 SessionId = sessionId,
                 Progress = progressNegotiated && RequestsCommandProgress(payload, commandId) ? new CommandProgressBuffer() : null,
             };
+            command.ResumeTicket?.Owner.BindCancellation(
+                command.ResumeTicket,
+                () =>
+                {
+                    work.TryCancel(commandId);
+                }
+            );
             // Only negotiated peers can relax the legacy FIFO predecessor. Native admission
             // still rechecks the actual handler identity and all current owner barriers.
             bool bypass = AllowsArbitrationBypass(arbitrationNegotiated, command);
@@ -1334,6 +1390,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             );
             if (rejection != null)
             {
+                command.ResumeTicket?.Owner.Release(command.ResumeTicket);
                 request.Progress?.Dispose();
                 request.Dispose();
                 request.Timing?.ExecutionDone();
@@ -1480,6 +1537,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 catch (OperationCanceledException) { }
                 request.Timing?.ExecutionDone();
+                request.Command.ResumeTicket?.Owner.Release(request.Command.ResumeTicket);
             }
         }
 
@@ -1720,6 +1778,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 // session_id is now server-authoritative; omitted here or sent as null
                 ["project_name"] = _projectName,
                 ["arbitration_generation"] = NativeCommandArbitrator.Shared.Generation,
+                ["resume_generation"] = CommandResumeState.SessionId,
                 ["project_hash"] = _projectHash,
                 ["unity_version"] = _unityVersion,
                 ["project_path"] = _projectPath,
@@ -1731,7 +1790,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     LargeResultWriter.CompressionCapability,
                     CommandProgressBuffer.Capability,
                     CommandPhaseTiming.Capability,
-                    NativeCommandArbitrator.Capability
+                    NativeCommandArbitrator.Capability,
+                    CommandResumeJournal.Capability
                 ),
             };
 

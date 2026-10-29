@@ -20,7 +20,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         internal IReadOnlyCollection<string> Capabilities { get; }
         internal string SessionGeneration => ServerGeneration + ":" + SessionId;
 
-        internal StdioAuthenticatedSession(string generation, string session, bool progress, bool arbitration = false)
+        internal StdioAuthenticatedSession(string generation, string session, bool progress, bool arbitration = false, bool resume = false)
         {
             ServerGeneration = generation;
             SessionId = session;
@@ -29,6 +29,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 capabilities.Add(CommandProgressBuffer.Capability);
             if (arbitration)
                 capabilities.Add(NativeCommandArbitrator.Capability);
+            if (resume)
+                capabilities.Add(CommandResumeJournal.Capability);
             Capabilities = capabilities.AsReadOnly();
         }
     }
@@ -167,6 +169,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             string session = Guid.NewGuid().ToString("N");
             bool progress = OffersCapability(request["capabilities"], CommandProgressBuffer.Capability);
             bool arbitration = OffersCapability(request["capabilities"], NativeCommandArbitrator.Capability);
+            bool resume = OffersCapability(request["capabilities"], CommandResumeJournal.Capability);
             var acknowledgement = new JObject
             {
                 ["type"] = "authenticated",
@@ -174,7 +177,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 ["session_id"] = session,
                 ["proof"] = Proof(token, "server", Generation, challenge, nonce, session),
             };
-            var negotiated = new StdioAuthenticatedSession(Generation, session, progress, arbitration);
+            var negotiated = new StdioAuthenticatedSession(Generation, session, progress, arbitration, resume);
             deadline.Token.ThrowIfCancellationRequested();
             if (admit != null && !admit(negotiated))
             {
@@ -195,6 +198,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 acknowledgement["capabilities"] = new JArray(negotiated.Capabilities);
             if (arbitration)
                 acknowledgement["arbitration_generation"] = NativeCommandArbitrator.Shared.Generation;
+            if (resume)
+                acknowledgement["resume_generation"] = CommandResumeState.SessionId;
             await WriteAcknowledgementAsync(stream, acknowledgement, deadline.Token).ConfigureAwait(false);
             return negotiated;
         }

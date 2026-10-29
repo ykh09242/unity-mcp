@@ -30,6 +30,7 @@ from transport.json_decoder import decode_json
 
 if TYPE_CHECKING:
     import asyncio
+    from services.registry.operation_target import OperationTarget
 
 _resync_pool: ContextVar["UnityConnectionPool | None"] = ContextVar(
     "stdio_resync_pool", default=None
@@ -39,6 +40,7 @@ _connection_selection: ContextVar["_ConnectionSelection | None"] = ContextVar(
 )
 
 from models.models import MCPResponse, UnityInstanceInfo
+from services.operation_permissions import JsonValue
 from services.command_progress import (
     CAPABILITY,
     MAX_PROGRESS_BYTES,
@@ -65,6 +67,14 @@ from transport.native_arbitration import (
     decode_native_reply,
     valid_generation,
     may_retry_wire_attempt,
+)
+from transport.command_resume import (
+    CAPABILITY as RESUME_CAPABILITY,
+    CommandResumeInvocation,
+    CommandResumeInterrupted,
+    CommandResumeOwner,
+    CommandResumeAbandoned,
+    resume_eligible,
 )
 
 
@@ -402,7 +412,7 @@ class UnityConnection:
                             StdioAuthentication(
                                 self.auth_token_provider or read_stdio_token, handshake_deadline
                             ),
-                            capabilities=(CAPABILITY, ARBITRATION_CAPABILITY),
+                            capabilities=(CAPABILITY, ARBITRATION_CAPABILITY, RESUME_CAPABILITY),
                         )
                         self._check_deadline(handshake_deadline)
                         self.authenticated_session = session
@@ -763,6 +773,7 @@ class UnityConnection:
         _catalog_guard=None,
         _operation_guard=None,
         _progress: ProgressSink | None = None,
+        _resume: CommandResumeInvocation | None = None,
     ) -> dict[str, Any]:
         """Send a command with retry/backoff and port rediscovery. Pings only when requested.
 
@@ -815,7 +826,11 @@ class UnityConnection:
         # Preflight: if Unity reports reloading, return a structured hint so clients can retry politely
         try:
             status = read_status_file(target_hash)
-            if status and (status.get("reloading") or status.get("reason") == "reloading"):
+            if (
+                status
+                and (status.get("reloading") or status.get("reason") == "reloading")
+                and not (_resume is not None and _resume.cancelled.is_set())
+            ):
                 # Reload invalidates the socket; drop it under the I/O lock so this
                 # close is serialized against the send/recv block, then reconnect next call.
                 with self._command_lock(deadline):
@@ -848,6 +863,8 @@ class UnityConnection:
                     # so we reconnect instead of writing to a dead connection.
                     self._ensure_live_connection()
                     if _operation_guard is not None and not _operation_guard():
+                        if _resume is not None:
+                            raise CommandResumeInterrupted()
                         return MCPResponse(
                             success=False,
                             error="operation_target_changed",
@@ -859,6 +876,8 @@ class UnityConnection:
                     if _expected_generation is not None and (
                         not self.sock or self.session_generation != _expected_generation
                     ):
+                        if _resume is not None:
+                            raise CommandResumeInterrupted()
                         return MCPResponse(
                             success=False,
                             error="observation_generation_changed",
@@ -879,6 +898,8 @@ class UnityConnection:
                         command_type,
                     )
                     if _operation_guard is not None and not _operation_guard():
+                        if _resume is not None:
+                            raise CommandResumeInterrupted()
                         return MCPResponse(
                             success=False,
                             error="operation_target_changed",
@@ -915,6 +936,17 @@ class UnityConnection:
                         )
                     # Build payload
                     session = self.authenticated_session
+                    if _resume is not None and (
+                        session is None
+                        or RESUME_CAPABILITY not in session.capabilities
+                        or session.resume_generation != _resume.editor_session_id
+                    ):
+                        return MCPResponse(
+                            success=False,
+                            error="Original Editor continuation is unavailable",
+                            hint="inspect_state_before_retry",
+                            data={"reason": "outcome_unknown", "command": command_type},
+                        )
                     arbitration = (
                         NativeArbitrationRequest.create(session.arbitration_generation)
                         if session is not None
@@ -935,6 +967,7 @@ class UnityConnection:
                                     if arbitration is not None
                                     else {}
                                 ),
+                                **({"resume": _resume.to_wire()} if _resume is not None else {}),
                             }
                         ).encode("utf-8")
 
@@ -976,6 +1009,8 @@ class UnityConnection:
                             self._check_deadline(deadline)
                         self._set_socket_deadline(self.sock, deadline)
                         command_sent = True
+                        if _resume is not None:
+                            _resume.dispatch()
                         self.sock.sendall(payload)
                         self._check_deadline(deadline)
                         logger.info(
@@ -1024,7 +1059,12 @@ class UnityConnection:
                     resp = _decode_unity_response(response_data)
                     if not isinstance(resp, dict):
                         raise _UnityProtocolError("Unity response must be a JSON object")
+                    if _resume is not None:
+                        resp = _resume.unwrap(resp)
                     reply = decode_native_reply(resp, arbitration)
+                    if _resume is not None:
+                        _resume.validate_reply(reply)
+                        reply = _resume.normalize_reply(command_type, reply)
                     response_received = True
                     if reply.not_started:
                         raise NativeNotStarted(
@@ -1063,10 +1103,14 @@ class UnityConnection:
                             observed=True,
                             cause="observed",
                         )
+                    if _resume is not None and _resume.state in {"unknown", "unavailable"}:
+                        return resp
                     if resp.get("status") == "error":
                         err = resp.get("error") or resp.get("message", "Unknown Unity error")
                         raise Exception(err)
                     return resp.get("result", {})
+                except CommandResumeInterrupted:
+                    raise
                 except Exception as e:
                     logger.warning(
                         "Unity communication attempt %d failed (%s)", attempt + 1, type(e).__name__
@@ -1087,6 +1131,12 @@ class UnityConnection:
                         raise
                     self.disconnect()
                     if command_sent:
+                        if (
+                            _resume is not None
+                            and not _resume.cancelled.is_set()
+                            and not protocol_error
+                        ):
+                            raise CommandResumeInterrupted() from e
                         if blender_timeout is not None:
                             # Preserve the Blender bridge's existing exception contract.
                             raise
@@ -1913,6 +1963,7 @@ def send_command_with_retry(
     deadline = _command_deadline(command_type, params)
     connection = None
     expected_generation = None
+    resume_owner = CommandResumeOwner(deadline)
     try:
         while True:
             try:
@@ -1924,6 +1975,7 @@ def send_command_with_retry(
                     retry_ms=retry_ms,
                     retry_on_reload=retry_on_reload,
                     _deadline=deadline,
+                    _resume_owner=resume_owner,
                     **({"_connection": connection} if connection is not None else {}),
                     **(
                         {"_expected_generation": expected_generation}
@@ -1934,11 +1986,16 @@ def send_command_with_retry(
                 )
                 return response
             except NativeNotStarted as refusal:
-                if not may_retry_wire_attempt(command_type, refusal.reply):
+                resume = resume_owner.invocation
+                if not (
+                    resume is not None
+                    and resume.waiting
+                    or may_retry_wire_attempt(command_type, refusal.reply)
+                ):
                     return refusal.reply.payload
                 if connection is None:
                     connection = _ConnectionSelection(deadline).run(
-                        get_unity_connection, instance_id
+                        get_unity_connection, resume_owner.instance_id or instance_id
                     )
                 expected_generation = refusal.transport_generation
                 params = refusal.params
@@ -1948,6 +2005,17 @@ def send_command_with_retry(
                 time.sleep(
                     min(0.1, max(0.0, deadline - time.monotonic())) if deadline is not None else 0.1
                 )
+            except CommandResumeInterrupted:
+                resume = resume_owner.invocation
+                if resume is None:
+                    raise
+                resume.interrupted()
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError("Unity command deadline expired during reload") from None
+                connection = _resume_stdio_sync(
+                    resume_owner.instance_id or instance_id, resume_owner
+                )
+                expected_generation = None
     finally:
         if _progress is not None:
             with contextlib.suppress(Exception):
@@ -1991,6 +2059,7 @@ def _send_command_with_retry(
     _catalog_guard=None,
     _operation_guard=None,
     _progress: ProgressSink | None = None,
+    _resume_owner: CommandResumeOwner | None = None,
 ) -> tuple[dict[str, Any] | MCPResponse, UnityConnection]:
     """Retain dispatch provenance for async completion without another lookup.
 
@@ -2011,6 +2080,23 @@ def _send_command_with_retry(
         time.time() - t_get_conn,
         command_type,
     )
+    session = conn.authenticated_session
+    resume = (
+        _resume_owner.bind(session.resume_generation)
+        if _resume_owner is not None
+        and session is not None
+        and RESUME_CAPABILITY in session.capabilities
+        and resume_eligible(command_type, params, custom=_catalog_guard is not None)
+        else _resume_owner.invocation
+        if _resume_owner is not None
+        else None
+    )
+    if _resume_owner is not None and _resume_owner.cancelled.is_set():
+        raise CommandResumeAbandoned()
+    if resume is not None:
+        if _resume_owner.instance_id is None:
+            _resume_owner.instance_id = conn.instance_id
+        params = _resume_owner.snapshot(params)
     if max_retries is None:
         max_retries = getattr(config, "reload_max_retries", None)
     if retry_ms is None:
@@ -2038,6 +2124,7 @@ def _send_command_with_retry(
         **({"_catalog_guard": _catalog_guard} if _catalog_guard is not None else {}),
         **({"_operation_guard": _operation_guard} if _operation_guard is not None else {}),
         **({"_progress": _progress} if _progress is not None else {}),
+        **({"_resume": resume} if resume is not None else {}),
     )
     retries = 0
     wait_started = None
@@ -2051,6 +2138,8 @@ def _send_command_with_retry(
         and (max_retries is None or retries < max_retries)
         and (deadline is None or time.monotonic() < deadline)
     ):
+        if _resume_owner is not None and _resume_owner.cancelled.is_set():
+            raise CommandResumeAbandoned()
         if wait_started is None:
             wait_started = time.monotonic()
             logger.debug(
@@ -2091,6 +2180,8 @@ def _send_command_with_retry(
         if (deadline is not None and now >= deadline) or now - wait_started >= max_wait_s:
             break
         retries += 1
+        if _resume_owner is not None and _resume_owner.cancelled.is_set():
+            raise CommandResumeAbandoned()
         response = conn.send_command(
             command_type,
             params,
@@ -2102,6 +2193,7 @@ def _send_command_with_retry(
                 else {}
             ),
             **({"_progress": _progress} if _progress is not None else {}),
+            **({"_resume": resume} if resume is not None else {}),
         )
         reason = _extract_response_reason(response)
 
@@ -2135,6 +2227,21 @@ def _send_command_with_retry(
         command_type,
     )
     return response, conn
+
+
+def _resume_stdio_sync(instance_id: str | None, owner: CommandResumeOwner) -> UnityConnection:
+    """Keep a sync sender's exact target while the original reload budget remains."""
+    while not owner.cancelled.is_set():
+        if owner.deadline is not None and time.monotonic() >= owner.deadline:
+            raise TimeoutError("Unity command deadline expired during reload")
+        try:
+            return _ConnectionSelection(owner.deadline).run(get_unity_connection, instance_id)
+        except (ConnectionError, OSError):
+            remaining = (
+                max(0.0, owner.deadline - time.monotonic()) if owner.deadline is not None else 0.1
+            )
+            time.sleep(min(0.1, remaining))
+    raise CommandResumeAbandoned()
 
 
 class _AsyncDispatchState:
@@ -2267,6 +2374,8 @@ async def _async_send_command_response(
         if _deadline is not None
         else policy_deadline
     )
+    resume_owner = CommandResumeOwner(deadline)
+    connection = None
     try:
         owner_pool = _resync_pool.get()
         if owner_pool is not None and owner_pool._retired:
@@ -2311,9 +2420,15 @@ async def _async_send_command_response(
                         _progress=_progress,
                         _connection=connection,
                         _operation_guard=operation_guard,
+                        _resume_owner=resume_owner,
                     )
                 except NativeNotStarted as refusal:
-                    if not may_retry_wire_attempt(command_type, refusal.reply):
+                    resume = resume_owner.invocation
+                    if not (
+                        resume is not None
+                        and resume.waiting
+                        or may_retry_wire_attempt(command_type, refusal.reply)
+                    ):
                         return refusal.reply.payload
                     params = refusal.params
                     _expected_generation = refusal.transport_generation
@@ -2321,7 +2436,38 @@ async def _async_send_command_response(
                     # this wait. A status/cancel caller can now own the sole wire.
                     async with asyncio.timeout_at(deadline):
                         await asyncio.sleep(0.1)
+                except CommandResumeInterrupted:
+                    resume = resume_owner.invocation
+                    if resume is None:
+                        raise
+                    resume.interrupted()
+                    fresh = await _resume_stdio_connection(
+                        connection.instance_id, target, resume_owner, owner_pool
+                    )
+                    if fresh is None:
+                        return MCPResponse(
+                            success=False,
+                            error="Original Editor continuation is unavailable",
+                            hint="inspect_state_before_retry",
+                            data={"reason": "outcome_unknown", "command": command_type},
+                        )
+                    connection, target = fresh
+                    operation_guard = target.is_current
+                    _expected_generation = target.transport_generation
+    except asyncio.CancelledError:
+        resume_owner.cancel()
+        if connection is not None and resume_owner.invocation is not None:
+            await _cancel_stdio_resume(connection, resume_owner, command_type, params)
+        raise
     except TimeoutError:
+        resume = resume_owner.invocation
+        if resume is not None and resume.dispatched and resume.state != "queued":
+            return MCPResponse(
+                success=False,
+                error="Unity command deadline expired while observing its original invocation",
+                hint="inspect_state_before_retry",
+                data={"reason": "outcome_unknown", "command": command_type},
+            )
         return MCPResponse(
             success=False,
             error="Unity command deadline expired before dispatch",
@@ -2329,6 +2475,99 @@ async def _async_send_command_response(
         )
     except Exception as error:
         return MCPResponse(success=False, error=str(error))
+
+
+async def _resume_stdio_connection(
+    instance_id: str | None,
+    original: "OperationTarget",
+    owner: CommandResumeOwner,
+    pool: "UnityConnectionPool | None",
+) -> "tuple[UnityConnection, OperationTarget] | None":
+    """Reconnect without changing the owning project, principal or Editor process."""
+    import asyncio  # noqa: ANYIO_OK -- existing connection lifetime is asyncio-owned.
+    from services.registry.operation_target import capture_stdio_target
+
+    resume = owner.invocation
+    if resume is None:
+        return None
+    while not owner.cancelled.is_set():
+        if owner.deadline is not None and time.monotonic() >= owner.deadline:
+            raise TimeoutError("Unity command deadline expired during reload")
+        try:
+            connection = await _select_connection(instance_id, owner.deadline, pool)
+        except (ConnectionError, OSError):
+            remaining = (
+                max(0.0, owner.deadline - time.monotonic()) if owner.deadline is not None else 0.1
+            )
+            await asyncio.sleep(min(0.1, remaining))
+            continue
+        target = capture_stdio_target(connection)
+        session = connection.authenticated_session
+        if (
+            target.scope.key != original.scope.key
+            or not target.is_current()
+            or session is None
+            or RESUME_CAPABILITY not in session.capabilities
+            or session.resume_generation != resume.editor_session_id
+        ):
+            return None
+        return connection, target
+    return None
+
+
+async def _cancel_stdio_resume(
+    connection: UnityConnection,
+    owner: CommandResumeOwner,
+    command: str,
+    params: dict[str, JsonValue],
+) -> None:
+    """Use a separate authenticated control socket while the business reader is occupied."""
+    import asyncio  # noqa: ANYIO_OK -- cleanup stays in the existing pool's executor lifetime.
+    import anyio
+
+    resume = owner.invocation
+    if resume is None:
+        return
+    params = owner.snapshot(params)
+
+    def cancel():
+        receipt_token = execution_owner.set(None)
+        control = UnityConnection(
+            host=connection.host,
+            port=connection.port,
+            instance_id=connection.instance_id,
+            auth_token_provider=connection.auth_token_provider,
+            allow_legacy_auth=False,
+        )
+        try:
+            control.send_command(
+                command,
+                params,
+                max_attempts=0,
+                deadline=time.monotonic() + 1.0,
+                _resume=resume,
+            )
+        except (OSError, RuntimeError, ValueError):
+            # The canceled sender never resumes. Dormant native work also has
+            # its original deadline when a reload prevents tombstone delivery.
+            return
+        finally:
+            control.disconnect()
+            execution_owner.reset(receipt_token)
+
+    loop = asyncio.get_running_loop()
+    pool = _resync_pool.get()
+    if pool is None and connection._pool_owner is not None:
+        pool = connection._pool_owner()
+    if pool is not None and pool._retired:
+        return
+    worker = submit_owned_executor(loop, None, cancel)
+    if pool is not None:
+        pool._resync_workers.add(worker)
+        worker.add_done_callback(pool._resync_workers.discard)
+    worker.add_done_callback(_consume_async_exception)
+    with anyio.move_on_after(1.0, shield=True):
+        await asyncio.shield(worker)
 
 
 async def _async_send_command_attempt(
@@ -2347,6 +2586,7 @@ async def _async_send_command_attempt(
     _progress: ProgressSink | None = None,
     _connection: UnityConnection | None = None,
     _operation_guard=None,
+    _resume_owner: CommandResumeOwner | None = None,
 ) -> dict[str, Any] | MCPResponse:
     """Admit one blocking command worker per actual connection and event loop.
 
@@ -2435,6 +2675,7 @@ async def _async_send_command_attempt(
                     retry_on_reload=retry_on_reload,
                     _connection=conn,
                     _deadline=deadline,
+                    **({"_resume_owner": _resume_owner} if _resume_owner is not None else {}),
                     **(
                         {"_expected_generation": _expected_generation}
                         if _expected_generation is not None
@@ -2487,6 +2728,8 @@ async def _async_send_command_attempt(
                     result, conn = await asyncio.shield(completion)
         except asyncio.CancelledError:
             state.abort_before_start()
+            if _resume_owner is not None:
+                _resume_owner.cancel()
             raise
 
         # After a successful command, check if the connection was freshly
@@ -2508,7 +2751,7 @@ async def _async_send_command_attempt(
             )
 
         return result
-    except NativeNotStarted:
+    except (NativeNotStarted, CommandResumeInterrupted):
         raise
     except Exception as e:
         return MCPResponse(success=False, error=str(e))

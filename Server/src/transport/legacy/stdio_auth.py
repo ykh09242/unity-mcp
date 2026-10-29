@@ -14,6 +14,7 @@ import time
 from typing import Callable
 
 from transport.native_arbitration import CAPABILITY, valid_generation
+from transport.command_resume import CAPABILITY as RESUME_CAPABILITY
 
 
 class StdioAuthenticationError(RuntimeError):
@@ -32,6 +33,7 @@ class StdioAuthenticatedSession:
     session_id: str
     capabilities: frozenset[str]
     arbitration_generation: str | None = None
+    resume_generation: str | None = None
 
     @property
     def session_generation(self) -> str:
@@ -45,7 +47,7 @@ def _optional_capabilities(value: object) -> frozenset[str]:
         or any(type(item) is not str or not 1 <= len(item) <= 64 for item in value)
     ):
         return frozenset()
-    return frozenset(value).intersection({"command_progress_v1", CAPABILITY})
+    return frozenset(value).intersection({"command_progress_v1", CAPABILITY, RESUME_CAPABILITY})
 
 
 def authentication_proof(token: str, fields: list[str]) -> str:
@@ -144,4 +146,11 @@ def authenticate_stdio_session(
     arbitration_generation = reply.get("arbitration_generation") if CAPABILITY in accepted else None
     if CAPABILITY in accepted and not valid_generation(arbitration_generation):
         raise StdioAuthenticationError("Invalid native arbitration generation")
-    return StdioAuthenticatedSession(generation, session, accepted, arbitration_generation)
+    resume_generation = reply.get("resume_generation") if RESUME_CAPABILITY in accepted else None
+    if RESUME_CAPABILITY in accepted and (
+        CAPABILITY not in accepted or not valid_generation(resume_generation)
+    ):
+        raise StdioAuthenticationError("Invalid command continuation generation")
+    return StdioAuthenticatedSession(
+        generation, session, accepted, arbitration_generation, resume_generation
+    )
