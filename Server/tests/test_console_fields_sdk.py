@@ -17,8 +17,9 @@ def test_registered_console_schema_accepts_projection_and_preserves_defaults():
         sent = []
         body = "Full error body\\nsecond line\\n" + "x" * 1000
         native = {"type": "Error", "message": body, "file": "Assets/Fixture.cs", "line": 17, "stackTrace": "Fixture:Method()"}
-        async def send(fn, instance, name, params):
+        async def send(fn, instance, name, params, *, retry_on_reload):
             assert name == "read_console"
+            assert retry_on_reload is False
             sent.append(copy.deepcopy(params))
             item = {key: native[key] for key in params["fields"]} if "fields" in params else copy.deepcopy(native)
             return {"success": True, "data": [item]}
@@ -30,7 +31,7 @@ def test_registered_console_schema_accepts_projection_and_preserves_defaults():
             for mode in ("2026-07-28", "legacy"):
                 async with Client(server, mode=mode) as client:
                     tools = await client.list_tools()
-                    schema = next(tool.inputSchema for tool in tools if tool.name == "read_console")
+                    schema = next(tool.input_schema for tool in tools if tool.name == "read_console")
                     assert "fields" in schema["properties"]
                     for field_input in (["type", "message"], '["type", "message"]'):
                         before = len(sent)

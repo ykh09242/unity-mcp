@@ -76,7 +76,9 @@ def test_editor_readiness_nested_validation_and_existing_advice(tmp_path):
                         advice = result["data"]["advice"]
                         assert advice["ready_for_tools"] is (not stale)
                         assert advice["blocking_reasons"] == (["stale_status"] if stale else [])
-                        assert advice["recommended_retry_after_ms"] == (500 if stale else 0)
+                        assert advice["warnings"] == ["external_changes_scan_unknown"]
+                        assert advice["recommended_retry_after_ms"] == (500 if stale else None)
+                        assert advice["recommended_next_action"] == ("retry_later" if stale else "inspect_scan_scope")
                     reply = {"success": True, "data": {}}
                     result = json.loads((await client.read_resource("mcpforunity://editor/state"))[0].text)
                     assert result["success"] and result["data"]["sequence"] == 0

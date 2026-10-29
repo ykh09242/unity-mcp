@@ -77,7 +77,9 @@ async def test_sdk_explicit_compile_poll_recovers_registry_gap(
 
     target_hash = "99a6a4da94b65b84"
     compile_id = "a" * 32
-    expected = native_job(compile_id)
+    native = native_job(compile_id)
+    # Public status is derived from compiler evidence, not the raw peer label.
+    expected = {**native, "status": "failed"}
     if not other_connected:
         await command_hub.registry.unregister("session")
     waiting = asyncio.Event()
@@ -96,7 +98,7 @@ async def test_sdk_explicit_compile_poll_recovers_registry_gap(
         assert message["params"] == {"compile_id": compile_id}
         await command_hub.endpoint._handle_command_result(
             command_hub.websocket,
-            CommandResultMessage(id=message["id"], result={"success": True, "data": expected}),
+            CommandResultMessage(id=message["id"], result={"success": True, "data": native}),
         )
 
     command_hub.websocket.send_json = compile_result

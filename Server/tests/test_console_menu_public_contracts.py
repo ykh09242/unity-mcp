@@ -194,7 +194,7 @@ async def main():
             discovered = {tool.name: tool for tool in await client.list_tools()}
             check('read_console' in discovered and 'execute_menu_item' in discovered, 'full tool registration')
             for tool in ('read_console', 'execute_menu_item'):
-                print('FULL_SCHEMA', mode, tool, json.dumps(discovered[tool].inputSchema, sort_keys=True))
+                print('FULL_SCHEMA', mode, tool, json.dumps(discovered[tool].input_schema, sort_keys=True))
                 print('FULL_ANNOTATIONS', mode, tool, discovered[tool].annotations.model_dump_json())
             resources = {str(resource.uri): resource for resource in await client.list_resources()}
             check('mcpforunity://menu-items' in resources, 'actual resource discovery')
@@ -209,7 +209,13 @@ async def main():
                         raw = {'status': 'success', 'result': response} if wrapped else response
                         result, sent = await invoke(client, tool, payload, mode)
                         check(sent == [('Project@fixture', tool, expected)], 'exact SDK/coercion ' + repr(payload))
-                        wanted = response if tool == 'read_console' else model_response(response)
+                        wanted = model_response(response)
+                        if tool == 'read_console':
+                            wanted = {**response}
+                            if expected['action'] == 'get':
+                                wanted['observation'] = ({'status': 'available'} if not failed else {
+                                    'status': 'unavailable', 'next_action': 'retry_console_read',
+                                    'retry_after_ms': 500})
                         check(result.structured_content == wanted, 'existing response/error model')
             for include in (False, True):
                 for shape in ('list', 'lines', 'items'):
@@ -219,6 +225,7 @@ async def main():
                     data = entries if shape == 'list' else {shape: entries, 'nextCursor': None, 'total': 0}
                     raw = {'success': True, 'data': data}
                     wanted = copy.deepcopy(raw)
+                    wanted['observation'] = {'status': 'available'}
                     if not include:
                         selected = wanted['data'] if shape == 'list' else wanted['data'][shape]
                         selected[0].pop('stacktrace')

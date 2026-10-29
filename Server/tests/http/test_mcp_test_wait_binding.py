@@ -724,7 +724,12 @@ async def test_actual_factory_hosted_waits_capture_current_tenant_and_project_an
                     "arguments": {"job_id": "owned", "wait_timeout": 1},
                 }
                 ordinary = await bound_call(client, "tools/call", params, selector=selector)
-                assert ordinary["result"]["structuredContent"]["result"]["data"]["error"] == sid
+                assert ordinary["result"]["isError"] is False
+                ordinary_data = ordinary["result"]["structuredContent"]
+                assert ordinary_data["success"] is True
+                assert ordinary_data["data"]["job_id"] == "owned"
+                assert ordinary_data["data"]["status"] == "succeeded"
+                assert ordinary_data["data"]["error"] == sid
                 created = await bound_call(
                     client, "tools/call", params, tasks=True, selector=selector
                 )

@@ -15,7 +15,8 @@ def test_console_all_and_defaults_at_actual_sdk_boundary():
         module=importlib.import_module("services.tools.read_console")
         sent=[]
         async def instance(ctx): return None
-        async def send(fn, instance, command, params):
+        async def send(fn, instance, command, params, *, retry_on_reload=True):
+            assert retry_on_reload is (params["action"] == "clear")
             sent.append(params)
             return {"success":True,"data":{"lines":[]}}
         module.get_unity_instance_from_context=instance
