@@ -42,6 +42,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             public int Polls;
             public int CompleteAfter = 3;
             public Action Begin;
+            public Action Poll;
 
             public void BeginReset()
             {
@@ -55,6 +56,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                 get
                 {
                     Polls++;
+                    Poll?.Invoke();
                     return Polls >= CompleteAfter;
                 }
             }
@@ -178,6 +180,45 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That(participant.Begins, Is.EqualTo(1));
             Assert.That(replacement.Begins, Is.Zero);
             Assert.That(engine.State.Failure.Code, Is.EqualTo("reset_participant_unavailable"));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CompletionCallbackCannotReleaseOrReplaceAnyCapturedRegistration(bool replace)
+        {
+            foreach (bool releaseSelf in new[] { false, true })
+            {
+                string id = "execution.callback." + replace + "." + releaseSelf;
+                var first = new ResetParticipant { CompleteAfter = 1 };
+                var last = new ResetParticipant { CompleteAfter = 1 };
+                var replacement = new ResetParticipant();
+                IDisposable firstToken = Register(id + ".first", first);
+                IDisposable lastToken = Register(id + ".last", last);
+                last.Poll = () =>
+                {
+                    (releaseSelf ? lastToken : firstToken).Dispose();
+                    if (replace)
+                        Register(id + (releaseSelf ? ".last" : ".first"), replacement);
+                };
+                JObject json = Json();
+                ((JArray)json["setup_steps"]).Add(
+                    new JObject
+                    {
+                        ["name"] = "reset",
+                        ["action"] = "reset_state",
+                        ["reset_ids"] = new JArray(id + ".first", id + ".last"),
+                    }
+                );
+                var engine = Engine(new Host(), json);
+                Finish(engine);
+                Assert.That(engine.State.Status, Is.EqualTo("failed"));
+                Assert.That(engine.State.Failure.Code, Is.EqualTo("reset_participant_unavailable"));
+                Assert.That(engine.State.Failure.Target, Is.EqualTo(id + (releaseSelf ? ".last" : ".first")));
+                Assert.That(first.Begins, Is.EqualTo(1));
+                Assert.That(last.Begins, Is.EqualTo(1));
+                Assert.That(replacement.Begins, Is.Zero);
+                Assert.That(engine.State.Steps.Single(step => step.Stage == "cleanup").Status, Is.EqualTo("passed"));
+            }
         }
 
         [TestCase(false)]

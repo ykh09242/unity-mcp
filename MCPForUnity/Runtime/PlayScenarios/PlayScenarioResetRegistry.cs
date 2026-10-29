@@ -157,6 +157,10 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 bool complete = true;
                 for (int index = 0; index < _ids.Length; index++)
                     complete &= Borrow(index).IsResetComplete;
+                // Project callbacks may release or replace a participant already polled.
+                // Revalidate the entire captured set without replaying any project code.
+                for (int index = 0; index < _ids.Length; index++)
+                    Borrow(index);
                 return complete;
             }
         }
