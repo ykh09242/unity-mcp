@@ -14,6 +14,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from models import MCPResponse
+from models.response_lifetime import ResponsePollLifetime
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 import transport.unity_transport as unity_transport
@@ -28,6 +29,10 @@ from services.tools.get_compile_job import parse_compile_job, read_compile_job, 
 logger = logging.getLogger(__name__)
 
 REFRESH_READY_TIMEOUT_SECONDS = 300.0
+
+
+class _ObservationUnavailable(Exception):
+    """Reject a replacement without retaining its payload or losing prior evidence."""
 
 
 def _in_pytest() -> bool:
@@ -60,49 +65,76 @@ async def wait_for_editor_ready(
 
     start = time.monotonic()
     deadline = start + timeout_s
-    while time.monotonic() < deadline:
-        data = None
+    observation_timeout = None
+
+    async def notify_observer(data, remaining):
+        nonlocal observation_timeout
+        if on_observation is None:
+            return
         try:
-            state_resp = await asyncio.wait_for(
+            await asyncio.wait_for(on_observation(data), timeout=remaining)
+        except TimeoutError as error:
+            if data is None or data["advice"].get("ready_for_tools") is not True:
+                observation_timeout = error
+            # Optional evidence collection cannot erase observed readiness.
+
+    async def read_state():
+        try:
+            response = await asyncio.wait_for(
                 editor_state.get_editor_state_authoritative(ctx),
                 timeout=max(0.0, deadline - time.monotonic()),
             )
-            if time.monotonic() >= deadline:
-                break
-            state = state_resp.model_dump() if hasattr(state_resp, "model_dump") else state_resp
+            state = response.model_dump() if hasattr(response, "model_dump") else response
             data = (
                 state.get("data")
                 if isinstance(state, dict) and state.get("success") is True
                 else None
             )
+            if not isinstance(data, dict) or not isinstance(data.get("advice"), dict):
+                raise _ObservationUnavailable()
         except Exception:
-            pass  # not ready yet — keep polling
+            raise _ObservationUnavailable() from None
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            break
-        advice = (data or {}).get("advice") if isinstance(data, dict) else None
-        observed_ready = isinstance(advice, dict) and advice.get("ready_for_tools") is True
-        if on_observation is not None:
-            try:
-                await asyncio.wait_for(on_observation(data), timeout=remaining)
-            except TimeoutError:
-                if not observed_ready:
-                    raise
-                # Optional evidence collection cannot erase readiness already
-                # observed before the deadline. Its work is cancelled and drained.
-        if isinstance(advice, dict) and "recovery_required" in (
-            advice.get("blocking_reasons") or []
-        ):
-            return (False, time.monotonic() - start)
-        if observed_ready:
-            return (True, time.monotonic() - start)
-        if time.monotonic() >= deadline:
-            break
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        await asyncio.sleep(min(0.25, remaining))
+            raise _ObservationUnavailable()
+        # Commit replacement ownership only once the observer has consumed the
+        # state. Expired replies must not release the summary still being delivered.
+        await notify_observer(data, remaining)
+        return data
 
+    async with ResponsePollLifetime() as observations:
+        try:
+            while time.monotonic() < deadline:
+                data = advice = None
+                try:
+                    # read_state bounds both awaits with the same absolute deadline.
+                    data = await observations.fetch(read_state(), timeout=None)
+                except _ObservationUnavailable:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    await notify_observer(None, remaining)
+                if observation_timeout is not None:
+                    # Adopt consumed evidence before the caller handles this timeout.
+                    break
+                advice = data.get("advice") if isinstance(data, dict) else None
+                observed_ready = isinstance(advice, dict) and advice.get("ready_for_tools") is True
+                if isinstance(advice, dict) and "recovery_required" in (
+                    advice.get("blocking_reasons") or []
+                ):
+                    return (False, time.monotonic() - start)
+                if observed_ready:
+                    return (True, time.monotonic() - start)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(0.25, remaining))
+        finally:
+            if on_observation is None:
+                observations.discard()
+
+    if observation_timeout is not None:
+        raise observation_timeout
     return (False, time.monotonic() - start)
 
 
@@ -507,6 +539,16 @@ async def refresh_unity(
     compile_polled = False
     last_compile_poll = None
 
+    async def read_observed_compile():
+        observed = await read_compile_job(unity_instance, compile_id)
+        if (
+            observed["outcome"] == "unknown"
+            and observed["state"] == "finished"
+            and observed["session_id"] is None
+        ):
+            raise _ObservationUnavailable(observed["reason"])
+        return observed
+
     async def observe_refresh(state):
         nonlocal compilation, compilation_observed_at, compilation_observation_error
         nonlocal readiness, resulting_state, compile_polled, last_compile_poll
@@ -544,16 +586,9 @@ async def refresh_unity(
         # Also retain this marker if the outer readiness budget cancels the read.
         compilation_observation_error = "observation_unavailable"
         try:
-            observed = await asyncio.wait_for(
-                read_compile_job(unity_instance, compile_id), timeout=min(1.0, remaining)
+            observed = await compile_observations.fetch(
+                read_observed_compile(), timeout=min(1.0, remaining)
             )
-            if (
-                observed["outcome"] == "unknown"
-                and observed["state"] == "finished"
-                and observed["session_id"] is None
-            ):
-                compilation_observation_error = observed["reason"]
-                return
             if (
                 observed["last_successful_compilation"] is None
                 and observed["session_id"] == compilation["session_id"]
@@ -565,93 +600,96 @@ async def refresh_unity(
             compilation_observed_at = time.monotonic()
             compilation_observation_error = None
             compile_polled = True
+        except _ObservationUnavailable as error:
+            compilation_observation_error = str(error)
         except Exception:
             # A failed read cannot erase previously observed compiler evidence.
             compilation_observation_error = "observation_unavailable"
 
-    # Optional server-side wait loop (defensive): if Unity tool doesn't wait or returns quickly,
-    # poll the canonical editor_state resource until ready or timeout.
-    ready_confirmed = False
-    if wait_for_ready:
-        readiness = {"ready": False, "blocking_reasons": None, "warnings": []}
-        remaining = deadline - time.monotonic()
-        if remaining > 0:
-            try:
-                ready_confirmed, _ = await wait_for_editor_ready(
-                    ctx, timeout_s=remaining, on_observation=observe_refresh
+    async with ResponsePollLifetime() as compile_observations:
+        # Optional server-side wait loop (defensive): if Unity tool doesn't wait or returns quickly,
+        # poll the canonical editor_state resource until ready or timeout.
+        ready_confirmed = False
+        if wait_for_ready:
+            readiness = {"ready": False, "blocking_reasons": None, "warnings": []}
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                try:
+                    ready_confirmed, _ = await wait_for_editor_ready(
+                        ctx, timeout_s=remaining, on_observation=observe_refresh
+                    )
+                except TimeoutError:
+                    pass  # The observer shares the readiness deadline; never extend it.
+            readiness["ready"] = ready_confirmed
+
+            if (
+                not ready_confirmed
+                and readiness.get("next_action") == "inspect_native_work_then_restart_editor"
+            ):
+                return with_compilation(
+                    MCPResponse(
+                        success=False,
+                        error="recovery_required",
+                        message="Editor readiness is blocked by native work requiring recovery. Inspect native work before restarting the Editor; do not repeat the refresh.",
+                        data={
+                            **(native_data if isinstance(native_data, dict) else {}),
+                            "reason": "recovery_required",
+                            "timeout": False,
+                            "retryable": False,
+                            "recovery_action": "inspect_native_work_then_restart_editor",
+                        },
+                    )
                 )
-            except TimeoutError:
-                pass  # The observer shares the readiness deadline; never extend it.
-        readiness["ready"] = ready_confirmed
+
+            # If we timed out without confirming readiness, log and return failure
+            if not ready_confirmed:
+                logger.warning(
+                    "refresh_unity: Timed out after %ss waiting for editor to become ready",
+                    timeout_seconds,
+                )
+                return with_compilation(
+                    MCPResponse(
+                        success=False,
+                        message=f"Timed out after {timeout_seconds:g}s waiting for editor readiness; inspect dispatch and compilation evidence.",
+                        data={
+                            **(native_data if isinstance(native_data, dict) else {}),
+                            "timeout": True,
+                            "wait_seconds": timeout_seconds,
+                        },
+                    )
+                )
 
         if (
-            not ready_confirmed
-            and readiness.get("next_action") == "inspect_native_work_then_restart_editor"
+            compile_id
+            and wait_for_ready
+            and not compile_polled
+            and (recovered_from_disconnect or compilation["reason"] != "tracking_unsupported")
         ):
-            return with_compilation(
-                MCPResponse(
-                    success=False,
-                    error="recovery_required",
-                    message="Editor readiness is blocked by native work requiring recovery. Inspect native work before restarting the Editor; do not repeat the refresh.",
-                    data={
-                        **(native_data if isinstance(native_data, dict) else {}),
-                        "reason": "recovery_required",
-                        "timeout": False,
-                        "retryable": False,
-                        "recovery_action": "inspect_native_work_then_restart_editor",
-                    },
-                )
-            )
+            await observe_refresh(None)
 
-        # If we timed out without confirming readiness, log and return failure
-        if not ready_confirmed:
-            logger.warning(
-                "refresh_unity: Timed out after %ss waiting for editor to become ready",
-                timeout_seconds,
+        # A dispatch-only response does not confirm import. Acknowledge only the edits
+        # observed before dispatch, leaving concurrent or subsequently sampled edits dirty.
+        response_data = response_dict.get("data")
+        refresh_performed = (
+            response_dict.get("success") is True
+            and scope in ("assets", "all")
+            and (
+                not isinstance(response_data, dict)
+                or response_data.get("refresh_triggered") is not False
             )
-            return with_compilation(
-                MCPResponse(
-                    success=False,
-                    message=f"Timed out after {timeout_seconds:g}s waiting for editor readiness; inspect dispatch and compilation evidence.",
-                    data={
-                        **(native_data if isinstance(native_data, dict) else {}),
-                        "timeout": True,
-                        "wait_seconds": timeout_seconds,
-                    },
-                )
-            )
-
-    if (
-        compile_id
-        and wait_for_ready
-        and not compile_polled
-        and (recovered_from_disconnect or compilation["reason"] != "tracking_unsupported")
-    ):
-        await observe_refresh(None)
-
-    # A dispatch-only response does not confirm import. Acknowledge only the edits
-    # observed before dispatch, leaving concurrent or subsequently sampled edits dirty.
-    response_data = response_dict.get("data")
-    refresh_performed = (
-        response_dict.get("success") is True
-        and scope in ("assets", "all")
-        and (
-            not isinstance(response_data, dict)
-            or response_data.get("refresh_triggered") is not False
         )
-    )
-    if ready_confirmed and refresh_performed and dirty_snapshot is not None:
-        external_changes_scanner.clear_dirty(dirty_instance, expected=dirty_snapshot)
+        if ready_confirmed and refresh_performed and dirty_snapshot is not None:
+            external_changes_scanner.clear_dirty(dirty_instance, expected=dirty_snapshot)
 
-    if recovered_from_disconnect:
+        if recovered_from_disconnect:
+            return with_compilation(
+                MCPResponse(
+                    success=True,
+                    message="Editor is ready after the refresh response was lost; refresh execution is unconfirmed.",
+                    data={"recovered_from_disconnect": True},
+                )
+            )
+
         return with_compilation(
-            MCPResponse(
-                success=True,
-                message="Editor is ready after the refresh response was lost; refresh execution is unconfirmed.",
-                data={"recovered_from_disconnect": True},
-            )
+            MCPResponse(**response_dict) if isinstance(response, dict) else response
         )
-
-    return with_compilation(
-        MCPResponse(**response_dict) if isinstance(response, dict) else response
-    )
