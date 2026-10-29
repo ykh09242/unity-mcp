@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -38,6 +39,7 @@ namespace MCPForUnityTests.Editor.Services
         private string _currentJobId;
         private string _jobSession;
         private string _currentJobSession;
+        private string _admissionWriteSession;
         private long _persistTime;
         private ITestRunnerService _originalService;
         private object _originalOwner;
@@ -80,6 +82,8 @@ namespace MCPForUnityTests.Editor.Services
             _currentJobId = TestJobManager.CurrentJobId;
             _jobSession = SessionState.GetString("MCPForUnity.TestJobsV1", string.Empty);
             _currentJobSession = SessionState.GetString("MCPForUnity.CurrentTestJobIdV1", string.Empty);
+            _admissionWriteSession = SessionState.GetString("MCPForUnity.TestAdmissionWriteV1", string.Empty);
+            SessionState.SetString("MCPForUnity.TestAdmissionWriteV1", string.Empty);
             _persistTime = (long)typeof(TestJobManager).GetField("_lastPersistUnixMs", StaticPrivate).GetValue(null);
             Jobs.Clear();
             SetCurrent(null);
@@ -125,6 +129,7 @@ namespace MCPForUnityTests.Editor.Services
                 typeof(TestJobManager).GetField("_lastPersistUnixMs", StaticPrivate).SetValue(null, _persistTime);
                 SessionState.SetString("MCPForUnity.TestJobsV1", _jobSession);
                 SessionState.SetString("MCPForUnity.CurrentTestJobIdV1", _currentJobSession);
+                SessionState.SetString("MCPForUnity.TestAdmissionWriteV1", _admissionWriteSession);
             }
             finally
             {
@@ -416,11 +421,11 @@ namespace MCPForUnityTests.Editor.Services
         {
             int schedules = 0;
             SetSchedule(_ => "scheduled-" + ++schedules);
-            string oldId = TestJobManager.StartJob(TestMode.EditMode, initTimeoutMs: 1);
+            string oldId = TestJobManager.StartJob(TestMode.EditMode, initTimeoutMs: 1000);
             Task<TestRunResult> oldRun = _runner.LastRun;
             var queuedDiscovery = _service.GetTestsAsync(TestMode.EditMode);
             Assert.IsFalse(queuedDiscovery.IsCompleted);
-            Jobs[oldId].StartedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 100;
+            Jobs[oldId].StartedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 2000;
             Assert.AreEqual(TestJobStatus.Failed, TestJobManager.GetJob(oldId).Status);
             await ExpectFailure(oldRun, "Test job failed to initialize");
             await ExpectFailure(queuedDiscovery, "has not stopped");
@@ -671,6 +676,189 @@ namespace MCPForUnityTests.Editor.Services
             public Task<TestRunResult> RunTestsAsync(TestMode mode, TestFilterOptions options = null) => LastRun = _service.RunTestsAsync(mode, options);
 
             public Task<IReadOnlyList<Dictionary<string, string>>> GetTestsAsync(TestMode? mode) => _service.GetTestsAsync(mode);
+        }
+
+        [Test]
+        public void OversizedInitialAdmissionDoesNotBlockLaterValidJob()
+        {
+            var gate = (SemaphoreSlim)typeof(TestRunnerService).GetField("_operationLock", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+            gate.Wait();
+            Assert.Throws<InvalidOperationException>(() =>
+                TestJobManager.StartJob(TestMode.EditMode, new TestFilterOptions { TestNames = new[] { new string('x', 5000) } })
+            );
+            Assert.IsNull(TestJobManager.CurrentJobId);
+            Assert.AreEqual("", SessionState.GetString("MCPForUnity.TestAdmissionWriteV1", ""));
+            string id = TestJobManager.StartJob(TestMode.EditMode, new TestFilterOptions { TestNames = new[] { "Suite.Valid" } });
+            Assert.AreEqual(id, TestJobManager.CurrentJobId);
+            var persisted = JObject.Parse(SessionState.GetString("MCPForUnity.TestJobsV1", ""));
+            Assert.AreEqual("Suite.Valid", (string)persisted["jobs"].Single(row => (string)row["job_id"] == id)["run_admission"]["filters"]["TestNames"][0]);
+        }
+
+        [Test]
+        public void QueuedRun_PersistsExactFiltersBeforeWaitingForAdmission()
+        {
+            var gate = (SemaphoreSlim)typeof(TestRunnerService).GetField("_operationLock", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+            gate.Wait();
+            var options = new TestFilterOptions
+            {
+                TestNames = new[] { "Suite.Pending" },
+                GroupNames = new[] { "Suite.*" },
+                CategoryNames = new[] { "Slow" },
+                AssemblyNames = new[] { "EditorTests" },
+            };
+            string id = TestJobManager.StartJob(TestMode.EditMode, options);
+            options.TestNames[0] = "mutated";
+            var persisted = JObject.Parse(SessionState.GetString("MCPForUnity.TestJobsV1", ""));
+            var admission = persisted["jobs"].Single(row => (string)row["job_id"] == id)["run_admission"];
+            Assert.NotNull(admission, "Accepted work must retain a declarative pre-Execute record across reload.");
+            Assert.AreEqual("queued", (string)admission["phase"]);
+            Assert.AreEqual("Suite.Pending", (string)admission["filters"]["TestNames"][0]);
+            Assert.AreEqual("Suite.*", (string)admission["filters"]["GroupNames"][0]);
+            Assert.AreEqual("Slow", (string)admission["filters"]["CategoryNames"][0]);
+            Assert.AreEqual("EditorTests", (string)admission["filters"]["AssemblyNames"][0]);
+            Assert.IsFalse(TestRunnerService.HasOwnedNativeRun, "Waiting for the service semaphore is not native ownership.");
+        }
+
+        private static void InvokeJobManager(string method) => typeof(TestJobManager).GetMethod(method, StaticPrivate).Invoke(null, null);
+
+        private void ReloadQueuedJob()
+        {
+            InvokeJobManager("BeforeAssemblyReload");
+            _service.Dispose();
+            typeof(TestRunnerService).GetField("_activeRunOwner", StaticPrivate).SetValue(null, null);
+            SessionState.SetString(RetiredRunSessionKey, "");
+            Jobs.Clear();
+            SetCurrent(null);
+            InvokeJobManager("TryRestoreFromSessionState");
+            _service = new TestRunnerService();
+            _api = (TestRunnerApi)typeof(TestRunnerService).GetField("_testRunnerApi", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+            MCPServiceLocator.Register<ITestRunnerService>(_service);
+            InvokeJobManager("RestoreRunningJobCallbacks");
+        }
+
+        [Test]
+        public void QueuedRun_RepeatedReloadResumesSameJobOnceWithFrozenOptions()
+        {
+            var gate = (SemaphoreSlim)typeof(TestRunnerService).GetField("_operationLock", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+            gate.Wait();
+            var options = new TestFilterOptions { TestNames = new[] { "Suite.Original" }, CategoryNames = new[] { "OriginalCategory" } };
+            string id = TestJobManager.StartJob(TestMode.EditMode, options);
+            options.TestNames[0] = "Suite.Changed";
+            ReloadQueuedJob();
+            Assert.IsFalse(TestRunnerService.HasOwnedNativeRun, "Restoring queued work must not attach an invoked-run callback owner.");
+            ReloadQueuedJob();
+            int calls = 0;
+            SetSchedule(settings =>
+            {
+                calls++;
+                Assert.AreEqual(id, TestJobManager.CurrentJobId);
+                Assert.AreEqual("Suite.Original", settings.filters[0].testNames[0]);
+                Assert.AreEqual("OriginalCategory", settings.filters[0].categoryNames[0]);
+                Assert.AreEqual("executing", (string)JObject.Parse(SessionState.GetString("MCPForUnity.TestJobsV1", ""))["jobs"][0]["run_admission"]["phase"]);
+                return "fedcba0987654321fedcba0987654321";
+            });
+            InvokeJobManager("ResumeQueuedJobsAfterReload");
+            InvokeJobManager("RestoreRunningJobCallbacks");
+            InvokeJobManager("ResumeQueuedJobsAfterReload");
+            Assert.AreEqual(1, calls);
+            Assert.AreEqual(id, TestJobManager.CurrentJobId);
+            _service.RunFinished(null);
+        }
+
+        [Test]
+        public void ExecutingRun_ReloadRestoresCallbacksWithoutReplaying()
+        {
+            int calls = 0;
+            SetSchedule(_ =>
+            {
+                calls++;
+                return "fedcba0987654321fedcba0987654321";
+            });
+            string id = TestJobManager.StartJob(TestMode.EditMode);
+            Assert.AreEqual(1, calls);
+            Assert.AreEqual("executing", (string)Jobs[id].RunAdmission["phase"]);
+            // Simulate teardown of the old managed domain without retiring its native run.
+            typeof(TestRunnerService).GetField("_activeRunOwner", StaticPrivate).SetValue(null, null);
+            ReloadQueuedJob();
+            SetSchedule(_ =>
+            {
+                calls++;
+                return "unexpected";
+            });
+            InvokeJobManager("ResumeQueuedJobsAfterReload");
+            Assert.AreEqual(1, calls);
+            Assert.IsTrue(TestRunnerService.HasOwnedNativeRun);
+            _service.RunFinished(null);
+        }
+
+        [Test]
+        public void QueuedRun_FailedFenceWriteBlocksReloadReplay()
+        {
+            var gate = (SemaphoreSlim)typeof(TestRunnerService).GetField("_operationLock", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+            gate.Wait();
+            string id = TestJobManager.StartJob(TestMode.EditMode);
+            // Exceed the bounded row size to force the guarded fence snapshot to fail.
+            Jobs[id].RunAdmission["filters"] = new JObject
+            {
+                ["TestNames"] = new JArray(new string('x', 5000)),
+                ["GroupNames"] = JValue.CreateNull(),
+                ["CategoryNames"] = JValue.CreateNull(),
+                ["AssemblyNames"] = JValue.CreateNull(),
+            };
+            Assert.Throws<InvalidOperationException>(() => TestJobManager.MarkRunExecuting(id));
+            Assert.AreEqual(id, SessionState.GetString("MCPForUnity.TestAdmissionWriteV1", ""));
+            // The last durable history still says queued; the write marker denies replay.
+            Jobs.Clear();
+            SetCurrent(null);
+            InvokeJobManager("TryRestoreFromSessionState");
+            int calls = 0;
+            SetSchedule(_ =>
+            {
+                calls++;
+                return "unexpected";
+            });
+            InvokeJobManager("ResumeQueuedJobsAfterReload");
+            Assert.AreEqual(0, calls);
+        }
+
+        [Test]
+        public void QueuedRun_CancelBeforeReloadRemainsCancelledWithoutNativeControl()
+        {
+            var gate = (SemaphoreSlim)typeof(TestRunnerService).GetField("_operationLock", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+            gate.Wait();
+            string id = TestJobManager.StartJob(TestMode.EditMode);
+            TestJobManager.CancelJob(id);
+            ReloadQueuedJob();
+            int calls = 0;
+            SetSchedule(_ =>
+            {
+                calls++;
+                return "unexpected";
+            });
+            InvokeJobManager("ResumeQueuedJobsAfterReload");
+            Assert.AreEqual(0, calls);
+            Assert.AreEqual(TestJobStatus.Cancelled, Jobs[id].Status);
+            Assert.IsFalse(TestRunnerService.HasOwnedNativeRun);
+        }
+
+        [Test]
+        public void QueuedRun_OriginalInitializationDeadlineIsNotRenewedByReload()
+        {
+            var gate = (SemaphoreSlim)typeof(TestRunnerService).GetField("_operationLock", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);
+            gate.Wait();
+            string id = TestJobManager.StartJob(TestMode.EditMode, initTimeoutMs: 1);
+            Jobs[id].StartedUnixMs -= 10000;
+            ReloadQueuedJob();
+            int calls = 0;
+            SetSchedule(_ =>
+            {
+                calls++;
+                return "unexpected";
+            });
+            InvokeJobManager("ResumeQueuedJobsAfterReload");
+            Assert.AreEqual(0, calls);
+            Assert.AreEqual(TestJobStatus.Failed, Jobs[id].Status);
+            Assert.IsFalse(TestRunnerService.HasOwnedNativeRun);
         }
 
         [Test]

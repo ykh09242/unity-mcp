@@ -52,6 +52,7 @@ namespace MCPForUnity.Editor.Services
         public int ReloadGeneration { get; set; }
         public string ResultAvailability { get; set; }
         public JObject NativeControl { get; set; }
+        public JObject RunAdmission { get; set; }
         internal NativeTestRunControl Control;
     }
 
@@ -72,12 +73,14 @@ namespace MCPForUnity.Editor.Services
         // SessionState survives domain reloads within the same Unity Editor session.
         private const string SessionKeyJobs = "MCPForUnity.TestJobsV1";
         private const string SessionKeyCurrentJobId = "MCPForUnity.CurrentTestJobIdV1";
+        private const string SessionKeyAdmissionWrite = "MCPForUnity.TestAdmissionWriteV1";
 
         private static readonly object LockObj = new();
         private static readonly Dictionary<string, TestJob> Jobs = new();
         private static string _currentJobId;
         private static long _lastPersistUnixMs;
         private static bool _controlMonitor;
+        private static readonly HashSet<string> ResumingJobs = new();
         private static TestJobResultStore ResultStoreOverride = null;
         private static TestJobResultStore _resultStore;
         internal static TestJobResultStore ResultStore
@@ -105,10 +108,20 @@ namespace MCPForUnity.Editor.Services
             TryRestoreFromSessionState();
             AssemblyReloadEvents.beforeAssemblyReload += BeforeAssemblyReload;
             RestoreRunningJobCallbacks();
+            if (_currentJobId != null && Jobs.TryGetValue(_currentJobId, out var restored) && (string)restored.RunAdmission?["phase"] == "queued")
+            {
+                string restoredId = _currentJobId;
+                EditorApplication.delayCall += () =>
+                {
+                    if (CurrentJobId == restoredId)
+                        ResumeQueuedJobsAfterReload();
+                };
+            }
         }
 
         private static void BeforeAssemblyReload()
         {
+            ResumingJobs.Clear();
             TestRunnerService.CheckpointBeforeReload();
             foreach (var job in Jobs.Values.Where(j => j.Status == TestJobStatus.Running))
             {
@@ -141,6 +154,9 @@ namespace MCPForUnity.Editor.Services
                         return;
                     }
                 }
+
+                if ((string)job.RunAdmission?["phase"] == "queued")
+                    return;
 
                 // Polling a restored job never otherwise touches the lazy test service.
                 // Re-register callbacks now, before the Test Runner resumes after reload.
@@ -243,6 +259,7 @@ namespace MCPForUnity.Editor.Services
             public string result_availability { get; set; }
             public int omitted_failure_previews { get; set; }
             public JObject native_control { get; set; }
+            public JObject run_admission { get; set; }
         }
 
         private static TestJobStatus ParseStatus(string status)
@@ -348,6 +365,12 @@ namespace MCPForUnity.Editor.Services
                         row["native_control"] = NativeTestRunControl.CorruptState(id);
                         corrupt = true;
                     }
+                    if (row["run_admission"] != null && row["run_admission"].Type != JTokenType.Null && !ValidRunAdmission(row["run_admission"]))
+                    {
+                        // An invalid admission record can never authorize a replay.
+                        row["run_admission"] = new JObject { ["phase"] = "invalid" };
+                        corrupt = true;
+                    }
                     if (corrupt)
                         row["result_availability"] = "corrupt";
                     if (Encoding.UTF8.GetByteCount(row.ToString(Formatting.None)) > 4096)
@@ -421,6 +444,7 @@ namespace MCPForUnity.Editor.Services
                             ReloadGeneration = Math.Max(pj.reload_generation, pj.awaiting_reload_resume ? 1 : 0),
                             ResultAvailability = pj.result_availability ?? "legacy_unavailable",
                             NativeControl = pj.native_control,
+                            RunAdmission = pj.run_admission,
                             Result = null,
                         };
                     }
@@ -448,7 +472,7 @@ namespace MCPForUnity.Editor.Services
                     {
                         // Managed native ownership survives history age. Its captured GUID, final
                         // progress and idle observer decide termination; wall clock is not evidence.
-                        if (currentJob.Status == TestJobStatus.Running && currentJob.Control == null)
+                        if (currentJob.Status == TestJobStatus.Running && currentJob.Control == null && (string)currentJob.RunAdmission?["phase"] != "queued")
                         {
                             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                             long staleCutoffMs = 5 * 60 * 1000; // 5 minutes
@@ -476,7 +500,9 @@ namespace MCPForUnity.Editor.Services
 
         private static string Preview(string text) => text == null ? null : TestJobResultStore.BoundedText(text, 256, out _);
 
-        private static bool PersistToSessionState(bool force = false)
+        private static bool PersistToSessionState(bool force = false) => PersistToSessionStateCore(force, validateOnly: false);
+
+        private static bool PersistToSessionStateCore(bool force, bool validateOnly)
         {
             OperationActivity.Invalidate();
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -534,6 +560,7 @@ namespace MCPForUnity.Editor.Services
                             reload_generation = j.ReloadGeneration,
                             result_availability = j.ResultAvailability,
                             native_control = j.NativeControl,
+                            run_admission = j.RunAdmission,
                         })
                         .ToList();
 
@@ -559,6 +586,8 @@ namespace MCPForUnity.Editor.Services
                 string encoded = JsonConvert.SerializeObject(snapshot);
                 if (Encoding.UTF8.GetByteCount(encoded) > 48 * 1024)
                     throw new InvalidDataException("Test job metadata exceeds its byte limit.");
+                if (validateOnly)
+                    return true;
                 SessionState.SetString(SessionKeyCurrentJobId, snapshot.current_job_id ?? string.Empty);
                 SessionState.SetString(SessionKeyJobs, encoded);
                 if (SessionState.GetString(SessionKeyJobs, "") != encoded)
@@ -643,10 +672,40 @@ namespace MCPForUnity.Editor.Services
 
         internal static object CancelJob(string id)
         {
+            if (!Jobs.TryGetValue(id, out var job))
+            {
+                if (!NativeTestRunControl.Available)
+                    throw new NotSupportedException("unsupported_native_test_control");
+                throw new ArgumentException("Test job not found.");
+            }
+            bool uninvoked =
+                job.Control == null && job.NativeControl == null
+                || job.Control != null
+                    && job.Control.NativeGuid == null
+                    && (bool?)job.Control.State["native_invoked"] == false
+                    && (bool?)job.Control.State["observation_lost"] != true;
+            if (job.Status == TestJobStatus.Running && (string)job.RunAdmission?["phase"] == "queued" && uninvoked)
+            {
+                job.Status = TestJobStatus.Cancelled;
+                job.CompletionKind = "cancelled";
+                job.FinishedUnixMs = job.LastUpdateUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                if (_currentJobId == id)
+                    _currentJobId = null;
+                if (!PersistAdmissionTransition(id))
+                {
+                    TestRunnerService.RetireJob(id, "Test job cancellation could not be persisted.");
+                    throw new InvalidOperationException("Test job cancellation could not be confirmed.");
+                }
+                TestRunnerService.RetireJob(id, "Test job cancelled before native execution.");
+                return new
+                {
+                    job_id = id,
+                    status = "cancelled",
+                    native_control = job.NativeControl,
+                };
+            }
             if (!NativeTestRunControl.Available)
                 throw new NotSupportedException("unsupported_native_test_control");
-            if (!Jobs.TryGetValue(id, out var job))
-                throw new ArgumentException("Test job not found.");
             if (job.Control == null)
                 throw new NotSupportedException("unsupported_native_test_control: job has no captured native control ownership");
             if (!job.Control.Released)
@@ -775,6 +834,11 @@ namespace MCPForUnity.Editor.Services
                 Error = null,
                 Result = null,
                 InitTimeoutMs = initTimeoutMs,
+                RunAdmission = new JObject
+                {
+                    ["phase"] = "queued",
+                    ["filters"] = filterOptions == null ? JValue.CreateNull() : JObject.FromObject(filterOptions),
+                },
             };
 
             // Single lock scope for check-and-set to avoid TOCTOU race
@@ -787,19 +851,41 @@ namespace MCPForUnity.Editor.Services
                 Jobs[jobId] = job;
                 _currentJobId = jobId;
             }
-            if (runTimeoutMs > 0 && EnsureNativeControl(jobId, runTimeoutMs) == null)
+            if (runTimeoutMs > 0)
             {
+                job.Control = NativeTestRunControl.Create(jobId, runTimeoutMs);
+                if (job.Control == null)
+                {
+                    Jobs.Remove(jobId);
+                    _currentJobId = null;
+                    throw new NotSupportedException("unsupported_native_test_control");
+                }
+                BindControl(job);
+            }
+            // A deterministic serialization or size rejection has not made the
+            // initial admission uncertain, so it must not leave the write marker set.
+            if (!PersistToSessionStateCore(force: true, validateOnly: true))
+            {
+                job.Control?.Dispose();
                 Jobs.Remove(jobId);
                 _currentJobId = null;
-                throw new NotSupportedException("unsupported_native_test_control");
+                throw new InvalidOperationException("Test job admission exceeds bounded metadata limits.");
             }
-            PersistToSessionState(force: true);
+            if (!PersistAdmissionTransition(jobId))
+            {
+                job.Control?.RetireQueued();
+                Jobs.Remove(jobId);
+                _currentJobId = null;
+                throw new InvalidOperationException("Test job admission could not be persisted.");
+            }
 
+            // This domain already owns the original waiter; only a later domain may resume it.
+            ResumingJobs.Add(jobId);
             // Kick the run (must be called on main thread; our command handlers already run there).
             Task<TestRunResult> task;
             try
             {
-                task = MCPServiceLocator.Tests.RunTestsAsync(mode, filterOptions);
+                task = MCPServiceLocator.Tests.RunTestsAsync(mode, FiltersFor(job.RunAdmission));
             }
             catch (Exception ex)
             {
@@ -808,33 +894,149 @@ namespace MCPForUnity.Editor.Services
                 throw;
             }
 
-            void FinalizeJob(Action finalize)
-            {
-                // Ensure state mutation happens on main thread to avoid Unity API surprises.
-                EditorApplication.delayCall += () =>
-                {
-                    try
-                    {
-                        finalize();
-                    }
-                    catch (Exception ex)
-                    {
-                        McpLog.Error($"[TestJobManager] Finalize failed: {ex.Message}\n{ex.StackTrace}");
-                    }
-                };
-            }
-
-            task.ContinueWith(
-                t =>
-                {
-                    // NOTE: We now finalize jobs deterministically from the TestRunnerService RunFinished callback.
-                    // This continuation is retained as a safety net in case RunFinished is not delivered.
-                    FinalizeJob(() => FinalizeFromTask(jobId, t));
-                },
-                TaskScheduler.Default
-            );
+            AttachFinalizer(jobId, task);
 
             return jobId;
+        }
+
+        private static bool PersistAdmissionTransition(string id)
+        {
+            // If the snapshot write fails after the marker, a later domain cannot
+            // interpret an older queued snapshot as permission to run.
+            try
+            {
+                if (!string.IsNullOrEmpty(SessionState.GetString(SessionKeyAdmissionWrite, "")))
+                    return false;
+                SessionState.SetString(SessionKeyAdmissionWrite, id);
+                if (SessionState.GetString(SessionKeyAdmissionWrite, "") != id || !PersistToSessionState(force: true))
+                    return false;
+                SessionState.SetString(SessionKeyAdmissionWrite, "");
+                return SessionState.GetString(SessionKeyAdmissionWrite, "") == "";
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static bool ValidRunAdmission(JToken token)
+        {
+            if (token is not JObject admission || admission.Count != 2 || admission["phase"]?.Type != JTokenType.String)
+                return false;
+            string phase = (string)admission["phase"];
+            if (phase != "queued" && phase != "executing")
+                return false;
+            var filters = admission["filters"];
+            if (filters?.Type == JTokenType.Null)
+                return true;
+            if (filters is not JObject options || options.Count != 4)
+                return false;
+            foreach (string key in new[] { "TestNames", "GroupNames", "CategoryNames", "AssemblyNames" })
+            {
+                var value = options[key];
+                if (value?.Type == JTokenType.Null)
+                    continue;
+                if (value is not JArray array || array.Any(item => item.Type != JTokenType.String && item.Type != JTokenType.Null))
+                    return false;
+            }
+            return true;
+        }
+
+        private static TestFilterOptions FiltersFor(JObject admission) =>
+            admission["filters"].Type == JTokenType.Null ? null : admission["filters"].ToObject<TestFilterOptions>();
+
+        internal static void MarkRunExecuting(string id)
+        {
+            if (id == null)
+                return;
+            if (!Jobs.TryGetValue(id, out var job) || job.Status != TestJobStatus.Running)
+                throw new InvalidOperationException("Test job admission is no longer queued.");
+            // Jobs created by older clients or test integrations have no admission record.
+            if (job.RunAdmission == null)
+                return;
+            if ((string)job.RunAdmission["phase"] != "queued")
+                throw new InvalidOperationException("Test job admission is no longer queued.");
+            if (
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - job.StartedUnixMs
+                > (job.InitTimeoutMs > 0 ? job.InitTimeoutMs : DefaultInitializationTimeoutMs)
+            )
+                throw new InvalidOperationException("Test job failed to initialize (tests did not start within timeout)");
+            job.RunAdmission["phase"] = "executing";
+            if (!PersistAdmissionTransition(id))
+                throw new InvalidOperationException("Test job execution fence could not be persisted.");
+        }
+
+        private static void ResumeQueuedJobsAfterReload()
+        {
+            EditorApplication.update -= ResumeQueuedJobsAfterReload;
+            string id = CurrentJobId;
+            if (id == null || !Jobs.TryGetValue(id, out var job) || job.Status != TestJobStatus.Running || (string)job.RunAdmission?["phase"] != "queued")
+                return;
+            if (!string.IsNullOrEmpty(SessionState.GetString(SessionKeyAdmissionWrite, "")))
+                return;
+            if (!ValidRunAdmission(job.RunAdmission) || !Enum.TryParse(job.Mode, out TestMode mode) || !Enum.IsDefined(typeof(TestMode), mode))
+                return;
+            if (job.NativeControl != null && job.Control == null)
+                return;
+            if (
+                job.Control != null
+                && (
+                    (bool?)job.Control.State["native_invoked"] != false
+                    || (bool?)job.Control.State["observation_lost"] == true
+                    || job.Control.Released
+                    || job.Control.Requested
+                )
+            )
+                return;
+            if (ResumingJobs.Contains(id))
+                return;
+            if (
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - job.StartedUnixMs
+                > (job.InitTimeoutMs > 0 ? job.InitTimeoutMs : DefaultInitializationTimeoutMs)
+            )
+            {
+                TestRunnerService.RetireJob(id, "Test job failed to initialize (tests did not start within timeout)");
+                FinalizeFromTask(
+                    id,
+                    Task.FromException<TestRunResult>(new TimeoutException("Test job failed to initialize (tests did not start within timeout)"))
+                );
+                return;
+            }
+            if (EditorStateCache.GetActualIsCompiling() || EditorApplication.isUpdating || EditorStateCache.IsDomainReloadPending)
+            {
+                EditorApplication.update += ResumeQueuedJobsAfterReload;
+                return;
+            }
+            if (!ResumingJobs.Add(id))
+                return;
+            try
+            {
+                var task = MCPServiceLocator.Tests.RunTestsAsync(mode, FiltersFor(job.RunAdmission));
+                AttachFinalizer(id, task);
+            }
+            catch (Exception ex)
+            {
+                FinalizeFromTask(id, Task.FromException<TestRunResult>(ex));
+            }
+        }
+
+        private static void AttachFinalizer(string jobId, Task<TestRunResult> task)
+        {
+            task.ContinueWith(
+                t =>
+                    EditorApplication.delayCall += () =>
+                    {
+                        try
+                        {
+                            FinalizeFromTask(jobId, t);
+                        }
+                        catch (Exception ex)
+                        {
+                            McpLog.Error($"[TestJobManager] Finalize failed: {ex.Message}\n{ex.StackTrace}");
+                        }
+                    },
+                TaskScheduler.Default
+            );
         }
 
         public static TestRunResult FinalizeCurrentJobFromRunFinished(TestRunResult resultPayload, TestRunResult previous = null)
@@ -1492,6 +1694,7 @@ namespace MCPForUnity.Editor.Services
 
         private static void FinalizeFromTask(string jobId, Task<TestRunResult> task)
         {
+            ResumingJobs.Remove(jobId);
             lock (LockObj)
             {
                 if (!Jobs.TryGetValue(jobId, out var existing))

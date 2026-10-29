@@ -324,6 +324,7 @@ namespace MCPForUnity.Editor.Services
                     throw new InvalidOperationException(
                         "Editor became busy before test execution; wait for compilation, import and reload to settle before retrying."
                     );
+                TestJobManager.MarkRunExecuting(jobId);
                 nativeControl?.MarkExecuting();
                 nativeInvoked = true;
                 string nativeGuid = _testRunnerApi.Execute(settings);
