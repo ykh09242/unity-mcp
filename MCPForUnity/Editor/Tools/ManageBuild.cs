@@ -154,15 +154,9 @@ namespace MCPForUnity.Editor.Tools
 
             var options = BuildRunner.CreateBuildOptions(target, outputPath, scenes, buildOptions, subtarget);
 
-            if (scriptingImplementation.HasValue)
-                PlayerSettings.SetScriptingBackend(
-                    BuildTargetMapping.GetNamedBuildTarget(target, (StandaloneBuildSubtarget)subtarget),
-                    scriptingImplementation.Value
-                );
-
             string jobId = BuildJobStore.CreateJobId();
             var job = new BuildJob(jobId, target, outputPath);
-            return BuildRunner.ScheduleBuild(job, options);
+            return BuildRunner.SchedulePreparedBuild(job, options, scriptingImplementation);
         }
 
         private static object HandleBuildPlan(JObject request, bool apply)
@@ -191,28 +185,7 @@ namespace MCPForUnity.Editor.Tools
                     );
                 BuildPlayerOptions options = plan.CopyOptions();
                 var job = new BuildJob(BuildJobStore.CreateJobId(), options.target, options.locationPathName);
-                return BuildRunner.ScheduleBuild(
-                    job,
-                    options,
-                    beforeBuild: () =>
-                    {
-                        BuildPlan current;
-                        try
-                        {
-                            current = BuildPlan.Capture(detached);
-                        }
-                        catch (BuildPlanException error)
-                        {
-                            throw new InvalidOperationException("build_plan_stale: " + error.Message + " Request a fresh plan before applying.");
-                        }
-                        if (!string.Equals(expected, current.Sha256, StringComparison.OrdinalIgnoreCase))
-                            throw new InvalidOperationException(
-                                "build_plan_stale: Build observations changed before execution. Request a fresh plan before applying."
-                            );
-                        if (plan.RequestedBackend.HasValue)
-                            PlayerSettings.SetScriptingBackend(plan.NamedTarget, plan.RequestedBackend.Value);
-                    }
-                );
+                return BuildRunner.SchedulePreparedBuild(job, options, plan.RequestedBackend, detached, plan);
             }
             catch (BuildPlanException error)
             {
@@ -334,17 +307,9 @@ namespace MCPForUnity.Editor.Tools
                 options = buildOptions,
             };
 
-            if (scriptingImplementation.HasValue)
-                PlayerSettings.SetScriptingBackend(
-                    targetGroup == BuildTargetGroup.Standalone && subtarget == StandaloneBuildSubtarget.Server
-                        ? NamedBuildTarget.Server
-                        : NamedBuildTarget.FromBuildTargetGroup(targetGroup),
-                    scriptingImplementation.Value
-                );
-
             string jobId = BuildJobStore.CreateJobId();
             var job = new BuildJob(jobId, target, outputPath);
-            return BuildRunner.ScheduleProfileBuild(job, options);
+            return BuildRunner.SchedulePreparedProfileBuild(job, options, scriptingImplementation, (int)subtarget);
         }
 
         private static bool TryGetProfileBuildTarget(
@@ -694,35 +659,24 @@ namespace MCPForUnity.Editor.Tools
                 string batchId = BuildJobStore.CreateBatchId();
                 var batch = new BatchJob(batchId);
                 batch.State = BuildJobState.Building;
-                BuildJobStore.AddBatchJob(batch);
+                var checkpoint = new BuildQueueEntry
+                {
+                    Id = batchId,
+                    Batch = true,
+                    DeadlineUnixMs = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
+                };
 
                 foreach (var (bt, path) in resolvedTargets)
                 {
                     var child = new BuildJob(BuildJobStore.CreateJobId(), bt, path);
                     batch.Children.Add(child);
+                    var options = BuildRunner.CreateBuildOptions(bt, path, null, buildOpts, (int)StandaloneBuildSubtarget.Player);
+                    BuildQueueChild frozen = BuildQueueChild.Capture(child, options);
+                    frozen.SwitchTarget = true;
+                    checkpoint.Children.Add(frozen);
                 }
 
-                BuildRunner.ScheduleNextBatchBuild(
-                    batch,
-                    index =>
-                    {
-                        var child = batch.Children[index];
-                        var group = BuildTargetMapping.GetTargetGroup(child.Target);
-
-                        // Platform switch is required — ensures correct shader variants,
-                        // asset import settings, and scripting defines for the target
-                        if (EditorUserBuildSettings.activeBuildTarget != child.Target)
-                        {
-                            if (!EditorUserBuildSettings.SwitchActiveBuildTarget(group, child.Target))
-                                throw new InvalidOperationException($"Failed to switch to build platform '{child.Target}'.");
-                        }
-
-                        int subtarget = (int)StandaloneBuildSubtarget.Player;
-                        var options = BuildRunner.CreateBuildOptions(child.Target, child.OutputPath, null, buildOpts, subtarget);
-                        BuildRunner.ScheduleBuild(child, options);
-                        return child;
-                    }
-                );
+                BuildQueueCheckpoint.Enqueue(checkpoint, jobs: batch.Children, batch: batch);
 
                 return new PendingResponse(
                     $"Batch build started ({batch.Children.Count} builds).",
@@ -755,7 +709,12 @@ namespace MCPForUnity.Editor.Tools
                 string batchId = BuildJobStore.CreateBatchId();
                 var batch = new BatchJob(batchId);
                 batch.State = BuildJobState.Building;
-                BuildJobStore.AddBatchJob(batch);
+                var checkpoint = new BuildQueueEntry
+                {
+                    Id = batchId,
+                    Batch = true,
+                    DeadlineUnixMs = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
+                };
 
                 for (int i = 0; i < profiles.Length; i++)
                 {
@@ -764,23 +723,26 @@ namespace MCPForUnity.Editor.Tools
                     string path = $"{outputDir}/{name}/{PlayerSettings.productName}";
                     var child = new BuildJob(BuildJobStore.CreateJobId(), target, path);
                     batch.Children.Add(child);
+                    var options = new BuildPlayerWithProfileOptions
+                    {
+                        buildProfile = loadedProfiles[i],
+                        locationPathName = path,
+                        options = buildOpts,
+                    };
+                    BuildQueueChild frozen = BuildQueueChild.Capture(
+                        child,
+                        new BuildPlayerOptions
+                        {
+                            target = target,
+                            locationPathName = path,
+                            options = buildOpts,
+                        }
+                    );
+                    BuildRunner.CaptureProfile(frozen, options);
+                    checkpoint.Children.Add(frozen);
                 }
 
-                BuildRunner.ScheduleNextBatchBuild(
-                    batch,
-                    index =>
-                    {
-                        var child = batch.Children[index];
-                        var opts = new BuildPlayerWithProfileOptions
-                        {
-                            buildProfile = loadedProfiles[index],
-                            locationPathName = child.OutputPath,
-                            options = buildOpts,
-                        };
-                        BuildRunner.ScheduleProfileBuild(child, opts);
-                        return child;
-                    }
-                );
+                BuildQueueCheckpoint.Enqueue(checkpoint, jobs: batch.Children, batch: batch);
 
                 return new PendingResponse(
                     $"Batch build started ({batch.Children.Count} builds).",
@@ -807,6 +769,12 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse(jobIdResult.ErrorMessage);
 
             string jobId = jobIdResult.Value;
+
+            if (BuildQueueCheckpoint.Cancel(jobId))
+                return new SuccessResponse(
+                    "Build cancellation recorded. An invoked native build will finish; queued work will not start.",
+                    new { job_id = jobId, state = "cancelled" }
+                );
 
             var batchJob = BuildJobStore.GetBatchJob(jobId);
             if (batchJob != null)

@@ -21,6 +21,8 @@ namespace MCPForUnityTests.EditMode.Tools
         private BuildJob originalLastCompleted;
         private bool capturedStore;
         private bool originalNativeOwner;
+        private string originalQueue;
+        private bool originalQueueWriting;
         private static HashSet<string> NativeOwners =>
             (HashSet<string>)typeof(BuildRunner).GetField("NativeOwners", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
         private static HashSet<string> InvokedOwners =>
@@ -65,6 +67,11 @@ namespace MCPForUnityTests.EditMode.Tools
             originalLastCompleted = BuildJobStore.LastCompletedJob;
             capturedStore = true;
             originalNativeOwner = SessionState.GetBool("MCPForUnity.Build.NativeOwnerV1", false);
+            originalQueue = SessionState.GetString(BuildQueueCheckpoint.StorageKey, "");
+            originalQueueWriting = SessionState.GetBool(BuildQueueCheckpoint.WritingKey, false);
+            SessionState.EraseString(BuildQueueCheckpoint.StorageKey);
+            SessionState.EraseBool(BuildQueueCheckpoint.WritingKey);
+            ForgetQueueDomain();
             Jobs.Clear();
             Batches.Clear();
             LastCompleted.SetValue(null, null);
@@ -86,6 +93,9 @@ namespace MCPForUnityTests.EditMode.Tools
                     NativeOwners.Clear();
                     InvokedOwners?.Clear();
                     SessionState.SetBool("MCPForUnity.Build.NativeOwnerV1", originalNativeOwner);
+                    SessionState.SetString(BuildQueueCheckpoint.StorageKey, originalQueue);
+                    SessionState.SetBool(BuildQueueCheckpoint.WritingKey, originalQueueWriting);
+                    ForgetQueueDomain();
                     Jobs.Clear();
                     Batches.Clear();
                     foreach (var pair in originalJobs)
@@ -108,6 +118,14 @@ namespace MCPForUnityTests.EditMode.Tools
             return EditorApplication.update == null
                 ? Enumerable.Empty<EditorApplication.CallbackFunction>()
                 : EditorApplication.update.GetInvocationList().Cast<EditorApplication.CallbackFunction>();
+        }
+
+        private static void ForgetQueueDomain()
+        {
+            const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+            typeof(BuildQueueCheckpoint).GetField("entries", flags).SetValue(null, null);
+            ((HashSet<string>)typeof(BuildQueueCheckpoint).GetField("Scheduled", flags).GetValue(null)).Clear();
+            ((Dictionary<string, Action>)typeof(BuildQueueCheckpoint).GetField("Preparations", flags).GetValue(null)).Clear();
         }
 
         private void CaptureCallbacks()
@@ -197,9 +215,9 @@ namespace MCPForUnityTests.EditMode.Tools
 
 #if UNITY_6000_0_OR_NEWER
         [Test]
-        public void QueuedProfileBuildLostAtReloadDoesNotRequireNativeRecovery()
+        public void MissingProfileIsRefusedBeforeSchedulingOrNativeRecovery()
         {
-            BuildRunner.ScheduleProfileBuild(Child(), new BuildPlayerWithProfileOptions());
+            Assert.Throws<ArgumentException>(() => BuildRunner.ScheduleProfileBuild(Child(), new BuildPlayerWithProfileOptions()));
             CaptureCallbacks();
             NativeOwners.Clear();
             foreach (var callback in ownedCallbacks)

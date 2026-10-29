@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
@@ -19,12 +20,12 @@ namespace MCPForUnity.Editor.Tools.Build
         internal static bool HasNativeOwner => NativeOwners.Count != 0;
         internal static bool NativeRecoveryRequired => !HasNativeOwner && SessionState.GetBool(NativeOwnerKey, false);
 
-        private static void ReserveNative(string id)
+        internal static void ReserveNative(string id)
         {
             NativeOwners.Add(id);
         }
 
-        private static void ReleaseNative(string id)
+        internal static void ReleaseNative(string id)
         {
             NativeOwners.Remove(id);
             // Queued callbacks and between-child continuations vanish at reload without
@@ -35,10 +36,27 @@ namespace MCPForUnity.Editor.Tools.Build
 
         public static object ScheduleBuild(BuildJob job, BuildPlayerOptions options, Action beforeBuild = null)
         {
+            return SchedulePreparedBuild(job, options, null, null, null, beforeBuild);
+        }
+
+        internal static object SchedulePreparedBuild(
+            BuildJob job,
+            BuildPlayerOptions options,
+            ScriptingImplementation? backend,
+            JObject planRequest = null,
+            BuildPlan plan = null,
+            Action beforeBuild = null
+        )
+        {
+            BuildQueueEntry entry = BuildQueueEntry.Single(job, options);
+            BuildQueueChild child = entry.Children[0];
+            child.Backend = backend.HasValue ? (int)backend.Value : null;
+            child.PlanRequest = (JObject)planRequest?.DeepClone();
+            child.PlanHash = plan?.Sha256;
+            child.PlanData = plan?.ToData();
+            child.UnsupportedPreparation = beforeBuild != null;
             job.State = BuildJobState.Pending;
-            BuildJobStore.AddBuildJob(job);
-            ReserveNative(job.JobId);
-            ScheduleOwnedBuild(job, () => BuildPipeline.BuildPlayer(options), beforeBuild);
+            BuildQueueCheckpoint.Enqueue(entry, beforeBuild, new[] { job });
 
             return new PendingResponse(
                 $"Build scheduled for {job.Target}. Polling for completion...",
@@ -50,10 +68,30 @@ namespace MCPForUnity.Editor.Tools.Build
 #if UNITY_6000_0_OR_NEWER
         public static object ScheduleProfileBuild(BuildJob job, BuildPlayerWithProfileOptions options)
         {
+            return SchedulePreparedProfileBuild(job, options, null, 0);
+        }
+
+        internal static object SchedulePreparedProfileBuild(
+            BuildJob job,
+            BuildPlayerWithProfileOptions options,
+            ScriptingImplementation? backend,
+            int subtarget
+        )
+        {
+            BuildQueueEntry entry = BuildQueueEntry.Single(
+                job,
+                new BuildPlayerOptions
+                {
+                    target = job.Target,
+                    locationPathName = options.locationPathName,
+                    options = options.options,
+                    subtarget = subtarget,
+                }
+            );
+            CaptureProfile(entry.Children[0], options);
+            entry.Children[0].Backend = backend.HasValue ? (int)backend.Value : null;
             job.State = BuildJobState.Pending;
-            BuildJobStore.AddBuildJob(job);
-            ReserveNative(job.JobId);
-            ScheduleOwnedBuild(job, () => BuildPipeline.BuildPlayer(options));
+            BuildQueueCheckpoint.Enqueue(entry, jobs: new[] { job });
 
             return new PendingResponse(
                 $"Profile build scheduled for {job.Target}. Polling for completion...",
@@ -61,7 +99,81 @@ namespace MCPForUnity.Editor.Tools.Build
                 data: new { job_id = job.JobId, platform = job.Target.ToString() }
             );
         }
+
+        internal static void CaptureProfile(BuildQueueChild child, BuildPlayerWithProfileOptions options)
+        {
+            string path = AssetDatabase.GetAssetPath(options.buildProfile);
+            if (string.IsNullOrEmpty(path))
+                throw new ArgumentException("A persistent build profile asset is required for a queued profile build.");
+            child.ProfilePath = path;
+            child.ProfileGuid = AssetDatabase.AssetPathToGUID(path);
+            child.ProfileHash = AssetDatabase.GetAssetDependencyHash(path).ToString();
+            child.ProfileSceneSettings = BuildQueueCheckpoint.CaptureProfileSceneSettings();
+        }
 #endif
+
+        internal static void ScheduleCheckpointBuild(BuildJob job, BuildQueueChild child)
+        {
+            ReserveNative(job.JobId);
+            BuildReport InvokeNative()
+            {
+                BuildQueueCheckpoint.MarkNativeStarted(child);
+#if UNITY_6000_0_OR_NEWER
+                if (child.ProfilePath != null)
+                {
+                    var profile = AssetDatabase.LoadAssetAtPath<UnityEditor.Build.Profile.BuildProfile>(child.ProfilePath);
+                    if (profile == null)
+                        throw new InvalidOperationException("Queued build profile is unavailable.");
+                    return BuildPipeline.BuildPlayer(
+                        new BuildPlayerWithProfileOptions
+                        {
+                            buildProfile = profile,
+                            locationPathName = child.Options.locationPathName,
+                            options = child.Options.options,
+                        }
+                    );
+                }
+#endif
+                return BuildPlayerForQueuedBuild(child.Options);
+            }
+            ScheduleOnNextUpdate(() =>
+            {
+                if (job.State != BuildJobState.Pending)
+                {
+                    try
+                    {
+                        BuildQueueCheckpoint.Complete(job);
+                    }
+                    finally
+                    {
+                        ReleaseNative(job.JobId);
+                    }
+                    return;
+                }
+                try
+                {
+                    BuildQueueCheckpoint.Prepare(child);
+                    // Setters may request a domain reload after they return. The next
+                    // callback waits for compilation/import, or is rebuilt after reload.
+                    ScheduleOwnedBuild(job, InvokeNative, () => BuildQueueCheckpoint.ValidateNativeAdmission(child));
+                }
+                catch (Exception error)
+                {
+                    try
+                    {
+                        RunBuildCore(job, InvokeNative, () => throw error);
+                    }
+                    finally
+                    {
+                        ReleaseNative(job.JobId);
+                    }
+                }
+            });
+        }
+
+        // The seam allows disposable-Editor reload fixtures to count native admission
+        // without creating a Player. Production always uses BuildPipeline.BuildPlayer.
+        internal static Func<BuildPlayerOptions, BuildReport> BuildPlayerForQueuedBuild = options => BuildPipeline.BuildPlayer(options);
 
         public static BuildPlayerOptions CreateBuildOptions(BuildTarget target, string outputPath, string[] scenes, BuildOptions buildOptions, int subtarget)
         {
@@ -205,10 +317,14 @@ namespace MCPForUnity.Editor.Tools.Build
         private static void RunBuildCore(BuildJob job, Func<BuildReport> buildFunc, Action beforeBuild = null)
         {
             if (job.State != BuildJobState.Pending)
+            {
+                BuildQueueCheckpoint.Complete(job);
                 return;
+            }
 
             job.State = BuildJobState.Building;
-            job.StartedAt = DateTime.UtcNow;
+            if (job.StartedAt == default)
+                job.StartedAt = DateTime.UtcNow;
             BuildReportStore.Observe(job);
             BuildReport capturedReport = null;
 
@@ -253,6 +369,7 @@ namespace MCPForUnity.Editor.Tools.Build
 
             BuildReportStore.Complete(job, capturedReport);
             BuildJobStore.SetLastCompleted(job);
+            BuildQueueCheckpoint.Complete(job);
 
             // Emit console signal so the build result is visible in Unity's Console
             if (job.State == BuildJobState.Succeeded)
@@ -376,12 +493,14 @@ namespace MCPForUnity.Editor.Tools.Build
         /// Unlike delayCall, update callbacks are guaranteed to fire since the
         /// TransportCommandDispatcher processes commands through the same mechanism.
         /// </summary>
-        private static void ScheduleOnNextUpdate(Action action)
+        internal static void ScheduleOnNextUpdate(Action action)
         {
             bool executed = false;
             void RunOnce()
             {
                 if (executed)
+                    return;
+                if (EditorApplication.isCompiling || EditorApplication.isUpdating)
                     return;
                 executed = true;
                 EditorApplication.update -= RunOnce;
