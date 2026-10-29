@@ -281,6 +281,42 @@ namespace MCPForUnityTests
         }
 
         [Test]
+        public void ClosedIterationCallbackCannotWriteIntoNextIteration()
+        {
+            var previousLogs = new PlayScenarioLogBuffer();
+            Application.LogCallback previousCallback = PlayScenarioPlayerLogDrain.Capture(previousLogs);
+            Application.LogCallback subscribers = previousCallback;
+            Application.LogCallback inFlight = subscribers;
+            previousCallback("previous message", "", LogType.Log);
+            subscribers -= previousCallback;
+            previousLogs.Close();
+
+            var nextLogs = new PlayScenarioLogBuffer();
+            Application.LogCallback nextCallback = PlayScenarioPlayerLogDrain.Capture(nextLogs);
+            subscribers += nextCallback;
+            inFlight("delayed previous error", "", LogType.Error);
+            subscribers("next message", "", LogType.Log);
+
+            var previous = new PlayScenarioRun();
+            var next = new PlayScenarioRun();
+            previousLogs.DrainTo(previous);
+            nextLogs.DrainTo(next);
+            Assert.That(previous.UnexpectedLogCount, Is.Zero);
+            Assert.That(previous.Logs.Count, Is.EqualTo(1));
+            Assert.That(previous.Logs[0].Message, Is.EqualTo("previous message"));
+            Assert.That(next.UnexpectedLogCount, Is.Zero);
+            Assert.That(next.Logs.Count, Is.EqualTo(1));
+            Assert.That(next.Logs[0].Message, Is.EqualTo("next message"));
+
+            subscribers("next error", "", LogType.Error);
+            nextLogs.DrainTo(next);
+            Assert.That(next.UnexpectedLogCount, Is.EqualTo(1));
+            StringAssert.Contains("next error", next.LastUnexpectedLogError);
+            subscribers -= nextCallback;
+            Assert.IsNull(subscribers);
+        }
+
+        [Test]
         public void LateUnexpectedLogChangesNativeSuccessAndExitCodeBeforePublication()
         {
             PlayScenarioDefinition definition = Definition();

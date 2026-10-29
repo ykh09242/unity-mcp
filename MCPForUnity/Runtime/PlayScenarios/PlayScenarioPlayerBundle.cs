@@ -397,6 +397,13 @@ namespace MCPForUnity.Runtime.PlayScenarios
     /// <summary>Applies sticky unexpected log state before step success and final report publication.</summary>
     public static class PlayScenarioPlayerLogDrain
     {
+        public static Application.LogCallback Capture(PlayScenarioLogBuffer logs)
+        {
+            if (logs == null)
+                throw new ArgumentNullException(nameof(logs));
+            return (message, stack, type) => logs.Add(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), type.ToString(), message, stack);
+        }
+
         public static void Apply(PlayScenarioLogBuffer logs, PlayScenarioEngine engine, ref int processed, long now)
         {
             if (logs == null || engine == null)

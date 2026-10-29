@@ -19,6 +19,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private PlayScenarioRun run;
         private PlayScenarioEngine engine;
         private PlayScenarioLogBuffer logs;
+        private Application.LogCallback logCallback;
         private string directory;
         private PlayScenarioPlayerCancellation cancellation;
         private bool subscribed;
@@ -132,7 +133,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
             iterationRecorded = false;
             processedUnexpectedLogs = 0;
             logs = new PlayScenarioLogBuffer(bundle.Definition.LogPolicy);
-            Application.logMessageReceivedThreaded += OnLog;
+            logCallback = PlayScenarioPlayerLogDrain.Capture(logs);
+            Application.logMessageReceivedThreaded += logCallback;
             subscribed = true;
             engine = new PlayScenarioEngine(
                 run,
@@ -174,8 +176,6 @@ namespace MCPForUnity.Runtime.PlayScenarios
             checkpointBytes += png.Length;
             return filename;
         }
-
-        private void OnLog(string message, string stack, LogType type) => logs?.Add(Now, type.ToString(), message, stack);
 
         private void Drain() => PlayScenarioPlayerLogDrain.Apply(logs, engine, ref processedUnexpectedLogs, Now);
 
@@ -301,7 +301,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
         {
             if (subscribed)
             {
-                Application.logMessageReceivedThreaded -= OnLog;
+                Application.logMessageReceivedThreaded -= logCallback;
+                logCallback = null;
                 subscribed = false;
             }
             logs?.Close();
