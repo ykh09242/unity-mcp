@@ -13,9 +13,10 @@ import pytest
 from starlette.applications import Starlette
 from starlette.routing import WebSocketRoute
 from starlette.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
+from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from core.config import config
+from transport.charge_ledger import ChargeLedger
 from transport.models import RegisterMessage
 from transport.plugin_hub import PluginDisconnectedError, PluginHub
 from transport.plugin_registry import PluginRegistry
@@ -32,6 +33,8 @@ def isolated_hub(monkeypatch: pytest.MonkeyPatch) -> PluginRegistry:
         monkeypatch.setattr(PluginHub, name, {})
     for name in ("_registry", "_lock", "_loop", "_mcp"):
         monkeypatch.setattr(PluginHub, name, None)
+    for name in ("_retained_results", "_raw_results"):
+        monkeypatch.setattr(PluginHub, name, ChargeLedger())
     return PluginRegistry()
 
 
@@ -162,8 +165,13 @@ async def test_command_timeout_includes_blocked_send(
         deadlines[0].reschedule(asyncio.get_running_loop().time())
         await asyncio.Event().wait()
 
-    ws = AsyncMock()
-    ws.send_json.side_effect = blocked_send
+    await isolated_hub.register("session", "Fixture", "owned-hash", "6000.3")
+    ws = SimpleNamespace(
+        state=SimpleNamespace(plugin_generation="owned-generation", user_id=None),
+        client_state=WebSocketState.CONNECTED,
+        application_state=WebSocketState.CONNECTED,
+        send_json=blocked_send,
+    )
     PluginHub._connections["session"] = ws
     monkeypatch.setattr(asyncio, "timeout_at", capture_deadline)
     monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", LIFECYCLE_WATCHDOG_SECONDS)
@@ -177,6 +185,7 @@ async def test_command_timeout_includes_blocked_send(
         result = command.result()
         assert deadlines[0].expired()
         assert result["success"] is False
+        assert result["data"]["reason"] == "outcome_unknown"
         assert result["data"]["cause"] == "timeout"
         assert result["hint"] == "inspect_state_before_retry"
         assert PluginHub._pending == {}

@@ -10,6 +10,7 @@ import anyio
 import pytest
 import pytest_asyncio
 from fastmcp import Client, FastMCP
+from starlette.websockets import WebSocketState
 
 import main
 from core.config import config
@@ -39,7 +40,13 @@ async def lifecycle_state(monkeypatch: pytest.MonkeyPatch):
 
 
 def socket_stub():
-    return SimpleNamespace(state=SimpleNamespace(), send_json=AsyncMock(), close=AsyncMock())
+    return SimpleNamespace(
+        state=SimpleNamespace(),
+        client_state=WebSocketState.CONNECTED,
+        application_state=WebSocketState.CONNECTED,
+        send_json=AsyncMock(),
+        close=AsyncMock(),
+    )
 
 
 @pytest.mark.asyncio
@@ -61,7 +68,7 @@ async def test_server_shutdown_releases_plugin_commands_and_ping_tasks(lifecycle
             session_id = next(iter(PluginHub._connections))
             ping_task = PluginHub._ping_tasks[session_id]
             command = asyncio.create_task(PluginHub.send_command(session_id, "manage_scene", {}))
-            await await_signal(sent, "sent")
+            await await_signal(sent, "sent", producers=(command,))
         assert PluginHub._connections == {}
         assert PluginHub._ping_tasks == {}
         assert PluginHub._pending == {}

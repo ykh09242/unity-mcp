@@ -121,9 +121,9 @@ async def test_non_fast_commands_keep_admission_without_unused_snapshot(
                     "Fixture@owned-hash", command, {}, user_id=user, retry_on_reload=retry_on_reload
                 )
                 assert result == {"success": True, "data": {"command": command}}
-                # Capture the queue fence, then revalidate native dispatch after
-                # waiting. Neither lookup builds an unused read snapshot.
-                assert wire.counts["session"] - before["session"] == 2
+                # Queue capture, command admission and final socket authorization
+                # each read the session without building an unused read snapshot.
+                assert wire.counts["session"] - before["session"] == 3
                 assert wire.counts["hash"] - before["hash"] == 1
                 assert wire.counts["list"] == 0
                 assert not wire.hub._pending and not wire.hub._retained_results
@@ -143,7 +143,8 @@ async def test_fast_commands_still_capture_identity_with_reload_retry_disabled(
     )
     assert result["success"]
     assert wire.hub.identity_calls == 1
-    assert wire.counts == {"session": 3, "hash": 1, "list": 0}
+    # The required read identity adds one lookup to the three dispatch checks.
+    assert wire.counts == {"session": 4, "hash": 1, "list": 0}
     assert wire.websocket.state.plugin_state_read_epoch == (
         1 if command == "get_editor_state" else 0
     )

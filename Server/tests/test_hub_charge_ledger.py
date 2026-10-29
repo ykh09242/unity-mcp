@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
+from starlette.websockets import WebSocketState
 
 from models.response_limits import ResponseOwner, response_size
 from transport.charge_ledger import ChargeLedger
@@ -36,7 +37,12 @@ async def hub():
         _admitted = {}
 
     OwnedHub.configure(PluginRegistry())
-    websocket = SimpleNamespace(state=SimpleNamespace(plugin_generation="owned"), close=AsyncMock())
+    websocket = SimpleNamespace(
+        state=SimpleNamespace(plugin_generation="owned"),
+        client_state=WebSocketState.CONNECTED,
+        application_state=WebSocketState.CONNECTED,
+        close=AsyncMock(),
+    )
     OwnedHub._connections["session"] = websocket
     try:
         yield OwnedHub.__new__(OwnedHub), websocket
@@ -187,6 +193,7 @@ async def test_old_pending_ledger_cannot_insert_into_replacement(hub):
 async def test_actual_ownerless_send_cleanup_only_releases_captured_ledger(hub):
     endpoint, websocket = hub
     cls = type(endpoint)
+    await cls._registry.register("session", "Owned", "owned-hash", "test")
     started, cleanup, finish = asyncio.Event(), asyncio.Event(), asyncio.Event()
     messages = []
 
@@ -202,13 +209,13 @@ async def test_actual_ownerless_send_cleanup_only_releases_captured_ledger(hub):
     websocket.send_json = send
     task = asyncio.create_task(cls.send_command("session", "owned", {}))
     try:
-        await await_signal(started, "started")
+        await await_signal(started, "started", producers=(task,))
         command_id = messages[0]["id"]
         old_ledger = cls._retained_results
         await endpoint._handle_command_result(
             websocket, CommandResultMessage(id=command_id, result={"success": True})
         )
-        await await_signal(cleanup, "cleanup")
+        await await_signal(cleanup, "cleanup", producers=(task,))
         assert old_ledger.total_bytes > 0
         replacement = ChargeLedger(
             {command_id: {"bytes": 30, "user_id": "bob", "session_id": "replacement"}}
