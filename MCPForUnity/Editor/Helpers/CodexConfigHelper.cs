@@ -575,6 +575,30 @@ namespace MCPForUnity.Editor.Helpers
             server["http_headers"] = table;
         }
 
+        internal static bool TryValidateServerEnabled(string toml, out string reason)
+        {
+            reason = "Invalid Codex server configuration. Click Configure to update.";
+            var root = TryParseToml(toml);
+            if (
+                root == null
+                || (!TryGetTable(root, "mcp_servers", out var servers) && !TryGetTable(root, "mcpServers", out servers))
+                || !TryGetTable(servers, "unityMCP", out var server)
+            )
+                return false;
+            return TryValidateServerEnabled(server, out reason);
+        }
+
+        private static bool TryValidateServerEnabled(TomlTable server, out string reason)
+        {
+            reason = null;
+            if (server.TryGetNode("enabled", out var enabled) && (enabled is not TomlBoolean flag || !flag.Value))
+            {
+                reason = "Codex unityMCP is disabled or has an invalid enabled setting. Enable it in the config file.";
+                return false;
+            }
+            return true;
+        }
+
         internal static bool TryValidateHttpServer(string toml, IDictionary<string, string> expectedHeaders, out string reason)
         {
             reason = "Invalid Codex HTTP configuration. Click Configure to update.";
@@ -590,9 +614,9 @@ namespace MCPForUnity.Editor.Helpers
                 return false;
             }
 
-            if (server.TryGetNode("enabled", out var enabled) && (enabled is not TomlBoolean flag || !flag.Value))
+            if (!TryValidateServerEnabled(server, out var activationReason))
             {
-                reason = "Codex unityMCP is disabled or has an invalid enabled setting. Enable it in the config file.";
+                reason = activationReason;
                 return false;
             }
             foreach (var key in new[] { "command", "args", "env", "env_vars", "cwd", "bearer_token" })

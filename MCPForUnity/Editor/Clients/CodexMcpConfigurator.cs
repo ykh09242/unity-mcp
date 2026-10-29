@@ -65,6 +65,12 @@ namespace MCPForUnity.Editor.Clients
                         client.configuredTransport = Models.ConfiguredTransport.Unknown;
                     }
 
+                    if (!CodexConfigHelper.TryValidateServerEnabled(toml, out var activationReason))
+                    {
+                        client.SetStatus(McpStatus.IncorrectPath, activationReason);
+                        return client.status;
+                    }
+
                     bool matches = false;
                     bool hasVersionMismatch = false;
                     string mismatchReason = null;

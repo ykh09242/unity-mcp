@@ -87,6 +87,34 @@ namespace MCPForUnityTests.Editor.Clients
             Assert.IsFalse(File.Exists(client.GetConfigPath()));
         }
 
+        [TestCase(null, false, true)]
+        [TestCase(null, true, true)]
+        [TestCase("true", false, true)]
+        [TestCase("true", true, true)]
+        [TestCase("false", false, false)]
+        [TestCase("false", true, false)]
+        [TestCase("'false'", false, false)]
+        [TestCase("'false'", true, false)]
+        [TestCase("0", false, false)]
+        [TestCase("0", true, false)]
+        [TestCase("[]", false, false)]
+        [TestCase("[]", true, false)]
+        public void CodexStdioStatusHonorsActivationWithoutRewriting(string enabled, bool attemptAutoRewrite, bool configured)
+        {
+            var client = (OwnedCodex)Create("codex");
+            client.Configure();
+            string document = File.ReadAllText(client.GetConfigPath());
+            if (enabled != null)
+                document = document.Replace("[mcp_servers.unityMCP]", "[mcp_servers.unityMCP]\nenabled = " + enabled);
+            File.WriteAllText(client.GetConfigPath(), document);
+            byte[] before = File.ReadAllBytes(client.GetConfigPath());
+
+            Assert.AreEqual(configured ? McpStatus.Configured : McpStatus.IncorrectPath, client.CheckStatus(attemptAutoRewrite));
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(client.GetConfigPath()));
+            if (!configured)
+                StringAssert.Contains("Enable it in the config file", client.StatusDetail);
+        }
+
         [TestCase("json", "core", false)]
         [TestCase("json", "minimal", false)]
         [TestCase("json", "full", false)]
@@ -271,6 +299,8 @@ namespace MCPForUnityTests.Editor.Clients
 
         private sealed class OwnedCodex : CodexMcpConfigurator
         {
+            internal string StatusDetail => client.configStatus;
+
             public OwnedCodex(McpClient descriptor)
                 : base(descriptor) { }
         }
