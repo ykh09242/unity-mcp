@@ -73,6 +73,114 @@ namespace MCPForUnityTests.Editor.Clients
         [Test]
         public void CheckStatus_DetectsHttp_WhenHttpUrlProperty() => AssertHttpDetected("httpUrl");
 
+        [TestCase(false, "https://synthetic.example.test/Team/MCP?project=TeamA", McpStatus.IncorrectPath)]
+        [TestCase(false, "https://synthetic.example.test/team/mcp?project=TeamA", McpStatus.IncorrectPath)]
+        [TestCase(false, "https://synthetic.example.test/Team/mcp?project=teama", McpStatus.IncorrectPath)]
+        [TestCase(false, "HTTPS://SYNTHETIC.EXAMPLE.TEST:443/Team/mcp?project=TeamA", McpStatus.Configured)]
+        [TestCase(false, "https://synthetic.example.test/other/../Team/mcp?project=TeamA", McpStatus.Configured)]
+        [TestCase(false, "https://synthetic.example.test/%54eam/mcp?project=TeamA", McpStatus.Configured)]
+        [TestCase(true, "https://synthetic.example.test/Team/MCP?project=TeamA", McpStatus.IncorrectPath)]
+        [TestCase(true, "https://synthetic.example.test/team/mcp?project=TeamA", McpStatus.IncorrectPath)]
+        [TestCase(true, "https://synthetic.example.test/Team/mcp?project=teama", McpStatus.IncorrectPath)]
+        [TestCase(true, "HTTPS://SYNTHETIC.EXAMPLE.TEST:443/Team/mcp?project=TeamA", McpStatus.Configured)]
+        [TestCase(true, "https://synthetic.example.test/other/../Team/mcp?project=TeamA", McpStatus.Configured)]
+        [TestCase(true, "https://synthetic.example.test/%54eam/mcp?project=TeamA", McpStatus.Configured)]
+        public void EndpointIdentityControlsStatusAndConfigureAction(bool codex, string endpoint, McpStatus expected)
+        {
+            EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "remote");
+            EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "https://synthetic.example.test/Team?project=TeamA");
+            EditorPrefs.SetString(EditorPrefKeys.ApiKey, "synthetic-current");
+            EditorConfigurationCache.Instance.Refresh();
+            string path = Path.Combine(_tempDir, codex ? "endpoint.toml" : "endpoint.json");
+            string text = codex
+                ? "[mcp_servers.unityMCP]\nurl = '" + endpoint + "'\nhttp_headers = { 'X-API-Key' = 'synthetic-current' }\n"
+                : "{\"mcpServers\":{\"unityMCP\":{\"url\":\"" + endpoint + "\",\"headers\":{\"X-API-Key\":\"synthetic-current\"}}}}";
+            File.WriteAllText(path, text);
+            var model = new McpClient
+            {
+                name = "Synthetic",
+                windowsConfigPath = path,
+                macConfigPath = path,
+                linuxConfigPath = path,
+            };
+            McpClientConfiguratorBase client = codex ? new FakeCodexConfigurator(model) : new FakeJsonConfigurator(model);
+
+            Assert.AreEqual(expected, client.CheckStatus(attemptAutoRewrite: false));
+            Assert.AreEqual(!codex && expected == McpStatus.Configured ? "Unregister" : "Configure", client.GetConfigureActionLabel());
+            Assert.AreEqual(text, File.ReadAllText(path), "Read-only status must preserve the supplied endpoint.");
+        }
+
+        [TestCase(false, "Team%2fA", McpStatus.Configured)]
+        [TestCase(false, "Team/A", McpStatus.IncorrectPath)]
+        [TestCase(false, "team%2fA", McpStatus.IncorrectPath)]
+        [TestCase(true, "Team%2fA", McpStatus.Configured)]
+        [TestCase(true, "Team/A", McpStatus.IncorrectPath)]
+        [TestCase(true, "team%2fA", McpStatus.IncorrectPath)]
+        public void EndpointQueryNormalizesEscapeHexCaseWithoutDecodingReservedCharacters(bool codex, string project, McpStatus expected)
+        {
+            EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "remote");
+            EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "https://synthetic.example.test?project=Team%2FA");
+            EditorPrefs.SetString(EditorPrefKeys.ApiKey, "synthetic-current");
+            EditorConfigurationCache.Instance.Refresh();
+            string endpoint = "https://synthetic.example.test/mcp?project=" + project;
+            string path = Path.Combine(_tempDir, codex ? "escaped.toml" : "escaped.json");
+            string text = codex
+                ? "[mcp_servers.unityMCP]\nurl = '" + endpoint + "'\nhttp_headers = { 'X-API-Key' = 'synthetic-current' }\n"
+                : "{\"mcpServers\":{\"unityMCP\":{\"url\":\"" + endpoint + "\",\"headers\":{\"X-API-Key\":\"synthetic-current\"}}}}";
+            File.WriteAllText(path, text);
+            var model = new McpClient
+            {
+                name = "Synthetic",
+                windowsConfigPath = path,
+                macConfigPath = path,
+                linuxConfigPath = path,
+            };
+            McpClientConfiguratorBase client = codex ? new FakeCodexConfigurator(model) : new FakeJsonConfigurator(model);
+
+            Assert.AreEqual(expected, client.CheckStatus(attemptAutoRewrite: false));
+            Assert.AreEqual(!codex && expected == McpStatus.Configured ? "Unregister" : "Configure", client.GetConfigureActionLabel());
+            Assert.AreEqual(text, File.ReadAllText(path));
+        }
+
+        [TestCase(McpStatus.IncorrectPath, "Incorrect Path")]
+        [TestCase(McpStatus.NotConfigured, "Not Configured")]
+        [TestCase(McpStatus.Error, "Error")]
+        [TestCase(McpStatus.VersionMismatch, "Version Mismatch")]
+        public void StatusRetainsActionableDetailsSeparatelyFromLabel(McpStatus status, string label)
+        {
+            var model = new McpClient();
+            model.SetStatus(status, "Enable the synthetic entry before connecting.");
+            Assert.AreEqual("Enable the synthetic entry before connecting.", model.configStatus);
+            Assert.AreEqual(label, model.GetStatusDisplayString());
+
+            model.SetStatus(McpStatus.Configured);
+            Assert.AreEqual("Configured", model.configStatus, "A later status must clear stale recovery details.");
+        }
+
+        [Test]
+        public void JsonStatusRetainsDisabledEntryRecoveryInstructions()
+        {
+            EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "remote");
+            EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "https://synthetic.example.test");
+            EditorPrefs.SetString(EditorPrefKeys.ApiKey, "synthetic-current");
+            EditorConfigurationCache.Instance.Refresh();
+            string path = Path.Combine(_tempDir, "disabled.json");
+            string text = "{\"mcpServers\":{\"unityMCP\":{\"url\":\"https://synthetic.example.test/mcp\",\"disabled\":true}}}";
+            File.WriteAllText(path, text);
+            var model = new McpClient
+            {
+                name = "Synthetic",
+                windowsConfigPath = path,
+                macConfigPath = path,
+                linuxConfigPath = path,
+            };
+
+            Assert.AreEqual(McpStatus.IncorrectPath, new FakeJsonConfigurator(model).CheckStatus(attemptAutoRewrite: false));
+            Assert.AreEqual("The client entry is disabled. Enable it in the client configuration.", model.configStatus);
+            Assert.AreEqual("Incorrect Path", model.GetStatusDisplayString());
+            Assert.AreEqual(text, File.ReadAllText(path));
+        }
+
         [TestCase("synthetic-current", true, McpStatus.Configured)]
         [TestCase("synthetic-stale", true, McpStatus.IncorrectPath)]
         [TestCase(null, true, McpStatus.IncorrectPath)]

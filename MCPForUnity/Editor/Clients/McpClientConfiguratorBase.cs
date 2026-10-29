@@ -129,11 +129,28 @@ namespace MCPForUnity.Editor.Clients
 
             if (Uri.TryCreate(a.Trim(), UriKind.Absolute, out var uriA) && Uri.TryCreate(b.Trim(), UriKind.Absolute, out var uriB))
             {
-                return Uri.Compare(uriA, uriB, UriComponents.HttpRequestUrl, UriFormat.SafeUnescaped, StringComparison.OrdinalIgnoreCase) == 0;
+                // Uri canonicalizes the scheme, host and default port. Paths and query
+                // values can identify different endpoints when only their case differs.
+                string CanonicalRequestUrl(Uri uri)
+                {
+                    char[] value = uri.GetComponents(UriComponents.HttpRequestUrl, UriFormat.SafeUnescaped).ToCharArray();
+                    // Escaped reserved characters stay escaped, but their hex digits
+                    // represent the same byte regardless of letter case.
+                    for (int i = 0; i + 2 < value.Length; i++)
+                    {
+                        if (value[i] != '%' || !Uri.IsHexDigit(value[i + 1]) || !Uri.IsHexDigit(value[i + 2]))
+                            continue;
+                        value[i + 1] = char.ToUpperInvariant(value[i + 1]);
+                        value[i + 2] = char.ToUpperInvariant(value[i + 2]);
+                        i += 2;
+                    }
+                    return new string(value);
+                }
+                return string.Equals(CanonicalRequestUrl(uriA), CanonicalRequestUrl(uriB), StringComparison.Ordinal);
             }
 
             string Normalize(string value) => value.Trim().TrimEnd('/');
-            return string.Equals(Normalize(a), Normalize(b), StringComparison.OrdinalIgnoreCase);
+            return string.Equals(Normalize(a), Normalize(b), StringComparison.Ordinal);
         }
 
         /// <summary>
