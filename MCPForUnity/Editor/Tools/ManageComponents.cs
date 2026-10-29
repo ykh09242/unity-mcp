@@ -516,6 +516,8 @@ namespace MCPForUnity.Editor.Tools
                 }
                 if (anyPropertySet)
                 {
+                    if (PrefabUtility.IsPartOfPrefabInstance(component))
+                        PrefabUtility.RecordPrefabInstancePropertyModifications(component);
                     EditorUtility.SetDirty(component);
                     MarkOwningSceneDirty(targetGo);
                 }
@@ -544,6 +546,8 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (anyPropertySet)
                 {
+                    if (PrefabUtility.IsPartOfPrefabInstance(component))
+                        PrefabUtility.RecordPrefabInstancePropertyModifications(component);
                     EditorUtility.SetDirty(component);
                     MarkOwningSceneDirty(targetGo);
                 }
