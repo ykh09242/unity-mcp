@@ -33,9 +33,15 @@ namespace MCPForUnityTests.EditMode.Tools
             BuildRunner.BuildPlayerForQueuedBuild = options =>
             {
                 SessionState.SetInt(Prefix + "invocations", SessionState.GetInt(Prefix + "invocations", 0) + 1);
+                // A resumed Editor callback can run before UTF recreates its log scope.
+                // In that window the exact failure is verified from the restored job below.
+                try
+                {
+                    LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex("owned resumed build invocation probe"));
+                }
+                catch (InvalidOperationException error) when (error.Message == "No log scope is available") { }
                 throw new InvalidOperationException("owned resumed build invocation probe");
             };
-            LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex("owned resumed build invocation probe"));
         }
 
         [
@@ -61,6 +67,7 @@ namespace MCPForUnityTests.EditMode.Tools
                 Assert.IsNotNull(restored, "The accepted job must retain its original identity after the actual domain boundary.");
                 Assert.AreEqual(id, restored.JobId);
                 Assert.AreEqual(BuildJobState.Failed, restored.State, "The injected native callback deliberately throws after counting admission.");
+                Assert.AreEqual("owned resumed build invocation probe", restored.ErrorMessage);
                 Assert.IsFalse(BuildRunner.HasNativeOwner || BuildRunner.NativeRecoveryRequired);
                 for (int i = 0; i < 3; i++)
                     yield return null;

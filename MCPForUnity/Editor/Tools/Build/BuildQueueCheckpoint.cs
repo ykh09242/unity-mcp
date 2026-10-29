@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -16,11 +17,15 @@ namespace MCPForUnity.Editor.Tools.Build
     internal sealed class BuildQueueJournal
     {
         private const int MaxBytes = 1048576;
+        internal const int MaxActiveEntries = 32;
+        internal const int MaxRecentTerminalEntries = 64;
+        internal const int MaxHistoryEntries = 4096;
         private readonly Func<string> read;
         private readonly Action<string> write;
         private readonly Func<bool> readWriting;
         private readonly Action<bool> writeWriting;
         private readonly string project;
+        private List<BuildQueueTombstone> history;
 
         internal BuildQueueJournal(Func<string> read, Action<string> write, Func<bool> readWriting, Action<bool> writeWriting, string project)
         {
@@ -37,18 +42,31 @@ namespace MCPForUnity.Editor.Tools.Build
                 throw new InvalidDataException("Build continuation storage has an incomplete write. Queued builds cannot be resumed safely.");
             string json = read();
             if (string.IsNullOrEmpty(json))
+            {
+                history = new List<BuildQueueTombstone>();
                 return new List<BuildQueueEntry>();
+            }
             try
             {
                 if (Encoding.UTF8.GetByteCount(json) > MaxBytes)
                     throw new InvalidDataException("Build continuation storage exceeds its limit.");
                 JObject root = JObject.Parse(json);
-                if (root.Count != 4 || (int?)root["version"] != 1 || (string)root["project"] != project || root["entries"] is not JArray)
+                int? version = (int?)root["version"];
+                if (
+                    (version != 1 && version != 2)
+                    || root.Count != (version == 1 ? 4 : 5)
+                    || (string)root["project"] != project
+                    || root["entries"] is not JArray
+                    || (version == 2 && root["history"] is not JArray)
+                )
                     throw new InvalidDataException("Build continuation storage identity is invalid.");
-                if ((string)root["sha256"] != Hash(root["entries"].ToString(Formatting.None)))
+                JToken signed = version == 1 ? root["entries"] : new JArray(root["entries"], root["history"]);
+                if ((string)root["sha256"] != Hash(signed.ToString(Formatting.None)))
                     throw new InvalidDataException("Build continuation storage checksum is invalid.");
                 var entries = root["entries"].ToObject<List<BuildQueueEntry>>();
+                history = version == 1 ? new List<BuildQueueTombstone>() : root["history"].ToObject<List<BuildQueueTombstone>>();
                 Validate(entries);
+                ValidateHistory(entries, history);
                 return entries;
             }
             catch (Exception error) when (error is JsonException || error is ArgumentException || error is InvalidCastException || error is OverflowException)
@@ -57,19 +75,42 @@ namespace MCPForUnity.Editor.Tools.Build
             }
         }
 
-        internal void Save(IEnumerable<BuildQueueEntry> source)
+        internal List<BuildQueueEntry> Save(IEnumerable<BuildQueueEntry> source)
         {
             if (readWriting())
                 throw new InvalidDataException("Build continuation storage has an incomplete write.");
+            if (history == null)
+                Load();
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var entries = source.ToList();
             Validate(entries);
+            entries.RemoveAll(entry => entry.Settled && entry.DeadlineUnixMs < now);
+            var nextHistory = history.Where(item => item.DeadlineUnixMs >= now).ToList();
+            // Every accepted entry reserves a history slot. Settling cannot exhaust the
+            // count budget; old exact IDs remain deduplicated until their original deadline.
+            ValidateHistory(entries, nextHistory);
+            var retired = entries.Where(entry => entry.Settled).Reverse().Skip(MaxRecentTerminalEntries).ToList();
+            foreach (BuildQueueEntry entry in retired)
+            {
+                nextHistory.Add(
+                    new BuildQueueTombstone
+                    {
+                        Id = entry.Id,
+                        ChildIds = entry.Children.Select(child => child.JobId).ToArray(),
+                        DeadlineUnixMs = entry.DeadlineUnixMs,
+                    }
+                );
+                entries.Remove(entry);
+            }
             JArray body = JArray.FromObject(entries);
+            JArray retained = JArray.FromObject(nextHistory);
             string json = new JObject
             {
-                ["version"] = 1,
+                ["version"] = 2,
                 ["project"] = project,
                 ["entries"] = body,
-                ["sha256"] = Hash(body.ToString(Formatting.None)),
+                ["history"] = retained,
+                ["sha256"] = Hash(new JArray(body, retained).ToString(Formatting.None)),
             }.ToString(Formatting.None);
             if (Encoding.UTF8.GetByteCount(json) > MaxBytes)
                 throw new InvalidDataException("Build continuation storage is full. No build was scheduled.");
@@ -83,6 +124,41 @@ namespace MCPForUnity.Editor.Tools.Build
             writeWriting(false);
             if (readWriting())
                 throw new IOException("Build continuation write guard could not be cleared.");
+            history = nextHistory;
+            return entries;
+        }
+
+        internal bool ContainsRetainedId(string id) => history != null && history.Any(item => item.Id == id || item.ChildIds.Contains(id));
+
+        private static void ValidateHistory(List<BuildQueueEntry> entries, List<BuildQueueTombstone> retained)
+        {
+            if (retained == null || entries.Count + retained.Count > MaxHistoryEntries)
+                throw new InvalidDataException("Build continuation history capacity exceeded. Wait for retained deadlines before admitting new builds.");
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            foreach (
+                var item in entries
+                    .Select(entry => new BuildQueueTombstone
+                    {
+                        Id = entry.Id,
+                        ChildIds = entry.Children.Select(child => child.JobId).ToArray(),
+                        DeadlineUnixMs = entry.DeadlineUnixMs,
+                    })
+                    .Concat(retained)
+            )
+            {
+                if (
+                    item == null
+                    || string.IsNullOrEmpty(item.Id)
+                    || item.DeadlineUnixMs <= 0
+                    || item.ChildIds == null
+                    || item.ChildIds.Length == 0
+                    || item.ChildIds.Length > 128
+                )
+                    throw new InvalidDataException("Build continuation history is invalid.");
+                foreach (string id in new[] { item.Id }.Concat(item.ChildIds).Distinct(StringComparer.Ordinal))
+                    if (string.IsNullOrEmpty(id) || !ids.Add(id))
+                        throw new InvalidDataException("Build continuation history contains duplicate job IDs.");
+            }
         }
 
         private static string Hash(string value)
@@ -93,7 +169,11 @@ namespace MCPForUnity.Editor.Tools.Build
 
         private static void Validate(List<BuildQueueEntry> entries)
         {
-            if (entries == null || entries.Count > 32)
+            if (
+                entries == null
+                || entries.Count(entry => entry == null || entry.Children == null || entry.Children.Any(child => child == null || child.Phase != "terminal"))
+                    > MaxActiveEntries
+            )
                 throw new InvalidDataException("Build continuation entry limit exceeded.");
             var ids = new HashSet<string>(StringComparer.Ordinal);
             foreach (BuildQueueEntry entry in entries)
@@ -130,6 +210,13 @@ namespace MCPForUnity.Editor.Tools.Build
         }
     }
 
+    internal sealed class BuildQueueTombstone
+    {
+        public string Id;
+        public string[] ChildIds;
+        public long DeadlineUnixMs;
+    }
+
     internal sealed class BuildQueueEntry
     {
         public string Id;
@@ -137,7 +224,12 @@ namespace MCPForUnity.Editor.Tools.Build
         public bool Cancelled;
         public int CurrentIndex;
         public long DeadlineUnixMs;
+        public string ReportId;
+        public string ReportPersistenceError;
         public List<BuildQueueChild> Children = new();
+
+        [JsonIgnore]
+        internal bool Settled => Children != null && CurrentIndex == Children.Count && Children.All(child => child != null && child.Phase == "terminal");
 
         internal static BuildQueueEntry Single(BuildJob job, BuildPlayerOptions options) =>
             new BuildQueueEntry
@@ -170,6 +262,7 @@ namespace MCPForUnity.Editor.Tools.Build
         public string ProfilePath;
         public string ProfileGuid;
         public string ProfileHash;
+        public bool ProfileOverridesGlobalScenes;
         public JArray ProfileSceneSettings;
         public JObject PlanRequest;
         public string PlanHash;
@@ -246,13 +339,10 @@ namespace MCPForUnity.Editor.Tools.Build
         {
             if (Entries.Any(existing => existing.Id == entry.Id || existing.Children.Any(child => entry.Children.Any(next => next.JobId == child.JobId))))
                 throw new InvalidOperationException("The build job ID already has a continuation checkpoint.");
-            // Terminal records may be discarded only after their original retention deadline.
-            Entries.RemoveAll(existing =>
-                existing.DeadlineUnixMs < DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() && existing.Children.All(c => c.Phase == "terminal")
-            );
+            if (new[] { entry.Id }.Concat(entry.Children.Select(child => child.JobId)).Any(Journal.ContainsRetainedId))
+                throw new InvalidOperationException("The build job ID already has a retained terminal checkpoint.");
             var next = new List<BuildQueueEntry>(Entries) { entry };
-            Journal.Save(next);
-            entries = next;
+            entries = Journal.Save(next);
             if (batch != null)
                 BuildJobStore.AddBatchJob(batch);
             if (jobs != null)
@@ -278,7 +368,11 @@ namespace MCPForUnity.Editor.Tools.Build
                         continue;
                     RestoreJobs(entry);
                     if (entry.Children.All(child => child.Phase == "terminal"))
+                    {
+                        if (!entry.Settled)
+                            Continue(entry.Id);
                         continue;
+                    }
                     // A previously invoked build owns the recovery fence; queued jobs must
                     // never hide that fence by acquiring an in-memory native reservation.
                     if (BuildRunner.NativeRecoveryRequired)
@@ -304,6 +398,8 @@ namespace MCPForUnity.Editor.Tools.Build
                 {
                     CurrentIndex = entry.CurrentIndex,
                     State = entry.Cancelled ? BuildJobState.Cancelled : BuildJobState.Building,
+                    ReportId = entry.ReportId,
+                    ReportPersistenceError = entry.ReportPersistenceError,
                 };
                 BuildJobStore.AddBatchJob(batch);
             }
@@ -335,7 +431,9 @@ namespace MCPForUnity.Editor.Tools.Build
 
         private static void Continue(string id)
         {
-            BuildQueueEntry entry = Entries.Single(item => item.Id == id);
+            BuildQueueEntry entry = Entries.SingleOrDefault(item => item.Id == id);
+            if (entry == null || entry.Settled)
+                return;
             while (entry.CurrentIndex < entry.Children.Count && entry.Children[entry.CurrentIndex].Phase == "terminal")
                 entry.CurrentIndex++;
             BatchJob batch = entry.Batch ? BuildJobStore.GetBatchJob(id) : null;
@@ -350,8 +448,12 @@ namespace MCPForUnity.Editor.Tools.Build
                         : batch.Children.Any(child => child.State == BuildJobState.Failed) ? BuildJobState.Failed
                         : BuildJobState.Succeeded;
                     BuildReportStore.Complete(batch);
+                    entry.ReportId = batch.ReportId;
+                    entry.ReportPersistenceError = batch.ReportPersistenceError;
+                    foreach (BuildQueueChild completed in entry.Children)
+                        completed.Observe(batch.Children.Single(job => job.JobId == completed.JobId));
                 }
-                Journal.Save(Entries);
+                entries = Journal.Save(Entries);
                 Scheduled.Remove(id);
                 BuildRunner.ReleaseNative(id);
                 return;
@@ -374,7 +476,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 Complete(job);
                 return;
             }
-            Journal.Save(Entries); // The current batch cursor exists before any target switch.
+            entries = Journal.Save(Entries); // The current batch cursor exists before any target switch.
             BuildRunner.ScheduleCheckpointBuild(job, child);
         }
 
@@ -387,6 +489,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 throw new InvalidOperationException("Queued build preparation cannot be reconstructed safely after reload; no native build was invoked.");
             if (EditorApplication.isPlayingOrWillChangePlaymode || BuildPipeline.isBuildingPlayer)
                 throw new InvalidOperationException("Queued build cannot start while the Editor is playing or another native build is active.");
+            ValidateForeignOwners(entry, child);
             BuildRunner.ValidateOutputPath(child.OutputPath);
             BuildRunner.ValidateScenePaths(child.Options.scenes);
             if (!BuildPipeline.IsBuildTargetSupported(BuildTargetMapping.GetTargetGroup(child.Target), child.Target))
@@ -395,7 +498,7 @@ namespace MCPForUnity.Editor.Tools.Build
             ValidateProfile(child);
             child.Phase = "preparing";
             child.Observe(BuildJobStore.GetBuildJob(child.JobId));
-            Journal.Save(Entries);
+            entries = Journal.Save(Entries);
             if (child.SwitchTarget && EditorUserBuildSettings.activeBuildTarget != child.Target)
             {
                 if (!EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetMapping.GetTargetGroup(child.Target), child.Target))
@@ -451,7 +554,7 @@ namespace MCPForUnity.Editor.Tools.Build
         {
             if (child.ProfilePath == null)
                 return;
-            if (child.ProfileSceneSettings != null && !JToken.DeepEquals(child.ProfileSceneSettings, CaptureProfileSceneSettings()))
+            if (child.ProfileSceneSettings != null && !JToken.DeepEquals(child.ProfileSceneSettings, CaptureCurrentProfileSceneSettings(child)))
                 throw new InvalidOperationException("Build profile scene settings changed while queued. Request a new build.");
             if (
                 AssetDatabase.GUIDToAssetPath(child.ProfileGuid) != child.ProfilePath
@@ -461,9 +564,23 @@ namespace MCPForUnity.Editor.Tools.Build
                 throw new InvalidOperationException("Build profile changed or disappeared while queued. Request a new build.");
         }
 
-        internal static JArray CaptureProfileSceneSettings() =>
+        private static JArray CaptureCurrentProfileSceneSettings(BuildQueueChild child)
+        {
+#if UNITY_6000_0_OR_NEWER
+            if (child.ProfileOverridesGlobalScenes)
+            {
+                var profile = AssetDatabase.LoadAssetAtPath<UnityEditor.Build.Profile.BuildProfile>(child.ProfilePath);
+                if (profile == null || !profile.overrideGlobalScenes)
+                    throw new InvalidOperationException("Build profile changed or disappeared while queued. Request a new build.");
+                return CaptureProfileSceneSettings(profile.scenes);
+            }
+#endif
+            return CaptureProfileSceneSettings();
+        }
+
+        internal static JArray CaptureProfileSceneSettings(EditorBuildSettingsScene[] scenes = null) =>
             new JArray(
-                EditorBuildSettings.scenes.Select(scene => new JObject
+                (scenes ?? EditorBuildSettings.scenes).Select(scene => new JObject
                 {
                     ["path"] = scene.path,
                     ["guid"] = AssetDatabase.AssetPathToGUID(scene.path),
@@ -480,6 +597,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 throw new InvalidOperationException("Build continuation is not eligible for native invocation.");
             if (EditorApplication.isPlayingOrWillChangePlaymode || BuildPipeline.isBuildingPlayer)
                 throw new InvalidOperationException("Queued build cannot invoke native work while the Editor is playing or another native build is active.");
+            ValidateForeignOwners(entry, child);
             if (child.SwitchTarget && EditorUserBuildSettings.activeBuildTarget != child.Target)
                 throw new InvalidOperationException("Build platform changed after queued preparation. Request a new build.");
             if (child.Backend.HasValue)
@@ -492,11 +610,17 @@ namespace MCPForUnity.Editor.Tools.Build
             ValidateProfile(child);
         }
 
+        private static void ValidateForeignOwners(BuildQueueEntry entry, BuildQueueChild child)
+        {
+            if (NativeOperationBarriers.TryGetBuildContinuationBlocker(child.JobId, entry.Batch ? entry.Id : null, out NativeAdmissionBlocker blocker))
+                throw new InvalidOperationException("Queued build native admission blocked: " + blocker.Reason);
+        }
+
         internal static void MarkNativeStarted(BuildQueueChild child)
         {
             ValidateNativeAdmission(child);
             child.Phase = "native_started";
-            Journal.Save(Entries);
+            entries = Journal.Save(Entries);
         }
 
         internal static void Complete(BuildJob job)
@@ -504,21 +628,24 @@ namespace MCPForUnity.Editor.Tools.Build
             BuildQueueEntry entry = Entries.FirstOrDefault(item => item.Children.Any(child => child.JobId == job.JobId));
             if (entry == null)
                 return;
+            // Cancellation and expiry also finish jobs without RunBuildCore. Apply the
+            // same bounded public-job retention and report observation on those paths.
+            BuildJobStore.SetLastCompleted(job);
             BuildQueueChild child = entry.Children.Single(item => item.JobId == job.JobId);
             child.Observe(job);
             child.Phase = "terminal";
             Preparations.Remove(job.JobId);
-            Journal.Save(Entries);
+            entries = Journal.Save(Entries);
             BuildRunner.ScheduleOnNextUpdate(() => Continue(entry.Id));
         }
 
         internal static bool Cancel(string id)
         {
             BuildQueueEntry entry = Entries.FirstOrDefault(item => item.Id == id);
-            if (entry == null || entry.Children.All(child => child.Phase == "terminal") || (!entry.Batch && entry.Children[0].Phase == "native_started"))
+            if (entry == null || entry.Settled || (!entry.Batch && (entry.Children[0].Phase == "native_started" || entry.Children[0].Phase == "terminal")))
                 return false;
             entry.Cancelled = true;
-            Journal.Save(Entries); // Tombstone is durable before reporting cancellation.
+            entries = Journal.Save(Entries); // Tombstone is durable before reporting cancellation.
             if (entry.Batch)
                 BuildJobStore.GetBatchJob(entry.Id).State = BuildJobState.Cancelled;
             foreach (BuildQueueChild child in entry.Children.Where(child => child.Phase != "native_started" && child.Phase != "terminal"))
@@ -526,11 +653,11 @@ namespace MCPForUnity.Editor.Tools.Build
                 BuildJob job = BuildJobStore.GetBuildJob(child.JobId);
                 job.State = entry.Batch ? BuildJobState.Skipped : BuildJobState.Cancelled;
                 job.CompletedAt = DateTime.UtcNow;
+                BuildReportStore.Complete(job);
                 child.Observe(job);
                 child.Phase = "terminal";
-                BuildReportStore.Complete(job);
             }
-            Journal.Save(Entries);
+            entries = Journal.Save(Entries);
             return true;
         }
     }

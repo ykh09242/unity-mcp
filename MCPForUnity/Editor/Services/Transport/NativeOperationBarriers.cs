@@ -30,6 +30,11 @@ namespace MCPForUnity.Editor.Services.Transport
         internal static bool TryGetBlocker(string commandName, JObject parameters, out NativeAdmissionBlocker blocker) =>
             Evaluate(commandName, parameters, Capture(), out blocker);
 
+        // A resumed build may exclude only its own child and parent reservations.
+        // Lost invocations and all other native families remain admission fences.
+        internal static bool TryGetBuildContinuationBlocker(string jobId, string batchId, out NativeAdmissionBlocker blocker) =>
+            Evaluate("manage_build", null, Capture(buildJobId: jobId, buildBatchId: batchId), out blocker);
+
         // General readiness shares ordinary-read admission. Read-only UPM queries
         // still fence Client calls/execute_code, but do not block every tool.
         internal static NativeAdmissionBlocker ObserveReadiness(bool compiling)
@@ -38,7 +43,7 @@ namespace MCPForUnity.Editor.Services.Transport
             return blocker;
         }
 
-        private static NativeBarrierState Capture(bool? compiling = null)
+        private static NativeBarrierState Capture(bool? compiling = null, string buildJobId = null, string buildBatchId = null)
         {
             var retired = TestRunnerService.RetiredRunRecoveryDetails;
             // The matching restored control can settle this marker independently of
@@ -70,7 +75,7 @@ namespace MCPForUnity.Editor.Services.Transport
                     TestJobManager.HasRunningJob
                     || TestJobManager.NativeAdmissionBlocked
                     || TestRunnerService.HasOwnedNativeRun
-                    || BuildRunner.HasNativeOwner
+                    || (buildJobId == null ? BuildRunner.HasNativeOwner : BuildRunner.HasForeignNativeOwner(buildJobId, buildBatchId))
                     || BuildPipeline.isBuildingPlayer
                     || PlayScenarioService.IsBusy
                     || PlayScenarioSuiteService.IsBusy,

@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Tools.Build;
 using Newtonsoft.Json.Linq;
@@ -145,6 +147,34 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void MoreThanThirtyTwoSequentialCancelledJobsLeaveAdmissionAvailableAndRetainDedupe()
+        {
+            string firstId = null;
+            for (int index = 0; index < 80; index++)
+            {
+                BuildJob job = Job();
+                firstId ??= job.JobId;
+                BuildRunner.ScheduleBuild(job, Options(job));
+                Assert.IsTrue(BuildQueueCheckpoint.Cancel(job.JobId));
+                Advance();
+                Advance();
+                Assert.IsFalse(BuildRunner.HasNativeOwner || BuildRunner.NativeRecoveryRequired);
+            }
+            Assert.LessOrEqual(Jobs.Count, BuildQueueJournal.MaxRecentTerminalEntries);
+            SimulateDomainLoss();
+            Restore();
+            BuildJob duplicate = new BuildJob(firstId, EditorUserBuildSettings.activeBuildTarget, "Builds/UnusedQueuedTest.exe");
+            Assert.Throws<InvalidOperationException>(() => BuildRunner.ScheduleBuild(duplicate, Options(duplicate)));
+            BuildJob next = Job();
+            Assert.DoesNotThrow(() => BuildRunner.ScheduleBuild(next, Options(next)));
+            Assert.IsTrue(BuildQueueCheckpoint.Cancel(next.JobId));
+            Advance();
+            Advance();
+            Assert.AreEqual(0, invocations);
+            Assert.LessOrEqual(Entries.Count, BuildQueueJournal.MaxRecentTerminalEntries);
+        }
+
+        [Test]
         public void ExpiredOriginalDeadlineIsTerminalWithoutInvocation()
         {
             BuildJob job = Job();
@@ -277,6 +307,266 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(second.JobId, restored.Children[1].JobId);
             Assert.AreEqual(BuildJobState.Failed, restored.State);
         }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void LateBatchCancellationRemainsCancelledAfterDeferredSettlement(bool reload)
+        {
+            BatchJob batch = CompleteFinalChildBeforeSettlement();
+            JObject result = JObject.FromObject(ManageBuild.HandleCommand(new JObject { ["action"] = "cancel", ["job_id"] = batch.JobId }));
+            Assert.IsTrue((bool)result["success"], result.ToString());
+            if (reload)
+            {
+                SimulateDomainLoss();
+                Restore();
+            }
+            Advance();
+            Advance();
+            Assert.AreEqual(BuildJobState.Cancelled, BuildJobStore.GetBatchJob(batch.JobId).State);
+            SimulateDomainLoss();
+            Restore();
+            Assert.AreEqual(BuildJobState.Cancelled, BuildJobStore.GetBatchJob(batch.JobId).State);
+            Assert.AreEqual(0, invocations);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CompletedBatchStatusRetainsReportMetadataByOriginalId(bool persistenceFailure)
+        {
+            FieldInfo storage = typeof(BuildReportStore).GetField("StorageRootOverride", PrivateStatic);
+            object originalStorage = storage.GetValue(null);
+            string root = Path.Combine(Path.GetDirectoryName(Application.dataPath), ".work", "BuildQueueReport_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                string reportRoot = Path.Combine(root, "reports");
+                if (persistenceFailure)
+                    File.WriteAllText(reportRoot, "owned path obstruction");
+                storage.SetValue(null, reportRoot);
+                BatchJob batch = CompleteFinalChildBeforeSettlement();
+                Advance();
+                Advance();
+                string reportId = batch.ReportId;
+                string persistenceError = batch.ReportPersistenceError;
+                if (persistenceFailure)
+                    Assert.AreEqual("build_report_persistence_unavailable", persistenceError);
+                else
+                    Assert.IsNotNull(reportId);
+                SimulateDomainLoss();
+                Restore();
+                JObject response = JObject.FromObject(ManageBuild.HandleCommand(new JObject { ["action"] = "status", ["job_id"] = batch.JobId }));
+                Assert.IsTrue((bool)response["success"], response.ToString());
+                Assert.AreEqual(batch.JobId, (string)response["data"]["job_id"]);
+                Assert.AreEqual(reportId, (string)response["data"]["report_id"]);
+                Assert.AreEqual(persistenceError, (string)response["data"]["report_persistence_error"]);
+                Assert.AreEqual("succeeded", (string)response["data"]["result"]);
+            }
+            finally
+            {
+                storage.SetValue(null, originalStorage);
+                StringAssert.StartsWith(Path.Combine(Path.GetDirectoryName(Application.dataPath), ".work", "BuildQueueReport_"), root);
+                Directory.Delete(root, true);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ForeignCompilationOwnerBlocksRestoredBuildBeforePreparationOrInvocation(bool afterPreparation)
+        {
+            Assert.IsNull(CompilationJobTracker.Reservation.State, "Preserve any real compilation owner.");
+            BuildJob original = Job();
+            BuildRunner.ScheduleBuild(original, Options(original));
+            SimulateDomainLoss();
+            Restore();
+            if (afterPreparation)
+                Advance();
+            string generation = CompilationJobTracker.Reservation.Reserve(
+                "foreign-compile-" + Guid.NewGuid().ToString("N"),
+                EditorApplication.timeSinceStartup + 60
+            );
+            try
+            {
+                LogAssert.Expect(LogType.Error, new Regex("Queued build native admission blocked: native_job_active"));
+                Advance();
+                Advance();
+                Assert.AreEqual(0, invocations);
+                StringAssert.Contains("native_job_active", BuildJobStore.GetBuildJob(original.JobId).ErrorMessage);
+                Assert.IsNotNull(CompilationJobTracker.Reservation.State);
+            }
+            finally
+            {
+                Assert.IsTrue(CompilationJobTracker.Reservation.AbortBeforeStart(generation));
+            }
+        }
+
+        [Test]
+        public void OwnQueuedReservationDoesNotHideLostNativeBuildFence()
+        {
+            BuildJob job = Job();
+            BuildRunner.ScheduleBuild(job, Options(job));
+            SessionState.SetBool(NativeKey, true);
+            Assert.IsTrue(BuildRunner.NativeRecoveryRequired);
+            Assert.IsTrue(NativeOperationBarriers.TryGetBuildContinuationBlocker(job.JobId, null, out var blocker));
+            Assert.AreEqual("recovery_required", blocker.Reason);
+            LogAssert.Expect(LogType.Error, new Regex("Queued build native admission blocked: recovery_required"));
+            Advance();
+            Assert.AreEqual(0, invocations);
+            Assert.IsTrue(BuildRunner.NativeRecoveryRequired);
+        }
+
+        [Test]
+        public void BuildContinuationExcludesOnlyItsExactChildAndBatchIds()
+        {
+            string childId = "owned-child";
+            string batchId = "owned-batch";
+            BuildRunner.ReserveNative(childId);
+            BuildRunner.ReserveNative(batchId);
+            try
+            {
+                Assert.IsFalse(BuildRunner.HasForeignNativeOwner(childId, batchId));
+                Assert.IsFalse(NativeOperationBarriers.TryGetBuildContinuationBlocker(childId, batchId, out _));
+                BuildRunner.ReserveNative("foreign-build");
+                Assert.IsTrue(NativeOperationBarriers.TryGetBuildContinuationBlocker(childId, batchId, out var blocker));
+                Assert.AreEqual("native_job_active", blocker.Reason);
+            }
+            finally
+            {
+                BuildRunner.ReleaseNative(childId);
+                BuildRunner.ReleaseNative(batchId);
+                BuildRunner.ReleaseNative("foreign-build");
+            }
+        }
+
+        private static BatchJob CompleteFinalChildBeforeSettlement()
+        {
+            BuildJob child = Job();
+            var batch = new BatchJob("late-batch-" + Guid.NewGuid().ToString("N")) { State = BuildJobState.Building };
+            batch.Children.Add(child);
+            BuildQueueEntry entry = BuildQueueEntry.Single(child, Options(child));
+            entry.Id = batch.JobId;
+            entry.Batch = true;
+            BuildQueueCheckpoint.Enqueue(entry, jobs: batch.Children, batch: batch);
+            child.State = BuildJobState.Succeeded;
+            child.CompletedAt = DateTime.UtcNow;
+            BuildQueueCheckpoint.Complete(child);
+            return batch;
+        }
+
+#if UNITY_6000_0_OR_NEWER
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ProfileCheckpointFreezesOnlyItsEffectiveScenes(bool overridesGlobal)
+        {
+            string sourceScene = AssetDatabase
+                .FindAssets("t:Scene")
+                .Select(AssetDatabase.GUIDToAssetPath)
+                .FirstOrDefault(path => path.StartsWith("Assets/", StringComparison.Ordinal));
+            Assert.IsNotNull(sourceScene, "The owned test project must contain a preauthored scene.");
+            string prefix = "Assets/__QueuedProfile_" + Guid.NewGuid().ToString("N");
+            string profilePath = prefix + ".asset";
+            string profileScene = prefix + "_Profile.unity";
+            string globalScene = prefix + "_Global.unity";
+            string changedGlobalScene = prefix + "_ChangedGlobal.unity";
+            var ownedScenes = new List<string>();
+            bool ownsProfilePath = false;
+            EditorBuildSettingsScene[] originalScenes = EditorBuildSettings.scenes;
+            var profile = ScriptableObject.CreateInstance<UnityEditor.Build.Profile.BuildProfile>();
+            try
+            {
+                foreach (string scene in new[] { profileScene, globalScene, changedGlobalScene })
+                {
+                    Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(scene), "Preserve any preexisting scene asset.");
+                    ownedScenes.Add(scene);
+                    Assert.IsTrue(AssetDatabase.CopyAsset(sourceScene, scene), "Create an owned real scene for the profile fixture.");
+                    Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<SceneAsset>(scene));
+                }
+                profile.overrideGlobalScenes = overridesGlobal;
+                profile.scenes = new[] { new EditorBuildSettingsScene(profileScene, true) };
+                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(globalScene, true) };
+                Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(profilePath), "Preserve any preexisting profile asset.");
+                ownsProfilePath = true;
+                AssetDatabase.CreateAsset(profile, profilePath);
+                AssetDatabase.SaveAssets();
+                BuildJob job = Job();
+                BuildQueueChild child = BuildQueueChild.Capture(job, Options(job));
+                BuildRunner.CaptureProfile(child, new BuildPlayerWithProfileOptions { buildProfile = profile });
+                CollectionAssert.AreEqual(new[] { overridesGlobal ? profileScene : globalScene }, child.Options.scenes);
+                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(changedGlobalScene, true) };
+                if (overridesGlobal)
+                    Assert.DoesNotThrow(() => BuildQueueCheckpoint.ValidateProfile(child));
+                else
+                    StringAssert.Contains(
+                        "scene settings changed",
+                        Assert.Throws<InvalidOperationException>(() => BuildQueueCheckpoint.ValidateProfile(child)).Message
+                    );
+            }
+            finally
+            {
+                EditorBuildSettings.scenes = originalScenes;
+                if (ownsProfilePath)
+                    AssetDatabase.DeleteAsset(profilePath);
+                if (profile != null)
+                    UnityEngine.Object.DestroyImmediate(profile);
+                foreach (string scene in ownedScenes)
+                    AssetDatabase.DeleteAsset(scene);
+            }
+        }
+
+        [Test]
+        public void PublicProfileSchedulingPreservesManifestAndIgnoresUnrelatedGlobalScenesAfterReload()
+        {
+            string scene = AssetDatabase
+                .FindAssets("t:Scene")
+                .Select(AssetDatabase.GUIDToAssetPath)
+                .First(path => path.StartsWith("Assets/", StringComparison.Ordinal));
+            string profilePath = "Assets/__QueuedProfile_" + Guid.NewGuid().ToString("N") + ".asset";
+            EditorBuildSettingsScene[] originalScenes = EditorBuildSettings.scenes;
+            var profile = ScriptableObject.CreateInstance<UnityEditor.Build.Profile.BuildProfile>();
+            Func<BuildPlayerWithProfileOptions, BuildReport> originalBuilder = BuildRunner.BuildProfileForQueuedBuild;
+            try
+            {
+                profile.overrideGlobalScenes = true;
+                profile.scenes = new[] { new EditorBuildSettingsScene(scene, true) };
+                EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene("Assets/__MissingUnrelatedGlobalScene.unity", true) };
+                AssetDatabase.CreateAsset(profile, profilePath);
+                AssetDatabase.SaveAssets();
+                BuildRunner.BuildProfileForQueuedBuild = options =>
+                {
+                    invocations++;
+                    Assert.AreEqual("Builds/bundles.manifest", options.assetBundleManifestPath);
+                    Assert.AreEqual(profilePath, AssetDatabase.GetAssetPath(options.buildProfile));
+                    throw new InvalidOperationException("controlled queued build invocation");
+                };
+                BuildJob original = Job();
+                BuildRunner.ScheduleProfileBuild(
+                    original,
+                    new BuildPlayerWithProfileOptions
+                    {
+                        buildProfile = profile,
+                        locationPathName = original.OutputPath,
+                        assetBundleManifestPath = "Builds/bundles.manifest",
+                        options = BuildOptions.Development,
+                    }
+                );
+                SimulateDomainLoss();
+                Restore();
+                ExpectInvocationFailure();
+                Advance();
+                Advance();
+                Advance();
+                Assert.AreEqual(1, invocations);
+                Assert.AreEqual("controlled queued build invocation", BuildJobStore.GetBuildJob(original.JobId).ErrorMessage);
+            }
+            finally
+            {
+                BuildRunner.BuildProfileForQueuedBuild = originalBuilder;
+                EditorBuildSettings.scenes = originalScenes;
+                AssetDatabase.DeleteAsset(profilePath);
+                if (profile != null)
+                    UnityEngine.Object.DestroyImmediate(profile);
+            }
+        }
+#endif
 
         private static BuildJob Job() =>
             new BuildJob("queued-test-" + Guid.NewGuid().ToString("N"), EditorUserBuildSettings.activeBuildTarget, "Builds/UnusedQueuedTest.exe");

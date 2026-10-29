@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Build;
@@ -18,7 +19,10 @@ namespace MCPForUnity.Editor.Tools.Build
         private static readonly HashSet<string> NativeOwners = new();
         private static readonly HashSet<string> InvokedOwners = new();
         internal static bool HasNativeOwner => NativeOwners.Count != 0;
-        internal static bool NativeRecoveryRequired => !HasNativeOwner && SessionState.GetBool(NativeOwnerKey, false);
+        internal static bool NativeRecoveryRequired => InvokedOwners.Count == 0 && SessionState.GetBool(NativeOwnerKey, false);
+
+        internal static bool HasForeignNativeOwner(string jobId, string batchId) =>
+            NativeOwners.Any(owner => !string.Equals(owner, jobId, StringComparison.Ordinal) && !string.Equals(owner, batchId, StringComparison.Ordinal));
 
         internal static void ReserveNative(string id)
         {
@@ -84,6 +88,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 {
                     target = job.Target,
                     locationPathName = options.locationPathName,
+                    assetBundleManifestPath = options.assetBundleManifestPath,
                     options = options.options,
                     subtarget = subtarget,
                 }
@@ -108,7 +113,11 @@ namespace MCPForUnity.Editor.Tools.Build
             child.ProfilePath = path;
             child.ProfileGuid = AssetDatabase.AssetPathToGUID(path);
             child.ProfileHash = AssetDatabase.GetAssetDependencyHash(path).ToString();
-            child.ProfileSceneSettings = BuildQueueCheckpoint.CaptureProfileSceneSettings();
+            child.ProfileOverridesGlobalScenes = options.buildProfile.overrideGlobalScenes;
+            var scenes = child.ProfileOverridesGlobalScenes ? options.buildProfile.scenes : EditorBuildSettings.scenes;
+            child.ProfileSceneSettings = BuildQueueCheckpoint.CaptureProfileSceneSettings(scenes);
+            child.Options.scenes = scenes.Where(scene => scene.enabled).Select(scene => scene.path).ToArray();
+            child.Options.assetBundleManifestPath = options.assetBundleManifestPath;
         }
 #endif
 
@@ -124,11 +133,12 @@ namespace MCPForUnity.Editor.Tools.Build
                     var profile = AssetDatabase.LoadAssetAtPath<UnityEditor.Build.Profile.BuildProfile>(child.ProfilePath);
                     if (profile == null)
                         throw new InvalidOperationException("Queued build profile is unavailable.");
-                    return BuildPipeline.BuildPlayer(
+                    return BuildProfileForQueuedBuild(
                         new BuildPlayerWithProfileOptions
                         {
                             buildProfile = profile,
                             locationPathName = child.Options.locationPathName,
+                            assetBundleManifestPath = child.Options.assetBundleManifestPath,
                             options = child.Options.options,
                         }
                     );
@@ -174,6 +184,9 @@ namespace MCPForUnity.Editor.Tools.Build
         // The seam allows disposable-Editor reload fixtures to count native admission
         // without creating a Player. Production always uses BuildPipeline.BuildPlayer.
         internal static Func<BuildPlayerOptions, BuildReport> BuildPlayerForQueuedBuild = options => BuildPipeline.BuildPlayer(options);
+#if UNITY_6000_0_OR_NEWER
+        internal static Func<BuildPlayerWithProfileOptions, BuildReport> BuildProfileForQueuedBuild = options => BuildPipeline.BuildPlayer(options);
+#endif
 
         public static BuildPlayerOptions CreateBuildOptions(BuildTarget target, string outputPath, string[] scenes, BuildOptions buildOptions, int subtarget)
         {
@@ -500,7 +513,7 @@ namespace MCPForUnity.Editor.Tools.Build
             {
                 if (executed)
                     return;
-                if (EditorApplication.isCompiling || EditorApplication.isUpdating)
+                if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorStateCache.IsDomainReloadPending)
                     return;
                 executed = true;
                 EditorApplication.update -= RunOnce;
