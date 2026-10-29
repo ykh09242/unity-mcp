@@ -382,6 +382,71 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SetRendererColor_PropertyBlock_PreservesEffectiveNonColorOverrides(bool hasIndexedBlock)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = "PropertyBlockPreservationCube";
+            try
+            {
+                var renderer = go.GetComponent<Renderer>();
+                var material = AssetDatabase.LoadAssetAtPath<Material>(_matPath);
+                renderer.sharedMaterials = new[] { material, material };
+                string colorProperty = material.HasProperty("_BaseColor") ? "_BaseColor" : "_Color";
+                Color originalMaterialColor = material.GetColor(colorProperty);
+                var global = new MaterialPropertyBlock();
+                global.SetColor(colorProperty, Color.green);
+                global.SetFloat("_McpUnrelated", 0.625f);
+                global.SetFloat("_McpGlobalOnly", 3f);
+                global.SetTexture("_McpTexture", Texture2D.blackTexture);
+                renderer.SetPropertyBlock(global);
+                var indexed = new MaterialPropertyBlock();
+                indexed.SetColor(colorProperty, Color.blue);
+                indexed.SetFloat("_McpUnrelated", 0.25f);
+                indexed.SetTexture("_McpTexture", Texture2D.whiteTexture);
+                renderer.SetPropertyBlock(indexed, 1);
+                if (hasIndexedBlock)
+                    renderer.SetPropertyBlock(indexed, 0);
+
+                JObject result = ToJObject(
+                    ManageMaterial.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "set_renderer_color",
+                            ["target"] = go.name,
+                            ["searchMethod"] = "by_name",
+                            ["slot"] = 0,
+                            ["mode"] = "property_block",
+                            ["color"] = new JArray(1f, 0f, 0f, 1f),
+                        }
+                    )
+                );
+
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                var actual = new MaterialPropertyBlock();
+                renderer.GetPropertyBlock(actual, 0);
+                Assert.AreEqual(Color.red, actual.GetColor(colorProperty));
+                Assert.AreEqual(hasIndexedBlock ? 0.25f : 0.625f, actual.GetFloat("_McpUnrelated"));
+                Assert.AreEqual(hasIndexedBlock ? 0f : 3f, actual.GetFloat("_McpGlobalOnly"));
+                Assert.AreSame(hasIndexedBlock ? Texture2D.whiteTexture : Texture2D.blackTexture, actual.GetTexture("_McpTexture"));
+                renderer.GetPropertyBlock(actual);
+                Assert.AreEqual(Color.green, actual.GetColor(colorProperty));
+                Assert.AreEqual(0.625f, actual.GetFloat("_McpUnrelated"));
+                Assert.AreSame(Texture2D.blackTexture, actual.GetTexture("_McpTexture"));
+                renderer.GetPropertyBlock(actual, 1);
+                Assert.AreEqual(Color.blue, actual.GetColor(colorProperty));
+                Assert.AreEqual(0.25f, actual.GetFloat("_McpUnrelated"));
+                Assert.AreSame(Texture2D.whiteTexture, actual.GetTexture("_McpTexture"));
+                CollectionAssert.AreEqual(new[] { material, material }, renderer.sharedMaterials);
+                Assert.AreEqual(originalMaterialColor, material.GetColor(colorProperty));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
         [Test]
         public void GetMaterialInfo_ReturnsProperties()
         {

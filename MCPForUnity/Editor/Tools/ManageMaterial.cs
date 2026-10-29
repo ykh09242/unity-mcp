@@ -348,6 +348,8 @@ namespace MCPForUnity.Editor.Tools
 
                 MaterialPropertyBlock block = new MaterialPropertyBlock();
                 renderer.GetPropertyBlock(block, slot);
+                if (block.isEmpty)
+                    renderer.GetPropertyBlock(block);
 
                 if (sharedMaterials[slot] != null)
                 {
