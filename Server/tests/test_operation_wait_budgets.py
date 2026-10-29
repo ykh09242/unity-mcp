@@ -104,17 +104,21 @@ def test_stdio_reload_does_not_exhaust_old_retry_count_or_twenty_second_cap(tmp_
         """
 config.command_total_timeout = 900
 os.environ["UNITY_MCP_RELOAD_MAX_WAIT_S"] = "600"
-from models import MCPResponse
-class ReloadingConnection:
-    def send_command(self, *_args, **_kwargs):
-        if clock.now < 45:
-            return MCPResponse(success=False, hint="retry", data={"reason": "reloading"})
-        return {"success": True}
-module.get_unity_connection = lambda _instance: ReloadingConnection()
-module.time.sleep = lambda seconds: clock.advance(seconds, None)
-result = module.send_command_with_retry("fixture_query", {})
-assert result == {"success": True}, result
+status = home / ".unity-mcp/unity-mcp-status-owned.json"
+status.write_text('{"reloading":true}', encoding="utf-8")
+sock = ClockedSocket(clock, [(0.0, b"WELCOME UNITY-MCP 1 FRAMING=1\\n"), (0.0, header), (0.0, payload)])
+module.socket.create_connection = lambda endpoint, timeout: sock
+module.get_unity_connection = lambda _instance: conn
+def sleep(seconds):
+    assert not sock.send_attempts, "Reload wait must not dispatch the command"
+    clock.advance(seconds, None)
+    if clock.now >= 45:
+        status.write_text('{"reloading":false}', encoding="utf-8")
+module.time.sleep = sleep
+result = module.send_command_with_retry("fixture_query", {}, instance_id=conn.instance_id)
+assert result == {"ok": True}, result
 assert clock.now == 45
+assert len(sock.send_attempts) == 2, "Expected one framed command after recovery"
 """,
         tmp_path,
     )

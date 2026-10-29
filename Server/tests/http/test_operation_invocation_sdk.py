@@ -288,7 +288,7 @@ async def test_queued_sdk_callback_rechecks_authority_and_enabled_state(sdk_boun
             if change == "revoke":
                 assert refused.is_error
             else:
-                assert refused.structured_content["error"] == "operation_target_changed"
+                assert refused.structured_content["error"] == "operation_tool_unavailable"
         finally:
             await state.finish()
 

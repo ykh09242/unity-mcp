@@ -53,7 +53,8 @@ async def test_refresh_reports_native_recovery_without_polling_to_timeout(
     assert response.data["timeout"] is False
     assert response.data["retryable"] is False
     assert response.data["readiness"]["ready"] is False
-    assert response.data["readiness"]["next_action"] == "inspect_native_work_then_restart_editor"
+    # A blocked owner without positive restart evidence must not demand a restart.
+    assert response.data["readiness"]["next_action"] == "inspect_native_work"
     assert read.await_count == 1
     assert calls == ["refresh_unity"]
 

@@ -212,6 +212,8 @@ def test_capabilities_are_negotiated_as_supported_intersection(client):
             "tool_settings_ack_v1",
             "phase_timing_v1",
             "native_arbitration_v1",
+            "command_resume_v1",
+            "command_resume_origin_v1",
         }
         assert set(registered["capabilities"]) == set(FEATURES)
         assert "tool_settings_ack_v1" not in registered["capabilities"]

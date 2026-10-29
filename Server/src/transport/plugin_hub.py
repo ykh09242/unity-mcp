@@ -1586,7 +1586,6 @@ class PluginHub(WebSocketEndpoint):
         budget.session_id = session_id
         lease = await require_credential_lease() if config.http_remote_hosted else None
         registry = cls._registry
-        original_session = await registry.get_session(session_id) if registry is not None else None
         socket = cls._connections.get(session_id)
         resume_generation = (
             getattr(socket.state, "plugin_resume_generation", None) if socket is not None else None
@@ -1601,6 +1600,13 @@ class PluginHub(WebSocketEndpoint):
                 or resume_eligible(command_type, params, custom=_catalog_guard is not None)
             )
             and (_expected_read is None or queued_origin.get() is not None)
+            else None
+        )
+        # Only resumable commands need an original target for reconnect/cancellation.
+        # Other commands already validate their session at admission and dispatch.
+        original_session = (
+            await registry.get_session(session_id)
+            if resume is not None and registry is not None
             else None
         )
         if resume is not None:
