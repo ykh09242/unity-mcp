@@ -15,19 +15,22 @@ namespace MCPForUnity.Editor.Tools.Build
     {
         private const string NativeOwnerKey = "MCPForUnity.Build.NativeOwnerV1";
         private static readonly HashSet<string> NativeOwners = new();
+        private static readonly HashSet<string> InvokedOwners = new();
         internal static bool HasNativeOwner => NativeOwners.Count != 0;
         internal static bool NativeRecoveryRequired => !HasNativeOwner && SessionState.GetBool(NativeOwnerKey, false);
 
         private static void ReserveNative(string id)
         {
             NativeOwners.Add(id);
-            SessionState.SetBool(NativeOwnerKey, true);
         }
 
         private static void ReleaseNative(string id)
         {
             NativeOwners.Remove(id);
-            SessionState.SetBool(NativeOwnerKey, HasNativeOwner);
+            // Queued callbacks and between-child continuations vanish at reload without
+            // invoking native work. They cannot create or discharge a lost-invocation fence.
+            if (InvokedOwners.Remove(id))
+                SessionState.SetBool(NativeOwnerKey, InvokedOwners.Count != 0);
         }
 
         public static object ScheduleBuild(BuildJob job, BuildPlayerOptions options, Action beforeBuild = null)
@@ -213,6 +216,10 @@ namespace MCPForUnity.Editor.Tools.Build
             {
                 beforeBuild?.Invoke();
                 SaveBeforeBuild();
+                // Persist immediately before the indivisible native invocation, after any
+                // preparation that can fail without ever entering BuildPlayer.
+                SessionState.SetBool(NativeOwnerKey, true);
+                InvokedOwners.Add(job.JobId);
                 BuildReport report = buildFunc();
                 capturedReport = report;
                 job.CompletedAt = DateTime.UtcNow;

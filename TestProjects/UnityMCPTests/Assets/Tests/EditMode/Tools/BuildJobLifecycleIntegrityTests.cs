@@ -6,6 +6,8 @@ using MCPForUnity.Editor.Tools.Build;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.Build.Reporting;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
@@ -21,6 +23,8 @@ namespace MCPForUnityTests.EditMode.Tools
         private bool originalNativeOwner;
         private static HashSet<string> NativeOwners =>
             (HashSet<string>)typeof(BuildRunner).GetField("NativeOwners", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+        private static HashSet<string> InvokedOwners =>
+            (HashSet<string>)typeof(BuildRunner).GetField("InvokedOwners", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null);
 
         private static Dictionary<string, BuildJob> Jobs =>
             (Dictionary<string, BuildJob>)typeof(BuildJobStore).GetField("_buildJobs", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
@@ -80,6 +84,7 @@ namespace MCPForUnityTests.EditMode.Tools
                 if (capturedStore)
                 {
                     NativeOwners.Clear();
+                    InvokedOwners?.Clear();
                     SessionState.SetBool("MCPForUnity.Build.NativeOwnerV1", originalNativeOwner);
                     Jobs.Clear();
                     Batches.Clear();
@@ -177,6 +182,175 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             Assert.AreEqual(jobId, response["data"].Value<string>("job_id"));
             Assert.AreEqual(pending ? "pending" : null, response.Value<string>("_mcp_status"));
+        }
+
+        [Test]
+        public void QueuedBuildLostAtReloadDoesNotRequireNativeRecovery()
+        {
+            BuildRunner.ScheduleBuild(Child(), new BuildPlayerOptions());
+            CaptureCallbacks();
+            NativeOwners.Clear(); // Domain-static owners and update callbacks do not survive reload.
+            foreach (var callback in ownedCallbacks)
+                EditorApplication.update -= callback;
+            Assert.IsFalse(BuildRunner.NativeRecoveryRequired, "A never-invoked build cannot leave a lost-native-work fence.");
+        }
+
+#if UNITY_6000_0_OR_NEWER
+        [Test]
+        public void QueuedProfileBuildLostAtReloadDoesNotRequireNativeRecovery()
+        {
+            BuildRunner.ScheduleProfileBuild(Child(), new BuildPlayerWithProfileOptions());
+            CaptureCallbacks();
+            NativeOwners.Clear();
+            foreach (var callback in ownedCallbacks)
+                EditorApplication.update -= callback;
+            Assert.IsFalse(BuildRunner.NativeRecoveryRequired);
+        }
+#endif
+
+        [Test]
+        public void BatchPreparationGapLostAtReloadDoesNotRequireNativeRecovery()
+        {
+            var batch = new BatchJob("local-reload-gap") { State = BuildJobState.Building };
+            batch.Children.Add(Child());
+            BuildRunner.ScheduleNextBatchBuild(batch, index => throw new InvalidOperationException("controlled preparation failure"));
+            CaptureCallbacks();
+            Assert.IsTrue(BuildRunner.HasNativeOwner, "The queued continuation still owns admission in this domain.");
+            NativeOwners.Clear();
+            foreach (var callback in ownedCallbacks)
+                EditorApplication.update -= callback;
+            Assert.IsFalse(BuildRunner.NativeRecoveryRequired, "A lost batch continuation did not invoke native build work.");
+        }
+
+        [Test]
+        public void QueuedCancellationCannotClearHistoricalNativeUncertainty()
+        {
+            SessionState.SetBool("MCPForUnity.Build.NativeOwnerV1", true);
+            BuildJob job = Child();
+            BuildRunner.ScheduleBuild(job, new BuildPlayerOptions());
+            job.State = BuildJobState.Cancelled;
+            AdvanceOwnedCallbacks();
+            Assert.IsFalse(BuildRunner.HasNativeOwner);
+            Assert.IsTrue(BuildRunner.NativeRecoveryRequired, "Queued cleanup cannot discharge a lost invocation from an earlier domain.");
+        }
+
+        private void ScheduleManagedBuild(BuildJob job, Func<BuildReport> build, Action beforeBuild = null)
+        {
+            typeof(BuildRunner).GetMethod("ReserveNative", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { job.JobId });
+            typeof(BuildRunner)
+                .GetMethod("ScheduleOwnedBuild", BindingFlags.Static | BindingFlags.NonPublic)
+                .Invoke(null, new object[] { job, build, beforeBuild });
+            CaptureCallbacks();
+        }
+
+        private static void ExpectManagedBuildFailure() =>
+            LogAssert.Expect(UnityEngine.LogType.Error, "[MCP Build] ✗ Build failed: StandaloneWindows64 — controlled build failure");
+
+        [Test]
+        public void PreparationFailureDoesNotPersistNativeInvocation()
+        {
+            bool invoked = false;
+            ScheduleManagedBuild(
+                Child(),
+                () =>
+                {
+                    invoked = true;
+                    return null;
+                },
+                () => throw new InvalidOperationException("controlled build failure")
+            );
+            ExpectManagedBuildFailure();
+            AdvanceOwnedCallbacks();
+            Assert.IsFalse(invoked);
+            Assert.IsFalse(SessionState.GetBool("MCPForUnity.Build.NativeOwnerV1", false));
+        }
+
+        [Test]
+        public void InvocationMarkerStartsAfterPreparationAndDoesNotRetainQueuedSibling()
+        {
+            bool markedDuringPreparation = true;
+            bool markedDuringInvocation = false;
+            BuildJob sibling = Child();
+            ScheduleManagedBuild(
+                Child(),
+                () =>
+                {
+                    markedDuringInvocation = SessionState.GetBool("MCPForUnity.Build.NativeOwnerV1", false);
+                    BuildRunner.ScheduleBuild(sibling, new BuildPlayerOptions());
+                    sibling.State = BuildJobState.Cancelled;
+                    throw new InvalidOperationException("controlled build failure");
+                },
+                () => markedDuringPreparation = SessionState.GetBool("MCPForUnity.Build.NativeOwnerV1", false)
+            );
+            ExpectManagedBuildFailure();
+            AdvanceOwnedCallbacks();
+            Assert.IsFalse(markedDuringPreparation);
+            Assert.IsTrue(markedDuringInvocation, "Persist the uncertainty marker before entering native code.");
+            Assert.IsTrue(BuildRunner.HasNativeOwner, "The sibling callback still owns admission.");
+            NativeOwners.Clear();
+            InvokedOwners?.Clear();
+            Assert.IsFalse(BuildRunner.NativeRecoveryRequired, "A returned invocation cannot turn its queued sibling into native uncertainty.");
+        }
+
+        [Test]
+        public void BatchCompletedChildGapLostAtReloadDoesNotRequireNativeRecovery()
+        {
+            var batch = new BatchJob("local-completed-child-reload-gap") { State = BuildJobState.Building };
+            batch.Children.Add(Child());
+            batch.Children.Add(Child());
+            BuildRunner.ScheduleNextBatchBuild(
+                batch,
+                index =>
+                {
+                    BuildJob child = batch.Children[index];
+                    ScheduleManagedBuild(child, () => throw new InvalidOperationException("controlled build failure"));
+                    return child;
+                }
+            );
+            ExpectManagedBuildFailure();
+            AdvanceOwnedCallbacks();
+            Assert.AreEqual(1, batch.CurrentIndex);
+            Assert.IsTrue(BuildRunner.HasNativeOwner, "The batch and next queued child still own admission.");
+            NativeOwners.Clear();
+            InvokedOwners?.Clear();
+            Assert.IsFalse(BuildRunner.NativeRecoveryRequired, "The previous native call returned before the next child was queued.");
+        }
+
+        [Test]
+        public void QueuedSiblingCleanupCannotClearAnExecutingInvocation()
+        {
+            bool retainedDuringSiblingCleanup = false;
+            ScheduleManagedBuild(
+                Child(),
+                () =>
+                {
+                    var precedingCallbacks = new HashSet<EditorApplication.CallbackFunction>(CurrentCallbacks());
+                    BuildJob sibling = Child();
+                    BuildRunner.ScheduleBuild(sibling, new BuildPlayerOptions());
+                    sibling.State = BuildJobState.Cancelled;
+                    CaptureCallbacks();
+                    foreach (var callback in CurrentCallbacks().Where(callback => !precedingCallbacks.Contains(callback)).ToArray())
+                        callback();
+                    retainedDuringSiblingCleanup = SessionState.GetBool("MCPForUnity.Build.NativeOwnerV1", false);
+                    throw new InvalidOperationException("controlled build failure");
+                }
+            );
+            ExpectManagedBuildFailure();
+            AdvanceOwnedCallbacks();
+            Assert.IsTrue(retainedDuringSiblingCleanup);
+            Assert.IsFalse(BuildRunner.HasNativeOwner);
+            Assert.IsFalse(BuildRunner.NativeRecoveryRequired);
+        }
+
+        [Test]
+        public void LostInvocationMarkerRemainsConservativeAfterReload()
+        {
+            NativeOwners.Add("local-native-invocation");
+            InvokedOwners?.Add("local-native-invocation");
+            SessionState.SetBool("MCPForUnity.Build.NativeOwnerV1", true);
+            NativeOwners.Clear();
+            InvokedOwners?.Clear();
+            Assert.IsTrue(BuildRunner.NativeRecoveryRequired, "Existing true markers remain compatible evidence of native uncertainty.");
         }
 
         [Test]
