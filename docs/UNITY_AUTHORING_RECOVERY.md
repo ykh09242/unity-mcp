@@ -161,6 +161,23 @@ result (including interruption or loss of managed state), the summary remains
 unknown rather than borrowing old counts. Use `get_test_job` with its existing ID
 for retained job history and detailed results.
 
+## Tools interrupted by an Editor reload
+
+A reload can interrupt the managed response while native work has already started.
+When the transport reports an unknown outcome, inspect the existing job or resulting
+state after reconnection; do not repeat a mutation solely because its response was
+lost. Supported job observations keep the original job ID and wait deadline.
+
+Connection shutdown retires queued WebSocket commands before cancellation callbacks
+finish. Work that already entered its handler retains its normal completion and
+native-ownership rules. Build callbacks queued in the old domain cannot survive a
+reload, so they do not create a persistent native-build fence until the native build
+is invoked. An interrupted invoked build remains uncertain and keeps its fence.
+
+Repeated reloads preserve a pending stdio bridge resume even when the bridge has not
+restarted between passes. An explicit stop or transport switch still clears that
+intent. Connection recovery does not replay the interrupted tool operation.
+
 ## Recursive runtime data during hot reload
 
 Unity hot reload serializes eligible private fields and auto-property backing

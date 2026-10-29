@@ -56,14 +56,15 @@ namespace MCPForUnity.Editor.Services
 
             try
             {
-                // Only persist resume intent when stdio is the active transport and the bridge is running.
+                // A second reload can arrive before the first reload's deferred resume.
+                // Preserve that intent until resume succeeds or an explicit stop/switch clears it.
                 bool useHttp = EditorConfigurationCache.Instance.UseHttpTransport;
                 // Check both TransportManager AND StdioBridgeHost directly, because CI starts via StdioBridgeHost
                 // bypassing TransportManager state.
                 bool tmRunning = MCPServiceLocator.TransportManager.IsRunning(TransportMode.Stdio);
                 bool hostRunning = StdioBridgeHost.IsRunning;
                 bool isRunning = tmRunning || hostRunning;
-                bool shouldResume = !useHttp && isRunning;
+                bool shouldResume = !useHttp && (isRunning || EditorPrefs.GetBool(EditorPrefKeys.ResumeStdioAfterReload, false));
 
                 if (shouldResume)
                 {

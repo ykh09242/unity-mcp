@@ -28,7 +28,8 @@ try {
     & $DotnetPath @arguments
     if ($LASTEXITCODE -ne 0) { throw 'Reload batch isolation fixture compilation failed' }
     $scenarios = @('batch-unset', 'batch-empty', 'batch-whitespace', 'batch-optin', 'batch-zero',
-        'interactive-unset', 'interactive-empty', 'interactive-whitespace', 'interactive-optin', 'interactive-migrated')
+        'interactive-unset', 'interactive-empty', 'interactive-whitespace', 'interactive-optin', 'interactive-migrated',
+        'interactive-stdio-pending', 'interactive-stdio-active', 'interactive-stdio-stopped', 'interactive-stdio-switch')
     foreach ($scenario in $scenarios) {
         # Static constructors run once per process. Each scenario must start a fresh process.
         $output = @(& (Join-Path $UnityData 'MonoBleedingEdge/bin/mono.exe') $executable $scenario)

@@ -47,6 +47,7 @@ namespace UnityEditor
     public static class SessionState
     {
         public static readonly Dictionary<string, bool> Values = new Dictionary<string, bool>();
+        private static readonly Dictionary<string, string> Strings = new Dictionary<string, string>();
         public static int Reads,
             Writes,
             Deletes;
@@ -67,6 +68,24 @@ namespace UnityEditor
         {
             Deletes++;
             Values.Remove(key);
+        }
+
+        public static string GetString(string key, string fallback)
+        {
+            Reads++;
+            return Strings.TryGetValue(key, out var value) ? value : fallback;
+        }
+
+        public static void SetString(string key, string value)
+        {
+            Writes++;
+            Strings[key] = value;
+        }
+
+        public static void EraseString(string key)
+        {
+            Deletes++;
+            Strings.Remove(key);
         }
     }
 
@@ -169,11 +188,12 @@ namespace MCPForUnity.Editor.Services.Transport
     public sealed class TransportManager
     {
         public static int Calls;
+        public bool StdioRunning;
 
         public bool IsRunning(TransportMode mode)
         {
             Calls++;
-            return false;
+            return mode == TransportMode.Stdio && StdioRunning;
         }
 
         public void ForceStop(TransportMode mode)
@@ -184,12 +204,16 @@ namespace MCPForUnity.Editor.Services.Transport
         public Task StopAsync(TransportMode mode)
         {
             Calls++;
+            if (mode == TransportMode.Stdio)
+                StdioRunning = false;
             return Task.CompletedTask;
         }
 
         public Task<bool> StartAsync(TransportMode mode)
         {
             Calls++;
+            if (mode == TransportMode.Stdio)
+                StdioRunning = true;
             return Task.FromResult(true);
         }
 
@@ -299,6 +323,28 @@ public static class ReloadBatchIsolationHarness
                 UnityEditor.SessionState.Reads == 0 && UnityEditor.SessionState.Writes == 0 && UnityEditor.SessionState.Deletes == 0,
                 "blocked reload events leave session state untouched"
             );
+        }
+        if (scenario.StartsWith("interactive-stdio-", StringComparison.Ordinal))
+        {
+            var transport = MCPForUnity.Editor.Services.MCPServiceLocator.TransportManager;
+            bool switched = scenario == "interactive-stdio-switch";
+            bool stopped = scenario == "interactive-stdio-stopped";
+            bool active = scenario == "interactive-stdio-active";
+            MCPForUnity.Editor.Helpers.EditorConfigurationCache.Instance.UseHttpTransport = switched;
+            transport.StdioRunning = active;
+            if (stopped || active)
+                UnityEditor.EditorPrefs.Values.Remove(StdioResume);
+            UnityEditor.AssemblyReloadEvents.RaiseBefore();
+            Check(UnityEditor.EditorPrefs.Values.ContainsKey(StdioResume) == (!switched && !stopped), "first reload preserves only requested stdio resume");
+            Check(!transport.StdioRunning, "old stdio bridge stops before reload");
+            UnityEditor.AssemblyReloadEvents.RaiseBefore();
+            Check(
+                UnityEditor.EditorPrefs.Values.ContainsKey(StdioResume) == (!switched && !stopped),
+                "second reload retains pending resume without a running bridge"
+            );
+            UnityEditor.AssemblyReloadEvents.RaiseAfter();
+            Check(transport.StdioRunning == (!switched && !stopped), "post-reload resume occurs only for the retained intent");
+            Check(!UnityEditor.EditorPrefs.Values.ContainsKey(StdioResume), "successful resume consumes intent; explicit stop and switch remain cleared");
         }
         Console.WriteLine(scenario + ": " + (checks - failures) + "/" + checks + " checks passed");
         return failures == 0 ? 0 : 1;
