@@ -42,7 +42,8 @@ def replace_once(path: Path, pattern: str, repl: str, *, dry_run: bool = False) 
         write_text(path, new)
 
 
-def remove_line_exact(path: Path, line: str, *, dry_run: bool = False) -> None:
+def remove_optional_line_exact(path: Path, line: str, *, dry_run: bool = False) -> None:
+    """Remove a legacy line if present, rejecting ambiguous duplicate matches."""
     original = read_text(path)
     lines = original.splitlines(keepends=True)
 
@@ -54,10 +55,10 @@ def remove_line_exact(path: Path, line: str, *, dry_run: bool = False) -> None:
             continue
         kept.append(l)
 
-    if removed != 1:
-        raise RuntimeError(f"{path}: expected to remove exactly 1 line '{line}', removed {removed}")
+    if removed > 1:
+        raise RuntimeError(f"{path}: expected at most 1 line '{line}', found {removed}")
 
-    if not dry_run:
+    if removed and not dry_run:
         write_text(path, "".join(kept))
 
 
@@ -73,7 +74,7 @@ def apply_asset_store_edits(mcp_dir: Path, remote_url: str, *, dry_run: bool = F
         if not path.is_file():
             raise RuntimeError(f"Expected file not found: {path}")
 
-    remove_line_exact(setup_service, "[InitializeOnLoad]", dry_run=dry_run)
+    remove_optional_line_exact(setup_service, "[InitializeOnLoad]", dry_run=dry_run)
     replace_once(
         http_util,
         r'private const string DefaultRemoteBaseUrl = "";',

@@ -112,7 +112,7 @@ def asset_fixture(tmp_path):
     repo = tmp_path / "repo"
     source = repo / "MCPForUnity"
     files = {
-        "Editor/Setup/SetupWindowService.cs": "[InitializeOnLoad]\nclass Setup {}\n",
+        "Editor/Setup/SetupWindowService.cs": "class Setup {}\n",
         "Editor/MenuItems/MCPForUnityMenu.cs": "class Menu {}\n",
         "Editor/Helpers/HttpEndpointUtility.cs": 'private const string DefaultRemoteBaseUrl = "";\n',
         "Editor/Windows/Components/Connection/McpConnectionSection.cs": (
@@ -206,6 +206,59 @@ def test_asset_dry_run_never_stages_or_writes(asset_fixture, monkeypatch):
     monkeypatch.setattr(helper.tempfile, "mkdtemp", unexpected)
     monkeypatch.setattr(helper, "write_text", unexpected)
     assert run_asset(helper, monkeypatch, repo, project, "--dry-run", "--backup") == 0
+
+
+def test_asset_current_repository_preflight_is_read_only(monkeypatch):
+    helper = load_helper("prepare_unity_asset_store_release")
+    source = Path(__file__).resolve().parents[2] / "MCPForUnity"
+    paths = [
+        source / "Editor/Setup/SetupWindowService.cs",
+        source / "Editor/MenuItems/MCPForUnityMenu.cs",
+        source / "Editor/Helpers/HttpEndpointUtility.cs",
+        source / "Editor/Windows/Components/Connection/McpConnectionSection.cs",
+    ]
+    before = {path: path.read_bytes() for path in paths}
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("current-source preflight attempted a filesystem mutation")
+
+    monkeypatch.setattr(helper, "write_text", unexpected)
+    helper.apply_asset_store_edits(source, "https://example.test/mcp", dry_run=True)
+    assert {path: path.read_bytes() for path in paths} == before
+
+
+def test_asset_legacy_setup_attribute_is_removed_only_from_destination(asset_fixture, monkeypatch):
+    helper, repo, source, project, destination = asset_fixture
+    setup = source / "Editor/Setup/SetupWindowService.cs"
+    setup.write_text("[InitializeOnLoad]\n" + setup.read_text())
+    source_before = snapshot(source)
+    destination_before = snapshot(destination)
+    assert run_asset(helper, monkeypatch, repo, project, "--dry-run") == 0
+    assert snapshot(source) == source_before
+    assert snapshot(destination) == destination_before
+    assert run_asset(helper, monkeypatch, repo, project) == 0
+    assert snapshot(source) == source_before
+    assert (
+        "[InitializeOnLoad]" not in (destination / "Editor/Setup/SetupWindowService.cs").read_text()
+    )
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_asset_duplicate_setup_attributes_fail_before_staging(asset_fixture, monkeypatch, dry_run):
+    helper, repo, source, project, destination = asset_fixture
+    setup = source / "Editor/Setup/SetupWindowService.cs"
+    setup.write_text("[InitializeOnLoad]\n[InitializeOnLoad]\n" + setup.read_text())
+    before = snapshot(source)
+    destination_before = snapshot(destination)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("ambiguous setup attributes reached staging")
+
+    monkeypatch.setattr(helper.tempfile, "mkdtemp", unexpected)
+    with pytest.raises(RuntimeError, match="InitializeOnLoad"):
+        run_asset(helper, monkeypatch, repo, project, *(["--dry-run"] if dry_run else []))
+    assert snapshot(source) == before
+    assert snapshot(destination) == destination_before
 
 
 def test_asset_url_is_a_literal_csharp_string(asset_fixture, monkeypatch):
