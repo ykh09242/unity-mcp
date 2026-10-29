@@ -222,6 +222,13 @@ async def _preflight_test_run(ctx, observations, refresh_if_dirty, max_wait_s):
                 get_editor_state_authoritative(ctx), timeout=timeout
             )
             value = response.model_dump() if hasattr(response, "model_dump") else response
+            if (
+                isinstance(value, dict)
+                and value.get("success") is False
+                and isinstance(value.get("data"), dict)
+                and value["data"].get("reason") == "instance_selection_required"
+            ):
+                return MCPResponse(**value)
             if isinstance(value, dict) and value.get("success") is True:
                 data = value.get("data")
         except Exception:

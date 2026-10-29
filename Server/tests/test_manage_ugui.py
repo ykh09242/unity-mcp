@@ -771,6 +771,7 @@ async def test_returns_instance_selection_failure_without_waiting_for_editor(
 ) -> None:
     # Given: production selection refuses two sessions before any command can run.
     from services.tools.preflight import preflight
+    import services.tools.preflight as preflight_module
     from transport.plugin_hub import InstanceSelectionRequiredError, PluginHub
     from transport.plugin_registry import PluginRegistry
 
@@ -781,6 +782,8 @@ async def test_returns_instance_selection_failure_without_waiting_for_editor(
     monkeypatch.setattr(registry, "list_sessions", listing)
     send = AsyncMock()
     ready = AsyncMock(return_value=(False, 0.0))
+    pause = AsyncMock(side_effect=AssertionError("selection refusal must not poll readiness"))
+    monkeypatch.setattr(preflight_module, "asyncio", SimpleNamespace(sleep=pause))
     boundary.instance.return_value = None
     monkeypatch.setattr(config, "transport_mode", "http")
     monkeypatch.setattr(config, "http_remote_hosted", False)
@@ -802,14 +805,21 @@ async def test_returns_instance_selection_failure_without_waiting_for_editor(
         response.structured_content
         == MCPResponse(
             success=False,
-            error=InstanceSelectionRequiredError._MULTIPLE_INSTANCES,
+            error=(
+                InstanceSelectionRequiredError._MULTIPLE_INSTANCES
+                + " Available instances: ['SceneA@hashA', 'SceneB@hashB']."
+            ),
             hint="select_instance",
-            data={"reason": "instance_selection_required", "available_instances": []},
+            data={
+                "reason": "instance_selection_required",
+                "available_instances": ["SceneA@hashA", "SceneB@hashB"],
+            },
         ).model_dump()
     )
     send.assert_not_awaited()
     ready.assert_not_awaited()
-    assert listing.await_count == 3
+    pause.assert_not_awaited()
+    assert listing.await_count == 2
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ from fastmcp import Client, FastMCP
 from pydantic import JsonValue
 
 from services.tools.manage_ugui import manage_ugui
+import services.tools.preflight as preflight_module
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,8 +22,26 @@ class Boundary:
 
 @pytest.fixture
 def boundary(monkeypatch: pytest.MonkeyPatch) -> Boundary:
+    elapsed = 0.0
+
+    async def advance(seconds: float) -> None:
+        nonlocal elapsed
+        elapsed += seconds
+
+    monkeypatch.setattr(preflight_module, "time", SimpleNamespace(monotonic=lambda: elapsed))
+    monkeypatch.setattr(preflight_module, "asyncio", SimpleNamespace(sleep=advance))
     fixture = Boundary(
-        state=AsyncMock(return_value={"success": True, "data": {"tests": {"is_running": True}}}),
+        state=AsyncMock(
+            return_value={
+                "success": True,
+                "data": {
+                    "tests": {"is_running": True},
+                    "compilation": {"is_compiling": False, "is_domain_reload_pending": False},
+                    "assets": {"external_changes_scan_complete": True},
+                    "advice": {"ready_for_tools": True},
+                },
+            }
+        ),
         refresh=AsyncMock(return_value={"success": True}),
         read=AsyncMock(return_value={"success": True}),
         mutate=AsyncMock(return_value={"success": True}),
@@ -147,12 +166,12 @@ async def test_valid_ugui_properties_keep_false_zero_and_nullable_reference(
     properties: dict[str, JsonValue],
 ) -> None:
     # Given
-    boundary.state.return_value = {"success": True, "data": {"tests": {"is_running": False}}}
+    boundary.state.return_value["data"]["tests"]["is_running"] = False
     # When
     result = await manage_ugui(SimpleNamespace(), action=action, target=0, properties=properties)
     # Then
     assert result["success"] is True
-    boundary.state.assert_awaited_once()
+    assert boundary.state.await_count == 4
     assert boundary.mutate.await_args.args[3]["properties"] == properties
     assert boundary.mutate.await_args.args[3]["target"] == 0
     boundary.refresh.assert_not_awaited()
@@ -233,7 +252,7 @@ async def test_valid_ugui_create_properties_preserve_default_boundaries(
     element_type: str,
     properties: dict[str, JsonValue],
 ) -> None:
-    boundary.state.return_value = {"success": True, "data": {"tests": {"is_running": False}}}
+    boundary.state.return_value["data"]["tests"]["is_running"] = False
     result = await manage_ugui(
         SimpleNamespace(),
         action="create",
@@ -242,7 +261,7 @@ async def test_valid_ugui_create_properties_preserve_default_boundaries(
         properties=properties,
     )
     assert result["success"] is True
-    boundary.state.assert_awaited_once()
+    assert boundary.state.await_count == 4
     assert boundary.mutate.await_args.args[3]["properties"] == properties
 
 
@@ -291,12 +310,12 @@ async def test_valid_ugui_float32_rounding_preserves_raw_payload(
     action: str,
     properties: dict[str, JsonValue],
 ) -> None:
-    boundary.state.return_value = {"success": True, "data": {"tests": {"is_running": False}}}
+    boundary.state.return_value["data"]["tests"]["is_running"] = False
     result = await manage_ugui(
         SimpleNamespace(), action=action, target="Canvas", properties=properties
     )
     assert result["success"] is True
-    boundary.state.assert_awaited_once()
+    assert boundary.state.await_count == 4
     assert boundary.mutate.await_args.args[3]["properties"] == properties
 
 
@@ -319,7 +338,7 @@ async def test_create_ugui_offset_overflow_precedes_editor_readiness(boundary: B
 
 @pytest.mark.asyncio
 async def test_create_ugui_finite_large_offsets_are_forwarded(boundary: Boundary) -> None:
-    boundary.state.return_value = {"success": True, "data": {"tests": {"is_running": False}}}
+    boundary.state.return_value["data"]["tests"]["is_running"] = False
     properties = {"offsetMin": [-1.7e38, 0], "offsetMax": [1.7e38, 0]}
     result = await manage_ugui(
         SimpleNamespace(),
@@ -329,5 +348,5 @@ async def test_create_ugui_finite_large_offsets_are_forwarded(boundary: Boundary
         properties=properties,
     )
     assert result["success"] is True
-    boundary.state.assert_awaited_once()
+    assert boundary.state.await_count == 4
     assert boundary.mutate.await_args.args[3]["properties"] == properties
