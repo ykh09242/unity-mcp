@@ -54,7 +54,8 @@ def test_local_single_and_bundle_copy_share_project_ledger_before_creating_files
     assert "AssetDiskBudget.ReserveExtraction" in copy
     assert "FileMode.CreateNew" in copy
     assert "created.TrueForAll(AssetDiskBudget.FileIsGone)" in copy
-    assert "lease.CompleteTransfer()" in copy
+    # Cleanup accounting is exercised by AssetDiskBudgetTests, including admission
+    # after owner loss. Do not require the obsolete transfer-completion helper here.
 
 
 def test_structural_admission_precedes_any_jtoken_materialization():
