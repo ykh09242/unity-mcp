@@ -48,6 +48,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private ClientWebSocket _socket;
         private CancellationTokenSource _lifecycleCts;
         private CancellationTokenSource _connectionCts;
+        private CommandAdmission _commandAdmission;
         private Task _receiveTask;
         private Task _keepAliveTask;
         private Task _registrationTask;
@@ -269,6 +270,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     var socket = _socket;
                     var loops = CaptureConnectionLoops();
+                    loops.Admission?.Retire();
                     var previous = _stopSettlement;
                     var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
                     _stoppingLifecycle = lifecycleCts;
@@ -408,6 +410,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 ++_startVersion;
                 lifecycleCts = _lifecycleCts;
                 loops = CaptureConnectionLoops();
+                loops.Admission?.Retire();
                 if (
                     lifecycleCts != null
                     || loops.Cts != null
@@ -427,6 +430,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 socket = _socket;
                 _lifecycleCts = null;
                 _connectionCts = null;
+                _commandAdmission = null;
                 _socket = null;
                 _receiveTask = null;
                 _keepAliveTask = null;
@@ -605,6 +609,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 return false;
             token.ThrowIfCancellationRequested();
             var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            var admission = new CommandAdmission();
             CancellationToken connectionToken = connectionCts.Token;
             bool ownsLifecycle;
             lock (_ownershipLock)
@@ -614,6 +619,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 if (ownsLifecycle)
                 {
                     _connectionCts = connectionCts;
+                    _commandAdmission = admission;
                     // A registered reply can arrive before the Start/reconnect continuation.
                     _sessionId = "pending";
                     _commandWork = new ConnectionCommandWork(connectionToken);
@@ -630,6 +636,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             if (!ownsLifecycle)
             {
+                admission.Dispose();
                 connectionCts.Dispose();
                 return false;
             }
@@ -735,9 +742,37 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             return true;
         }
 
+        // These tokens are observed by admission only: never register callbacks or pass
+        // them to a handler. Retirement must finish before user cancellation can run.
+        private sealed class CommandAdmission : IDisposable
+        {
+            private readonly object gate = new object();
+            private CancellationTokenSource source = new CancellationTokenSource();
+            internal CancellationToken Token { get; }
+
+            internal CommandAdmission() => Token = source.Token;
+
+            internal void Retire()
+            {
+                lock (gate)
+                    source?.Cancel();
+            }
+
+            public void Dispose()
+            {
+                lock (gate)
+                {
+                    source?.Cancel();
+                    source?.Dispose();
+                    source = null;
+                }
+            }
+        }
+
         private sealed class ConnectionLoops
         {
             public CancellationTokenSource Cts;
+            public CommandAdmission Admission;
             public Task Receive;
             public Task KeepAlive;
             public Task Registration;
@@ -751,6 +786,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             new ConnectionLoops
             {
                 Cts = _connectionCts,
+                Admission = _commandAdmission,
                 Receive = _receiveTask,
                 KeepAlive = _keepAliveTask,
                 Registration = _registrationTask,
@@ -762,7 +798,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         // Callers hold _ownershipLock when checking and publishing connection state.
         private bool IsCurrentConnectionToken(CancellationToken token)
         {
-            if (token.IsCancellationRequested || _connectionCts == null)
+            if (token.IsCancellationRequested || _connectionCts == null || _commandAdmission?.Token.IsCancellationRequested == true)
                 return false;
             try
             {
@@ -786,7 +822,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         }
 
         /// <summary>Stops only the connection loops captured by the owning operation.</summary>
-        private Task StopCapturedConnectionLoopsAsync(ConnectionLoops loops) => Task.Run(() => DrainCapturedConnectionLoopsAsync(loops));
+        private Task StopCapturedConnectionLoopsAsync(ConnectionLoops loops)
+        {
+            loops.Admission?.Retire();
+            return Task.Run(() => DrainCapturedConnectionLoopsAsync(loops));
+        }
 
         private async Task DrainCapturedConnectionLoopsAsync(ConnectionLoops loops)
         {
@@ -832,6 +872,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 catch { }
                 _ = Interlocked.CompareExchange(ref _keepAliveTask, null, loops.KeepAlive);
+            }
+            if (loops.Admission != null)
+            {
+                loops.Admission.Dispose();
+                Interlocked.CompareExchange(ref _commandAdmission, null, loops.Admission);
             }
             if (loops.Cts != null)
             {
@@ -1238,6 +1283,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
 
             ConnectionCommandWork work;
+            CommandAdmission admission;
             string sessionId;
             bool progressNegotiated;
             bool phaseTimingNegotiated;
@@ -1247,6 +1293,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 if (!IsCurrentConnectionToken(token))
                     return;
                 work = _commandWork;
+                admission = _commandAdmission;
                 sessionId = _sessionId;
                 progressNegotiated = _commandProgressNegotiated;
                 phaseTimingNegotiated = _phaseTimingNegotiated;
@@ -1271,6 +1318,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 Deadline = deadline,
                 Timing = CommandPhaseTiming.CreateForCommand(McpLogRecord.IsEnabled, phaseTimingNegotiated, payload),
                 Owner = work,
+                Admission = admission,
                 SessionId = sessionId,
                 Progress = progressNegotiated && RequestsCommandProgress(payload, commandId) ? new CommandProgressBuffer() : null,
             };
@@ -1282,12 +1330,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 previous => ExecuteQueuedCommandAsync(previous, request, token),
                 request.CancelAsync,
                 bypass,
-                deadline.Dispose
+                request.Dispose
             );
             if (rejection != null)
             {
                 request.Progress?.Dispose();
-                deadline.Dispose();
+                request.Dispose();
                 request.Timing?.ExecutionDone();
                 try
                 {
@@ -1322,7 +1370,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     .Mode != ToolOperationMode.Exclusive;
         }
 
-        private sealed class QueuedCommand
+        private sealed class QueuedCommand : IDisposable
         {
             public string Id;
             public Command Command;
@@ -1330,17 +1378,25 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             public CancellationTokenSource Deadline;
             public CommandPhaseTiming Timing;
             public ConnectionCommandWork Owner;
+            public CommandAdmission Admission;
             public string SessionId;
             public CommandProgressBuffer Progress;
             public Task Response;
-            private int _cancelRequested;
-            public bool CancelRequested => Volatile.Read(ref _cancelRequested) != 0;
+            private readonly CommandAdmission cancellation = new CommandAdmission();
+            public CancellationToken RequestCancellation => cancellation.Token;
+            public bool CancelRequested => RequestCancellation.IsCancellationRequested;
 
             public Task CancelAsync()
             {
-                Interlocked.Exchange(ref _cancelRequested, 1);
+                cancellation.Retire();
                 Progress?.Close();
                 return Task.Run(() => Deadline.Cancel());
+            }
+
+            public void Dispose()
+            {
+                cancellation.Dispose();
+                Deadline.Dispose();
             }
         }
 
@@ -1369,7 +1425,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         request.Deadline.Token,
                         null,
                         request.Timing,
-                        request.Progress
+                        request.Progress,
+                        request.Admission?.Token ?? CancellationToken.None,
+                        request.RequestCancellation
                     );
                     request.Response = operation.Response;
                     response = (await operation.Response.ConfigureAwait(false)).Payload;
@@ -1772,6 +1830,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 if (Interlocked.CompareExchange(ref _isReconnectingFlag, 1, 0) != 0)
                     return Task.CompletedTask;
+                _commandAdmission?.Retire();
                 _isConnected = false;
                 _state = TransportState.Disconnected(TransportDisplayName, reason ?? "Connection closed");
             }

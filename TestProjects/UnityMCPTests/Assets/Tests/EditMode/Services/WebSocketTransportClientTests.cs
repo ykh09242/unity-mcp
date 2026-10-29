@@ -717,8 +717,8 @@ namespace MCPForUnityTests.Editor.Services
                 EditorApplication.delayCall -= (EditorApplication.CallbackFunction)callback;
         }
 
-        [TestCase("stop")]
         [TestCase("force")]
+        [TestCase("stop")]
         [TestCase("disconnect")]
         public async Task UnsettledCommand_BoundsControlAndPreventsReplacementMutation(string transition)
         {
@@ -915,6 +915,195 @@ namespace MCPForUnityTests.Editor.Services
                 release.TrySetResult(new { complete = true });
                 await NativeProgressProbe.AwaitOwned(force);
                 await StopOwnedProgressClient(client);
+            }
+        }
+
+        [TestCase("force")]
+        [TestCase("stop")]
+        [TestCase("reconnect")]
+        public async Task RetiredConnectionAdmission_PreventsQueuedHandlerStartAndPreservesReplacement(string transition)
+        {
+            RequireOwnedProgressEditor();
+            using var fixture = new QueuedAdmissionFixture();
+            using var release = new ManualResetEventSlim();
+            using var entered = new ManualResetEventSlim();
+            using var callback = fixture.Connection.Token.Register(() =>
+            {
+                entered.Set();
+                release.Wait();
+            });
+            using var replacementConnection = new CancellationTokenSource();
+            using var replacementLifecycle = new CancellationTokenSource();
+            using var replacementAdmission = QueuedAdmissionFixture.NewAdmission();
+            try
+            {
+                if (transition == "force")
+                    fixture.Client.ForceStop();
+                else if (transition == "stop")
+                    _ = fixture.Client.StopAsync();
+                else
+                    await fixture.Invoke("HandleSocketClosureAsync", "owned admission test", fixture.Connection.Token);
+                Assert.IsTrue(entered.Wait(TimeSpan.FromSeconds(5)), "The controlled cancellation worker must enter before the dispatcher is pumped.");
+                Assert.IsTrue(fixture.Connection.IsCancellationRequested);
+                // The fake connection has no endpoint to reconnect to. Cancel its old
+                // lifecycle while its captured drain is still held by the callback.
+                fixture.Lifecycle.Cancel();
+                fixture.Pump();
+                Assert.AreEqual(0, fixture.Calls, "A retired connection cannot admit work while linked deadline cancellation is delayed.");
+
+                var replacementWork = new ConnectionCommandWork(replacementConnection.Token);
+                SetField(fixture.Client, "_connectionCts", replacementConnection);
+                SetField(fixture.Client, "_lifecycleCts", replacementLifecycle);
+                SetField(fixture.Client, "_commandAdmission", replacementAdmission);
+                SetField(fixture.Client, "_commandWork", replacementWork);
+                release.Set();
+                await NativeProgressProbe.AwaitOwned(fixture.Work.DrainAsync());
+                await AwaitControlCondition(() => QueuedAdmissionFixture.IsDisposed(fixture.Admission));
+                Assert.AreSame(replacementAdmission, GetField(fixture.Client, "_commandAdmission"));
+                Assert.AreSame(replacementConnection, GetField(fixture.Client, "_connectionCts"));
+                Assert.AreSame(replacementWork, GetField(fixture.Client, "_commandWork"));
+                Assert.IsFalse(QueuedAdmissionFixture.Token(replacementAdmission).IsCancellationRequested);
+                Assert.IsFalse(replacementConnection.IsCancellationRequested);
+                Assert.AreEqual(0, fixture.Calls);
+            }
+            finally
+            {
+                release.Set();
+                fixture.Pump();
+                fixture.Client.ForceStop();
+                await NativeProgressProbe.AwaitOwned(fixture.Client.StopAsync());
+            }
+        }
+
+        [Test]
+        public async Task RetiredRequestAdmission_PreventsQueuedHandlerStartBeforeDeadlineCancellation()
+        {
+            RequireOwnedProgressEditor();
+            using var fixture = new QueuedAdmissionFixture();
+            try
+            {
+                // This fixture has no socket. Disable its unused reconnect lifecycle;
+                // the independent connection and request deadline stay live below.
+                fixture.Lifecycle.Cancel();
+                Assert.IsFalse(fixture.Connection.IsCancellationRequested);
+                // Pause the callback worker at the existing marker/deadline boundary. The
+                // marker must fence a request already inserted into the dispatcher.
+                var callbacks =
+                    (Dictionary<string, Func<Task>>)
+                        typeof(ConnectionCommandWork).GetField("_cancellations", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(fixture.Work);
+                object request = callbacks[QueuedAdmissionFixture.Id].Target;
+                object marker = request.GetType().GetField("cancellation", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(request);
+                marker.GetType().GetMethod("Retire", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(marker, null);
+                var deadline = (CancellationTokenSource)request.GetType().GetField("Deadline").GetValue(request);
+                Assert.IsFalse(deadline.IsCancellationRequested);
+                fixture.Pump();
+                await NativeProgressProbe.AwaitOwned(fixture.Work.DrainAsync());
+                Assert.AreEqual(0, fixture.Calls, "A request marker must be observed even before the asynchronous deadline callback worker runs.");
+            }
+            finally
+            {
+                fixture.Pump();
+                fixture.Client.ForceStop();
+                await NativeProgressProbe.AwaitOwned(fixture.Client.StopAsync());
+            }
+        }
+
+        [Test]
+        public async Task QueuedRequestCancellation_RetiresAdmissionBeforeReturningItsWorker()
+        {
+            Type requestType = typeof(WebSocketTransportClient).GetNestedType("QueuedCommand", BindingFlags.NonPublic);
+            object request = Activator.CreateInstance(requestType, true);
+            using var deadline = new CancellationTokenSource();
+            requestType.GetField("Deadline").SetValue(request, deadline);
+            try
+            {
+                Task cancellation = (Task)requestType.GetMethod("CancelAsync").Invoke(request, null);
+                Assert.IsTrue((bool)requestType.GetProperty("CancelRequested").GetValue(request));
+                Assert.IsTrue(((CancellationToken)requestType.GetProperty("RequestCancellation").GetValue(request)).IsCancellationRequested);
+                await NativeProgressProbe.AwaitOwned(cancellation);
+            }
+            finally
+            {
+                ((IDisposable)request).Dispose();
+            }
+        }
+
+        private sealed class QueuedAdmissionFixture : IDisposable
+        {
+            internal const string Id = "owned-queued-admission";
+            private const BindingFlags StaticPrivate = BindingFlags.Static | BindingFlags.NonPublic;
+            private const BindingFlags InstancePrivate = BindingFlags.Instance | BindingFlags.NonPublic;
+            private static readonly Type AdmissionType = typeof(WebSocketTransportClient).GetNestedType("CommandAdmission", BindingFlags.NonPublic);
+            private readonly FieldInfo processing = typeof(TransportCommandDispatcher).GetField("_processingFlag", StaticPrivate);
+            private readonly int previousProcessing;
+            private readonly ProgressHandlerScope handlers = new ProgressHandlerScope();
+            internal readonly WebSocketTransportClient Client = new WebSocketTransportClient();
+            internal readonly CancellationTokenSource Connection = new CancellationTokenSource();
+            internal readonly CancellationTokenSource Lifecycle = new CancellationTokenSource();
+            internal readonly IDisposable Admission = NewAdmission();
+            internal readonly ConnectionCommandWork Work;
+            internal int Calls;
+
+            internal QueuedAdmissionFixture()
+            {
+                const string name = "__focus_reload_queued_admission";
+                Work = new ConnectionCommandWork(Connection.Token);
+                SetField(Client, "_connectionCts", Connection);
+                SetField(Client, "_lifecycleCts", Lifecycle);
+                SetField(Client, "_commandAdmission", Admission);
+                SetField(Client, "_commandWork", Work);
+                previousProcessing = (int)processing.GetValue(null);
+                processing.SetValue(null, 1);
+                handlers.Set(
+                    name,
+                    new MCPForUnity.Editor.Tools.HandlerInfo(
+                        name,
+                        _ =>
+                        {
+                            Calls++;
+                            return new { complete = true };
+                        },
+                        null
+                    )
+                );
+                Invoke(
+                        "HandleExecuteAsync",
+                        new JObject
+                        {
+                            ["id"] = Id,
+                            ["name"] = name,
+                            ["timeout"] = 30,
+                        },
+                        Connection.Token
+                    )
+                    .GetAwaiter()
+                    .GetResult();
+            }
+
+            internal static IDisposable NewAdmission() => (IDisposable)Activator.CreateInstance(AdmissionType, true);
+
+            internal static CancellationToken Token(object admission) =>
+                (CancellationToken)AdmissionType.GetProperty("Token", InstancePrivate).GetValue(admission);
+
+            internal static bool IsDisposed(object admission) => AdmissionType.GetField("source", InstancePrivate).GetValue(admission) == null;
+
+            internal Task Invoke(string method, params object[] arguments) =>
+                (Task)typeof(WebSocketTransportClient).GetMethod(method, InstancePrivate).Invoke(Client, arguments);
+
+            internal void Pump()
+            {
+                processing.SetValue(null, 0);
+                typeof(TransportCommandDispatcher).GetMethod("ProcessQueue", StaticPrivate).Invoke(null, null);
+            }
+
+            public void Dispose()
+            {
+                processing.SetValue(null, previousProcessing);
+                handlers.Dispose();
+                Client.Dispose();
+                Admission.Dispose();
+                Connection.Dispose();
+                Lifecycle.Dispose();
             }
         }
 
