@@ -21,6 +21,7 @@ from pydantic import ValidationError
 
 from core.sdk_compatibility import is_reviewed_sdk
 from services.credential_lease import require_credential_lease
+from services.operation_permissions import OperationPermissionError, authorize_operation
 
 from services.test_wait_journal import (
     DeadlineCheckpoint,
@@ -152,6 +153,12 @@ def install_test_job_tasks(
                 raise MCPError(INVALID_PARAMS, "Authenticated wait owner is required")
             if not isinstance(user_id, str) or not user_id:
                 raise MCPError(INVALID_PARAMS, "Authenticated wait owner is required")
+            try:
+                # A retained Task bypasses the ordinary tool middleware. Its
+                # owner still needs the current grant to observe a native job.
+                authorize_operation(lease.permissions, "get_test_job", {})
+            except OperationPermissionError as error:
+                raise MCPError(INVALID_PARAMS, "Remote operation permission denied") from error
             return f"hosted:v1:{user_id}"
         if state.get(AUTHENTICATED_LOCAL_STATE) is not True:
             raise MCPError(INVALID_PARAMS, "Authenticated local control is required")
