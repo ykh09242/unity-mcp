@@ -11,7 +11,7 @@ import uuid
 import weakref
 from hashlib import sha256
 from collections.abc import Coroutine, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from collections.abc import Callable
@@ -98,6 +98,12 @@ from services.credential_lease import (
     require_credential_lease,
 )
 from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
+from transport.socket_write_guard import (
+    SOCKET_SEND_BOUNDARY_STATE,
+    SocketSendBoundary,
+    SocketWriteGuard,
+    socket_write_guard,
+)
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 from services.registry.operation_context import operation_task
 from transport.native_arbitration import (
@@ -446,11 +452,28 @@ class PluginHub(WebSocketEndpoint):
             if isinstance(lease, CredentialLease):
                 await lease.check()
                 lease.check_now()
-            await self.send(message)
+            writer = socket_write_guard.get()
+            bound = writer.bind_frame(websocket, message) if writer is not None else None
+            token = socket_write_guard.set(bound)
+            try:
+                if bound is not None and not isinstance(
+                    websocket.scope.get("state", {}).get(SOCKET_SEND_BOUNDARY_STATE),
+                    SocketSendBoundary,
+                ):
+                    # Standalone sockets have no outer renewing auth sender.
+                    if not await bound.authorize():
+                        return
+                    bound.dispatch()
+                # Wrapped sockets defer final admission to the outermost auth
+                # sender, after every credential-renewal checkpoint in the chain.
+                await self.send(message)
+            finally:
+                socket_write_guard.reset(token)
             if isinstance(lease, CredentialLease):
                 await lease.check()
 
         websocket = WebSocket(self.scope, receive=self.receive, send=guarded_send)
+        websocket.state.plugin_guarded_send = True
         close_code = 1000
         # Owner exit follows every close path and the actual captured disconnect cleanup.
         async with AsyncExitStack() as lifetime:
@@ -1706,6 +1729,16 @@ class PluginHub(WebSocketEndpoint):
             if not cls._is_non_mutating(command_type, params):
                 epoch = getattr(websocket.state, "plugin_command_epoch", 0)
                 websocket.state.plugin_command_epoch = epoch + 1 if type(epoch) is int else 1
+            # Readiness-gated mutations carry an observation identity too. Their
+            # own admitted epoch is valid; a later mutation still invalidates it.
+            admitted_read = (
+                replace(
+                    _expected_read,
+                    command_epoch=getattr(websocket.state, "plugin_command_epoch", 0),
+                )
+                if _expected_read is not None
+                else None
+            )
             if command_type == "get_editor_state" and _expected_read is None:
                 epoch = getattr(websocket.state, "plugin_state_read_epoch", 0)
                 websocket.state.plugin_state_read_epoch = epoch + 1 if type(epoch) is int else 1
@@ -1877,44 +1910,79 @@ class PluginHub(WebSocketEndpoint):
                             generation=generation,
                             project_hash=session.project_hash if session is not None else None,
                         )
-                        # Durable journal I/O yields. Repeat the original exact
-                        # target/catalog/lease fences before admitting socket I/O.
+                    writer = SocketWriteGuard(
+                        asyncio.current_task(), websocket, authorize_write, dispatch_write
+                    )
+                    writer_token = socket_write_guard.set(writer)
+                    try:
+                        if getattr(websocket.state, "plugin_guarded_send", False):
+                            # Carry final admission through both Hub and optional
+                            # remote-auth send wrappers, immediately before I/O.
+                            await websocket.send_json(payload)
+                        elif await writer.authorize():
+                            writer.dispatch()
+                            await websocket.send_json(payload)
+                    finally:
+                        socket_write_guard.reset(writer_token)
+                    for lease in (requester, plugin):
+                        if lease is not None:
+                            await lease.check()
+
+                async def authorize_write() -> bool:
+                    # Scheduling, credential renewal and optional journal I/O
+                    # can all yield after admission. Every writer must recheck
+                    # its exact target/catalog after those yields, before I/O.
+                    async with cls._authorized_socket_lock(websocket, lock, requester):
                         current_session = (
                             await registry.get_session(session_id) if registry is not None else None
                         )
-                        async with cls._authorized_socket_lock(websocket, lock, requester):
-                            if (
-                                cls._connections.get(session_id) is not websocket
-                                or getattr(websocket.state, "plugin_generation", None) != generation
-                                or current_session is None
-                                or current_session.project_hash != session.project_hash
-                            ):
-                                raise PluginDisconnectedError("Receipt target generation changed")
-                            if context is not None and (
-                                context.selection is None
-                                or not context.selection.matches(
-                                    registry, session_id, websocket, current_session
+                        if future.done():
+                            return False
+                        if (
+                            cls._lock is not lock
+                            or cls._registry is not registry
+                            or cls._connections.get(session_id) is not websocket
+                            or websocket.client_state != WebSocketState.CONNECTED
+                            or getattr(websocket.state, "plugin_generation", None) != generation
+                            or session is None
+                            or current_session is None
+                            or current_session.project_hash != session.project_hash
+                            or current_session.user_id != user_id
+                        ):
+                            raise CommandNotDispatchedError("Plugin target generation changed")
+                        if context is not None and (
+                            context.selection is None
+                            or not context.selection.matches(
+                                registry, session_id, websocket, current_session
+                            )
+                        ):
+                            raise CommandNotDispatchedError("Plugin project context changed")
+                        if admitted_read is not None and not cls._matches_read_identity(
+                            websocket, user_id, admitted_read
+                        ):
+                            future.set_result(cls._unavailable_retry_response("read_invalidated"))
+                            return False
+                        if _catalog_guard is not None and not _catalog_guard.check_http(
+                            session_id, user_id
+                        ):
+                            from services.custom_tool_service import custom_catalog_changed
+
+                            future.set_result(custom_catalog_changed().model_dump())
+                            return False
+                        for lease in (requester, cls._socket_lease(websocket)):
+                            if lease is not None:
+                                lease.check_now()
+                                authorize_operation(
+                                    lease.permissions,
+                                    payload["name"],
+                                    payload["params"],
+                                    custom=_catalog_guard is not None,
+                                    native=True,
                                 )
-                            ):
-                                raise CommandNotDispatchedError("Receipt project context changed")
-                            if _expected_read is not None and not cls._matches_read_identity(
-                                websocket, user_id, _expected_read
-                            ):
-                                raise CommandNotDispatchedError("Receipt read identity changed")
-                            if _catalog_guard is not None and not _catalog_guard.check_http(
-                                session_id, user_id
-                            ):
-                                raise CommandNotDispatchedError("Receipt custom catalog changed")
-                            for lease in (requester, cls._socket_lease(websocket)):
-                                if lease is not None:
-                                    lease.check_now()
-                                    authorize_operation(
-                                        lease.permissions,
-                                        payload["name"],
-                                        payload["params"],
-                                        custom=_catalog_guard is not None,
-                                        native=True,
-                                    )
+                    return True
+
+                def dispatch_write() -> None:
+                    receipt = execution_owner.get()
                     if receipt is not None:
                         receipt.dispatch_started(
                             kind="http",
@@ -1923,10 +1991,6 @@ class PluginHub(WebSocketEndpoint):
                             generation=generation,
                         )
                     budget.dispatched = True
-                    await websocket.send_json(payload)
-                    for lease in (requester, plugin):
-                        if lease is not None:
-                            await lease.check()
 
                 receipt = execution_owner.get()
                 receipt_pin = receipt.acquire_worker() if receipt is not None else None
@@ -1962,6 +2026,10 @@ class PluginHub(WebSocketEndpoint):
                 return result
             except NativeNotStarted:
                 raise
+            except CommandNotDispatchedError:
+                # Final target fences run before socket I/O. Preserve the
+                # refusal without uncertainty or a cancellation for unsent work.
+                raise
             except OperationPermissionError:
                 # Admission may differ after canonical serialization. A refusal
                 # before dispatch must not manufacture an unknown outcome or
@@ -1978,7 +2046,7 @@ class PluginHub(WebSocketEndpoint):
                     cause="permission_ended",
                 )
             except CredentialLeaseError:
-                canceled = True
+                canceled = budget.dispatched
                 if not budget.dispatched:
                     return MCPResponse(success=False, error="auth_required").model_dump()
                 return command_outcome_unknown(

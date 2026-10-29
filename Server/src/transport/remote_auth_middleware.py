@@ -13,6 +13,11 @@ from core.constants import API_KEY_HEADER
 from core.config import config
 from services.api_key_service import ApiKeyService
 from services.credential_lease import CredentialLeaseError
+from transport.socket_write_guard import (
+    SOCKET_SEND_BOUNDARY_STATE,
+    SocketSendBoundary,
+    socket_write_guard,
+)
 
 AUTHENTICATED_USER_STATE = "unity_mcp_authenticated_user_id"
 AUTHENTICATED_LEASE_STATE = "unity_mcp_authenticated_credential_lease"
@@ -84,6 +89,10 @@ class RemoteControlAuthMiddleware:
 
         started = False
         websocket_closed = False
+        send_boundary = SocketSendBoundary()
+        outer_boundary = scope.get("state", {}).get(SOCKET_SEND_BOUNDARY_STATE)
+        if not isinstance(outer_boundary, SocketSendBoundary):
+            outer_boundary = send_boundary
 
         async def guarded_receive():
             await lease.check()
@@ -95,6 +104,18 @@ class RemoteControlAuthMiddleware:
             nonlocal started, websocket_closed
             await lease.check()
             lease.check_now()
+            writer = socket_write_guard.get()
+            if (
+                scope["type"] == "websocket"
+                and writer is not None
+                and writer.matches(send_boundary, message)
+            ):
+                if not await writer.authorize():
+                    return
+                # Final target admission may itself renew the requester/plugin.
+                # Recheck this outer credential without another yielding step.
+                lease.check_now()
+                writer.dispatch()
             if message["type"] in ("http.response.start", "websocket.accept"):
                 # A suspended writer may already have crossed the protocol boundary.
                 started = True
@@ -109,6 +130,11 @@ class RemoteControlAuthMiddleware:
                 **scope.get("state", {}),
                 AUTHENTICATED_USER_STATE: lease.user_id,
                 AUTHENTICATED_LEASE_STATE: lease,
+                **(
+                    {SOCKET_SEND_BOUNDARY_STATE: outer_boundary}
+                    if scope["type"] == "websocket"
+                    else {}
+                ),
             },
         }
         # Keep the actual ASGI owner charged through policy handling, including a
