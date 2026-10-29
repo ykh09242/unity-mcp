@@ -44,12 +44,12 @@ namespace MCPForUnity.Editor.Models
             };
         }
 
-        // Helper method to set both status enum and string for backward compatibility
+        // Keep caller details for tooltips; status labels are derived separately.
         public void SetStatus(McpStatus newStatus, string errorDetails = null)
         {
             status = newStatus;
 
-            if ((newStatus == McpStatus.Error || newStatus == McpStatus.VersionMismatch) && !string.IsNullOrEmpty(errorDetails))
+            if (!string.IsNullOrEmpty(errorDetails))
             {
                 configStatus = errorDetails;
             }

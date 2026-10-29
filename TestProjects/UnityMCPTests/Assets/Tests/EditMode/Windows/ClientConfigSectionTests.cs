@@ -22,6 +22,31 @@ namespace MCPForUnityTests.Editor.Windows
     [Parallelizable(ParallelScope.None)]
     public class ClientConfigSectionTests
     {
+        [TestCase(McpStatus.IncorrectPath, "Incorrect Path", "warning")]
+        [TestCase(McpStatus.NotConfigured, "Not Configured", "not-configured")]
+        [TestCase(McpStatus.Error, "Error", "warning")]
+        [TestCase(McpStatus.VersionMismatch, "Version Mismatch", "warning")]
+        public void StatusTooltipKeepsRecoveryDetailsWithoutChangingBadge(McpStatus status, string label, string style)
+        {
+            var client = new MemoryCodexClient(status);
+            client.Client.SetStatus(status, "Enable the synthetic entry before connecting.");
+            var section = CreateSection(client);
+            var apply = typeof(McpClientConfigSection).GetMethod("ApplyStatusToUi", BindingFlags.Instance | BindingFlags.NonPublic);
+
+            apply.Invoke(section, new object[] { client, false, null });
+
+            Assert.AreEqual(label, Get<Label>(section, "clientStatusLabel").text);
+            Assert.AreEqual("Enable the synthetic entry before connecting.", Get<Label>(section, "clientStatusLabel").tooltip);
+            Assert.IsTrue(Get<VisualElement>(section, "clientStatusIndicator").ClassListContains(style));
+            Assert.AreEqual("Configure", Get<Button>(section, "configureButton").text);
+            Assert.IsTrue(Get<Button>(section, "configureButton").enabledSelf);
+
+            client.Client.SetStatus(McpStatus.Configured);
+            apply.Invoke(section, new object[] { client, false, null });
+            Assert.AreEqual("Configured", Get<Label>(section, "clientStatusLabel").tooltip);
+            Assert.IsTrue(Get<VisualElement>(section, "clientStatusIndicator").ClassListContains("configured"));
+        }
+
         private sealed class FoldoutWindow : EditorWindow { }
 
         [UnityTest]
