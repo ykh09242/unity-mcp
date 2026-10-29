@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using MCPForUnity.Editor.Clients;
 using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
+using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 
@@ -47,15 +49,71 @@ namespace MCPForUnityTests.Editor.Helpers
                 string path = Owned(root, "opencode.json");
                 File.WriteAllText(path, json);
                 var configurator = new OwnedOpenCode(path);
-                configurator.Configure();
+                Assert.Throws<InvalidOperationException>(() => configurator.Configure());
                 Assert.AreEqual(McpStatus.Error, configurator.Status);
                 Assert.AreEqual(json, File.ReadAllText(path));
             });
         }
 
+        [Test]
+        public void InvalidOpenCodeConfigurationIsReportedAndRetainedForSelectiveRetry()
+        {
+            WithOwnedRoot(root =>
+            {
+                string path = Owned(root, "opencode.json");
+                const string invalid = "{broken";
+                File.WriteAllText(path, invalid);
+                var failed = new OwnedOpenCode(path);
+                var successful = new SuccessfulClient();
+                var service = new ClientConfigurationService(new IMcpClientConfigurator[] { successful, failed }, () => false, _ => { }, () => { }, _ => { });
+
+                var summary = service.ConfigureAllDetectedClients();
+
+                Assert.AreEqual(1, summary.SuccessCount);
+                Assert.AreEqual(1, summary.FailureCount);
+                Assert.AreEqual(McpStatus.Error, failed.Status);
+                Assert.IsTrue(summary.Messages.Exists(message => message.Contains("OpenCode") && message.Contains("not a JSON object")));
+                Assert.IsTrue(summary.Attempt.CanRetry);
+                Assert.AreEqual(1, summary.Attempt.Failures.Count);
+                Assert.AreEqual(failed.Id, summary.Attempt.Failures[0].ClientId);
+
+                var retry = service.RetryFailedClients(summary.Attempt);
+                Assert.AreEqual(0, retry.Summary.SuccessCount);
+                Assert.AreEqual(1, retry.Summary.FailureCount);
+                Assert.AreEqual(2, failed.ConfigureCalls);
+                Assert.AreEqual(1, successful.ConfigureCalls);
+                Assert.AreEqual(invalid, File.ReadAllText(path));
+                Assert.Throws<InvalidOperationException>(() => service.ConfigureClient(failed));
+            });
+        }
+
+        private sealed class SuccessfulClient : McpClientConfiguratorBase
+        {
+            public int ConfigureCalls;
+
+            public SuccessfulClient()
+                : base(new McpClient { name = "Synthetic Success" }) { }
+
+            public override bool IsInstalled => true;
+
+            public override string GetConfigPath() => null;
+
+            public override McpStatus CheckStatus(bool attemptAutoRewrite = true) => Status;
+
+            public override void Configure()
+            {
+                ConfigureCalls++;
+            }
+
+            public override string GetManualSnippet() => "";
+
+            public override IList<string> GetInstallationSteps() => Array.Empty<string>();
+        }
+
         private sealed class OwnedOpenCode : OpenCodeConfigurator
         {
             private readonly string path;
+            public int ConfigureCalls;
 
             public OwnedOpenCode(string path)
             {
@@ -63,6 +121,12 @@ namespace MCPForUnityTests.Editor.Helpers
             }
 
             public override string GetConfigPath() => path;
+
+            public override void Configure()
+            {
+                ConfigureCalls++;
+                base.Configure();
+            }
         }
 
         [TestCase("mcpServers", "[]")]

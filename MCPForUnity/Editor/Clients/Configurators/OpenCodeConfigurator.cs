@@ -152,6 +152,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
             catch (Exception ex)
             {
                 client.SetStatus(McpStatus.Error, ex.Message);
+                throw;
             }
         }
 
