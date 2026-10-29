@@ -148,6 +148,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 frames = 1;
             int controls = 0;
             bool data = false;
+            bool dataStarted = false;
             bool header = false;
             bool animated = false;
             for (int chunks = 0; chunks < 65536; chunks++)
@@ -174,7 +175,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 }
                 else if (kind == "acTL")
                 {
-                    Require(size == 8 && !data && !animated, "invalid APNG frame header");
+                    Require(size == 8 && !dataStarted && !animated, "invalid APNG frame header");
                     animated = true;
                     frames = r.U32(true);
                     r.U32(true);
@@ -192,8 +193,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 }
                 else if (kind == "IDAT")
                 {
-                    Require(size > 0 || data, "empty PNG image data");
-                    data = true;
+                    dataStarted = true;
+                    data |= size > 0;
                 }
                 else if (kind == "IEND")
                 {

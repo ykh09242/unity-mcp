@@ -135,6 +135,70 @@ namespace MCPForUnityTests.Editor.AssetGen
             admission.Inspect(stream, stream.Length, extension);
         }
 
+        private static byte[] PngDataLayout(params byte[][] chunks)
+        {
+            byte[] original = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==");
+            using var stream = new MemoryStream();
+            stream.Write(original, 0, 33);
+            void Big(uint value)
+            {
+                for (int shift = 24; shift >= 0; shift -= 8)
+                    stream.WriteByte((byte)(value >> shift));
+            }
+            foreach (byte[] chunk in chunks)
+            {
+                Big((uint)chunk.Length);
+                byte[] content = Encoding.ASCII.GetBytes("IDAT").Concat(chunk).ToArray();
+                stream.Write(content, 0, content.Length);
+                uint crc = uint.MaxValue;
+                foreach (byte value in content)
+                {
+                    crc ^= value;
+                    for (int bit = 0; bit < 8; bit++)
+                        crc = (crc >> 1) ^ ((crc & 1) == 0 ? 0 : 0xedb88320u);
+                }
+                Big(~crc);
+            }
+            stream.Write(original, original.Length - 12, 12);
+            return stream.ToArray();
+        }
+
+        [Test]
+        public void PngEmptyDataChunksPreserveImageAdmission()
+        {
+            byte[] payload = Convert.FromBase64String("eJxj+M/A8B8ABQAB/w==");
+            foreach (
+                byte[] image in new[]
+                {
+                    PngDataLayout(Array.Empty<byte>(), payload, Array.Empty<byte>()),
+                    PngDataLayout(Array.Empty<byte>(), Array.Empty<byte>(), payload),
+                    PngDataLayout(payload.Take(4).ToArray(), Array.Empty<byte>(), payload.Skip(4).ToArray()),
+                }
+            )
+            {
+                var admission = new ImageAdmission();
+                Inspect(admission, image, ".png");
+                Assert.AreEqual(8, admission.WorkBytes);
+            }
+        }
+
+        [Test]
+        public void PngEmptyDataChunksDoNotSupplyImageDataOrBypassBounds()
+        {
+            Assert.Throws<InvalidDataException>(() => Inspect(new ImageAdmission(), PngDataLayout(), ".png"));
+            Assert.Throws<InvalidDataException>(() => Inspect(new ImageAdmission(), PngDataLayout(Array.Empty<byte>(), Array.Empty<byte>()), ".png"));
+            byte[] valid = PngDataLayout(Array.Empty<byte>(), Convert.FromBase64String("eJxj+M/A8B8ABQAB/w=="));
+            Assert.Throws<InvalidDataException>(() => Inspect(new ImageAdmission(), valid.Take(valid.Length - 3).ToArray(), ".png"));
+            Assert.Throws<InvalidDataException>(() => Inspect(new ImageAdmission(new ImageAdmission.Limits { MaxImageBytes = 7 }), valid, ".png"));
+        }
+
+        [Test]
+        public void PngEmptyDataChunkStillStartsAnimationData()
+        {
+            byte[] emptyFirst = PngDataLayout(Array.Empty<byte>()).Take(45).Concat(Png(1, 1, frames: 2).Skip(33)).ToArray();
+            Assert.Throws<InvalidDataException>(() => Inspect(new ImageAdmission(), emptyFirst, ".png"));
+        }
+
         private static byte[] Build(Action<BinaryWriter> write)
         {
             using var s = new MemoryStream();
