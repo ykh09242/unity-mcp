@@ -22,6 +22,7 @@ namespace MCPForUnity.Editor.Services
     internal sealed class TestRunnerService : ITestRunnerService, IBudgetedTestDiscovery, IErrorCallbacks, IDisposable
     {
         private static readonly TestMode[] AllModes = { TestMode.EditMode, TestMode.PlayMode };
+        internal static Func<ExecutionSettings, string> ExecuteForTests = null;
 
         private readonly TestRunnerApi _testRunnerApi;
         private readonly Action<TestMode, Action<ITestAdaptor>> _retrieveTestList;
@@ -54,6 +55,14 @@ namespace MCPForUnity.Editor.Services
 
         internal static bool HasRetiredRun => !string.IsNullOrEmpty(SessionState.GetString(RetiredRunSessionKey, string.Empty));
         internal static bool HasOwnedNativeRun => _activeRunOwner != null || HasRetiredRun;
+
+        internal static void PreserveNativeOwnership(string jobId)
+        {
+            // Never replace another unresolved owner with an unrelated recovery record.
+            if (!string.IsNullOrEmpty(jobId) && !HasRetiredRun)
+                SessionState.SetString(RetiredRunSessionKey, jobId);
+        }
+
         internal static bool RetiredRunHasLiveOwner =>
             HasRetiredRun
             && _activeRunOwner != null
@@ -152,7 +161,12 @@ namespace MCPForUnity.Editor.Services
 
         internal void ResumeJobAfterReload(string jobId, string mode)
         {
-            if (_runCompletionSource != null || _trackedJobId != null || string.IsNullOrEmpty(jobId) || TestJobManager.CurrentJobId != jobId)
+            if (
+                _runCompletionSource != null
+                || _trackedJobId != null && _trackedJobId != jobId
+                || string.IsNullOrEmpty(jobId)
+                || TestJobManager.CurrentJobId != jobId
+            )
             {
                 return;
             }
@@ -327,7 +341,7 @@ namespace MCPForUnity.Editor.Services
                 TestJobManager.MarkRunExecuting(jobId);
                 nativeControl?.MarkExecuting();
                 nativeInvoked = true;
-                string nativeGuid = _testRunnerApi.Execute(settings);
+                string nativeGuid = ExecuteForTests != null ? ExecuteForTests(settings) : _testRunnerApi.Execute(settings);
                 nativeControl?.BindGuid(nativeGuid);
             }
             catch
@@ -406,7 +420,10 @@ namespace MCPForUnity.Editor.Services
                 return;
             _apiReleased = true;
 
-            // Reload must release the hidden API without retiring the persisted test run.
+            // Releasing the managed callback API is not proof that Unity stopped. Keep an
+            // independent owner marker even when native observer binding is unavailable.
+            if (_activeRunOwner == this && _trackedJobId != null && !TestJobManager.IsKnownUnstarted(_trackedJobId))
+                PreserveNativeOwnership(_trackedJobId);
             try
             {
                 _testRunnerApi?.UnregisterCallbacks(this);

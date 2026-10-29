@@ -144,7 +144,6 @@ namespace MCPForUnity.Editor.Services
                     // A timed-out caller is gone, but Unity can still deliver its terminal callback.
                     // Recreate the callback owner even though its manager record is already failed.
                     _ = MCPServiceLocator.Tests;
-                    return;
                 }
                 TestJob job;
                 lock (LockObj)
@@ -155,11 +154,12 @@ namespace MCPForUnity.Editor.Services
                     }
                 }
 
-                if ((string)job.RunAdmission?["phase"] == "queued")
+                if (IsKnownUnstarted(job.JobId))
                     return;
 
                 // Polling a restored job never otherwise touches the lazy test service.
                 // Re-register callbacks now, before the Test Runner resumes after reload.
+                TestRunnerService.PreserveNativeOwnership(job.JobId);
                 if (MCPServiceLocator.Tests is TestRunnerService service)
                 {
                     service.ResumeJobAfterReload(job.JobId, job.Mode);
@@ -465,30 +465,9 @@ namespace MCPForUnity.Editor.Services
                         _currentJobId = null;
                     }
 
-                    // Detect and clean up stale "running" jobs that were orphaned by domain reload.
-                    // After a domain reload, TestRunStatus resets to not-running, but _currentJobId
-                    // may still be set. If the job hasn't been updated recently, it's likely orphaned.
-                    if (!string.IsNullOrEmpty(_currentJobId) && Jobs.TryGetValue(_currentJobId, out var currentJob))
-                    {
-                        // Managed native ownership survives history age. Its captured GUID, final
-                        // progress and idle observer decide termination; wall clock is not evidence.
-                        if (currentJob.Status == TestJobStatus.Running && currentJob.Control == null && (string)currentJob.RunAdmission?["phase"] != "queued")
-                        {
-                            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                            long staleCutoffMs = 5 * 60 * 1000; // 5 minutes
-                            if (now - currentJob.LastUpdateUnixMs > staleCutoffMs)
-                            {
-                                McpLog.Warn(
-                                    $"[TestJobManager] Clearing stale job {_currentJobId} (last update {(now - currentJob.LastUpdateUnixMs) / 1000}s ago)"
-                                );
-                                currentJob.Status = TestJobStatus.Failed;
-                                currentJob.Error = "Job orphaned after domain reload";
-                                currentJob.CompletionKind = "interrupted_by_reload";
-                                currentJob.FinishedUnixMs = now;
-                                _currentJobId = null;
-                            }
-                        }
-                    }
+                    // Missing native control, old progress, and an idle managed status cannot
+                    // prove that Unity stopped. Keep the original job for callback recovery.
+                    // Its original caller deadline still applies when observed through GetJob.
                 }
             }
             catch (Exception)
@@ -638,6 +617,18 @@ namespace MCPForUnity.Editor.Services
         }
 
         internal static NativeTestRunControl ControlFor(string id) => id != null && Jobs.TryGetValue(id, out var job) ? job.Control : null;
+
+        internal static bool IsKnownUnstarted(string id)
+        {
+            if (id == null || !Jobs.TryGetValue(id, out var job) || !string.IsNullOrEmpty(SessionState.GetString(SessionKeyAdmissionWrite, "")))
+                return false;
+            if (!ValidRunAdmission(job.RunAdmission) || (string)job.RunAdmission["phase"] != "queued")
+                return false;
+            return job.NativeControl == null
+                || (bool?)job.NativeControl["native_invoked"] == false
+                    && (bool?)job.NativeControl["observation_lost"] != true
+                    && job.NativeControl["native_guid"]?.Type != JTokenType.String;
+        }
 
         internal static bool ControlOwnsCallback(string id) => ControlFor(id)?.AcceptsCallback() ?? true;
 

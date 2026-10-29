@@ -176,6 +176,100 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsFalse(TestRunStatus.IsRunning);
         }
 
+        [TestCase("legacy")]
+        [TestCase("executing")]
+        [TestCase("invalid")]
+        public void ControlLessOldRunRetainsOwnershipAcrossReloadUntilItsTerminalCallback(string admission)
+        {
+            var job = AddJob();
+            job.StartedUnixMs = job.LastUpdateUnixMs = DateTimeOffset.UtcNow.AddMinutes(-6).ToUnixTimeMilliseconds();
+            job.TotalTests = 2;
+            job.CompletedTests = 1;
+            if (admission != "legacy")
+                job.RunAdmission = new JObject { ["phase"] = "executing", ["filters"] = JValue.CreateNull() };
+            InvokeManager("PersistToSessionState", true);
+            if (admission == "invalid")
+            {
+                var history = JObject.Parse(SessionState.GetString(JobsKey, ""));
+                history["jobs"][0]["run_admission"] = new JObject { ["phase"] = "unrecognized" };
+                SessionState.SetString(JobsKey, history.ToString());
+            }
+            _jobs.Clear();
+            ManagerField("_currentJobId").SetValue(null, null);
+            InvokeManager("TryRestoreFromSessionState");
+
+            Assert.AreEqual(job.JobId, TestJobManager.CurrentJobId, "Elapsed time is not proof that the original native run terminated.");
+            var restored = TestJobManager.GetJob(job.JobId);
+            Assert.AreEqual(TestJobStatus.Running, restored.Status);
+            Assert.IsNull(restored.Control, "This regression must cover an unsupported or unavailable native observer.");
+            Assert.AreEqual(1, restored.CompletedTests);
+            var service = RestoreCallbacks();
+            Assert.IsNotNull(service);
+            Assert.IsTrue(TestRunnerService.HasOwnedNativeRun);
+            Assert.Throws<InvalidOperationException>(() => TestJobManager.StartJob(TestMode.EditMode));
+            Assert.Throws<NotSupportedException>(() => TestJobManager.CancelJob(job.JobId));
+            Assert.AreEqual(TestJobStatus.Running, TestJobManager.GetJob(job.JobId).Status);
+            Assert.IsTrue(service.RunTestsAsync(TestMode.EditMode).IsFaulted, "The recovered service must not enter Execute again.");
+            Assert.AreSame(service, RestoreCallbacks());
+
+            service.OnError("owned terminal callback");
+            Assert.IsFalse(TestJobManager.HasRunningJob);
+            Assert.IsFalse(TestRunnerService.HasOwnedNativeRun);
+            Assert.AreEqual("owned terminal callback", TestJobManager.GetJob(job.JobId).Error);
+        }
+
+        [Test]
+        public void ControlLessReloadKeepsOriginalInitializationDeadlineAndQuarantinesTimedOutOwner()
+        {
+            var job = AddJob();
+            job.StartedUnixMs = job.LastUpdateUnixMs = DateTimeOffset.UtcNow.AddMinutes(-6).ToUnixTimeMilliseconds();
+            job.InitTimeoutMs = 120000;
+            job.RunAdmission = new JObject { ["phase"] = "executing", ["filters"] = JValue.CreateNull() };
+            InvokeManager("PersistToSessionState", true);
+            _jobs.Clear();
+            InvokeManager("TryRestoreFromSessionState");
+            var service = RestoreCallbacks();
+            Assert.IsNotNull(service);
+            Assert.AreEqual(job.StartedUnixMs, _jobs[job.JobId].StartedUnixMs);
+            Assert.AreEqual(job.InitTimeoutMs, _jobs[job.JobId].InitTimeoutMs);
+
+            Assert.AreEqual(TestJobStatus.Failed, TestJobManager.GetJob(job.JobId).Status);
+            Assert.IsTrue(TestRunnerService.HasRetiredRun, "A caller timeout must not release unknown native ownership.");
+            Assert.Throws<InvalidOperationException>(() => TestJobManager.StartJob(TestMode.EditMode));
+            service.OnError("late native termination");
+            Assert.IsFalse(TestRunnerService.HasRetiredRun);
+            StringAssert.Contains("failed to initialize", TestJobManager.GetJob(job.JobId).Error);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ApiReleasePreservesOnlyPotentiallyInvokedOwner(bool queued)
+        {
+            var job = AddJob();
+            job.RunAdmission = new JObject { ["phase"] = queued ? "queued" : "executing", ["filters"] = JValue.CreateNull() };
+            var service = new TestRunnerService();
+            ServiceField.SetValue(null, service);
+            service.ResumeJobAfterReload(job.JobId, job.Mode);
+            typeof(TestRunnerService).GetMethod("ReleaseApi", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(service, null);
+            Assert.AreEqual(!queued, TestRunnerService.HasRetiredRun);
+            Assert.AreEqual(job.JobId, TestJobManager.CurrentJobId);
+        }
+
+        [Test]
+        public void RecoveryDoesNotReplaceAnIndependentRetiredOwnerOrAssignItsCallbackToCurrentJob()
+        {
+            var job = AddJob();
+            SessionState.SetString(RetiredKey, "independent-retired-owner");
+            var service = RestoreCallbacks();
+            Assert.AreEqual("independent-retired-owner", SessionState.GetString(RetiredKey, ""));
+            service.OnError("independent owner's terminal callback");
+            Assert.AreEqual(job.JobId, TestJobManager.CurrentJobId);
+            Assert.AreEqual(TestJobStatus.Running, job.Status);
+            Assert.IsNull(job.Error);
+            Assert.AreSame(service, RestoreCallbacks());
+            Assert.AreEqual(job.JobId, SessionState.GetString(RetiredKey, ""));
+        }
+
         [Test]
         public void ReloadInterruptionRetainsCompletedLeavesWithoutReportingTestAssertionFailure()
         {
