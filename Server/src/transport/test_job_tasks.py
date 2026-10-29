@@ -427,7 +427,7 @@ class TestJobTasks(ServerExtension):
         started = False
         lease = captured.credential_lease
         try:
-            async with lease.own() if lease is not None else nullcontext():
+            async with lease.owner_lifetime() if lease is not None else nullcontext():
                 started = True
                 await self._run_owned(task_id, captured, admission)
         except CredentialLeaseError:
@@ -443,6 +443,10 @@ class TestJobTasks(ServerExtension):
         try:
             if authorization_failed:
                 raise CredentialLeaseError()
+            if captured.credential_lease is not None:
+                # Renewal can cancel its owner. Enter the cleanup lifetime before
+                # this first yielding check, retaining the owner through cleanup.
+                await captured.credential_lease.check()
             # The original wait runner owns the inner deadline and ordinary last
             # observation semantics. This hard outer guard never refreshes time.
             result = None
