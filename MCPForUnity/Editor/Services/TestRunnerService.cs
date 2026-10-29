@@ -54,6 +54,27 @@ namespace MCPForUnity.Editor.Services
 
         internal static bool HasRetiredRun => !string.IsNullOrEmpty(SessionState.GetString(RetiredRunSessionKey, string.Empty));
         internal static bool HasOwnedNativeRun => _activeRunOwner != null || HasRetiredRun;
+        internal static bool RetiredRunHasLiveOwner =>
+            HasRetiredRun
+            && _activeRunOwner != null
+            && !_activeRunOwner._apiReleased
+            && !_activeRunOwner._disposed
+            && _activeRunOwner._trackedJobId == SessionState.GetString(RetiredRunSessionKey, string.Empty);
+
+        internal static Transport.NativeRecoveryDetails RetiredRunRecoveryDetails =>
+            !HasRetiredRun
+                ? null
+                : new Transport.NativeRecoveryDetails(
+                    "tests",
+                    "native_cleanup",
+                    RetiredRunHasLiveOwner ? "test_terminal_callback_pending" : "test_callback_owner_unavailable",
+                    RetiredRunHasLiveOwner ? "recoverable" : "unknown",
+                    RetiredRunHasLiveOwner ? "wait_for_test_cleanup" : "inspect_native_work",
+                    RetiredRunHasLiveOwner
+                        ? "The retired test run still has a registered callback owner. Wait for its terminal callback or stop the run in Test Runner."
+                        : "The retired test run is retained but its callback owner is unavailable. Inspect Test Runner; callback ownership may reattach after reload.",
+                    SessionState.GetString(RetiredRunSessionKey, string.Empty)
+                );
 
         internal static void ThrowIfRetiredRunPending()
         {

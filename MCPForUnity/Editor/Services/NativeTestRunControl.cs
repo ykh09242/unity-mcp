@@ -31,6 +31,7 @@ namespace MCPForUnity.Editor.Services
         private bool? globalActive;
         private string lastSnapshotError;
         private bool restoredAfterReload;
+        private bool observerUnavailable;
         private bool laterTurn;
         private bool disposed;
         private EditorApplication.CallbackFunction scheduledTurn;
@@ -140,6 +141,7 @@ namespace MCPForUnity.Editor.Services
                 control = new NativeTestRunControl(jobId, 0, () => EditorApplication.timeSinceStartup, () => null, _ => false);
                 control.State = (JObject)state.DeepClone();
                 control.State["termination"] = "unknown";
+                control.observerUnavailable = true;
                 return control;
             }
             control.State = (JObject)state.DeepClone();
@@ -422,6 +424,62 @@ namespace MCPForUnity.Editor.Services
         }
 
         // All values are cached from the existing monitor. Status reads never probe UTF.
+        internal Transport.NativeRecoveryDetails RecoveryDetails()
+        {
+            if (Released)
+                return null;
+            string reason;
+            string mode;
+            string message;
+            if ((bool?)State["ambiguous"] == true)
+            {
+                reason = "test_callback_attribution_ambiguous";
+                mode = "restart_required";
+                message = "A foreign or incoherent test runner made callback attribution ambiguous. The retained owner cannot safely release native work.";
+            }
+            else if ((bool?)State["observation_lost"] == true)
+            {
+                reason = "test_ownership_evidence_lost";
+                mode = "restart_required";
+                message = "The persisted test ownership or completion evidence was lost. An idle Editor cannot prove that this native run stopped.";
+            }
+            else if (NativeGuid == null && (bool?)State["native_invoked"] == true)
+            {
+                reason = "test_native_guid_missing";
+                mode = "restart_required";
+                message = "Native test execution was invoked without a retained run GUID. Completion cannot be attributed safely to this owner.";
+            }
+            else if ((string)State["termination"] != "unknown")
+                return null;
+            else if (observerUnavailable || disposed)
+            {
+                reason = "test_native_observer_unavailable";
+                mode = "unknown";
+                message =
+                    "The test run is retained, but its native observer is unavailable. Inspect Test Runner and restore supported observation before retrying.";
+            }
+            else
+            {
+                reason = lastSnapshotError != null ? "test_native_snapshot_unavailable" : "test_final_witness_pending";
+                mode = "recoverable";
+                message =
+                    lastSnapshotError != null
+                        ? "The retained test observer could not read a native snapshot. It will reconcile later observations; keep waiting for native cleanup."
+                        : "The retained test observer has not received this run's final completion witness. Idle snapshots alone cannot release the owner.";
+            }
+            return new Transport.NativeRecoveryDetails(
+                "tests",
+                "native_cleanup",
+                reason,
+                mode,
+                mode == "recoverable" ? "wait_for_test_cleanup"
+                    : mode == "restart_required" ? "inspect_native_work_then_restart_editor"
+                    : "inspect_native_work",
+                message,
+                (string)State["job_id"]
+            );
+        }
+
         internal JObject Diagnostics() =>
             new JObject
             {
@@ -519,6 +577,13 @@ namespace MCPForUnity.Editor.Services
                     State["termination"] = "unknown";
                     return;
                 }
+                // A temporary failed read does not destroy GUID ownership. Restore only
+                // an exact coherent running observation; partial snapshots remain unknown.
+                bool coherentOwned =
+                    (bool)value["global_active"]
+                    && new[] { "registered", "active", "serialized_active" }.All(key => ((JArray)value[key]).Count == 1 && (string)value[key][0] == NativeGuid);
+                if (coherentOwned && (string)State["termination"] == "unknown")
+                    State["termination"] = Requested || (bool?)State["final_witness"] == true ? "cleanup_pending" : "running";
                 if (idle && (bool?)State["final_witness"] == true && laterTurn && fromEditorUpdate && editorUpdates > finalEditorUpdates && tick > finalTick)
                 {
                     State["released"] = true;

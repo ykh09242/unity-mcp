@@ -166,6 +166,8 @@ namespace MCPForUnityTests.Editor.Services
             Call("Tick");
             Assert.IsFalse(Released);
             Assert.AreEqual("unknown", (string)State["termination"]);
+            Assert.AreEqual("recoverable", ((NativeTestRunControl)control).RecoveryDetails().Mode);
+            Assert.AreEqual("test_final_witness_pending", ((NativeTestRunControl)control).RecoveryDetails().Reason);
         }
 
         [Test]
@@ -356,6 +358,8 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(0, calls);
             Assert.IsFalse(Released);
             Assert.AreEqual("unknown", (string)State["termination"]);
+            Assert.AreEqual("restart_required", ((NativeTestRunControl)control).RecoveryDetails().Mode);
+            Assert.AreEqual("test_native_guid_missing", ((NativeTestRunControl)control).RecoveryDetails().Reason);
         }
 
         [Test]
@@ -368,6 +372,92 @@ namespace MCPForUnityTests.Editor.Services
             Call("Tick");
             Assert.IsFalse(Released);
             Assert.AreEqual("unknown", (string)State["termination"]);
+        }
+
+        [TestCase(false, "running")]
+        [TestCase(true, "cleanup_pending")]
+        public void TemporarySnapshotLossReconcilesExactOwnedGuidWithoutReleasing(bool cancelling, string expectedTermination)
+        {
+            Create();
+            Call("BindGuid", Guid);
+            if (cancelling)
+                Call("Request", "user");
+            snapshot = null;
+            Call("Tick");
+            var details = ((NativeTestRunControl)control).RecoveryDetails();
+            Assert.AreEqual("recoverable", details.Mode);
+            Assert.AreEqual("test_native_snapshot_unavailable", details.Reason);
+            snapshot = Native(true);
+            Call("Tick");
+            Assert.AreEqual(expectedTermination, (string)State["termination"]);
+            Assert.IsNull(((NativeTestRunControl)control).RecoveryDetails());
+            Assert.IsFalse(Released, "Recovered observation changes classification, never native ownership.");
+            snapshot = Native(false);
+            Call("NoteEditorUpdate");
+            Call("TickFromEditorUpdate");
+            Assert.IsFalse(Released, "Even a later idle Editor turn cannot replace the final witness.");
+            Call("ObserveFinal", Guid);
+            Call("Tick");
+            Assert.IsFalse(Released);
+            Call("NoteEditorUpdate");
+            Call("TickFromEditorUpdate");
+            Assert.IsTrue(Released);
+        }
+
+        [TestCase("ambiguous", "test_callback_attribution_ambiguous")]
+        [TestCase("observation_lost", "test_ownership_evidence_lost")]
+        public void CoherentSnapshotCannotRepairLostOwnershipEvidence(string flag, string expectedReason)
+        {
+            Create();
+            Call("BindGuid", Guid);
+            State[flag] = true;
+            State["termination"] = "unknown";
+            Call("Tick");
+            Assert.AreEqual("unknown", (string)State["termination"]);
+            var details = ((NativeTestRunControl)control).RecoveryDetails();
+            Assert.AreEqual("restart_required", details.Mode);
+            Assert.AreEqual(expectedReason, details.Reason);
+            Call("ObserveFinal", Guid);
+            snapshot = Native(false);
+            Call("NoteEditorUpdate");
+            Call("TickFromEditorUpdate");
+            Assert.IsFalse(Released, "A later completion cannot repair lost attribution or persisted evidence.");
+        }
+
+        [Test]
+        public void PartialOwnedSnapshotCannotRepairTemporaryObservationFailure()
+        {
+            Create();
+            Call("BindGuid", Guid);
+            snapshot = null;
+            Call("Tick");
+            snapshot = Native(true);
+            snapshot["active"] = new JArray();
+            Call("Tick");
+            Assert.AreEqual("unknown", (string)State["termination"]);
+            Assert.IsFalse(Released);
+        }
+
+        [Test]
+        public void UnavailableRestoredObserverRequiresInspectionWithoutInventingRestartEvidence()
+        {
+            Create();
+            Call("BindGuid", Guid);
+            var saved = (JObject)State.DeepClone();
+            bool disabled = NativeTestRunControl.DisableForTests;
+            try
+            {
+                NativeTestRunControl.DisableForTests = true;
+                using var restored = NativeTestRunControl.Restore(Job, saved);
+                restored.Tick();
+                Assert.IsFalse(restored.Released);
+                Assert.AreEqual("unknown", restored.RecoveryDetails().Mode);
+                Assert.AreEqual("test_native_observer_unavailable", restored.RecoveryDetails().Reason);
+            }
+            finally
+            {
+                NativeTestRunControl.DisableForTests = disabled;
+            }
         }
 
         [Test]

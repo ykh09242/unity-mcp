@@ -398,6 +398,8 @@ namespace MCPForUnityTests.Editor.Services
             Task<TestRunResult> oldRun = _runner.LastRun;
             Assert.IsTrue(TestJobManager.ClearStuckJob());
             await ExpectFailure(oldRun, "Job cleared manually");
+            Assert.IsTrue(TestRunnerService.RetiredRunHasLiveOwner);
+            Assert.AreEqual("recoverable", TestRunnerService.RetiredRunRecoveryDetails.Mode);
             Assert.Throws<InvalidOperationException>(() => TestJobManager.StartJob(TestMode.EditMode));
             Assert.AreEqual(1, Jobs.Count, "Rejected requests must not reserve hidden queued jobs.");
             _service.RunStarted(null);
@@ -451,9 +453,14 @@ namespace MCPForUnityTests.Editor.Services
             _service.Dispose();
             typeof(MCPServiceLocator).GetField("_testRunnerService", StaticPrivate).SetValue(null, null);
             typeof(TestRunnerService).GetField("_activeRunOwner", StaticPrivate).SetValue(null, null);
+            Assert.IsFalse(TestRunnerService.RetiredRunHasLiveOwner);
+            Assert.AreEqual("unknown", TestRunnerService.RetiredRunRecoveryDetails.Mode);
+            Assert.AreEqual("test_callback_owner_unavailable", TestRunnerService.RetiredRunRecoveryDetails.Reason);
             typeof(TestJobManager).GetMethod("RestoreRunningJobCallbacks", StaticPrivate).Invoke(null, null);
             _service = (TestRunnerService)typeof(MCPServiceLocator).GetField("_testRunnerService", StaticPrivate).GetValue(null);
             Assert.IsNotNull(_service, "The reload hook must register callbacks even when the persisted manager job is failed.");
+            Assert.IsTrue(TestRunnerService.RetiredRunHasLiveOwner);
+            Assert.AreEqual("recoverable", TestRunnerService.RetiredRunRecoveryDetails.Mode);
             _runner = new CapturingRunner(_service);
             MCPServiceLocator.Register<ITestRunnerService>(_runner);
             _api = (TestRunnerApi)typeof(TestRunnerService).GetField("_testRunnerApi", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(_service);

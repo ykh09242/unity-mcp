@@ -616,6 +616,17 @@ namespace MCPForUnity.Editor.Services
         internal static bool NativeRecoveryRequired =>
             Jobs.Values.Any(job => job.Control != null && !job.Control.Released && (string)job.Control.State["termination"] == "unknown");
 
+        internal static Transport.NativeRecoveryDetails NativeRecoveryDetails =>
+            Jobs
+                .Values.Select(job => job.Control?.RecoveryDetails())
+                .Where(details => details != null)
+                .OrderBy(details =>
+                    details.Mode == "restart_required" ? 0
+                    : details.Mode == "unknown" ? 1
+                    : 2
+                )
+                .FirstOrDefault();
+
         internal static bool OtherNativeAdmissionBlocked(string admittedJobId) =>
             Jobs.Values.Any(job =>
                 job.Control != null
