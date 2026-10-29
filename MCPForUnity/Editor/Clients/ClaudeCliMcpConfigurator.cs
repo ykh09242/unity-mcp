@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
@@ -54,7 +55,13 @@ namespace MCPForUnity.Editor.Clients
             out string stderr,
             int timeout,
             string pathPrepend
-        ) => ExecPath.TryRun(executable, arguments, directory, out stdout, out stderr, timeout, pathPrepend);
+        )
+        {
+            bool result = ExecPath.TryRun(executable, arguments, directory, out stdout, out stderr, out bool processMayBeRunning, timeout, pathPrepend);
+            if (processMayBeRunning)
+                throw new TimeoutException("Claude CLI may still be running.");
+            return result;
+        }
 
         public override bool SupportsAutoConfigure => true;
         private bool hasSelectedLocalRegistration;
@@ -406,13 +413,7 @@ namespace MCPForUnity.Editor.Clients
                     $"mcp add --scope local --transport stdio UnityMCP -- \"{uvxPath}\" {uvxDevFlags}{fromArgs} {packageName}{StartupToolProfile.CommandSuffix(startupToolProfile)}";
             }
 
-            RemoveSelectedLocalRegistrations(claudePath, projectDir, pathPrepend);
-
-            // Now add the registration
-            if (!RunCli(claudePath, args, projectDir, out var stdout, out var stderr, 15000, pathPrepend))
-            {
-                throw new InvalidOperationException("Failed to register with Claude Code. Check its CLI path, configuration permissions and scope.");
-            }
+            ReplaceSelectedLocalRegistration(claudePath, projectDir, pathPrepend, args);
 
             McpLog.Info($"Successfully registered with Claude Code using {(useHttpTransport ? "HTTP" : "stdio")} transport.");
             hasSelectedLocalRegistration = true;
@@ -495,13 +496,7 @@ namespace MCPForUnity.Editor.Clients
             }
             catch { }
 
-            RemoveSelectedLocalRegistrations(claudePath, projectDir, pathPrepend);
-
-            // Now add the registration with the current transport mode
-            if (!RunCli(claudePath, args, projectDir, out var stdout, out var stderr, 15000, pathPrepend))
-            {
-                throw new InvalidOperationException("Failed to register with Claude Code. Check its CLI path, configuration permissions and scope.");
-            }
+            ReplaceSelectedLocalRegistration(claudePath, projectDir, pathPrepend, args);
 
             McpLog.Info($"Successfully registered with Claude Code using {(useHttpTransport ? "HTTP" : "stdio")} transport.");
 
@@ -599,17 +594,89 @@ namespace MCPForUnity.Editor.Clients
             };
 
         // The CLI owns configuration writes. Never rewrite the shared user document to clean up other scopes.
-        private void RemoveSelectedLocalRegistrations(string claudePath, string projectDir, string pathPrepend)
+        private void ReplaceSelectedLocalRegistration(string claudePath, string projectDir, string pathPrepend, string arguments)
+        {
+            var previous = ReadSelectedLocalRegistrations(projectDir);
+            string failure = "Claude CLI could not remove the selected local registration.";
+            try
+            {
+                RemoveSelectedLocalRegistrations(claudePath, projectDir, pathPrepend, previous);
+                failure = "Failed to register with Claude Code.";
+                if (!RunCli(claudePath, arguments, projectDir, out _, out _, 15000, pathPrepend))
+                    throw new InvalidOperationException(failure);
+            }
+            catch (Exception error)
+            {
+                string recovery =
+                    error is TimeoutException ? UncertainRecoveryMessage : RecoverSelectedLocalRegistrations(claudePath, projectDir, pathPrepend, previous);
+                // CLI output/configuration can contain credentials. Report only the operation and recovery state.
+                string message = failure + " " + recovery;
+                client.SetStatus(McpStatus.Error, message);
+                throw new InvalidOperationException(message);
+            }
+        }
+
+        private const string UncertainRecoveryMessage =
+            "The CLI may still be running; automatic recovery was not attempted. Wait for it to stop, then inspect the selected local registration before retrying.";
+
+        private string RecoverSelectedLocalRegistrations(string claudePath, string projectDir, string pathPrepend, Dictionary<string, JObject> previous)
+        {
+            try
+            {
+                foreach (var entry in previous)
+                {
+                    var current = ReadSelectedLocalRegistrations(projectDir);
+                    if (current.Any(pair => !previous.TryGetValue(pair.Key, out var old) || !JToken.DeepEquals(old, pair.Value)))
+                        return "The local registration changed; its current entries were preserved. Inspect them before retrying.";
+                    if (current.ContainsKey(entry.Key))
+                        continue;
+                    // Restore only a missing exact entry, through the CLI, preserving other scopes and settings.
+                    RunCli(claudePath, ClaudeHttpAuth.BuildRegistrationArguments(entry.Value, entry.Key), projectDir, out _, out _, 15000, pathPrepend);
+                    current = ReadSelectedLocalRegistrations(projectDir);
+                    if (!current.TryGetValue(entry.Key, out var restored) || !JToken.DeepEquals(restored, entry.Value))
+                        return "Claude CLI could not restore the previous local registration. Inspect configuration permissions and repair it before retrying.";
+                }
+                var final = ReadSelectedLocalRegistrations(projectDir);
+                if (final.Any(pair => !previous.TryGetValue(pair.Key, out var old) || !JToken.DeepEquals(old, pair.Value)))
+                    return "The local registration changed; its current entries were preserved. Inspect them before retrying.";
+                if (previous.Keys.Any(name => !final.ContainsKey(name)))
+                    return "Claude CLI could not restore the previous local registration. Inspect the selected configuration before retrying.";
+                return previous.Count == 0 ? "No previous local registration needed recovery." : "Previous local registrations were preserved or restored.";
+            }
+            catch (TimeoutException)
+            {
+                return "The recovery CLI may still be running; further recovery was not attempted. Wait for it to stop, then inspect the selected local registration.";
+            }
+            catch
+            {
+                return "Claude CLI could not restore the previous local registration. Inspect the selected configuration before retrying.";
+            }
+        }
+
+        private void RemoveSelectedLocalRegistrations(string claudePath, string projectDir, string pathPrepend, Dictionary<string, JObject> expected = null)
         {
             try
             {
                 var registrations = ReadSelectedLocalRegistrations(projectDir);
+                var remaining = new Dictionary<string, JObject>(expected ?? registrations, StringComparer.Ordinal);
+                if (
+                    registrations.Count != remaining.Count
+                    || registrations.Any(pair => !remaining.TryGetValue(pair.Key, out var old) || !JToken.DeepEquals(old, pair.Value))
+                )
+                    throw new InvalidOperationException("Local registration changed before configuration. Inspect it before retrying.");
                 foreach (var name in registrations.Keys)
                 {
+                    var current = ReadSelectedLocalRegistrations(projectDir);
+                    if (
+                        current.Count != remaining.Count
+                        || current.Any(pair => !remaining.TryGetValue(pair.Key, out var old) || !JToken.DeepEquals(old, pair.Value))
+                    )
+                        throw new InvalidOperationException("Local registration changed during configuration. Inspect it before retrying.");
                     if (!RunCli(claudePath, $"mcp remove --scope local {name}", projectDir, out _, out _, 5000, pathPrepend))
                         throw new InvalidOperationException(
                             "Claude CLI could not remove the selected local registration. Other scopes were preserved; check configuration permissions and retry."
                         );
+                    remaining.Remove(name);
                 }
                 hasSelectedLocalRegistration = ReadSelectedLocalRegistrations(projectDir).Count > 0;
                 if (hasSelectedLocalRegistration)

@@ -221,10 +221,23 @@ namespace MCPForUnity.Editor.Helpers
             int timeoutMs = 15000,
             string extraPathPrepend = null,
             IDictionary<string, string> environmentOverrides = null
+        ) => TryRun(file, args, workingDir, out stdout, out stderr, out _, timeoutMs, extraPathPrepend, environmentOverrides);
+
+        internal static bool TryRun(
+            string file,
+            string args,
+            string workingDir,
+            out string stdout,
+            out string stderr,
+            out bool processMayBeRunning,
+            int timeoutMs = 15000,
+            string extraPathPrepend = null,
+            IDictionary<string, string> environmentOverrides = null
         )
         {
             stdout = string.Empty;
             stderr = string.Empty;
+            processMayBeRunning = false;
             try
             {
                 bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
@@ -306,6 +319,7 @@ namespace MCPForUnity.Editor.Helpers
                 if (!process.Start())
                     return false;
 
+                processMayBeRunning = true;
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
@@ -316,9 +330,11 @@ namespace MCPForUnity.Editor.Helpers
                         process.Kill();
                     }
                     catch { }
+                    // Killing the wrapper does not prove its child CLI stopped writing.
                     return false;
                 }
 
+                processMayBeRunning = false;
                 // Ensure async buffers are flushed
                 process.WaitForExit();
 

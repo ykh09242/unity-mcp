@@ -143,8 +143,10 @@ namespace MCPForUnity.Editor.Helpers
             return entry;
         }
 
-        internal static string BuildRegistrationArguments(JObject entry)
+        internal static string BuildRegistrationArguments(JObject entry, string name = "UnityMCP")
         {
+            if (!string.Equals(name, "UnityMCP", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Only the UnityMCP registration can be managed.", nameof(name));
             // ProcessStartInfo.Arguments uses double-quote/backslash argument escaping, not shell single quotes.
             string json = JsonConvert.SerializeObject(
                 entry,
@@ -157,7 +159,7 @@ namespace MCPForUnity.Editor.Helpers
                 json = json.Replace(character.ToString(), "\\u" + ((int)character).ToString("x4"));
             }
             string quoted = Regex.Replace(json, "(\\\\*)\"", "$1$1\\\"");
-            return "mcp add-json --scope local UnityMCP \"" + quoted + "\"";
+            return "mcp add-json --scope local " + name + " \"" + quoted + "\"";
         }
 
         internal static bool TryValidateLocalEntry(JObject entry, string executable, out string reason)

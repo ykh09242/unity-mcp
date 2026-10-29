@@ -82,6 +82,18 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.That(stdout, Does.Contain("--version"));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void TryRun_DistinguishesFinishedFailureFromUncertainTimeout(bool timeout)
+        {
+            RequireWindows();
+            // A cmd builtin loop has no child process to leave behind.
+            string shim = WriteShim(_tempRoot, "failure.cmd", timeout ? ":wait\r\ngoto wait" : "exit /b 1");
+            bool ok = ExecPath.TryRun(shim, "", _tempRoot, out _, out _, out bool processMayBeRunning, timeout ? 100 : 10000);
+            Assert.IsFalse(ok);
+            Assert.AreEqual(timeout, processMayBeRunning);
+        }
+
         [Test]
         public void FindAllInPath_ReturnsEveryMatchInPathOrder()
         {
