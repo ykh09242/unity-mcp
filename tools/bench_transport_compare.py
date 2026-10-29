@@ -96,6 +96,11 @@ class Metadata(FrozenModel):
     readiness_strategy: Literal["inflight_shared", "per_call"]
     ordinary_resource_strategy: Literal["inflight_shared", "per_call"] = "per_call"
     readiness_private_workloads: list[Literal["state"]] = []
+    readiness_probe_workloads: list[Literal["small", "state", "large"]] = [
+        "small",
+        "state",
+        "large",
+    ]
     runner: Literal["UnityMCP"]
     retention_middleware: Literal[True]
 
@@ -242,24 +247,26 @@ def check_contract(capture: Capture) -> None:
             ):
                 raise ValueError("Stdio readiness or actual delivery observer contract failed")
         else:
-            upper = 3 * n + 3
+            probes = set(row.fixture_metadata.readiness_probe_workloads)
+            recovery = 3 if "small" in probes else 0
+            upper = len(probes) * n + recovery
             if (
                 capture.options.concurrency == 1
                 or row.fixture_metadata.readiness_strategy == "per_call"
             ):
                 lower = upper
             else:
-                private = len(row.fixture_metadata.readiness_private_workloads)
+                private = len(probes.intersection(row.fixture_metadata.readiness_private_workloads))
                 lower = (
                     private * n
-                    + (3 - private)
+                    + (len(probes) - private)
                     * (
                         1
                         + capture.options.warmup
                         + (capture.options.samples + capture.options.concurrency - 1)
                         // capture.options.concurrency
                     )
-                    + 3
+                    + recovery
                 )
             if not lower <= readiness <= upper:
                 raise ValueError("HTTP readiness RPC budget changed")
@@ -286,10 +293,10 @@ def check_contract(capture: Capture) -> None:
                 name: late.get(name, 0) - commands.get(name, 0)
                 for name in set(late) | set(commands)
             }
-            if {name: count for name, count in delta.items() if count} != {
-                "read_console": 1,
-                "ping": 1,
-            }:
+            expected_partial = {"read_console": 1}
+            if "large" in probes:
+                expected_partial["ping"] = 1
+            if {name: count for name, count in delta.items() if count} != expected_partial:
                 raise ValueError("Partial-transfer peer RPC counts changed")
         counts = row.client_rpc_counts
         if (
@@ -345,6 +352,10 @@ def compare(baseline: Capture, candidate: Capture) -> dict[str, JsonValue]:
     for mode in ("stdio", "http"):
         left = next(row for row in baseline.results if row.mode == mode)
         right = next(row for row in candidate.results if row.mode == mode)
+        if set(right.fixture_metadata.readiness_probe_workloads) - set(
+            left.fixture_metadata.readiness_probe_workloads
+        ):
+            raise ValueError("Candidate restored readiness probes for an unprobed workload")
         for field in ("readiness_strategy", "ordinary_resource_strategy"):
             if (
                 getattr(left.fixture_metadata, field) == "inflight_shared"

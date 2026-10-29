@@ -229,11 +229,14 @@ def test_actual_transports_when_owned_peers_complete_cancel_and_reconnect(tmp_pa
         state = result["lifecycle"]["after_reconnect"]
         assert state["registrations"] == 2
         if result["mode"] == "http":
+            assert result["fixture_metadata"]["readiness_probe_workloads"] == ["state"]
+            assert state["commands"]["ping"] == 3
             assert (state["pending"], state["retained"]) == (0, 0)
             partial = result["lifecycle"]["partial_cancel"]
             assert partial["receiver_final_chunk_processed"] is True
             assert partial["held"]["assembler_buffer_bytes"] > 4194304
             assert partial["held"]["hub_reserved_bytes"] <= partial["held"]["capacity_bytes"]
+            assert partial["after_late_chunks"]["commands"]["ping"] == 3
         else:
             assert (state["pending"], state["retained"]) == (None, None)
             assert state["accounting"]["stdio_delivery_observer_available"] is True

@@ -68,6 +68,22 @@ class MeasuredConnection(UnityConnection):
 async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
     console = importlib.import_module("services.tools.read_console")
     jobs = importlib.import_module("services.tools.run_tests")
+    console_probe_policy: dict[str, bool] = {}
+    original_console_send = console.send_with_unity_instance
+
+    async def observe_console_send(*arguments, **options):
+        # Observe declared transport policy rather than measured ping counts:
+        # an accidental probe despite retry_on_reload=False still fails budget.
+        # Older products default this option True.
+        workload = CORRELATION.get().split(":", 1)[0]
+        probe = options.get("retry_on_reload", True)
+        if workload in {"small", "large"}:
+            if workload in console_probe_policy and console_probe_policy[workload] != probe:
+                raise RuntimeError("Owned console workload changed its readiness policy")
+            console_probe_policy[workload] = probe
+        return await original_console_send(*arguments, **options)
+
+    console.send_with_unity_instance = observe_console_send
     state = PeerState(
         Path(args.directory) / "peer.jsonl",
         args.large_bytes,
@@ -360,6 +376,11 @@ async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
             "readiness_private_workloads": ["state"]
             if hasattr(PluginHub, "_ordinary_state_reads")
             else [],
+            "readiness_probe_workloads": [
+                workload
+                for workload in ("small", "state", "large")
+                if console_probe_policy.get(workload, True)
+            ],
             "runner": "UnityMCP",
             "retention_middleware": True,
             "pid": os.getpid(),

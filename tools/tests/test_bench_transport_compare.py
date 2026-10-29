@@ -551,6 +551,65 @@ def test_natural_shared_readiness_variation_preserves_both_counts(report: Captur
     ) == (75, 76)
 
 
+def console_observation_report(report: Capture, pings: int = 34) -> Capture:
+    """Console observations skip ping; the parameterized state workload still probes."""
+    raw = concurrent_report(report, pings, gated=True).model_dump(mode="json")
+    row = next(row for row in raw["results"] if row["mode"] == "http")
+    row["fixture_metadata"]["readiness_probe_workloads"] = ["state"]
+    row["lifecycle"]["partial_cancel"]["after_late_chunks"]["commands"]["ping"] = pings
+    return Capture.model_validate(raw)
+
+
+@pytest.mark.parametrize("gated", [False, True])
+def test_console_observation_policy_preserves_historical_comparison(
+    report: Capture, gated: bool
+) -> None:
+    baseline = concurrent_report(report, 75, gated=gated)
+    raw = console_observation_report(report).model_dump(mode="json")
+    raw["options"]["cohort_gate"] = gated
+    candidate = Capture.model_validate(raw)
+    assert compare(baseline, candidate)["semantic_parity"] is True
+    with pytest.raises(ValueError, match="restored readiness probes"):
+        compare(candidate, baseline)
+
+
+@pytest.mark.parametrize("pings", [33, 35])
+def test_console_observation_policy_rejects_missing_or_extra_state_probe(
+    report: Capture, pings: int
+) -> None:
+    with pytest.raises(ValueError, match="HTTP readiness RPC budget"):
+        comparator.check_contract(console_observation_report(report, pings))
+
+
+def test_console_observation_policy_rejects_extra_partial_probe(report: Capture) -> None:
+    raw = console_observation_report(report).model_dump(mode="json")
+    row = next(row for row in raw["results"] if row["mode"] == "http")
+    row["lifecycle"]["partial_cancel"]["after_late_chunks"]["commands"]["ping"] += 1
+    with pytest.raises(ValueError, match="Partial-transfer peer RPC counts"):
+        comparator.check_contract(Capture.model_validate(raw))
+
+
+@pytest.mark.parametrize(
+    "workloads,pings",
+    [([], 0), (["small"], 22), (["large"], 19), (["state"], 34), (["small", "state"], 56)],
+)
+@pytest.mark.parametrize("extra", [0, 1])
+def test_probe_workloads_account_for_exact_lifecycle_and_partial_work(
+    report: Capture, workloads: list[str], pings: int, extra: int
+) -> None:
+    raw = concurrent_report(report, pings + extra, gated=True).model_dump(mode="json")
+    row = next(row for row in raw["results"] if row["mode"] == "http")
+    row["fixture_metadata"]["readiness_probe_workloads"] = workloads
+    row["lifecycle"]["partial_cancel"]["after_late_chunks"]["commands"]["ping"] = (
+        pings + extra + ("large" in workloads)
+    )
+    if extra:
+        with pytest.raises(ValueError, match="readiness"):
+            comparator.check_contract(Capture.model_validate(raw))
+    else:
+        comparator.check_contract(Capture.model_validate(raw))
+
+
 @pytest.mark.parametrize("pings,gated,reason", [(106, False, "budget"), (76, True, "Cohort-gated")])
 def test_shared_readiness_still_rejects_invalid_budget_or_gate(
     report: Capture, pings: int, gated: bool, reason: str
