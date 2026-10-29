@@ -729,14 +729,22 @@ async def test_sdk_partial_tool_execution_cannot_be_reported_safe_to_retry(
 
 @pytest.mark.asyncio
 async def test_sdk_nonretrying_command_does_not_wait_for_reconnect(command_hub, monkeypatch):
+    from unittest.mock import AsyncMock
+
     async with Client(request_server(), mode="legacy") as client:
         await client.call_tool("select_fixture")
         await command_hub.registry.unregister("session")
         monkeypatch.setenv("UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", "1")
-        started = asyncio.get_running_loop().time()
-        result = await client.call_tool("manage_scene", {"retry_on_reload": False})
+        wait = AsyncMock(
+            side_effect=AssertionError("Nonretrying calls must not wait for reconnect")
+        )
+        monkeypatch.setattr(command_hub.registry, "wait_for_change", wait)
+        result = await await_completion(
+            asyncio.create_task(client.call_tool("manage_scene", {"retry_on_reload": False})),
+            "nonretrying SDK invocation",
+        )
         assert result.structured_content["hint"] == "retry"
-        assert asyncio.get_running_loop().time() - started < 0.3
+        wait.assert_not_awaited()
         assert command_hub.sent == []
 
 
