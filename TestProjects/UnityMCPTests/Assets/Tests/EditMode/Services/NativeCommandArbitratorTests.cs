@@ -100,6 +100,37 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
+        [Test]
+        public void RefusedCommandRetainsItsConcreteRecoveryReasonWithoutChangingDisposition()
+        {
+            var binding = new JObject
+            {
+                ["version"] = 1,
+                ["request_nonce"] = Guid.NewGuid().ToString("N"),
+                ["instance_generation"] = NativeCommandArbitrator.Shared.Generation,
+            };
+            var detail = new NativeRecoveryDetails(
+                "owned_compilation",
+                "recovery_required",
+                "compilation_context_lost_on_reload",
+                "restart_required",
+                "inspect_native_work_then_restart_editor",
+                "The matching finish witness was lost across reload.",
+                "compile-job"
+            );
+            var blocker = new NativeAdmissionBlocker("recovery_required", false, detail);
+            var wire = JObject.Parse(TransportCommandResponse.FromObject(new { success = false }).WithAdmission(binding, true, blocker).ToJson());
+            var proof = wire["native_arbitration"];
+            Assert.AreEqual("not_started", (string)proof["disposition"]);
+            Assert.IsFalse((bool)proof["retryable"]);
+            Assert.AreEqual(binding["request_nonce"], proof["request_nonce"]);
+            Assert.IsNull(proof["recovery"], "Older servers reject unknown fields in the negotiated admission proof.");
+            var coordination = wire["payload"]["data"]["native_coordination"];
+            Assert.AreEqual(detail.Reason, (string)coordination["recovery"]["reason"]);
+            Assert.AreEqual(detail.Message, (string)coordination["recovery"]["message"]);
+            Assert.AreEqual(detail.Action, (string)coordination["recovery_action"]);
+        }
+
         [TestCase("execute_menu_item")]
         [TestCase("execute_menu_item_observed")]
         [TestCase("capture_ui_snapshot")]

@@ -33,6 +33,7 @@ namespace MCPForUnity.Editor.Services
 
         private static bool _lastIsCompiling;
         private static string _lastTrackedNativeBarrierReason;
+        private static NativeRecoveryDetails _lastTrackedNativeRecovery;
         private static TestRunSummary _lastTrackedTestSummary;
         private const string PlayTransitionKey = "MCPForUnity.EditorState.PlayTransition";
         internal static bool IsPlayModeTransition =>
@@ -302,6 +303,9 @@ namespace MCPForUnity.Editor.Services
 
             [JsonProperty("recovery_action")]
             public string RecoveryAction { get; set; }
+
+            [JsonProperty("recovery", NullValueHandling = NullValueHandling.Ignore)]
+            public NativeRecoveryDetails Recovery { get; set; }
         }
 
         private sealed class EditorStateTransport
@@ -461,6 +465,7 @@ namespace MCPForUnity.Editor.Services
                 || _lastTrackedTestsRunning != testsRunning
                 || _lastTrackedNativeControlUnreleased != nativeControlUnreleased
                 || _lastTrackedNativeBarrierReason != nativeBarrier.Reason
+                || !(_lastTrackedNativeRecovery?.Matches(nativeBarrier.Recovery) ?? nativeBarrier.Recovery == null)
                 || _lastTrackedTestSummary != TestRunStatus.Summary
                 || _lastTrackedTestsMode != testsMode
                 || _lastTrackedTestJobId != testJobId
@@ -749,7 +754,8 @@ namespace MCPForUnity.Editor.Services
                     Blocked = nativeBarrier.Reason != null,
                     Reason = nativeBarrier.Reason,
                     Retryable = nativeBarrier.Reason != null && nativeBarrier.Retryable,
-                    RecoveryAction = nativeBarrier.Reason == "recovery_required" ? "inspect_native_work_then_restart_editor" : null,
+                    RecoveryAction = nativeBarrier.RecoveryAction,
+                    Recovery = nativeBarrier.Recovery,
                 },
                 Transport = new EditorStateTransport { UnityBridgeConnected = null, LastMessageUnixMs = null },
                 Settings = new EditorStateSettings { BatchExecuteMaxCommands = Tools.BatchExecute.GetMaxCommandsPerBatch() },
@@ -768,6 +774,7 @@ namespace MCPForUnity.Editor.Services
             _lastTrackedTestsRunning = testsRunning;
             _lastTrackedNativeControlUnreleased = nativeControlUnreleased;
             _lastTrackedNativeBarrierReason = nativeBarrier.Reason;
+            _lastTrackedNativeRecovery = nativeBarrier.Recovery;
             _lastTrackedTestSummary = testSummary;
             _lastTrackedTestsMode = testsMode;
             _lastTrackedTestJobId = currentJobId;

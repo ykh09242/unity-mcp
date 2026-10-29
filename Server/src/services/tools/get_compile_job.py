@@ -6,9 +6,10 @@ import json
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from models import MCPResponse
+from models.native_recovery import NativeRecovery, RecoveryAction, parse_recovery, recovery_action
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 import transport.unity_transport as unity_transport
@@ -52,8 +53,19 @@ class CompileCoordination(BaseModel):
     ]
     reason: Literal["native_job_active", "recovery_required"] | None
     retryable: bool
-    recovery_action: Literal["inspect_native_work_then_restart_editor"] | None
+    recovery_action: RecoveryAction | None
+    recovery: NativeRecovery | None = Field(default=None, exclude_if=lambda value: value is None)
     completion_requires: Literal["matching_pipeline_finish_and_editor_quiescence"]
+
+    @field_validator("recovery", mode="before")
+    @classmethod
+    def optional_recovery(cls, value):
+        return value if isinstance(value, NativeRecovery) else parse_recovery(value)
+
+    @model_validator(mode="after")
+    def bounded_guidance(self):
+        self.recovery_action = recovery_action(self.reason, self.recovery, self.recovery_action)
+        return self
 
 
 class SuccessfulCompilation(BaseModel):
@@ -214,7 +226,27 @@ async def read_compile_job(instance: str | None, compile_id: str) -> dict:
     coordination = value.get("native_coordination")
     if coordination is not None:
         try:
-            diagnostics = CompileCoordination.model_validate(coordination).model_dump()
+            # Future optional sibling fields cannot invalidate the strict compiler ledger.
+            known = (
+                {
+                    key: item
+                    for key, item in coordination.items()
+                    if key
+                    in (
+                        "scope",
+                        "phase",
+                        "reason",
+                        "retryable",
+                        "recovery_action",
+                        "recovery",
+                        "completion_requires",
+                    )
+                }
+                if isinstance(coordination, dict)
+                else coordination
+            )
+            parsed = CompileCoordination.model_validate(known)
+            diagnostics = parsed.model_dump()
         except ValidationError:
             return result
         candidate = {**result, "native_coordination": diagnostics}

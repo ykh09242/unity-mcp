@@ -87,7 +87,7 @@ def test_editor_state_rejects_missing_payload_without_fabricating_readiness():
                         assert reason in advice["blocking_reasons"], response
                         assert response["data"]["native_coordination"]["retryable"] is retryable, response
                         if not retryable:
-                            assert advice["recommended_next_action"] == "inspect_native_work_then_restart_editor", response
+                            assert advice["recommended_next_action"] == "inspect_native_work", response
                             assert advice["recommended_retry_after_ms"] is None, response
 
                     for native in ([], "invalid", {"blocked": "false"}, {"blocked": True, "reason": []},

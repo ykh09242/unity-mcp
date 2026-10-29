@@ -105,14 +105,14 @@ async def test_idle_editor_with_native_recovery_never_passes_readiness(command_h
         data = await read_doctor(client)
         capabilities = await read_capabilities(client)
     assert data["connection_verified"] is True
-    assert data["checks"]["readiness"] == {
-        "status": "not_checked",
-        "reason": "recovery_required",
-        "next_action": "inspect_native_work_then_restart_editor",
-    }
+    check = data["checks"]["readiness"]
+    assert check["status"] == "not_checked"
+    assert check["reason"] == "recovery_required"
+    assert check["next_action"] == "inspect_native_work"
+    assert check["native_coordination"]["reason"] == "recovery_required"
     assert capabilities["readiness"]["status"] == "blocked"
     assert "recovery_required" in capabilities["readiness"]["blocking_reasons"]
-    assert capabilities["readiness"]["next_action"] == "inspect_native_work_then_restart_editor"
+    assert capabilities["readiness"]["next_action"] == "inspect_native_work"
 
 
 @pytest.mark.asyncio

@@ -82,3 +82,31 @@ def test_retry_requires_exact_not_started_and_both_known_reason_and_native_flag(
 def test_negotiated_peer_cannot_return_bare_handler_result_in_place_of_envelope():
     with pytest.raises(NativeArbitrationProtocolError):
         decode_native_reply({"success": True}, request())
+
+
+def test_payload_recovery_details_survive_without_authorizing_retry():
+    # Given: diagnostics stay in the payload of an unchanged identity-bound refusal.
+    reply = envelope(reason="recovery_required", retryable=True)
+    detail = {
+        "source": "compile",
+        "phase": "started",
+        "reason": "pipeline_identity_missing",
+        "mode": "restart_required",
+        "message": "The native pipeline identity was lost.",
+    }
+    reply["payload"]["data"] = {
+        "native_coordination": {
+            "blocked": True,
+            "reason": "recovery_required",
+            "retryable": False,
+            "recovery": detail,
+            "recovery_action": "inspect_native_work_then_restart_editor",
+        }
+    }
+    # When: transport admission is decoded.
+    result = decode_native_reply(reply, request())
+    # Then: the receipt retains the explanation but cannot permit replay.
+    assert result.not_started and not result.retryable
+    native = result.payload["data"]["native_coordination"]
+    assert native["recovery"] == detail
+    assert native["recovery_action"] == "inspect_native_work_then_restart_editor"

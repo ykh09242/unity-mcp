@@ -31,13 +31,14 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [TestCase(false, "native_job_active")]
-        [TestCase(true, "recovery_required")]
+        [TestCase(true, "native_job_active")]
         public void CachedReadObservesNativeReservationWithoutWaitingForAnEditorTick(bool expired, string reason)
         {
             var owner = CompilationJobTracker.Reservation;
             Assert.IsNull(owner.State, "This isolated test requires no existing compile owner.");
             EditorStateCache.GetSnapshot();
             owner.Reserve("state-observation-test", expired ? 0 : EditorApplication.timeSinceStartup + 600);
+            var pending = EditorStateCache.GetSnapshot();
             var context = new object();
             owner.Started(context);
             try
@@ -45,7 +46,16 @@ namespace MCPForUnityTests.Editor.Services
                 var snapshot = EditorStateCache.GetSnapshot();
                 Assert.AreEqual(reason, (string)snapshot["native_coordination"]?["reason"]);
                 Assert.IsTrue((bool)snapshot["native_coordination"]["blocked"]);
-                Assert.AreEqual(!expired, (bool)snapshot["native_coordination"]["retryable"]);
+                Assert.IsTrue((bool)snapshot["native_coordination"]["retryable"]);
+                Assert.AreEqual("recoverable", (string)snapshot["native_coordination"]["recovery"]["mode"]);
+                Assert.AreEqual("state-observation-test", (string)snapshot["native_coordination"]["recovery"]["job_id"]);
+                Assert.AreEqual("pending", (string)pending["native_coordination"]["recovery"]["phase"]);
+                Assert.AreEqual("started", (string)snapshot["native_coordination"]["recovery"]["phase"]);
+                Assert.Greater(
+                    (long)snapshot["sequence"],
+                    (long)pending["sequence"],
+                    "Changed owner diagnostics must invalidate unchanged blocking reason caches."
+                );
                 Assert.IsNotNull(owner.State, "Observing readiness must not release native ownership.");
             }
             finally
@@ -70,7 +80,7 @@ namespace MCPForUnityTests.Editor.Services
                 {
                     TestRunStatus.MarkStarted(TestMode.EditMode);
                     var payload = new TestRunResult(new TestRunSummary(66, passed, failed, 0, 1.5, nativeResult), Array.Empty<TestRunTestResult>());
-                    complete.Invoke(runner, new object[] { payload, null });
+                    complete.Invoke(runner, new object[] { payload, null, null });
                     long? finished = TestRunStatus.FinishedUnixMs;
                     TestRunStatus.MarkFinished();
                     Assert.AreEqual(finished, TestRunStatus.FinishedUnixMs, "Duplicate cleanup must preserve the actual completion time.");

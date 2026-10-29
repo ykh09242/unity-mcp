@@ -12,6 +12,7 @@ from typing import Final
 import anyio
 from fastmcp import Context
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
+from models.native_recovery import WAIT_ACTIONS, parse_coordination
 
 from core.config import config
 from models.capabilities import (
@@ -374,9 +375,17 @@ def _compose(
         next_action=action
         if isinstance(action, str)
         and action
-        in {"none", "retry_later", "inspect_editor", "inspect_native_work_then_restart_editor"}
+        in {
+            "none",
+            "retry_later",
+            "inspect_editor",
+            "inspect_native_work",
+            "inspect_native_work_then_restart_editor",
+            *WAIT_ACTIONS,
+        }
         and ready is not None
         else "read_editor_state",
+        native_coordination=parse_coordination(state.get("native_coordination")),
     )
     project = observations["get_project_info"].data
     packages = _section(project, "packages")

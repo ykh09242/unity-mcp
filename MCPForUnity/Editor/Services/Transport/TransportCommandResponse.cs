@@ -30,6 +30,24 @@ namespace MCPForUnity.Editor.Services.Transport
             if (notStarted)
             {
                 admission["reason"] = blocker.Reason;
+                // Keep the negotiated proof schema unchanged for older servers.
+                // Diagnostics belong to the refusal payload, not replay authority.
+                if (blocker.RecoveryAction != null && payload is JObject result)
+                {
+                    var data = result["data"] as JObject;
+                    if (data == null)
+                        result["data"] = data = new JObject();
+                    var coordination = new JObject
+                    {
+                        ["blocked"] = true,
+                        ["reason"] = blocker.Reason,
+                        ["retryable"] = blocker.Retryable,
+                        ["recovery_action"] = blocker.RecoveryAction,
+                    };
+                    if (blocker.Recovery != null)
+                        coordination["recovery"] = JObject.FromObject(blocker.Recovery);
+                    data["native_coordination"] = coordination;
+                }
             }
             return this;
         }

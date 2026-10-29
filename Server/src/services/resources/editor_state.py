@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Literal, Any
 
 from fastmcp import Context
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from services.execution_receipt_context import owned_to_thread
 from core.config import config
 from models import MCPResponse
+from models.native_recovery import NativeRecovery, parse_coordination
 from models.response_limits import response_limit_error
 from services.registry import mcp_for_unity_resource
 from services.tools import get_unity_instance_from_context
@@ -135,6 +136,7 @@ class EditorStateNativeCoordination(BaseModel):
     reason: str | None = None
     retryable: bool | None = None
     recovery_action: str | None = None
+    recovery: NativeRecovery | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class EditorStateSettings(BaseModel):
@@ -273,6 +275,7 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
     blocking: list[str] = []
     native = state_v2.get("native_coordination")
     recovery_required = False
+    native_action = None
     if native is not None:
         # Derive bounded guidance from the same native admission reason, never
         # from an arbitrary peer-provided action or a coerced boolean.
@@ -287,14 +290,16 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
         if blocked is True and isinstance(reason, str) and reason in known_reasons:
             blocking.append(reason)
             recovery_required = reason == "recovery_required"
+            normalized = parse_coordination(native)
+            native_action = normalized.recovery_action if normalized is not None else None
             state_v2["native_coordination"] = {
                 "blocked": True,
                 "reason": reason,
                 "retryable": not recovery_required,
-                "recovery_action": "inspect_native_work_then_restart_editor"
-                if recovery_required
-                else None,
+                "recovery_action": native_action,
             }
+            if normalized is not None and normalized.recovery is not None:
+                state_v2["native_coordination"]["recovery"] = normalized.recovery.model_dump()
         elif blocked is False and reason is None:
             state_v2["native_coordination"] = {"blocked": False, "reason": None, "retryable": False}
         else:
@@ -398,8 +403,10 @@ def _enrich_advice_and_staleness(state_v2: dict[str, Any]) -> dict[str, Any]:
         else 5000
         if inspect_editor
         else 500,
-        "recommended_next_action": "inspect_native_work_then_restart_editor"
+        "recommended_next_action": native_action or "inspect_native_work"
         if recovery_required
+        else native_action
+        if native_action is not None
         else "inspect_editor"
         if inspect_editor
         else "inspect_scan_scope"

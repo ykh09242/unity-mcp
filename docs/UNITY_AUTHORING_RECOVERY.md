@@ -118,16 +118,35 @@ Read-only package queries retain their command-specific restrictions; they do no
 make every ordinary scene or Console read unavailable.
 
 - `native_job_active` is a transient ownership barrier. Wait for the current native
-  work to finish without starting it again.
+  work to finish without starting it again. A caller's wait deadline does not cancel
+  a native request or discard its pipeline identity. Late matching compilation
+  events and recovered test observations can still release ownership safely.
 - `recovery_required` means native ownership cannot safely be released from the
   available evidence. Advice reports `ready_for_tools=false`, no automatic retry
-  interval, and `inspect_native_work_then_restart_editor`. Capability discovery and
-  doctor's readiness check report the same condition. A verified connection alone
-  does not establish readiness.
+  interval, and a concrete recovery action. Capability discovery and doctor's
+  readiness check retain the same diagnostics. A verified connection alone does
+  not establish readiness.
 - `refresh_unity` and CLI `editor refresh` stop waiting when recovery is observed.
   They return `recovery_required`, `retryable=false` and `timeout=false`, preserving
   the acknowledged refresh/available compile evidence. They do not replay refresh
   or restart Unity automatically.
+
+Optional `native_coordination.recovery` identifies the `source`, `phase`, `reason`,
+`mode` and explanatory `message`, with `job_id` and `generation` when available.
+`recoverable` means the retained observer can still reconcile completion;
+`unknown` asks for inspection without asserting that a restart is necessary.
+Only `restart_required` recommends `inspect_native_work_then_restart_editor`.
+For example, an unfinished compilation checkpoint whose pipeline context was lost
+across reload, a build whose completion observer disappeared, or a Package Manager
+request whose handle is gone cannot be released using idle flags alone. The message
+explains that missing evidence. Legacy peers without these details still remain
+blocked but ask for `inspect_native_work`, rather than inferring a restart cause.
+
+A temporary test snapshot failure does not erase a retained run GUID. A later
+coherent observation of that same run restores tracking. A retired test run with
+its callback owner retained waits for terminal completion; losing attribution to
+the run remains a separate recovery condition. Focusing the Editor or observing
+an assembly reload is not itself evidence that a restart is required.
 
 Inspect the active Test Runner, build, import or compilation work and save relevant
 logs before deciding to restart the Editor. An idle sample does not prove that an

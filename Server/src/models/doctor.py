@@ -3,6 +3,7 @@
 from typing import Annotated, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from models.native_recovery import NativeCoordination, RecoveryAction
 
 EXACT_TARGET_PATTERN: Final = r"(?=\S)[^@/\\\x00-\x1f\x7f]{1,128}@[0-9a-fA-F]{8,64}\Z"
 
@@ -34,17 +35,23 @@ class DoctorCheck(DoctorModel):
         "readiness_unknown",
         "auth_required",
     ]
-    next_action: Literal[
-        "none",
-        "retry_later",
-        "select_instance",
-        "reconnect_unity",
-        "inspect_editor",
-        "inspect_native_work_then_restart_editor",
-        "restart_client_server",
-        "verify_selected_source",
-        "use_authenticated_client",
-    ]
+    next_action: (
+        RecoveryAction
+        | Literal[
+            "none",
+            "retry_later",
+            "select_instance",
+            "reconnect_unity",
+            "inspect_editor",
+            "inspect_native_work_then_restart_editor",
+            "restart_client_server",
+            "verify_selected_source",
+            "use_authenticated_client",
+        ]
+    )
+    native_coordination: NativeCoordination | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class DoctorPackage(DoctorModel):

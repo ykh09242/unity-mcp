@@ -24,6 +24,7 @@ from transport.command_budget import command_outcome_unknown
 import transport.legacy.unity_connection as _legacy_conn
 from services.state.external_changes_scanner import external_changes_scanner
 import services.resources.editor_state as editor_state
+from models.native_recovery import parse_coordination
 from services.tools.get_compile_job import parse_compile_job, read_compile_job, unknown_compile_job
 
 logger = logging.getLogger(__name__)
@@ -393,6 +394,7 @@ async def refresh_unity(
     compilation_observation_error = None
     readiness = None
     resulting_state = None
+    native_coordination = None
 
     def with_compilation(value):
         payload = value.model_dump() if isinstance(value, MCPResponse) else dict(value)
@@ -413,6 +415,8 @@ async def refresh_unity(
             payload["message"] = "No refresh or compilation was dispatched."
         if readiness is not None:
             data["readiness"] = readiness
+            if native_coordination is not None:
+                data["native_coordination"] = native_coordination
             if resulting_state is not None:
                 data["resulting_state"] = resulting_state
             if readiness["ready"]:
@@ -456,7 +460,7 @@ async def refresh_unity(
                 and compilation["requested_at_unix_ms"] <= compilation["started_at_unix_ms"]
             ):
                 data["compilation_goal_satisfied"] = True
-            if compilation["native_coordination"] is not None:
+            if native_coordination is None and compilation["native_coordination"] is not None:
                 data["native_coordination"] = compilation["native_coordination"]
             data["compilation_observation_age_seconds"] = (
                 max(0.0, time.monotonic() - compilation_observed_at)
@@ -552,16 +556,23 @@ async def refresh_unity(
     async def observe_refresh(state):
         nonlocal compilation, compilation_observed_at, compilation_observation_error
         nonlocal readiness, resulting_state, compile_polled, last_compile_poll
+        nonlocal native_coordination
         advice = state.get("advice") if isinstance(state, dict) else None
         observed_ready = isinstance(advice, dict) and advice.get("ready_for_tools") is True
         if isinstance(advice, dict):
+            native = parse_coordination(state.get("native_coordination"))
+            native_coordination = native.model_dump() if native is not None else None
             readiness = {
                 "ready": observed_ready,
                 "blocking_reasons": advice.get("blocking_reasons"),
                 "warnings": advice.get("warnings", []),
             }
+            if native is not None and native.recovery_action is not None:
+                readiness["next_action"] = native.recovery_action
             if "recovery_required" in (advice.get("blocking_reasons") or []):
-                readiness["next_action"] = "inspect_native_work_then_restart_editor"
+                readiness["next_action"] = (
+                    native.recovery_action if native is not None else None
+                ) or "inspect_native_work"
             activity = state.get("activity")
             phase = activity.get("phase") if isinstance(activity, dict) else None
             if isinstance(phase, str) and phase:
@@ -622,21 +633,22 @@ async def refresh_unity(
                     pass  # The observer shares the readiness deadline; never extend it.
             readiness["ready"] = ready_confirmed
 
-            if (
-                not ready_confirmed
-                and readiness.get("next_action") == "inspect_native_work_then_restart_editor"
+            if not ready_confirmed and "recovery_required" in (
+                readiness.get("blocking_reasons") or []
             ):
+                native_detail = (native_coordination or {}).get("recovery") or {}
                 return with_compilation(
                     MCPResponse(
                         success=False,
                         error="recovery_required",
-                        message="Editor readiness is blocked by native work requiring recovery. Inspect native work before restarting the Editor; do not repeat the refresh.",
+                        message=native_detail.get("message")
+                        or "Editor readiness is blocked by native work requiring inspection. Do not repeat the refresh.",
                         data={
                             **(native_data if isinstance(native_data, dict) else {}),
                             "reason": "recovery_required",
                             "timeout": False,
                             "retryable": False,
-                            "recovery_action": "inspect_native_work_then_restart_editor",
+                            "recovery_action": readiness["next_action"],
                         },
                     )
                 )

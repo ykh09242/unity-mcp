@@ -3,6 +3,7 @@
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from models.native_recovery import NativeCoordination
 
 WireCapability = Literal[
     "editor_state_v1", "large_result_v1", "large_result_gzip_v1", "command_cancel_v1"
@@ -41,6 +42,9 @@ class CapabilityReadiness(CapabilityModel):
     blocking_reasons: list[str] = Field(default_factory=list)
     next_action: str = "read_editor_state"
     source: Literal["editor_state"] = "editor_state"
+    native_coordination: NativeCoordination | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class CapabilityFeature(CapabilityModel):

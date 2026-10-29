@@ -845,16 +845,21 @@ def refresh(mode: str, scope: str, compile: bool, no_wait: bool):
                     )
                 advice = _enrich_advice_and_staleness(data)["advice"]
                 if "recovery_required" in advice["blocking_reasons"]:
+                    native = data["native_coordination"]
+                    recovery = native.get("recovery")
                     raise UnityCommandError(
                         {
                             "success": False,
                             "error": "recovery_required",
-                            "message": "Editor readiness is blocked by native work requiring recovery. Inspect native work before restarting the Editor; do not repeat the refresh.",
+                            "message": recovery["message"]
+                            if recovery
+                            else "Editor readiness is blocked by native work requiring inspection. Do not repeat the refresh.",
                             "data": {
                                 "reason": "recovery_required",
                                 "timeout": False,
                                 "retryable": False,
-                                "recovery_action": "inspect_native_work_then_restart_editor",
+                                "recovery_action": advice["recommended_next_action"],
+                                "native_coordination": native,
                                 "refresh_response": result,
                             },
                         }

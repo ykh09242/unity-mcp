@@ -112,7 +112,10 @@ def test_coordination_is_diagnostic_and_cannot_certify_compiler_success(phase):
 
     assert result["outcome"] == "unknown"
     assert result["attribution"] == "unconfirmed"
-    assert result["native_coordination"] == coordination
+    assert result["native_coordination"] == {
+        **coordination,
+        "recovery_action": "inspect_native_work" if phase == "recovery_required" else None,
+    }
 
 
 def test_old_peer_without_coordination_still_preserves_outcome():

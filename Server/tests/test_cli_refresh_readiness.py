@@ -93,7 +93,10 @@ ACKNOWLEDGED = {
 }
 
 
-def test_refresh_native_recovery_is_reported_without_waiting_to_deadline(refresh_cli):
+@pytest.mark.parametrize("restart_required", [False, True])
+def test_refresh_native_recovery_is_reported_without_waiting_to_deadline(
+    refresh_cli, restart_required
+):
     invoke, requests, now = refresh_cli
     blocked = ready_state()
     blocked["data"]["native_coordination"] = {
@@ -101,6 +104,14 @@ def test_refresh_native_recovery_is_reported_without_waiting_to_deadline(refresh
         "reason": "recovery_required",
         "retryable": False,
     }
+    if restart_required:
+        blocked["data"]["native_coordination"]["recovery"] = {
+            "source": "compile",
+            "phase": "started",
+            "reason": "pipeline_identity_missing",
+            "mode": "restart_required",
+            "message": "Native pipeline identity was lost.",
+        }
 
     def handler(payload):
         return httpx.Response(
@@ -114,7 +125,13 @@ def test_refresh_native_recovery_is_reported_without_waiting_to_deadline(refresh
     assert response["data"]["timeout"] is False
     assert response["data"]["retryable"] is False
     assert response["data"]["refresh_response"] == ACKNOWLEDGED
-    assert response["data"]["recovery_action"] == "inspect_native_work_then_restart_editor"
+    assert response["data"]["recovery_action"] == (
+        "inspect_native_work_then_restart_editor" if restart_required else "inspect_native_work"
+    )
+    native = response["data"]["native_coordination"]
+    assert native["reason"] == "recovery_required"
+    if restart_required:
+        assert native["recovery"] == blocked["data"]["native_coordination"]["recovery"]
     assert len(requests) == 2
     assert now[0] == 0
 
