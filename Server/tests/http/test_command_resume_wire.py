@@ -7,17 +7,29 @@ import pytest
 from tests.http.test_plugin_hub_lifecycle import isolated_hub, wire_client  # noqa: F401
 from tests.timing import watchdog_timeout
 from transport.plugin_hub import PluginHub
+from tests.receipt_resume_support import prepared_receipt
 
 EDITOR = "e" * 32
 
 
-def register(socket, editor=EDITOR):
+async def receipt_dispatch(session_id):
+    with prepared_receipt("owned"):
+        return await PluginHub.send_command(session_id, "manage_scene", {"action": "save"})
+
+
+def register(socket, editor=EDITOR, *, origin=False, path=None):
     socket.receive_json()
     socket.send_json(
         {
             "type": "register",
             "project_hash": "owned",
-            "capabilities": ["native_arbitration_v1", "command_resume_v1", "command_cancel_v1"],
+            "capabilities": [
+                "native_arbitration_v1",
+                "command_resume_v1",
+                "command_cancel_v1",
+                *(["command_resume_origin_v1"] if origin else []),
+            ],
+            **({"project_path": path} if path else {}),
             "arbitration_generation": "a" * 32,
             "resume_generation": editor,
         }
@@ -53,12 +65,19 @@ def respond(socket, command, state, payload=None):
 
 
 @pytest.mark.parametrize("first_state", [None, "queued"])
-def test_same_sender_continues_original_invocation_after_reload(wire_client, first_state):
+@pytest.mark.parametrize("receipted", [False, True])
+def test_same_sender_continues_original_invocation_after_reload(
+    wire_client, first_state, receipted
+):
     # Given one original command, possibly acknowledged as still queued.
     with wire_client.websocket_connect("/hub/plugin") as first_socket:
         ack = register(first_socket)
         future = wire_client.portal.start_task_soon(
-            partial(PluginHub.send_command, ack["session_id"], "manage_scene", {"action": "save"})
+            partial(receipt_dispatch, ack["session_id"])
+            if receipted
+            else partial(
+                PluginHub.send_command, ack["session_id"], "manage_scene", {"action": "save"}
+            )
         )
         first = first_socket.receive_json()
         if first_state is not None:
@@ -96,12 +115,17 @@ def test_live_executing_invocation_is_observed_without_readmission(wire_client):
         assert future.result(watchdog_timeout())["data"]["applied"] == 1
 
 
-def test_cold_editor_restart_does_not_receive_old_invocation(wire_client):
+@pytest.mark.parametrize("receipted", [False, True])
+def test_cold_editor_restart_does_not_receive_old_invocation(wire_client, receipted):
     # Given an original invocation whose reply was lost.
     with wire_client.websocket_connect("/hub/plugin") as socket:
         ack = register(socket)
         future = wire_client.portal.start_task_soon(
-            partial(PluginHub.send_command, ack["session_id"], "manage_scene", {"action": "save"})
+            partial(receipt_dispatch, ack["session_id"])
+            if receipted
+            else partial(
+                PluginHub.send_command, ack["session_id"], "manage_scene", {"action": "save"}
+            )
         )
         socket.receive_json()
     # When a new Editor process replaces it.
@@ -175,6 +199,43 @@ def test_malformed_resume_envelope_finishes_without_another_attempt(wire_client)
         result = future.result(watchdog_timeout())
         # Then malformed metadata cannot cause a dead wait or readmission.
         assert result["data"]["reason"] == "outcome_unknown"
+        assert not PluginHub._pending
+
+
+def test_receipted_reconnect_rejects_changed_project_root(wire_client, tmp_path):
+    with wire_client.websocket_connect("/hub/plugin") as socket:
+        ack = register(socket, path=str(tmp_path / "Original"))
+        future = wire_client.portal.start_task_soon(partial(receipt_dispatch, ack["session_id"]))
+        socket.receive_json()
+    with wire_client.websocket_connect("/hub/plugin") as socket:
+        register(socket, path=str(tmp_path / "Replacement"))
+        assert future.result(watchdog_timeout())["data"]["reason"] == "outcome_unknown"
+        assert not PluginHub._pending
+
+
+@pytest.mark.parametrize("supported", [False, True])
+def test_origin_extension_requires_negotiation_and_covers_preflight_reads(wire_client, supported):
+    from transport.command_resume import CommandResumeProtocolError, queued_origin
+
+    async def dispatch_origin(session_id):
+        token = queued_origin.set("c" * 32)
+        try:
+            return await PluginHub.send_command(session_id, "get_editor_state", {})
+        finally:
+            queued_origin.reset(token)
+
+    with wire_client.websocket_connect("/hub/plugin") as socket:
+        ack = register(socket, origin=supported)
+        assert ("command_resume_origin_v1" in ack.get("capabilities", [])) is supported
+        future = wire_client.portal.start_task_soon(partial(dispatch_origin, ack["session_id"]))
+        if supported:
+            command = socket.receive_json()
+            assert command["resume"]["origin_generation"] == "c" * 32
+            respond(socket, command, "completed")
+            assert future.result(watchdog_timeout())["success"]
+        else:
+            with pytest.raises(CommandResumeProtocolError):
+                future.result(watchdog_timeout())
         assert not PluginHub._pending
 
 

@@ -88,6 +88,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private bool _arbitrationNegotiated;
         private bool _resumeNegotiated;
         private bool _resumeOffered;
+        private bool _resumeOriginOffered;
+        private bool _resumeOriginNegotiated;
         private bool _commandProgressOffered;
         private bool _commandProgressNegotiated;
 
@@ -446,6 +448,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 _arbitrationNegotiated = false;
                 _resumeNegotiated = false;
                 _resumeOffered = false;
+                _resumeOriginOffered = false;
+                _resumeOriginNegotiated = false;
                 _phaseTimingOffered = false;
                 _phaseTimingNegotiated = false;
                 _commandProgressOffered = false;
@@ -634,6 +638,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _arbitrationNegotiated = false;
                     _resumeNegotiated = false;
                     _resumeOffered = false;
+                    _resumeOriginOffered = false;
+                    _resumeOriginNegotiated = false;
                     _phaseTimingOffered = false;
                     _phaseTimingNegotiated = false;
                     _commandProgressOffered = false;
@@ -1006,7 +1012,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             break;
                         work = _commandWork;
                     }
-                    if (_resumeNegotiated && payload["resume"] is JObject cancelResume)
+                    if (
+                        _resumeNegotiated
+                        && payload["resume"] is JObject cancelResume
+                        && (cancelResume.Property("origin_generation") == null || _resumeOriginNegotiated)
+                    )
                         await TransportCommandDispatcher
                             .RunOnMainThreadAsync(
                                 () =>
@@ -1039,6 +1049,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     return;
                 _arbitrationOffered = HasCapability(payload, NativeCommandArbitrator.Capability);
                 _resumeOffered = HasCapability(payload, CommandResumeJournal.Capability);
+                _resumeOriginOffered = _resumeOffered && HasCapability(payload, CommandResumeJournal.OriginCapability);
+                if (!_resumeOriginOffered)
+                    _resumeOriginNegotiated = false;
                 if (!_resumeOffered)
                     _resumeNegotiated = false;
                 if (!_arbitrationOffered)
@@ -1092,6 +1105,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _commandCancellationNegotiated = HasCapability(payload, ConnectionCommandWork.CancellationCapability);
                     _arbitrationNegotiated = _arbitrationOffered && HasCapability(payload, NativeCommandArbitrator.Capability);
                     _resumeNegotiated = _resumeOffered && HasCapability(payload, CommandResumeJournal.Capability);
+                    _resumeOriginNegotiated = _resumeNegotiated && _resumeOriginOffered && HasCapability(payload, CommandResumeJournal.OriginCapability);
                     _phaseTimingNegotiated = _phaseTimingOffered && HasCapability(payload, CommandPhaseTiming.Capability);
                     _commandProgressNegotiated = _commandProgressOffered && HasCommandProgressCapability(payload);
                     _statePublisher?.Dispose();
@@ -1313,6 +1327,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             bool phaseTimingNegotiated;
             bool arbitrationNegotiated;
             bool resumeNegotiated;
+            bool originNegotiated;
             lock (_ownershipLock)
             {
                 if (!IsCurrentConnectionToken(token))
@@ -1324,6 +1339,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 phaseTimingNegotiated = _phaseTimingNegotiated;
                 arbitrationNegotiated = _arbitrationNegotiated;
                 resumeNegotiated = _resumeNegotiated;
+                originNegotiated = _resumeOriginNegotiated;
             }
             if (work == null)
                 return;
@@ -1339,7 +1355,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             };
             if (command.resume != null)
             {
-                if (!resumeNegotiated)
+                if (!resumeNegotiated || command.resume.Property("origin_generation") != null && !originNegotiated)
                 {
                     deadline.Dispose();
                     await SendCommandResultAsync(commandId, new { status = "error", error = "Command continuation was not negotiated" }, token)
@@ -1791,7 +1807,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     CommandProgressBuffer.Capability,
                     CommandPhaseTiming.Capability,
                     NativeCommandArbitrator.Capability,
-                    CommandResumeJournal.Capability
+                    CommandResumeJournal.Capability,
+                    CommandResumeJournal.OriginCapability
                 ),
             };
 

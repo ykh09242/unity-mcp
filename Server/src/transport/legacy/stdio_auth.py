@@ -14,7 +14,7 @@ import time
 from typing import Callable
 
 from transport.native_arbitration import CAPABILITY, valid_generation
-from transport.command_resume import CAPABILITY as RESUME_CAPABILITY
+from transport.command_resume import CAPABILITY as RESUME_CAPABILITY, ORIGIN_CAPABILITY
 
 
 class StdioAuthenticationError(RuntimeError):
@@ -47,7 +47,9 @@ def _optional_capabilities(value: object) -> frozenset[str]:
         or any(type(item) is not str or not 1 <= len(item) <= 64 for item in value)
     ):
         return frozenset()
-    return frozenset(value).intersection({"command_progress_v1", CAPABILITY, RESUME_CAPABILITY})
+    return frozenset(value).intersection(
+        {"command_progress_v1", CAPABILITY, RESUME_CAPABILITY, ORIGIN_CAPABILITY}
+    )
 
 
 def authentication_proof(token: str, fields: list[str]) -> str:
@@ -151,6 +153,8 @@ def authenticate_stdio_session(
         CAPABILITY not in accepted or not valid_generation(resume_generation)
     ):
         raise StdioAuthenticationError("Invalid command continuation generation")
+    if ORIGIN_CAPABILITY in accepted and RESUME_CAPABILITY not in accepted:
+        raise StdioAuthenticationError("Command origin requires continuation support")
     return StdioAuthenticatedSession(
         generation, session, accepted, arbitration_generation, resume_generation
     )

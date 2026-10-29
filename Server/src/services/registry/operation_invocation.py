@@ -349,6 +349,14 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                 raise OperationScopeChanged()
 
         async def call():
+            from transport.command_resume import queued_origin
+
+            if queued_origin.get() is not None and (
+                not trusted
+                or resolve_operation_policy(name, params, trusted_builtin=trusted).reason
+                in {"untrusted_handler", "arbitrary_execution"}
+            ):
+                return refusal_result(_refusal("operation_reload_requires_fresh_request"))
             if inspect.iscoroutinefunction(function):
                 return await function(*args, **kwargs)
             return await owned_to_thread(function, *args, **kwargs)
@@ -457,6 +465,16 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                             continue
                         if refusal is not None:
                             return refusal_result(refusal)
+                        rebound = target.scope.generation != original_target.scope.generation
+                        if rebound and (
+                            not trusted
+                            or policy.reason in {"untrusted_handler", "arbitrary_execution"}
+                            or original_target.origin_generation is None
+                            or target.origin_generation is None
+                        ):
+                            return refusal_result(
+                                _refusal("operation_reload_requires_fresh_request")
+                            )
                         owner.request = admission_for(
                             target,
                             policy.mode,
@@ -465,7 +483,15 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                             observational_continuation=observation,
                         )
                         invocation_started = True
-                        return await call()
+                        from transport.command_resume import queued_origin
+
+                        origin_token = queued_origin.set(
+                            original_target.origin_generation if rebound else queued_origin.get()
+                        )
+                        try:
+                            return await call()
+                        finally:
+                            queued_origin.reset(origin_token)
             except OperationScopeChanged:
                 return refusal_result(
                     _refusal("operation_target_changed", invocation_started=invocation_started)

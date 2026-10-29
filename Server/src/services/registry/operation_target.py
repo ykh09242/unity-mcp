@@ -6,6 +6,7 @@ from collections.abc import Callable, Awaitable
 from core.config import config
 from services.registry.operation_scheduler import OperationScope
 from transport.native_arbitration import CAPABILITY, valid_generation
+from transport.command_resume import ORIGIN_CAPABILITY
 from services.operation_permissions import JsonValue
 
 
@@ -25,6 +26,7 @@ class OperationTarget:
         default=None, repr=False, compare=False
     )
     resume_generation: str | None = None
+    origin_generation: str | None = None
 
 
 async def capture_target(
@@ -116,6 +118,13 @@ def capture_stdio_target(connection) -> OperationTarget:
             and valid_generation(resume)
             else None
         ),
+        origin_generation=(
+            native
+            if session is not None
+            and ORIGIN_CAPABILITY in session.capabilities
+            and valid_generation(native)
+            else None
+        ),
     )
 
 
@@ -177,4 +186,5 @@ async def capture_http_target(session_id: str, *, hub=None) -> OperationTarget |
         available,
         lambda: hub._pending_capacity_error(session_id, session.user_id),
         resume if hub._supports(socket, "command_resume_v1") and valid_generation(resume) else None,
+        native if hub._supports(socket, ORIGIN_CAPABILITY) and valid_generation(native) else None,
     )

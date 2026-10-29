@@ -15,6 +15,7 @@ namespace MCPForUnity.Editor.Services.Transport
     internal sealed class CommandResumeJournal
     {
         internal const string Capability = "command_resume_v1";
+        internal const string OriginCapability = "command_resume_origin_v1";
         internal const int MaxEntries = 128;
         internal const int MaxSnapshotBytes = 2 * 1024 * 1024;
         internal const int MaxResultBytes = 8192;
@@ -77,6 +78,7 @@ namespace MCPForUnity.Editor.Services.Transport
             public long deadline;
             public string phase;
             public string domain;
+            public string origin_generation;
             public bool volatile_targets;
             public bool completed_uncached;
             public bool not_started;
@@ -175,7 +177,9 @@ namespace MCPForUnity.Editor.Services.Transport
             {
                 if (
                     request == null
-                    || request.Count != 5
+                    || request.Count != (request.Property("origin_generation") == null ? 5 : 6)
+                    || request.Property("origin_generation") != null
+                        && (request["origin_generation"]?.Type != JTokenType.String || !IsIdentity((string)request["origin_generation"]))
                     || request["version"]?.Type != JTokenType.Integer
                     || request["version"].ToString(Formatting.None) != "1"
                     || request["invocation_id"]?.Type != JTokenType.String
@@ -189,6 +193,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 string session = request?.Value<string>("editor_session_id");
                 string action = request?.Value<string>("action");
                 long? deadline = parsedDeadline;
+                string origin = (string)request["origin_generation"];
                 if (
                     unavailable
                     || !IsIdentity(id)
@@ -204,7 +209,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 string fingerprint = Fingerprint(name, parameters ?? new JObject());
                 if (entries.TryGetValue(id, out Entry entry))
                 {
-                    if (entry.fingerprint != fingerprint || entry.deadline != deadline)
+                    if (entry.fingerprint != fingerprint || entry.deadline != deadline || entry.origin_generation != origin)
                         return Reply(request, "unavailable");
                 }
                 else
@@ -228,6 +233,7 @@ namespace MCPForUnity.Editor.Services.Transport
                         deadline = deadline.Value,
                         phase = "queued",
                         domain = domain,
+                        origin_generation = origin,
                         volatile_targets = HasVolatileTargets(parameters, name) || !continuationPolicy(name, parameters ?? new JObject()),
                     };
                     entries.Add(id, entry);
@@ -254,7 +260,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 if (action == "status" || active.ContainsKey(id))
                     return Reply(request, "queued");
                 if (
-                    entry.domain != domain
+                    (entry.domain != domain || entry.origin_generation != null)
                     && (entry.volatile_targets || HasVolatileTargets(parameters, name) || !continuationPolicy(name, parameters ?? new JObject()))
                 )
                     return Reply(request, "unavailable");
@@ -263,7 +269,7 @@ namespace MCPForUnity.Editor.Services.Transport
                     Id = id,
                     Request = (JObject)request.DeepClone(),
                     Owner = this,
-                    Revalidate = entry.domain == domain ? null : () => continuationPolicy(name, parameters ?? new JObject()),
+                    Revalidate = entry.domain == domain && entry.origin_generation == null ? null : () => continuationPolicy(name, parameters ?? new JObject()),
                 };
                 active.Add(id, ticket);
                 var accepted = Reply(request, "queued");
@@ -439,11 +445,13 @@ namespace MCPForUnity.Editor.Services.Transport
                         || (commandName == "manage_graphics" || commandName == "manage_render_environment") && action == "skybox_set_sun"
                     );
                 bool componentCommand = commandName == "manage_components" || commandName == "manage_components_selected";
+                bool assetAssignment = (commandName == "manage_asset" || commandName == "asset_edit") && action == "modify";
                 foreach (var property in obj.Properties())
                 {
                     string key = property.Name.Replace("_", "").ToLowerInvariant();
                     if (
                         key.Contains("instanceid")
+                        || key == "entityid"
                         || key.Contains("scenehandle")
                         || key == "objectid"
                         || key == "handle"
@@ -458,7 +466,8 @@ namespace MCPForUnity.Editor.Services.Transport
                         componentValues
                         || key == "componentproperties"
                         || key == "componentstoadd"
-                        || componentCommand && (key == "properties" || key == "value");
+                        || componentCommand && (key == "properties" || key == "value")
+                        || assetAssignment && key == "properties";
                     bool encodedContainer =
                         (key == "componentproperties" || key == "componentstoadd" || key == "properties") && property.Value.Type == JTokenType.String;
                     if (encodedContainer)

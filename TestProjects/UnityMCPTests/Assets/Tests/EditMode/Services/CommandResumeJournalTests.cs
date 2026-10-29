@@ -45,6 +45,67 @@ namespace MCPForUnityTests.Editor.Services
             };
 
         [Test]
+        public void PublicQueueOriginUsesTheSameContinuationGateOnItsFirstNativeSend()
+        {
+            var cases = new[]
+            {
+                ("manage_gameobject", "{\"action\":\"delete\",\"target\":\"-12345\"}"),
+                ("gameobject_edit", "{\"action\":\"delete\",\"target\":\"-12345\"}"),
+                (
+                    "gameobject_edit",
+                    "{\"action\":\"modify\",\"target\":\"Player\",\"componentProperties\":\"{\\\"Custom\\\":{\\\"arbitraryReference\\\":123}}\"}"
+                ),
+            };
+            foreach (var (name, json) in cases)
+            {
+                Setup();
+                var request = Request();
+                request["origin_generation"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+                Assert.IsNull(journal.Admit(request, name, JObject.Parse(json)).Ticket, name);
+                request.Remove("origin_generation");
+                Assert.IsNull(journal.Admit(request, name, JObject.Parse(json)).Ticket, "Origin cannot be stripped on retry");
+            }
+        }
+
+        [Test]
+        public void PublicQueueOriginRevalidatesDependenciesAndCannotBeDowngraded()
+        {
+            bool allowed = true;
+            journal = new CommandResumeJournal(() => stored, value => stored = value, () => now, (_, __) => allowed);
+            var request = Request();
+            request["origin_generation"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            var parameters = JObject.Parse("{\"action\":\"create\",\"name\":\"123\",\"position\":[1,2,3]}");
+            var admitted = journal.Admit(request, "manage_gameobject", parameters);
+            Assert.IsNotNull(admitted.Ticket);
+            allowed = false;
+            Assert.IsFalse(journal.TryStart(admitted.Ticket));
+            journal.Release(admitted.Ticket);
+            request["origin_generation"] = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+            Assert.IsNull(journal.Admit(request, "manage_gameobject", parameters).Ticket);
+            request["origin_generation"] = JValue.CreateNull();
+            Assert.IsNull(journal.Admit(request, "manage_gameobject", parameters).Ticket);
+        }
+
+        [Test]
+        public void AssetComponentAssignmentsAndEntityIdentitiesCannotCrossReload()
+        {
+            var cases = new[]
+            {
+                ("asset_edit", "{\"action\":\"modify\",\"properties\":{\"MeshRenderer\":{\"sharedMaterial\":123}}}"),
+                ("manage_asset", "{\"action\":\"modify\",\"properties\":{\"MeshRenderer\":{\"sharedMaterial\":123}}}"),
+                ("manage_asset", "{\"action\":\"modify\",\"properties\":{\"MeshRenderer\":{\"sharedMaterial\":{\"entityID\":123}}}}"),
+            };
+            foreach (var (name, json) in cases)
+            {
+                Setup();
+                var parameters = JObject.Parse(json);
+                Assert.IsNotNull(journal.Admit(Request(), name, parameters).Ticket);
+                journal = Open();
+                Assert.IsNull(journal.Admit(Request("resume"), name, parameters).Ticket, name);
+            }
+        }
+
+        [Test]
         public void QueuedReloadCanBeClaimedExactlyOnceAndStartedReloadCannotReplay()
         {
             var parameters = new JObject { ["value"] = 1 };

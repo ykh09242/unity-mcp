@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from contextvars import Context, ContextVar
-from typing import Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from services.execution_receipt_identity import JsonValue
+
+if TYPE_CHECKING:
+    from transport.command_resume import CommandResumeInvocation
 
 T = TypeVar("T")
 
@@ -32,6 +35,7 @@ class ExecutionOwner(Protocol):
         session_id: str | None,
         generation: str | int | None,
         project_hash: str | None,
+        resume: CommandResumeInvocation | None = None,
     ) -> None: ...
 
     def observe(
@@ -68,13 +72,17 @@ def submit_owned_executor(loop, executor, function: Callable[..., T], *args) -> 
     existing executor behavior.
     """
     from services.registry.operation_context import capture_operation_worker, current_operation
+    from transport.command_resume import queued_origin
 
     owner = execution_owner.get()
-    if owner is None and current_operation.get() is None:
+    origin = queued_origin.get()
+    if owner is None and current_operation.get() is None and origin is None:
         return loop.run_in_executor(executor, function, *args)
     # Existing executor callers had no request Context. Restore only the opaque
     # ownership handle; never copy HTTP request/header or SDK session material.
     context = Context()
+    if origin is not None:
+        context.run(queued_origin.set, origin)
     operation_pin = capture_operation_worker(context)
     pin = None
     try:

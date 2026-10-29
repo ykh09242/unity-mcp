@@ -37,6 +37,7 @@ def target(
     process=PROCESS,
     principal="local",
     project="deadbeef",
+    origin="a" * 32,
     **kwargs,
 ):
     return OperationTarget(
@@ -44,6 +45,7 @@ def target(
         current,
         True,
         resume_generation=process,
+        origin_generation=origin,
         **kwargs,
     )
 
@@ -324,5 +326,135 @@ async def test_original_deadline_also_bounds_pending_catalog_validation(boundary
         if not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+    assert effects == []
+    assert scheduler().snapshot()["instances"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked", ["custom", "arbitrary", "old_peer"])
+async def test_rebound_callback_with_unprovable_dependencies_never_runs(monkeypatch, blocked):
+    captures, effects = [], []
+
+    async def capture(*args, **kwargs):
+        captures.append(True)
+        return (
+            target("g1", lambda: False)
+            if len(captures) == 1
+            else target("g2", origin=None if blocked == "old_peer" else "b" * 32)
+        )
+
+    async def callback(ctx):
+        effects.append(True)
+
+    monkeypatch.setattr(mod, "capture_target", capture)
+    monkeypatch.setattr(mod, "trusted_tool", lambda *_: blocked != "custom")
+    name = "execute_code" if blocked == "arbitrary" else "create_script"
+    value = await mod.wrap_tool(callback, name, name)(Context())
+    assert value["error"] == "operation_reload_requires_fresh_request"
+    assert value["data"]["dispatch"] == "not_dispatched"
+    assert effects == []
+    assert scheduler().snapshot()["instances"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alias", [False, True])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"action": "delete", "target": "-12345"},
+        {
+            "action": "modify",
+            "target": "Player",
+            "component_properties": '{"Custom":{"arbitraryReference":123}}',
+        },
+        {"action": "modify", "target": "Player", "position": [1, 2, 3], "name": "123"},
+    ],
+)
+async def test_actual_public_gameobject_callbacks_preserve_origin_for_every_native_boundary(
+    monkeypatch, alias, arguments
+):
+    import services.tools.manage_gameobject as gameobjects
+    from services.registry import tool_registry
+    from services.registry.capability_adapter import register_capability
+    from services.registry.capability_catalog import CAPABILITIES
+    from transport.command_resume import CommandResumeInvocation, queued_origin
+
+    captures, observed = [], []
+
+    async def capture(*args, **kwargs):
+        captures.append(True)
+        return target("g1", lambda: False) if len(captures) == 1 else target("g2", origin="b" * 32)
+
+    async def preflight(*args, **kwargs):
+        observed.append(("preflight", queued_origin.get()))
+        return None
+
+    async def send(_sender, _instance, name, params):
+        resume = CommandResumeInvocation.create(PROCESS, asyncio.get_running_loop().time() + 5)
+        observed.append((name, resume.to_wire()["origin_generation"]))
+        if "component_properties" in arguments:
+            assert params["componentProperties"] == {"Custom": {"arbitraryReference": 123}}
+        return {"success": True}
+
+    monkeypatch.setattr(mod, "capture_target", capture)
+    monkeypatch.setattr(gameobjects, "preflight", preflight)
+    monkeypatch.setattr(gameobjects, "send_with_unity_instance", send)
+    monkeypatch.setattr(tool_registry, "_tool_registry", list(tool_registry._tool_registry))
+    name, callback = "manage_gameobject", gameobjects.manage_gameobject
+    if alias:
+        feature = next(item for item in CAPABILITIES if item.name == "gameobject_edit")
+        name, callback = feature.name, register_capability(feature, callback)
+    assert mod.trusted_tool(callback, name)
+    value = await mod.wrap_tool(callback, name, "manage_gameobject")(ctx=Context(), **arguments)
+    assert value["success"], value
+    assert observed == [("preflight", "a" * 32), (name, "a" * 32)]
+    assert queued_origin.get() is None
+
+
+@pytest.mark.asyncio
+async def test_nested_untrusted_callback_cannot_escape_public_origin(monkeypatch):
+    from transport.command_resume import queued_origin
+
+    effects = []
+
+    async def callback(ctx):
+        effects.append(True)
+
+    monkeypatch.setattr(mod, "trusted_tool", lambda *_: False)
+    token = queued_origin.set("a" * 32)
+    try:
+        value = await mod.wrap_tool(callback, "custom", None)(Context())
+    finally:
+        queued_origin.reset(token)
+    assert value["error"] == "operation_reload_requires_fresh_request"
+    assert effects == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_rebind_before_admission_never_invokes_callback(boundary, monkeypatch):
+    captures, effects = [], []
+    validating = asyncio.Event()
+
+    async def available(*args):
+        validating.set()
+        await asyncio.Event().wait()
+
+    async def capture(*args, **kwargs):
+        captures.append(True)
+        return (
+            target("g1", lambda: False)
+            if len(captures) == 1
+            else target("g2", public_available=available)
+        )
+
+    async def callback(ctx):
+        effects.append(True)
+
+    monkeypatch.setattr(mod, "capture_target", capture)
+    task = asyncio.create_task(mod.wrap_tool(callback, "create_script", "manage_script")(Context()))
+    await asyncio.wait_for(validating.wait(), 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert effects == []
     assert scheduler().snapshot()["instances"] == 0

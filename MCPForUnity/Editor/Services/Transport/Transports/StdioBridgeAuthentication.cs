@@ -20,7 +20,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         internal IReadOnlyCollection<string> Capabilities { get; }
         internal string SessionGeneration => ServerGeneration + ":" + SessionId;
 
-        internal StdioAuthenticatedSession(string generation, string session, bool progress, bool arbitration = false, bool resume = false)
+        internal StdioAuthenticatedSession(string generation, string session, bool progress, bool arbitration = false, bool resume = false, bool origin = false)
         {
             ServerGeneration = generation;
             SessionId = session;
@@ -31,6 +31,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 capabilities.Add(NativeCommandArbitrator.Capability);
             if (resume)
                 capabilities.Add(CommandResumeJournal.Capability);
+            if (resume && arbitration && origin)
+                capabilities.Add(CommandResumeJournal.OriginCapability);
             Capabilities = capabilities.AsReadOnly();
         }
     }
@@ -170,6 +172,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             bool progress = OffersCapability(request["capabilities"], CommandProgressBuffer.Capability);
             bool arbitration = OffersCapability(request["capabilities"], NativeCommandArbitrator.Capability);
             bool resume = OffersCapability(request["capabilities"], CommandResumeJournal.Capability);
+            bool origin = OffersCapability(request["capabilities"], CommandResumeJournal.OriginCapability);
             var acknowledgement = new JObject
             {
                 ["type"] = "authenticated",
@@ -177,7 +180,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 ["session_id"] = session,
                 ["proof"] = Proof(token, "server", Generation, challenge, nonce, session),
             };
-            var negotiated = new StdioAuthenticatedSession(Generation, session, progress, arbitration, resume);
+            var negotiated = new StdioAuthenticatedSession(Generation, session, progress, arbitration, resume, origin);
             deadline.Token.ThrowIfCancellationRequested();
             if (admit != null && !admit(negotiated))
             {

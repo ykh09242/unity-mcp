@@ -14,6 +14,7 @@ from core.config import config
 from tests.timing import watchdog_timeout
 from transport.legacy import unity_connection as uc
 from transport.legacy.stdio_auth import authentication_proof
+from tests.receipt_resume_support import prepared_receipt
 
 TOKEN = "owned-command-resume-token-" + "x" * 32
 EDITOR = "e" * 32
@@ -61,7 +62,7 @@ def result(command, state, value):
 
 
 @contextmanager
-def resume_peer(mode="completed", reloads=1):
+def resume_peer(mode="completed", reloads=1, *, origin=False):
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(4)
@@ -98,7 +99,11 @@ def resume_peer(mode="completed", reloads=1):
                         "proof": authentication_proof(
                             TOKEN, ["server", generation, challenge, nonce, session]
                         ),
-                        "capabilities": ["native_arbitration_v1", "command_resume_v1"],
+                        "capabilities": [
+                            "native_arbitration_v1",
+                            "command_resume_v1",
+                            *(["command_resume_origin_v1"] if origin else []),
+                        ],
                         "arbitration_generation": generation,
                         "resume_generation": "f" * 32 if mode == "cold" and attempt else EDITOR,
                     },
@@ -126,10 +131,10 @@ def resume_peer(mode="completed", reloads=1):
                             "code": "command_outcome_unknown",
                             "error": "Command continuation state: unknown",
                         }
-                    send_frame(
-                        peer,
-                        result(command, "unknown" if mode == "unknown" else "completed", value),
-                    )
+                    reply = result(command, "unknown" if mode == "unknown" else "completed", value)
+                    if mode == "malformed":
+                        reply["command_resume"]["invocation_id"] = "0" * 32
+                    send_frame(peer, reply)
         except (OSError, AssertionError, EOFError) as error:
             failures.append(error)
 
@@ -185,6 +190,71 @@ def configure(monkeypatch, port, reconnect_failures=0):
     monkeypatch.setattr(uc, "get_unity_connection", select)
     monkeypatch.setattr(uc, "read_status_file", lambda *_: None)
     return connection
+
+
+@pytest.mark.asyncio
+async def test_malformed_tcp_resume_proof_is_unknown_and_retires_connection(monkeypatch):
+    with resume_peer("malformed", reloads=0) as (port, commands, _, _):
+        connection = configure(monkeypatch, port)
+        try:
+            value = await uc.async_send_command_with_retry(
+                "manage_scene", {"action": "save"}, instance_id=connection.instance_id
+            )
+            value = value.model_dump() if hasattr(value, "model_dump") else value
+            assert value["data"]["reason"] == "outcome_unknown"
+            assert value["hint"] == "inspect_state_before_retry"
+            assert connection.sock is None
+            assert len(commands) == 1
+        finally:
+            connection.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["completed", "cold"])
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_receipt_enabled_tcp_reconnect_keeps_original_invocation(
+    monkeypatch, mode, asynchronous
+):
+    with resume_peer(mode) as (port, commands, _, _):
+        connection = configure(monkeypatch, port)
+        try:
+            with prepared_receipt("deadbeef"):
+                if asynchronous:
+                    value = await uc.async_send_command_with_retry(
+                        "manage_scene", {"action": "save"}, instance_id=connection.instance_id
+                    )
+                else:
+                    value = uc.send_command_with_retry(
+                        "manage_scene", {"action": "save"}, instance_id=connection.instance_id
+                    )
+            value = value.model_dump() if hasattr(value, "model_dump") else value
+            if mode == "cold":
+                assert value["data"]["reason"] == "outcome_unknown"
+                assert len(commands) == 1
+            else:
+                assert value["data"]["applied"] == 1
+                assert len(commands) == 2
+                assert commands[1]["resume"] == {**commands[0]["resume"], "action": "resume"}
+        finally:
+            connection.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_origin_extension_reaches_authenticated_tcp_for_read_preflight(monkeypatch):
+    from transport.command_resume import queued_origin
+
+    with resume_peer(reloads=0, origin=True) as (port, commands, _, _):
+        connection = configure(monkeypatch, port)
+        token = queued_origin.set("a" * 32)
+        try:
+            value = await uc.async_send_command_with_retry(
+                "get_editor_state", {}, instance_id=connection.instance_id
+            )
+            assert value["success"]
+            assert commands[0]["resume"]["origin_generation"] == "a" * 32
+        finally:
+            queued_origin.reset(token)
+            connection.disconnect()
 
 
 @pytest.mark.parametrize("mode", ["queued", "completed", "unknown", "cold"])

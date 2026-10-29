@@ -80,6 +80,44 @@ def test_cancel_interrupts_all_future_admission_actions():
     assert invocation.to_wire()["action"] == "cancel"
 
 
+@pytest.mark.parametrize(
+    "invalid", ["new_invocation", "undispatched", "new_action", "canceled", "project"]
+)
+def test_receipt_generation_rebind_requires_its_original_dispatched_invocation(invalid):
+    from tests.receipt_resume_support import prepared_receipt
+    from services.execution_receipt_identity import ReceiptUnavailable
+
+    original = CommandResumeInvocation.create("a" * 32, time.monotonic() + 30)
+    with prepared_receipt("owned") as receipt:
+        values = dict(
+            custom=False,
+            kind="http",
+            attempt_id="first",
+            session_id="s1",
+            generation="g1",
+            project_hash="owned",
+            resume=original,
+        )
+        receipt.native("manage_scene", {"action": "save"}, **values)
+        if invalid != "undispatched":
+            original.dispatch()
+        original.interrupted()
+        if invalid == "new_action":
+            original.action = "new"
+        if invalid == "canceled":
+            original.cancel()
+        if invalid == "new_invocation":
+            values["resume"] = CommandResumeInvocation.create("a" * 32, time.monotonic() + 30)
+            values["resume"].dispatch()
+            values["resume"].interrupted()
+        if invalid == "project":
+            values["project_hash"] = "other"
+        values.update(attempt_id="second", session_id="s2", generation="g2")
+        with pytest.raises(ReceiptUnavailable):
+            receipt.native("manage_scene", {"action": "save"}, **values)
+        assert receipt.target == ("s1", "g1")
+
+
 @pytest.mark.asyncio
 async def test_permission_revocation_after_dispatch_cannot_become_reload_retry(command_hub):
     # Given a negotiated command whose authorization ends after dispatch begins.

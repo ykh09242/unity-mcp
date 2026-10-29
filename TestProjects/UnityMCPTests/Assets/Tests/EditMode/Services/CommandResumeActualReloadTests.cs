@@ -80,6 +80,39 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
+        [UnityTest, Explicit("Owned disposable batch Editor only; verifies first native admission for a callback queued before real domain reload.")]
+        public IEnumerator PublicQueuedOriginCannotReinterpretOldReferencesOnFirstNativeAdmission()
+        {
+            Prepare("public_origin");
+            try
+            {
+                ReloadWithProbe();
+                yield return new WaitForDomainReload();
+                AssertReloaded();
+                var journal = Open();
+                string origin = SessionState.GetString(Prefix + "origin", "");
+                Assert.AreNotEqual(origin, NativeCommandArbitrator.Shared.Generation);
+                var request = Request(journal, "new");
+                request["origin_generation"] = origin;
+                var stale = JObject.Parse("{\"action\":\"delete\",\"target\":\"-12345\"}");
+                Assert.IsNull(journal.Admit(request, "gameobject_edit", stale).Ticket);
+                request["invocation_id"] = Guid.NewGuid().ToString("N");
+                var stable = JObject.Parse("{\"action\":\"create\",\"name\":\"123\",\"position\":[1,2,3]}");
+                var accepted = journal.Admit(request, "manage_gameobject", stable);
+                Assert.IsNotNull(accepted.Ticket);
+                Assert.IsTrue(journal.TryStart(accepted.Ticket));
+                SessionState.SetInt(Prefix + "invocations", SessionState.GetInt(Prefix + "invocations", 0) + 1);
+                Assert.IsNull(journal.Admit(request, "manage_gameobject", stable).Ticket);
+                Assert.AreEqual(1, SessionState.GetInt(Prefix + "invocations", 0));
+                journal.Complete(accepted.Ticket, new JObject { ["success"] = true });
+                journal.Release(accepted.Ticket);
+            }
+            finally
+            {
+                Cleanup();
+            }
+        }
+
         [UnityTest, Explicit("Owned disposable batch Editor only; verifies cancellation across a real domain reload.")]
         public IEnumerator CanceledIntentCannotResurrectAfterReload()
         {
@@ -148,10 +181,16 @@ namespace MCPForUnityTests.Editor.Services
             try
             {
                 var journal = Open();
+                string phase = SessionState.GetString(Prefix + "phase", "");
+                if (phase == "public_origin")
+                {
+                    SessionState.SetString(Prefix + "origin", NativeCommandArbitrator.Shared.Generation);
+                    SessionState.SetBool(Prefix + "checkpoint_written", true);
+                    return;
+                }
                 var admitted = journal.Admit(Request(journal, "new"), "owned_test", Parameters);
                 if (admitted.Ticket == null)
                     throw new InvalidOperationException("The old domain did not queue the command.");
-                string phase = SessionState.GetString(Prefix + "phase", "");
                 if (phase == "started" && !journal.TryStart(admitted.Ticket))
                     throw new InvalidOperationException("The old domain did not persist the started fence.");
                 if (phase == "canceled" && journal.Admit(Request(journal, "cancel"), "owned_test", Parameters).State != "canceled")
@@ -177,7 +216,7 @@ namespace MCPForUnityTests.Editor.Services
             AssemblyReloadEvents.beforeAssemblyReload -= WriteCheckpointAtReload;
             if (!SessionState.GetBool(Prefix + "active", false))
                 return;
-            foreach (string key in new[] { "phase", "id", "deadline", "domain", "journal", "error" })
+            foreach (string key in new[] { "phase", "id", "deadline", "domain", "origin", "journal", "error" })
                 SessionState.EraseString(Prefix + key);
             foreach (string key in new[] { "active", "checkpoint_written" })
                 SessionState.EraseBool(Prefix + key);

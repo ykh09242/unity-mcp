@@ -70,6 +70,9 @@ from transport.native_arbitration import (
 )
 from transport.command_resume import (
     CAPABILITY as RESUME_CAPABILITY,
+    ORIGIN_CAPABILITY,
+    queued_origin,
+    CommandResumeProtocolError,
     CommandResumeInvocation,
     CommandResumeInterrupted,
     CommandResumeOwner,
@@ -412,7 +415,12 @@ class UnityConnection:
                             StdioAuthentication(
                                 self.auth_token_provider or read_stdio_token, handshake_deadline
                             ),
-                            capabilities=(CAPABILITY, ARBITRATION_CAPABILITY, RESUME_CAPABILITY),
+                            capabilities=(
+                                CAPABILITY,
+                                ARBITRATION_CAPABILITY,
+                                RESUME_CAPABILITY,
+                                ORIGIN_CAPABILITY,
+                            ),
                         )
                         self._check_deadline(handshake_deadline)
                         self.authenticated_session = session
@@ -923,6 +931,22 @@ class UnityConnection:
                         if receipt is not None and self.instance_id is not None
                         else None
                     )
+                    session = self.authenticated_session
+                    if _resume is not None and (
+                        session is None
+                        or RESUME_CAPABILITY not in session.capabilities
+                        or session.resume_generation != _resume.editor_session_id
+                        or _resume.origin_generation is not None
+                        and ORIGIN_CAPABILITY not in session.capabilities
+                    ):
+                        return MCPResponse(
+                            success=False,
+                            error="Original Editor continuation is unavailable",
+                            hint="inspect_state_before_retry",
+                            data={"reason": "outcome_unknown", "command": command_type},
+                        )
+                    if queued_origin.get() is not None and _resume is None:
+                        raise CommandResumeProtocolError()
                     if receipt is not None:
                         receipt.native(
                             command_type,
@@ -933,20 +957,9 @@ class UnityConnection:
                             session_id="stdio:" + receipt_project,
                             generation=self.session_generation,
                             project_hash=receipt_project,
+                            resume=_resume,
                         )
                     # Build payload
-                    session = self.authenticated_session
-                    if _resume is not None and (
-                        session is None
-                        or RESUME_CAPABILITY not in session.capabilities
-                        or session.resume_generation != _resume.editor_session_id
-                    ):
-                        return MCPResponse(
-                            success=False,
-                            error="Original Editor continuation is unavailable",
-                            hint="inspect_state_before_retry",
-                            data={"reason": "outcome_unknown", "command": command_type},
-                        )
                     arbitration = (
                         NativeArbitrationRequest.create(session.arbitration_generation)
                         if session is not None
@@ -1123,6 +1136,7 @@ class UnityConnection:
                         (
                             _UnityProtocolError,
                             NativeArbitrationProtocolError,
+                            CommandResumeProtocolError,
                             json.JSONDecodeError,
                             UnicodeDecodeError,
                         ),
@@ -2086,7 +2100,10 @@ def _send_command_with_retry(
         if _resume_owner is not None
         and session is not None
         and RESUME_CAPABILITY in session.capabilities
-        and resume_eligible(command_type, params, custom=_catalog_guard is not None)
+        and (
+            queued_origin.get() is not None
+            or resume_eligible(command_type, params, custom=_catalog_guard is not None)
+        )
         else _resume_owner.invocation
         if _resume_owner is not None
         else None

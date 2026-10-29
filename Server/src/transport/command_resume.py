@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextvars import ContextVar
 from threading import Event
 import json
 import time
@@ -14,6 +15,9 @@ from services.operation_policy import OperationMode, resolve_operation_policy
 from transport.native_arbitration import NativeReply, valid_generation
 
 CAPABILITY: Final = "command_resume_v1"
+ORIGIN_CAPABILITY: Final = "command_resume_origin_v1"
+# Set only by the uninvoked public owner after a validated same-process rebind.
+queued_origin: ContextVar[str | None] = ContextVar("queued_command_origin", default=None)
 ResumeAction = Literal["new", "status", "resume", "cancel"]
 _STATES: Final = frozenset(
     {"queued", "executing", "completed", "canceled", "expired", "unknown", "unavailable"}
@@ -52,13 +56,24 @@ class CommandResumeInvocation:
     state: str | None = None
     dispatched: bool = False
     cancelled: Event = field(default_factory=Event, repr=False)
+    origin_generation: str | None = None
 
     @classmethod
     def create(cls, editor_session_id: str, deadline: float) -> CommandResumeInvocation:
-        if not valid_generation(editor_session_id):
+        origin = queued_origin.get()
+        if (
+            not valid_generation(editor_session_id)
+            or origin is not None
+            and not valid_generation(origin)
+        ):
             raise CommandResumeProtocolError()
         remaining = max(0.0, deadline - time.monotonic())
-        return cls(uuid4().hex, editor_session_id, int((time.time() + remaining) * 1000))
+        return cls(
+            uuid4().hex,
+            editor_session_id,
+            int((time.time() + remaining) * 1000),
+            origin_generation=origin,
+        )
 
     def to_wire(self) -> dict[str, JsonValue]:
         return {
@@ -67,6 +82,7 @@ class CommandResumeInvocation:
             "editor_session_id": self.editor_session_id,
             "deadline_unix_ms": self.deadline_unix_ms,
             "action": "cancel" if self.cancelled.is_set() else self.action,
+            **({"origin_generation": self.origin_generation} if self.origin_generation else {}),
         }
 
     def interrupted(self) -> None:

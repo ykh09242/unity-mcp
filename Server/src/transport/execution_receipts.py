@@ -54,6 +54,7 @@ from services.execution_receipts import ExecutionReceiptStore, ReceiptInvocation
 from services.operation_permissions import Permission, required_permissions
 from transport.local_auth_middleware import AUTHENTICATED_LOCAL_STATE
 from transport.local_project_context import full_hash
+from transport.command_resume import CommandResumeInvocation
 
 META_KEY = "io.github.ykh09242.unity-mcp/execution"
 RESULT_BYTES = 1024 * 1024
@@ -262,6 +263,7 @@ class PreparedExecution:
         self.closed = False
         self.stopping = False
         self.target: tuple[str, str | int | None] | None = None
+        self.resume_invocation: CommandResumeInvocation | None = None
         self.expires_at = time.monotonic() + EXECUTION_SECONDS
         self.attempts: dict[tuple[str, str], dict] = {}
         self.native_unknown = False
@@ -297,6 +299,7 @@ class PreparedExecution:
         session_id: str | None,
         generation: str | int | None,
         project_hash: str | None,
+        resume: CommandResumeInvocation | None = None,
     ) -> None:
         """Synchronous durable fence before canonical native I/O, including threads.
 
@@ -315,8 +318,19 @@ class PreparedExecution:
                 raise ReceiptUnavailable("execution_receipt_project_changed")
             target = session_id, generation
             if self.target is not None and target != self.target:
-                raise ReceiptUnavailable("execution_receipt_generation_changed")
+                # The transport validates project/principal/root/process before this
+                # fence. Only its already-bound invocation may carry that authority;
+                # a new command in the same Editor process cannot rebind this receipt.
+                if (
+                    resume is None
+                    or resume is not self.resume_invocation
+                    or not resume.dispatched
+                    or resume.action == "new"
+                    or resume.cancelled.is_set()
+                ):
+                    raise ReceiptUnavailable("execution_receipt_generation_changed")
             self.target = target
+            self.resume_invocation = resume
             invocation = self.invocation
         # The short ownership lock never spans journal I/O. Wrapper cancellation
         # may mark stopping while this owned worker completes its durable fence.

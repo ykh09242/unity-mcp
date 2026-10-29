@@ -117,6 +117,9 @@ from transport.native_arbitration import (
 )
 from transport.command_resume import (
     CAPABILITY as RESUME_CAPABILITY,
+    ORIGIN_CAPABILITY,
+    queued_origin,
+    CommandResumeProtocolError,
     CommandResumeInvocation,
     CommandResumeInterrupted,
     resume_eligible,
@@ -302,6 +305,7 @@ class PluginHub(WebSocketEndpoint):
             phase_diagnostics.CAPABILITY,
             ARBITRATION_CAPABILITY,
             RESUME_CAPABILITY,
+            ORIGIN_CAPABILITY,
         }
     )
     _editor_states: ClassVar[EditorStateStore] = EditorStateStore()
@@ -1592,14 +1596,21 @@ class PluginHub(WebSocketEndpoint):
             if socket is not None
             and cls._supports(socket, RESUME_CAPABILITY)
             and valid_generation(resume_generation)
-            and resume_eligible(command_type, params, custom=_catalog_guard is not None)
-            and _expected_read is None
+            and (
+                queued_origin.get() is not None
+                or resume_eligible(command_type, params, custom=_catalog_guard is not None)
+            )
+            and (_expected_read is None or queued_origin.get() is not None)
             else None
         )
         if resume is not None:
             # Snapshot the admitted JSON once; every wire continuation carries
             # exactly the same values, even if caller-owned dictionaries change.
             params = json.loads(json.dumps(params))
+        if queued_origin.get() is not None and (
+            resume is None or not cls._supports(socket, ORIGIN_CAPABILITY)
+        ):
+            raise CommandResumeProtocolError()
         try:
             async with lease.own() if lease is not None else nullcontext():
                 while True:
@@ -1838,6 +1849,14 @@ class PluginHub(WebSocketEndpoint):
                 from services.custom_tool_service import custom_catalog_changed
 
                 return custom_catalog_changed().model_dump()
+            if _resume is not None and (
+                not cls._supports(websocket, RESUME_CAPABILITY)
+                or getattr(websocket.state, "plugin_resume_generation", None)
+                != _resume.editor_session_id
+                or _resume.origin_generation is not None
+                and not cls._supports(websocket, ORIGIN_CAPABILITY)
+            ):
+                raise CommandResumeProtocolError()
             # Disconnect can run between the initial lookup and this lock.
             if cls._connections.get(session_id) is not websocket:
                 if _resume is not None:
@@ -2078,6 +2097,7 @@ class PluginHub(WebSocketEndpoint):
                             session_id=session_id,
                             generation=generation,
                             project_hash=session.project_hash if session is not None else None,
+                            resume=_resume,
                         )
                     writer = SocketWriteGuard(
                         asyncio.current_task(), websocket, authorize_write, dispatch_write
@@ -2604,6 +2624,8 @@ class PluginHub(WebSocketEndpoint):
                 ARBITRATION_CAPABILITY not in accepted or not valid_generation(resume_generation)
             ):
                 accepted = accepted - {RESUME_CAPABILITY}
+            if RESUME_CAPABILITY not in accepted:
+                accepted = accepted - {ORIGIN_CAPABILITY}
             websocket.state.plugin_resume_generation = (
                 resume_generation if RESUME_CAPABILITY in accepted else None
             )

@@ -1158,7 +1158,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 catch (JsonException) { /* Preserve the legacy invalid-command response path. */ }
                 if (resumeCommand?.resume != null)
                 {
-                    if (!session.Capabilities.Contains(CommandResumeJournal.Capability))
+                    if (
+                        !session.Capabilities.Contains(CommandResumeJournal.Capability)
+                        || resumeCommand.resume.Property("origin_generation") != null && !session.Capabilities.Contains(CommandResumeJournal.OriginCapability)
+                    )
                         throw new IOException("Command continuation was not negotiated");
                     var admission = await TransportCommandDispatcher
                         .RunOnMainThreadAsync(

@@ -74,6 +74,31 @@ namespace MCPForUnityTests.Editor.Services
             };
 
         [Test]
+        public void PublicOriginRefusesActualCustomAndArbitraryHandlerDependencies()
+        {
+            var method = typeof(CommandResumeState).GetMethod("CanContinue", BindingFlags.NonPublic | BindingFlags.Static);
+            var policy = (Func<string, JObject, bool>)Delegate.CreateDelegate(typeof(Func<string, JObject, bool>), method);
+            journal = new CommandResumeJournal(() => stored, value => stored = value, () => 1000, policy);
+            handlers[Name] = new HandlerInfo(
+                Name,
+                _ =>
+                {
+                    calls++;
+                    return new { done = true };
+                },
+                null
+            );
+            foreach (string name in new[] { Name, "execute_code", "execute_menu_item" })
+            {
+                var request = Request();
+                request["invocation_id"] = Guid.NewGuid().ToString("N");
+                request["origin_generation"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+                Assert.IsNull(journal.Admit(request, name, new JObject()).Ticket, name);
+            }
+            Assert.AreEqual(0, calls);
+        }
+
+        [Test]
         public void DispatcherPersistsCompletionBeforePublishingAndCachedReplyRebindsCurrentProof()
         {
             handlers[Name] = new HandlerInfo(
