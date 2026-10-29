@@ -78,6 +78,9 @@ def test_remove_path_uses_indexed_exact_and_descendant_ranges(workspace, monkeyp
             "SCAN graph_assets" in item or "SCAN graph_asset_paths" in item for item in plan
         ), plan
         assert sum("SEARCH" in item for item in plan) >= 4, plan
+        # SQLite may count statement preparation in progress callbacks. Prepare
+        # once before comparing execution work with and without unrelated rows.
+        assert not connection.execute(selection).fetchall()
         steps = 0
 
         def tick():
@@ -90,6 +93,17 @@ def test_remove_path_uses_indexed_exact_and_descendant_ranges(workspace, monkeyp
         connection.set_progress_handler(None, 0)
         assert steps < 200, steps
         large_steps = steps
+        # A forced-scan control demonstrates that these unrelated rows would
+        # exceed the same work budget if the indexed ranges regressed.
+        scan_selection = selection.replace(
+            "graph_assets WHERE", "graph_assets NOT INDEXED WHERE"
+        ).replace("graph_asset_paths WHERE", "graph_asset_paths NOT INDEXED WHERE")
+        assert not connection.execute(scan_selection).fetchall()
+        steps = 0
+        connection.set_progress_handler(tick, 1)
+        assert not connection.execute(scan_selection).fetchall()
+        connection.set_progress_handler(None, 0)
+        assert steps > 10 * max(large_steps, 200), (steps, large_steps)
         for table in ("graph_assets", "graph_asset_paths"):
             connection.execute(
                 "DELETE FROM " + table + " WHERE path>=? AND path<?",
