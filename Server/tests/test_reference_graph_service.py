@@ -35,6 +35,75 @@ REQUEST_MARKER = ContextVar("graph_test_request_marker", default=None)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("consistency", ["cached", "checked"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {},
+        {"revision": 1},
+        {"epoch": "next-epoch"},
+        {"compiling": True},
+        {"importing": True},
+        {"compilation_failed": True},
+        {"compilation_context": {"revision": "changed"}},
+        {"addressables_event_error": "observer unavailable"},
+    ],
+)
+async def test_delivery_native_status_downgrades_freshness(setup, monkeypatch, consistency, change):
+    service, sender, ctx = setup
+    native_change = {}
+
+    async def send(instance, params):
+        result = await sender(instance, params)
+        if params["action"] == "status":
+            result.update(native_change)
+        return result
+
+    service.send = send
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        entry.workspace.set_policy({"respect_gitignore": False}, expected_version=0)
+        assert await entry.engine.reconcile()
+        # Scheduling occurs after initial freshness calculation and before the
+        # delivery status read. Only the native transport changes its evidence.
+        monkeypatch.setattr(service, "start", lambda *_, **__: native_change.update(change))
+        response = await service.execute(
+            ctx, "query", {"node": "asset:fixture", "consistency": consistency}
+        )
+        status = response["data"]["graph_status"]
+        assert status["native_current"] is (not change)
+        assert status["current"] is (not change)
+        assert status["consistency"] == (
+            "checked_snapshot" if consistency == "checked" else "cached"
+        )
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_initially_stale_native_status_stays_stale_at_delivery(setup, monkeypatch):
+    service, sender, ctx = setup
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
+
+        async def send(instance, params):
+            result = await sender(instance, params)
+            if params["action"] == "status":
+                result["revision"] = 1
+            return result
+
+        service.send = send
+        response = await service.execute(ctx, "query", {"node": "asset:fixture"})
+        assert not response["data"]["graph_status"]["native_current"]
+        assert not response["data"]["graph_status"]["current"]
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_build_context_change_cannot_claim_native_current_before_reconciliation(
     setup, monkeypatch
 ):

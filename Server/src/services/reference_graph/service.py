@@ -73,6 +73,21 @@ def local_user() -> str:
     return "local:" + _hash((uid, str(Path.home().absolute())))
 
 
+def _native_matches_progress(progress: dict, editor: dict) -> bool:
+    return bool(
+        progress.get("initialized", False)
+        and progress.get("epoch") == editor.get("epoch")
+        and progress.get("after") == editor.get("revision")
+        and progress.get("editor", {}).get("compilation_context")
+        == editor.get("compilation_context")
+        and progress.get("phase") == "idle"
+        and not any(
+            editor.get(key)
+            for key in ("compiling", "importing", "compilation_failed", "addressables_event_error")
+        )
+    )
+
+
 async def native_send(instance: str, params: dict) -> dict:
     result = await send_with_unity_instance(
         async_send_command_with_retry,
@@ -1120,23 +1135,9 @@ class ReferenceGraphService:
         native_current = (
             admission_current
             and (not fallback or ignore_verified)
-            and progress.get("initialized", False)
-            and progress.get("epoch") == editor.get("epoch")
-            and progress.get("after") == editor.get("revision")
-            and progress.get("editor", {}).get("compilation_context")
-            == editor.get("compilation_context")
-            and progress.get("phase") == "idle"
+            and _native_matches_progress(progress, editor)
             and status["queue_idle"]
             and not providers["addressables"]["errors"]
-            and not any(
-                editor.get(key)
-                for key in (
-                    "compiling",
-                    "importing",
-                    "compilation_failed",
-                    "addressables_event_error",
-                )
-            )
         )
         counts = await drained_thread(workspace.counts)
         if action in {"query", "diagnostics"}:
@@ -1242,6 +1243,8 @@ class ReferenceGraphService:
             if fallback and not await entry.engine.validate_ignore():
                 raise RevisionConflict("Ignore rules changed before delivery; retry collection")
             latest = await entry.collect("status")
+            native_current = native_current and _native_matches_progress(progress, latest)
+            current = current and native_current
             if not await drained_thread(workspace.ignore_current, latest):
                 await drained_thread(workspace.block_admission)
                 raise RevisionConflict("Ignore rules changed before delivery; retry collection")
