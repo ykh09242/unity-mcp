@@ -448,19 +448,38 @@ class GraphQueries:
     def diff(self, before: str, after: str, *, limit: int = 100, cursor: str | None = None) -> dict:
         self._page_size(limit)
         last = ""
+        position = None
         if cursor is not None:
             position = self._decode(cursor)
-            if (
-                position.get("before") != before
-                or position.get("after") != after
-                or not isinstance(position.get("last"), str)
-            ):
+            if position.get("before") != before or position.get("after") != after:
                 raise ValueError("Cursor belongs to another comparison")
-            last = position["last"]
+            if "last_row" in position:
+                if (
+                    type(position["last_row"]) is not int
+                    or not 0 < position["last_row"] < 2**63
+                    or position.get("last_side") not in ("before", "after")
+                    or not isinstance(position.get("last_hash"), str)
+                ):
+                    raise ValueError("Invalid comparison cursor anchor")
+            elif isinstance(position.get("last"), str):
+                last = position["last"]
+            else:
+                raise ValueError("Invalid legacy comparison cursor anchor")
         with self.store._connect() as connection:
             old, new = self._snapshot(connection, before), self._snapshot(connection, after)
             old_backing = snapshot_storage.backing(connection, before)
             new_backing = snapshot_storage.backing(connection, after)
+            if position is not None and "last_row" in position:
+                anchor = connection.execute(
+                    "SELECT id FROM graph_snapshot_edges WHERE rowid=? AND snapshot=?",
+                    (
+                        position["last_row"],
+                        old_backing if position["last_side"] == "before" else new_backing,
+                    ),
+                ).fetchone()
+                if anchor is None or _hash(anchor["id"]) != position["last_hash"]:
+                    raise ValueError("Invalid comparison cursor anchor; restart the comparison")
+                last = anchor["id"]
             # Page candidate IDs before comparing payloads. Filtering unchanged
             # rows first would scan a whole identical snapshot in one request.
             rows = connection.execute(
@@ -468,7 +487,8 @@ class GraphQueries:
  SELECT id FROM graph_snapshot_edges WHERE snapshot=? AND id>?
  UNION SELECT id FROM graph_snapshot_edges WHERE snapshot=? AND id>?
  ORDER BY id LIMIT ?)
- SELECT ids.id,a.payload AS previous,b.payload AS current FROM ids
+ SELECT ids.id,a.rowid AS old_row,b.rowid AS new_row,
+ a.payload AS previous,b.payload AS current FROM ids
  LEFT JOIN graph_snapshot_edges a ON a.snapshot=? AND a.id=ids.id
  LEFT JOIN graph_snapshot_edges b ON b.snapshot=? AND b.id=ids.id
  ORDER BY ids.id""",
@@ -533,7 +553,15 @@ class GraphQueries:
                 "historical": True,
                 "compared": min(limit, len(rows)),
                 "next_cursor": self._encode(
-                    {"before": before, "after": after, "last": rows[limit - 1]["id"]}
+                    {
+                        "before": before,
+                        "after": after,
+                        # Immutable snapshot rows recover the ordered ID without
+                        # copying an unbounded declaration identity into a token.
+                        "last_row": rows[limit - 1]["old_row"] or rows[limit - 1]["new_row"],
+                        "last_side": "before" if rows[limit - 1]["old_row"] else "after",
+                        "last_hash": _hash(rows[limit - 1]["id"]),
+                    }
                 )
                 if more
                 else None,

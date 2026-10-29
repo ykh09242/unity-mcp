@@ -597,17 +597,37 @@ class GraphStore:
         position = None
         if cursor is not None:
             try:
-                if len(cursor) > 1024:
+                if not isinstance(cursor, str) or len(cursor) > 1024:
                     raise ValueError("Cursor is too long")
                 position = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")))
-                if position["query"] != query_hash or not isinstance(position["last"], str):
+                if not isinstance(position, dict) or position.get("query") != query_hash:
                     raise ValueError("Cursor belongs to another query")
+                if "last_row" in position:
+                    if (
+                        type(position["last_row"]) is not int
+                        or not 0 < position["last_row"] < 2**63
+                        or not isinstance(position.get("last_hash"), str)
+                    ):
+                        raise ValueError("Invalid cursor anchor")
+                elif not isinstance(position.get("last"), str):
+                    raise ValueError("Invalid legacy cursor anchor")
             except (ValueError, KeyError, TypeError, UnicodeError) as error:
                 raise ValueError("Invalid reference graph cursor") from error
         with self._connect() as connection:
             revision = connection.execute("SELECT revision FROM graph_meta").fetchone()[0]
             if position is not None and position.get("revision") != revision:
                 raise RevisionConflict("Graph changed between pages; restart the query")
+            last = ""
+            if position is not None:
+                if "last_row" in position:
+                    anchor = connection.execute(
+                        "SELECT id FROM edges WHERE rowid=?", (position["last_row"],)
+                    ).fetchone()
+                    if anchor is None or _hash(anchor["id"]) != position["last_hash"]:
+                        raise ValueError("Invalid reference graph cursor anchor; restart the query")
+                    last = anchor["id"]
+                else:
+                    last = position["last"]
             if connection.execute(
                 "SELECT 1 FROM graph_excluded_nodes WHERE id=?", (node,)
             ).fetchone():
@@ -620,8 +640,8 @@ class GraphStore:
                 }
             column = "owner" if direction == "outgoing" else "target"
             rows = connection.execute(
-                f"SELECT e.*,o.state,n.present,c.published AS provenance FROM edges e JOIN sources s ON s.provider=e.provider LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider LEFT JOIN nodes n ON n.id=e.target WHERE e.{column}=? AND e.id>? AND s.enabled=1 AND (SELECT ready FROM graph_admission WHERE id=1)=1 AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.owner OR x.id=e.target) ORDER BY e.id LIMIT ?",
-                (node, position["last"] if position else "", limit + 1),
+                f"SELECT e.rowid AS cursor_row,e.*,o.state,n.present,c.published AS provenance FROM edges e JOIN sources s ON s.provider=e.provider LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider LEFT JOIN nodes n ON n.id=e.target WHERE e.{column}=? AND e.id>? AND s.enabled=1 AND (SELECT ready FROM graph_admission WHERE id=1)=1 AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.owner OR x.id=e.target) ORDER BY e.id LIMIT ?",
+                (node, last, limit + 1),
             ).fetchall()
             more = len(rows) > limit
             rows = rows[:limit]
@@ -640,7 +660,14 @@ class GraphStore:
             next_cursor = (
                 base64.urlsafe_b64encode(
                     _json(
-                        {"query": query_hash, "revision": revision, "last": rows[-1]["id"]}
+                        {
+                            "query": query_hash,
+                            "revision": revision,
+                            # A 64-bit row anchor keeps long persisted IDs out of
+                            # the token; the digest rejects a moved/reused rowid.
+                            "last_row": rows[-1]["cursor_row"],
+                            "last_hash": _hash(rows[-1]["id"]),
+                        }
                     ).encode("utf-8")
                 ).decode("ascii")
                 if more
