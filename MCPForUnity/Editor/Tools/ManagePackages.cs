@@ -32,6 +32,8 @@ namespace MCPForUnity.Editor.Tools
         private const int MaxCompletedQueries = 10;
         private const string MutationOwnerKey = "MCPForUnity.Packages.NativeMutationV1";
         private const string QueryOwnerKey = "MCPForUnity.Packages.NativeQueryV1";
+        private static readonly bool LostMutationOwner = SessionState.GetBool(MutationOwnerKey, false);
+        private static readonly bool LostQueryOwner = SessionState.GetBool(QueryOwnerKey, false);
         internal static bool HasNativeMutation => PendingRequests.Count != 0;
         internal static bool HasNativeQuery => PendingListRequests.Count != 0 || PendingSearchRequests.Count != 0;
         internal static bool MutationRecoveryRequired => !HasNativeMutation && SessionState.GetBool(MutationOwnerKey, false);
@@ -39,8 +41,8 @@ namespace MCPForUnity.Editor.Tools
 
         private static void PersistNativeRequests()
         {
-            SessionState.SetBool(MutationOwnerKey, HasNativeMutation);
-            SessionState.SetBool(QueryOwnerKey, HasNativeQuery);
+            SessionState.SetBool(MutationOwnerKey, LostMutationOwner || HasNativeMutation);
+            SessionState.SetBool(QueryOwnerKey, LostQueryOwner || HasNativeQuery);
         }
 
         private static void CaptureNativeReloadState()
@@ -49,13 +51,24 @@ namespace MCPForUnity.Editor.Tools
             {
                 try
                 {
-                    return !request.IsCompleted;
+                    return request == null || !request.IsCompleted;
                 }
                 catch
                 {
                     return true;
                 }
             }
+            // Preserve results already proved by a live native handle before handles disappear.
+            foreach (var pair in PendingRequests.ToArray())
+                if (!Unfinished(pair.Value))
+                    FinalizeRequest(pair.Key, pair.Value);
+            foreach (var pair in PendingListRequests.ToArray())
+                if (!Unfinished(pair.Value))
+                    CheckListRequest(pair.Key, pair.Value);
+            foreach (var pair in PendingSearchRequests.ToArray())
+                if (!Unfinished(pair.Value))
+                    CheckSearchRequest(pair.Key, pair.Value);
+            PackageQueryJobStore.Persist();
             // IsCompleted proves native request quiescence on both success and failure. A
             // lost handle, desired package state, or void Resolve acknowledgement cannot.
             SessionState.SetBool(MutationOwnerKey, MutationRecoveryRequired || PendingRequests.Values.Any(Unfinished));
@@ -274,6 +287,9 @@ namespace MCPForUnity.Editor.Tools
 
                 if (PendingSearchRequests.TryGetValue(jobId, out var searchReq))
                     return CheckSearchRequest(jobId, searchReq);
+                var receipt = PackageQueryJobStore.Get(jobId);
+                if (receipt != null)
+                    return receipt;
             }
 
             PackageJob job;
@@ -308,8 +324,9 @@ namespace MCPForUnity.Editor.Tools
                     long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     var previousStatus = job.Status;
                     string previousReason = job.RecoveryReason;
+                    var previousObservation = job.PackageObservation?.DeepClone();
                     PackageJobManager.TryRecoverJob(job, nowMs);
-                    if (job.Status != previousStatus || job.RecoveryReason != previousReason)
+                    if (job.Status != previousStatus || job.RecoveryReason != previousReason || !JToken.DeepEquals(previousObservation, job.PackageObservation))
                         PackageJobManager.PersistToSessionState();
                 }
             }
@@ -342,8 +359,18 @@ namespace MCPForUnity.Editor.Tools
         {
             try
             {
-                var request = Client.List();
-                string jobId = Guid.NewGuid().ToString("N");
+                string jobId = PackageQueryJobStore.Begin("list_packages");
+                if (jobId == null)
+                    return new ErrorResponse("Cannot retain another package query receipt; no native query was started.");
+                ListRequest request;
+                try
+                {
+                    request = Client.List();
+                }
+                catch (Exception ex)
+                {
+                    return CacheQueryResult(jobId, new ErrorResponse($"Failed to start package list: {ex.Message}"));
+                }
                 PendingListRequests[jobId] = request;
                 PersistNativeRequests();
 
@@ -421,8 +448,18 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                var request = Client.Search(queryResult.Value);
-                string jobId = Guid.NewGuid().ToString("N");
+                string jobId = PackageQueryJobStore.Begin("search_packages");
+                if (jobId == null)
+                    return new ErrorResponse("Cannot retain another package query receipt; no native query was started.");
+                SearchRequest request;
+                try
+                {
+                    request = Client.Search(queryResult.Value);
+                }
+                catch (Exception ex)
+                {
+                    return CacheQueryResult(jobId, new ErrorResponse($"Failed to start package search: {ex.Message}"));
+                }
                 PendingSearchRequests[jobId] = request;
                 PersistNativeRequests();
 
@@ -903,7 +940,9 @@ namespace MCPForUnity.Editor.Tools
         {
             // Query jobs share the same immutable identity/status contract as mutations.
             // Retain it after the native request is released and on every status retry.
-            string operation = PendingSearchRequests.ContainsKey(jobId) ? "search_packages" : "list_packages";
+            string operation = PendingSearchRequests.ContainsKey(jobId)
+                ? "search_packages"
+                : (string)PackageQueryJobStore.Get(jobId)?["data"]?["operation"] ?? "list_packages";
             var response = JObject.FromObject(result);
             var data = response["data"] as JObject ?? new JObject();
             data["job_id"] = jobId;
@@ -913,6 +952,7 @@ namespace MCPForUnity.Editor.Tools
             PendingListRequests.Remove(jobId);
             PendingSearchRequests.Remove(jobId);
             PersistNativeRequests();
+            response = PackageQueryJobStore.Complete(jobId, operation, response);
             CompletedQueryResults[jobId] = response;
             CompletedQueryOrder.Enqueue(jobId);
             while (CompletedQueryOrder.Count > MaxCompletedQueries)

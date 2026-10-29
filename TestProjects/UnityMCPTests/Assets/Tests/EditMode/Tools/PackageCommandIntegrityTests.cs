@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -29,6 +30,11 @@ namespace MCPForUnityTests.EditMode.Tools
             originalCache;
         private Queue<string> order;
         private string[] originalOrder;
+        private Func<string> queryReader;
+        private Action<string> queryWriter;
+        private Dictionary<string, JObject> originalReceipts;
+        private static Dictionary<string, JObject> Receipts =>
+            (Dictionary<string, JObject>)typeof(PackageQueryJobStore).GetField("Receipts", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
 
         [SetUp]
         public void SetUp()
@@ -43,6 +49,12 @@ namespace MCPForUnityTests.EditMode.Tools
             order = Field<Queue<string>>("CompletedQueryOrder");
             originalCache = new Dictionary<string, object>(cache);
             originalOrder = order.ToArray();
+            originalReceipts = new Dictionary<string, JObject>(Receipts);
+            queryReader = PackageQueryJobStore.SessionReader;
+            queryWriter = PackageQueryJobStore.SessionWriter;
+            PackageQueryJobStore.SessionReader = () => "";
+            PackageQueryJobStore.SessionWriter = value => { };
+            Receipts.Clear();
             capturedCache = true;
             root = Path.Combine(Path.GetTempPath(), "McpPackageCommandIntegrity_" + Guid.NewGuid().ToString("N"));
             Assert.IsFalse(Directory.Exists(root));
@@ -84,6 +96,11 @@ namespace MCPForUnityTests.EditMode.Tools
                     order.Clear();
                     foreach (string id in originalOrder)
                         order.Enqueue(id);
+                    Receipts.Clear();
+                    foreach (var pair in originalReceipts)
+                        Receipts.Add(pair.Key, pair.Value);
+                    PackageQueryJobStore.SessionReader = queryReader;
+                    PackageQueryJobStore.SessionWriter = queryWriter;
                 }
             }
         }

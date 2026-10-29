@@ -1,3 +1,7 @@
+using System;
+using System.Diagnostics;
+using System.Reflection;
+using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools;
@@ -50,6 +54,50 @@ namespace MCPForUnityTests.EditMode.Tools
             StringAssert.Contains("host", response.ToString());
             StringAssert.Contains("repo.git", response.ToString());
             StringAssert.Contains("Resolution failed", response.ToString());
+        }
+
+        [Test]
+        public void LargePlainDiagnosticsPreserveTextWithoutUnboundedPatternSearch()
+        {
+            string plain = new string('x', 140 * 1024);
+            var timer = Stopwatch.StartNew();
+            Assert.AreEqual(plain, PackageSourceSecurity.Redact(plain));
+            Assert.IsFalse(PackageSourceSecurity.HasCredentials(plain));
+            Assert.Less(timer.ElapsedMilliseconds, 5000, "Plain fields must not trigger quadratic URL/SCP matching.");
+        }
+
+        [TestCase(" https://user:secret@host/repo.git?token=secret")]
+        [TestCase(" user:secret@host:repo.git#secret")]
+        [TestCase(":// https://user:secret@host/repo.git")]
+        [TestCase("@host user:secret@host:repo.git")]
+        public void LongMalformedPrefixesNeverExposeCredentialSuffixes(string suffix)
+        {
+            string source = new string('x', 140 * 1024) + suffix;
+            var timer = Stopwatch.StartNew();
+            string redacted = PackageSourceSecurity.Redact(source);
+            StringAssert.DoesNotContain("secret", redacted);
+            Assert.Less(timer.ElapsedMilliseconds, 5000, "Malformed URL/SCP candidates need a finite redaction budget.");
+        }
+
+        [Test]
+        public void LongAmbiguousScpCredentialAdmissionIsBoundedAndFailsClosed()
+        {
+            string source = new string(':', 140 * 1024) + "user:secret@host:repo.git";
+            var timer = Stopwatch.StartNew();
+            Assert.IsTrue(PackageSourceSecurity.HasCredentials(source));
+            StringAssert.DoesNotContain("secret", PackageSourceSecurity.ForStorage(source));
+            Assert.Less(timer.ElapsedMilliseconds, 5000);
+        }
+
+        [TestCase("Url")]
+        [TestCase("ScpSource")]
+        [TestCase("ScpCredentials")]
+        [TestCase("GitPathQuery")]
+        public void EveryPackagePatternHasAFiniteMatchBudget(string field)
+        {
+            var regex = (Regex)typeof(PackageSourceSecurity).GetField(field, BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            Assert.Greater(regex.MatchTimeout, TimeSpan.Zero);
+            Assert.LessOrEqual(regex.MatchTimeout, TimeSpan.FromMilliseconds(100));
         }
 
         [Test]

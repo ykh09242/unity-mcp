@@ -11,6 +11,7 @@ namespace MCPForUnityTests.Editor.Services
     {
         private Dictionary<string, PackageJob> _originalJobs;
         private string _originalSession;
+        private System.Func<UnityEditor.PackageManager.PackageInfo[]> _originalRegistrationReader;
         private static Dictionary<string, PackageJob> Jobs =>
             (Dictionary<string, PackageJob>)typeof(PackageJobManager).GetField("Jobs", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
 
@@ -20,6 +21,7 @@ namespace MCPForUnityTests.Editor.Services
             _originalJobs = new Dictionary<string, PackageJob>(Jobs);
             _originalSession = SessionState.GetString("MCPForUnity.PackageJobsV1", string.Empty);
             Jobs.Clear();
+            _originalRegistrationReader = PackageJobManager.RegisteredPackagesReader;
         }
 
         [TearDown]
@@ -29,6 +31,7 @@ namespace MCPForUnityTests.Editor.Services
             foreach (var pair in _originalJobs)
                 Jobs.Add(pair.Key, pair.Value);
             SessionState.SetString("MCPForUnity.PackageJobsV1", _originalSession);
+            PackageJobManager.RegisteredPackagesReader = _originalRegistrationReader;
         }
 
         [Test]
@@ -128,7 +131,7 @@ namespace MCPForUnityTests.Editor.Services
         [TestCase("add")]
         [TestCase("embed")]
         [TestCase("remove")]
-        public void LostRequestRemainsUnknownBeyondFormerTimeoutAndCanReconcile(string operation)
+        public void LostRequestRemainsUnknownBeyondFormerTimeoutDespiteDesiredState(string operation)
         {
             const long now = 10_000_000;
             var job = new PackageJob
@@ -149,8 +152,13 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual("request_lost_after_reload", (string)unknown["recovery"]?["reason"]);
             Assert.AreEqual(false, (bool?)unknown["recovery"]?["retry_safe"]);
             RecoverWithSnapshot(job, now + 1, operation == "remove" ? System.Array.Empty<UnityEditor.PackageManager.PackageInfo>() : new[] { info });
-            Assert.AreEqual(PackageJobStatus.Succeeded, job.Status);
-            Assert.AreEqual("desired_state_observed", (string)JObject.FromObject(PackageJobManager.ToSerializable(job))["recovery"]?["reason"]);
+            Assert.AreEqual(PackageJobStatus.Unknown, job.Status);
+            Assert.IsNull(job.FinishedUnixMs);
+            Assert.IsNull(job.ResultVersion, "Observed registration must not masquerade as the Request result.");
+            var recovered = JObject.FromObject(PackageJobManager.ToSerializable(job));
+            Assert.AreEqual("request_lost_after_reload", (string)recovered["recovery"]?["reason"]);
+            Assert.AreEqual(true, (bool?)recovered["package_observation"]?["desired_state_observed"]);
+            Assert.AreEqual("none", (string)recovered["package_observation"]?["completion_effect"]);
         }
 
         [Test]
@@ -169,22 +177,60 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual("owned-error", job.Error);
         }
 
-        [Test]
-        public void UnknownMutationStatusReconcilesThroughPublicStatusAndSessionRestore()
+        [TestCase("add")]
+        [TestCase("embed")]
+        [TestCase("remove")]
+        public void UnknownMutationStatusStaysUnknownThroughPublicStatusAndSessionRestore(string operation)
         {
-            // Observe the already-installed package; never invoke a package operation.
-            var info = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(PackageJobManager).Assembly);
-            Assert.NotNull(info);
-            string id = PackageJobManager.StartJob("add", info.name + "@" + info.version);
-            var job = PackageJobManager.GetJob(id);
-            job.Status = PackageJobStatus.Unknown;
-            var status = JObject.FromObject(MCPForUnity.Editor.Tools.ManagePackages.HandleCommand(new JObject { ["action"] = "status", ["job_id"] = id }));
-            Assert.AreEqual("succeeded", (string)status["data"]?["status"]);
-            job.Status = PackageJobStatus.Unknown;
+            PackageJobManager.RegisteredPackagesReader = () =>
+                operation == "remove" ? System.Array.Empty<UnityEditor.PackageManager.PackageInfo>() : new[] { PackageInfoFixture() };
+            string id = PackageJobManager.StartJob(operation, "com.fixture.tool@1.0.0");
             PackageJobManager.PersistToSessionState();
             Jobs.Clear();
             typeof(PackageJobManager).GetMethod("TryRestoreFromSessionState", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+            Assert.AreEqual(PackageJobStatus.Unknown, PackageJobManager.GetJob(id).Status);
+            var status = JObject.FromObject(MCPForUnity.Editor.Tools.ManagePackages.HandleCommand(new JObject { ["action"] = "status", ["job_id"] = id }));
+            Assert.AreEqual("unknown", (string)status["data"]?["status"]);
+            Assert.AreEqual(true, (bool?)status["data"]?["package_observation"]?["desired_state_observed"]);
+            PackageJobManager.PersistToSessionState();
+            Jobs.Clear();
+            typeof(PackageJobManager).GetMethod("TryRestoreFromSessionState", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+            Assert.AreEqual(PackageJobStatus.Unknown, PackageJobManager.GetJob(id).Status);
+        }
+
+        [TestCase("add")]
+        [TestCase("embed")]
+        [TestCase("remove")]
+        public void AlreadyDesiredStateDoesNotConfirmLostRequest(string operation)
+        {
+            var job = new PackageJob
+            {
+                JobId = "preexisting",
+                Operation = operation,
+                Package = "com.fixture.tool@1.0.0",
+                Status = PackageJobStatus.Running,
+                StartedUnixMs = 123,
+            };
+            RecoverWithSnapshot(
+                job,
+                456,
+                operation == "remove" ? System.Array.Empty<UnityEditor.PackageManager.PackageInfo>() : new[] { PackageInfoFixture() }
+            );
+            Assert.AreEqual(PackageJobStatus.Unknown, job.Status);
+            Assert.AreEqual(123, job.StartedUnixMs);
+            Assert.IsNull(job.FinishedUnixMs);
+            Assert.IsTrue((bool)job.PackageObservation["desired_state_observed"]);
+        }
+
+        [Test]
+        public void ConfirmedNativeSuccessRemainsSuccessfulAcrossRestore()
+        {
+            string id = PackageJobManager.StartJob("add", "com.fixture.tool@1.0.0");
+            PackageJobManager.CompleteJob(id, true, version: "1.0.0", name: "com.fixture.tool");
+            Jobs.Clear();
+            typeof(PackageJobManager).GetMethod("TryRestoreFromSessionState", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
             Assert.AreEqual(PackageJobStatus.Succeeded, PackageJobManager.GetJob(id).Status);
+            Assert.AreEqual("1.0.0", PackageJobManager.GetJob(id).ResultVersion);
         }
 
         private static UnityEditor.PackageManager.PackageInfo PackageInfoFixture()

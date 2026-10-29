@@ -33,6 +33,7 @@ namespace MCPForUnity.Editor.Services
         public string ResultName { get; set; }
         public JObject Resolve { get; set; }
         public string RecoveryReason { get; set; }
+        public JObject PackageObservation { get; set; }
     }
 
     internal static class PackageRecoveryIdentity
@@ -118,6 +119,7 @@ namespace MCPForUnity.Editor.Services
         internal static Func<string> SessionReader = () => SessionState.GetString(SessionKeyJobs, string.Empty);
         internal static Action<string> SessionWriter = value => SessionState.SetString(SessionKeyJobs, value);
         internal static JObject ResolveRegistration = null;
+        internal static Func<PackageInfo[]> RegisteredPackagesReader = PackageInfo.GetAllRegisteredPackages;
 
         static PackageJobManager()
         {
@@ -150,6 +152,9 @@ namespace MCPForUnity.Editor.Services
 
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
             public JToken resolve { get; set; }
+
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+            public JObject package_observation { get; set; }
         }
 
         private static PackageJobStatus ParseStatus(string status)
@@ -203,6 +208,7 @@ namespace MCPForUnity.Editor.Services
                             ResultVersion = pj.result_version,
                             ResultName = pj.result_name,
                             RecoveryReason = pj.recovery_reason,
+                            PackageObservation = pj.package_observation,
                             Resolve = pj.operation == "resolve" ? NormalizeResolve(pj.resolve as JObject) : null,
                         };
 
@@ -266,46 +272,37 @@ namespace MCPForUnity.Editor.Services
             try
             {
                 string packageName = ExtractPackageName(job.Package);
-                var allPackages = recoveryPackages ??= PackageInfo.GetAllRegisteredPackages();
+                var allPackages = recoveryPackages ??= RegisteredPackagesReader();
                 var info = FindPackageInfo(allPackages, packageName, job.Package);
 
-                if (job.Operation == "add" || job.Operation == "embed")
+                bool desiredState = job.Operation switch
                 {
-                    if (
-                        info != null
-                        && (job.Operation == "embed" ? info.source == PackageSource.Embedded : PackageRecoveryIdentity.MatchesVersion(info, job.Package))
-                    )
-                    {
-                        job.Status = PackageJobStatus.Succeeded;
-                        job.FinishedUnixMs = nowMs;
-                        job.LastUpdateUnixMs = nowMs;
-                        job.ResultVersion = info.version;
-                        job.ResultName = info.name;
-                        job.RecoveryReason = "desired_state_observed";
-                        job.Error = null;
-                        McpLog.Info($"[PackageJobManager] Recovered {job.Operation} job {job.JobId}: {info.name}@{info.version} installed.");
-                    }
-                    else
-                        MarkRecoveryUnknown(job, nowMs, "request_lost_after_reload");
-                }
-                else if (job.Operation == "remove")
+                    "add" => info != null && PackageRecoveryIdentity.MatchesVersion(info, job.Package),
+                    "embed" => info != null && info.source == PackageSource.Embedded,
+                    "remove" => info == null,
+                    _ => false,
+                };
+                // Registration may predate admission and never proves this Request completed.
+                MarkRecoveryUnknown(job, nowMs, "request_lost_after_reload");
+                job.PackageObservation = new JObject
                 {
-                    if (info == null)
-                    {
-                        job.Status = PackageJobStatus.Succeeded;
-                        job.FinishedUnixMs = nowMs;
-                        job.LastUpdateUnixMs = nowMs;
-                        job.RecoveryReason = "desired_state_observed";
-                        job.Error = null;
-                        McpLog.Info($"[PackageJobManager] Recovered remove job {job.JobId}: '{packageName}' is no longer installed.");
-                    }
-                    else
-                        MarkRecoveryUnknown(job, nowMs, "request_lost_after_reload");
-                }
+                    ["status"] = "observed",
+                    ["desired_state_observed"] = desiredState,
+                    ["observed_unix_ms"] = nowMs,
+                    ["completion_effect"] = "none",
+                    ["registered_name"] = info?.name,
+                    ["registered_version"] = info?.version,
+                };
             }
             catch (Exception ex)
             {
-                MarkRecoveryUnknown(job, nowMs, "registration_unavailable");
+                MarkRecoveryUnknown(job, nowMs, "request_lost_after_reload");
+                job.PackageObservation = new JObject
+                {
+                    ["status"] = "unavailable",
+                    ["reason"] = "registration_unavailable",
+                    ["completion_effect"] = "none",
+                };
                 McpLog.Warn($"[PackageJobManager] Recovery check failed for job {job.JobId}: {PackageSourceSecurity.Redact(ex.Message)}");
             }
         }
@@ -385,6 +382,7 @@ namespace MCPForUnity.Editor.Services
                             result_version = j.ResultVersion,
                             result_name = j.ResultName,
                             recovery_reason = j.RecoveryReason,
+                            package_observation = j.PackageObservation,
                             resolve = j.Resolve,
                         })
                         .ToList();
@@ -549,6 +547,7 @@ namespace MCPForUnity.Editor.Services
                 job.LastUpdateUnixMs = now;
                 job.Error = PackageSourceSecurity.Redact(error);
                 job.RecoveryReason = null;
+                job.PackageObservation = null;
                 job.ResultVersion = version;
                 job.ResultName = name;
             }
@@ -603,6 +602,7 @@ namespace MCPForUnity.Editor.Services
                         retry_safe = false,
                     },
                 resolve = job.Operation == "resolve" ? NormalizeResolve(job.Resolve) : null,
+                package_observation = job.PackageObservation?.DeepClone(),
                 observation = "Source identifiers and native error text are omitted from copyable Activity evidence.",
             };
         }
@@ -637,6 +637,8 @@ namespace MCPForUnity.Editor.Services
                     ["native_completion"] = "unobserved",
                     ["retry_safe"] = false,
                 };
+            if (job.PackageObservation != null)
+                observation["package_observation"] = job.PackageObservation.DeepClone();
             return observation;
         }
     }
