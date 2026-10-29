@@ -1214,6 +1214,166 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(new Vector3(x, y, z), clone.transform.position);
         }
 
+        private GameObject CreateDuplicatePrefab(out string prefabPath)
+        {
+            CreateAssetRoot();
+            prefabPath = assetRoot + "/Duplicate.prefab";
+            var template = Owned("PrefabTemplate");
+            template.AddComponent<BoxCollider>().size = new Vector3(2, 3, 4);
+            var child = Owned("PrefabChild");
+            child.transform.SetParent(template.transform, false);
+            child.AddComponent<SphereCollider>().radius = 2;
+            var prefab = PrefabUtility.SaveAsPrefabAsset(template, prefabPath);
+            Assert.IsNotNull(prefab);
+            UnityEngine.Object.DestroyImmediate(template);
+            return prefab;
+        }
+
+        private static void AssertDuplicatePrefab(GameObject clone, string prefabPath, bool overridden)
+        {
+            Assert.AreEqual(PrefabInstanceStatus.Connected, PrefabUtility.GetPrefabInstanceStatus(clone));
+            Assert.AreEqual(prefabPath, AssetDatabase.GetAssetPath(PrefabUtility.GetCorrespondingObjectFromSource(clone)));
+            Assert.AreEqual(overridden ? new Vector3(7, 8, 9) : new Vector3(2, 3, 4), clone.GetComponent<BoxCollider>().size);
+            Assert.AreEqual(2, clone.transform.GetChild(0).GetComponent<SphereCollider>().radius);
+            if (overridden)
+            {
+                Assert.AreEqual(13, clone.GetComponent<Rigidbody>().mass);
+                Assert.IsNotNull(clone.transform.Find("InstanceOnlyChild"));
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DuplicatePrefabPreservesConnectionOverridesAndSourceUpdates(bool overridden)
+        {
+            var prefab = CreateDuplicatePrefab(out string path);
+            var source = (GameObject)PrefabUtility.InstantiatePrefab(prefab, ownedScene);
+            if (overridden)
+            {
+                source.GetComponent<BoxCollider>().size = new Vector3(7, 8, 9);
+                PrefabUtility.RecordPrefabInstancePropertyModifications(source.GetComponent<BoxCollider>());
+                source.AddComponent<Rigidbody>().mass = 13;
+                var added = Owned("Added");
+                added.name = "InstanceOnlyChild";
+                added.transform.SetParent(source.transform, false);
+            }
+            var response = Call(Duplicate(source));
+            Succeeded(response);
+            var clone = ResponseObject(response, true);
+            AssertDuplicatePrefab(clone, path, overridden);
+
+            var contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                contents.GetComponent<BoxCollider>().size = new Vector3(10, 11, 12);
+                contents.transform.GetChild(0).GetComponent<SphereCollider>().radius = 5;
+                Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(contents, path));
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+            Assert.AreEqual(overridden ? new Vector3(7, 8, 9) : new Vector3(10, 11, 12), clone.GetComponent<BoxCollider>().size);
+            Assert.AreEqual(5, clone.transform.GetChild(0).GetComponent<SphereCollider>().radius);
+            Assert.AreEqual(PrefabInstanceStatus.Connected, PrefabUtility.GetPrefabInstanceStatus(source));
+        }
+
+        [Test]
+        public void DuplicatePrefabPreservesTextClipboardAndDuplicatesOnlyRequestedSelection()
+        {
+            var prefab = CreateDuplicatePrefab(out string path);
+            var source = (GameObject)PrefabUtility.InstantiatePrefab(prefab, ownedScene);
+            var unrelated = Owned("UnrelatedSelection");
+            Selection.objects = new UnityEngine.Object[] { source, unrelated };
+            string clipboard = EditorGUIUtility.systemCopyBuffer;
+            string sentinel = prefix + "Clipboard";
+            try
+            {
+                EditorGUIUtility.systemCopyBuffer = sentinel;
+                var response = Call(Duplicate(source));
+                Succeeded(response);
+                var clone = ResponseObject(response, true);
+                AssertDuplicatePrefab(clone, path, false);
+                Assert.AreEqual(sentinel, EditorGUIUtility.systemCopyBuffer);
+                CollectionAssert.AreEquivalent(new[] { source, unrelated, clone }, ownedScene.GetRootGameObjects());
+                CollectionAssert.AreEqual(new[] { clone }, Selection.gameObjects);
+            }
+            finally
+            {
+                EditorGUIUtility.systemCopyBuffer = clipboard;
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DuplicatePrefabUndoRedoAndSaveReopenPreserveRequestedPlacement(bool prefabSource)
+        {
+            GameObject source;
+            string path = null;
+            if (prefabSource)
+            {
+                var prefab = CreateDuplicatePrefab(out path);
+                source = (GameObject)PrefabUtility.InstantiatePrefab(prefab, ownedScene);
+                source.GetComponent<BoxCollider>().size = new Vector3(7, 8, 9);
+                PrefabUtility.RecordPrefabInstancePropertyModifications(source.GetComponent<BoxCollider>());
+                source.AddComponent<Rigidbody>().mass = 13;
+                var added = Owned("Added");
+                added.name = "InstanceOnlyChild";
+                added.transform.SetParent(source.transform, false);
+            }
+            else
+            {
+                CreateAssetRoot();
+                source = Owned("RegularSource");
+            }
+            var originalParent = Owned("OriginalParent");
+            source.transform.SetParent(originalParent.transform, true);
+            source.transform.position = new Vector3(1, 2, 3);
+            if (prefabSource)
+                PrefabUtility.RecordPrefabInstancePropertyModifications(source.transform);
+            var requestedParent = Owned("RequestedParent");
+            requestedParent.transform.position = new Vector3(20, 30, 40);
+            string name = prefix + "RequestedCopy";
+            var request = Duplicate(source);
+            request["new_name"] = name;
+            request["parent"] = requestedParent.GetInstanceIDCompat();
+            request["position"] = new JArray(4, 5, 6);
+            request["offset"] = new JArray(100, 100, 100);
+            Selection.objects = new UnityEngine.Object[] { source, originalParent };
+            var response = Call(request);
+            Succeeded(response);
+            var clone = ResponseObject(response, true);
+            Assert.AreSame(clone, Selection.activeGameObject);
+            Assert.AreEqual(originalParent.transform, source.transform.parent);
+            Assert.AreEqual(name, clone.name);
+            Assert.AreEqual(requestedParent.transform, clone.transform.parent);
+            Assert.AreEqual(new Vector3(4, 5, 6), clone.transform.position);
+            if (prefabSource)
+                AssertDuplicatePrefab(clone, path, true);
+            Undo.FlushUndoRecordObjects();
+            Undo.PerformUndo();
+            Assert.IsTrue(clone == null);
+            Assert.IsTrue(source != null);
+            Undo.PerformRedo();
+            clone = Objects().Single(go => go.name == name);
+            Assert.AreEqual(requestedParent.transform, clone.transform.parent);
+            Assert.AreEqual(new Vector3(4, 5, 6), clone.transform.position);
+            if (prefabSource)
+                AssertDuplicatePrefab(clone, path, true);
+            else
+                Assert.AreEqual(PrefabInstanceStatus.NotAPrefab, PrefabUtility.GetPrefabInstanceStatus(clone));
+
+            string scenePath = assetRoot + "/" + ownedScene.name + ".unity";
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, scenePath));
+            // Reopen only the exact saved fixture scene additively; never replace another scene.
+            ownedScene = sceneFixture.ReopenSavedScene();
+            clone = Objects().Single(go => go.name == name);
+            Assert.AreEqual(prefix + "RequestedParent", clone.transform.parent.name);
+            Assert.AreEqual(new Vector3(4, 5, 6), clone.transform.position);
+            if (prefabSource)
+                AssertDuplicatePrefab(clone, path, true);
+        }
+
         [TestCase("ko-KR", "2026-10-09T11:12:13Z")]
         [TestCase("en-US", "2026-10-09T11:12:13+09:00")]
         public void DuplicateParsedDateNameRetainsLegacyStringConversion(string culture, string name)
@@ -1302,12 +1462,17 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(source.transform.position, clone.transform.position);
         }
 
-        [TestCase("omitted")]
-        [TestCase("existing")]
-        [TestCase("null")]
-        [TestCase("empty")]
-        [TestCase("missing")]
-        public void DuplicateChild_PreservesWorldTransformForEveryParentMode(string parentMode)
+        [TestCase("omitted", false)]
+        [TestCase("existing", false)]
+        [TestCase("null", false)]
+        [TestCase("empty", false)]
+        [TestCase("missing", false)]
+        [TestCase("omitted", true)]
+        [TestCase("existing", true)]
+        [TestCase("null", true)]
+        [TestCase("empty", true)]
+        [TestCase("missing", true)]
+        public void DuplicateChild_PreservesWorldTransformForEveryParentMode(string parentMode, bool prefabSource)
         {
             var originalParent = Owned("OriginalParent");
             originalParent.transform.SetPositionAndRotation(new Vector3(10, 0, 0), Quaternion.Euler(0, 30, 0));
@@ -1315,10 +1480,12 @@ namespace MCPForUnityTests.Editor.Tools
             var otherParent = Owned("OtherParent");
             otherParent.transform.SetPositionAndRotation(new Vector3(-4, 0, 5), Quaternion.Euler(0, 90, 0));
             otherParent.transform.localScale = Vector3.one * 0.5f;
-            var source = Owned("Source");
+            var source = prefabSource ? (GameObject)PrefabUtility.InstantiatePrefab(CreateDuplicatePrefab(out _), ownedScene) : Owned("Source");
             source.transform.SetParent(originalParent.transform, false);
             source.transform.SetPositionAndRotation(new Vector3(1, 2, 3), Quaternion.Euler(0, 45, 0));
             source.transform.localScale = new Vector3(0.5f, 1, 1.5f);
+            if (prefabSource)
+                PrefabUtility.RecordPrefabInstancePropertyModifications(source.transform);
             var request = Duplicate(source);
             if (parentMode != "omitted")
                 request["parent"] =
@@ -1338,6 +1505,8 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.Less(Vector3.Distance(source.transform.position, clone.transform.position), 0.0001f);
             Assert.Less(Quaternion.Angle(source.transform.rotation, clone.transform.rotation), 0.01f);
             Assert.Less(Vector3.Distance(source.transform.lossyScale, clone.transform.lossyScale), 0.0001f);
+            if (prefabSource)
+                Assert.AreEqual(PrefabInstanceStatus.Connected, PrefabUtility.GetPrefabInstanceStatus(clone));
         }
 
         [Test]

@@ -101,6 +101,27 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.IsFalse(ownedScene.isDirty, "The rejection test requires a clean owned scene.");
         }
 
+        public Scene ReopenSavedScene()
+        {
+            Assert.IsTrue(ownedScene.IsValid() && ownedScene.isLoaded && !ownedScene.isDirty);
+            StringAssert.StartsWith(scenePrefix, ownedScene.name);
+            string path = ownedScene.path;
+            Assert.IsFalse(string.IsNullOrEmpty(path));
+            Scene placeholder = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            try
+            {
+                Assert.IsTrue(EditorSceneManager.CloseScene(ownedScene, false));
+                ownedScene = EditorSceneManager.OpenScene(path, OpenSceneMode.Additive);
+                Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
+                return ownedScene;
+            }
+            finally
+            {
+                if (placeholder.IsValid() && placeholder.isLoaded)
+                    EditorSceneManager.CloseScene(placeholder, true);
+            }
+        }
+
         public void Close()
         {
             if (previousScene.IsValid() && previousScene.isLoaded)

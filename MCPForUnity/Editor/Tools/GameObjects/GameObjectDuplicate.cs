@@ -49,14 +49,21 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             Transform duplicateParent = parentToken == null ? sourceGo.transform.parent : newParent?.transform;
-            GameObject duplicatedGo = UnityEngine.Object.Instantiate(sourceGo, duplicateParent, true);
-            if (duplicateParent == null && sourceGo.transform.parent != null)
+            Undo.IncrementCurrentGroup();
+            int undoGroup = Undo.GetCurrentGroup();
+            string undoName = $"Duplicate {sourceGo.name}";
+            Undo.SetCurrentGroupName(undoName);
+            // Editor duplication preserves the instance's prefab connections and overrides.
+            GameObject duplicatedGo = DuplicateInEditor(sourceGo);
+            if (duplicatedGo == null)
+                return new ErrorResponse($"Could not duplicate GameObject '{sourceGo.name}'.");
+            Undo.RegisterCreatedObjectUndo(duplicatedGo, undoName);
+            if (duplicatedGo.transform.parent != duplicateParent)
             {
-                // Unity's parentless clone path copies a child's local transform.
-                duplicatedGo.transform.SetPositionAndRotation(sourceGo.transform.position, sourceGo.transform.rotation);
-                duplicatedGo.transform.localScale = sourceGo.transform.lossyScale;
+                Undo.SetTransformParent(duplicatedGo.transform, duplicateParent, undoName);
             }
-            Undo.RegisterCreatedObjectUndo(duplicatedGo, $"Duplicate {sourceGo.name}");
+            Undo.RecordObject(duplicatedGo, undoName);
+            Undo.RecordObject(duplicatedGo.transform, undoName);
 
             if (!string.IsNullOrEmpty(newName))
             {
@@ -76,6 +83,14 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 duplicatedGo.transform.position = sourceGo.transform.position + offset.Value;
             }
 
+            if (PrefabUtility.IsPartOfPrefabInstance(duplicatedGo))
+            {
+                PrefabUtility.RecordPrefabInstancePropertyModifications(duplicatedGo);
+                PrefabUtility.RecordPrefabInstancePropertyModifications(duplicatedGo.transform);
+            }
+            Undo.FlushUndoRecordObjects();
+            Undo.CollapseUndoOperations(undoGroup);
+
             EditorUtility.SetDirty(duplicatedGo);
             EditorSceneManager.MarkSceneDirty(duplicatedGo.scene);
 
@@ -90,6 +105,30 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     duplicatedObject = Helpers.GameObjectSerializer.GetGameObjectData(duplicatedGo),
                 }
             );
+        }
+
+        private static GameObject DuplicateInEditor(GameObject source)
+        {
+#if UNITY_2023_2_OR_NEWER
+            return GameObjectUtility.DuplicateGameObject(source);
+#else
+            // The public object-based API was added after the supported 2021.3 floor.
+            // Use the same native duplication entry point as the legacy Hierarchy.
+            UnityEngine.Object[] selection = Selection.objects;
+            UnityEngine.Object active = Selection.activeObject;
+            try
+            {
+                Selection.objects = new UnityEngine.Object[] { source };
+                Unsupported.DuplicateGameObjectsUsingPasteboard();
+                GameObject duplicate = Selection.activeGameObject;
+                return duplicate != source ? duplicate : null;
+            }
+            finally
+            {
+                Selection.objects = selection;
+                Selection.activeObject = active;
+            }
+#endif
         }
     }
 }
