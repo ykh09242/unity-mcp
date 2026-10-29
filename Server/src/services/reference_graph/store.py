@@ -746,6 +746,12 @@ class GraphStore:
             old = connection.execute("SELECT version FROM rules WHERE id=?", (identity,)).fetchone()
             if (old[0] if old else 0) != expected_version:
                 raise RevisionConflict("Analysis rule changed")
+            call = payload.get("call")
+            if call is not None and payload.get("enabled", True):
+                for row in connection.execute("SELECT payload FROM rules WHERE id<>?", (identity,)):
+                    rule = json.loads(row[0])
+                    if rule.get("enabled", True) and rule.get("call") == call:
+                        raise ValueError("Duplicate enabled wrapper rule call")
             version = expected_version + 1
             connection.execute(
                 "INSERT INTO rules VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version,payload=excluded.payload",

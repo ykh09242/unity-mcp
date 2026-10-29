@@ -170,7 +170,7 @@ async def test_config_pages_cas_reauthorization_and_isolation(setup, tmp_path, m
                     "kind": "rule",
                     "id": str(index),
                     "expected_version": 0,
-                    "config": {"call": "Loader.Load", "argument": 0, "scheme": "resources"},
+                    "config": {"call": f"Loader{index}.Load", "argument": 0, "scheme": "resources"},
                 },
             )
         page = (await service.execute(ctx, "export_config", {"kind": "rule", "limit": 2}))["data"]
