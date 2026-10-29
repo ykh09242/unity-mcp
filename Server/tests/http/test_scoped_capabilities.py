@@ -23,6 +23,16 @@ async def state(name):
     return "Fixture@hash" if name == "unity_instance" else None
 
 
+def test_capability_probe_limit_schema_keeps_default_and_exposes_bounded_retry():
+    # Given/When: clients discover the public capability limit schema.
+    from models.capabilities import CapabilityLimits
+
+    schema = CapabilityLimits.model_json_schema()["properties"]["max_probes"]
+    # Then: existing construction keeps five while an explicit bounded retry advertises six.
+    assert schema["default"] == 5
+    assert schema["enum"] == [5, 6]
+
+
 @pytest.mark.asyncio
 async def test_build_selection_reduces_actual_dispatched_commands(command_hub):
     await install_native_replies(command_hub, native_observations())
@@ -124,7 +134,113 @@ async def test_concurrent_scopes_own_their_observations(command_hub):
     assert first.features["recording"].reason == "not_requested"
     assert second.features["recording"].supported is True
     assert second.features["input"].reason == "not_requested"
+    assert first.readiness.status == second.readiness.status == "ready"
+    assert first.limits.max_probes == second.limits.max_probes == 6
+    assert first.target.execution_environment == second.target.execution_environment == "editor"
     assert len([m for m in command_hub.sent if m["type"] == "execute"]) == 4
+    assert PluginHub._pending == {}
+
+
+@pytest.mark.asyncio
+async def test_overlapping_scope_retries_only_invalidated_state_within_original_budget(
+    command_hub, monkeypatch
+):
+    # Given: another capability query advances the epoch after the first state identity capture.
+    from tests.timing import await_signal
+
+    await install_native_replies(command_hub, native_observations())
+    captured = asyncio.Event()
+    release = asyncio.Event()
+    read_identity = PluginHub._read_identity
+    state_attempts = 0
+
+    async def hold_first_identity(cls, session, *, authoritative=False):
+        nonlocal state_attempts
+        identity = await read_identity(session, authoritative=authoritative)
+        if authoritative:
+            state_attempts += 1
+            if state_attempts == 1:
+                captured.set()
+                await release.wait()
+        return identity
+
+    monkeypatch.setattr(PluginHub, "_read_identity", classmethod(hold_first_identity))
+    first = asyncio.create_task(
+        query_project_capabilities(SimpleNamespace(get_state=state), features=("input",))
+    )
+    try:
+        await await_signal(captured, "first authoritative identity captured")
+        # When: a second scope completes its own metadata and state before releasing the first.
+        second = await query_project_capabilities(
+            SimpleNamespace(get_state=state), features=("recording",)
+        )
+        release.set()
+        result = await first
+    finally:
+        release.set()
+        if not first.done():
+            first.cancel()
+        await asyncio.gather(first, return_exceptions=True)
+    # Then: each scope gets its own current state; invalidation never replays metadata.
+    assert result.readiness.status == second.readiness.status == "ready"
+    assert result.features["recording"].reason == second.features["input"].reason == "not_requested"
+    assert result.target.execution_environment == second.target.execution_environment == "editor"
+    assert state_attempts == 3
+    commands = [item["name"] for item in command_hub.sent if item["type"] == "execute"]
+    assert sorted(commands) == [
+        "get_editor_state",
+        "get_editor_state",
+        "manage_input",
+        "manage_recording",
+    ]
+    assert PluginHub._pending == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exhaust_deadline", [False, True])
+async def test_real_mutations_cannot_make_invalidated_capability_state_ready(
+    command_hub, monkeypatch, exhaust_deadline
+):
+    # Given: an actual mutation advances the epoch after every captured state identity.
+    import anyio
+    import services.capabilities as capabilities
+    from transport.unity_transport import send_with_unity_instance
+
+    monkeypatch.setattr(capabilities, "_QUERY_TIMEOUT_SECONDS", 0.1)
+    await install_native_replies(command_hub, native_observations())
+    read_identity = PluginHub._read_identity
+    attempts = 0
+
+    async def mutate_after_identity(cls, session, *, authoritative=False):
+        nonlocal attempts
+        identity = await read_identity(session, authoritative=authoritative)
+        if authoritative:
+            attempts += 1
+            await send_with_unity_instance(
+                None, "Fixture@hash", "manage_scene", {"action": "create"}, retry_on_reload=False
+            )
+            if exhaust_deadline:
+                await anyio.sleep_forever()
+        return identity
+
+    monkeypatch.setattr(PluginHub, "_read_identity", classmethod(mutate_after_identity))
+    # When: the selected query spends its original finite read budget.
+    started = anyio.current_time()
+    result = await query_project_capabilities(SimpleNamespace(get_state=state), features=("input",))
+    # Then: retries are finite, no stale state dispatches, and metadata remains scoped.
+    assert anyio.current_time() - started < 0.5
+    assert attempts == (1 if exhaust_deadline else 2)
+    assert result.readiness.status == "unknown"
+    assert result.features["input"].supported is True
+    assert result.features["recording"].reason == "not_requested"
+    assert result.evidence["get_editor_state"].status == "unknown"
+    assert result.evidence["get_editor_state"].reason == (
+        "not_observed" if exhaust_deadline else "read_invalidated"
+    )
+    commands = [item["name"] for item in command_hub.sent if item["type"] == "execute"]
+    assert commands.count("manage_scene") == attempts
+    assert commands.count("manage_input") == 1
+    assert "get_editor_state" not in commands
     assert PluginHub._pending == {}
 
 

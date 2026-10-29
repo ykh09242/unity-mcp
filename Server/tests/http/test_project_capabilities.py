@@ -465,7 +465,7 @@ async def test_stored_selection_registry_lock_cannot_block_capability_resource(
 async def test_stalled_cancel_has_explicit_grace_and_keeps_verified_partial_evidence(
     command_hub, monkeypatch, cleanup_exhausted
 ):
-    # Given: four sources finish before one blocked probe is explicitly cancelled.
+    # Given: three metadata sources finish before the fourth is explicitly cancelled.
     import services.capabilities as capabilities
 
     query_timeout = watchdog_timeout()
@@ -480,7 +480,7 @@ async def test_stalled_cancel_has_explicit_grace_and_keeps_verified_partial_evid
     probe_deadlines = set()
     read_deadlines = set()
     completed_sources = set()
-    expected_sources = set(native_observations()) - {"manage_recording"}
+    expected_sources = set(native_observations()) - {"manage_recording", "get_editor_state"}
     observed = anyio.Event()
     recording_entered = anyio.Event()
     cancellation_budgets = []
@@ -558,6 +558,10 @@ async def test_stalled_cancel_has_explicit_grace_and_keeps_verified_partial_evid
         assert data["connection"]["reason"] == "connection_changed_or_deadline"
         assert data["target"]["instance_id"] is None
     assert data["limits"]["query_cleanup_grace_seconds"] == cleanup_grace
+    assert data["evidence"]["get_editor_state"]["status"] == "unknown"
+    assert "get_editor_state" not in {
+        item.get("name") for item in command_hub.sent if item["type"] == "execute"
+    }
     assert data["limits"]["query_max_elapsed_seconds"] == pytest.approx(
         query_timeout + cleanup_grace
     )
@@ -619,7 +623,7 @@ async def test_final_revalidation_lock_clears_identity_within_disclosed_maximum(
     probe_deadlines = set()
     read_deadlines = set()
     completed_sources = set()
-    expected_sources = set(native_observations()) - {"manage_recording"}
+    expected_sources = set(native_observations()) - {"manage_recording", "get_editor_state"}
     observed = anyio.Event()
     recording_entered = anyio.Event()
     revalidation_entered = anyio.Event()

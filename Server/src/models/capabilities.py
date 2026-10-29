@@ -69,7 +69,7 @@ class CapabilityLimits(CapabilityModel):
     query_timeout_seconds: float
     query_cleanup_grace_seconds: float
     query_max_elapsed_seconds: float
-    max_probes: Literal[5] = 5
+    max_probes: Literal[5, 6] = 5
     response_bytes: int
     response_depth: int
     response_nodes: int

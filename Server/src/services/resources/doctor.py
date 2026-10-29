@@ -15,7 +15,7 @@ from services.registry import mcp_for_unity_resource
     description="Read current bounded connection/native-read/source evidence for this MCP request. Does not attest another client application's connection or change configuration.",
 )
 async def get_doctor(ctx: Context) -> DoctorResourceResponse:
-    """Reuse the capability capture, preserving its five-probe budget and ownership checks."""
+    """Reuse the capability capture, preserving its bounded probe budget and ownership checks."""
     return DoctorResourceResponse(data=await query_doctor(ctx))
 
 

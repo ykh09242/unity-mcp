@@ -57,9 +57,11 @@ selection. Player support still requires the existing bundle preflight.
 
 Unrequested features and sources remain unknown with `reason: not_requested`;
 they are not unsupported or failed. `partial` continues to describe completeness
-of the full view, so a successful narrow read is normally partial. The schema and
-five-probe maximum remain unchanged. Requested observations retain the existing
-single read budget and final connection generation, project and principal checks.
+of the full view, so a successful narrow read is normally partial. The limits
+schema retains a default `max_probes` of five and also accepts six; current queries
+disclose a maximum of six to cover one state-only retry on `read_invalidated`.
+Requested observations and that retry share the existing single read budget and
+final connection generation, project and principal checks.
 
 No completed capability response is cached (TTL zero). The native readiness owner
 already reuses stable package-version metadata and invalidates it on package
@@ -67,7 +69,9 @@ registration events; current readiness is always recomputed. CLI doctor and full
 tool inspection keep their existing complete behavior.
 
 The HTTP/SDK regression measures actual production command dispatches with a
-controlled native responder: full discovery sends five commands, build-only sends
-two, and build plus input sends three. This is a command-count reduction, not a
-claim about real Unity latency or serial execution; full probes remain concurrent.
+controlled native responder: stable full discovery sends five commands, build-only
+sends two, and build plus input sends three. Selected metadata sources run
+concurrently, then current Editor evidence is read. Only an invalidated state
+observation may be retried once, within the same total budget. These counts do not
+claim real Unity latency.
 No workload size, memory allowance or execution timeout is reduced.

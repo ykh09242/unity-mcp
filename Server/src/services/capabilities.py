@@ -480,6 +480,7 @@ async def _capture_project_capabilities(
         query_timeout_seconds=timeout,
         query_cleanup_grace_seconds=cleanup_grace,
         query_max_elapsed_seconds=timeout + cleanup_grace,
+        max_probes=len(_SOURCES) + 1,
         response_bytes=MAX_RESPONSE_BYTES,
         response_depth=MAX_RESPONSE_DEPTH,
         response_nodes=MAX_RESPONSE_NODES,
@@ -529,7 +530,7 @@ async def _capture_project_capabilities(
                 with anyio.move_on_at(probe_deadline):
                     async with anyio.create_task_group() as tasks:
                         for name in _SOURCES:
-                            if name not in selected_sources:
+                            if name not in selected_sources or name == "get_editor_state":
                                 continue
                             tasks.start_soon(
                                 _read_source,
@@ -540,6 +541,23 @@ async def _capture_project_capabilities(
                                 probe_deadline,
                                 observations,
                             )
+                    # Even observational capability names can resolve to custom
+                    # native handlers. Keep conservative transport epochs and
+                    # observe readiness only after this query's other sources settle.
+                    # Retry one invalidated observation, never metadata or mutations.
+                    for _attempt in range(2):
+                        if anyio.current_time() >= probe_deadline:
+                            break
+                        await _read_source(
+                            "get_editor_state",
+                            ctx,
+                            connection,
+                            user_id,
+                            probe_deadline,
+                            observations,
+                        )
+                        if observations["get_editor_state"].evidence.reason != "read_invalidated":
+                            break
         if (
             captured
             and connection.status == "connected"
