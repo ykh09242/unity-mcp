@@ -57,10 +57,18 @@ def native_evidence(outcome):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
 @pytest.mark.parametrize("outcome", ["success", "failed"])
+@pytest.mark.parametrize(
+    "completion_requires",
+    [
+        "matching_pipeline_finish_and_editor_quiescence",
+        "matching_pipeline_finish_or_native_task_termination_then_editor_quiescence",
+    ],
+)
 async def test_sdk_preserves_native_compiler_evidence_with_coordination(
-    monkeypatch, protocol, outcome
+    monkeypatch, protocol, outcome, completion_requires
 ):
     commands = []
+    coordination = {**NATIVE_IDLE, "completion_requires": completion_requires}
 
     async def selected(ctx):
         return "CompileFixture@one"
@@ -72,7 +80,7 @@ async def test_sdk_preserves_native_compiler_evidence_with_coordination(
         return {
             "success": True,
             "data": native_evidence(outcome),
-            "native_coordination": copy.deepcopy(NATIVE_IDLE),
+            "native_coordination": copy.deepcopy(coordination),
         }
 
     monkeypatch.setattr(status, "get_unity_instance_from_context", selected)
@@ -88,7 +96,7 @@ async def test_sdk_preserves_native_compiler_evidence_with_coordination(
     assert result["generation"] == 1
     assert result["error_count"] == int(outcome == "failed")
     assert len(result["diagnostics"]) == int(outcome == "failed")
-    assert result["native_coordination"] == NATIVE_IDLE
+    assert result["native_coordination"] == coordination
 
 
 @pytest.mark.parametrize(

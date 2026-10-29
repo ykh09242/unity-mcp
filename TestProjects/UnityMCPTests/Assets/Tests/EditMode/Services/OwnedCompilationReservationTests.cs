@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Services;
 using NUnit.Framework;
 
@@ -6,6 +7,118 @@ namespace MCPForUnityTests.Editor.Services
 {
     public class OwnedCompilationReservationTests
     {
+        [Test]
+        public void CanceledOrFaultedNativeTaskReleasesAfterReloadWithoutClaimingPipelineFinish()
+        {
+            foreach (bool faulted in new[] { false, true })
+            {
+                var task = new TaskCompletionSource<bool>();
+                var owner = new OwnedCompilationReservation(readTask: _ => task.Task);
+                owner.Reserve("compile-one", 100);
+                owner.Started(new object());
+                owner.ObserveNativeCompletion();
+                Quiesce(owner);
+                Assert.AreEqual("started", owner.State.Phase, "An unfinished task is still owned.");
+                if (faulted)
+                    task.SetException(new InvalidOperationException("controlled native failure"));
+                else
+                    task.SetCanceled();
+                owner.ObserveNativeCompletion();
+                Assert.IsFalse(owner.State.PipelineFinished, "Missing public finish must not be invented.");
+                Assert.AreEqual(faulted ? "faulted" : "canceled", owner.State.NativeTaskTermination);
+                var restored = new OwnedCompilationReservation(owner.State);
+                Assert.AreEqual("recoverable", restored.Recovery(101).Mode);
+                restored.ObserveQuiescence(false);
+                Assert.IsNotNull(restored.Blocker(101), "Actual native activity still fences admission.");
+                restored.ObserveQuiescence(true);
+                Assert.IsNull(restored.Blocker(101));
+            }
+        }
+
+        [Test]
+        public void ReplacementStartCapturesCanceledOwnerBeforeTheNextReload()
+        {
+            var first = new TaskCompletionSource<bool>();
+            var owner = new OwnedCompilationReservation(readTask: _ => first.Task);
+            owner.Reserve("compile-one", 100);
+            owner.Started(new object());
+            first.SetCanceled();
+            owner.Started(new object());
+            var restored = new OwnedCompilationReservation(owner.State);
+            Assert.AreEqual("compilation_canceled_awaiting_quiescence", restored.Recovery(1).Reason);
+            Quiesce(restored);
+            Assert.IsNull(restored.Blocker(1));
+        }
+
+        [Test]
+        public void SuccessfulNativeTaskStillRequiresItsMatchingPublicFinish()
+        {
+            var task = new TaskCompletionSource<bool>();
+            var owner = new OwnedCompilationReservation(readTask: _ => task.Task);
+            owner.Reserve("compile-one", 100);
+            var context = new object();
+            owner.Started(context);
+            task.SetResult(true);
+            owner.ObserveNativeCompletion();
+            owner.Started(new object());
+            Quiesce(owner);
+            Assert.AreEqual("started", owner.State.Phase);
+            owner.Finished(context);
+            Quiesce(owner);
+            Assert.IsNull(owner.Blocker(1));
+        }
+
+        [Test]
+        public void UnknownContextWithCompletedTaskPropertyCannotProveTermination()
+        {
+            var task = new TaskCompletionSource<bool>();
+            task.SetCanceled();
+            var owner = new OwnedCompilationReservation();
+            owner.Reserve("compile-one", 100);
+            var context = new { TaskObject = task.Task };
+            Assert.IsNull(CompilationTaskObservation.Read(context));
+            owner.Started(context);
+            owner.ObserveNativeCompletion();
+            Quiesce(owner);
+            Assert.AreEqual("started", owner.State.Phase);
+        }
+
+        [Test]
+        public void InterruptedRefreshCannotReleaseAReplacementCycleBeforeItsOwnFinish()
+        {
+            var first = new TaskCompletionSource<bool>();
+            var second = new TaskCompletionSource<bool>();
+            var firstContext = new object();
+            var secondContext = new object();
+            var owner = new OwnedCompilationReservation(readTask: value => ReferenceEquals(value, firstContext) ? first.Task : second.Task);
+            string generation = owner.Reserve("compile-one", 100, refreshing: true);
+            owner.Started(firstContext);
+            first.SetCanceled();
+            owner.Started(secondContext);
+            Assert.IsNull(owner.State.NativeTaskTermination, "The first task cannot certify the replacement.");
+            Assert.IsTrue(owner.CompleteRefreshDecision(generation));
+            owner.Finished(firstContext);
+            owner.ObserveNativeCompletion();
+            Quiesce(owner);
+            Assert.AreEqual("started", owner.State.Phase);
+            owner.Finished(secondContext);
+            Quiesce(owner);
+            Assert.IsNull(owner.Blocker(1));
+        }
+
+        [Test]
+        public void InvalidTerminationCheckpointCannotReleaseOwnership()
+        {
+            var owner = new OwnedCompilationReservation();
+            owner.Reserve("compile-one", 100);
+            var state = owner.State;
+            state.Phase = "finished";
+            state.NativeTaskTermination = "success";
+            var restored = new OwnedCompilationReservation(state);
+            Quiesce(restored);
+            Assert.AreEqual("invalid_compilation_checkpoint", restored.Recovery(1).Reason);
+        }
+
         [Test]
         public void DelayedStartIsOwnedUntilMatchingFinishEvenWithNoAssemblies()
         {

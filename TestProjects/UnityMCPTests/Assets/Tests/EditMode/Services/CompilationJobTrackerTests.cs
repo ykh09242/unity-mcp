@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -101,7 +102,60 @@ namespace MCPForUnityTests.Editor.Services
         private string _saved;
         private long _time;
 
-        private CompilationLedger Ledger(string restored = null) => new(Session, "C:/fixture", value => _saved = value, restored, () => ++_time);
+        private CompilationLedger Ledger(string restored = null, Func<object, Task> readTask = null) =>
+            new(Session, "C:/fixture", value => _saved = value, restored, () => ++_time, readTask);
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void TerminatedNativeTaskRemainsUnknownAndDoesNotPoisonTheNextCompilation(bool faulted)
+        {
+            var task = new TaskCompletionSource<bool>();
+            var context = new object();
+            var ledger = Ledger(readTask: value => ReferenceEquals(value, context) ? task.Task : null);
+            ledger.Begin(Id);
+            ledger.ExplicitRequest(Id);
+            ledger.Dispatched(Id);
+            ledger.Started(context);
+            ledger.Assembly("A.dll", Array.Empty<CompilerMessage>());
+            if (faulted)
+                task.SetException(new InvalidOperationException("controlled native failure"));
+            else
+                task.SetCanceled();
+            // A replacement start can arrive before any observer update.
+            Cycle(ledger, new object(), false);
+            var result = ledger.Query(Id);
+            Assert.AreEqual("finished", (string)result["state"]);
+            Assert.AreEqual("unknown", (string)result["outcome"]);
+            Assert.AreEqual(faulted ? "compilation_faulted" : "compilation_canceled", (string)result["reason"]);
+            Assert.IsFalse((bool)result["collection_complete"]);
+            Assert.IsFalse(ledger.Begin(Id), "Polling the interrupted identity must not dispatch again.");
+            ledger.Begin(Other);
+            ledger.ExplicitRequest(Other);
+            ledger.Dispatched(Other);
+            Cycle(ledger, new object(), false);
+            var restored = Ledger(_saved);
+            Assert.AreEqual("unknown", (string)restored.Query(Id)["outcome"]);
+            Assert.AreEqual("success", (string)restored.Query(Other)["outcome"]);
+        }
+
+        [Test]
+        public void CompletedNativeTaskCannotInventDiagnosticsOrPublicFinish()
+        {
+            var task = new TaskCompletionSource<bool>();
+            var ledger = Ledger(readTask: _ => task.Task);
+            ledger.Begin(Id);
+            ledger.ExplicitRequest(Id);
+            ledger.Dispatched(Id);
+            var context = new object();
+            ledger.Started(context);
+            task.SetResult(true);
+            ledger.ObserveNativeCompletion();
+            Assert.AreEqual("running", (string)ledger.Query(Id)["state"]);
+            Assert.AreEqual("unknown", (string)ledger.Query(Id)["outcome"]);
+            ledger.Assembly("A.dll", Array.Empty<CompilerMessage>());
+            ledger.Finished(context);
+            Assert.AreEqual("success", (string)ledger.Query(Id)["outcome"]);
+        }
 
         private static CompilerMessage Message(bool error, string message = "Fixture compiler message", string file = "Assets/Fixture.cs") =>
             new()

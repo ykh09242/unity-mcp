@@ -33,11 +33,28 @@ Status and cancellation remain available through the reviewed control commands.
   A zero-event refresh falls through to the explicit compilation request.
   Matching pipeline start/finish events, including a finish with no compiled assemblies,
   retain ownership until the refresh decision has settled and later Editor updates
-  observe raw compilation/import/reload quiescence. A known finish witness survives
-  reload; an unfinished context does not. A missing event at the existing caller
-  observation deadline becomes `recovery_required`, never a fabricated release. A
-  lost event context across reload also requires recovery. Synchronous refresh without
+  observe raw compilation/import/reload quiescence. Unity's Bee pipeline can cancel
+  or fault a compilation without emitting its finish event. For the recognized
+  `Bee.BeeDriver.ActiveBuild` context in `Bee.BeeDriver2`, the exact retained task's
+  cancellation/failure is also a completion witness. That witness is saved on Editor
+  updates, replacement pipeline events and before reload; it still requires later
+  native quiescence. A successful task alone is not a witness because diagnostics
+  and the public finish callback can still be pending. Unknown context types retain
+  event-only tracking. This compatibility path was exercised on Unity 6000.0.69f1.
+  Both kinds of completion witness survive reload. A missing event at the caller's
+  observation deadline retains ownership and can still recover from late evidence;
+  elapsed time does not require a restart. An unfinished context lost across reload
+  still requires recovery. Synchronous refresh without
   an explicit compilation request does not leave a speculative pending reservation.
+
+An interrupted compile job retains its `compile_id`, reports `outcome: unknown`
+with `reason: compilation_canceled` or `compilation_faulted`, and cannot be dispatched
+again with that identity. Its incomplete diagnostics do not contaminate a subsequent
+independent compilation. The coordination diagnostic accepts both the legacy
+`matching_pipeline_finish_and_editor_quiescence` contract and
+`matching_pipeline_finish_or_native_task_termination_then_editor_quiescence`.
+Unity's [compilation implementation](https://github.com/Unity-Technologies/UnityCsReference/blob/6000.0/Editor/Mono/Scripting/ScriptCompilation/EditorCompilation.cs)
+shows the terminal task path that skips the public finish event.
 
 ## Refresh response observations
 

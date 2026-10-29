@@ -342,6 +342,7 @@ namespace MCPForUnity.Editor.Services
                 UnityEditor.Compilation.CompilationPipeline.compilationStarted += context =>
                 {
                     _pipelineCompilationRunning = true;
+                    CompilationJobTracker.ObserveNativeCompletion();
                     CompilationJobTracker.Reservation.Started(context);
                     CompilationJobTracker.Ledger.Started(context);
                     SetSessionUnixMs(CompileStartedKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -351,6 +352,7 @@ namespace MCPForUnity.Editor.Services
                 UnityEditor.Compilation.CompilationPipeline.compilationFinished += context =>
                 {
                     _pipelineCompilationRunning = false;
+                    CompilationJobTracker.ObserveNativeCompletion();
                     CompilationJobTracker.Reservation.Finished(context);
                     CompilationJobTracker.Ledger.Finished(context);
                     // Fires before the domain reload, which is what makes the finish
@@ -368,6 +370,9 @@ namespace MCPForUnity.Editor.Services
 
                 AssemblyReloadEvents.beforeAssemblyReload += () =>
                 {
+                    // A replacement compilation may reload before another update.
+                    // Save cancellation/failure evidence while its native task survives.
+                    CompilationJobTracker.ObserveNativeCompletion();
                     _domainReloadPending = true;
                     _domainReloadBeforeUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     ForceUpdate("before_domain_reload");

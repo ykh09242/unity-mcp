@@ -148,6 +148,14 @@ its callback owner retained waits for terminal completion; losing attribution to
 the run remains a separate recovery condition. Focusing the Editor or observing
 an assembly reload is not itself evidence that a restart is required.
 
+Compilation cancellation or an internal compiler task failure can omit Unity's
+public finish event. When the original Bee task remains identifiable, its terminal
+state is recorded before reload and the reservation releases after native quiescence.
+The compile job remains `unknown` with `compilation_canceled` or
+`compilation_faulted`; recovery does not imply compiler success or repeat the request.
+An older checkpoint that already lost its context and completion evidence cannot
+be repaired from idle flags or an unrelated later compilation.
+
 Inspect the active Test Runner, build, import or compilation work and save relevant
 logs before deciding to restart the Editor. An idle sample does not prove that an
 interrupted native operation released its resources. Likewise, multiple candidate

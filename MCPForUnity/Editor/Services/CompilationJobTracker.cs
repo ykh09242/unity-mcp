@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -24,6 +25,7 @@ namespace MCPForUnity.Editor.Services
         private readonly string _projectRoot;
         private readonly Action<string> _save;
         private readonly Func<long> _now;
+        private readonly Func<object, Task> _readTask;
         private readonly List<Request> _requests = new();
         private readonly List<Run> _runs = new();
         private long _generation;
@@ -43,6 +45,9 @@ namespace MCPForUnity.Editor.Services
         {
             [JsonIgnore]
             public object Context;
+
+            [JsonIgnore]
+            public Task NativeTask;
             public long Generation;
             public long Started;
             public long? Finished;
@@ -58,12 +63,20 @@ namespace MCPForUnity.Editor.Services
             public int DiagnosticBytes = 512;
         }
 
-        internal CompilationLedger(string session, string projectRoot, Action<string> save, string restored = null, Func<long> now = null)
+        internal CompilationLedger(
+            string session,
+            string projectRoot,
+            Action<string> save,
+            string restored = null,
+            Func<long> now = null,
+            Func<object, Task> readTask = null
+        )
         {
             _session = session;
             _projectRoot = Path.GetFullPath(projectRoot).Replace('\\', '/').TrimEnd('/');
             _save = save;
             _now = now ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            _readTask = readTask ?? CompilationTaskObservation.Read;
             if (!string.IsNullOrEmpty(restored))
                 Restore(restored);
         }
@@ -148,6 +161,7 @@ namespace MCPForUnity.Editor.Services
 
         internal void Started(object context)
         {
+            ObserveNativeCompletion();
             if (context == null || _runs.Any(r => ReferenceEquals(r.Context, context)))
             {
                 Incomplete();
@@ -163,6 +177,7 @@ namespace MCPForUnity.Editor.Services
             var run = new Run
             {
                 Context = context,
+                NativeTask = _readTask(context),
                 Generation = ++_generation,
                 Started = _now(),
             };
@@ -270,9 +285,33 @@ namespace MCPForUnity.Editor.Services
             }
             run.Finished = _now();
             run.Context = null;
+            run.NativeTask = null;
             foreach (var request in _requests)
                 CloseFinished(request);
             Save();
+        }
+
+        internal void ObserveNativeCompletion()
+        {
+            bool changed = false;
+            foreach (var run in _runs.Where(r => r.Finished == null))
+            {
+                string termination = CompilationTaskObservation.Termination(run.NativeTask);
+                if (termination == null)
+                    continue;
+                run.Finished = _now();
+                run.Context = null;
+                run.NativeTask = null;
+                run.Complete = false;
+                foreach (var request in _requests.Where(r => r.Candidates.Contains(run.Generation)))
+                {
+                    request.Reason = "compilation_" + termination;
+                    CloseFinished(request);
+                }
+                changed = true;
+            }
+            if (changed)
+                Save();
         }
 
         private void CloseFinished(Request request)
@@ -674,8 +713,15 @@ namespace MCPForUnity.Editor.Services
 
         private static void ObserveNativeQuiescence()
         {
+            ObserveNativeCompletion();
             if (Reservation.AwaitingQuiescence)
                 Reservation.ObserveQuiescence(!EditorApplication.isCompiling && !EditorApplication.isUpdating && !EditorStateCache.IsDomainReloadPending);
+        }
+
+        internal static void ObserveNativeCompletion()
+        {
+            Reservation.ObserveNativeCompletion();
+            Ledger.ObserveNativeCompletion();
         }
 
         private static OwnedCompilationReservation CreateReservation()
@@ -721,7 +767,7 @@ namespace MCPForUnity.Editor.Services
                 retryable = reason == "native_job_active",
                 recovery_action = recovery?.Action,
                 recovery,
-                completion_requires = "matching_pipeline_finish_and_editor_quiescence",
+                completion_requires = "matching_pipeline_finish_or_native_task_termination_then_editor_quiescence",
             };
         }
 

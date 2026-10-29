@@ -1,10 +1,13 @@
 using System;
+using System.Reflection;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.Transport;
 
 namespace MCPForUnity.Editor.Services
 {
     // A requested compilation can be idle until a later Editor tick. Public job outcome and
-    // idle samples cannot retire that ownership; only its paired pipeline events can.
+    // idle samples cannot retire that ownership. Completion needs paired pipeline events
+    // or terminal cancellation/failure of the exact native task supplied at its start.
     internal sealed class OwnedCompilationReservation
     {
         internal sealed class Checkpoint
@@ -16,14 +19,18 @@ namespace MCPForUnity.Editor.Services
             public bool RefreshDecisionPending;
             public bool RefreshCycleObserved;
             public bool PipelineFinished;
+            public string NativeTaskTermination;
             public string RecoveryReason;
         }
 
         private Checkpoint state;
         private object context;
+        private Task nativeTask;
+        private readonly Func<object, Task> readTask;
         private bool finishTurnObserved;
         internal Action Changed;
-        internal bool AwaitingQuiescence => state?.PipelineFinished == true && !state.RefreshDecisionPending;
+        private bool HasCompletion => state != null && (state.PipelineFinished || state.NativeTaskTermination != null);
+        internal bool AwaitingQuiescence => HasCompletion && !state.RefreshDecisionPending;
         internal Checkpoint State =>
             state == null
                 ? null
@@ -36,24 +43,28 @@ namespace MCPForUnity.Editor.Services
                     RefreshDecisionPending = state.RefreshDecisionPending,
                     RefreshCycleObserved = state.RefreshCycleObserved,
                     PipelineFinished = state.PipelineFinished,
+                    NativeTaskTermination = state.NativeTaskTermination,
                     RecoveryReason = state.RecoveryReason,
                 };
 
-        internal OwnedCompilationReservation(Checkpoint restored = null)
+        internal OwnedCompilationReservation(Checkpoint restored = null, Func<object, Task> readTask = null)
         {
+            this.readTask = readTask ?? CompilationTaskObservation.Read;
             if (restored != null)
             {
+                bool terminated = restored.NativeTaskTermination == "canceled" || restored.NativeTaskTermination == "faulted";
                 bool valid =
                     Guid.TryParseExact(restored.Generation, "N", out _)
                     && !string.IsNullOrEmpty(restored.JobId)
                     && !double.IsNaN(restored.Deadline)
                     && !double.IsInfinity(restored.Deadline)
+                    && (restored.NativeTaskTermination == null || terminated && !restored.PipelineFinished)
                     && (
-                        ((restored.Phase == "pending" || restored.Phase == "started") && !restored.PipelineFinished)
-                        || (restored.Phase == "finished" && restored.PipelineFinished)
+                        ((restored.Phase == "pending" || restored.Phase == "started") && !restored.PipelineFinished && !terminated)
+                        || (restored.Phase == "finished" && (restored.PipelineFinished || terminated))
                         || restored.Phase == "recovery_required"
                     );
-                bool finished = valid && restored.PipelineFinished && (restored.Phase == "finished" || restored.Phase == "recovery_required");
+                bool finished = valid && (restored.PipelineFinished || terminated) && (restored.Phase == "finished" || restored.Phase == "recovery_required");
                 string recoveryReason =
                     finished ? null
                     : !valid ? "invalid_compilation_checkpoint"
@@ -65,7 +76,8 @@ namespace MCPForUnity.Editor.Services
                     Generation = valid ? restored.Generation : null,
                     Deadline = restored.Deadline,
                     Phase = finished ? "finished" : "recovery_required",
-                    PipelineFinished = finished,
+                    PipelineFinished = finished && restored.PipelineFinished,
+                    NativeTaskTermination = finished ? restored.NativeTaskTermination : null,
                     RefreshCycleObserved = restored.RefreshCycleObserved,
                     RecoveryReason = recoveryReason,
                 };
@@ -108,11 +120,14 @@ namespace MCPForUnity.Editor.Services
 
         internal void Started(object value)
         {
-            if (state == null || (state.Phase != "pending" && !(state.RefreshDecisionPending && state.PipelineFinished)))
+            ObserveNativeCompletion();
+            if (state == null || (state.Phase != "pending" && !(state.RefreshDecisionPending && HasCompletion)))
                 return;
             context = value;
+            nativeTask = readTask(value);
             state.RefreshCycleObserved |= state.RefreshDecisionPending;
             state.PipelineFinished = false;
+            state.NativeTaskTermination = null;
             finishTurnObserved = false;
             state.Phase = value == null ? "recovery_required" : "started";
             state.RecoveryReason = value == null ? "compilation_context_unavailable" : null;
@@ -124,8 +139,25 @@ namespace MCPForUnity.Editor.Services
             if (state == null || context == null || !ReferenceEquals(context, value))
                 return;
             context = null;
+            nativeTask = null;
             state.PipelineFinished = true;
             state.Phase = "finished";
+            finishTurnObserved = false;
+            Changed?.Invoke();
+        }
+
+        internal void ObserveNativeCompletion()
+        {
+            string termination = CompilationTaskObservation.Termination(nativeTask);
+            if (state == null || context == null || termination == null)
+                return;
+            // Unity's Bee pipeline omits compilationFinished for canceled/faulted
+            // tasks. Retain that exact task's witness before a later reload loses it.
+            context = null;
+            nativeTask = null;
+            state.NativeTaskTermination = termination;
+            state.Phase = "finished";
+            state.RecoveryReason = null;
             finishTurnObserved = false;
             Changed?.Invoke();
         }
@@ -143,7 +175,7 @@ namespace MCPForUnity.Editor.Services
 
         internal void ObserveQuiescence(bool quiescent)
         {
-            if (state == null || !state.PipelineFinished || state.RefreshDecisionPending)
+            if (!HasCompletion || state.RefreshDecisionPending)
                 return;
             // Observe a later Editor update before considering raw native idle. This
             // cannot run from the pipeline Finished callback itself.
@@ -198,12 +230,20 @@ namespace MCPForUnity.Editor.Services
             string reason;
             string action;
             string detail;
-            if (state.PipelineFinished)
+            if (HasCompletion)
             {
-                reason = state.RefreshDecisionPending ? "refresh_trigger_decision_pending" : "compilation_finished_awaiting_quiescence";
+                reason =
+                    state.RefreshDecisionPending ? "refresh_trigger_decision_pending"
+                    : state.NativeTaskTermination != null ? "compilation_" + state.NativeTaskTermination + "_awaiting_quiescence"
+                    : "compilation_finished_awaiting_quiescence";
                 action = "wait_for_editor_quiescence";
-                detail = state.RefreshDecisionPending
-                    ? "The matching pipeline finish was observed; wait for the owned refresh trigger decision and later editor quiescence before ownership can be released."
+                detail =
+                    state.NativeTaskTermination != null
+                        ? "The exact native compilation task "
+                            + state.NativeTaskTermination
+                            + " without a pipeline finish event. Its termination was recorded; ownership will release after the refresh decision and later Editor quiescence. This does not establish compilation success."
+                    : state.RefreshDecisionPending
+                        ? "The matching pipeline finish was observed; wait for the owned refresh trigger decision and later editor quiescence before ownership can be released."
                     : "The matching pipeline finish was observed; ownership will release after later Editor updates confirm compilation, import and assembly reload are idle.";
             }
             else if (state.Phase == "started")
@@ -224,5 +264,33 @@ namespace MCPForUnity.Editor.Services
             }
             return new NativeRecoveryDetails("owned_compilation", state.Phase, reason, "recoverable", action, detail, state.JobId, state.Generation);
         }
+    }
+
+    internal static class CompilationTaskObservation
+    {
+        internal static Task Read(object context)
+        {
+            // This is an optional, read-only compatibility adapter for Unity's Bee
+            // context, not a general TaskObject convention. Unknown versions/types
+            // retain event-only ownership rather than guessing that work ended.
+            var type = context?.GetType();
+            if (type?.FullName != "Bee.BeeDriver.ActiveBuild" || type.Assembly.GetName().Name != "Bee.BeeDriver2")
+                return null;
+            try
+            {
+                return type.GetProperty("TaskObject", BindingFlags.Instance | BindingFlags.Public)?.GetValue(context) as Task;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        // Success is deliberately excluded: assembly diagnostics and the public
+        // finish callback may still be pending after the Bee task has completed.
+        internal static string Termination(Task task) =>
+            task?.IsCanceled == true ? "canceled"
+            : task?.IsFaulted == true ? "faulted"
+            : null;
     }
 }

@@ -55,7 +55,10 @@ class CompileCoordination(BaseModel):
     retryable: bool
     recovery_action: RecoveryAction | None
     recovery: NativeRecovery | None = Field(default=None, exclude_if=lambda value: value is None)
-    completion_requires: Literal["matching_pipeline_finish_and_editor_quiescence"]
+    completion_requires: Literal[
+        "matching_pipeline_finish_and_editor_quiescence",
+        "matching_pipeline_finish_or_native_task_termination_then_editor_quiescence",
+    ]
 
     @field_validator("recovery", mode="before")
     @classmethod
