@@ -46,6 +46,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
         public string MetadataHash;
         public string RegisteredGuid;
 
+        // Digest only: request contents are retained separately in Editor SessionState.
+        public string SubmissionIntentHash;
+        public string SubmissionRefusalCode;
+
         private static readonly HashSet<string> Phases = new(StringComparer.Ordinal)
         {
             "preparing",
@@ -162,6 +166,15 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 return false;
             if (Meshy != null && !Meshy.Validate())
                 return false;
+            if (
+                SubmissionIntentHash != null && !Hex(SubmissionIntentHash, 64)
+                || SubmissionRefusalCode != null
+                    && (!SubmissionRefusalCode.StartsWith("submission_", StringComparison.Ordinal) || SafeCode(SubmissionRefusalCode) == null)
+                || SubmissionIntentHash != null && SubmissionRefusalCode != null
+            )
+                return false;
+            if (Phase == "preparing" && SubmissionIntentHash != null && (Receipt != null || Meshy != null || FalOutputField != null || SavedPath != null))
+                return false;
             if (Phase == "polling" || Phase == "refining" || Phase == "refine_submitting" || Phase == "downloading")
             {
                 if (!HasSafeReceipt() || Provider == "meshy" && Meshy == null || Provider == "fal" && Kind == "model" && FalOutputField == null)
@@ -271,6 +284,15 @@ namespace MCPForUnity.Editor.Services.AssetGen
             Known(
                 value,
                 "reload_before_submission",
+                "submission_intent_unavailable",
+                "submission_intent_invalid",
+                "submission_intent_too_large",
+                "submission_intent_unsupported",
+                "submission_url_input_not_retained",
+                "submission_input_changed",
+                "submission_output_changed",
+                "submission_configuration_changed",
+                "submission_authorization_revoked",
                 "submission_outcome_unknown",
                 "refine_outcome_unknown",
                 "local_write_outcome_unknown",
@@ -297,6 +319,17 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 "job_timeout" => "Timed out within the original generation execution budget.",
                 "reconnect_key_unavailable" => "The provider key needed to reconnect is unavailable.",
                 "reload_before_submission" => "Editor reload interrupted the job before provider submission.",
+                "submission_intent_unavailable" => "The original submission intent is unavailable in this Editor session; no provider request was submitted.",
+                "submission_intent_invalid" => "The retained submission intent is invalid; no provider request was submitted.",
+                "submission_intent_too_large" =>
+                    "The original submission exceeds the bounded session-intent limit; no provider request was submitted after reload.",
+                "submission_intent_unsupported" => "The original submission cannot be reconstructed safely; no provider request was submitted after reload.",
+                "submission_url_input_not_retained" => "Remote image URLs are not retained across reload; no provider request was submitted after reload.",
+                "submission_input_changed" =>
+                    "The original local input is missing or its content or asset identity changed; no provider request was submitted.",
+                "submission_output_changed" => "The original output folder is no longer valid; no provider request was submitted.",
+                "submission_configuration_changed" => "The provider model configuration changed; no provider request was submitted.",
+                "submission_authorization_revoked" => "The generation/import tool is no longer authorized; no provider request was submitted.",
                 "saved_asset_identity_changed" => "Saved asset identity changed; retained output was not imported.",
                 "saved_asset_missing" => "Saved output is missing; no replacement was written.",
                 "checkpoint_write_failed" => "Recovery checkpoint could not be stored; further work stopped.",

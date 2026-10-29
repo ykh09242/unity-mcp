@@ -123,7 +123,10 @@ namespace MCPForUnityTests.Editor.AssetGen
             string[] ids = SessionState.GetString(Index, "").Split(',');
             AssetGenJobManager.ResetTransientForTests();
             foreach (string id in ids)
+            {
                 SessionState.EraseString(Prefix + id);
+                AssetGenSubmissionIntent.Forget(id);
+            }
             SessionState.EraseString(Index);
             instance = Guid.NewGuid().ToString("N");
             now = 5;
@@ -176,6 +179,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             Pump(job.JobId, 2);
             var cp = AssetGenJobCheckpoint.Read(AssetGenJobCheckpoint.ParseRecord(SessionState.GetString(Prefix + job.JobId, "")), job.JobId, now);
             cp.Phase = phase;
+            if (phase == "preparing")
+                cp.SubmissionIntentHash = null; // Legacy preparing records have no reconstructable session intent.
             if (phase == "writing" || phase == "importing")
             {
                 cp.SavedPath = cp.OutputFolder + "/owned.glb";
@@ -191,6 +196,19 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual(AssetGenJobState.Failed, restored.State);
             Assert.AreEqual(code, restored.RecoveryCode);
             Assert.AreEqual(calls, http.RecordedRequests.Count);
+        }
+
+        [Test]
+        public void RestartBeforeSubmission_RefusesMissingSessionIntentWithoutProviderCalls()
+        {
+            var job = Start();
+            Restart();
+            Pump(job.JobId);
+            var restored = AssetGenJobManager.GetJob(job.JobId);
+            Assert.AreEqual(AssetGenJobState.Failed, restored.State);
+            Assert.AreEqual("submission_intent_unavailable", restored.RecoveryCode);
+            Assert.AreEqual("not_submitted", restored.RecoveryState);
+            Assert.IsEmpty(http.RecordedRequests);
         }
 
         [Test]

@@ -88,6 +88,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         internal static bool SkipModelVerificationForTests;
         internal static Func<double> ClockForTests = null;
         internal static Action<string> BeforeCheckpointWriteForTests = null;
+        internal static Func<string, bool> SubmissionAuthorizationForTests;
 
         private static AssetGenJobJournal _journal;
         private static string _journalRootForTests;
@@ -234,7 +235,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         string failure = RestoreFailure(cp);
                         if (failure != null || Runners.Count >= AssetGenJobCheckpoint.MaxActive)
                         {
-                            RecoveryFailure(job, failure ?? "checkpoint_invalid", failure == "reload_before_submission" ? "not_submitted" : "outcome_unknown");
+                            RecoveryFailure(job, failure ?? "checkpoint_invalid", cp.Phase == "preparing" ? "not_submitted" : "outcome_unknown");
                             interrupted.Add(job);
                             continue;
                         }
@@ -246,6 +247,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         job.RecoveryCode = "resumed";
                         UpdateProviderEvidence(runner);
                     }
+                    else
+                        AssetGenSubmissionIntent.Forget(id);
                     TrackJob(job);
                 }
                 catch
@@ -272,7 +275,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         private static string RestoreFailure(AssetGenJobCheckpoint cp) =>
             cp.Phase switch
             {
-                "preparing" => "reload_before_submission",
+                "preparing" => cp.SubmissionIntentHash != null ? null : cp.SubmissionRefusalCode ?? "reload_before_submission",
                 "submitting" => "submission_outcome_unknown",
                 "refine_submitting" => "refine_outcome_unknown",
                 "writing" => "local_write_outcome_unknown",
@@ -409,8 +412,13 @@ namespace MCPForUnity.Editor.Services.AssetGen
             if (req == null)
                 throw new ArgumentNullException(nameof(req));
             EnsureCapacity();
+            req = AssetGenSubmissionIntent.Copy(req);
             req.OutputFolder = AssetGenPaths.ResolveOutputFolder(req.OutputFolder, "Models");
             string provider = string.IsNullOrEmpty(req.Provider) ? "tripo" : req.Provider.ToLowerInvariant();
+            req.Model =
+                provider == "tripo" ? (string.IsNullOrEmpty(req.Model) ? TripoAdapter.ModelVersion : req.Model)
+                : provider == "meshy" ? (string.IsNullOrEmpty(req.Model) ? MeshyAdapter.DefaultModel : req.Model)
+                : AssetGenModelCatalog.ResolveModel("model", provider, req.Model);
             IModelProviderAdapter adapter = AssetGenProviders.Model(provider); // throws NotSupportedException if unimplemented
 
             var job = NewJob("model", provider, "generate");
@@ -426,6 +434,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             var runner = new Runner
             {
                 Job = job,
+                Submission = AssetGenSubmissionIntent.Capture(job, req),
                 SubmitFn = async ct =>
                 {
                     if (string.Equals(provider, "fal", StringComparison.OrdinalIgnoreCase) && !SkipModelVerificationForTests)
@@ -458,8 +467,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
             if (req == null)
                 throw new ArgumentNullException(nameof(req));
             EnsureCapacity();
+            req = AssetGenSubmissionIntent.Copy(req);
             req.OutputFolder = AssetGenPaths.ResolveOutputFolder(req.OutputFolder, "Images");
             string provider = string.IsNullOrEmpty(req.Provider) ? "fal" : req.Provider.ToLowerInvariant();
+            req.Model = AssetGenModelCatalog.ResolveModel("image", provider, req.Model);
             IImageProviderAdapter adapter = AssetGenProviders.Image(provider); // throws NotSupportedException if unimplemented
 
             var job = NewJob("image", provider, "generate");
@@ -474,6 +485,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             var runner = new Runner
             {
                 Job = job,
+                Submission = AssetGenSubmissionIntent.Capture(job, req),
                 SubmitFn = async ct =>
                 {
                     if (!SkipModelVerificationForTests && string.Equals(provider, "fal", StringComparison.OrdinalIgnoreCase))
@@ -514,8 +526,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
             if (req == null)
                 throw new ArgumentNullException(nameof(req));
             EnsureCapacity();
+            req = AssetGenSubmissionIntent.Copy(req);
             req.OutputFolder = AssetGenPaths.ResolveOutputFolder(req.OutputFolder, "Audio");
             string provider = string.IsNullOrEmpty(req.Provider) ? "fal" : req.Provider.ToLowerInvariant();
+            req.Model = AssetGenModelCatalog.ResolveModel("audio", provider, req.Model);
             IAudioProviderAdapter adapter = AssetGenProviders.Audio(provider); // throws NotSupportedException if unimplemented
 
             var job = NewJob("audio", provider, "generate");
@@ -528,6 +542,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             var runner = new Runner
             {
                 Job = job,
+                Submission = AssetGenSubmissionIntent.Capture(job, req),
                 SubmitFn = async ct =>
                 {
                     if (!SkipModelVerificationForTests)
@@ -572,6 +587,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             var runner = new Runner
             {
                 Job = job,
+                Submission = AssetGenSubmissionIntent.Capture(job, null),
                 SubmitFn = ct => adapter.ResolveDownloadUrlAsync(uid, apiKey, transport, ct), // returns the zip/gltf URL as providerJobId
                 PollFn = (pid, ct) =>
                     Task.FromResult(
@@ -682,6 +698,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             {
                 r.Job.ProgressEvidence?.RequestCancellation();
                 r.Canceled = true;
+                AssetGenSubmissionIntent.Forget(jobId);
                 r.Job.State = AssetGenJobState.Canceled;
                 r.Job.RecoveryState = "terminal";
                 r.Job.RecoveryCode = "canceled";
@@ -732,6 +749,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             public AssetGenJob Job;
             public AssetGenJobCheckpoint Checkpoint;
+            public AssetGenSubmissionIntent Submission;
+            public bool ResumingSubmission;
             public long Epoch;
             public IModelProviderAdapter ModelAdapter;
             public bool AsSprite;
@@ -801,6 +820,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             AttachMeshyCheckpoint(runner);
             try
             {
+                runner.Submission?.Store(runner.Checkpoint);
                 PersistRequired(job, runner.Checkpoint);
                 EnsureTicking();
             }
@@ -948,10 +968,13 @@ namespace MCPForUnity.Editor.Services.AssetGen
             if (!Runners.TryGetValue(job.JobId, out var runner) || !ReferenceEquals(runner.Job, job))
                 throw new OperationCanceledException();
             Admit(runner);
+            if (runner.ResumingSubmission)
+                ValidateSubmission(runner);
             runner.Checkpoint.Phase = "submitting";
             runner.Job.ProgressEvidence?.Begin(AssetOperationPhase.Submitting);
             runner.Job.ProviderPhase = "submit";
             PersistRequired(job, runner.Checkpoint);
+            AssetGenSubmissionIntent.Forget(job.JobId);
             Admit(runner);
         }
 
@@ -960,6 +983,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
             string receipt = await r.SubmitFn(r.Cts.Token);
             Admit(r);
             r.ProviderJobId = receipt;
+            AssetGenSubmissionIntent.Forget(r.Job.JobId);
+            r.Submission = null;
             AssetGenJobCheckpoint cp = r.Checkpoint;
             cp.Meshy = (r.ModelAdapter as MeshyAdapter)?.CaptureRecovery();
             cp.FalOutputField = (r.ModelAdapter as FalModelAdapter)?.CaptureOutputField();
@@ -1021,6 +1046,118 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 : "poll";
         }
 
+        private static void ValidateSubmission(Runner r)
+        {
+            string tool = r.Job.Kind == "marketplace" ? "import_model" : "generate_" + r.Job.Kind;
+            if (!(SubmissionAuthorizationForTests?.Invoke(tool) ?? MCPServiceLocator.ToolDiscovery.IsToolEnabled(tool)))
+                throw new RecoveryAbort("submission_authorization_revoked");
+            try
+            {
+                r.Submission.ValidateCurrent(
+                    r.Checkpoint,
+                    r.Submission.Model?.CatalogEntry ?? r.Submission.Image?.CatalogEntry ?? r.Submission.Audio?.CatalogEntry
+                );
+            }
+            catch (InvalidDataException error)
+            {
+                throw new RecoveryAbort(AssetGenJobCheckpoint.SafeCode(error.Message) ?? "submission_intent_invalid");
+            }
+            Admit(r);
+        }
+
+        private static string ResolveSubmissionKey(Runner r)
+        {
+            Admit(r);
+            if (!SecureKeyStore.Current.TryGet(r.Job.Provider, out string key) || string.IsNullOrEmpty(key))
+                throw new RecoveryAbort("reconnect_key_unavailable");
+            return key;
+        }
+
+        private static void RestoreSubmission(Runner r)
+        {
+            try
+            {
+                r.Submission = AssetGenSubmissionIntent.Read(r.Job, r.Checkpoint);
+            }
+            catch (InvalidDataException error)
+            {
+                throw new RecoveryAbort(AssetGenJobCheckpoint.SafeCode(error.Message) ?? "submission_intent_invalid");
+            }
+            r.ResumingSubmission = true;
+            ValidateSubmission(r);
+            string key = ResolveSubmissionKey(r);
+            Admit(r);
+            r.Transport = CreateJobTransport(r.Job.JobId);
+            if (r.Job.Kind == "model")
+            {
+                ModelGenRequest request = r.Submission.Model;
+                request.CatalogEntry = AssetGenModelCatalog.Find(request.Model);
+                r.ModelAdapter = AssetGenProviders.Model(r.Job.Provider);
+                AttachMeshyCheckpoint(r);
+                r.SubmitFn = async ct =>
+                {
+                    if (r.Job.Provider == "fal" && !SkipModelVerificationForTests)
+                        request.CatalogEntry = await FalModelCatalog.VerifyForGeneration(request.Model, "model", request.Mode, ct, key);
+                    key = ResolveSubmissionKey(r);
+                    AdmitSubmission(r.Job);
+                    return r.ModelAdapter is TripoAdapter tripo
+                        ? await tripo.SubmitAsync(request, key, r.Transport, ct, () => AdmitSubmission(r.Job))
+                        : await r.ModelAdapter.SubmitAsync(request, key, r.Transport, ct);
+                };
+                r.PollFn = (id, ct) => r.ModelAdapter.PollAsync(id, key, r.Transport, ct);
+            }
+            else if (r.Job.Kind == "image")
+            {
+                ImageGenRequest request = r.Submission.Image;
+                request.CatalogEntry = AssetGenModelCatalog.Find(request.Model);
+                var adapter = AssetGenProviders.Image(r.Job.Provider);
+                r.SubmitFn = async ct =>
+                {
+                    if (!SkipModelVerificationForTests)
+                        request.CatalogEntry =
+                            r.Job.Provider == "fal"
+                                ? await FalModelCatalog.VerifyForGeneration(request.Model, "image", request.Mode, ct, key)
+                                : await OpenRouterModelCatalog.VerifyForGeneration(request.Model, request.Mode, ct);
+                    key = ResolveSubmissionKey(r);
+                    AdmitSubmission(r.Job);
+                    return await adapter.SubmitAsync(request, key, r.Transport, ct);
+                };
+                r.PollFn = (id, ct) => adapter.PollAsync(id, key, r.Transport, ct);
+            }
+            else if (r.Job.Kind == "audio")
+            {
+                AudioGenRequest request = r.Submission.Audio;
+                request.CatalogEntry = AssetGenModelCatalog.Find(request.Model);
+                var adapter = AssetGenProviders.Audio(r.Job.Provider);
+                r.SubmitFn = async ct =>
+                {
+                    if (!SkipModelVerificationForTests)
+                        request.CatalogEntry = await FalModelCatalog.VerifyForGeneration(request.Model, "audio", "text", ct, key);
+                    key = ResolveSubmissionKey(r);
+                    AdmitSubmission(r.Job);
+                    return await adapter.SubmitAsync(request, key, r.Transport, ct);
+                };
+                r.PollFn = (id, ct) => adapter.PollAsync(id, key, r.Transport, ct);
+            }
+            else
+            {
+                var adapter = AssetGenProviders.Marketplace("sketchfab");
+                r.SubmitFn = ct => adapter.ResolveDownloadUrlAsync(r.Checkpoint.MarketplaceUid, ResolveSubmissionKey(r), r.Transport, ct);
+                r.PollFn = (url, ct) =>
+                    Task.FromResult(
+                        new ProviderPollResult
+                        {
+                            State = ProviderPollState.Succeeded,
+                            Progress = 1f,
+                            ResultExt = "zip",
+                            DownloadUrl = url,
+                        }
+                    );
+            }
+            r.Phase = RunnerPhase.Submit;
+            r.Job.State = AssetGenJobState.Queued;
+        }
+
         private static void Reconnect(Runner r)
         {
             Admit(r);
@@ -1040,6 +1177,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 ValidateSaved(r);
                 Admit(r);
                 r.Phase = RunnerPhase.Import;
+                return;
+            }
+            if (cp.Phase == "preparing")
+            {
+                RestoreSubmission(r);
                 return;
             }
             // Local saved recovery must never touch credentials, catalog or adapter construction.
@@ -1121,6 +1263,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         Reconnect(r);
                         break;
                     case RunnerPhase.Submit:
+                        if (r.ResumingSubmission)
+                            ValidateSubmission(r);
                         r.Job.ProgressEvidence?.Begin(AssetOperationPhase.Preparing);
                         r.Job.State = AssetGenJobState.Running;
                         Persist(r.Job);
@@ -1128,6 +1272,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         {
                             r.Checkpoint.Phase = AssetGenJobCheckpoint.SafeId(r.MarketplaceUid, 128) ? "polling" : "nonresumable";
                             PersistRequired(r.Job, r.Checkpoint);
+                            AssetGenSubmissionIntent.Forget(r.Job.JobId);
                             Admit(r);
                         }
                         r.SubmitTask = SubmitAndCheckpoint(r);
@@ -1644,12 +1789,13 @@ namespace MCPForUnity.Editor.Services.AssetGen
             r.Job.State = AssetGenJobState.Failed;
             r.Job.RecoveryCode = code;
             r.Job.RecoveryState =
-                r.Checkpoint.Phase == "submitting"
+                r.Checkpoint.Phase == "preparing" ? "not_submitted"
+                : r.Checkpoint.Phase == "submitting"
                 || r.Checkpoint.Phase == "refine_submitting"
                 || r.Checkpoint.Phase == "writing"
                 || r.Checkpoint.Phase == "importing"
                     ? "outcome_unknown"
-                    : "unavailable";
+                : "unavailable";
             r.Job.Error = SecretRedactor.Scrub(string.IsNullOrEmpty(message) ? "Generation failed." : message);
             Persist(r.Job);
             Finalize(r);
@@ -1660,6 +1806,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             if (!Runners.TryGetValue(r.Job.JobId, out var current) || !ReferenceEquals(current, r))
                 return;
             r.Job.ProgressEvidence?.Stop();
+            AssetGenSubmissionIntent.Forget(r.Job.JobId);
             Runners.Remove(r.Job.JobId);
             OperationActivity.Invalidate();
             try
@@ -1718,6 +1865,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     Journal.Save(record, JobOrder, Now(), true);
                 SessionState.SetString(JobKeyPrefix + job.JobId, record.ToString(Formatting.None));
                 SessionState.SetString(JobIndexKey, index);
+                if (IsTerminal(job.State))
+                    AssetGenSubmissionIntent.Forget(job.JobId);
                 _jobIndexDirty = false;
             }
             catch
@@ -1837,7 +1986,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
             PrepareForAssemblyReload();
             string index = SessionState.GetString(JobIndexKey, string.Empty);
             foreach (string id in index.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
                 SessionState.EraseString(JobKeyPrefix + id);
+                AssetGenSubmissionIntent.Forget(id);
+            }
             SessionState.EraseString(JobIndexKey);
             Jobs.Clear();
             Checkpoints.Clear();
@@ -1852,6 +2004,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             SkipModelVerificationForTests = false;
             ClockForTests = null;
             BeforeCheckpointWriteForTests = null;
+            SubmissionAuthorizationForTests = null;
             _journalRootForTests = null;
             _journalOwnerForTests = null;
             _journalInstanceForTests = null;

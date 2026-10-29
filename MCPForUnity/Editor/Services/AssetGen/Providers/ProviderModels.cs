@@ -39,7 +39,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         public string Prompt;
         public string ImagePath;
         public string ImageUrl;
-        public bool AllowImageUpload; // Transient Tripo-only consent; never a checkpoint field.
+        public bool AllowImageUpload; // Tripo-only consent; session intent only, never the disk checkpoint.
         public string Format = "glb";
         public float TargetSize = 1f;
         public bool Texture = true;
@@ -70,7 +70,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
     /// <summary>
     /// Request to generate an audio clip (fal.ai for v1). <see cref="Model"/> selects the fal
     /// endpoint (stable-audio-25 / cassetteai/* / lyria2). <see cref="Duration"/> is a per-gen
-    /// input; 0 => provider default. Never carries a key; never persisted (transient request only).
+    /// input; 0 => provider default. Never carries a key; bounded session intent may retain it across
+    /// assembly reload, but the disk journal never contains the request.
     /// </summary>
     public sealed class AudioGenRequest
     {
