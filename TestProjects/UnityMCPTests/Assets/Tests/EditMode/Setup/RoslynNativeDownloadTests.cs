@@ -13,6 +13,47 @@ namespace MCPForUnityTests.Editor.Setup
     public class RoslynNativeDownloadTests
     {
         [UnityTest]
+        public IEnumerator AbortReleasesNativeOwnershipBeforeFinallyDisposesAgain()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            TcpClient client = null;
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            using var transfer = new RoslynInstaller.UnityTransfer($"http://127.0.0.1:{port}/held");
+            try
+            {
+                var accepted = listener.AcceptTcpClientAsync();
+                transfer.Start();
+                var elapsed = Stopwatch.StartNew();
+                while (!accepted.IsCompleted && elapsed.Elapsed < TimeSpan.FromSeconds(5))
+                    yield return null;
+                Assert.That(accepted.IsCompleted, Is.True);
+                client = accepted.GetAwaiter().GetResult();
+                transfer.Abort();
+                Assert.Throws<ObjectDisposedException>(
+                    () => _ = transfer.DownloadedBytes,
+                    "Abort must finish ownership cleanup before the caller's finally continues."
+                );
+                Assert.That(transfer.IsDone, Is.True);
+                Assert.DoesNotThrow(() => transfer.Dispose());
+            }
+            finally
+            {
+                client?.Dispose();
+                listener.Stop();
+            }
+        }
+
+        [Test]
+        public void DisposedTransferReportsDoneWithoutNativeAccess()
+        {
+            var transfer = new RoslynInstaller.UnityTransfer("http://127.0.0.1:1/never-sent");
+            transfer.Dispose();
+            Assert.DoesNotThrow(() => transfer.Dispose());
+            Assert.That(transfer.IsDone, Is.True, "Finally cleanup must not query freed native state.");
+        }
+
+        [UnityTest]
         public IEnumerator CancellationAbortsARealStalledUnityWebRequest()
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);

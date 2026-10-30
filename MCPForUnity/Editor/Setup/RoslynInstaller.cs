@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Runtime.Helpers;
 using UnityEditor;
 using UnityEngine;
@@ -233,18 +234,29 @@ namespace MCPForUnity.Editor.Setup
 
         internal sealed class UnityTransfer : RoslynDownload.ITransfer
         {
-            private readonly UnityWebRequest request;
+            private readonly EditorWebRequest owner;
+            private UnityWebRequest request => owner.Request;
 
             internal UnityTransfer(string url)
             {
-                request = UnityWebRequest.Get(url);
-                // The watchdog uses progress, rather than timing out a healthy slow body.
-                request.timeout = 0;
+                EditorWebRequest.ThrowIfUnavailable();
+                UnityWebRequest native = UnityWebRequest.Get(url);
+                try
+                {
+                    // The watchdog uses progress, rather than timing out a healthy slow body.
+                    native.timeout = 0;
+                    owner = new EditorWebRequest(native);
+                }
+                catch
+                {
+                    native.Dispose();
+                    throw;
+                }
             }
 
-            public void Start() => request.SendWebRequest();
+            public void Start() => owner.Send(CancellationToken.None);
 
-            public bool IsDone => request.isDone;
+            public bool IsDone => owner.IsDisposed || request.isDone;
             public ulong DownloadedBytes => request.downloadedBytes;
             public float Progress => request.downloadProgress;
             public bool Succeeded => request.result == UnityWebRequest.Result.Success;
@@ -259,9 +271,10 @@ namespace MCPForUnity.Editor.Setup
             public string Error => request.error;
             public byte[] Data => request.downloadHandler.data;
 
-            public void Abort() => request.Abort();
+            // Abort is terminal for this adapter: detach before stopping native work.
+            public void Abort() => owner.Dispose();
 
-            public void Dispose() => request.Dispose();
+            public void Dispose() => owner.Dispose();
         }
 
         private static byte[] ExtractFileFromZip(byte[] zipBytes, string entryPath)
