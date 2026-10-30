@@ -37,13 +37,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 return Task.FromCanceled<HttpResult>(ct);
 
             int timeout = ResolveTimeoutSeconds(spec.TimeoutSeconds);
-            var tcs = new TaskCompletionSource<HttpResult>();
+            EditorWebRequest.ThrowIfUnavailable();
+            var tcs = new TaskCompletionSource<HttpResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             var download = new BoundedDownloadHandler();
             UnityWebRequest request = null;
             UploadHandlerRaw upload = null;
             bool downloadAttached = false;
             bool uploadAttached = false;
-            CancellationTokenRegistration ctReg = default;
+            EditorWebRequest owner = null;
             try
             {
                 // Retain ownership until each handler has actually attached to the request.
@@ -72,54 +73,57 @@ namespace MCPForUnity.Editor.Services.AssetGen.Http
                 // by AssetDownloadTransport, which revalidates the URL and DNS at every hop.
                 request.redirectLimit = 0;
 
-                if (ct.CanBeCanceled)
-                {
-                    ctReg = ct.Register(() =>
+                owner = new EditorWebRequest(request);
+                owner.Send(
+                    ct,
+                    () =>
                     {
+                        HttpResult result = null;
+                        Exception failure = null;
                         try
                         {
-                            request.Abort();
+                            var body = download.GetBody();
+                            result = new HttpResult
+                            {
+                                Status = (int)request.responseCode,
+                                IsSuccess = request.result == UnityWebRequest.Result.Success,
+                                RetryAfterSeconds = int.TryParse(request.GetResponseHeader("Retry-After"), out int retryAfter) ? (int?)retryAfter : null,
+                            };
+                            result.SetBody(body);
                         }
-                        catch { /* ignore */ }
-                        tcs.TrySetCanceled();
-                    });
-                }
-
-                var op = request.SendWebRequest();
-                op.completed += _ =>
-                {
-                    try
-                    {
-                        var body = download.GetBody();
-                        var result = new HttpResult
+                        catch (Exception e)
                         {
-                            Status = (int)request.responseCode,
-                            IsSuccess = request.result == UnityWebRequest.Result.Success,
-                            RetryAfterSeconds = int.TryParse(request.GetResponseHeader("Retry-After"), out int retryAfter) ? (int?)retryAfter : null,
-                        };
-                        result.SetBody(body);
-                        tcs.TrySetResult(result);
-                    }
-                    catch (Exception e)
+                            failure = e;
+                        }
+                        finally
+                        {
+                            owner.Dispose();
+                        }
+                        if (failure != null)
+                            tcs.TrySetException(failure);
+                        else
+                            tcs.TrySetResult(result);
+                    },
+                    error =>
                     {
-                        tcs.TrySetException(e);
+                        if (error is OperationCanceledException)
+                            tcs.TrySetCanceled(ct);
+                        else
+                            tcs.TrySetException(error);
                     }
-                    finally
-                    {
-                        ctReg.Dispose();
-                        request.Dispose();
-                    }
-                };
+                );
 
                 return tcs.Task;
             }
             catch
             {
                 // No completion callback owns cleanup when configuration or sending fails synchronously.
-                ctReg.Dispose();
                 try
                 {
-                    request?.Dispose();
+                    if (owner != null)
+                        owner.Dispose();
+                    else
+                        request?.Dispose();
                 }
                 finally
                 {
