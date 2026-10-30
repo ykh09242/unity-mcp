@@ -318,8 +318,11 @@ namespace MCPForUnityTests.Editor.AssetGen
             var second = OpenRouterModelCatalog.VerifyForGeneration(Id, "image", CancellationToken.None);
             cancel.Cancel();
             delayed.Endpoint.SetResult(Json(new JObject { ["id"] = Id, ["endpoints"] = new JArray(Endpoint(Parameters())) }));
-            for (int i = 0; i < 100 && (!first.IsCompleted || !second.IsCompleted); i++)
+            // Editor frames can advance faster than asynchronous cancellation continuations.
+            double deadline = UnityEditor.EditorApplication.timeSinceStartup + 5;
+            while ((!first.IsCompleted || !second.IsCompleted) && UnityEditor.EditorApplication.timeSinceStartup < deadline)
                 yield return null;
+            Assert.IsTrue(first.IsCompleted && second.IsCompleted, $"Verification did not settle: first={first.Status}, second={second.Status}.");
             Assert.IsTrue(first.IsCanceled);
             Assert.IsFalse(delayed.SharedToken.IsCancellationRequested);
             Assert.AreEqual("vendor", second.GetAwaiter().GetResult().RouterProviderTag);
