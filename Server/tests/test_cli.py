@@ -132,6 +132,14 @@ class TestOutputFormatting:
         assert "name" in result
         assert "Player" in result
 
+    def test_format_as_text_preserves_success_fields_beside_message(self):
+        # Given: a successful response with useful top-level fields.
+        data = {"success": True, "message": "Completed", "count": 3}
+        # When: the formatter renders the success response.
+        result = format_as_text(data)
+        # Then: the message fallback does not hide useful fields.
+        assert "count: 3" in result
+
     def test_format_as_text_error_response(self):
         """Test text formatting for error response."""
         data = {"success": False, "error": "Something went wrong"}

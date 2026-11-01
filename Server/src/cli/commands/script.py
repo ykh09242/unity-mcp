@@ -1,6 +1,5 @@
 """Script CLI commands."""
 
-import base64
 import json
 import sys
 from typing import Any, Optional
@@ -13,6 +12,7 @@ from cli.utils.output import format_output, print_error, print_success
 from cli.utils.connection import run_command, handle_unity_errors, UnityCommandError
 from cli.utils.parsers import parse_json_list_or_exit
 from cli.utils.confirmation import confirm_destructive_action
+from cli.utils.script_read import format_script_read
 
 
 def _split_script_path(path: str) -> tuple[str, str]:
@@ -108,31 +108,7 @@ def read(path: str, start_line: Optional[int], line_count: Optional[int]):
     }
 
     result = run_command("manage_script", params, config)
-    # For read, just output the content directly
-    if result.get("success") and result.get("data"):
-        data = result.get("data", {})
-        if isinstance(data, dict) and "contents" in data:
-            contents = data["contents"]
-            if start_line is not None or line_count is not None:
-                start = (start_line or 1) - 1
-                end = start + line_count if line_count is not None else None
-                contents = "".join(contents.splitlines(keepends=True)[start:end])
-            if config.format == "json":
-                result = dict(result)
-                result["data"] = dict(result["data"])
-                result["data"]["contents"] = contents
-                if start_line is not None or line_count is not None:
-                    if result["data"].get("contentsEncoded"):
-                        result["data"]["encodedContents"] = base64.b64encode(
-                            contents.encode("utf-8")
-                        ).decode("ascii")
-                click.echo(format_output(result, config.format))
-            else:
-                click.echo(contents)
-        else:
-            click.echo(format_output(result, config.format))
-    else:
-        click.echo(format_output(result, config.format))
+    click.echo(format_script_read(result, config.format, start_line, line_count))
 
 
 @script.command("delete")
@@ -248,4 +224,4 @@ def validate(path: str, level: str):
     }
 
     result = run_command("manage_script", params, config)
-    click.echo(format_output(result, config.format))
+    click.echo(format_output(result, config.format, show_success_message=True))

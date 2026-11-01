@@ -2,12 +2,34 @@
 
 import sys
 import os
+import re
 import click
+import regex
 from typing import Optional, Any
 
-from cli.utils.config import get_config
+from cli.utils.config import CLIConfig, get_config
 from cli.utils.output import format_output, print_error, print_info, print_success
-from cli.utils.connection import run_command, handle_unity_errors
+from cli.utils.connection import (
+    run_command,
+    handle_unity_errors,
+    UnityCommandError,
+    UnityConnectionError,
+)
+from cli.utils.script_read import format_script_read, script_contents
+from services.tools import bounded_regex
+
+_SEARCH_RESULT_LIMIT = 1000
+_EXCERPT_CHARS = 500
+_MATCH_CHARS = 200
+
+
+def _read_source(params: dict[str, Any], config: CLIConfig) -> dict[str, Any]:
+    """Keep read/search transport failures in the selected structured output format."""
+    try:
+        result = run_command("manage_script", params, config)
+    except UnityConnectionError as error:
+        raise UnityCommandError({"success": False, "error": str(error)}) from error
+    return result.get("result", result)
 
 
 @click.group()
@@ -59,7 +81,7 @@ def execute(source: Optional[str], file: Optional[str], no_safety_checks: bool):
     }
 
     result = run_command("execute_code", params, config)
-    click.echo(format_output(result, config.format))
+    click.echo(format_output(result, config.format, show_success_message=True))
     _print_execution_result(result)
 
 
@@ -78,7 +100,7 @@ def history(limit: int):
     """
     config = get_config()
     result = run_command("execute_code", {"action": "get_history", "limit": limit}, config)
-    click.echo(format_output(result, config.format))
+    click.echo(format_output(result, config.format, show_success_message=True))
 
 
 @code.command("replay")
@@ -94,7 +116,7 @@ def replay(index: int):
     """
     config = get_config()
     result = run_command("execute_code", {"action": "replay", "index": index}, config)
-    click.echo(format_output(result, config.format))
+    click.echo(format_output(result, config.format, show_success_message=True))
     _print_execution_result(result)
 
 
@@ -111,13 +133,21 @@ def clear_history():
     """Clear execution history."""
     config = get_config()
     result = run_command("execute_code", {"action": "clear_history"}, config)
-    click.echo(format_output(result, config.format))
+    click.echo(format_output(result, config.format, show_success_message=True))
 
 
 @code.command("read")
 @click.argument("path")
-@click.option("--start-line", "-s", default=None, type=int, help="Starting line number (1-based).")
-@click.option("--line-count", "-n", default=None, type=int, help="Number of lines to read.")
+@click.option(
+    "--start-line",
+    "-s",
+    default=None,
+    type=click.IntRange(min=1),
+    help="Starting line number (1-based).",
+)
+@click.option(
+    "--line-count", "-n", default=None, type=click.IntRange(min=1), help="Number of lines to read."
+)
 @handle_unity_errors
 def read(path: str, start_line: Optional[int], line_count: Optional[int]):
     """Read a source file.
@@ -140,28 +170,19 @@ def read(path: str, start_line: Optional[int], line_count: Optional[int]):
         "path": directory,
     }
 
-    if start_line:
-        params["startLine"] = start_line
-    if line_count:
-        params["lineCount"] = line_count
-
-    result = run_command("manage_script", params, config)
-    # For read, output content directly if available
-    if result.get("success") and result.get("data"):
-        data = result.get("data", {})
-        if isinstance(data, dict) and "contents" in data:
-            click.echo(data["contents"])
-        else:
-            click.echo(format_output(result, config.format))
-    else:
-        click.echo(format_output(result, config.format))
+    result = _read_source(params, config)
+    click.echo(format_script_read(result, config.format, start_line, line_count))
 
 
 @code.command("search")
 @click.argument("pattern")
 @click.argument("path")
 @click.option(
-    "--max-results", "-n", default=50, type=int, help="Maximum number of results (default: 50)."
+    "--max-results",
+    "-n",
+    default=50,
+    type=click.IntRange(min=1),
+    help="Maximum results (default: 50; output capped at 1000 with bounded excerpts).",
 )
 @click.option(
     "--case-sensitive",
@@ -176,15 +197,16 @@ def search(pattern: str, path: str, max_results: int, case_sensitive: bool):
     PATTERN is a regex pattern to search for.
     PATH is the script path (e.g., Assets/Scripts/Player.cs).
 
+    Results stop at --max-results (at most 1000). Excerpts are limited to 500
+    characters and match text to 200. JSON data.count is the number returned;
+    data.truncated indicates further matches, without counting the entire file.
+
     \b
     Examples:
         unity-mcp code search "class.*Player" "Assets/Scripts/Player.cs"
         unity-mcp code search "private.*int" "Assets/Scripts/GameManager.cs"
         unity-mcp code search "TODO|FIXME" "Assets/Scripts/Utils.cs"
     """
-    import re
-    import base64
-
     config = get_config()
 
     # Extract name and directory from path
@@ -199,29 +221,15 @@ def search(pattern: str, path: str, max_results: int, case_sensitive: bool):
         "path": directory,
     }
 
-    result = run_command("manage_script", read_params, config)
-
-    # Handle nested response structure: {status, result: {success, data}}
-    inner_result = result.get("result", result)
-
-    if not inner_result.get("success") and result.get("status") != "success":
-        click.echo(format_output(result, config.format))
-        return
-
-    # Get file contents from nested data
-    data = inner_result.get("data", {})
-    contents = data.get("contents")
-
-    # Handle base64 encoded content
-    if not contents and data.get("contentsEncoded") and data.get("encodedContents"):
-        try:
-            contents = base64.b64decode(data["encodedContents"]).decode("utf-8", "replace")
-        except (ValueError, TypeError):
-            pass
-
-    if not contents:
-        print_error(f"Could not read file content from {path}")
-        sys.exit(1)
+    result = _read_source(read_params, config)
+    if result.get("success") is False:
+        raise UnityCommandError(result)
+    data = result.get("data")
+    contents = script_contents(data) if isinstance(data, dict) else None
+    if contents is None:
+        raise UnityCommandError(
+            {"success": False, "error": f"Could not read file content from {path}"}
+        )
 
     # Step 2: Perform regex search locally
     flags = re.MULTILINE
@@ -229,41 +237,59 @@ def search(pattern: str, path: str, max_results: int, case_sensitive: bool):
         flags |= re.IGNORECASE
 
     try:
-        regex = re.compile(pattern, flags)
-    except re.error as e:
-        print_error(f"Invalid regex pattern: {e}")
-        sys.exit(1)
-
-    found = list(regex.finditer(contents))
-
-    if not found:
-        print_info(f"No matches found for pattern: {pattern}")
-        return
-
-    results = []
-    for m in found[:max_results]:
-        start_idx = m.start()
-
-        # Calculate line number
-        line_num = contents.count("\n", 0, start_idx) + 1
-
-        # Get line content
-        line_start = contents.rfind("\n", 0, start_idx) + 1
-        line_end = contents.find("\n", start_idx)
-        if line_end == -1:
-            line_end = len(contents)
-
-        line_content = contents[line_start:line_end].strip()
-
-        results.append(
-            {
-                "line": line_num,
-                "content": line_content,
-                "match": m.group(0),
-            }
+        budget = bounded_regex.WorkBudget()
+        limit = min(max_results, _SEARCH_RESULT_LIMIT, bounded_regex.MAX_MATCHES)
+        found = bounded_regex.find_matches(
+            pattern, contents, flags, limit, budget=budget, truncate=True
         )
+        results = []
+        cursor = 0
+        line_num = 1
+        for match in found[:limit]:
+            start_idx = match.start()
+            budget.consume(start_idx - cursor + _EXCERPT_CHARS + _MATCH_CHARS)
+            line_num += contents.count("\n", cursor, start_idx)
+            cursor = start_idx
+            # Search only a bounded neighborhood rather than copying a whole wide line.
+            excerpt_start = max(0, start_idx - _EXCERPT_CHARS // 2)
+            line_start = contents.rfind("\n", excerpt_start, start_idx) + 1
+            line_start = max(excerpt_start, line_start)
+            excerpt_end = min(len(contents), line_start + _EXCERPT_CHARS)
+            line_end = contents.find("\n", start_idx, excerpt_end)
+            if line_end == -1:
+                line_end = excerpt_end
+            results.append(
+                {
+                    "line": line_num,
+                    "content": contents[line_start:line_end].strip(),
+                    "match": contents[start_idx : min(match.end(), start_idx + _MATCH_CHARS)],
+                    "contentTruncated": line_start > 0
+                    and contents[line_start - 1] != "\n"
+                    or line_end < len(contents)
+                    and contents[line_end] != "\n",
+                    "matchTruncated": match.end() - start_idx > _MATCH_CHARS,
+                }
+            )
+        budget.check()
+    except (regex.error, ValueError, TimeoutError) as error:
+        raise UnityCommandError({"success": False, "error": str(error)}) from error
 
-    # Display results
-    click.echo(f"Found {len(results)} matches (total: {len(found)}):\n")
-    for match in results:
-        click.echo(f"  Line {match['line']}: {match['content']}")
+    truncated = len(found) > limit
+    if config.format == "json":
+        click.echo(
+            format_output(
+                {
+                    "success": True,
+                    "data": {"matches": results, "count": len(results), "truncated": truncated},
+                },
+                config.format,
+            )
+        )
+    elif not results:
+        print_info(f"No matches found for pattern: {pattern}")
+    else:
+        total = f"at least {len(found)}" if truncated else str(len(found))
+        click.echo(f"Found {len(results)} matches (total: {total}):\n")
+        for match in results:
+            suffix = " ... (excerpt truncated)" if match["contentTruncated"] else ""
+            click.echo(f"  Line {match['line']}: {match['content']}{suffix}")

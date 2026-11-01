@@ -63,13 +63,15 @@ def find_matches(
     limit: int = MAX_MATCHES,
     *,
     budget: WorkBudget | None = None,
+    truncate: bool = False,
 ):
+    """Collect bounded matches; truncation returns at most limit plus one sentinel."""
     budget = budget or WorkBudget()
     budget.consume(len(text) + len(pattern))
     compiled = _compile(pattern, text, flags)
     matches = list(islice(compiled.finditer(text, timeout=budget.timeout()), limit + 1))
     budget.consume(len(matches))
-    if len(matches) > limit:
+    if len(matches) > limit and not truncate:
         raise ValueError(f"Regex exceeds the {limit} match limit; use a narrower pattern")
     return matches
 

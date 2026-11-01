@@ -9,12 +9,16 @@ import click
 _TABLE_ROW_LIMIT = 50
 
 
-def format_output(data: Any, format_type: str = "text") -> str:
+def format_output(
+    data: Any, format_type: str = "text", *, show_success_message: bool = False
+) -> str:
     """Format output based on requested format type.
 
     Args:
         data: Data to format
         format_type: One of 'text', 'json', 'table'
+        show_success_message: Opt in when the formatter owns success acknowledgements.
+            Existing commands that print their own success text leave this disabled.
 
     Returns:
         Formatted string
@@ -24,7 +28,7 @@ def format_output(data: Any, format_type: str = "text") -> str:
     elif format_type == "table":
         return format_as_table(data)
     else:
-        return format_as_text(data)
+        return format_as_text(data, show_success_message=show_success_message)
 
 
 def format_as_json(data: Any) -> str:
@@ -35,7 +39,7 @@ def format_as_json(data: Any) -> str:
         return json.dumps({"error": f"JSON serialization failed: {e}", "raw": str(data)})
 
 
-def format_as_text(data: Any, indent: int = 0) -> str:
+def format_as_text(data: Any, indent: int = 0, *, show_success_message: bool = True) -> str:
     """Format data as human-readable text."""
     prefix = "  " * indent
 
@@ -61,7 +65,15 @@ def format_as_text(data: Any, indent: int = 0) -> str:
         if "success" in data and data.get("success"):
             result = data.get("data") or data.get("result") or data
             if result != data:
-                return format_as_text(result, indent)
+                return format_as_text(result, indent, show_success_message=show_success_message)
+            if (
+                show_success_message
+                and data.get("message")
+                and not any(
+                    key not in ("success", "error", "message", "data", "result") for key in data
+                )
+            ):
+                return f"{prefix}{data['message']}"
 
         lines = []
         for key, value in data.items():
