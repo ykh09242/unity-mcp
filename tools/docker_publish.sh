@@ -3,7 +3,7 @@
  # Requirements:
  # - Docker installed with buildx support (e.g. Docker Desktop).
  # - Authenticated to the target registry (e.g. run: docker login).
- # - Run from the `tools/` directory (this script uses build context `.` and Dockerfile `../Server/Dockerfile`).
+ # - Run from any directory; the script resolves the repository build context.
  #
  # Usage:
  #   ./docker_publish.sh <image> <version>
@@ -18,6 +18,8 @@
  # - vX.Y
  # - vX
  set -euo pipefail
+
+ REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
  
  if [[ "${1:-}" == "" || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
    echo "Usage: $(basename "$0") <image> <version>" >&2
@@ -46,9 +48,9 @@
  
  docker buildx build \
    --platform linux/amd64 \
-   -f ../Server/Dockerfile \
+   -f "$REPO_ROOT/Server/Dockerfile" \
    -t "$IMAGE:v$VERSION" \
    -t "$IMAGE:v$MINOR" \
    -t "$IMAGE:v$MAJOR" \
    --push \
-   .
+   "$REPO_ROOT"
