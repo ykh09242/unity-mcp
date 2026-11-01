@@ -171,20 +171,37 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(asset, PrefabUtility.GetCorrespondingObjectFromSource(instance));
         }
 
-        [Test]
-        public void CreatePrefab_SceneReload_PreservesInactiveOverrideAndPrefabLink()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CreatePrefab_SceneReload_PreservesGameObjectOverridesAndPrefabLink(bool setActive)
         {
             var asset = CreatePrefab(true);
+            string sourcePath = AssetDatabase.GetAssetPath(asset);
+            string sourceGuid = AssetDatabase.AssetPathToGUID(sourcePath);
+            string sourceName = asset.name;
             var request = Request(asset);
-            request["setActive"] = false;
+            if (setActive)
+                request["setActive"] = false;
+            request["tag"] = "Player";
+            request["layer"] = "Ignore Raycast";
             Call(request);
             string scenePath = assetRoot + "/Instance.unity";
             Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, scenePath));
             Assert.IsTrue(EditorSceneManager.CloseScene(ownedScene, true));
             ownedScene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Additive);
             var instance = ownedScene.GetRootGameObjects().Single();
-            Assert.IsFalse(instance.activeSelf);
-            Assert.AreEqual(asset, PrefabUtility.GetCorrespondingObjectFromSource(instance));
+            Assert.AreEqual(!setActive, instance.activeSelf);
+            Assert.AreEqual("PrefabCreateCopy", instance.name);
+            Assert.AreEqual("Player", instance.tag);
+            Assert.AreEqual(LayerMask.NameToLayer("Ignore Raycast"), instance.layer);
+            var source = AssetDatabase.LoadAssetAtPath<GameObject>(sourcePath);
+            Assert.AreEqual(source, PrefabUtility.GetCorrespondingObjectFromSource(instance));
+            Assert.IsTrue(PrefabUtility.IsPartOfPrefabInstance(instance));
+            Assert.AreEqual(sourceGuid, AssetDatabase.AssetPathToGUID(sourcePath));
+            Assert.AreEqual(sourceName, source.name);
+            Assert.IsTrue(source.activeSelf);
+            Assert.AreEqual("Untagged", source.tag);
+            Assert.AreEqual(0, source.layer);
         }
 
         [Test]
@@ -203,6 +220,7 @@ namespace MCPForUnityTests.Editor.Tools
                 Object.DestroyImmediate(source);
             }
             string guid = AssetDatabase.AssetPathToGUID(path);
+            string savedName = AssetDatabase.LoadAssetAtPath<GameObject>(path).name;
             var roots = ownedScene.GetRootGameObjects();
             bool wasDirty = ownedScene.isDirty;
             var request = Request();
@@ -217,7 +235,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(wasDirty, ownedScene.isDirty);
             Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
             var preserved = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-            Assert.AreEqual("PreservedPrefab", preserved.name);
+            Assert.AreEqual(savedName, preserved.name);
             Assert.IsNotNull(preserved.transform.Find("DistinctiveChild"));
             Assert.AreEqual(new Vector3(2, 3, 4), preserved.GetComponent<BoxCollider>().size);
         }

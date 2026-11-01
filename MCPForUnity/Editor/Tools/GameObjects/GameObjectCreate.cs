@@ -241,8 +241,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             if (setActive.HasValue && newGo.activeSelf != setActive.Value)
             {
                 newGo.SetActive(setActive.Value);
-                if (PrefabUtility.IsPartOfPrefabInstance(newGo))
-                    PrefabUtility.RecordPrefabInstancePropertyModifications(newGo);
             }
 
             transformOptions.Apply(newGo.transform, position, rotation, scale);
@@ -332,6 +330,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 UnityEngine.Object.DestroyImmediate(newGo);
                 return componentPropertiesError;
             }
+
+            if (PrefabUtility.IsPartOfPrefabInstance(newGo))
+                PrefabUtility.RecordPrefabInstancePropertyModifications(newGo);
 
             // Save as Prefab ONLY if we *created* a new object AND saveAsPrefab is true
             using var folders = new AssetFolderScope();
