@@ -190,7 +190,9 @@ class WaitJournal:
         self._record_bytes = result_bytes + metadata_bytes
         self._lock = threading.RLock()
         self._writer = None
+        self._poisoned = False
         self._index: dict[str, tuple[int, bool]] = {}
+        self._retention: dict[str, tuple[tuple[int, ...], float]] = {}
         self.installation_id = ""
         try:
             self._open()
@@ -303,12 +305,35 @@ class WaitJournal:
     def _check_open(self) -> None:
         if self._writer is None:
             raise JournalUnavailable("Wait journal is closed")
+        if self._poisoned:
+            raise JournalUnavailable(
+                "Wait journal commit is uncertain; close and reopen to recover"
+            )
+
+    def _record_identity(self, path: Path) -> tuple[int, ...]:
+        info = path.lstat()
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_size > self._record_bytes
+            or getattr(info, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 1024)
+        ):
+            raise JournalUnavailable("Invalid journal record")
+        self._require_private(path)
+        return (
+            info.st_dev,
+            info.st_ino,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+            info.st_mode,
+            info.st_nlink,
+            info.st_uid,
+        )
 
     def _read(self, task_id: str) -> WaitRecord:
         path = self.root / f"{task_id}.json"
-        if path.is_symlink() or path.stat().st_size > self._record_bytes:
-            raise JournalUnavailable("Invalid journal record")
-        self._require_private(path)
+        identity = self._record_identity(path)
         try:
             raw = path.read_bytes()
             bounded = bounded_json_text(
@@ -327,6 +352,14 @@ class WaitJournal:
             ):
                 raise ValueError("Inconsistent task state")
             self._validate(record)
+            if self._record_identity(path) != identity:
+                raise JournalUnavailable("Journal record changed while reading")
+            self._retention[task_id] = (identity, record.expires_at)
+            if task_id in self._index:
+                self._index[task_id] = (len(raw), self._index[task_id][1])
+                if self.charged_bytes > self.quota_bytes:
+                    self._poisoned = True
+                    raise JournalUnavailable("Journal exceeds physical quota")
             return record
         except (ValueError, RecursionError) as error:
             raise JournalUnavailable("Invalid journal record") from error
@@ -350,11 +383,13 @@ class WaitJournal:
             raise JournalUnavailable("Ordinary result exceeds supported response ceiling")
 
     def _write(self, record: WaitRecord, *, active: bool) -> None:
+        self._check_open()
         self._validate(record)
         stage = self.root / f"{record.task_id}.stage"
         final = self.root / f"{record.task_id}.json"
         encoder = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"), allow_nan=False)
         count = 0
+        replaced = False
         try:
             with self._create_private(stage) as stream:
                 for chunk in encoder.iterencode(record.model_dump(exclude_none=True)):
@@ -373,15 +408,31 @@ class WaitJournal:
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(stage, final)
+            replaced = True
             if os.name != "nt":
                 directory = os.open(self.root, os.O_RDONLY)
                 try:
                     os.fsync(directory)
                 finally:
                     os.close(directory)
+            identity = self._record_identity(final)
+            if identity[2] != count:
+                raise JournalUnavailable("Journal record changed while committing")
+            if type(record) is WaitRecord:
+                self._retention[record.task_id] = (identity, record.expires_at)
+            else:
+                # Extension serializers can change stored metadata as well as results.
+                self._retention.pop(record.task_id, None)
             self._index[record.task_id] = (count, active)
         except Exception as error:
-            stage.unlink(missing_ok=True)
+            if replaced:
+                # The final file may be committed even though directory durability
+                # failed. Retain its reservation until a new writer reconciles disk.
+                self._poisoned = True
+            try:
+                stage.unlink(missing_ok=True)
+            except OSError:
+                self._poisoned = True
             if isinstance(error, JournalUnavailable):
                 raise
             raise JournalUnavailable("Atomic journal commit failed") from error
@@ -407,7 +458,9 @@ class WaitJournal:
             try:
                 self._write(record, active=True)
             except Exception:
-                self._index.pop(record.task_id)
+                if not self._poisoned:
+                    self._index.pop(record.task_id)
+                    self._retention.pop(record.task_id, None)
                 raise
             return record
 
@@ -459,9 +512,24 @@ class WaitJournal:
         with self._lock:
             self._check_open()
             for task_id, (_, active) in tuple(self._index.items()):
-                if not active and self.clock() >= self._read(task_id).expires_at:
-                    (self.root / f"{task_id}.json").unlink()
+                if active:
+                    continue
+                path = self.root / f"{task_id}.json"
+                identity = self._record_identity(path)
+                cached = self._retention.get(task_id)
+                if cached is None or cached[0] != identity or self.clock() >= cached[1]:
+                    # Destructive expiry always revalidates current bytes, even on
+                    # filesystems where metadata can retain coarse timestamps.
+                    self._read(task_id)
+                    cached = self._retention[task_id]
+                if self.clock() >= cached[1]:
+                    try:
+                        path.unlink()
+                    except OSError:
+                        self._poisoned = True
+                        raise
                     del self._index[task_id]
+                    self._retention.pop(task_id, None)
 
     def close(self) -> None:
         with self._lock:

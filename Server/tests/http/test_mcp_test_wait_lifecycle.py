@@ -9,6 +9,7 @@ import threading
 import time
 import stat
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -318,6 +319,123 @@ def test_atomic_replacement_failure_keeps_prior_committed_record(tmp_path, monke
         monkeypatch.setattr(os, "replace", original)
         journal.finish(record.task_id, "completed", result={"content": []})
         assert journal.get(record.task_id, "alice").status == "completed"
+
+
+@pytest.mark.parametrize("transition", ["create", "cancel", "finish"])
+def test_directory_sync_failure_retains_reservation_until_reopen(tmp_path, monkeypatch, transition):
+    from services import test_wait_journal as storage
+
+    root = tmp_path / "waits"
+    now = [1000.0]
+    with WaitJournal(root, clock=lambda: now[0], max_records=1) as journal:
+        record = None if transition == "create" else journal.create(operation())
+        original_open, original_fsync, original_close = os.open, os.fsync, os.close
+        directory_fd = object()
+
+        def open_with_directory(path, flags, *args):
+            return directory_fd if Path(path) == root else original_open(path, flags, *args)
+
+        def sync(descriptor):
+            if descriptor is directory_fd:
+                raise OSError("injected directory fsync failure after replacement")
+            return original_fsync(descriptor)
+
+        # Exercise the POSIX post-replace boundary on every host; file replacement
+        # is real, while directory open/fsync is injected (not native POSIX evidence).
+        with monkeypatch.context() as injection:
+            injection.setattr(journal, "_require_private", lambda *args, **kwargs: None)
+            injection.setattr(
+                storage,
+                "os",
+                SimpleNamespace(
+                    **{
+                        **vars(os),
+                        "name": "posix",
+                        "open": open_with_directory,
+                        "fsync": sync,
+                        "close": lambda descriptor: (
+                            None if descriptor is directory_fd else original_close(descriptor)
+                        ),
+                    }
+                ),
+            )
+            with pytest.raises(JournalUnavailable):
+                if transition == "create":
+                    journal.create(operation())
+                elif transition == "cancel":
+                    journal.request_cancel(record.task_id, "alice")
+                else:
+                    journal.finish(record.task_id, "completed", result={"content": []})
+
+        committed = list(root.glob("*.json"))
+        assert len(committed) == 1
+        assert journal.charged_bytes >= 2 * journal._record_bytes
+        task_id = committed[0].stem
+        for action in (
+            lambda: journal.create(operation()),
+            lambda: journal.get(task_id, "alice"),
+            lambda: journal.request_cancel(task_id, "alice"),
+            lambda: journal.finish(task_id, "cancelled"),
+            journal.prune,
+        ):
+            with pytest.raises(JournalUnavailable, match="uncertain"):
+                action()
+        now[0] += 3601
+        with pytest.raises(JournalUnavailable, match="uncertain"):
+            journal.prune()
+        assert committed[0].exists()
+
+    with WaitJournal(root, clock=lambda: 1001.0, max_records=1) as reopened:
+        restored = reopened.get(task_id, "alice")
+        assert restored.status == ("completed" if transition == "finish" else "failed")
+        assert restored.cancel_requested is (transition == "cancel")
+        with pytest.raises(JournalCapacity):
+            reopened.create(operation())
+
+
+def test_creation_does_not_reread_unchanged_retained_payloads(tmp_path, monkeypatch):
+    with WaitJournal(tmp_path / "waits", clock=lambda: 1000.0) as journal:
+        for _ in range(12):
+            record = journal.create(operation())
+            journal.finish(record.task_id, "completed", result={"value": "x" * 65536})
+        original_read = Path.read_bytes
+        reads = []
+
+        def read(path):
+            if path.parent == journal.root and path.suffix == ".json":
+                reads.append(path)
+            return original_read(path)
+
+        monkeypatch.setattr(Path, "read_bytes", read)
+        journal.create(operation())
+        journal.prune()
+        assert reads == [], "Admission reparsed unchanged retained result bodies"
+        assert journal.get(record.task_id, "alice").result == {"value": "x" * 65536}
+        assert len(reads) == 1, "An explicit result read must read current committed bytes"
+
+
+@pytest.mark.parametrize("damage", ["extend", "expire", "corrupt"])
+def test_pruning_revalidates_externally_changed_expiry(tmp_path, damage):
+    now = [1000.0]
+    with WaitJournal(tmp_path / "waits", clock=lambda: now[0], ttl_seconds=10) as journal:
+        record = journal.create(operation())
+        journal.finish(record.task_id, "completed", result={"content": []})
+        path = journal.root / f"{record.task_id}.json"
+        document = json.loads(path.read_bytes())
+        document["expires_at"] = 1005.0 if damage == "expire" else 1100.0
+        path.write_bytes(b"invalid" if damage == "corrupt" else json.dumps(document).encode())
+        now[0] = 1011.0 if damage == "extend" else 1006.0
+        if damage == "corrupt":
+            with pytest.raises(JournalUnavailable, match="Invalid journal record"):
+                journal.prune()
+            assert path.exists()
+        else:
+            journal.prune()
+            assert path.exists() is (damage == "extend")
+            if damage == "extend":
+                assert journal.charged_bytes == sum(
+                    item.stat().st_size for item in journal.root.iterdir()
+                )
 
 
 def test_full_supported_ordinary_payload_has_separate_record_overhead(tmp_path):
