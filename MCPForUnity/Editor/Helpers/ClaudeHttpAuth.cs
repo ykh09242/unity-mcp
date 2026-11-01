@@ -143,6 +143,14 @@ namespace MCPForUnity.Editor.Helpers
             return entry;
         }
 
+        internal static JObject BuildRemoteEntry(string url, string apiKey)
+        {
+            var entry = new JObject { ["type"] = "http", ["url"] = url };
+            if (!string.IsNullOrEmpty(apiKey))
+                entry["headers"] = new JObject { [AuthConstants.ApiKeyHeader] = apiKey };
+            return entry;
+        }
+
         internal static string BuildRegistrationArguments(JObject entry, string name = "UnityMCP")
         {
             if (!string.Equals(name, "UnityMCP", StringComparison.OrdinalIgnoreCase))

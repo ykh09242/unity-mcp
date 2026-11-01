@@ -550,21 +550,12 @@ namespace MCPForUnity.Editor.Clients
             {
                 string httpUrl = HttpEndpointUtility.GetMcpRpcUrl();
                 bool remote = HttpEndpointUtility.IsRemoteScope();
-                if (!remote)
-                {
-                    var entry = ClaudeHttpAuth.BuildLocalEntry(httpUrl, MCPServiceLocator.Paths.GetClaudeCliPath());
-                    return "# JSON argument for: claude mcp add-json --scope local UnityMCP <json>\n"
-                        + entry.ToString(Formatting.Indented)
-                        + "\n\n# Use Configure for automatic registration and shell-safe argument quoting.";
-                }
-                string apiKey = remote ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty) : null;
-                string headerArg = BuildHttpAuthArgument(httpUrl, remote, apiKey);
-                return "# Register the MCP server with Claude Code:\n"
-                    + $"claude mcp add --scope local --transport http UnityMCP {httpUrl}{headerArg}\n\n"
-                    + "# Remove the local registration for the selected project:\n"
-                    + "claude mcp remove --scope local UnityMCP\n\n"
-                    + "# List registered servers:\n"
-                    + "claude mcp list";
+                var entry = remote
+                    ? ClaudeHttpAuth.BuildRemoteEntry(httpUrl, EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty))
+                    : ClaudeHttpAuth.BuildLocalEntry(httpUrl, MCPServiceLocator.Paths.GetClaudeCliPath());
+                return "# JSON argument for: claude mcp add-json --scope local UnityMCP <json>\n"
+                    + entry.ToString(Formatting.Indented)
+                    + "\n\n# Use Configure for automatic registration and shell-safe argument quoting.";
             }
 
             if (string.IsNullOrEmpty(uvxPath))
@@ -735,7 +726,9 @@ namespace MCPForUnity.Editor.Clients
             {
                 return ClaudeHttpAuth.BuildRegistrationArguments(ClaudeHttpAuth.BuildLocalEntry(httpUrl, claudePath, existing));
             }
-            return $"mcp add --scope local --transport http UnityMCP {httpUrl}{BuildHttpAuthArgument(httpUrl, true, apiKey)}";
+            // Share add-json encoding with local registration: npm batch shims must never parse
+            // URL queries or static header values as cmd.exe syntax. Remote needs no helper probe.
+            return ClaudeHttpAuth.BuildRegistrationArguments(ClaudeHttpAuth.BuildRemoteEntry(httpUrl, apiKey));
         }
 
         private JObject GetExistingConfigForRegistration(string projectDir)
@@ -748,48 +741,6 @@ namespace MCPForUnity.Editor.Clients
                     existing = entry;
             }
             return existing;
-        }
-
-        private static string BuildHttpAuthArgument(string httpUrl, bool remote, string apiKey)
-        {
-            string value = remote ? apiKey : HttpEndpointUtility.ReadLocalAuthToken(new Uri(httpUrl));
-            if (string.IsNullOrEmpty(value))
-            {
-                return string.Empty;
-            }
-            string header = remote ? AuthConstants.ApiKeyHeader : AuthConstants.LocalTokenHeader;
-            return $" --header \"{header}: {SanitizeShellHeaderValue(value)}\"";
-        }
-
-        /// <summary>
-        /// Sanitizes a value for safe inclusion inside a double-quoted shell argument.
-        /// Escapes characters that are special within double quotes (", \, `, $, !)
-        /// to prevent shell injection or argument splitting.
-        /// </summary>
-        private static string SanitizeShellHeaderValue(string value)
-        {
-            if (string.IsNullOrEmpty(value))
-                return value;
-
-            var sb = new System.Text.StringBuilder(value.Length);
-            foreach (char c in value)
-            {
-                switch (c)
-                {
-                    case '"':
-                    case '\\':
-                    case '`':
-                    case '$':
-                    case '!':
-                        sb.Append('\\');
-                        sb.Append(c);
-                        break;
-                    default:
-                        sb.Append(c);
-                        break;
-                }
-            }
-            return sb.ToString();
         }
 
         /// <summary>
