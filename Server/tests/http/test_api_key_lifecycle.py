@@ -25,7 +25,9 @@ async def test_lifespan_closes_captured_validator_after_other_cleanup(
     def factory(**kwargs):
         client = actual_client(
             transport=httpx.MockTransport(
-                lambda request: httpx.Response(200, json={"valid": True, "user_id": "owned-user"})
+                lambda request: httpx.Response(
+                    200, stream=httpx.ByteStream(b'{"valid":true,"user_id":"owned-user"}')
+                )
             ),
             trust_env=False,
             **kwargs,

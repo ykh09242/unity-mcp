@@ -83,7 +83,9 @@ async def _scenario(case):
             transient_index += 1
             if transient_index == 1:
                 return httpx.Response(503)
-        return httpx.Response(200, json={"valid": True, "user_id": "fixture-user"})
+        return httpx.Response(
+            200, stream=httpx.ByteStream(b'{"valid":true,"user_id":"fixture-user"}')
+        )
 
     actual_client = httpx.AsyncClient
 

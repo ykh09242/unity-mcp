@@ -52,7 +52,9 @@ async def admission(monkeypatch, request):
         )
         if isinstance(reply, Exception):
             raise reply
-        return reply
+        return httpx.Response(
+            reply.status_code, headers=reply.headers, stream=httpx.ByteStream(reply.content)
+        )
 
     def factory(**kwargs):
         client = actual_client(transport=httpx.MockTransport(handler), trust_env=False, **kwargs)

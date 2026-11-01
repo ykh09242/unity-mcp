@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from contextvars import Context
 from typing import Any
 
+from services.auth_response import AuthResponseError, parse_auth_body, read_auth_body
 from services.credential_lease import CredentialLease, CredentialLeaseError
 from services.operation_permissions import PermissionClaimError, parse_permissions
 from urllib.parse import urlsplit
@@ -82,6 +83,8 @@ class ApiKeyService:
     # Request defaults (sensible hardening)
     REQUEST_TIMEOUT: float = 5.0
     MAX_RETRIES: int = 1
+    RESPONSE_MAX_BYTES: int = 64 * 1024
+    METADATA_MAX_BYTES: int = 16 * 1024
 
     # Confirmed-invalid keys are cached too, so a bad key does not re-hit the auth service on
     # every call. That also means an unauthenticated caller grows the cache by one entry per
@@ -457,50 +460,47 @@ class ApiKeyService:
                     )
                 client = self._client
                 # Build request headers
-                headers = {"Content-Type": "application/json"}
+                headers = {
+                    "Content-Type": "application/json",
+                    "Accept-Encoding": "gzip, deflate, identity",
+                }
                 if self._service_token_header and self._service_token:
                     headers[self._service_token_header] = self._service_token
 
-                response = await client.post(
+                async with client.stream(
+                    "POST",
                     self._validation_url,
                     json={"api_key": api_key},
                     headers=headers,
-                )
-
-                if response.status_code == 200:
-                    data = response.json()
-                    verdict = data.get("valid")
-                    if verdict is not True and verdict is not False:
+                ) as response:
+                    if response.status_code == 200:
+                        body = await read_auth_body(response, self.RESPONSE_MAX_BYTES)
+                        data = parse_auth_body(body, self.METADATA_MAX_BYTES)
                         return ValidationResult(
-                            valid=False,
-                            error="Auth service error (invalid validation verdict)",
-                            cacheable=False,
+                            valid=data.valid,
+                            user_id=data.user_id if data.valid else None,
+                            metadata=data.metadata if data.valid else None,
+                            error=None if data.valid else data.error,
                         )
-                    if verdict is True:
-                        return ValidationResult(
-                            valid=True,
-                            user_id=data.get("user_id"),
-                            metadata=data.get("metadata"),
-                        )
-                    else:
-                        return ValidationResult(
-                            valid=False,
-                            error=data.get("error", "Invalid API key"),
-                        )
-                elif response.status_code == 401:
-                    return ValidationResult(valid=False, error="Invalid API key")
-                else:
+                    if response.status_code == 401:
+                        return ValidationResult(valid=False, error="Invalid API key")
                     logger.warning(
                         "API key validation returned status %d for key %s",
                         response.status_code,
                         redacted_key,
                     )
-                    # Fail closed but don't cache (transient service error)
+                    # Fail closed but don't cache (transient service error).
                     return ValidationResult(
                         valid=False,
                         error=f"Auth service error (status {response.status_code})",
                         cacheable=False,
                     )
+
+            except AuthResponseError:
+                logger.warning("Invalid API key validation response for key %s", redacted_key)
+                return ValidationResult(
+                    valid=False, error="Auth service error (invalid response)", cacheable=False
+                )
 
             except httpx.TimeoutException:
                 if attempt < self.MAX_RETRIES:

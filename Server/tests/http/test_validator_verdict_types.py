@@ -1,5 +1,8 @@
 """External authentication verdicts must be literal JSON booleans."""
 
+import json
+from contextlib import asynccontextmanager
+
 import httpx
 import pytest
 from starlette.applications import Starlette
@@ -34,7 +37,12 @@ def test_remote_http_authentication_requires_boolean_verdict(
     real_client = httpx.AsyncClient
 
     def response_handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"valid": verdict, "user_id": "fixture-user"})
+        return httpx.Response(
+            200,
+            stream=httpx.ByteStream(
+                json.dumps({"valid": verdict, "user_id": "fixture-user"}).encode()
+            ),
+        )
 
     def client_factory(
         *, timeout: float, follow_redirects: bool, limits: httpx.Limits
@@ -51,14 +59,24 @@ def test_remote_http_authentication_requires_boolean_verdict(
     async def identity(request: Request) -> JSONResponse:
         return JSONResponse({"user": request.scope["state"][AUTHENTICATED_USER_STATE]})
 
+    @asynccontextmanager
+    async def lifespan(_app):
+        try:
+            yield
+        finally:
+            await service.aclose()
+
     app = Starlette(
-        routes=[Route("/control", identity)], middleware=[Middleware(RemoteControlAuthMiddleware)]
+        routes=[Route("/control", identity)],
+        middleware=[Middleware(RemoteControlAuthMiddleware)],
+        lifespan=lifespan,
     )
     # When the actual HTTP authentication middleware processes a request.
-    response = TestClient(app).get("/control", headers={"X-API-Key": "fixture-api-key"})
-    # Then malformed truthy verdicts never authenticate or enter the verdict cache.
-    assert response.status_code == status
-    if verdict is not True and verdict is not False:
-        assert service._cache == {}
-    if verdict is True:
-        assert response.json() == {"user": "fixture-user"}
+    with TestClient(app) as client:
+        response = client.get("/control", headers={"X-API-Key": "fixture-api-key"})
+        # Then malformed truthy verdicts never authenticate or enter the verdict cache.
+        assert response.status_code == status
+        if verdict is not True and verdict is not False:
+            assert service._cache == {}
+        if verdict is True:
+            assert response.json() == {"user": "fixture-user"}

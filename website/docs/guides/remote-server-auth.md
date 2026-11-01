@@ -249,7 +249,18 @@ If a service token is configured, an additional header is sent:
 
 - `valid` (bool, required): Must be `true`.
 - `user_id` (string, required): Stable identifier for the user. Used for session isolation.
-- `metadata` (object, optional): Arbitrary metadata stored alongside the validation result.
+- `metadata` (object, optional): Metadata stored alongside the validation result, limited to 16 KiB of compact UTF-8 JSON.
+
+Validation responses are streamed with independent 64 KiB limits on encoded and
+decoded body bytes, regardless of `Content-Length`. JSON must be an object with a
+literal Boolean verdict, at most 4,096 values and nesting depth at most 32. Invalid
+field types, malformed JSON and exceeded limits fail authentication without caching
+the result. Metadata may also be `null` or omitted.
+
+The request advertises `gzip, deflate, identity`. Single gzip streams and zlib or
+raw DEFLATE streams are supported with bounded inflation. Other content encodings,
+encoding chains, incomplete compressed streams and trailing compressed data are
+rejected. Responses are closed on success, rejection, retry and cancellation.
 
 ### Response (Invalid Key)
 

@@ -1,20 +1,24 @@
 """Tests for ApiKeyService: validation, caching, retries, and singleton lifecycle."""
 
 import asyncio
+import json
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+import pytest_asyncio
 
 from services.api_key_service import ApiKeyService, ValidationResult
 
 
-@pytest.fixture(autouse=True)
-def _reset_singleton():
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_singleton():
     """Reset the ApiKeyService singleton between tests."""
     ApiKeyService._instance = None
     yield
+    if ApiKeyService._instance is not None:
+        await ApiKeyService._instance.aclose()
     ApiKeyService._instance = None
 
 
@@ -33,10 +37,34 @@ def _make_service(
 
 
 def _mock_response(status_code=200, json_data=None):
-    resp = MagicMock(spec=httpx.Response)
-    resp.status_code = status_code
-    resp.json.return_value = json_data or {}
-    return resp
+    return httpx.Response(status_code, json=json_data or {})
+
+
+_HTTPX_CLIENT = httpx.AsyncClient
+
+
+class _StreamingClient:
+    """Keep existing request assertions while exercising HTTPX streaming responses."""
+
+    def __init__(self):
+        self.post = AsyncMock()
+        self._client = _HTTPX_CLIENT(transport=httpx.MockTransport(self._respond))
+
+    async def _respond(self, request):
+        reply = await self.post(
+            str(request.url),
+            json=json.loads(request.content),
+            headers={key: value for key, value in request.headers.multi_items()},
+        )
+        return httpx.Response(
+            reply.status_code, headers=reply.headers, stream=httpx.ByteStream(reply.content)
+        )
+
+    def stream(self, method, url, **kwargs):
+        return self._client.stream(method, url, **kwargs)
+
+    async def aclose(self):
+        await self._client.aclose()
 
 
 # ---------------------------------------------------------------------------
@@ -75,9 +103,7 @@ class TestBasicValidation:
         )
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = AsyncMock(return_value=mock_resp)
             MockClient.return_value = instance
 
@@ -93,9 +119,7 @@ class TestBasicValidation:
         mock_resp = _mock_response(200, {"valid": False, "error": "Key revoked"})
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = AsyncMock(return_value=mock_resp)
             MockClient.return_value = instance
 
@@ -110,9 +134,7 @@ class TestBasicValidation:
         mock_resp = _mock_response(401)
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = AsyncMock(return_value=mock_resp)
             MockClient.return_value = instance
 
@@ -152,9 +174,7 @@ class TestCaching:
             return mock_resp
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = counting_post
             MockClient.return_value = instance
 
@@ -178,9 +198,7 @@ class TestCaching:
             return mock_resp
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = counting_post
             MockClient.return_value = instance
 
@@ -203,9 +221,7 @@ class TestCaching:
             return mock_resp
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = counting_post
             MockClient.return_value = instance
 
@@ -233,9 +249,7 @@ class TestCaching:
             return mock_resp
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = counting_post
             MockClient.return_value = instance
 
@@ -259,9 +273,7 @@ class TestCaching:
             return mock_resp
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = counting_post
             MockClient.return_value = instance
 
@@ -297,9 +309,7 @@ class TestTransientFailures:
             return resp
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = sequential_post
             MockClient.return_value = instance
 
@@ -327,9 +337,7 @@ class TestTransientFailures:
             return mock_ok
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = timeout_then_ok
             MockClient.return_value = instance
 
@@ -347,9 +355,7 @@ class TestTransientFailures:
             raise httpx.TimeoutException("timed out")
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = always_timeout
             MockClient.return_value = instance
 
@@ -373,9 +379,7 @@ class TestTransientFailures:
             return mock_ok
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = error_then_ok
             MockClient.return_value = instance
 
@@ -392,9 +396,7 @@ class TestTransientFailures:
             raise httpx.ConnectError("connection refused")
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = always_error
             MockClient.return_value = instance
 
@@ -412,9 +414,7 @@ class TestTransientFailures:
             raise ValueError("something unexpected")
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = unexpected
             MockClient.return_value = instance
 
@@ -444,16 +444,14 @@ class TestServiceToken:
             return mock_resp
 
         with patch("httpx.AsyncClient") as MockClient:
-            instance = AsyncMock()
-            instance.__aenter__ = AsyncMock(return_value=instance)
-            instance.__aexit__ = AsyncMock(return_value=False)
+            instance = _StreamingClient()
             instance.post = capture_post
             MockClient.return_value = instance
 
             await svc.validate("test-svctoken-key1234")
 
-        assert captured_headers.get("X-Service-Token") == "test-svc-token-123"
-        assert captured_headers.get("Content-Type") == "application/json"
+        assert captured_headers.get("x-service-token") == "test-svc-token-123"
+        assert captured_headers.get("content-type") == "application/json"
 
 
 # ---------------------------------------------------------------------------
@@ -464,9 +462,7 @@ class TestServiceToken:
 def _patched_client(mock_resp):
     ctx = patch("httpx.AsyncClient")
     MockClient = ctx.start()
-    instance = AsyncMock()
-    instance.__aenter__ = AsyncMock(return_value=instance)
-    instance.__aexit__ = AsyncMock(return_value=False)
+    instance = _StreamingClient()
     instance.post = AsyncMock(return_value=mock_resp)
     MockClient.return_value = instance
     return ctx, instance
