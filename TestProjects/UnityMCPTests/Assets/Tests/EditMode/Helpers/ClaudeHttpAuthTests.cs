@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -6,13 +7,203 @@ using MCPForUnity.Editor.Clients;
 using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Models;
+using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Helpers
 {
     public class ClaudeHttpAuthTests
     {
+        [TestCase(0, false)]
+        [TestCase(1, false)]
+        [TestCase(2, false)]
+        [TestCase(0, true)]
+        [TestCase(1, true)]
+        [TestCase(2, true)]
+        public void StdioRegistrationThroughWindowsShimPreservesLiteralPaths(int captureMode, bool fail)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                Assert.Ignore("Windows npm-shim regression.");
+            string root = Path.Combine(Path.GetTempPath(), "mcp-stdio-process-" + Guid.NewGuid().ToString("N"));
+            string project = Path.Combine(root, "project");
+            string literalSegment = "%MCP_SYNTHETIC_UNDEFINED_" + Guid.NewGuid().ToString("N") + "%";
+            string shimDirectory = Path.Combine(root, "Program Files (synthetic cli)");
+            string source = Path.Combine(root, "source " + literalSegment + " ! & (editable) ^");
+            Directory.CreateDirectory(project);
+            Directory.CreateDirectory(shimDirectory);
+            Directory.CreateDirectory(source);
+            File.WriteAllText(Path.Combine(source, "pyproject.toml"), "# synthetic source only\n");
+            string executable = Path.Combine(shimDirectory, "claude.cmd");
+            string uvx = Path.Combine(shimDirectory, "uvx " + literalSegment + " ! & (executable) ^.exe");
+            File.WriteAllText(
+                Path.Combine(shimDirectory, "capture.ps1"),
+                "$ErrorActionPreference = 'Stop'\r\n"
+                    + "if ($args[1] -eq 'add-json') {\r\n"
+                    + "  if ($args.Count -ne 6) { throw 'Unexpected JSON argument count' }\r\n"
+                    + "  $entry = $args[5] | ConvertFrom-Json\r\n"
+                    + "} elseif ($args[1] -eq 'add' -and $args.Count -gt 9) {\r\n"
+                    + "  $entry = @{ type = 'stdio'; command = $args[8]; args = @($args[9..($args.Count - 1)]) }\r\n"
+                    + "} else { throw 'Unexpected registration command' }\r\n"
+                    + "@{ Prefix = @($args[0..4]); Entry = $entry } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'captured.json') -Encoding UTF8\r\n"
+                    + (fail ? "exit 23\r\n" : "exit 0\r\n")
+            );
+            File.WriteAllText(
+                executable,
+                "@echo off\r\nsetlocal EnableDelayedExpansion\r\npowershell.exe -NoProfile -NonInteractive -File \"%~dp0capture.ps1\" %*\r\nexit /b %errorlevel%\r\n"
+            );
+            string profileKey = StartupToolProfile.PreferenceKey(ProjectIdentityUtility.GetProjectHash());
+            var stringPreferences = new Dictionary<string, (bool Exists, string Value)>();
+            foreach (string key in new[] { EditorPrefKeys.ClientProjectDirOverride, EditorPrefKeys.GitUrlOverride, profileKey })
+                stringPreferences[key] = (EditorPrefs.HasKey(key), EditorPrefs.GetString(key, ""));
+            var boolPreferences = new Dictionary<string, (bool Exists, bool Value)>();
+            foreach (string key in new[] { EditorPrefKeys.UseHttpTransport, EditorPrefKeys.DevModeForceServerRefresh })
+                boolPreferences[key] = (EditorPrefs.HasKey(key), EditorPrefs.GetBool(key, false));
+            var originalPaths = MCPServiceLocator.Paths;
+            try
+            {
+                MCPServiceLocator.Register<IPathResolverService>(new SyntheticClientPaths { UvxPath = uvx, ClaudePath = executable });
+                EditorPrefs.SetString(EditorPrefKeys.ClientProjectDirOverride, project);
+                EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, source);
+                EditorPrefs.SetString(profileKey, "core");
+                EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, false);
+                EditorPrefs.SetBool(EditorPrefKeys.DevModeForceServerRefresh, true);
+                EditorConfigurationCache.Instance.Refresh();
+                var client = new ClaudeCodeConfigurator().CreateOperationClient(Path.Combine(root, "synthetic-user-config.json"));
+                Action configure = () =>
+                {
+                    if (captureMode == 0)
+                        client.Configure();
+                    else
+                    {
+                        // Reflection keeps the real-process regression runnable against the
+                        // pre-fix API as a negative control; current code uses structured argv.
+                        var method = typeof(ClaudeCliMcpConfigurator).GetMethod("ConfigureWithCapturedValues");
+                        bool structured = method.GetParameters().Length == 14;
+                        var captured = new List<object>
+                        {
+                            project,
+                            executable,
+                            null,
+                            false,
+                            null,
+                            uvx,
+                            captureMode == 2 || !structured ? AssetPathUtility.GetBetaServerFromArgs(quoteFromPath: true) : null,
+                            "mcp-for-unity",
+                            "--no-cache --refresh ",
+                            null,
+                            ConfiguredTransport.Stdio,
+                            false,
+                            "core",
+                        };
+                        if (structured)
+                            captured.Add(captureMode == 1 ? AssetPathUtility.GetBetaServerFromArgsList() : null);
+                        try
+                        {
+                            method.Invoke(client, captured.ToArray());
+                        }
+                        catch (TargetInvocationException error) when (error.InnerException != null)
+                        {
+                            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+                        }
+                    }
+                };
+                if (fail)
+                    Assert.Throws<InvalidOperationException>(() => configure());
+                else
+                    configure();
+                var result = JObject.Parse(File.ReadAllText(Path.Combine(shimDirectory, "captured.json")));
+                Assert.AreEqual("stdio", (string)result["Entry"]["type"]);
+                Assert.AreEqual(uvx, (string)result["Entry"]["command"]);
+                CollectionAssert.AreEqual(
+                    new[]
+                    {
+                        "--no-cache",
+                        "--refresh",
+                        "--python",
+                        ">=3.11",
+                        "--from",
+                        source,
+                        "--with-editable",
+                        source,
+                        "mcp-for-unity",
+                        "--tool-profile",
+                        "core",
+                    },
+                    result["Entry"]["args"].ToObject<string[]>()
+                );
+                Assert.IsFalse(File.Exists(Path.Combine(root, "synthetic-user-config.json")), "The fake CLI records argv without registering anything.");
+            }
+            finally
+            {
+                MCPServiceLocator.Register<IPathResolverService>(originalPaths);
+                foreach (var pair in stringPreferences)
+                    if (pair.Value.Exists)
+                        EditorPrefs.SetString(pair.Key, pair.Value.Value);
+                    else
+                        EditorPrefs.DeleteKey(pair.Key);
+                foreach (var pair in boolPreferences)
+                    if (pair.Value.Exists)
+                        EditorPrefs.SetBool(pair.Key, pair.Value.Value);
+                    else
+                        EditorPrefs.DeleteKey(pair.Key);
+                EditorConfigurationCache.Instance.Refresh();
+                Directory.Delete(root, true);
+            }
+        }
+
+        [TestCase("C:\\literal %PATH% ! ^ & (source)\\", false)]
+        [TestCase("C:\\literal %PATH% ! ^ & (source)\\", true)]
+        [TestCase("/tmp/literal \"quoted\" source/", false)]
+        [TestCase("/tmp/literal \"quoted\" source/", true)]
+        public void LegacyStdioSourceDecodingPreservesGeneratedLiteralData(string source, bool editable)
+        {
+            string formatted = "--python \">=3.11\" --from \"" + source + "\"";
+            var expected = new List<string> { "--python", ">=3.11", "--from", source };
+            if (editable)
+            {
+                formatted += " --with-editable \"" + source + "\"";
+                expected.AddRange(new[] { "--with-editable", source });
+            }
+            var method = typeof(ClaudeCliMcpConfigurator).GetMethod("DecodeLegacyFromArguments", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(method, "Generated legacy arguments must be decoded before safe JSON registration.");
+            CollectionAssert.AreEqual(expected, (IList<string>)method.Invoke(null, new object[] { formatted }));
+        }
+
+        [Test]
+        public void UnsupportedLegacyStdioArgumentsFailBeforeRunningCli()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "mcp-stdio-legacy-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                var client = new ClaudeCodeConfigurator().CreateOperationClient(Path.Combine(root, "synthetic-user-config.json"));
+                Assert.Throws<ArgumentException>(() =>
+                    client.ConfigureWithCapturedValues(
+                        root,
+                        "must-never-run",
+                        null,
+                        false,
+                        null,
+                        "synthetic-uvx",
+                        "--from custom",
+                        "mcp-for-unity",
+                        "",
+                        null,
+                        ConfiguredTransport.Stdio,
+                        false
+                    )
+                );
+                Assert.IsEmpty(Directory.GetFiles(root));
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
         [TestCase("2.1.193 (Claude Code)", true)]
         [TestCase("2.1.292 (Claude Code)\n", true)]
         [TestCase("2.1.192 (Claude Code)", false)]

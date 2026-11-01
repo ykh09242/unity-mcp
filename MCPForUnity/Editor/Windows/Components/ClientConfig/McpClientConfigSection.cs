@@ -853,14 +853,14 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                 ApplyStatusToUi(client, showChecking: true, customMessage: unregister ? "Unregistering..." : "Configuring...");
                 string uvxPath = null,
                     packageName = null,
-                    fromArgs = null,
                     uvxDevFlags = null,
                     source = null;
+                IList<string> fromArgs = null;
                 bool forceRefresh = false;
                 if (!unregister && !context.UseHttp)
                 {
                     (uvxPath, source, packageName) = AssetPathUtility.GetUvxCommandParts();
-                    fromArgs = AssetPathUtility.GetBetaServerFromArgs(quoteFromPath: true);
+                    fromArgs = AssetPathUtility.GetBetaServerFromArgsList();
                     forceRefresh = AssetPathUtility.ShouldForceUvxRefresh();
                 }
                 string apiKey = context.UseHttp && context.Remote ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty) : null;
@@ -893,13 +893,14 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                         context.UseHttp,
                         context.HttpUrl,
                         uvxPath,
-                        fromArgs,
+                        null,
                         packageName,
                         uvxDevFlags,
                         apiKey,
                         context.Transport,
                         unregister,
-                        context.StartupProfile
+                        context.StartupProfile,
+                        capturedFromArguments: fromArgs
                     );
                 });
                 if (!IsCurrentCliState(client, state))

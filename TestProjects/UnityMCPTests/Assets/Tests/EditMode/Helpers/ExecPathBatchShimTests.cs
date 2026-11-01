@@ -1,13 +1,47 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Dependencies.PlatformDetectors;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Helpers
 {
+    internal sealed class SyntheticClientPaths : IPathResolverService
+    {
+        internal string UvxPath;
+        internal string ClaudePath;
+
+        public string GetUvxPath() => UvxPath;
+
+        public string GetClaudeCliPath() => ClaudePath;
+
+        public bool IsPythonDetected() => true;
+
+        public bool IsClaudeCliDetected() => true;
+
+        public bool HasUvxPathOverride => true;
+        public bool HasClaudeCliPathOverride => true;
+        public bool HasUvxPathFallback => false;
+
+        public void SetUvxPathOverride(string path) => throw new NotSupportedException();
+
+        public void SetClaudeCliPathOverride(string path) => throw new NotSupportedException();
+
+        public void ClearUvxPathOverride() => throw new NotSupportedException();
+
+        public void ClearClaudeCliPathOverride() => throw new NotSupportedException();
+
+        public bool TryValidateUvxExecutable(string path, out string version) => throw new NotSupportedException();
+
+        public Task<string> ValidateUvxExecutableAsync(string path) => throw new NotSupportedException();
+    }
+
     /// <summary>
     /// Covers the Windows interpreter-discovery path that pyenv-win exposed: batch shims have to be
     /// launchable, and a single executable name has to be resolvable to more than one PATH hit so a
@@ -16,6 +50,9 @@ namespace MCPForUnityTests.Editor.Helpers
     public class ExecPathBatchShimTests
     {
         private string _tempRoot;
+
+        [DllImport("kernel32.dll", EntryPoint = "GetLongPathNameW", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+        private static extern uint GetLongPathName(string path, StringBuilder longPath, uint capacity);
 
         [SetUp]
         public void SetUp()
@@ -82,6 +119,30 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.That(stdout, Does.Contain("--version"));
         }
 
+        [Test]
+        public void TryRun_BatchExecutablePercentSegmentsRemainLiteral()
+        {
+            RequireWindows();
+            string shim = WriteShim(
+                Path.Combine(_tempRoot, "Program %MCP_SYNTHETIC_SHIM_SEGMENT% ! & (Files) ^"),
+                "synthetic.cmd",
+                "echo literal executable reached"
+            );
+            Assert.IsTrue(
+                ExecPath.TryRun(
+                    shim,
+                    "",
+                    _tempRoot,
+                    out string stdout,
+                    out string stderr,
+                    10000,
+                    environmentOverrides: new Dictionary<string, string> { ["MCP_SYNTHETIC_SHIM_SEGMENT"] = "expanded-incorrect" }
+                ),
+                stderr
+            );
+            Assert.AreEqual("literal executable reached", stdout.Trim());
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void TryRun_DistinguishesFinishedFailureFromUncertainTimeout(bool timeout)
@@ -99,9 +160,15 @@ namespace MCPForUnityTests.Editor.Helpers
         {
             RequireWindows();
 
+            // TEMP can use an 8.3 alias, while where.exe returns long path names.
+            // Canonicalize the owned fixture, keeping exact match/order assertions below.
+            var canonicalRoot = new StringBuilder(32768);
+            uint length = GetLongPathName(_tempRoot, canonicalRoot, (uint)canonicalRoot.Capacity);
+            Assert.That(length, Is.InRange(1U, (uint)canonicalRoot.Capacity - 1), "Cannot resolve the owned temporary directory's long path.");
+
             // The real-world shape: a non-working entry earlier on PATH shadowing a working one.
-            string first = Path.Combine(_tempRoot, "first");
-            string second = Path.Combine(_tempRoot, "second");
+            string first = Path.Combine(canonicalRoot.ToString(), "first");
+            string second = Path.Combine(canonicalRoot.ToString(), "second");
             string name = "mcp_probe_" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".cmd";
             string firstShim = WriteShim(first, name, "exit /b 1");
             string secondShim = WriteShim(second, name, "echo Python 3.12.9");

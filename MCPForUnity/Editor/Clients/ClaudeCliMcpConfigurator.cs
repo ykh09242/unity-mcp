@@ -351,7 +351,8 @@ namespace MCPForUnity.Editor.Clients
             string apiKey,
             Models.ConfiguredTransport serverTransport,
             bool unregister,
-            string startupToolProfile = null
+            string startupToolProfile = null,
+            IList<string> capturedFromArguments = null
         )
         {
             if (unregister)
@@ -372,7 +373,8 @@ namespace MCPForUnity.Editor.Clients
                     uvxDevFlags,
                     apiKey,
                     serverTransport,
-                    startupToolProfile
+                    startupToolProfile,
+                    capturedFromArguments
                 );
             }
         }
@@ -392,7 +394,8 @@ namespace MCPForUnity.Editor.Clients
             string uvxDevFlags,
             string apiKey,
             Models.ConfiguredTransport serverTransport,
-            string startupToolProfile
+            string startupToolProfile,
+            IList<string> capturedFromArguments
         )
         {
             if (string.IsNullOrEmpty(claudePath))
@@ -409,8 +412,13 @@ namespace MCPForUnity.Editor.Clients
             {
                 // Use --scope local to register in the project-local config, avoiding conflicts with user-level config (#664)
                 GetExistingConfigForRegistration(projectDir);
-                args =
-                    $"mcp add --scope local --transport stdio UnityMCP -- \"{uvxPath}\" {uvxDevFlags}{fromArgs} {packageName}{StartupToolProfile.CommandSuffix(startupToolProfile)}";
+                args = BuildStdioRegistrationArguments(
+                    uvxPath,
+                    capturedFromArguments ?? DecodeLegacyFromArguments(fromArgs),
+                    packageName,
+                    uvxDevFlags,
+                    startupToolProfile
+                );
             }
 
             ReplaceSelectedLocalRegistration(claudePath, projectDir, pathPrepend, args);
@@ -470,10 +478,9 @@ namespace MCPForUnity.Editor.Clients
                 GetExistingConfigForRegistration(projectDir);
                 var (uvxPath, _, packageName) = AssetPathUtility.GetUvxCommandParts();
                 string devFlags = AssetPathUtility.GetUvxDevFlags();
-                string fromArgs = AssetPathUtility.GetBetaServerFromArgs(quoteFromPath: true);
+                var fromArgs = AssetPathUtility.GetBetaServerFromArgsList();
                 // Use --scope local to register in the project-local config, avoiding conflicts with user-level config (#664)
-                args =
-                    $"mcp add --scope local --transport stdio UnityMCP -- \"{uvxPath}\" {devFlags}{fromArgs} {packageName}{StartupToolProfile.CommandSuffix(StartupToolProfile.Selection)}";
+                args = BuildStdioRegistrationArguments(uvxPath, fromArgs, packageName, devFlags, StartupToolProfile.Selection);
             }
 
             string pathPrepend = null;
@@ -711,6 +718,54 @@ namespace MCPForUnity.Editor.Clients
                     result[server.Name] = entry;
                 }
             }
+            return result;
+        }
+
+        internal static string BuildStdioRegistrationArguments(
+            string executable,
+            IEnumerable<string> fromArguments,
+            string packageName,
+            string devFlags,
+            string profile
+        )
+        {
+            var arguments = new List<string>();
+            // These flags are generated internally and contain no path data.
+            arguments.AddRange((devFlags ?? "").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
+            arguments.AddRange(fromArguments);
+            arguments.Add(packageName);
+            StartupToolProfile.CommandSuffix(profile);
+            if (!string.IsNullOrEmpty(profile))
+                arguments.AddRange(new[] { "--tool-profile", profile });
+            return ClaudeHttpAuth.BuildRegistrationArguments(
+                new JObject
+                {
+                    ["type"] = "stdio",
+                    ["command"] = executable,
+                    ["args"] = new JArray(arguments),
+                }
+            );
+        }
+
+        internal static IList<string> DecodeLegacyFromArguments(string arguments)
+        {
+            if (string.IsNullOrEmpty(arguments))
+                return Array.Empty<string>();
+            // Compatibility for the public captured-values API's generated format only.
+            // Match the editable form first so embedded quotes/backslashes remain literal data.
+            const string prefix = "^--python \"(?<python>>=3\\.11)\" --from \"(?<source>.*)\"";
+            var match = System.Text.RegularExpressions.Regex.Match(arguments, prefix + " --with-editable \"\\k<source>\"$");
+            bool editable = match.Success;
+            if (!editable)
+                match = System.Text.RegularExpressions.Regex.Match(arguments, prefix + "$");
+            if (!match.Success)
+                throw new ArgumentException(
+                    "Expected generated --python/--from arguments. Pass structured capturedFromArguments for custom arguments.",
+                    nameof(arguments)
+                );
+            var result = new List<string> { "--python", match.Groups["python"].Value, "--from", match.Groups["source"].Value };
+            if (editable)
+                result.AddRange(new[] { "--with-editable", match.Groups["source"].Value });
             return result;
         }
 

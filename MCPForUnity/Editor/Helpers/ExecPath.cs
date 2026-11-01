@@ -261,8 +261,9 @@ namespace MCPForUnity.Editor.Helpers
                 else if (isBatch)
                 {
                     fileName = "cmd.exe";
-                    // /s /c plus an outer pair of quotes keeps paths containing spaces intact
-                    arguments = $"/s /c \"\"{file}\" {args}\"";
+                    // Expand the executable from the child's environment once: inserting a
+                    // literal path here would expand %NAME% segments even inside quotes.
+                    arguments = $"/d /v:off /s /c \"\"%MCP_UNITY_BATCH_EXECUTABLE%\" {args}\"";
                 }
                 else
                 {
@@ -292,6 +293,8 @@ namespace MCPForUnity.Editor.Helpers
                         psi.EnvironmentVariables[key] = entry.Value;
                     }
                 }
+                if (isBatch)
+                    psi.EnvironmentVariables["MCP_UNITY_BATCH_EXECUTABLE"] = file;
                 if (!string.IsNullOrEmpty(extraPathPrepend))
                 {
                     string currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
