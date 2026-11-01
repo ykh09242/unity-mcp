@@ -1,6 +1,9 @@
+using System;
 using System.IO;
 using MCPForUnity.Editor.Clients;
 using MCPForUnity.Editor.Clients.Configurators;
+using MCPForUnity.Editor.Models;
+using MCPForUnity.Editor.Services;
 using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Clients
@@ -8,6 +11,52 @@ namespace MCPForUnityTests.Editor.Clients
     [TestFixture]
     public class IsInstalledTests
     {
+        private sealed class SyntheticCodeBuddy : CodeBuddyCliConfigurator
+        {
+            internal int ConfigureCalls;
+
+            internal SyntheticCodeBuddy(string home)
+            {
+                client.windowsConfigPath = client.macConfigPath = client.linuxConfigPath = Path.Combine(home, ".codebuddy.json");
+            }
+
+            public override McpStatus CheckStatus(bool attemptAutoRewrite = true) => McpStatus.NotConfigured;
+
+            public override void Configure()
+            {
+                ConfigureCalls++;
+                File.WriteAllText(GetConfigPath(), "{\"synthetic-configured\":true}");
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CodeBuddyDetectionRequiresExistingClientConfig(bool configExists)
+        {
+            string home = Path.Combine(Path.GetTempPath(), "mcp-codebuddy-home-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(home);
+            try
+            {
+                var client = new SyntheticCodeBuddy(home);
+                if (configExists)
+                    File.WriteAllText(client.GetConfigPath(), "{}");
+                Assert.AreEqual(configExists, client.IsInstalled);
+                bool useHttp = true;
+                var service = new ClientConfigurationService(new[] { client }, () => useHttp, value => useHttp = value, () => { }, _ => { });
+                var result = service.ConfigureAllDetectedClients();
+                Assert.AreEqual(configExists ? 1 : 0, client.ConfigureCalls);
+                Assert.AreEqual(configExists ? 1 : 0, result.SuccessCount);
+                Assert.AreEqual(configExists ? 0 : 1, result.SkippedCount);
+                Assert.AreEqual(0, result.FailureCount);
+                Assert.AreEqual(configExists, File.Exists(client.GetConfigPath()), "Detection must never create a config for an absent client.");
+                Assert.IsTrue(useHttp, "Bulk configuration must preserve the requested transport.");
+            }
+            finally
+            {
+                Directory.Delete(home, true);
+            }
+        }
+
         [Test]
         public void IMcpClientConfigurator_ExposesIsInstalled()
         {

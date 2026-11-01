@@ -21,6 +21,9 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 }
             ) { }
 
+        // The home directory exists regardless of whether CodeBuddy has been installed.
+        public override bool IsInstalled => File.Exists(GetConfigPath());
+
         public override IList<string> GetInstallationSteps() =>
             new List<string>
             {
