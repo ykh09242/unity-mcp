@@ -38,6 +38,7 @@ async def owned_stdio(tmp_path: Path, store: Path, protocol: str):
             assert process.stdout is not None and process.stdin is not None
             output = BufferedByteReceiveStream(process.stdout)
             request_ids = itertools.count(1)
+            frames = []
 
             async def exchange(method, params, *, notification=False):
                 if protocol == "2026-07-28" and method == "tools/call":
@@ -59,7 +60,9 @@ async def owned_stdio(tmp_path: Path, store: Path, protocol: str):
                 identifier = None if notification else next(request_ids)
                 if identifier is not None:
                     message["id"] = identifier
-                await process.stdin.send(json.dumps(message).encode() + b"\n")
+                wire = json.dumps(message).encode() + b"\n"
+                frames.append(json.loads(wire))
+                await process.stdin.send(wire)
                 if identifier is None:
                     return None
                 reply = json.loads(await output.receive_until(b"\n", 128 * 1024))
@@ -78,82 +81,89 @@ async def owned_stdio(tmp_path: Path, store: Path, protocol: str):
                 )
                 assert reply["result"]["protocolVersion"] == protocol
                 await exchange("notifications/initialized", {}, notification=True)
-            yield exchange
+            yield exchange, frames
             await process.stdin.aclose()
         finally:
             await cleanup_process(process, grace_seconds=2)
+
+
+@pytest.fixture(scope="module")
+def receipt_scenarios(tmp_path_factory):
+    """Share incidental SDK startup; each protocol still owns a real restart."""
+    scenarios = {}
+
+    async def scenario(protocol):
+        if protocol in scenarios:
+            return scenarios[protocol]
+        root = tmp_path_factory.mktemp("receipt-" + protocol)
+        first_dir, second_dir = root / "first", root / "second"
+        first_dir.mkdir()
+        second_dir.mkdir()
+        store = root / "receipts"
+        initial, replay, params = {}, {}, {}
+        with anyio.fail_after(25):
+            async with owned_stdio(first_dir, store, protocol) as (call, first_frames):
+                described = await call(
+                    "tools/call", {"name": "get_execution_receipt", "arguments": {}}
+                )
+                store_id = described["result"]["structuredContent"]["store_id"]
+                for as_error in (False, True):
+                    params[as_error] = {
+                        "name": "receipt_exercise",
+                        "arguments": {"checked": 4, "as_error": as_error},
+                        "_meta": {
+                            META: {
+                                "version": 1,
+                                "store_id": store_id,
+                                "project_hash": PROJECT,
+                                "idempotency_key": "stdio-restart-key-" + str(as_error),
+                                "retain_result": True,
+                            }
+                        },
+                    }
+                    initial[as_error] = await call("tools/call", params[as_error])
+                executed = await call("tools/call", {"name": "body_count", "arguments": {}})
+                assert executed["result"]["structuredContent"]["body"] == 2
+            # A new native process reopens both independent journal records.
+            async with owned_stdio(second_dir, store, protocol) as (call, second_frames):
+                for as_error in (False, True):
+                    replay[as_error] = await call("tools/call", params[as_error])
+                first_count = await call("tools/call", {"name": "body_count", "arguments": {}})
+                second_count = await call("tools/call", {"name": "body_count", "arguments": {}})
+            assert (
+                first_count["result"]["structuredContent"]
+                == second_count["result"]["structuredContent"]
+                == {"body": 0}
+            )
+        scenarios[protocol] = initial, replay, (first_frames, second_frames)
+        return scenarios[protocol]
+
+    return scenario
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("protocol", ["2025-11-25", "2026-07-28"])
 @pytest.mark.parametrize("as_error", [False, True])
 async def test_actual_stdio_restart_rehydrates_receipt_without_second_handler(
-    tmp_path, protocol, as_error
+    receipt_scenarios, protocol, as_error
 ):
-    # Given one owned native SDK process and its actual private receipt store.
-    first_dir, second_dir = tmp_path / "first", tmp_path / "second"
-    first_dir.mkdir()
-    second_dir.mkdir()
-    store = tmp_path / "receipts"
-    with anyio.fail_after(25):
-        async with owned_stdio(first_dir, store, protocol) as call:
-            described = await call("tools/call", {"name": "get_execution_receipt", "arguments": {}})
-            store_id = described["result"]["structuredContent"]["store_id"]
-            params = {
-                "name": "receipt_exercise",
-                "arguments": {"checked": 4, "as_error": as_error},
-                "_meta": {
-                    META: {
-                        "version": 1,
-                        "store_id": store_id,
-                        "project_hash": PROJECT,
-                        "idempotency_key": "stdio-restart-key-0001",
-                        "retain_result": True,
-                    }
-                },
-            }
-            initial = await call("tools/call", params)
-        # When a second owned process reopens the same journal and receives that key.
-        async with owned_stdio(second_dir, store, protocol) as call:
-            replay = await call("tools/call", params)
-            count = await call("tools/call", {"name": "body_count", "arguments": {}})
-        # Then actual public SDK wire fields survive and the restarted body never runs.
-        assert initial["result"]["content"] == replay["result"]["content"]
-        assert initial["result"]["structuredContent"] == replay["result"]["structuredContent"]
-        assert initial["result"]["isError"] is replay["result"]["isError"] is as_error
-        assert initial["result"]["_meta"]["application"] == replay["result"]["_meta"]["application"]
-        assert replay["result"]["_meta"][META]["replayed"] is True
-        assert count["result"]["structuredContent"]["body"] == 0
+    initial_results, replay_results, _frames = await receipt_scenarios(protocol)
+    initial, replay = initial_results[as_error], replay_results[as_error]
+    assert initial["result"]["content"] == replay["result"]["content"]
+    assert initial["result"]["structuredContent"] == replay["result"]["structuredContent"]
+    assert initial["result"]["isError"] is replay["result"]["isError"] is as_error
+    assert initial["result"]["_meta"]["application"] == replay["result"]["_meta"]["application"]
+    assert replay["result"]["_meta"][META]["replayed"] is True
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("protocol", ["2025-11-25", "2026-07-28"])
-async def test_owned_stdio_client_never_reuses_request_ids(tmp_path, monkeypatch, protocol):
-    frames = []
-    open_process = anyio.open_process
-
-    async def capture_process(*args, **kwargs):
-        process = await open_process(*args, **kwargs)
-        send = process.stdin.send
-
-        async def capture_request(data):
-            frames.append(json.loads(data))
-            await send(data)
-
-        monkeypatch.setattr(process.stdin, "send", capture_request)
-        return process
-
-    monkeypatch.setattr(anyio, "open_process", capture_process)
-    with anyio.fail_after(25):
-        async with owned_stdio(tmp_path, tmp_path / "receipts", protocol) as call:
-            first = await call("tools/call", {"name": "body_count", "arguments": {}})
-            second = await call("tools/call", {"name": "body_count", "arguments": {}})
-    identifiers = [frame["id"] for frame in frames if "id" in frame]
-    assert len(identifiers) >= 2
-    assert len(identifiers) == len(set(identifiers)), frames
-    assert all(
-        "id" not in frame for frame in frames if frame["method"].startswith("notifications/")
-    )
-    assert (
-        first["result"]["structuredContent"] == second["result"]["structuredContent"] == {"body": 0}
-    )
+async def test_owned_stdio_client_never_reuses_request_ids(receipt_scenarios, protocol):
+    _initial, _replay, processes = await receipt_scenarios(protocol)
+    for frames in processes:
+        identifiers = [frame["id"] for frame in frames if "id" in frame]
+        assert len(identifiers) >= 4
+        assert len(identifiers) == len(set(identifiers)), frames
+        assert all(
+            "id" not in frame for frame in frames if frame["method"].startswith("notifications/")
+        )
