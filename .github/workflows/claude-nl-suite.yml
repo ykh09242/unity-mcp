@@ -1217,8 +1217,7 @@ jobs:
               return None
 
           fragments = sorted(Path('reports').glob('*_results.xml'))
-          report_names = {p.name for p in fragments}
-          fragments += sorted(p for p in Path('reports/_staging').glob('*_results.xml') if p.name not in report_names)
+          fragments += sorted(Path('reports/_staging').glob('*_results.xml'))
           if fragments:
               print("merge fragments:", ", ".join(p.as_posix() for p in fragments))
           added = 0
@@ -1241,10 +1240,6 @@ jobs:
                           tcs.append(ET.fromstring(m))
                       except Exception:
                           pass
-
-              # Guard: keep only the first testcase from each fragment
-              if len(tcs) > 1:
-                  tcs = tcs[:1]
 
               test_id = id_from_filename(frag)
 
@@ -1272,11 +1267,14 @@ jobs:
                   if (tc.get('name') or '') == 'NL-Suite.Bootstrap':
                       suite.remove(tc)
               testcases = suite.findall('.//testcase')
-              failures_cnt = sum(1 for tc in testcases if (tc.find('failure') is not None or tc.find('error') is not None))
               suite.set('tests', str(len(testcases)))
-              suite.set('failures', str(failures_cnt))
-              suite.set('errors', '0')
-              suite.set('skipped', '0')
+              for attribute, tag in [('failures', 'failure'), ('errors', 'error'), ('skipped', 'skipped')]:
+                  suite.set(attribute, str(sum(1 for tc in testcases if tc.find(tag) is not None)))
+              if root is not suite:
+                  all_cases = root.findall('.//testcase')
+                  root.set('tests', str(len(all_cases)))
+                  for attribute, tag in [('failures', 'failure'), ('errors', 'error'), ('skipped', 'skipped')]:
+                      root.set(attribute, str(sum(1 for tc in all_cases if tc.find(tag) is not None)))
               tree.write(src, encoding='utf-8', xml_declaration=True)
               print(f"Appended {added} testcase(s); renamed {renamed} to canonical NL/T names.")
           PY
@@ -1354,7 +1352,7 @@ jobs:
           tree = ET.parse(src)
           root = tree.getroot()
           suite = root.find('./*') if localname(root.tag) == 'testsuites' else root
-          cases = [] if suite is None else list(suite.findall('.//testcase'))
+          cases = list(root.findall('.//testcase'))
 
           def id_from_case(tc):
               n = (tc.get('name') or '')
@@ -1372,10 +1370,10 @@ jobs:
           name_map = {}
           for tc in cases:
               tid = id_from_case(tc)
-              ok = (tc.find('failure') is None and tc.find('error') is None)
-              if tid and tid not in id_status:
-                  id_status[tid] = ok
-                  name_map[tid] = (tc.get('name') or tid)
+              ok = all(tc.find(tag) is None for tag in ('failure', 'error', 'skipped'))
+              if tid:
+                  id_status[tid] = id_status.get(tid, True) and ok
+                  name_map.setdefault(tid, (tc.get('name') or tid))
 
           desired = ['NL-0','NL-1','NL-2','NL-3','NL-4','T-A','T-B','T-C','T-D','T-E','T-F','T-G','T-H','T-I','T-J','GO-0','GO-1','GO-2','GO-3','GO-4','GO-5','GO-6','GO-7','GO-8','GO-9','GO-10']
           default_titles = {
@@ -1417,20 +1415,21 @@ jobs:
 
           total = len(cases)
           failures = sum(1 for tc in cases if (tc.find('failure') is not None or tc.find('error') is not None))
-          passed = total - failures
+          skipped = sum(1 for tc in cases if tc.find('skipped') is not None and tc.find('failure') is None and tc.find('error') is None)
+          passed = total - failures - skipped
 
           lines = []
           lines += [
               '# Unity NL/T Editing Suite Test Results',
               '',
-              f'Totals: {passed} passed, {failures} failed, {total} total',
+              f'Totals: {passed} passed, {failures} failed, {skipped} skipped, {total} total',
               '',
               '## Test Checklist'
           ]
           for p in desired:
               st = id_status.get(p, None)
               label = display_name(p)
-              lines.append(f"- [x] {label}" if st is True else (f"- [ ] {label} (fail)" if st is False else f"- [ ] {label} (not run)"))
+              lines.append(f"- [x] {label}" if st is True else (f"- [ ] {label} (not passed)" if st is False else f"- [ ] {label} (not run)"))
           lines.append('')
 
           lines.append('## Test Details (trimmed)')
@@ -1456,10 +1455,10 @@ jobs:
           for tid in sorted(id_status.keys(), key=order_key):
               seen.add(tid)
               tc = next((c for c in cases if (id_from_case(c) == tid)), None)
-              if not tc:
+              if tc is None:
                   continue
               title = name_map.get(tid, tid)
-              status_badge = "PASS" if id_status[tid] else "FAIL"
+              status_badge = "PASS" if id_status[tid] else "NOT PASSED"
               lines.append(f"### {title} — {status_badge}")
               so = tc.find('system-out')
               text = '' if so is None or so.text is None else html.unescape(so.text.replace('\r\n','\n'))
@@ -1479,7 +1478,9 @@ jobs:
                   lines += [fence, t, fence]
               else:
                   lines.append('(no system-out)')
-              node = tc.find('failure') or tc.find('error')
+              node = tc.find('failure')
+              if node is None:
+                  node = tc.find('error')
               if node is not None:
                   msg = (node.get('message') or '').strip()
                   body = (node.text or '').strip()
@@ -1493,7 +1494,7 @@ jobs:
               if id_from_case(tc) in seen:
                   continue
               title = tc.get('name') or '(unnamed)'
-              status_badge = "PASS" if (tc.find('failure') is None and tc.find('error') is None) else "FAIL"
+              status_badge = "PASS" if all(tc.find(tag) is None for tag in ('failure', 'error', 'skipped')) else "FAIL"
               lines.append(f"### {title} — {status_badge}")
               lines.append('(unmapped test id)')
               lines.append('')
@@ -1524,7 +1525,7 @@ jobs:
           tree = ET.parse(junit_path)
           root = tree.getroot()
           suite = root.find('./*') if localname(root.tag) == 'testsuites' else root
-          cases = [] if suite is None else list(suite.findall('.//testcase'))
+          cases = list(root.findall('.//testcase'))
 
           def id_from_case(tc):
               name = (tc.get('name') or '').strip()
@@ -1538,14 +1539,14 @@ jobs:
                       return m.group(1)
               return None
 
-          # Determine status per desired ID (first occurrence wins, matching the summary builder)
+          # Every occurrence of a required ID must have executed and passed.
           id_status = {}
           for tc in cases:
               tid = id_from_case(tc)
-              if not tid or tid not in desired or tid in id_status:
+              if not tid or tid not in desired:
                   continue
-              ok = (tc.find('failure') is None and tc.find('error') is None)
-              id_status[tid] = ok
+              ok = all(tc.find(tag) is None for tag in ('failure', 'error', 'skipped'))
+              id_status[tid] = id_status.get(tid, True) and ok
 
           missing = [d for d in desired if d not in id_status]
           failed = [d for d, ok in id_status.items() if ok is False]
