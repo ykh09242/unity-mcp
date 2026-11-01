@@ -12,6 +12,13 @@ from models.response_limits import ResponseOwner, response_owner
 from services.tools.shared_tool_reads import SharedToolReads
 
 
+def test_worker_probe_counts_aggregate_text_below_per_string_threshold():
+    from services.tools.response_work import needs_response_worker
+
+    assert not needs_response_worker({"first": "x" * 20000, "second": "y" * 20000})
+    assert needs_response_worker({str(index): "x" * 60000 for index in range(100)})
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("admitted", [False, True])
 async def test_final_sizing_precedes_owned_worker_cloning(monkeypatch, admitted):

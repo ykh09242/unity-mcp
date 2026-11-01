@@ -13,6 +13,7 @@ from hashlib import sha256
 from collections.abc import Coroutine, Mapping
 from dataclasses import dataclass, replace
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext, suppress
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from collections.abc import Callable
 
@@ -64,6 +65,7 @@ from transport.large_result_assembler import (
     MAX_FRAME_BYTES,
     COMPRESSION_CAPABILITY,
     LargeResultAssembler,
+    CompletedLargeResult,
     LargeResultProtocolError,
 )
 from transport.blender_timeout import blender_command_timeout, SERVER_RESPONSE_GRACE
@@ -106,6 +108,7 @@ from transport.socket_write_guard import (
     socket_write_guard,
 )
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
+from services.tools.response_work import needs_response_worker, response_work
 from services.registry.operation_context import operation_task
 from transport.native_arbitration import (
     CAPABILITY as ARBITRATION_CAPABILITY,
@@ -200,6 +203,54 @@ class _ConnectionReadIdentity:
     generation: str
     command_epoch: int
     state_epoch: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ResultWork:
+    """Captured pending identity and capacity held through actual response work."""
+
+    entry: dict[str, Any]  # The Hub's existing pending-entry boundary.
+    generation: str | None
+    lock: asyncio.Lock
+    owner: ResponseOwner
+    max_retained_bytes: int
+    credential: CredentialLease | None
+    ingress: _IngressWork | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _IngressWork:
+    """One raw frame and decoded graph, owned through dispatch's frame cleanup."""
+
+    websocket: WebSocket
+    session_id: str | None
+    admission: tuple[WebSocket, str | None] | None
+    generation: str | None
+    lock: asyncio.Lock | None
+    credential: CredentialLease | None
+    raw_owner: ResponseOwner
+    graph_owner: ResponseOwner
+    max_retained_bytes: int
+    pending: dict[str, tuple[int, weakref.ReferenceType[asyncio.Future]]]
+
+    def release(self) -> None:
+        self.raw_owner.release()
+        self.graph_owner.release()
+
+
+@dataclass(slots=True)
+class _IngressScope:
+    """Mutable frame handoff: decode attaches ownership; dispatch clears it."""
+
+    work: _IngressWork | None = None
+    discarded: bool = False
+
+
+_ingress_scope: ContextVar[_IngressScope | None] = ContextVar("plugin_ingress_scope", default=None)
+
+
+class _PluginMessageLimitError(ValueError):
+    """The existing preparse byte, depth or node ceiling was exceeded."""
 
 
 class InstanceSelectionRequiredError(RuntimeError):
@@ -337,6 +388,10 @@ class PluginHub(WebSocketEndpoint):
 
     @classmethod
     def _has_result_capacity(cls, entry: Mapping[str, Any], charge: int) -> bool:
+        return charge <= cls._available_result_capacity(entry)
+
+    @classmethod
+    def _available_result_capacity(cls, entry: Mapping[str, Any]) -> int:
         user_id, session_id = entry.get("user_id"), entry["session_id"]
         total = cls._retained_results.total_bytes + cls._raw_results.total_bytes
         user_total = cls._retained_results.user_bytes(user_id) + cls._raw_results.user_bytes(
@@ -345,10 +400,10 @@ class PluginHub(WebSocketEndpoint):
         session_total = cls._retained_results.session_bytes(
             session_id
         ) + cls._raw_results.session_bytes(session_id)
-        return (
-            total + charge <= cls.MAX_RETAINED_RESULT_BYTES
-            and user_total + charge <= cls.MAX_RETAINED_RESULT_BYTES_PER_USER
-            and session_total + charge <= cls.MAX_RETAINED_RESULT_BYTES_PER_SESSION
+        return min(
+            cls.MAX_RETAINED_RESULT_BYTES - total,
+            cls.MAX_RETAINED_RESULT_BYTES_PER_USER - user_total,
+            cls.MAX_RETAINED_RESULT_BYTES_PER_SESSION - session_total,
         )
 
     @classmethod
@@ -505,6 +560,8 @@ class PluginHub(WebSocketEndpoint):
                 while websocket.application_state == WebSocketState.CONNECTED:
                     registered = getattr(websocket.state, "plugin_registered", False)
                     message = data = None
+                    frame = _IngressScope()
+                    frame_token = _ingress_scope.set(frame)
                     try:
                         if registered:
                             if lease is not None:
@@ -524,7 +581,10 @@ class PluginHub(WebSocketEndpoint):
                             break
                         if message["type"] == "websocket.receive":
                             data = await self.decode(websocket, message)
-                            if websocket.application_state == WebSocketState.CONNECTED:
+                            if (
+                                not frame.discarded
+                                and websocket.application_state == WebSocketState.CONNECTED
+                            ):
                                 if registered:
                                     await self.on_receive(websocket, data)
                                 else:
@@ -538,6 +598,9 @@ class PluginHub(WebSocketEndpoint):
                         # Delivery owns accepted results; idle dispatch must not
                         # retain an uncharged raw frame or its decoded graph.
                         message = data = None
+                        if frame.work is not None:
+                            frame.work.release()
+                        _ingress_scope.reset(frame_token)
             except CredentialLeaseError:
                 close_code = 4403
                 if websocket.application_state == WebSocketState.CONNECTED:
@@ -586,25 +649,151 @@ class PluginHub(WebSocketEndpoint):
                 )
                 return None
             return raw
-        text = bounded_json_text(
-            raw,
-            max_bytes=self.MAX_RAW_MESSAGE_BYTES,
-            max_depth=self.MAX_RESULT_DEPTH,
-            max_nodes=self.MAX_RESULT_NODES,
-        )
-        if text is None:
+        if len(raw) > self.MAX_RAW_MESSAGE_BYTES:
             await websocket.close(code=1009, reason="Plugin message exceeds supported limits")
             return None
         try:
-            # Subclass decode hooks are part of the existing bounded-text path.
-            return (
-                decode_json(raw, fallback_text=text)
-                if type(raw) in (str, bytes)
-                else json.loads(text)
-            )
+            if len(raw) >= 64 * 1024 or type(raw) not in (str, bytes):
+                return await self._decode_ingress(websocket, raw)
+            return type(self)._decode_json_message(raw, self.MAX_RESULT_NODES)
+        except _PluginMessageLimitError:
+            await websocket.close(code=1009, reason="Plugin message exceeds supported limits")
+            return None
         except (ValueError, RecursionError):
             await websocket.close(code=1003, reason="Malformed plugin message")
             return None
+
+    @classmethod
+    def _decode_json_message(cls, raw: str | bytes, max_nodes: int) -> Any:
+        text = bounded_json_text(
+            raw,
+            max_bytes=cls.MAX_RAW_MESSAGE_BYTES,
+            max_depth=cls.MAX_RESULT_DEPTH,
+            max_nodes=max_nodes,
+        )
+        if text is None:
+            raise _PluginMessageLimitError()
+        # Subclass decode hooks remain inside the bounded-text path.
+        return (
+            decode_json(raw, fallback_text=text) if type(raw) in (str, bytes) else json.loads(text)
+        )
+
+    @classmethod
+    def _claim_ingress_work(cls, websocket: WebSocket, raw: str | bytes) -> _IngressWork | None:
+        """Reserve raw/text and decoded storage before a frame can queue for CPU work."""
+        lock = cls._lock
+        standalone = lock is None and _ingress_scope.get() is None
+        if lock is None and not standalone:
+            return None
+        admission = cls._admitted.get(id(websocket))
+        session_id = next(
+            (sid for sid, peer in cls._connections.items() if peer is websocket), None
+        )
+        if (
+            not standalone
+            and session_id is None
+            and (admission is None or admission[0] is not websocket)
+        ):
+            return None
+        credential = cls._socket_lease(websocket)
+        user_id = credential.user_id if credential is not None else None
+        identity = {"user_id": user_id, "session_id": session_id or "ingress:" + str(id(websocket))}
+        # Exact builtin descriptors avoid extension __sizeof__ hooks. Text
+        # admission may encode UTF-8; bytes may coexist with four-byte Unicode.
+        raw_size = str.__sizeof__(raw) if isinstance(raw, str) else bytes.__sizeof__(raw)
+        raw_charge = raw_size + 4 * len(raw) + 4096
+        graph_charge = min(
+            cls.MAX_RESULT_RETAINED_BYTES, cls._available_result_capacity(identity) - raw_charge
+        )
+        if graph_charge < 512:
+            return None
+        raw_owner, graph_owner = ResponseOwner(), ResponseOwner()
+        ledger = cls._retained_results
+        try:
+            for owner, charge in ((raw_owner, raw_charge), (graph_owner, graph_charge)):
+                key = "ingress:" + str(uuid.uuid4())
+                owner.entries.append((ledger, key))
+                ledger[key] = {**identity, "bytes": charge}
+            return _IngressWork(
+                websocket,
+                session_id,
+                admission,
+                getattr(websocket.state, "plugin_generation", None),
+                lock,
+                credential,
+                raw_owner,
+                graph_owner,
+                graph_charge,
+                {
+                    command_id: (id(entry), weakref.ref(entry["future"]))
+                    for command_id, entry in cls._pending.items()
+                    if entry["session_id"] == session_id
+                },
+            )
+        except MemoryError:
+            raw_owner.release()
+            graph_owner.release()
+            raise
+
+    @classmethod
+    def _ingress_work_current(cls, work: _IngressWork) -> bool:
+        websocket = work.websocket
+        return (
+            cls._lock is work.lock
+            and getattr(websocket.state, "plugin_generation", None) == work.generation
+            and cls._socket_lease(websocket) is work.credential
+            and (
+                cls._connections.get(work.session_id) is websocket
+                if work.session_id is not None
+                else cls._admitted.get(id(websocket)) is work.admission
+            )
+        )
+
+    async def _decode_ingress(self, websocket: WebSocket, raw: str | bytes) -> Any:
+        cls = type(self)
+        lock = cls._lock
+        scope = _ingress_scope.get()
+        generation = getattr(websocket.state, "plugin_generation", None)
+        # Standalone decode remains usable before configuration. It shares the
+        # bounded retention ledger and worker pool, without acquiring dispatch
+        # authority; configuration/admission changes still fence its result.
+        async with (
+            cls._authorized_socket_lock(websocket, lock) if lock is not None else nullcontext()
+        ):
+            if (
+                cls._lock is not lock
+                or getattr(websocket.state, "plugin_generation", None) != generation
+            ):
+                if scope is not None:
+                    scope.discarded = True
+                return None
+            work = cls._claim_ingress_work(websocket, raw)
+            if work is not None and scope is not None:
+                scope.work = work
+        if work is None:
+            await websocket.close(code=1013, reason="Plugin message capacity reached")
+            return None
+        try:
+            decoded = await response_work(
+                lambda: cls._decode_json_message(
+                    raw, min(cls.MAX_RESULT_NODES, work.max_retained_bytes // 512)
+                ),
+                large=True,
+            )
+            async with (
+                cls._authorized_socket_lock(websocket, lock) if lock is not None else nullcontext()
+            ):
+                if not cls._ingress_work_current(work):
+                    if scope is not None:
+                        scope.discarded = True
+                    return None
+            return decoded
+        finally:
+            # Dispatch owns the graph across on_receive and raw-frame cleanup.
+            # Standalone callers own their returned value, while this call still
+            # retains its worker reservation until actual executor completion.
+            if scope is None:
+                work.release()
 
     @classmethod
     def _command_payload_size(cls, command_type: str, params: dict[str, Any]) -> int | None:
@@ -887,6 +1076,12 @@ class PluginHub(WebSocketEndpoint):
         lease = type(self)._socket_lease(websocket)
         if lease is not None:
             await lease.check()
+        scope = _ingress_scope.get()
+        work = scope.work if scope is not None else None
+        if work is not None and work.websocket is websocket:
+            async with type(self)._authorized_socket_lock(websocket, work.lock):
+                if not type(self)._ingress_work_current(work):
+                    return
         if isinstance(data, bytes):
             await self._handle_large_result(websocket, data)
             return
@@ -2942,6 +3137,109 @@ class PluginHub(WebSocketEndpoint):
             if after is not None and after != before:
                 cls._publish_editor_state(websocket, after)
 
+    @classmethod
+    def _claim_result_work(
+        cls, websocket: WebSocket, command_id: str, *, large: bool, raw_charge: int = 0
+    ) -> _ResultWork | None:
+        """Claim one pending reply under the Hub lock, before any worker can queue."""
+        entry = cls._pending.get(command_id)
+        if (
+            entry is None
+            or entry["future"].done()
+            or cls._connections.get(entry["session_id"]) is not websocket
+            or entry.get("result_work") is not None
+            or cls._lock is None
+        ):
+            return None
+        owner = ResponseOwner()
+        charge = cls.MAX_RESULT_RETAINED_BYTES
+        scope = _ingress_scope.get()
+        ingress = scope.work if scope is not None else None
+        if (
+            ingress is not None
+            and ingress.websocket is websocket
+            and not ingress.graph_owner.released
+        ):
+            pending = ingress.pending.get(command_id)
+            if (
+                not cls._ingress_work_current(ingress)
+                or pending is None
+                or pending[0] != id(entry)
+                or pending[1]() is not entry["future"]
+            ):
+                return None
+            charge = ingress.max_retained_bytes
+        else:
+            ingress = None
+        if large and ingress is None:
+            # Reserve the bounded graph ceiling before traversal/allocation. The
+            # two shared response workers therefore cannot build an unbounded queue.
+            charge = min(charge, cls._available_result_capacity(entry))
+            if charge <= 0:
+                entry["future"].set_result(response_limit_error("result_capacity"))
+                return None
+            ledger = cls._retained_results
+            key = "worker:" + str(uuid.uuid4())
+            ledger[key] = {
+                "bytes": charge + raw_charge,
+                "user_id": entry.get("user_id"),
+                "session_id": entry["session_id"],
+            }
+            owner.entries.append((ledger, key))
+        work = _ResultWork(
+            entry,
+            getattr(websocket.state, "plugin_generation", None),
+            cls._lock,
+            owner,
+            charge,
+            cls._socket_lease(websocket),
+            ingress,
+        )
+        entry["result_work"] = work
+        return work
+
+    @classmethod
+    def _result_work_current(cls, websocket: WebSocket, command_id: str, work: _ResultWork) -> bool:
+        return (
+            cls._lock is work.lock
+            and cls._pending.get(command_id) is work.entry
+            and work.entry.get("result_work") is work
+            and not work.entry["future"].done()
+            and cls._connections.get(work.entry["session_id"]) is websocket
+            and getattr(websocket.state, "plugin_generation", None) == work.generation
+            and cls._socket_lease(websocket) is work.credential
+        )
+
+    @classmethod
+    def _decode_large_result(
+        cls, completed: CompletedLargeResult, max_retained_bytes: int
+    ) -> CommandResultMessage:
+        # Decode directly from bytearray: avoid a second full bytes copy. This
+        # whole scan/decoder boundary runs in the bounded response worker.
+        text = bounded_json_text(
+            completed.payload,
+            max_bytes=cls.MAX_RAW_MESSAGE_BYTES,
+            max_depth=cls.MAX_RESULT_DEPTH,
+            # The raw reservation already covers source bytes and Unicode text.
+            # Bound decoded object/container overhead before graph allocation.
+            max_nodes=min(cls.MAX_RESULT_NODES, max_retained_bytes // 512),
+        )
+        if text is None:
+            reason = (
+                "result_capacity"
+                if max_retained_bytes < cls.MAX_RESULT_RETAINED_BYTES
+                else "result_payload_limit"
+            )
+            raise LargeResultProtocolError(reason, completed.command_id)
+        message = decode_json(completed.payload, fallback_text=text)
+        if (
+            not isinstance(message, dict)
+            or message.get("type") != "command_result"
+            or message.get("id") != completed.command_id
+        ):
+            raise LargeResultProtocolError("invalid_result_envelope", completed.command_id)
+        return CommandResultMessage(**message)
+
     async def _handle_large_result(
         self, websocket: WebSocket, data: bytes | dict[str, Any]
     ) -> None:
@@ -2955,6 +3253,7 @@ class PluginHub(WebSocketEndpoint):
             return
         completed = None
         command_id = None
+        work = None
         close_invalid = False
         try:
             async with cls._authorized_socket_lock(websocket, lock):
@@ -2988,43 +3287,51 @@ class PluginHub(WebSocketEndpoint):
                 if completed is None:
                     return
                 command_id = completed.command_id
-                # Decode directly from bytearray: avoid a second full bytes copy.
-                text = bounded_json_text(
-                    completed.payload,
-                    max_bytes=cls.MAX_RAW_MESSAGE_BYTES,
-                    max_depth=cls.MAX_RESULT_DEPTH,
-                    max_nodes=cls.MAX_RESULT_NODES,
+                reservation = cls._raw_results.get((generation, command_id))
+                if reservation is None:
+                    return
+                work = cls._claim_result_work(
+                    websocket, command_id, large=True, raw_charge=reservation["bytes"]
                 )
-                if text is None:
-                    raise LargeResultProtocolError("result_payload_limit", command_id)
-                message = decode_json(completed.payload, fallback_text=text)
-                if (
-                    not isinstance(message, dict)
-                    or message.get("type") != "command_result"
-                    or message.get("id") != command_id
-                ):
-                    raise LargeResultProtocolError("invalid_result_envelope", command_id)
-                payload = CommandResultMessage(**message)
-                completed = text = message = None
-            await self._handle_command_result(websocket, payload)
+                if work is None:
+                    return
+                # Move the raw reservation to the worker owner before detaching
+                # the assembler. Cancel/disconnect may now discard its transfer
+                # without returning capacity that a running worker still owns.
+                assembler.discard(generation, command_id)
+            payload = await response_work(
+                lambda: cls._decode_large_result(completed, work.max_retained_bytes), large=True
+            )
+            completed = None
+            await self._handle_command_result(websocket, payload, _work=work)
         except LargeResultProtocolError as exc:
             if exc.reason in {
                 "result_capacity",
                 "result_transfer_timeout",
             }:
-                if cls._transfer_pending(generation, exc.command_id):
-                    cls._pending[exc.command_id]["future"].set_result(
-                        response_limit_error(exc.reason)
+                async with cls._authorized_socket_lock(websocket, lock):
+                    current = (
+                        cls._result_work_current(websocket, exc.command_id, work)
+                        if work is not None
+                        else cls._lock is lock and cls._transfer_pending(generation, exc.command_id)
                     )
+                    if current:
+                        cls._pending[exc.command_id]["future"].set_result(
+                            response_limit_error(exc.reason)
+                        )
                 return
-            close_invalid = True
+            close_invalid = work is None or cls._result_work_current(websocket, command_id, work)
         except (ValueError, RecursionError):
-            close_invalid = True
+            close_invalid = work is None or cls._result_work_current(websocket, command_id, work)
         finally:
             if command_id is not None:
                 assembler.discard(generation, command_id)
+            if work is not None:
+                work.owner.release()
+                if work.entry.get("result_work") is work:
+                    work.entry.pop("result_work")
             if close_invalid:
-                completed = text = message = payload = start = data = None
+                completed = payload = start = data = None
         if close_invalid:
             # Closing can suspend. Release rejected payloads and decoder tracebacks first.
             await websocket.close(code=4400, reason="Invalid large result transfer")
@@ -3078,12 +3385,37 @@ class PluginHub(WebSocketEndpoint):
         progress.offer(CommandProgressUpdate(message.completed, message.total, message.stage))
 
     async def _handle_command_result(
-        self, websocket: WebSocket, payload: CommandResultMessage
+        self,
+        websocket: WebSocket,
+        payload: CommandResultMessage,
+        *,
+        _work: _ResultWork | None = None,
     ) -> None:
         cls = type(self)
         lock = cls._lock
         if lock is None:
             return
+        async with cls._authorized_socket_lock(websocket, lock):
+            work = _work or cls._claim_result_work(
+                websocket, payload.id, large=needs_response_worker(payload.result)
+            )
+            if work is None:
+                return
+        try:
+            await self._deliver_command_result(websocket, payload, work)
+        finally:
+            if _work is None:
+                # response_work only unwinds after its actual worker exits, even
+                # when receive/caller cancellation is repeated while it runs.
+                work.owner.release()
+                if work.entry.get("result_work") is work:
+                    work.entry.pop("result_work")
+
+    async def _deliver_command_result(
+        self, websocket: WebSocket, payload: CommandResultMessage, work: _ResultWork
+    ) -> None:
+        cls = type(self)
+        lock = work.lock
         command_id = payload.id
         result = payload.result
 
@@ -3093,21 +3425,15 @@ class PluginHub(WebSocketEndpoint):
 
         # Capture only an already-owned receipt under the existing socket fence.
         # Its journal I/O runs outside the Hub lock and outside the owner loop.
-        candidate = cls._pending.get(command_id)
-        if candidate is not None and candidate.get("progress_owner") is not None:
+        candidate = work.entry
+        if candidate.get("progress_owner") is not None:
             async with cls._authorized_socket_lock(websocket, lock):
-                if (
-                    cls._pending.get(command_id) is candidate
-                    and cls._connections.get(candidate["session_id"]) is websocket
-                ):
+                if cls._result_work_current(websocket, command_id, work):
                     candidate["progress_owner"].close()
-        receipt = candidate.get("receipt_owner") if candidate is not None else None
+        receipt = candidate.get("receipt_owner")
         if receipt is not None:
             async with cls._authorized_socket_lock(websocket, lock):
-                if (
-                    cls._pending.get(command_id) is not candidate
-                    or cls._connections.get(candidate["session_id"]) is not websocket
-                ):
+                if not cls._result_work_current(websocket, command_id, work):
                     return
                 receipt_session = candidate["session_id"]
                 receipt_generation = getattr(websocket.state, "plugin_generation", None)
@@ -3122,8 +3448,8 @@ class PluginHub(WebSocketEndpoint):
             )
         close_offender = False
         async with cls._authorized_socket_lock(websocket, lock):
-            entry = cls._pending.get(command_id)
-            if entry is None or cls._connections.get(entry["session_id"]) is not websocket:
+            entry = work.entry
+            if not cls._result_work_current(websocket, command_id, work):
                 return
             future = entry.get("future")
             if future and not future.done():
@@ -3151,68 +3477,83 @@ class PluginHub(WebSocketEndpoint):
                     )
                     return
                 result = reply.payload
-                charge = response_size(
-                    result,
-                    max_bytes=cls.MAX_RESULT_BYTES,
-                    max_depth=cls.MAX_RESULT_DEPTH,
-                    max_nodes=cls.MAX_RESULT_NODES,
-                    max_retained=cls.MAX_RESULT_RETAINED_BYTES,
-                )
-                if charge is None:
-                    future.set_result(response_limit_error("result_payload_limit"))
-                    count = getattr(websocket.state, "result_limit_violations", 0)
-                    count = count if isinstance(count, int) else 0
-                    websocket.state.result_limit_violations = count + 1
-                    close_offender = count >= 1
-                else:
-                    user_id = entry.get("user_id")
-                    if not cls._has_result_capacity(entry, charge):
+        charge = await response_work(
+            lambda: response_size(
+                result,
+                max_bytes=cls.MAX_RESULT_BYTES,
+                max_depth=cls.MAX_RESULT_DEPTH,
+                max_nodes=cls.MAX_RESULT_NODES,
+                max_retained=work.max_retained_bytes,
+            ),
+            large=needs_response_worker(result),
+        )
+        async with cls._authorized_socket_lock(websocket, lock):
+            if not cls._result_work_current(websocket, command_id, work):
+                return
+            # Replace the conservative worker charge with the measured result
+            # atomically, after the actual worker has stopped using its graph.
+            work.owner.release()
+            if charge is None:
+                if work.max_retained_bytes < cls.MAX_RESULT_RETAINED_BYTES:
+                    future.set_result(response_limit_error("result_capacity"))
+                    return
+                future.set_result(response_limit_error("result_payload_limit"))
+                count = getattr(websocket.state, "result_limit_violations", 0)
+                count = count if isinstance(count, int) else 0
+                websocket.state.result_limit_violations = count + 1
+                close_offender = count >= 1
+            else:
+                if work.ingress is not None:
+                    # The frame graph and result share the same objects. Hand
+                    # its reservation to the measured delivery atomically; the
+                    # raw-frame owner remains charged until dispatch drops it.
+                    work.ingress.graph_owner.release()
+                user_id = entry.get("user_id")
+                if not cls._has_result_capacity(entry, charge):
+                    future.set_result(response_limit_error("result_capacity"))
+                    return
+                result_ledger = entry.get("result_ledger", cls._retained_results)
+                if result_ledger is not cls._retained_results:
+                    future.set_result(response_limit_error("result_capacity"))
+                    return
+                result_ledger[command_id] = {
+                    "bytes": charge,
+                    "user_id": user_id,
+                    "session_id": entry["session_id"],
+                }
+                owner = entry.get("response_owner")
+                if owner is not None:
+                    if owner.released:
+                        result_ledger.pop(command_id, None)
                         future.set_result(response_limit_error("result_capacity"))
                         return
-                    result_ledger = entry.get("result_ledger", cls._retained_results)
-                    if result_ledger is not cls._retained_results:
-                        future.set_result(response_limit_error("result_capacity"))
-                        return
-                    result_ledger[command_id] = {
-                        "bytes": charge,
-                        "user_id": user_id,
-                        "session_id": entry["session_id"],
-                    }
-                    owner = entry.get("response_owner")
-                    if owner is not None:
-                        if owner.released:
-                            result_ledger.pop(command_id, None)
-                            future.set_result(response_limit_error("result_capacity"))
-                            return
-                        owner.entries.append((result_ledger, command_id))
+                    owner.entries.append((result_ledger, command_id))
 
-                        def reserve_copy(
-                            copy_owner,
-                            source_id=command_id,
-                            reservation=result_ledger[command_id],
-                            ledger=result_ledger,
+                    def reserve_copy(
+                        copy_owner,
+                        source_id=command_id,
+                        reservation=result_ledger[command_id],
+                        ledger=result_ledger,
+                    ):
+                        copy_charge = copy_owner.requested_copy_bytes
+                        copy_charge = reservation["bytes"] if copy_charge is None else copy_charge
+                        # Synchronous on the same owner loop: admission and
+                        # insertion cannot interleave with another producer.
+                        if (
+                            ledger is not cls._retained_results
+                            or ledger.get(source_id) is not reservation
+                            or not 0 <= copy_charge <= reservation["bytes"]
+                            or not cls._has_result_capacity(reservation, copy_charge)
                         ):
-                            copy_charge = copy_owner.requested_copy_bytes
-                            copy_charge = (
-                                reservation["bytes"] if copy_charge is None else copy_charge
-                            )
-                            # Synchronous on the same owner loop: admission and
-                            # insertion cannot interleave with another producer.
-                            if (
-                                ledger is not cls._retained_results
-                                or ledger.get(source_id) is not reservation
-                                or not 0 <= copy_charge <= reservation["bytes"]
-                                or not cls._has_result_capacity(reservation, copy_charge)
-                            ):
-                                return False
-                            copy_id = "copy:" + str(uuid.uuid4())
-                            ledger[copy_id] = {**reservation, "bytes": copy_charge}
-                            copy_owner.entries.append((ledger, copy_id))
-                            copy_owner.copy_reservations.append(reserve_copy)
-                            return True
+                            return False
+                        copy_id = "copy:" + str(uuid.uuid4())
+                        ledger[copy_id] = {**reservation, "bytes": copy_charge}
+                        copy_owner.entries.append((ledger, copy_id))
+                        copy_owner.copy_reservations.append(reserve_copy)
+                        return True
 
-                        owner.copy_reservations.append(reserve_copy)
-                    future.set_result(result)
+                    owner.copy_reservations.append(reserve_copy)
+                future.set_result(result)
         if close_offender:
             await asyncio.wait_for(
                 websocket.close(code=1009, reason="Repeated plugin result limit violation"),

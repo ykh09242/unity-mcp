@@ -27,6 +27,7 @@ def needs_response_worker(value: object) -> bool:
     """Bound the scheduling probe; this is not validation or a workload limit."""
     pending = [iter((value,))]
     nodes = 0
+    text_chars = 0
     while pending and nodes < 256:
         try:
             item = next(pending[-1])
@@ -36,7 +37,8 @@ def needs_response_worker(value: object) -> bool:
         nodes += 1
         item_type = type(item)
         if item_type is str:
-            if len(item) >= 64 * 1024:
+            text_chars += len(item)
+            if text_chars >= 64 * 1024:
                 return True
         elif item_type is dict:
             pending.append(iter(chain.from_iterable(item.items())))
