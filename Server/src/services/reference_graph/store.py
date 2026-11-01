@@ -460,8 +460,11 @@ class GraphStore:
         provider: str,
         edge: Edge,
         identity: str | None = None,
+        *,
+        payload: str | None = None,
     ) -> None:
-        payload = _json(asdict(edge))
+        if payload is None:
+            payload = _json(asdict(edge))
         connection.execute(
             "INSERT OR REPLACE INTO edges SELECT ?,?,?,?,?,? WHERE ?='manual' OR ? LIKE 'runtime:%' OR NOT EXISTS (SELECT 1 FROM graph_excluded_nodes WHERE id=? OR id=?)",
             (
@@ -743,11 +746,14 @@ class GraphStore:
             if (old[0] if old else 0) != expected_version:
                 raise RevisionConflict("Declaration changed")
             version = expected_version + 1
+            payload = _json(asdict(edge))
             connection.execute(
                 "INSERT INTO declarations VALUES (?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET version=excluded.version,owner=excluded.owner,payload=excluded.payload,deleted=0",
-                (identity, version, owner, _json(asdict(edge))),
+                (identity, version, owner, payload),
             )
-            self._insert_edge(connection, owner, "manual", edge, "declared:" + identity)
+            self._insert_edge(
+                connection, owner, "manual", edge, "declared:" + identity, payload=payload
+            )
             self._bump(connection)
             return version
 

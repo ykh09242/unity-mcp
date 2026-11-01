@@ -118,8 +118,9 @@ async def test_policy_reset_preserves_external_identity_for_authored_endpoint_ad
     assert workspace.external_nodes([owner])[0]["path"] == "private.json"
     assert workspace.external_inputs("external:settings") == {}
     assert await engine.reconcile()
-    assert not store.query(owner)["edges"]
-    assert store.query(owner)["excluded"]
+    excluded = store.query(owner)
+    assert not excluded["edges"]
+    assert excluded["excluded"]
     assert store.declarations()[0]["id"] == "kept"
     # When the exclusion is removed, then authored and generated references recover.
     workspace.set_policy({"exclude": []}, expected_version=1)

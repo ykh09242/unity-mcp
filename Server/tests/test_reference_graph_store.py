@@ -353,9 +353,20 @@ def test_deleted_and_recreated_declaration_cannot_accept_old_update(graph):
 
 def test_manual_declarations_survive_rebuild_and_require_matching_version(graph):
     publish(graph, "a", "v1", ["generated"])
-    graph.put_declaration("rule-1", "a", Edge("manual", "declared"), expected_version=0)
+    evidence = '한😀\n"\\'
+    graph.put_declaration(
+        "rule-1", "a", Edge("manual", "declared", evidence=evidence), expected_version=0
+    )
     with pytest.raises(RevisionConflict):
         graph.put_declaration("rule-1", "a", Edge("lost", "declared"), expected_version=0)
+    reopened = GraphStore(graph.path, SCOPE)
+    with reopened._connect() as db:
+        payloads = db.execute(
+            "SELECT CAST(d.payload AS BLOB),CAST(e.payload AS BLOB) FROM declarations d "
+            "JOIN edges e ON e.id='declared:'||d.id WHERE d.id='rule-1'"
+        ).fetchone()
+    assert payloads[0] == payloads[1]
+    assert reopened.declarations()[0]["edge"]["evidence"] == evidence
     graph.rebuild()
     assert [e["target"] for e in graph.query("a")["edges"]] == ["manual"]
     assert graph.query("a")["edges"][0]["confidence"] == "declared"
