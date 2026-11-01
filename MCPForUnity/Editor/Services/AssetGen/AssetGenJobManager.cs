@@ -89,6 +89,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         internal static Func<double> ClockForTests = null;
         internal static Action<string> BeforeCheckpointWriteForTests = null;
         internal static Func<string, bool> SubmissionAuthorizationForTests;
+        internal static Action<long, CancellationToken> ValidationChunkForTests;
 
         private static AssetGenJobJournal _journal;
         private static string _journalRootForTests;
@@ -344,7 +345,6 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 {
                     runner.Job.ProgressEvidence?.Stop();
                     runner.Cts.Cancel();
-                    runner.Cts.Dispose();
                 }
                 catch { }
                 // Observe faults without letting a stale continuation publish metadata or files.
@@ -352,6 +352,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 Observe(runner.PollTask);
                 ObserveDownload(runner.DownloadTask);
                 ObservePreparation(runner.PreparationTask);
+                ObserveValidation(runner.ValidationTask);
+                runner.Validation?.Dispose();
+                ReleaseAutoRefresh(runner);
+                DisposeCancellationAfterTasks(runner);
             }
             Runners.Clear();
             _journal?.Dispose();
@@ -386,6 +390,45 @@ namespace MCPForUnity.Editor.Services.AssetGen
                             t.Result?.Dispose();
                         else if (t.IsFaulted)
                             _ = t.Exception;
+                    },
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default
+                );
+        }
+
+        private static void ObserveValidation(Task<SavedValidation> task)
+        {
+            if (task != null)
+                _ = task.ContinueWith(
+                    t =>
+                    {
+                        if (t.Status == TaskStatus.RanToCompletion)
+                            t.Result?.Dispose();
+                        else if (t.IsFaulted)
+                            _ = t.Exception;
+                    },
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default
+                );
+        }
+
+        private static void DisposeCancellationAfterTasks(Runner runner)
+        {
+            // Token registrations and workers may still be running after cancellation/reload.
+            // Dispose the source only after every outstanding owner has stopped using its token.
+            CancellationTokenSource source = runner.Cts;
+            Task[] pending = new Task[] { runner.SubmitTask, runner.PollTask, runner.DownloadTask, runner.PreparationTask, runner.ValidationTask }
+                .Where(task => task != null)
+                .ToArray();
+            _ = Task.WhenAll(pending)
+                .ContinueWith(
+                    task =>
+                    {
+                        if (task.IsFaulted)
+                            _ = task.Exception;
+                        source.Dispose();
                     },
                     CancellationToken.None,
                     TaskContinuationOptions.ExecuteSynchronously,
@@ -742,6 +785,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             Download,
             AwaitDownload,
             AwaitPreparation,
+            AwaitValidation,
             Import,
         }
 
@@ -777,6 +821,9 @@ namespace MCPForUnity.Editor.Services.AssetGen
             public Task<ProviderPollResult> PollTask;
             public Task<HttpResult> DownloadTask;
             public Task<PreparedArtifact> PreparationTask;
+            public Task<SavedValidation> ValidationTask;
+            public SavedValidation Validation;
+            public bool AutoRefreshSuppressed;
             public bool Canceled;
             public bool ImportInProgress;
             public AssetOperationProgress.Snapshot? ActivityObservation;
@@ -1174,8 +1221,6 @@ namespace MCPForUnity.Editor.Services.AssetGen
             }
             if (cp.Phase == "saved")
             {
-                ValidateSaved(r);
-                Admit(r);
                 r.Phase = RunnerPhase.Import;
                 return;
             }
@@ -1423,6 +1468,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         using (PreparedArtifact prepared = r.PreparationTask.Result)
                         {
                             r.PreparationTask = null;
+                            // Yielding with an unregistered file in Assets would let auto-refresh
+                            // manufacture metadata between the saved checkpoint and validation.
+                            AssetDatabase.DisallowAutoRefresh();
+                            r.AutoRefreshSuppressed = true;
                             r.Job.Format = prepared.Extension;
                             r.LocalPath = WriteValidatedFile(r, null, prepared.Length, prepared.Hash, prepared.Extension, prepared);
                         }
@@ -1432,19 +1481,51 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         Advance(r);
                         break;
 
+                    case RunnerPhase.AwaitValidation:
+                        if (!r.ValidationTask.IsCompleted)
+                            break;
+                        if (Faulted(r.ValidationTask, out string validationError))
+                        {
+                            Fail(r, validationError, RecoveryCode(r.ValidationTask));
+                            break;
+                        }
+                        r.Validation = r.ValidationTask.Result;
+                        r.ValidationTask = null;
+                        r.Phase = RunnerPhase.Import;
+                        Advance(r);
+                        break;
+
                     case RunnerPhase.Import:
+                    {
                         r.Job.ProgressEvidence?.Begin(AssetOperationPhase.Importing);
-                        ValidateSaved(r);
+                        if (r.Validation == null)
+                        {
+                            StartValidation(r);
+                            if (r.Phase == RunnerPhase.AwaitValidation)
+                                break;
+                        }
+                        using SavedValidation validation = r.Validation;
+                        r.Validation = null;
+                        ValidateSavedIdentity(r, validation);
                         Admit(r);
                         r.Checkpoint.Phase = "importing";
                         UpdateProviderEvidence(r);
                         PersistRequired(r.Job, r.Checkpoint);
-                        Admit(r);
+                        // Persistence can invoke a callback. Re-admit the exact runner and the
+                        // validated snapshot after it, before opening the synchronous importer.
+                        ValidateSavedIdentity(r, validation);
+                        validation.ReleaseMetadata();
+                        ReleaseAutoRefresh(r);
                         // Once admitted, this synchronous pipeline may finish. Never replay it after reload.
                         r.ImportInProgress = true;
                         AssetGenJob imported;
                         try
                         {
+                            using var fingerprint = ImportFingerprintCache.UseValidatedSource(
+                                AssetGenPaths.ToAbsolute(r.LocalPath),
+                                validation.Fingerprint,
+                                validation.ValidateSourceIdentity
+                            );
                             // Preserve injected two-argument importers while giving the production
                             // model/archive pipeline its owning runner's cancellation token.
                             imported =
@@ -1483,6 +1564,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         Persist(r.Job);
                         Finalize(r);
                         break;
+                    }
                 }
             }
             catch (Exception e)
@@ -1726,6 +1808,10 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 throw new RecoveryAbort("saved_asset_identity_changed");
             cp.MetadataPresent = File.Exists(meta);
             cp.MetadataLength = cp.MetadataPresent ? new FileInfo(meta).Length : 0;
+            // A freshly published file has not entered an importer yet. Refuse unexpected
+            // oversized metadata here; recovered metadata is validated by the worker below.
+            if (cp.MetadataLength > PreparedArtifact.BackgroundThreshold)
+                throw new RecoveryAbort("saved_asset_identity_changed");
             cp.MetadataHash = cp.MetadataPresent ? HashFile(meta, cp.MetadataLength) : null;
             cp.RegisteredGuid = AssetDatabase.AssetPathToGUID(cp.SavedPath);
             if (string.IsNullOrEmpty(cp.RegisteredGuid))
@@ -1734,7 +1820,30 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 throw new RecoveryAbort("saved_asset_identity_changed");
         }
 
-        private static void ValidateSaved(Runner r)
+        private static void ReleaseAutoRefresh(Runner r)
+        {
+            if (!r.AutoRefreshSuppressed)
+                return;
+            r.AutoRefreshSuppressed = false;
+            AssetDatabase.AllowAutoRefresh();
+        }
+
+        private static void StartValidation(Runner r)
+        {
+            ValidateSavedIdentity(r);
+            // Snapshot paths, identity, clock and cancellation on the Editor thread. Neither
+            // the worker nor its continuations may touch a runner, checkpoint or Unity API.
+            var validation = new SavedValidation(r.Checkpoint, Now(), ClockForTests, r.Cts.Token, ValidationChunkForTests);
+            if (r.Checkpoint.SavedLength + r.Checkpoint.MetadataLength > PreparedArtifact.BackgroundThreshold)
+            {
+                r.ValidationTask = validation.RunAsync();
+                r.Phase = RunnerPhase.AwaitValidation;
+            }
+            else
+                r.Validation = validation.Run();
+        }
+
+        private static void ValidateSavedIdentity(Runner r, SavedValidation validation = null)
         {
             Admit(r);
             AssetGenJobCheckpoint cp = r.Checkpoint;
@@ -1745,17 +1854,183 @@ namespace MCPForUnity.Editor.Services.AssetGen
             if (
                 !cp.Validate(r.Job.JobId, Now())
                 || !IsAllowedResultExtension(r.Job.Kind, Path.GetExtension(cp.SavedPath))
-                || HashFile(abs, cp.SavedLength) != cp.SavedHash
                 || Directory.Exists(meta)
                 || File.Exists(meta) != cp.MetadataPresent
             )
                 throw new RecoveryAbort("saved_asset_identity_changed");
-            if (cp.MetadataPresent && HashFile(meta, cp.MetadataLength) != cp.MetadataHash)
-                throw new RecoveryAbort("saved_asset_identity_changed");
+            validation?.ValidateIdentity(cp, abs, meta);
             string guid = AssetDatabase.AssetPathToGUID(cp.SavedPath);
             if (!string.Equals(guid ?? "", cp.RegisteredGuid ?? "", StringComparison.Ordinal))
                 throw new RecoveryAbort("saved_asset_identity_changed");
             Admit(r);
+        }
+
+        private sealed class SavedValidation : IDisposable
+        {
+            private static readonly ArtifactPreparationQueue Workers = new();
+            private readonly string assetsRoot;
+            private readonly string path;
+            private readonly string relativePath;
+            private readonly long length;
+            private readonly string hash;
+            private readonly bool metadataPresent;
+            private readonly long metadataLength;
+            private readonly string metadataHash;
+            private readonly string registeredGuid;
+            private readonly double deadline;
+            private readonly double remaining;
+            private readonly Func<double> clock;
+            private readonly CancellationToken token;
+            private readonly Action<long, CancellationToken> chunk;
+            private readonly System.Diagnostics.Stopwatch elapsed = System.Diagnostics.Stopwatch.StartNew();
+            private FileStream content;
+            private FileStream metadata;
+            private DateTime contentWritten;
+            private DateTime metadataWritten;
+            private DateTime contentCreated;
+            private DateTime metadataCreated;
+            internal string Fingerprint { get; private set; }
+
+            internal SavedValidation(AssetGenJobCheckpoint cp, double now, Func<double> clock, CancellationToken token, Action<long, CancellationToken> chunk)
+            {
+                assetsRoot = Application.dataPath;
+                path = AssetGenPaths.ToAbsolute(cp.SavedPath);
+                relativePath = cp.SavedPath;
+                length = cp.SavedLength;
+                hash = cp.SavedHash;
+                metadataPresent = cp.MetadataPresent;
+                metadataLength = cp.MetadataLength;
+                metadataHash = cp.MetadataHash;
+                registeredGuid = cp.RegisteredGuid;
+                deadline = cp.Deadline;
+                remaining = deadline - now;
+                this.clock = clock;
+                this.token = token;
+                this.chunk = chunk;
+            }
+
+            private void Check()
+            {
+                token.ThrowIfCancellationRequested();
+                if (clock != null ? clock() >= deadline : elapsed.Elapsed.TotalSeconds >= remaining)
+                    throw new RecoveryAbort("job_timeout");
+            }
+
+            internal async Task<SavedValidation> RunAsync()
+            {
+                using (await Workers.AcquireAsync(length + metadataLength, token).ConfigureAwait(false))
+                    // The delegate owns cleanup even if canceled before dispatch.
+                    return await Task.Run(Run).ConfigureAwait(false);
+            }
+
+            internal SavedValidation Run()
+            {
+                try
+                {
+                    Check();
+                    content = Open(path, length, out contentWritten, out contentCreated);
+                    if (metadataPresent)
+                        metadata = Open(path + ".meta", metadataLength, out metadataWritten, out metadataCreated);
+                    if (Digest(content, length, out string fingerprint) != hash || metadataPresent && Digest(metadata, metadataLength, out _) != metadataHash)
+                        throw new RecoveryAbort("saved_asset_identity_changed");
+                    Fingerprint = fingerprint;
+                    Check();
+                    return this;
+                }
+                catch
+                {
+                    Dispose();
+                    throw;
+                }
+            }
+
+            private FileStream Open(string absolute, long expectedLength, out DateTime written, out DateTime created)
+            {
+                Check();
+                SafePathUtility.ResolveWithinRoot(assetsRoot, absolute);
+                if (!File.Exists(absolute))
+                    throw new RecoveryAbort(absolute == path ? "saved_asset_missing" : "saved_asset_identity_changed");
+                written = File.GetLastWriteTimeUtc(absolute);
+                created = File.GetCreationTimeUtc(absolute);
+                var stream = new FileStream(absolute, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024);
+                if (stream.Length == expectedLength)
+                    return stream;
+                stream.Dispose();
+                throw new RecoveryAbort("saved_asset_identity_changed");
+            }
+
+            private string Digest(FileStream stream, long expectedLength, out string fingerprint)
+            {
+                using var sha = SHA256.Create();
+                var buffer = new byte[64 * 1024];
+                long readLength = 0;
+                while (true)
+                {
+                    Check();
+                    int read = stream.Read(buffer, 0, buffer.Length);
+                    if (read == 0)
+                        break;
+                    readLength += read;
+                    if (readLength > expectedLength)
+                        throw new RecoveryAbort("saved_asset_identity_changed");
+                    sha.TransformBlock(buffer, 0, read, buffer, 0);
+                    chunk?.Invoke(readLength, token);
+                    Check();
+                }
+                if (readLength != expectedLength)
+                    throw new RecoveryAbort("saved_asset_identity_changed");
+                sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                fingerprint = Convert.ToBase64String(sha.Hash);
+                return BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+            }
+
+            internal void ValidateIdentity(AssetGenJobCheckpoint cp, string absolute, string meta)
+            {
+                ValidateSourceIdentity();
+                if (
+                    cp.SavedPath != relativePath
+                    || absolute != path
+                    || cp.SavedLength != length
+                    || cp.SavedHash != hash
+                    || cp.MetadataPresent != metadataPresent
+                    || cp.MetadataLength != metadataLength
+                    || cp.MetadataHash != metadataHash
+                    || cp.RegisteredGuid != registeredGuid
+                    || metadataPresent
+                        && (
+                            metadata == null
+                            || metadata.Length != metadataLength
+                            || new FileInfo(meta).Length != metadataLength
+                            || File.GetLastWriteTimeUtc(meta) != metadataWritten
+                            || File.GetCreationTimeUtc(meta) != metadataCreated
+                        )
+                )
+                    throw new RecoveryAbort("saved_asset_identity_changed");
+            }
+
+            internal void ValidateSourceIdentity()
+            {
+                Check();
+                SafePathUtility.ResolveWithinRoot(assetsRoot, path);
+                if (
+                    content == null
+                    || content.Length != length
+                    || new FileInfo(path).Length != length
+                    || File.GetLastWriteTimeUtc(path) != contentWritten
+                    || File.GetCreationTimeUtc(path) != contentCreated
+                )
+                    throw new RecoveryAbort("saved_asset_identity_changed");
+            }
+
+            // Keep content pinned through the synchronous importer. Metadata must become writable
+            // at admission so Unity can update importer settings; no Editor update occurs here.
+            internal void ReleaseMetadata() => Interlocked.Exchange(ref metadata, null)?.Dispose();
+
+            public void Dispose()
+            {
+                ReleaseMetadata();
+                Interlocked.Exchange(ref content, null)?.Dispose();
+            }
         }
 
         private static string NameFrom(string explicitName, string prompt, string jobId)
@@ -1824,11 +2099,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
             Observe(r.PollTask);
             ObserveDownload(r.DownloadTask);
             ObservePreparation(r.PreparationTask);
-            try
-            {
-                r.Cts?.Dispose();
-            }
-            catch { }
+            ObserveValidation(r.ValidationTask);
+            r.Validation?.Dispose();
+            r.Validation = null;
+            ReleaseAutoRefresh(r);
+            DisposeCancellationAfterTasks(r);
         }
 
         private static AssetGenJob NewJob(string kind, string provider, string action)
@@ -2010,6 +2285,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             ClockForTests = null;
             BeforeCheckpointWriteForTests = null;
             SubmissionAuthorizationForTests = null;
+            ValidationChunkForTests = null;
             _journalRootForTests = null;
             _journalOwnerForTests = null;
             _journalInstanceForTests = null;
