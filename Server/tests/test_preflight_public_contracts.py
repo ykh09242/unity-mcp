@@ -3,11 +3,11 @@
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import time
 
 import pytest
+from tests.sdk_scenarios import run_sdk_scenario, sdk_scenario_host  # noqa: F401
 
 
 @pytest.mark.parametrize(
@@ -51,11 +51,13 @@ def test_preflight_public_contract(case, tmp_path):
         filter(None, (str(Path(__file__).resolve().parents[1] / "src"), env.get("PYTHONPATH")))
     )
     env.pop("PYTEST_CURRENT_TEST", None)
-    child = subprocess.run(
-        [sys.executable, "-B", __file__, case, str(owned)],
+    child = run_sdk_scenario(
+        "import runpy, sys\nsys.argv = "
+        + repr([__file__, case, str(owned)])
+        + "\nrunpy.run_path("
+        + repr(__file__)
+        + ", run_name='__main__')",
         env=env,
-        capture_output=True,
-        text=True,
         timeout=30,
     )
     assert child.returncode == 0, child.stdout + child.stderr

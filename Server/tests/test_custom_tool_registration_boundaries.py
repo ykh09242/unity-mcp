@@ -2,11 +2,10 @@
 
 import os
 from pathlib import Path
-import subprocess
-import sys
 import textwrap
 
 import pytest
+from tests.sdk_scenarios import run_sdk_scenario, sdk_scenario_host  # noqa: F401
 
 
 def _run_sdk_scenario(source: str, evidence_dir: Path) -> None:
@@ -14,12 +13,9 @@ def _run_sdk_scenario(source: str, evidence_dir: Path) -> None:
     env["UNITY_MCP_DISABLE_TELEMETRY"] = "true"
     for name in ("APPDATA", "XDG_DATA_HOME", "UNITY_MCP_LOG_DIR"):
         env[name] = str(evidence_dir / name.lower())
-    result = subprocess.run(
-        [sys.executable, "-B", "-W", "error", "-c", textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1],
+    result = run_sdk_scenario(
+        "import warnings; warnings.simplefilter('error')\n" + textwrap.dedent(source),
         env=env,
-        capture_output=True,
-        text=True,
         timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr

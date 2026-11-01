@@ -2,7 +2,7 @@
 
 import pytest
 
-from .test_custom_tool_sdk_registration import run_sdk_regression
+from .sdk_scenarios import run_sdk_regression, sdk_scenario_host  # noqa: F401
 
 
 @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])

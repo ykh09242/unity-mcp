@@ -1,7 +1,7 @@
 """Advertised action rules and stable response variants through the actual SDK."""
 
 import pytest
-from tests.test_tool_group_status import run_sdk_regression
+from tests.sdk_scenarios import run_sdk_regression, sdk_scenario_host  # noqa: F401
 
 
 @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])

@@ -2,11 +2,10 @@
 
 import os
 from pathlib import Path
-import subprocess
-import sys
 import textwrap
 
 import pytest
+from tests.sdk_scenarios import run_sdk_scenario, sdk_scenario_host  # noqa: F401
 
 
 @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
@@ -125,12 +124,9 @@ def test_object_handle_registered_tool_and_resource(mode, tmp_path):
             print("HANDLE_SDK_PASS", MODE, len(requests))
         anyio.run(main)
     """
-    result = subprocess.run(
-        [sys.executable, "-B", "-c", "MODE = " + repr(mode) + "\n" + textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1],
+    result = run_sdk_scenario(
+        "MODE = " + repr(mode) + "\n" + textwrap.dedent(source),
         env=env,
-        capture_output=True,
-        text=True,
         timeout=90,
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -221,12 +217,9 @@ def test_actual_http_native_catalog_controls_handle_alias(mode, tmp_path):
             )
         ),
     }
-    result = subprocess.run(
-        [sys.executable, "-B", "-c", "MODE = " + repr(mode) + "\n" + textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1],
+    result = run_sdk_scenario(
+        "MODE = " + repr(mode) + "\n" + textwrap.dedent(source),
         env=env,
-        capture_output=True,
-        text=True,
         timeout=90,
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -352,24 +345,16 @@ def test_session_obsolete_false_rejected_by_actual_sdk(mode, action, flag, tmp_p
                   "outbound=" + str(module.send_with_unity_instance.await_count))
         anyio.run(main)
     """
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-B",
-            "-c",
-            "MODE = "
-            + repr(mode)
-            + "\nACTION = "
-            + repr(action)
-            + "\nFLAG = "
-            + repr(flag)
-            + "\n"
-            + textwrap.dedent(source),
-        ],
-        cwd=Path(__file__).resolve().parents[1],
+    result = run_sdk_scenario(
+        "MODE = "
+        + repr(mode)
+        + "\nACTION = "
+        + repr(action)
+        + "\nFLAG = "
+        + repr(flag)
+        + "\n"
+        + textwrap.dedent(source),
         env=env,
-        capture_output=True,
-        text=True,
         timeout=90,
     )
     assert result.returncode == 0, result.stdout + result.stderr
