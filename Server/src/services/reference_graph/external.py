@@ -18,6 +18,8 @@ from pathlib import Path
 import re
 import stat
 import threading
+import heapq
+from collections.abc import Callable
 from typing import BinaryIO
 
 from services.reference_graph.analysis import Analysis, Catalog
@@ -293,15 +295,32 @@ class ExternalSource:
             and not self._ignored(relative)
         )
 
-    def files(self) -> Iterator[str]:
+    def files(self, *, check: Callable[[], None] | None = None) -> Iterator[str]:
+        def check_scan():
+            self.budget.remaining()
+            if check is not None:
+                check()
+
+        check_scan()
         self.check_access()
         pending = [self.root]
         while pending:
+            check_scan()
             directory = pending.pop()
             check_owned_path(directory)
             with os.scandir(directory) as entries:
-                items = sorted(entries, key=lambda entry: entry.name)
-            for entry in items:
+                items = []
+                for entry in entries:
+                    check_scan()
+                    # Nonmatching and hidden entries still cost enumeration work.
+                    self.budget.admit_items(1)
+                    self.budget.directory_entries(len(pending) + len(items) + 1)
+                    # Incremental heap ordering keeps cancellation checkpoints
+                    # between bounded operations instead of one uninterruptible sort.
+                    heapq.heappush(items, (entry.name, entry))
+            while items:
+                check_scan()
+                _, entry = heapq.heappop(items)
                 if entry.name.startswith("."):
                     continue
                 path = Path(entry.path)

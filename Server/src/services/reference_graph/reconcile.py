@@ -1015,7 +1015,7 @@ class Reconciler:
         failures = 0
         pending = []
         provenance_updates = []
-        for path in adapter.files():
+        for path in adapter.files(check=partial(self._check_source, source, require_source)):
             self._check_source(source, require_source)
             old = previous.pop(path, None)
             owner = provider + ":" + _hash(path)

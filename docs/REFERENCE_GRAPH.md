@@ -211,11 +211,12 @@ all collection/analysis phases of one attempt, including collector waits.
 | Environment variable | Default | Scope |
 | --- | ---: | --- |
 | `UNITY_MCP_REFERENCE_GRAPH_MAX_PAGES` | 1,000,000 | Collector requests per attempt |
-| `UNITY_MCP_REFERENCE_GRAPH_MAX_ITEMS` | 50,000,000 | Collected items per attempt |
+| `UNITY_MCP_REFERENCE_GRAPH_MAX_ITEMS` | 50,000,000 | Collected items and external directory entries examined per attempt, including nonmatches |
 | `UNITY_MCP_REFERENCE_GRAPH_MAX_BYTES` | 68,719,476,736 (64 GiB) | Serialized response bytes; decoded source bytes also have this aggregate ceiling |
 | `UNITY_MCP_REFERENCE_GRAPH_MAX_SECONDS` | 86,400 (24 hours) | Whole attempt |
 | `UNITY_MCP_REFERENCE_GRAPH_MAX_SOURCE_BYTES` | 134,217,728 (128 MiB) | One source document |
 | `UNITY_MCP_REFERENCE_GRAPH_MAX_DEPENDENCY_ITEMS` | 1,000,000 | Dependencies of one asset |
+| `UNITY_MCP_REFERENCE_GRAPH_MAX_DIRECTORY_ENTRIES` | 100,000 | External directory entries and pending directories retained for deterministic enumeration |
 
 Collector pages must advance with stable snapshot/revision identity. Exhaustion
 returns a recoverable `CollectionBudgetExceeded` error naming the setting.

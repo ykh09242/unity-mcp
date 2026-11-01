@@ -277,7 +277,8 @@ async def test_external_owner_survives_interrupted_enumeration_and_is_removed_af
     )
     files = ExternalSource.files
 
-    def interrupted(_):
+    def interrupted(_, *, check):
+        check()
         yield "a.json"
         raise OSError("interrupted enumeration")
 
@@ -842,6 +843,66 @@ async def test_cancel_waits_for_owned_thread_before_returning():
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+@pytest.mark.asyncio
+async def test_cancelled_external_enumeration_drains_only_inflight_entry(
+    setup, tmp_path, monkeypatch
+):
+    import os
+    from pathlib import Path
+
+    _, workspace, _, engine = setup
+    root = tmp_path / "external"
+    root.mkdir()
+    for number in range(64):
+        (root / f"ignored-{number}.txt").write_text("ignored")
+    workspace.set_source(
+        "external:fixture", {"root": str(root), "include": ["*.json"]}, expected_version=0
+    )
+    entered, release, exited = (threading.Event() for _ in range(3))
+    scanned = []
+    scandir = os.scandir
+
+    @contextmanager
+    def held_directory(path):
+        with scandir(path) as iterator:
+            if Path(path) != root:
+                yield iterator
+                return
+
+            def entries():
+                for entry in iterator:
+                    scanned.append(entry.name)
+                    if len(scanned) == 3:
+                        entered.set()
+                        assert release.wait(watchdog_timeout())
+                    yield entry
+
+            try:
+                yield entries()
+            finally:
+                if entered.is_set():
+                    exited.set()
+
+    monkeypatch.setattr(os, "scandir", held_directory)
+    attempt = asyncio.create_task(engine.reconcile())
+    try:
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout())
+        attempt.cancel()
+        assert await asyncio.to_thread(engine.stopped.wait, watchdog_timeout())
+        attempt.cancel()
+        await asyncio.sleep(0)
+        assert not attempt.done()
+        assert not workspace.acquire("replacement")
+    finally:
+        release.set()
+        result = await asyncio.gather(attempt, return_exceptions=True)
+    assert isinstance(result[0], asyncio.CancelledError)
+    assert exited.is_set()
+    assert len(scanned) == 3, "Cancellation drained unrelated nonmatching entries"
+    assert workspace.acquire("replacement")
+    workspace.release("replacement")
 
 
 @pytest.mark.asyncio
@@ -1673,6 +1734,7 @@ async def test_transport_timeout_is_not_mislabeled_as_whole_attempt_budget(setup
         "max_seconds",
         "max_source_bytes",
         "max_dependency_items",
+        "max_directory_entries",
     ],
 )
 @pytest.mark.parametrize("value", ["0", "-1", "nan", "1.5", str(2**63)])

@@ -2,6 +2,7 @@
 
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -117,6 +118,85 @@ def test_external_growth_reads_only_remaining_budget_plus_overflow_probe(tmp_pat
         source.read(path.name)
     assert reads == [8]
     assert source.budget.decoded_bytes == 0
+
+
+@pytest.mark.parametrize("stop", ["items", "deadline", "cancel"])
+def test_nonmatching_directory_enumeration_stops_before_draining(tmp_path, monkeypatch, stop):
+    from services.reference_graph import collection_protocol
+
+    for number in range(64):
+        (tmp_path / f"unmatched-{number:03}.txt").write_text("ignored")
+    source = ExternalSource({"root": str(tmp_path), "include": ["*.json"]}, respect_gitignore=False)
+    source.budget = CollectionBudget(CollectionLimits(max_items=5))
+    scanned = []
+    checked = []
+    scandir = os.scandir
+    cancelled = False
+
+    class Entry:
+        def __init__(self, entry):
+            self.entry = entry
+            self.name, self.path = entry.name, entry.path
+
+        def stat(self, **kwargs):
+            checked.append(self.name)
+            return self.entry.stat(**kwargs)
+
+        def is_dir(self):
+            return self.entry.is_dir()
+
+    @contextmanager
+    def entries(path):
+        with scandir(path) as iterator:
+
+            def counted():
+                nonlocal cancelled
+                for entry in iterator:
+                    scanned.append(entry.name)
+                    if len(scanned) == 3:
+                        cancelled = True
+                        if stop == "deadline":
+                            monkeypatch.setattr(
+                                collection_protocol.time,
+                                "monotonic",
+                                lambda: (
+                                    source.budget.started + source.budget.limits.max_seconds + 1
+                                ),
+                            )
+                    yield Entry(entry)
+
+            yield counted()
+
+    def check():
+        if stop == "cancel" and cancelled:
+            raise RuntimeError("scan cancelled")
+
+    monkeypatch.setattr(os, "scandir", entries)
+    if stop == "cancel":
+        with pytest.raises(RuntimeError, match="scan cancelled"):
+            list(source.files(check=check))
+    else:
+        with pytest.raises(
+            CollectionBudgetExceeded, match="max_items" if stop == "items" else "max_seconds"
+        ):
+            list(source.files())
+    assert len(scanned) <= (6 if stop == "items" else 3)
+    assert len(checked) <= (5 if stop == "items" else 2)
+
+
+def test_directory_buffer_is_bounded_and_scan_order_is_deterministic(tmp_path):
+    for name in ("z.json", "a.json", "m.json"):
+        (tmp_path / name).write_text("{}")
+    for name in ("d", "b"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "entry.json").write_text("{}")
+    source = ExternalSource(
+        {"root": str(tmp_path), "include": ["**/*.json"]}, respect_gitignore=False
+    )
+    assert list(source.files()) == ["a.json", "m.json", "z.json", "d/entry.json", "b/entry.json"]
+    source.budget = CollectionBudget(CollectionLimits(max_directory_entries=2))
+    with pytest.raises(CollectionBudgetExceeded, match="max_directory_entries=2"):
+        list(source.files())
 
 
 def test_allowlist_exclusion_and_links(tmp_path):

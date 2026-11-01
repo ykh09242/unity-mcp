@@ -43,6 +43,7 @@ class CollectionLimits:
     max_seconds: int = 24 * 60 * 60
     max_source_bytes: int = 128 * 1024**2
     max_dependency_items: int = 1_000_000
+    max_directory_entries: int = 100_000
 
     def __post_init__(self):
         for field in fields(self):
@@ -117,6 +118,14 @@ class CollectionBudget:
     def dependencies(self, size: int) -> None:
         if size > self.limits.max_dependency_items:
             raise CollectionBudgetExceeded("max_dependency_items", self.limits.max_dependency_items)
+
+    def directory_entries(self, size: int) -> None:
+        """Bound retained directory entries and pending directories during enumeration."""
+        self.remaining()
+        if size > self.limits.max_directory_entries:
+            raise CollectionBudgetExceeded(
+                "max_directory_entries", self.limits.max_directory_entries
+            )
 
 
 def integer(value, name: str) -> int:
