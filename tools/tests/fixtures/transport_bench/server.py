@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import importlib.metadata
+import inspect
 import json
 import os
 import socket
@@ -137,8 +138,11 @@ async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
         ):
             state.partial_received.set()
 
-    async def observe_result(hub, websocket, payload) -> None:
-        await original_result(hub, websocket, payload)
+    async def observe_result(hub, websocket, payload, *, _work=None) -> None:
+        if _work is None:
+            await original_result(hub, websocket, payload)
+        else:
+            await original_result(hub, websocket, payload, _work=_work)
         accounting.snapshot()
 
     PluginHub._handle_large_result = observe_large
@@ -477,14 +481,17 @@ async def main(args: argparse.Namespace) -> None:
     try:
         with ExitStack() as patches:
             if args.transport == "http":
+                result_parameters = ("self", "websocket", "payload")
+                if "_work" in inspect.signature(PluginHub._handle_command_result).parameters:
+                    result_parameters += ("_work",)
                 patches.enter_context(
                     patch(
                         PluginHub,
                         "_handle_command_result",
-                        ("self", "websocket", "payload"),
+                        result_parameters,
                         diagnostic,
                         "hub_command_result",
-                        correlation=lambda _hub, _ws, payload: command_label(payload.id),
+                        correlation=lambda _hub, _ws, payload, **_kwargs: command_label(payload.id),
                     )
                 )
 
