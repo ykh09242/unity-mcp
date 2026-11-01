@@ -160,6 +160,7 @@ def test_http_worker_progress_tracks_real_pytest_phases(tmp_path):
     probe.write_text(
         """import json
 import os
+import sys
 from pathlib import Path
 import pytest
 
@@ -179,6 +180,7 @@ def phase_probe(request):
 @pytest.mark.parametrize("index", range(8))
 def test_phases(phase_probe, request, index):
     assert current() == {"nodeid": request.node.nodeid, "phase": "call"}
+    assert "tests.http.prepared_tool_registration" not in sys.modules
 """,
         encoding="utf-8",
     )

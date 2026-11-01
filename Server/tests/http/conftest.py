@@ -6,10 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from tests.http.prepared_tool_registration import prepared_tool_factory  # noqa: F401
-
 _progress_path: Path | None = None
 _last_nodeid = ""
+
+
+@pytest.fixture(scope="session")
+def prepared_tool_factory():
+    # Phase-only subprocesses use these hooks without needing application descriptors.
+    from tests.http.prepared_tool_registration import prepared_tool_factory as prepare
+
+    return prepare.__wrapped__()
 
 
 def _record_progress(phase: str, nodeid: str | None = None) -> None:
