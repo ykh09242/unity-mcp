@@ -2122,7 +2122,10 @@ namespace MCPForUnity.Editor.Tools
             if (!targetScene.Value.isLoaded)
                 return new ErrorResponse($"Target scene '{targetScene.Value.name}' is not loaded.");
 
-            SceneManager.MoveGameObjectToScene(go, targetScene.Value);
+            if (Application.isPlaying)
+                SceneManager.MoveGameObjectToScene(go, targetScene.Value);
+            else
+                Undo.MoveGameObjectToScene(go, targetScene.Value, $"Move '{go.name}' to scene '{targetScene.Value.name}'");
             return new SuccessResponse($"Moved '{go.name}' to scene '{targetScene.Value.name}'.");
         }
 

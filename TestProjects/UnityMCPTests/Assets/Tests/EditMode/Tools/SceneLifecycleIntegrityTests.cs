@@ -374,6 +374,58 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(first.isLoaded);
         }
 
+        [Test]
+        public void MoveToScene_UndoRedoAndReload_PreservesBothSceneHierarchies()
+        {
+            var retained = new GameObject("RetainedSource");
+            var go = new GameObject("MovedRoot");
+            var child = new GameObject("MovedChild");
+            child.transform.SetParent(go.transform, false);
+            child.transform.localPosition = new Vector3(2, 3, 4);
+            child.AddComponent<BoxCollider>().size = new Vector3(5, 6, 7);
+            var destinationRoot = new GameObject("RetainedDestination");
+            SceneManager.MoveGameObjectToScene(destinationRoot, second);
+            Assert.IsTrue(EditorSceneManager.SaveScene(first, firstPath));
+            Assert.IsTrue(EditorSceneManager.SaveScene(second, secondPath));
+
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            JObject request = Select("move_to_scene");
+            request["target"] = go.GetInstanceIDCompat();
+            Success(Call(request));
+            Undo.FlushUndoRecordObjects();
+            Undo.CollapseUndoOperations(group);
+            Assert.AreEqual(second, go.scene);
+            Assert.IsTrue(first.isDirty && second.isDirty, "Moving a saved hierarchy must dirty both scenes.");
+            Undo.PerformUndo();
+            Assert.AreEqual(first, go.scene);
+            Assert.AreEqual(first, child.scene);
+            Assert.AreEqual(first, retained.scene);
+            Assert.AreEqual(second, destinationRoot.scene);
+            Undo.PerformRedo();
+            Assert.AreEqual(second, go.scene);
+            Assert.AreEqual(second, child.scene);
+            Assert.AreEqual(go.transform, child.transform.parent);
+            Assert.IsTrue(EditorSceneManager.SaveScene(first, firstPath));
+            Assert.IsTrue(EditorSceneManager.SaveScene(second, secondPath));
+
+            Assert.IsTrue(SceneManager.SetActiveScene(second));
+            Assert.IsTrue(EditorSceneManager.CloseScene(first, true));
+            first = EditorSceneManager.OpenScene(firstPath, OpenSceneMode.Additive);
+            Assert.IsTrue(SceneManager.SetActiveScene(first));
+            Assert.IsTrue(EditorSceneManager.CloseScene(second, true));
+            ownedScenes.Remove(second);
+            second = EditorSceneManager.OpenScene(secondPath, OpenSceneMode.Additive);
+            ownedScenes.Add(second);
+            CollectionAssert.AreEquivalent(new[] { "RetainedSource" }, first.GetRootGameObjects().Select(root => root.name));
+            CollectionAssert.AreEquivalent(new[] { "RetainedDestination", "MovedRoot" }, second.GetRootGameObjects().Select(root => root.name));
+            var reloaded = second.GetRootGameObjects().Single(root => root.name == "MovedRoot");
+            Transform reloadedChild = reloaded.transform.Find("MovedChild");
+            Assert.IsNotNull(reloadedChild);
+            Assert.AreEqual(new Vector3(2, 3, 4), reloadedChild.localPosition);
+            Assert.AreEqual(new Vector3(5, 6, 7), reloadedChild.GetComponent<BoxCollider>().size);
+        }
+
         [TestCase("set_active_scene")]
         [TestCase("close_scene")]
         [TestCase("move_to_scene")]
