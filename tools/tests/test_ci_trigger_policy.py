@@ -113,3 +113,24 @@ def test_reusable_python_and_unity_inputs_and_license_boundaries_remain_availabl
     for name in ("python-tests.yml", "unity-tests.yml"):
         config = workflow(name)
         assert "pull_request_target" not in config.get("on", config.get(True))
+
+
+@pytest.mark.parametrize("target", ["main", "beta"])
+@pytest.mark.parametrize(
+    "change,path",
+    [
+        ("C# addition without metadata", "MCPForUnity/Editor/Tools/NewTool.cs"),
+        ("metadata removal", "MCPForUnity/Runtime/Component.cs.meta"),
+        ("asset GUID change", "MCPForUnity/Editor/Icons/Icon.png.meta"),
+    ],
+)
+def test_package_integrity_changes_select_python_pr_gate(target, change, path):
+    # Given: an added script, removed metadata or modified GUID in the shipped package.
+    # When: the real PR filters are evaluated (path filters apply to all change kinds).
+    selected_gate = selected("python-tests.yml", "pull_request", target, path, "synchronize")
+    # Then: the tools suite containing the shipped metadata integrity check must run.
+    assert selected_gate, change
+    runs = "\n".join(
+        step.get("run", "") for step in workflow("python-tests.yml")["jobs"]["test"]["steps"]
+    )
+    assert 'python -m pytest "$GITHUB_WORKSPACE/tools/tests/"' in runs

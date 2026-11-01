@@ -5,6 +5,7 @@ on:
     branches: [main, beta]
     paths:
       - Server/**
+      - MCPForUnity/**
       - tools/**
       - mcp_source.py
       - .github/scripts/**
