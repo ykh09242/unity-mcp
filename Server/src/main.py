@@ -119,6 +119,7 @@ try:  # pragma: no cover - startup safety guard
 except Exception:
     pass
 
+import fastmcp
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
 from logging.handlers import RotatingFileHandler
@@ -652,7 +653,12 @@ class UnityMCP(FastMCP):
             app.add_middleware(McpVersionMiddleware, path=app.state.path)
             app.add_middleware(CatalogSubscriptionLifetimeMiddleware)
         app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_HTTP_REQUEST_BYTES)
-        app.add_middleware(ResponseRetentionMiddleware)
+        app.add_middleware(
+            ResponseRetentionMiddleware,
+            legacy_sse_message_path=(
+                fastmcp.settings.message_path if app.state.transport_type == "sse" else None
+            ),
+        )
         if not config.http_remote_hosted:
             app.add_middleware(LocalControlAuthMiddleware, token=config.local_auth_token)
         else:

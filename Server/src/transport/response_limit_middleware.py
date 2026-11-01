@@ -239,8 +239,16 @@ class ResponseLimitMiddleware(Middleware):
 class ResponseRetentionMiddleware:
     """Keep HTTP command/result reservations through slow send and cancellation."""
 
-    def __init__(self, app):
+    def __init__(self, app, *, legacy_sse_message_path: str | None = None):
         self.app = app
+        # FastMCP mounts the configured legacy message endpoint as a subtree.
+        # Modern HTTP may use the same path or query parameters without sharing
+        # its response lifetime with a separate SSE connection.
+        self.legacy_sse_message_prefix = (
+            legacy_sse_message_path.rstrip("/") + "/"
+            if legacy_sse_message_path is not None
+            else None
+        )
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
@@ -291,6 +299,10 @@ class ResponseRetentionMiddleware:
             owner.release()
             legacy_post = (
                 scope.get("method") == "POST"
+                and self.legacy_sse_message_prefix is not None
+                and scope.get("path", "")
+                .removeprefix(scope.get("root_path", ""))
+                .startswith(self.legacy_sse_message_prefix)
                 and "session_id" in parse_qs(scope.get("query_string", b"").decode("latin-1"))
                 and b"mcp-session-id" not in dict(scope.get("headers", []))
             )
