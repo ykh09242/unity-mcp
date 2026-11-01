@@ -1,36 +1,97 @@
+using System;
 using System.IO;
+using System.Linq;
 using MCPForUnity.Editor.Tools.Prefabs;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using static MCPForUnityTests.Editor.TestUtilities;
+using Object = UnityEngine.Object;
 
 namespace MCPForUnityTests.Editor.Tools
 {
     public class ManagePrefabsStageTests
     {
-        private const string TempDirectory = "Assets/Temp/ManagePrefabsStageTests";
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
+        private string tempDirectory;
+        private string tempDirectoryGuid;
+        private Object[] originalSelection;
+        private Object originalActiveObject;
+        private Scene originalActiveScene;
+        private bool capturedState;
+
+        [OneTimeSetUp]
+        public void OneTimeSetUp() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void OneTimeTearDown() => sceneFixture.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
         {
-            StageUtility.GoToMainStage();
-            EnsureFolder(TempDirectory);
+            capturedState = false;
+            tempDirectory = null;
+            tempDirectoryGuid = null;
+            if (PrefabStageUtility.GetCurrentPrefabStage() != null)
+                Assert.Ignore("This fixture preserves the existing Prefab Stage, including unsaved changes.");
+            originalSelection = Selection.objects;
+            originalActiveObject = Selection.activeObject;
+            originalActiveScene = SceneManager.GetActiveScene();
+            capturedState = true;
+            Scene ownedScene = sceneFixture.Create("McpPrefabStage_", Guid.NewGuid().ToString("N"));
+            tempDirectory = "Assets/ManagePrefabsStageTests_" + Guid.NewGuid().ToString("N");
+            Assert.IsFalse(AssetDatabase.IsValidFolder(tempDirectory));
+            Assert.IsFalse(Directory.Exists(Path.Combine(Application.dataPath, tempDirectory.Substring("Assets/".Length))));
+            tempDirectoryGuid = AssetDatabase.CreateFolder("Assets", tempDirectory.Substring("Assets/".Length));
+            Assert.IsNotEmpty(tempDirectoryGuid);
+            string scenePath = tempDirectory + "/" + ownedScene.name + ".unity";
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, scenePath));
+            Assert.AreEqual(scenePath, ownedScene.path);
         }
 
         [TearDown]
         public void TearDown()
         {
-            StageUtility.GoToMainStage();
-
-            if (AssetDatabase.IsValidFolder(TempDirectory))
+            if (!capturedState)
+                return;
+            try
             {
-                AssetDatabase.DeleteAsset(TempDirectory);
+                CloseOwnedPrefabStage();
+                sceneFixture.Close();
+                if (!string.IsNullOrEmpty(tempDirectoryGuid))
+                {
+                    StringAssert.StartsWith("Assets/ManagePrefabsStageTests_", tempDirectory);
+                    Assert.AreEqual(tempDirectoryGuid, AssetDatabase.AssetPathToGUID(tempDirectory));
+                    Assert.IsTrue(AssetDatabase.DeleteAsset(tempDirectory));
+                }
             }
+            finally
+            {
+                if (originalActiveScene.IsValid() && originalActiveScene.isLoaded)
+                    SceneManager.SetActiveScene(originalActiveScene);
+                Selection.objects = originalSelection;
+                Selection.activeObject = originalActiveObject;
+            }
+        }
 
-            CleanupEmptyParentFolders(TempDirectory);
+        private void CloseOwnedPrefabStage()
+        {
+            var stage = PrefabStageUtility.GetCurrentPrefabStage();
+            if (stage == null)
+                return;
+            Assert.IsNotEmpty(tempDirectoryGuid);
+            Assert.AreEqual(tempDirectoryGuid, AssetDatabase.AssetPathToGUID(tempDirectory));
+            StringAssert.StartsWith(tempDirectory + "/", stage.assetPath, "A foreign Prefab Stage must never be closed by this fixture.");
+            if (stage.scene.isDirty)
+            {
+                var saved = ToJObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "save_prefab_stage" }));
+                Assert.IsTrue(saved.Value<bool>("success"), saved.ToString());
+            }
+            StageUtility.GoToMainStage();
         }
 
         [Test]
@@ -75,7 +136,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                StageUtility.GoToMainStage();
+                CloseOwnedPrefabStage();
                 SafeDeleteAsset(prefabPath);
             }
         }
@@ -95,7 +156,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                StageUtility.GoToMainStage();
+                CloseOwnedPrefabStage();
                 SafeDeleteAsset(prefabPath);
             }
         }
@@ -127,7 +188,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                StageUtility.GoToMainStage();
+                CloseOwnedPrefabStage();
                 SafeDeleteAsset(prefabPath);
                 SafeDeleteAsset(aliasPath);
             }
@@ -153,14 +214,14 @@ namespace MCPForUnityTests.Editor.Tools
                 Assert.IsTrue(saveResult.Value<bool>("success"), $"Expected save to succeed but got: {saveResult}");
                 Assert.AreEqual(prefabPath, saveResult["data"].Value<string>("prefabPath"));
 
-                StageUtility.GoToMainStage();
+                CloseOwnedPrefabStage();
 
                 GameObject reloaded = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
                 Assert.IsNotNull(reloaded.transform.Find("SavedChild"), "Saved prefab should contain the new child after save_prefab_stage.");
             }
             finally
             {
-                StageUtility.GoToMainStage();
+                CloseOwnedPrefabStage();
                 SafeDeleteAsset(prefabPath);
             }
         }
@@ -193,9 +254,89 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                StageUtility.GoToMainStage();
+                CloseOwnedPrefabStage();
                 SafeDeleteAsset(prefabPath);
             }
+        }
+
+        [Test]
+        public void FixtureCleanup_PreservesForeignFolderSceneAndSelection()
+        {
+            string sentinelPath = CreateTestPrefab("ForeignSentinel");
+            string sentinelGuid = AssetDatabase.AssetPathToGUID(sentinelPath);
+            byte[] sentinelBytes = File.ReadAllBytes(sentinelPath);
+            var sentinel = AssetDatabase.LoadAssetAtPath<GameObject>(sentinelPath);
+            Selection.activeObject = sentinel;
+            Object[] selected = Selection.objects;
+            Scene active = SceneManager.GetActiveScene();
+            Scene[] scenes = Enumerable.Range(0, SceneManager.sceneCount).Select(SceneManager.GetSceneAt).ToArray();
+            var nested = new ManagePrefabsStageTests();
+            try
+            {
+                nested.SetUp();
+                Assert.AreNotEqual(tempDirectory, nested.tempDirectory);
+                Assert.IsTrue(AssetDatabase.IsValidFolder(nested.tempDirectory));
+            }
+            finally
+            {
+                nested.TearDown();
+            }
+            Assert.IsFalse(AssetDatabase.IsValidFolder(nested.tempDirectory));
+            Assert.AreEqual(sentinelGuid, AssetDatabase.AssetPathToGUID(sentinelPath));
+            CollectionAssert.AreEqual(sentinelBytes, File.ReadAllBytes(sentinelPath));
+            Assert.AreEqual("ForeignSentinel", AssetDatabase.LoadAssetAtPath<GameObject>(sentinelPath).name);
+            CollectionAssert.AreEqual(scenes, Enumerable.Range(0, SceneManager.sceneCount).Select(SceneManager.GetSceneAt).ToArray());
+            Assert.AreEqual(active, SceneManager.GetActiveScene());
+            CollectionAssert.AreEqual(selected, Selection.objects);
+            Assert.AreEqual(sentinel, Selection.activeObject);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void FixtureGuard_PreservesExistingPrefabStageAndUnsavedChanges(bool dirty)
+        {
+            string prefabPath = CreateTestPrefab("ForeignStage");
+            byte[] sourceBytes = File.ReadAllBytes(prefabPath);
+            AssertOpenPrefabStage(prefabPath);
+            var stage = PrefabStageUtility.GetCurrentPrefabStage();
+            Assert.IsNotNull(stage);
+            if (dirty)
+            {
+                var child = new GameObject("UnsavedForeignChild");
+                child.transform.SetParent(stage.prefabContentsRoot.transform, false);
+                child.transform.localPosition = new Vector3(2, 3, 4);
+                EditorSceneManager.MarkSceneDirty(stage.scene);
+            }
+            bool wasDirty = stage.scene.isDirty;
+            Assert.AreEqual(dirty, wasDirty);
+            string rootName = stage.prefabContentsRoot.name;
+            Selection.activeObject = stage.prefabContentsRoot;
+            Object[] selected = Selection.objects;
+            Object activeObject = Selection.activeObject;
+            Scene activeScene = SceneManager.GetActiveScene();
+            Scene[] scenes = Enumerable.Range(0, SceneManager.sceneCount).Select(SceneManager.GetSceneAt).ToArray();
+            var nested = new ManagePrefabsStageTests();
+            try
+            {
+                Assert.Throws<IgnoreException>(() => nested.SetUp(), "An existing foreign stage must be guarded before any fixture mutation.");
+            }
+            finally
+            {
+                nested.TearDown();
+            }
+            Assert.IsNull(nested.tempDirectory);
+            Assert.AreSame(stage, PrefabStageUtility.GetCurrentPrefabStage());
+            Assert.AreEqual(wasDirty, stage.scene.isDirty);
+            Assert.AreEqual(rootName, stage.prefabContentsRoot.name);
+            Transform unsavedChild = stage.prefabContentsRoot.transform.Find("UnsavedForeignChild");
+            Assert.AreEqual(dirty, unsavedChild != null);
+            if (dirty)
+                Assert.AreEqual(new Vector3(2, 3, 4), unsavedChild.localPosition);
+            CollectionAssert.AreEqual(sourceBytes, File.ReadAllBytes(prefabPath));
+            CollectionAssert.AreEqual(selected, Selection.objects);
+            Assert.AreEqual(activeObject, Selection.activeObject);
+            Assert.AreEqual(activeScene, SceneManager.GetActiveScene());
+            CollectionAssert.AreEqual(scenes, Enumerable.Range(0, SceneManager.sceneCount).Select(SceneManager.GetSceneAt).ToArray());
         }
 
         private static void AssertOpenPrefabStage(string prefabPath)
@@ -205,9 +346,9 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(openResult.Value<bool>("success"), $"Expected open to succeed but got: {openResult}");
         }
 
-        private static string CreateTestPrefab(string rootName)
+        private string CreateTestPrefab(string rootName)
         {
-            string prefabPath = Path.Combine(TempDirectory, $"{rootName}.prefab").Replace('\\', '/');
+            string prefabPath = Path.Combine(tempDirectory, $"{rootName}.prefab").Replace('\\', '/');
             var root = new GameObject(rootName);
 
             try
