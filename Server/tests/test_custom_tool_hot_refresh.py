@@ -3,12 +3,10 @@
 from tests.timing import await_signal, watchdog_timeout
 
 import os
-from pathlib import Path
-import subprocess
-import sys
 import textwrap
 
 import pytest
+from tests.sdk_scenarios import run_sdk_scenario, sdk_scenario_host  # noqa: F401
 
 
 @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
@@ -397,12 +395,9 @@ def run_sdk(source, tmp_path, mode):
         directory = tmp_path / key
         directory.mkdir(exist_ok=True)
         env[key] = str(directory)
-    result = subprocess.run(
-        [sys.executable, "-B", "-c", "MODE = " + repr(mode) + "\n" + textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1],
+    result = run_sdk_scenario(
+        "MODE = " + repr(mode) + "\n" + textwrap.dedent(source),
         env=env,
-        capture_output=True,
-        text=True,
         timeout=45,
     )
     assert result.returncode == 0, result.stdout + result.stderr

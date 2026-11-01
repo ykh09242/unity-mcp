@@ -7,9 +7,6 @@ from datetime import datetime, timezone
 import gc
 import importlib
 import os
-from pathlib import Path
-import subprocess
-import sys
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -19,6 +16,7 @@ import anyio
 import pytest
 import pytest_asyncio
 
+from tests.sdk_scenarios import run_sdk_scenario, sdk_scenario_host  # noqa: F401
 from tests.remote_credentials import remote_credentials
 from starlette.websockets import WebSocketState
 
@@ -341,12 +339,13 @@ async def test_cancel_discards_observations_without_closing_parent(polling, oute
 @pytest.mark.parametrize("cancel", [False, True])
 def test_sdk_prefab_preflight_response_ownership(tmp_path, mode, cancel):
     # Isolate actual SDK from older integration fixtures replacing SDK modules.
-    source = r"""import asyncio, json, sys
+    source = r"""import asyncio, importlib, json, sys
 sys.path[:0] = ["src", "tests"]
 from fastmcp import Client, FastMCP
 from pytest import MonkeyPatch
-import test_preflight_response_lifetime as regression
+from tests import test_preflight_response_lifetime as regression
 from transport.response_limit_middleware import ResponseLimitMiddleware
+assert regression.module is importlib.import_module("services.tools.preflight"), "scenario reused stale preflight module"
 
 async def scenario():
     with MonkeyPatch.context() as monkeypatch:
@@ -386,12 +385,9 @@ asyncio.run(scenario())
     env = {**os.environ, "UNITY_MCP_DISABLE_TELEMETRY": "true"}
     for key in ("APPDATA", "XDG_DATA_HOME", "UNITY_MCP_LOG_DIR", "TEMP", "TMP"):
         env[key] = str(tmp_path)
-    result = subprocess.run(
-        [sys.executable, "-B", "-c", source],
-        cwd=Path(__file__).resolve().parents[1],
+    result = run_sdk_scenario(
+        source,
         env=env,
-        capture_output=True,
-        text=True,
         timeout=20,
     )
     assert result.returncode == 0, result.stdout + result.stderr
