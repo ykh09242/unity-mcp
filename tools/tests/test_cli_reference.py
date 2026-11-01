@@ -407,6 +407,25 @@ assert click.Group.resolve_command is before
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_cli_catalog_import_does_not_load_server_tool_runtime():
+    program = """
+import sys
+import cli.main
+assert cli.main.cli.commands, 'expected real registered CLI commands'
+assert 'services.tools' not in sys.modules, 'CLI catalog imported server tool runtime'
+assert 'fastmcp' not in sys.modules, 'CLI catalog imported server SDK'
+"""
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", program],
+        cwd=TOOLS.parent / "Server/src",
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_defaults_prompts_and_environment_do_not_run_or_override_examples(monkeypatch):
     command = click.Command(
         "unity-mcp",

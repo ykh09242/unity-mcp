@@ -8,11 +8,12 @@ import click
 from cli.utils.config import get_config
 from cli.utils.connection import handle_unity_errors, run_command
 from cli.utils.output import format_output
-from services.tools.manage_scene_edits import SceneEdit
 from pydantic import TypeAdapter, ValidationError
 
 
 def _read_edits(path: str, require_expected: bool) -> list[dict]:
+    from services.tools.manage_scene_edits import SceneEdit
+
     source = Path(path)
     try:
         if source.stat().st_size > 4 * 1024 * 1024:

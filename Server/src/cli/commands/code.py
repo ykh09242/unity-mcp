@@ -16,7 +16,6 @@ from cli.utils.connection import (
     UnityConnectionError,
 )
 from cli.utils.script_read import format_script_read, script_contents
-from services.tools import bounded_regex
 
 _SEARCH_RESULT_LIMIT = 1000
 _EXCERPT_CHARS = 500
@@ -230,6 +229,9 @@ def search(pattern: str, path: str, max_results: int, case_sensitive: bool):
         raise UnityCommandError(
             {"success": False, "error": f"Could not read file content from {path}"}
         )
+
+    # Load the server-side regex engine only when this command actually searches.
+    from services.tools import bounded_regex
 
     # Step 2: Perform regex search locally
     flags = re.MULTILINE

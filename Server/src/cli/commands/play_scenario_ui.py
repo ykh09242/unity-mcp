@@ -17,7 +17,6 @@ from cli.utils.play_scenario_analysis_io import (
 from cli.utils.play_scenario_ui import UiComparisonPolicy, compare_ui_snapshots
 from models.response_limits import bounded_json_text
 from models.ui_snapshots import validate_ui_snapshot
-from services.tools.capture_ui_snapshot import UiSnapshotRequest
 
 
 def _read_identity_map(source: Path):
@@ -68,6 +67,8 @@ def capture_ui_snapshot(
     component_type: str | None,
 ) -> None:
     """Save a complete bounded UI tree to a new file; missing evidence fails capture."""
+    from services.tools.capture_ui_snapshot import UiSnapshotRequest
+
     config = get_config()
     try:
         arguments = {"framework": framework, "target": target, "max_nodes": max_nodes}
