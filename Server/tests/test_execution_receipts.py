@@ -329,6 +329,46 @@ def test_stored_permission_floor_blocks_same_owner_weaker_credential(opened):
     )
 
 
+@pytest.mark.parametrize("live_owner", [None, "wrapper", "worker"])
+def test_expired_key_reuse_drops_old_floor_only_after_all_owners_exit(opened, tmp_path, live_owner):
+    create, clock = opened
+    store = create()
+    invocation = admit(store)
+    invocation.extend_floor(frozenset({"run"}), grants=GRANTS)
+    worker = invocation.acquire_worker() if live_owner == "worker" else None
+    invocation.enter_handler()
+    if live_owner != "wrapper":
+        invocation.finish("unknown" if worker else "completed")
+    scope = ReceiptScope("stable-user-A", PROJECT)
+    opts = options(store)
+    read_only = frozenset({"read"})
+    replacement_identity = identity(opts, {"new_read": True})
+
+    def replacement():
+        return store.admit(scope, opts, replacement_identity, floor=read_only, grants=read_only)
+
+    with pytest.raises(ReceiptNotFound):
+        replacement()
+    clock.value += TTL_SECONDS + 1
+    try:
+        if live_owner is not None:
+            with pytest.raises(ReceiptNotFound):
+                replacement()
+            assert store.active_count == 1
+    finally:
+        if worker is not None:
+            worker.close()
+        if live_owner == "wrapper":
+            invocation.finish("completed")
+
+    assert store.lookup(scope, opts, replacement_identity, grants=read_only) is None
+    renewed = replacement()
+    assert isinstance(renewed, ReceiptInvocation)
+    assert renewed.receipt_id != invocation.receipt_id
+    renewed.finish("not_dispatched")
+    assert not (tmp_path / "receipts" / (invocation.receipt_id + ".json")).exists()
+
+
 def test_unknown_and_expiry_keep_key_and_charge_until_actual_worker_release(opened):
     create, clock = opened
     store = create()

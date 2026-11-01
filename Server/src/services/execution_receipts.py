@@ -859,9 +859,10 @@ class ExecutionReceiptStore:
             if receipt_id is None:
                 return None
             record = self._records[receipt_id]
-            self._authorize(record, scope, grants)
+            # An unowned expired key no longer carries its historical permission floor.
             if now >= record.expires_at and receipt_id not in self._owned_ids():
                 return None
+            self._authorize(record, scope, grants)
             if (
                 record.fingerprint,
                 record.fingerprint_bytes,
@@ -875,10 +876,10 @@ class ExecutionReceiptStore:
             ):
                 raise ReceiptConflict("idempotency_conflict")
             record = self._read_record(receipt_id)
-            self._authorize(record, scope, grants)
             now = self._now()
             if now >= record.expires_at and receipt_id not in self._owned_ids():
                 return None
+            self._authorize(record, scope, grants)
             return self._view(self._expire_result(record, now))
 
     def _read_record(self, receipt_id: str) -> ReceiptRecord:
