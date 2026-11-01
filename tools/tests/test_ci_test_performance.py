@@ -261,6 +261,45 @@ def test_report_warns_without_counting_nested_time_or_interpreting_markup(timing
     assert "test&#124;&lt;script&gt; &#96;payload&#96;" in report
 
 
+def test_report_preserves_distinct_module_regressions_below_slowest_five(tmp_path):
+    # Given five consistently expensive modules and two smaller comparable modules.
+    junit = tmp_path / "report.xml"
+    snapshots = []
+    for first, second in [(10, 5), (20, 10)]:
+        durations = {f"stable_{index}": 100 for index in range(5)}
+        durations.update({"regressed_first": first, "regressed_second": second})
+        cases = "".join(
+            f'<testcase classname="{name}" name="case" time="{duration}"/>'
+            for name, duration in durations.items()
+        )
+        junit.write_text(
+            f'<testsuite time="{sum(durations.values())}">{cases}</testsuite>',
+            encoding="utf-8",
+        )
+        snapshots.append(
+            performance.snapshot(
+                junit,
+                python="3.15",
+                suite="tools",
+                runner="Linux-X64",
+                workers=0,
+                coverage=False,
+            )
+        )
+
+    # When both smaller modules cross the unchanged slowdown thresholds.
+    report, warnings = performance.render_report([snapshots[1]], [[snapshots[0]]] * 3, [])
+
+    # Then each regression remains visible and independently attributable.
+    assert "| regressed_first | 20.00s | 10.00s (slower) | 3 |" in report
+    assert "| regressed_second | 10.00s | 5.00s (slower) | 3 |" in report
+    assert len(warnings) == 2
+    assert any("regressed_first" in warning and "20.00s" in warning for warning in warnings)
+    assert any("regressed_second" in warning and "10.00s" in warning for warning in warnings)
+    assert all("3 samples" in warning for warning in warnings)
+    assert all(f"| stable_{index} |" in report for index in range(5))
+
+
 def test_invalid_or_duplicate_artifact_data_is_rejected(timing):
     with pytest.raises(ValueError, match="Duplicate"):
         performance.read_bundle(bundle([timing, timing]))
@@ -377,6 +416,7 @@ def test_real_report_cli_returns_success_for_detected_regression(timing, tmp_pat
     history = tmp_path / "history.json"
     history.write_bytes(bundle([timing]))
     timing["elapsed"] = 40
+    timing["modules"]["tests.slow"] = 25
     current = tmp_path / "current"
     current.mkdir()
     (current / "tools.json").write_text(json.dumps(timing), encoding="utf-8")
@@ -398,7 +438,9 @@ def test_real_report_cli_returns_success_for_detected_regression(timing, tmp_pat
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
-    assert "::warning::3.15-tools" in result.stdout
+    assert result.stdout.count("::warning::3.15-tools") == 2
+    assert "module tests.slow: summed testcase duration 25.00s" in result.stdout
+    assert "15.00s median (3 samples)" in result.stdout
 
 
 def test_unchanged_module_retains_baseline_when_another_module_changes(timing):

@@ -551,7 +551,8 @@ def render_report(
         "",
         "Warning-only observations from existing JUnit reports; no extra test runs.",
         "Comparable history requires the same workflow, branch, event, Python minor, runner, OS release, workers, coverage and test/skip inventory.",
-        "Unchanged modules retain their own baseline when another module changes; legacy artifacts require a matching whole suite.",
+        "Modules with matching testcase names and outcomes retain their own baseline when another module changes; legacy artifacts require a matching whole suite.",
+        "Matching inventory does not establish identical work: source changes, concurrent workloads and runner contention can affect durations. Warnings identify observations, not causes.",
         "OS releases start separate baselines; older reports without OS metadata are not mixed with observed environments.",
         "Image builds and Python/.NET patch versions are recorded below; their updates do not reset baselines.",
         "Baselines use the median of up to five successful runs, with at least three samples.",
@@ -586,7 +587,8 @@ def render_report(
                 "",
                 f"<details><summary>{entry['id']} timing detail</summary>",
                 "",
-                "Module values sum testcase durations, including setup/teardown; parallel sums are not wall time.",
+                "Module values sum testcase wall durations, including setup/teardown and subprocess waits; they measure neither CPU time nor the parallel suite's elapsed time.",
+                "The five slowest modules and every module crossing the regression thresholds are shown.",
                 "",
             ]
         )
@@ -607,13 +609,13 @@ def render_report(
             )
         details.extend(
             [
-                "| Slow module | Current | Baseline | Samples |",
+                "| Slow or regressed module | Current | Baseline | Samples |",
                 "| --- | ---: | ---: | ---: |",
             ]
         )
-        for name, elapsed in sorted(
-            entry["modules"].items(), key=lambda pair: pair[1], reverse=True
-        )[:5]:
+        for rank, (name, elapsed) in enumerate(
+            sorted(entry["modules"].items(), key=lambda pair: pair[1], reverse=True)
+        ):
             samples = [
                 value["modules"][name]
                 for run in history
@@ -621,13 +623,16 @@ def render_report(
                 if value["id"] == entry["id"] and module_comparable(entry, value, name)
             ][:MAX_SAMPLES]
             module_base, module_slower = regression(elapsed, samples, 5)
-            text = f"{module_base:.2f}s" if module_base is not None else "-"
-            details.append(
-                f"| {markdown(name)} | {elapsed:.2f}s | {text}{' (slower)' if module_slower else ''} | {len(samples)} |"
-            )
+            if rank < 5 or module_slower:
+                text = f"{module_base:.2f}s" if module_base is not None else "-"
+                details.append(
+                    f"| {markdown(name)} | {elapsed:.2f}s | {text}{' (slower)' if module_slower else ''} | {len(samples)} |"
+                )
             if module_slower:
                 warnings.append(
-                    f"{entry['id']} has a module at least 25% and 5s slower; see the timing report."
+                    f"{entry['id']} module {markdown(name)}: summed testcase duration {elapsed:.2f}s "
+                    f"versus {module_base:.2f}s median ({len(samples)} samples), "
+                    "at least 25% and 5s slower; see the timing report."
                 )
         details.extend(["", "| Slow testcase | Duration |", "| --- | ---: |"])
         for case in entry["slowest"][:3]:
