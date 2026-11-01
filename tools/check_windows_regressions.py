@@ -16,6 +16,10 @@ from xml.etree import ElementTree
 
 ROOT: Final = Path(__file__).resolve().parents[1]
 CASES: Final = {
+    # Collect Server helpers before tools tests adjust their standalone import paths.
+    "Server/tests/test_cli_doctor.py::test_live_server_releases_accepted_socket_when_windows_shutdown_resets": 1,
+    "Server/tests/test_play_scenario_player_assurance.py::test_snapshot_reader_retries_only_bounded_replacement_errors": 4,
+    "Server/tests/test_play_scenario_player_assurance.py::test_snapshot_retry_stops_at_elapsed_deadline": 3,
     "tools/tests/test_native_preference_process.py::test_controller_process_contract": 22,
     "tools/tests/test_process_observation.py::test_owned_windows_sampler_captures_and_closes_on_every_path": 4,
     "tools/tests/test_play_scenario_player_e2e.py::test_actual_owned_timeout_reaps_process": 1,
@@ -56,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         "UNITY_MCP_DISABLE_TELEMETRY": "1",
         "UNITY_MCP_LOG_DIR": str(output / "logs"),
         "PYTHONPATH": os.pathsep.join(
-            str(path) for path in (ROOT, ROOT / "tools", ROOT / "Server/src")
+            str(path) for path in (ROOT / "Server", ROOT / "Server/src", ROOT, ROOT / "tools")
         ),
     }
     result = subprocess.run(
@@ -64,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
             sys.executable,
             "-m",
             "pytest",
+            "--import-mode=importlib",
             *CASES,
             "-q",
             "-W",

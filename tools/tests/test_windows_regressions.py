@@ -9,6 +9,28 @@ import yaml
 from tools.check_windows_regressions import CASES, check_report
 
 
+def test_windows_selection_includes_proactor_cleanup_and_replacement_retry_boundaries():
+    assert (
+        CASES[
+            "Server/tests/test_cli_doctor.py::test_live_server_releases_accepted_socket_when_windows_shutdown_resets"
+        ]
+        == 1
+    )
+    assert (
+        CASES[
+            "Server/tests/test_play_scenario_player_assurance.py::test_snapshot_reader_retries_only_bounded_replacement_errors"
+        ]
+        == 4
+    )
+    assert (
+        CASES[
+            "Server/tests/test_play_scenario_player_assurance.py::test_snapshot_retry_stops_at_elapsed_deadline"
+        ]
+        == 3
+    )
+    assert sum(CASES.values()) == 40
+
+
 def test_report_requires_every_selected_case_to_execute(tmp_path):
     suite = ElementTree.Element("testsuite")
     for node, count in CASES.items():
