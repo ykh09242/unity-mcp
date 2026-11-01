@@ -72,6 +72,102 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [TestCase(true)]
+        [TestCase(false)]
+        public void PrefabReferenceAssignmentPersistsAndPreservesUnrelatedDirtyAsset(bool clear)
+        {
+            string meshPath = folder + "/Referenced.asset";
+            string prefabPath = folder + "/Reference.prefab";
+            var mesh = new Mesh { name = "Referenced" };
+            AssetDatabase.CreateAsset(mesh, meshPath);
+            var source = new GameObject("Reference", typeof(MeshFilter), typeof(Canvas));
+            try
+            {
+                source.GetComponent<MeshFilter>().sharedMesh = mesh;
+                source.GetComponent<Canvas>().sortingOrder = 7;
+                PrefabUtility.SaveAsPrefabAsset(source, prefabPath, out bool saved);
+                Assert.IsTrue(saved);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+            byte[] before = File.ReadAllBytes(prefabPath);
+            unrelated.frameRate = 17;
+            EditorUtility.SetDirty(unrelated);
+            JObject response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = prefabPath,
+                        ["properties"] = new JObject
+                        {
+                            ["MeshFilter"] = new JObject { ["sharedMesh"] = clear ? JValue.CreateNull() : new JValue(folder + "/Missing.asset") },
+                            ["Canvas"] = new JObject { ["sortingOrder"] = JValue.CreateNull() },
+                        },
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(original, File.ReadAllBytes(unrelatedPath));
+            Assert.IsTrue(EditorUtility.IsDirty(unrelated));
+            if (clear)
+                CollectionAssert.AreNotEqual(before, File.ReadAllBytes(prefabPath));
+            else
+                CollectionAssert.AreEqual(before, File.ReadAllBytes(prefabPath), "A failed non-null conversion must not clear the existing reference.");
+            AssetDatabase.ImportAsset(prefabPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            var reloaded = PrefabUtility.LoadPrefabContents(prefabPath);
+            try
+            {
+                Assert.That(reloaded.GetComponent<MeshFilter>().sharedMesh, Is.EqualTo(clear ? null : mesh));
+                Assert.That(reloaded.GetComponent<Canvas>().sortingOrder, Is.EqualTo(7), "Null cannot assign a non-nullable value property.");
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(reloaded);
+            }
+            CollectionAssert.AreEqual(original, File.ReadAllBytes(unrelatedPath));
+            Assert.IsTrue(EditorUtility.IsDirty(unrelated));
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void PublicReferenceFieldAssignmentPersistsAndPreservesUnrelatedDirtyAsset(bool clear)
+        {
+            string path = folder + "/Reference.asset";
+            var target = ScriptableObject.CreateInstance<MCPForUnityTests.EditMode.Tools.ReferenceDiagnosticFixture>();
+            target.reference = unrelated;
+            AssetDatabase.CreateAsset(target, path);
+            byte[] before = File.ReadAllBytes(path);
+            unrelated.frameRate = 17;
+            EditorUtility.SetDirty(unrelated);
+            JObject response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = path,
+                        ["properties"] = new JObject { ["reference"] = clear ? JValue.CreateNull() : new JValue(folder + "/Missing.asset") },
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(original, File.ReadAllBytes(unrelatedPath));
+            Assert.IsTrue(EditorUtility.IsDirty(unrelated));
+            if (clear)
+                CollectionAssert.AreNotEqual(before, File.ReadAllBytes(path));
+            else
+                CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+            UnityEngine.Resources.UnloadAsset(target);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            var reloaded = AssetDatabase.LoadAssetAtPath<MCPForUnityTests.EditMode.Tools.ReferenceDiagnosticFixture>(path);
+            Assert.IsNotNull(reloaded);
+            Assert.That(reloaded.reference, Is.EqualTo(clear ? null : unrelated));
+            CollectionAssert.AreEqual(original, File.ReadAllBytes(unrelatedPath));
+            Assert.IsTrue(EditorUtility.IsDirty(unrelated));
+        }
+
         [TestCase("asset_create")]
         [TestCase("asset_modify")]
         [TestCase("controller_create")]

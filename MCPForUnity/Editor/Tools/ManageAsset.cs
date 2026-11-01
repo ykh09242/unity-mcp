@@ -1178,8 +1178,10 @@ namespace MCPForUnity.Editor.Tools
                 System.Reflection.PropertyInfo propInfo = type.GetProperty(memberName, flags);
                 if (propInfo != null && propInfo.CanWrite)
                 {
-                    object convertedValue = Helpers.PropertyConversion.TryConvertToType(value, propInfo.PropertyType);
-                    if (convertedValue != null && !object.Equals(propInfo.GetValue(target), convertedValue))
+                    if (
+                        TryConvertMemberValue(value, propInfo.PropertyType, out object convertedValue)
+                        && !object.Equals(propInfo.GetValue(target), convertedValue)
+                    )
                     {
                         propInfo.SetValue(target, convertedValue);
                         return true;
@@ -1190,8 +1192,10 @@ namespace MCPForUnity.Editor.Tools
                     System.Reflection.FieldInfo fieldInfo = type.GetField(memberName, flags);
                     if (fieldInfo != null)
                     {
-                        object convertedValue = Helpers.PropertyConversion.TryConvertToType(value, fieldInfo.FieldType);
-                        if (convertedValue != null && !object.Equals(fieldInfo.GetValue(target), convertedValue))
+                        if (
+                            TryConvertMemberValue(value, fieldInfo.FieldType, out object convertedValue)
+                            && !object.Equals(fieldInfo.GetValue(target), convertedValue)
+                        )
                         {
                             fieldInfo.SetValue(target, convertedValue);
                             return true;
@@ -1204,6 +1208,19 @@ namespace MCPForUnity.Editor.Tools
                 McpLog.Warn($"[SetPropertyOrField] Failed to set '{memberName}' on {type.Name}: {ex.Message}");
             }
             return false;
+        }
+
+        private static bool TryConvertMemberValue(JToken value, Type type, out object convertedValue)
+        {
+            // Explicit null is an assignment for reference/nullable members. A failed
+            // conversion of non-null input also returns null, but must preserve the member.
+            if (value?.Type == JTokenType.Null)
+            {
+                convertedValue = null;
+                return !type.IsValueType || Nullable.GetUnderlyingType(type) != null;
+            }
+            convertedValue = Helpers.PropertyConversion.TryConvertToType(value, type);
+            return convertedValue != null;
         }
 
         // --- Data Serialization ---
