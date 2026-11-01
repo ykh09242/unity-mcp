@@ -8,6 +8,7 @@ set -e
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 GENERATOR="${REPO_ROOT}/tools/generate_docs_reference.py"
+cd "$REPO_ROOT"
 
 if [[ ! -f "$GENERATOR" ]]; then
   echo "pre-commit: $GENERATOR missing; skipping docs regeneration." >&2
@@ -16,11 +17,28 @@ fi
 
 relevant_paths='^Server/src/services/(tools|resources|registry)/'
 
-# Look at the staged change set only — exclude pure deletions.
-staged=$(git diff --cached --name-only --diff-filter=ACMR)
+# Include removals and the old paths of moves so obsolete pages are regenerated.
+staged=$(git diff --cached --name-only --no-renames)
 
 if ! grep -qE "$relevant_paths" <<<"$staged"; then
   exit 0
+fi
+
+# Generation reads the working tree. Require it to match the index for inputs
+# and reference pages, including preserved authored examples, before any writes.
+# This deliberately rejects partial staging instead of committing unstaged work.
+generation_inputs=(
+  Server/src
+  tools/generate_docs_reference.py
+  tools/cli_reference.py
+  tools/cli_example_validation.py
+  mcp_source.py
+  website/docs/reference
+)
+if ! git diff --quiet -- "${generation_inputs[@]}" ||
+  [[ -n "$(git ls-files --others --exclude-standard -- "${generation_inputs[@]}")" ]]; then
+  echo "pre-commit: unstaged reference inputs or pages; stage or stash them before regenerating." >&2
+  exit 1
 fi
 
 echo "pre-commit: tool/resource module changes detected — regenerating /website/docs/reference/"
@@ -33,10 +51,23 @@ else
   python3 "$GENERATOR"
 fi
 
-# Stage any reference files that changed so the commit captures them.
-if ! git diff --quiet -- "website/docs/reference"; then
+# The preflight guarantees that these deltas belong to this generator run.
+# Limit ownership to its output paths, and include new pages and deletions.
+generated_outputs=(
+  website/docs/reference/tools
+  website/docs/reference/resources
+  website/docs/reference/cli-commands.md
+)
+generated_changes=()
+while IFS= read -r -d '' path; do
+  generated_changes+=("$path")
+done < <(git diff --name-only -z -- "${generated_outputs[@]}")
+while IFS= read -r -d '' path; do
+  generated_changes+=("$path")
+done < <(git ls-files --others --exclude-standard -z -- "${generated_outputs[@]}")
+if (( ${#generated_changes[@]} )); then
   echo "pre-commit: staging regenerated reference pages."
-  git add website/docs/reference
+  git add -A -- "${generated_changes[@]}"
 fi
 
 exit 0
