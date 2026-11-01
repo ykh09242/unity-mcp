@@ -210,26 +210,44 @@ async def test_real_mutations_cannot_make_invalidated_capability_state_ready(
     await install_native_replies(command_hub, native_observations())
     read_identity = PluginHub._read_identity
     attempts = 0
+    deadlines = []
+    remaining_budgets = []
+    cancellations = []
 
     async def mutate_after_identity(cls, session, *, authoritative=False):
         nonlocal attempts
         identity = await read_identity(session, authoritative=authoritative)
         if authoritative:
             attempts += 1
+            deadline = anyio.current_effective_deadline()
+            # Inspect the enforced budget here, independently of caller scheduling latency.
+            deadlines.append(deadline)
+            remaining_budgets.append(deadline - anyio.current_time())
             await send_with_unity_instance(
                 None, "Fixture@hash", "manage_scene", {"action": "create"}, retry_on_reload=False
             )
             if exhaust_deadline:
-                await anyio.sleep_forever()
+                try:
+                    await anyio.sleep_forever()
+                except anyio.get_cancelled_exc_class():
+                    cancellations.append(anyio.current_time())
+                    raise
         return identity
 
     monkeypatch.setattr(PluginHub, "_read_identity", classmethod(mutate_after_identity))
     # When: the selected query spends its original finite read budget.
-    started = anyio.current_time()
-    result = await query_project_capabilities(SimpleNamespace(get_state=state), features=("input",))
+    with anyio.fail_after(watchdog_timeout()):
+        result = await query_project_capabilities(
+            SimpleNamespace(get_state=state), features=("input",)
+        )
     # Then: retries are finite, no stale state dispatches, and metadata remains scoped.
-    assert anyio.current_time() - started < 0.5
     assert attempts == (1 if exhaust_deadline else 2)
+    assert len(deadlines) == attempts
+    assert all(remaining <= 0.1 for remaining in remaining_budgets), remaining_budgets
+    assert deadlines == [deadlines[0]] * attempts
+    assert len(cancellations) == int(exhaust_deadline)
+    assert all(cancelled_at >= deadlines[0] for cancelled_at in cancellations)
+    assert result.limits.query_timeout_seconds == 0.1
     assert result.readiness.status == "unknown"
     assert result.features["input"].supported is True
     assert result.features["recording"].reason == "not_requested"
