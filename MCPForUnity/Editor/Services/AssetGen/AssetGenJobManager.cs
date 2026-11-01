@@ -1445,7 +1445,12 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         AssetGenJob imported;
                         try
                         {
-                            imported = r.ImportFn(r.Job, r.LocalPath);
+                            // Preserve injected two-argument importers while giving the production
+                            // model/archive pipeline its owning runner's cancellation token.
+                            imported =
+                                r.ImportFn == (Func<AssetGenJob, string, AssetGenJob>)ModelImportPipeline.ImportInto
+                                    ? ModelImportPipeline.ImportInto(r.Job, r.LocalPath, r.Cts.Token)
+                                    : r.ImportFn(r.Job, r.LocalPath);
                         }
                         finally
                         {

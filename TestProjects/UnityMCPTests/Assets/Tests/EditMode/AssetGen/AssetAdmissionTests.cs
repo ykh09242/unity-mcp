@@ -80,7 +80,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsNotNull(expanded["models"][0]["openapi"]);
         }
 
-        private static byte[] Png(int width, int height, byte depth = 8, int frames = 1)
+        internal static byte[] Png(int width, int height, byte depth = 8, int frames = 1)
         {
             using var stream = new MemoryStream();
             using var writer = new BinaryWriter(stream);

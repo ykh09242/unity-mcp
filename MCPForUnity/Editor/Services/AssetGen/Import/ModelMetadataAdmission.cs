@@ -10,8 +10,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
     /// <summary>Admits glTF JSON and embedded image work before any installed importer can decode it.</summary>
     internal static class ModelMetadataAdmission
     {
-        internal static void File(string path, ImageAdmission images = null, bool externalImagesAlreadyAdmitted = false)
+        internal static void File(
+            string path,
+            ImageAdmission images = null,
+            bool externalImagesAlreadyAdmitted = false,
+            CancellationToken cancellationToken = default
+        )
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string extension = Path.GetExtension(path).ToLowerInvariant();
             if (extension != ".gltf" && extension != ".glb")
                 return;
@@ -22,7 +28,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 extension,
                 images ?? new ImageAdmission(),
                 relative => System.IO.File.OpenRead(MCPForUnity.Runtime.Helpers.SafePathUtility.ResolveWithinRoot(Path.GetDirectoryName(path), relative)),
-                externalImagesAlreadyAdmitted
+                externalImagesAlreadyAdmitted,
+                cancellationToken
             );
         }
 

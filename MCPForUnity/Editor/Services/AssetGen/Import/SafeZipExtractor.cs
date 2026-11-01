@@ -42,13 +42,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             ISet<string> allowedExtensions,
             Action<ZipArchive> inspectArchive,
             Action<string> ensureDirectory,
-            string projectRoot
+            string projectRoot,
+            CancellationToken cancellationToken = default
         ) =>
             ExtractTo(
                 zipPath,
                 destDir,
                 allowedExtensions,
-                default,
+                cancellationToken,
                 MaxEntries,
                 MaxEntryBytes,
                 MaxTotalBytes,
@@ -113,6 +114,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                         declaredWritable += entry.Length;
                 }
                 inspectArchive?.Invoke(archive); // Same bounded archive; selection can reject before any extracted file is written.
+                cancellationToken.ThrowIfCancellationRequested();
                 AssetDiskBudget.Lease reservation = AssetDiskBudget.ReserveExtraction(budgetRoot, declaredWritable, cancellationToken);
                 long totalWritten = 0;
                 byte[] buffer = null;
@@ -166,9 +168,13 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                             buffer ??= new byte[81920];
                             long entryWritten = 0;
                             int count;
-                            while ((count = src.Read(buffer, 0, buffer.Length)) != 0)
+                            while (true)
                             {
                                 cancellationToken.ThrowIfCancellationRequested();
+                                count = src.Read(buffer, 0, buffer.Length);
+                                cancellationToken.ThrowIfCancellationRequested();
+                                if (count == 0)
+                                    break;
                                 if (count > maxEntryBytes - entryWritten || count > maxTotalBytes - totalWritten || count > entry.Length - entryWritten)
                                     throw new IOException("Archive exceeds the actual uncompressed size limit.");
                                 dst.Write(buffer, 0, count);
@@ -180,6 +186,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                                 throw new IOException("Archive entry size does not match its metadata.");
                         }
                     }
+                    cancellationToken.ThrowIfCancellationRequested();
                     completed = true; // Extracted files now belong to the caller's project asset scope.
                 }
                 catch

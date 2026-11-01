@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
 using MCPForUnity.Runtime.Helpers;
@@ -49,8 +50,11 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
 
         public static AssetGenJob ImportInto(AssetGenJob job, string localFilePath) => ImportInto(job, localFilePath, AssetGenPrefs.AutoNormalize);
 
+        public static AssetGenJob ImportInto(AssetGenJob job, string localFilePath, CancellationToken cancellationToken) =>
+            ImportInto(job, localFilePath, AssetGenPrefs.AutoNormalize, cancellationToken);
+
         // Capture policy once per import. The explicit overload lets native fixtures avoid global preference writes.
-        internal static AssetGenJob ImportInto(AssetGenJob job, string localFilePath, bool autoNormalize)
+        internal static AssetGenJob ImportInto(AssetGenJob job, string localFilePath, bool autoNormalize, CancellationToken cancellationToken = default)
         {
             if (job == null)
                 return null;
@@ -61,6 +65,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             job.ArchiveSelection = null;
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (string.IsNullOrEmpty(localFilePath))
                     return Fail(job, "No file to import.");
 
@@ -78,9 +83,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 if (job.ArchiveModelPath != null && ext != ".zip")
                     return Fail(job, "archive_model_path applies only to ZIP archives.", "archive_selector_requires_zip");
                 if (ext == ".zip")
-                    return ImportArchive(job, rel, autoNormalize);
+                    return ImportArchive(job, rel, autoNormalize, cancellationToken);
 
-                return ImportModelFile(job, rel, ext, autoNormalize);
+                return ImportModelFile(job, rel, ext, autoNormalize, cancellationToken: cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                job.State = AssetGenJobState.Canceled;
+                return job;
             }
             catch (ArchiveSelectionException e)
             {
@@ -108,10 +118,19 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             job.ModelImportStage = string.IsNullOrEmpty(job.AssetGuid) ? "saved" : "registered";
         }
 
-        private static AssetGenJob ImportModelFile(AssetGenJob job, string rel, string ext, bool autoNormalize, bool importAsset = true)
+        private static AssetGenJob ImportModelFile(
+            AssetGenJob job,
+            string rel,
+            string ext,
+            bool autoNormalize,
+            bool importAsset = true,
+            CancellationToken cancellationToken = default
+        )
         {
+            cancellationToken.ThrowIfCancellationRequested();
             RecordSavedFile(job, rel);
-            ModelMetadataAdmission.File(AssetGenPaths.ToAbsolute(rel));
+            ModelMetadataAdmission.File(AssetGenPaths.ToAbsolute(rel), cancellationToken: cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (importAsset)
                 AssetDatabase.ImportAsset(rel, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
             RecordSavedFile(job, rel);
@@ -252,7 +271,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
         }
 
         /// <summary>Inspect and select from the bounded archive before writing any extracted files.</summary>
-        private static AssetGenJob ImportArchive(AssetGenJob job, string zipRel, bool autoNormalize)
+        private static AssetGenJob ImportArchive(AssetGenJob job, string zipRel, bool autoNormalize, CancellationToken cancellationToken)
         {
             job.ArchiveSelection = ModelArchiveSelection.Evidence(zipRel, job.ArchiveModelPath);
             var evidence = job.ArchiveSelection;
@@ -276,12 +295,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     archive =>
                     {
                         selected = ModelArchiveSelection.Select(archive, ArchiveAllowedExtensions, job.ArchiveModelPath, evidence);
-                        ArchiveAssetAdmission.Validate(archive, ArchiveAllowedExtensions);
+                        ArchiveAssetAdmission.Validate(archive, ArchiveAllowedExtensions, cancellationToken);
                         selectionComplete = true;
                     },
                     directory => folders.EnsureFolder(AssetGenPaths.ToProjectRelative(directory)),
-                    Path.GetDirectoryName(Application.dataPath)
+                    Path.GetDirectoryName(Application.dataPath),
+                    cancellationToken
                 );
+                cancellationToken.ThrowIfCancellationRequested();
                 string selectedAbs = SafePathUtility.ResolveWithinRoot(folderAbs, selected);
                 if (!File.Exists(selectedAbs))
                     throw new IOException("The selected archive model was not extracted.");
@@ -289,6 +310,12 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 evidence["selected_asset_path"] = modelRel;
                 evidence["extraction_root"] = folderRel;
                 evidence["extraction"] = "complete";
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                evidence["extraction"] = selectionComplete ? "canceled" : "not_started";
+                job.State = AssetGenJobState.Canceled;
+                return job;
             }
             catch (ArchiveSelectionException e)
             {
@@ -309,7 +336,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 folderRel,
                 ImportAssetOptions.ImportRecursive | ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport
             );
-            ImportModelFile(job, modelRel, Path.GetExtension(modelRel).ToLowerInvariant(), autoNormalize, importAsset: false);
+            ImportModelFile(
+                job,
+                modelRel,
+                Path.GetExtension(modelRel).ToLowerInvariant(),
+                autoNormalize,
+                importAsset: false,
+                cancellationToken: cancellationToken
+            );
             folders.Complete();
             return job;
         }
