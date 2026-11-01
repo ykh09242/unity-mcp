@@ -111,10 +111,9 @@ def test_manifest_rejects_missing_or_invalid_template(bundle_repo, mode):
 def test_bundle_stages_manifest_icon_license_and_readme_before_pack(bundle_repo, monkeypatch):
     stages = []
 
-    def pack(command, *, cwd, capture_output, text, check):
+    def pack(command, cwd):
         stages.append(cwd)
-        assert command[:4] == ["npx", "@anthropic-ai/mcpb", "pack", "."]
-        assert capture_output and text and check
+        assert command[:3] == ["@anthropic-ai/mcpb", "pack", "."]
         manifest = json.loads((cwd / "manifest.json").read_text(encoding="utf-8"))
         assert manifest == {"version": "2.3.4", "icon": "icon.png", "name": "fixture"}
         for name in ("LICENSE", "README.md", "icon.png"):
@@ -122,7 +121,7 @@ def test_bundle_stages_manifest_icon_license_and_readme_before_pack(bundle_repo,
         Path(command[-1]).write_bytes(b"packed bundle")
         return subprocess.CompletedProcess(command, 0, stdout="packed")
 
-    monkeypatch.setattr(bundle.subprocess, "run", pack)
+    monkeypatch.setattr(bundle, "run_npx", pack)
     output = bundle_repo / "output.mcpb"
     assert bundle.generate_mcpb("2.3.4", output, bundle_repo / "icon.png") == output
     assert output.read_bytes() == b"packed bundle"
@@ -135,7 +134,7 @@ def test_bundle_failure_preserves_existing_output_and_removes_stage(
 ):
     stages = []
 
-    def pack(command, *, cwd, **_kwargs):
+    def pack(command, cwd):
         stages.append(cwd)
         if failure == "packer":
             raise subprocess.CalledProcessError(1, command, stderr="fixture pack failed")
@@ -145,7 +144,7 @@ def test_bundle_failure_preserves_existing_output_and_removes_stage(
             Path(command[-1]).write_bytes(b"")
         return subprocess.CompletedProcess(command, 0, stdout="packed")
 
-    monkeypatch.setattr(bundle.subprocess, "run", pack)
+    monkeypatch.setattr(bundle, "run_npx", pack)
     output = bundle_repo / "output.mcpb"
     output.write_bytes(b"previous bundle")
     error = {"packer": subprocess.CalledProcessError, "missing-npx": FileNotFoundError}.get(

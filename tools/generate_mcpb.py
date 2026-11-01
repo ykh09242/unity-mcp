@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,39 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_TEMPLATE = REPO_ROOT / "manifest.json"
+
+
+def run_npx(arguments: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    """Resolve npm's executable, preserving literal Windows path arguments."""
+    executable = shutil.which("npx")
+    if executable is None:
+        raise FileNotFoundError("npx not found")
+    command: list[str] | str = [executable, *arguments]
+    environment = None
+    if os.name == "nt" and Path(executable).suffix.casefold() in {".cmd", ".bat"}:
+        # cmd's quoting differs from the C argv quoting used by subprocess lists.
+        # Expand quoted environment references once, with delayed expansion disabled:
+        # valid Windows paths can contain %, !, &, ^ and parentheses, but not quotes
+        # or newlines. Do not splice their literal contents into shell source.
+        environment = os.environ.copy()
+        references = []
+        for index, argument in enumerate(command):
+            if any(character in argument for character in ('"', "\r", "\n")):
+                raise ValueError("Windows npm shim arguments cannot contain quotes or newlines")
+            name = f"_UNITY_MCPB_ARG_{index}"
+            environment[name] = argument
+            references.append(f'"%{name}%"')
+        interpreter = os.environ.get("COMSPEC", "cmd.exe")
+        command = subprocess.list2cmdline([interpreter, "/d", "/v:off", "/s", "/c"])
+        command += ' "' + " ".join(references) + '"'
+    return subprocess.run(
+        command,
+        cwd=cwd,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
 
 
 def create_manifest(version: str, icon_filename: str) -> dict:
@@ -83,13 +117,7 @@ def generate_mcpb(
         # Pack using mcpb CLI
         # Syntax: mcpb pack [directory] [output]
         try:
-            result = subprocess.run(
-                ["npx", "@anthropic-ai/mcpb", "pack", ".", str(staged_output)],
-                cwd=build_dir,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
+            result = run_npx(["@anthropic-ai/mcpb", "pack", ".", str(staged_output)], build_dir)
             print(result.stdout)
         except subprocess.CalledProcessError as e:
             print(f"MCPB pack failed:\n{e.stderr}", file=sys.stderr)

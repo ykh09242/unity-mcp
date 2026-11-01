@@ -28,7 +28,24 @@ def test_windows_selection_includes_proactor_cleanup_and_replacement_retry_bound
         ]
         == 3
     )
-    assert sum(CASES.values()) == 40
+    assert sum(CASES.values()) == 46
+
+
+@pytest.mark.parametrize(
+    "name,count",
+    [
+        ("test_bundle_launches_cmd_shim_and_preserves_metacharacter_paths", 1),
+        ("test_cmd_fixture_has_an_observable_injection_negative_control", 1),
+        ("test_cmd_shim_rejects_impossible_path_characters", 3),
+        ("test_cmd_shim_failure_preserves_exit_code_and_existing_bundle", 1),
+    ],
+)
+def test_windows_selection_requires_real_packaging_command_boundaries(name, count):
+    # Given the real Windows packaging cases and their parametrized execution counts.
+    node = f"tools/tests/test_generate_mcpb_windows.py::{name}"
+    # When the hermetic gate selects its mandatory inventory.
+    # Then every packaging boundary must execute, with no missing or skipped cases.
+    assert CASES.get(node) == count
 
 
 def test_report_requires_every_selected_case_to_execute(tmp_path):

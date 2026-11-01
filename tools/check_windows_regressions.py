@@ -1,4 +1,4 @@
-"""Run the hermetic Windows ownership, termination and file-sharing regressions.
+"""Run hermetic Windows ownership, file-sharing and npm command-shim regressions.
 
 Run with the existing Server environment: python tools/check_windows_regressions.py
 --output .tmp/windows-hermetic. No Unity installation, license or live Player is used.
@@ -26,6 +26,10 @@ CASES: Final = {
     "tools/tests/test_play_scenario_player_e2e.py::test_keyboard_interrupt_reaps_actual_owned_native_descendant": 1,
     "tools/tests/test_play_scenario_player_e2e.py::test_owned_stdout_pipe_is_closed_after_actual_process": 3,
     "Server/tests/test_play_scenario_player_assurance.py::test_windows_reader_allows_atomic_replacement_while_open": 1,
+    "tools/tests/test_generate_mcpb_windows.py::test_bundle_launches_cmd_shim_and_preserves_metacharacter_paths": 1,
+    "tools/tests/test_generate_mcpb_windows.py::test_cmd_fixture_has_an_observable_injection_negative_control": 1,
+    "tools/tests/test_generate_mcpb_windows.py::test_cmd_shim_rejects_impossible_path_characters": 3,
+    "tools/tests/test_generate_mcpb_windows.py::test_cmd_shim_failure_preserves_exit_code_and_existing_bundle": 1,
 }
 
 
