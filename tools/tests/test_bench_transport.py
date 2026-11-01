@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import textwrap
 import time
@@ -226,6 +227,7 @@ def test_actual_transports_when_owned_peers_complete_cancel_and_reconnect(tmp_pa
         assert set(result["warmed"]) == {"small", "state", "large", "job"}
         assert len(result["observations"]) == 14
         assert result["lifecycle"]["cancel_requested"] is True
+        assert result["lifecycle"]["cancel_peer_held_until_release"] is True
         state = result["lifecycle"]["after_reconnect"]
         assert state["registrations"] == 2
         if result["mode"] == "http":
@@ -243,6 +245,115 @@ def test_actual_transports_when_owned_peers_complete_cancel_and_reconnect(tmp_pa
         assert state["commands"]["read_console"] == 9
         assert state["commands"]["get_editor_state"] == state["commands"]["get_test_job"] == 3
         assert result["warmed"]["large"]["output_bytes"] > 4194304
+
+
+def test_fixture_failure_releases_held_peer_before_shutdown(tmp_path: Path) -> None:
+    # Given: the actual fixture lifespan with a real authenticated TCP command held.
+    script = tmp_path / "held_peer_failure.py"
+    script.write_text(
+        textwrap.dedent(
+            """
+            import argparse, json, threading, time
+            from pathlib import Path
+            import anyio
+            from tools.tests.fixtures.transport_bench import server
+
+            owned = {}
+            original_state = server.PeerState
+            original_connection = server.MeasuredConnection
+
+            def state(*args, **kwargs):
+                owned['state'] = original_state(*args, **kwargs)
+                return owned['state']
+
+            def connection(*args, **kwargs):
+                owned['connection'] = original_connection(*args, **kwargs)
+                return owned['connection']
+
+            class FailingRunner(server.UnityMCP):
+                def __init__(self, *args, lifespan, **kwargs):
+                    super().__init__(*args, lifespan=lifespan, **kwargs)
+                    self.owned_lifespan = lifespan
+
+                async def run_async(self, **kwargs):
+                    async with self.owned_lifespan(self):
+                        def send():
+                            try:
+                                owned['connection'].send_command(
+                                    'read_console', {'filterText': 'small:cancel'},
+                                    max_attempts=0, deadline=time.monotonic() + 5,
+                                )
+                            finally:
+                                owned['worker_done'].set()
+
+                        owned['worker_done'] = threading.Event()
+                        owned['worker'] = threading.Thread(target=send)
+                        owned['worker'].start()
+                        await owned['state'].wait_event('active', 'small:cancel')
+                        assert not owned['state'].cancel_release.is_set()
+                        assert not owned['worker_done'].is_set()
+                        # No completion control will release this held command.
+                        raise RuntimeError('Owned failure before completion control')
+
+            server.PeerState = state
+            server.MeasuredConnection = connection
+            server.UnityMCP = FailingRunner
+            args = argparse.Namespace(
+                transport='stdio', directory=str(Path(__file__).parent),
+                large_bytes=262144, work_ms=0, product_root=Path.cwd(),
+                concurrency=1, samples=1, cohort_gate=False, resource_contract=False,
+            )
+
+            async def exercise():
+                try:
+                    await server.serve(args, None)
+                except* RuntimeError as failures:
+                    assert len(failures.exceptions) == 1
+                    assert str(failures.exceptions[0]) == 'Owned failure before completion control'
+                    owned['failure_preserved'] = True
+                assert owned['failure_preserved']
+                assert owned['state'].cancel_release.is_set()
+                owned['worker'].join(timeout=1)
+                assert owned['worker_done'].is_set()
+                assert not owned['worker'].is_alive()
+                print(json.dumps({'released': True, 'worker_drained': True, 'failure_preserved': True}))
+
+            anyio.run(exercise)
+            """
+        ),
+        encoding="utf-8",
+    )
+    environment = {
+        key: os.environ[key]
+        for key in ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP")
+        if key in os.environ
+    }
+    environment.update(
+        BENCH_AUTH="a" * 64,
+        UNITY_MCP_DISABLE_TELEMETRY="true",
+        UNITY_MCP_TELEMETRY_ENABLED="0",
+        UNITY_MCP_LOG_DIR=str(tmp_path / "logs"),
+        UNITY_MCP_STATUS_DIR=str(tmp_path / "status"),
+        HOME=str(tmp_path / "home"),
+        USERPROFILE=str(tmp_path / "home"),
+    )
+    # When: failure unwinds the actual lifespan before the normal release control.
+    completed = subprocess.run(
+        native_python([str(script)], (TOOLS.parent / "Server/src", TOOLS.parent)),
+        cwd=TOOLS.parent,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    # Then: shutdown releases the peer, drains its real worker and preserves failure.
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "released": True,
+        "worker_drained": True,
+        "failure_preserved": True,
+    }
 
 
 @asynccontextmanager
@@ -396,6 +507,7 @@ async def test_readiness_is_complete_before_production_reader_observes_it(tmp_pa
         assert (state["pending"], state["retained"]) == (0, 0)
         assert state["registrations"] == 2
         assert result["lifecycle"]["partial_cancel"]["receiver_final_chunk_processed"] is True
+        assert result["lifecycle"]["cancel_peer_held_until_release"] is True
         print(
             json.dumps({"readiness_held": observed["held"], "actual_transport": result}), flush=True
         )

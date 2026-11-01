@@ -258,6 +258,8 @@ async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
             try:
                 yield
             finally:
+                # Release held peer work before cancelling shielded thread waits.
+                state.cancel_release.set()
                 group.cancel_scope.cancel()
                 if connection is not None:
                     connection.disconnect()
@@ -331,12 +333,24 @@ async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
 
     @mcp.tool(name="bench_wait_complete")
     async def wait_complete(correlation: str) -> dict[str, bool]:
+        held = False
+        if correlation == "small:cancel":
+            with state.write_lock:
+                active = state.active.get(correlation)
+                complete = state.complete.get(correlation)
+                held = (
+                    active is not None
+                    and active.is_set()
+                    and (complete is None or not complete.is_set())
+                    and not state.cancel_release.is_set()
+                )
+            state.cancel_release.set()
         await state.wait_event("complete", correlation)
         if correlation == "large:partial_cancel":
             with anyio.fail_after(8):
                 await state.partial_received.wait()
             return {"signalled": True, "receiver_final_chunk_processed": True}
-        return {"signalled": True}
+        return {"signalled": True, "held_until_release": held}
 
     @mcp.tool(name="bench_wait_drained")
     async def wait_drained() -> dict[str, JsonValue]:

@@ -46,6 +46,7 @@ class PeerState:
     write_lock: threading.Lock = field(default_factory=threading.Lock)
     active: dict[str, threading.Event] = field(default_factory=dict)
     complete: dict[str, threading.Event] = field(default_factory=dict)
+    cancel_release: threading.Event = field(default_factory=threading.Event)
     cohort_gate: bool = False
     concurrency: int = 1
     samples: int = 1
@@ -188,10 +189,11 @@ class TcpHandler(socketserver.BaseRequestHandler):
                 request = PeerRequest(name=raw["type"], params=raw["params"])
                 self.server.state.mark_active(request)
                 started = time.perf_counter()
-                delay = (
-                    0.5 if ":cancel" in request.correlation else self.server.state.work_ms / 1000
-                )
-                time.sleep(delay)
+                if request.correlation == "small:cancel":
+                    if not state.cancel_release.wait(8):
+                        raise RuntimeError("Owned cancellation peer was not released")
+                else:
+                    time.sleep(state.work_ms / 1000)
                 payload = self.server.state.serialize(
                     request, 0.0, (time.perf_counter() - started) * 1000
                 )
@@ -216,12 +218,11 @@ async def serve_websocket(state: PeerState, endpoint: str, token: str) -> None:
                 await state.wait_cohort(request.correlation)
             if state.resource_enabled:
                 await state.resource_entered.wait()
-            delay = (
-                0.5
-                if request.name != "ping" and ":cancel" in request.correlation
-                else state.work_ms / 1000
-            )
-            await anyio.sleep(delay)
+            if request.name != "ping" and request.correlation == "small:cancel":
+                if not await anyio.to_thread.run_sync(partial(state.cancel_release.wait, 8)):
+                    raise RuntimeError("Owned cancellation peer was not released")
+            else:
+                await anyio.sleep(state.work_ms / 1000)
             payload = state.serialize(request, queue_ms, (time.perf_counter() - started) * 1000)
             if len(payload) < THRESHOLD_BYTES:
                 await websocket.send(payload.decode())

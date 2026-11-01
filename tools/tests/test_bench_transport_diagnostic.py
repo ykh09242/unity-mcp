@@ -291,6 +291,8 @@ def test_owned_diagnostic_parity_and_cleanup_against_default(tmp_path: Path) -> 
     for before, after, mode in zip(
         natural["results"], diagnostic["results"], sidecar["modes"], strict=True
     ):
+        assert before["lifecycle"]["cancel_peer_held_until_release"] is True
+        assert after["lifecycle"]["cancel_peer_held_until_release"] is True
         for workload in ("small", "state", "large", "job"):
             assert (
                 before["warmed"][workload]["output_sha256"]

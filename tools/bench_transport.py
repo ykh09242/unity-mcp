@@ -326,9 +326,16 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
                     cancel_started = time.perf_counter()
                     cancelled.cancel()
                 cancel_return_ms = (time.perf_counter() - cancel_started) * 1000
-                # Synthetic peer work is intentionally non-cancellable. Observe late
-                # result cleanup and recovery after its declared 500ms delay.
-                await control("bench_wait_complete", {"correlation": "small:cancel"})
+                # Release non-cancellable peer work only after the caller has left
+                # its cancelled scope, then observe the actual late completion.
+                completed_cancel = await control(
+                    "bench_wait_complete", {"correlation": "small:cancel"}
+                )
+                if (
+                    not isinstance(completed_cancel, dict)
+                    or completed_cancel.get("held_until_release") is not True
+                ):
+                    raise RuntimeError("Cancellation peer completed before its explicit release")
                 await observe("small:after_cancel", "recovery")
                 cancel_status = await control("bench_wait_drained")
                 reconnect_started = time.perf_counter()
@@ -338,6 +345,7 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
                 final_status = await control("bench_wait_drained")
                 lifecycle: dict[str, JsonValue] = {
                     "cancel_requested": cancelled.cancel_called,
+                    "cancel_peer_held_until_release": True,
                     "cancel_return_ms": cancel_return_ms,
                     "after_cancel": cancel_status,
                     "reconnect_and_first_call_ms": reconnect_ms,
