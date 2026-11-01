@@ -27,7 +27,9 @@ namespace MCPForUnity.Editor.Helpers
         /// Writes MCP configuration to the specified path using sophisticated logic
         /// that preserves existing configuration and only writes when necessary
         /// </summary>
-        public static string WriteMcpConfiguration(string configPath, McpClient mcpClient = null)
+        public static string WriteMcpConfiguration(string configPath, McpClient mcpClient = null) => WriteMcpConfiguration(configPath, mcpClient, null);
+
+        internal static string WriteMcpConfiguration(string configPath, McpClient mcpClient, Action beforeComparison)
         {
             // 0) Respect explicit lock (hidden pref or UI toggle)
             try
@@ -41,11 +43,13 @@ namespace MCPForUnity.Editor.Helpers
 
             // Read existing config if it exists
             string existingJson = "{}";
+            byte[] snapshot = null;
             if (File.Exists(configPath))
             {
                 try
                 {
-                    existingJson = File.ReadAllText(configPath);
+                    snapshot = File.ReadAllBytes(configPath);
+                    existingJson = DecodeConfiguration(snapshot);
                 }
                 catch (Exception e)
                 {
@@ -82,7 +86,7 @@ namespace MCPForUnity.Editor.Helpers
             string mergedJson = JsonConvert.SerializeObject(existingRoot, jsonSettings);
 
             EnsureConfigDirectoryExists(configPath);
-            WriteAtomicFile(configPath, mergedJson);
+            WriteGuardedConfiguration(configPath, mergedJson, snapshot, beforeComparison);
 
             return "Configured successfully";
         }
@@ -90,7 +94,9 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>
         /// Configures a Codex client with sophisticated TOML handling
         /// </summary>
-        public static string ConfigureCodexClient(string configPath, McpClient mcpClient)
+        public static string ConfigureCodexClient(string configPath, McpClient mcpClient) => ConfigureCodexClient(configPath, mcpClient, null);
+
+        internal static string ConfigureCodexClient(string configPath, McpClient mcpClient, Action beforeComparison)
         {
             try
             {
@@ -100,11 +106,13 @@ namespace MCPForUnity.Editor.Helpers
             catch { }
 
             string existingToml = string.Empty;
+            byte[] snapshot = null;
             if (File.Exists(configPath))
             {
                 try
                 {
-                    existingToml = File.ReadAllText(configPath);
+                    snapshot = File.ReadAllBytes(configPath);
+                    existingToml = DecodeConfiguration(snapshot);
                 }
                 catch (Exception e)
                 {
@@ -123,7 +131,7 @@ namespace MCPForUnity.Editor.Helpers
             string updatedToml = CodexConfigHelper.UpsertCodexServerBlock(existingToml, uvxPath);
 
             EnsureConfigDirectoryExists(configPath);
-            WriteAtomicFile(configPath, updatedToml);
+            WriteGuardedConfiguration(configPath, updatedToml, snapshot, beforeComparison);
 
             return "Configured successfully";
         }
@@ -196,6 +204,14 @@ namespace MCPForUnity.Editor.Helpers
             }
         }
 
+        private static string DecodeConfiguration(byte[] snapshot)
+        {
+            // Decode the same bytes used by the guard, retaining ReadAllText's BOM detection.
+            using var stream = new MemoryStream(snapshot, false);
+            using var reader = new StreamReader(stream, Encoding.UTF8, true);
+            return reader.ReadToEnd();
+        }
+
         private static bool MatchesExpectedFile(string path, byte[] expected)
         {
             if (!File.Exists(path))
@@ -248,7 +264,11 @@ namespace MCPForUnity.Editor.Helpers
                 }
                 try
                 {
-                    File.Replace(tmp, path, backup);
+                    // An expected-absent target must never replace a file created after comparison.
+                    if (compare && expected == null)
+                        File.Move(tmp, path);
+                    else
+                        File.Replace(tmp, path, backup);
                     writeDone = true;
                 }
                 catch (FileNotFoundException)

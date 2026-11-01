@@ -1,17 +1,20 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using MCPForUnity.Editor.Clients;
 using MCPForUnity.Editor.Clients.Configurators;
+using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Helpers
 {
-    public class ConfigJsonIntegrityTests
+    public class ConfigJsonIntegrityTests : TransportPreferenceTestBase
     {
         [TestCase("{\"X-API-Key\":\"synthetic-current\"}", true)]
         [TestCase("{\"x-api-key\":\"synthetic-current\"}", true)]
@@ -208,6 +211,120 @@ namespace MCPForUnityTests.Editor.Helpers
                 Assert.IsFalse(Directory.Exists(absentParent));
                 Assert.AreEqual(0, Directory.GetFiles(root).Length);
             });
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void OrdinaryConfigurationPreservesConcurrentEditOrCreation(bool toml, bool missing)
+        {
+            WithHttpConfiguration(() =>
+                WithOwnedRoot(root =>
+                {
+                    // Given an existing snapshot (including its BOM), or an expected absent file.
+                    string path = Owned(root, toml ? "client.toml" : "client.json");
+                    if (!missing)
+                        File.WriteAllText(path, toml ? "model = \"original\"\r\n" : "{\"model\":\"original\"}\r\n", Encoding.Unicode);
+                    byte[] concurrent = Encoding.UTF8.GetBytes(toml ? "# concurrent\r\nmodel = \"edited\"\r\n" : "{\"model\":\"edited\"}\r\n");
+                    File.WriteAllText(path + ".tmp", "unrelated temp");
+                    File.WriteAllText(path + ".backup", "unrelated backup");
+                    Action edit = () => File.WriteAllBytes(path, concurrent);
+
+                    // When another writer edits or creates the file after this operation read it.
+                    Assert.Throws<McpConfigurationHelper.ConfigurationConflictException>(() => ConfigureOrdinary(path, toml, edit));
+
+                    // Then the concurrent bytes survive, and only this attempt's sidecars are removed.
+                    CollectionAssert.AreEqual(concurrent, File.ReadAllBytes(path));
+                    Assert.AreEqual("unrelated temp", File.ReadAllText(path + ".tmp"));
+                    Assert.AreEqual("unrelated backup", File.ReadAllText(path + ".backup"));
+                    Assert.AreEqual(3, Directory.GetFiles(root).Length);
+                })
+            );
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void OrdinaryConfigurationWritesAbsentOrUnchangedBomSnapshot(bool toml, bool missing)
+        {
+            WithHttpConfiguration(() =>
+                WithOwnedRoot(root =>
+                {
+                    // Given an absent file or an unchanged UTF-16 document with unrelated settings.
+                    string path = Owned(root, toml ? "client.toml" : "client.json");
+                    if (!missing)
+                        File.WriteAllText(path, toml ? "model = \"keep\"\r\n" : "{\"model\":\"keep\"}\r\n", Encoding.Unicode);
+
+                    // When ordinary configuration merges its owned server entry.
+                    Assert.AreEqual("Configured successfully", ConfigureOrdinary(path, toml, null));
+
+                    // Then new and existing documents remain valid and unrelated values survive.
+                    string document = File.ReadAllText(path);
+                    if (toml)
+                    {
+                        Assert.IsTrue(CodexConfigHelper.TryParseCodexServer(document, out _, out _, out string url));
+                        Assert.AreEqual("http://127.0.0.1:8080/mcp", url);
+                        if (!missing)
+                            Assert.AreEqual("keep", CodexConfigHelper.ParseConfiguration(document)["model"].AsString.Value);
+                    }
+                    else
+                    {
+                        var json = JObject.Parse(document);
+                        Assert.AreEqual("http://127.0.0.1:8080/mcp", (string)json["mcpServers"]["unityMCP"]["url"]);
+                        if (!missing)
+                            Assert.AreEqual("keep", (string)json["model"]);
+                    }
+                    Assert.AreEqual(1, Directory.GetFiles(root).Length);
+                })
+            );
+        }
+
+        private static string ConfigureOrdinary(string path, bool toml, Action beforeComparison) =>
+            toml
+                ? McpConfigurationHelper.ConfigureCodexClient(path, new McpClient(), beforeComparison)
+                : McpConfigurationHelper.WriteMcpConfiguration(path, new McpClient(), beforeComparison);
+
+        private static void WithHttpConfiguration(Action test)
+        {
+            bool hadLock = EditorPrefs.HasKey(EditorPrefKeys.LockCursorConfig);
+            bool originalLock = EditorPrefs.GetBool(EditorPrefKeys.LockCursorConfig, false);
+            bool hadScope = EditorPrefs.HasKey(EditorPrefKeys.HttpTransportScope);
+            string scope = EditorPrefs.GetString(EditorPrefKeys.HttpTransportScope, "local");
+            bool hadUrl = EditorPrefs.HasKey(EditorPrefKeys.HttpBaseUrl);
+            string url = EditorPrefs.GetString(EditorPrefKeys.HttpBaseUrl, "");
+            string token = Environment.GetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN");
+            var capability = CodexHttpAuth.SupportsHeadersHelper;
+            try
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, false);
+                EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
+                EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "local");
+                EditorPrefs.SetString(EditorPrefKeys.HttpBaseUrl, "http://127.0.0.1:8080");
+                Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN", "synthetic-integrity-token");
+                CodexHttpAuth.SupportsHeadersHelper = () => true;
+                EditorConfigurationCache.Instance.Refresh();
+                test();
+            }
+            finally
+            {
+                if (hadLock)
+                    EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, originalLock);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.LockCursorConfig);
+                if (hadScope)
+                    EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, scope);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.HttpTransportScope);
+                if (hadUrl)
+                    EditorPrefs.SetString(EditorPrefKeys.HttpBaseUrl, url);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.HttpBaseUrl);
+                Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN", token);
+                CodexHttpAuth.SupportsHeadersHelper = capability;
+                EditorConfigurationCache.Instance.Refresh();
+            }
         }
 
         private static void WithOwnedRoot(Action<string> test)
