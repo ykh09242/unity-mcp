@@ -1,5 +1,6 @@
 """Custom dispatch cannot turn native catalog rows into alternate built-in APIs."""
 
+from copy import deepcopy
 import importlib
 from unittest.mock import AsyncMock, Mock
 
@@ -9,18 +10,44 @@ import pytest
 from core.config import config
 from models.models import ToolDefinitionModel
 import services.custom_tool_service as custom
+from services.registry import TOOL_GROUPS
+from services.tool_discovery import ToolDiscovery
 from services.tools import register_all_tools
 
 endpoint = importlib.import_module("services.tools.execute_custom_tool")
 
 
+@pytest.fixture(scope="module")
+def boundary_catalog() -> FastMCP:
+    # Compile the real complete SDK catalog once; individual cases own all mutable state.
+    app = FastMCP("custom-availability-catalog")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(config, "http_remote_hosted", False)
+        patch.setattr(config, "transport_mode", "stdio")
+        register_all_tools(app)
+    return app
+
+
+def _boundary_app(catalog: FastMCP) -> FastMCP:
+    app = FastMCP("custom-availability-boundary")
+    source = catalog._tool_discovery
+    definitions = deepcopy(source.definitions)
+    for tool in definitions.values():
+        app.add_tool(tool)
+    discovery = ToolDiscovery(app, definitions, source.groups.copy(), hosted=False)
+    app._tool_discovery = discovery
+    for group in sorted(set(TOOL_GROUPS) - discovery.default_groups):
+        app.disable(tags={f"group:{group}"}, components={"tool"})
+    app.add_transform(discovery)
+    return app
+
+
 @pytest.fixture
-def boundary(monkeypatch):
+def boundary(monkeypatch, boundary_catalog):
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "transport_mode", "stdio")
     monkeypatch.setattr(custom.CustomToolService, "_instance", None)
-    app = FastMCP("custom-availability-boundary")
-    register_all_tools(app)
+    app = _boundary_app(boundary_catalog)
     service = custom.CustomToolService(app)
     send = AsyncMock(return_value={"success": True, "data": {"effect": "executed"}})
     monkeypatch.setattr(custom, "send_with_unity_instance", send)
@@ -30,6 +57,39 @@ def boundary(monkeypatch):
         )
         monkeypatch.setattr(module, "resolve_project_id_for_unity_instance", lambda _: "hash")
     return app, service, send
+
+
+@pytest.mark.asyncio
+async def test_boundary_catalog_keeps_mutable_case_state_independent(boundary, boundary_catalog):
+    app, service, _ = boundary
+    original = boundary_catalog._tool_discovery.definitions["manage_scene"]
+    tool = app._tool_discovery.definitions["manage_scene"]
+    tool.parameters["properties"]["action"]["description"] = "case-local mutation"
+    tool.tags.add("case-local mutation")
+    assert await app.get_tool("manage_tools") is not None
+    app.disable(names={"manage_tools"}, components={"tool"})
+    app.disable(names={"manage_scene"}, components={"tool"})
+    service.register_global_tools([ToolDefinitionModel(name="case_local_custom")])
+    assert await app.get_tool("manage_scene") is None
+    assert await app.get_tool("manage_tools") is None
+    assert await app.get_tool("case_local_custom") is not None
+
+    fresh = _boundary_app(boundary_catalog)
+    fresh_service = custom.CustomToolService(fresh)
+    restored = fresh._tool_discovery.definitions["manage_scene"]
+    assert restored.parameters == original.parameters
+    assert restored.tags == original.tags
+    assert "case-local mutation" not in restored.tags
+    assert restored.parameters["properties"]["action"].get("description") != "case-local mutation"
+    assert (await fresh.get_tool("manage_scene") is None) == (
+        await boundary_catalog.get_tool("manage_scene") is None
+    )
+    assert await fresh.get_tool("case_local_custom") is None
+    assert await fresh.get_tool("manage_tools") is not None
+    assert fresh_service._global_tools == {} and fresh_service._project_tools == {}
+    assert set(fresh._tool_discovery.definitions) == set(
+        boundary_catalog._tool_discovery.definitions
+    )
 
 
 @pytest.mark.asyncio
