@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
@@ -40,6 +41,7 @@ namespace MCPForUnityTests.Editor.Tools
             instance = null;
             if (PrefabStageUtility.GetCurrentPrefabStage() != null)
                 Assert.Ignore("This fixture preserves an existing Prefab Stage.");
+            AssertEditMainStage("before fixture scene creation");
             previousSelection = Selection.objects;
             previousActiveObject = Selection.activeObject;
             capturedState = true;
@@ -66,7 +68,12 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 UnityEngine.Object.DestroyImmediate(source);
             }
+            AssertEditMainStage("after prefab save and source cleanup");
             // Keep the fixture scene loaded while the separate owned instance scene is reopened.
+            Assert.IsTrue(
+                EditorSceneManager.SaveScene(sourceScene, assetRoot + "/" + sourceScene.name + ".unity"),
+                "Preserve the owned source scene name when saving it before adding another scene."
+            );
             instanceScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
             instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, instanceScene);
             Assert.IsNotNull(instance);
@@ -144,6 +151,55 @@ namespace MCPForUnityTests.Editor.Tools
             AssertValues(route, true);
         }
 
+        [TestCase("setActive", "false", "m_IsActive")]
+        [TestCase("tag", "\"Player\"", "m_TagString")]
+        [TestCase("layer", "\"Ignore Raycast\"", "m_Layer")]
+        public void GameObjectDirectWrites_PersistOverridesAndSupportUndo(string field, string json, string propertyPath)
+        {
+            Undo.IncrementCurrentGroup();
+            var response = JObject.FromObject(
+                ManageGameObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = instance.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        [field] = JToken.Parse(json),
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            AssertGameObjectValue(field, true);
+            Assert.That(PrefabUtility.GetPropertyModifications(instance).Select(change => change.propertyPath), Does.Contain(propertyPath));
+            Undo.FlushUndoRecordObjects();
+            Undo.IncrementCurrentGroup();
+            Undo.PerformUndo();
+            AssertGameObjectValue(field, false);
+            Undo.PerformRedo();
+            AssertGameObjectValue(field, true);
+
+            Assert.IsTrue(EditorSceneManager.SaveScene(instanceScene));
+            string scenePath = instanceScene.path;
+            ClearInstanceUndo();
+            Assert.IsTrue(EditorSceneManager.CloseScene(instanceScene, true));
+            instance = null;
+            instanceScene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Additive);
+            instance = instanceScene.GetRootGameObjects().Single();
+            Assert.IsTrue(PrefabUtility.IsPartOfPrefabInstance(instance));
+            AssertGameObjectValue(field, true);
+            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetRoot + "/Component.prefab");
+            Assert.IsTrue(prefab.activeSelf);
+            Assert.AreEqual("Untagged", prefab.tag);
+            Assert.AreEqual(0, prefab.layer);
+        }
+
+        private void AssertGameObjectValue(string field, bool applied)
+        {
+            Assert.AreEqual(field == "setActive" && applied ? false : true, instance.activeSelf);
+            Assert.AreEqual(field == "tag" && applied ? "Player" : "Untagged", instance.tag);
+            Assert.AreEqual(field == "layer" && applied ? LayerMask.NameToLayer("Ignore Raycast") : 0, instance.layer);
+        }
+
         private void Apply(string route, bool partialFailure)
         {
             bool ordinary = route == "ordinary";
@@ -192,6 +248,15 @@ namespace MCPForUnityTests.Editor.Tools
             foreach (Component component in instance.GetComponents<Component>())
                 Undo.ClearUndo(component);
             Undo.ClearUndo(instance);
+        }
+
+        private static void AssertEditMainStage(string phase)
+        {
+            Assert.IsFalse(EditorApplication.isPlayingOrWillChangePlaymode, $"Prefab persistence fixture must remain in Edit Mode {phase}.");
+            Assert.IsTrue(
+                StageUtility.GetCurrentStageHandle().Equals(StageUtility.GetMainStageHandle()),
+                $"Prefab persistence fixture must remain in the main stage {phase}."
+            );
         }
     }
 }

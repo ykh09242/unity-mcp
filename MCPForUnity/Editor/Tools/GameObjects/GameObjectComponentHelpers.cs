@@ -359,10 +359,14 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             {
                 return new ErrorResponse($"Component '{typeName}' not found on '{targetGo.name}' to remove.");
             }
+            if (componentToRemove is Transform)
+                return new ErrorResponse("Cannot remove Transform or RectTransform components.");
 
             try
             {
                 Undo.DestroyObjectImmediate(componentToRemove);
+                if (componentToRemove != null)
+                    return new ErrorResponse($"Unity did not remove component '{typeName}' from '{targetGo.name}'.");
                 return null;
             }
             catch (Exception e)

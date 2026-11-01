@@ -99,6 +99,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 }
 
                 targetGo.name = name;
+                RecordPrefabOverrides(targetGo);
                 modified = true;
             }
 
@@ -108,6 +109,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             if (setActive.HasValue && targetGo.activeSelf != setActive.Value)
             {
                 targetGo.SetActive(setActive.Value);
+                RecordPrefabOverrides(targetGo);
                 modified = true;
             }
 
@@ -132,6 +134,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 try
                 {
                     targetGo.tag = tagToSet;
+                    RecordPrefabOverrides(targetGo);
                     modified = true;
                 }
                 catch (Exception ex)
@@ -145,6 +148,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 if (layerId != -1 && targetGo.layer != layerId)
                 {
                     targetGo.layer = layerId;
+                    RecordPrefabOverrides(targetGo);
                     modified = true;
                 }
             }
@@ -157,6 +161,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 if (currentFlags != desiredFlags)
                 {
                     GameObjectUtility.SetStaticEditorFlags(targetGo, desiredFlags);
+                    RecordPrefabOverrides(targetGo);
                     modified = true;
                 }
             }
@@ -229,6 +234,12 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 EditorSceneManager.MarkSceneDirty(targetGo.scene);
 
             return new SuccessResponse($"GameObject '{targetGo.name}' modified successfully.", Helpers.GameObjectSerializer.GetGameObjectData(targetGo));
+        }
+
+        private static void RecordPrefabOverrides(GameObject target)
+        {
+            if (PrefabUtility.IsPartOfPrefabInstance(target))
+                PrefabUtility.RecordPrefabInstancePropertyModifications(target);
         }
     }
 }

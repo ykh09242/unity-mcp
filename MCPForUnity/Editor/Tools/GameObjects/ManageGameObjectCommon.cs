@@ -75,6 +75,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                         int index = presentTypes.FindIndex(removalType.IsAssignableFrom);
                         if (index < 0)
                             throw new ArgumentException($"Component '{component}' not found on '{componentSource.name}' to remove.");
+                        if (typeof(Transform).IsAssignableFrom(presentTypes[index]))
+                            throw new ArgumentException("Cannot remove Transform or RectTransform components.");
                         presentTypes.RemoveAt(index);
                     }
                 }

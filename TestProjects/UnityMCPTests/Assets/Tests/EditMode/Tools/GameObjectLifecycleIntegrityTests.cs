@@ -372,6 +372,8 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("componentsToAdd", "[\"MCPForUnityTests.Editor.Tools.LifecycleAbstractComponent\"]")]
         [TestCase("componentsToRemove", "[\"Transform\"]")]
         [TestCase("componentsToRemove", "[\"BoxCollider\",\"Transform\"]")]
+        [TestCase("componentsToRemove", "[\"Component\"]")]
+        [TestCase("componentsToRemove", "[\"BoxCollider\",\"Component\"]")]
         [TestCase("componentsToRemove", "[\"NoSuchComponent_ValidationAudit\"]")]
         public void InvalidModifyMutationInput_PreservesEarlierFields(string field, string json)
         {
@@ -406,6 +408,37 @@ namespace MCPForUnityTests.Editor.Tools
             CollectionAssert.AreEqual(new Component[] { target.transform, collider }, target.GetComponents<Component>());
             Assert.AreEqual(goDirty, EditorUtility.GetDirtyCount(target));
             Assert.AreEqual(transformDirty, EditorUtility.GetDirtyCount(target.transform));
+            Assert.AreSame(parent, Selection.activeGameObject);
+        }
+
+        [TestCase("RectTransform")]
+        [TestCase("Component")]
+        public void RemovingActualRectTransform_RejectsBeforeOtherMutations(string componentType)
+        {
+            var target = new GameObject(prefix + "RectTarget", typeof(RectTransform));
+            var collider = target.AddComponent<BoxCollider>();
+            var parent = Owned("RectParent");
+            Selection.activeGameObject = parent;
+            int dirty = EditorUtility.GetDirtyCount(target);
+            var response = Call(
+                new JObject
+                {
+                    ["action"] = "modify",
+                    ["target"] = target.GetInstanceIDCompat(),
+                    ["searchMethod"] = "by_id",
+                    ["name"] = prefix + "Changed",
+                    ["setActive"] = false,
+                    ["position"] = new JArray(1, 2, 3),
+                    ["componentsToRemove"] = new JArray("BoxCollider", componentType),
+                }
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("Transform", response.Value<string>("error"));
+            Assert.AreEqual(prefix + "RectTarget", target.name);
+            Assert.IsTrue(target.activeSelf);
+            Assert.AreEqual(Vector3.zero, target.transform.localPosition);
+            CollectionAssert.AreEqual(new Component[] { target.transform, collider }, target.GetComponents<Component>());
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(target));
             Assert.AreSame(parent, Selection.activeGameObject);
         }
 

@@ -84,8 +84,7 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void SetComponentProperties_ConversionFailure_ReportsConversionError_NotPropertyNotFound()
         {
-            // Expect conversion error log from PropertyConversion (ComponentOps reflection attempt)
-            LogAssert.Expect(LogType.Error, new Regex("Error converting token"));
+            LogAssert.Expect(LogType.Error, new Regex(@"\[PropertyConversion\] Property value conversion failed\."));
             // Expect the warning log from SetComponentPropertiesInternal
             LogAssert.Expect(LogType.Warning, new Regex("Failed to set"));
 
@@ -145,6 +144,27 @@ namespace MCPForUnityTests.Editor.Tools
 
             Assert.IsNull(result, "Should return null on success (no errors)");
             Assert.AreEqual(0.42f, audioSource.volume, 0.001f);
+        }
+
+        [TestCase(false, "Component")]
+        [TestCase(true, "Component")]
+        [TestCase(true, "RectTransform")]
+        public void RemoveComponent_RejectsActualTransformWithoutChangingComponents(bool rectTransform, string requestedType)
+        {
+            if (rectTransform)
+            {
+                Object.DestroyImmediate(testGo);
+                testGo = new GameObject("RectRemovalTest", typeof(RectTransform));
+            }
+            var collider = testGo.AddComponent<BoxCollider>();
+            var before = testGo.GetComponents<Component>();
+            int dirty = EditorUtility.GetDirtyCount(testGo);
+            var result = GameObjectComponentHelpers.RemoveComponentInternal(testGo, requestedType);
+            Assert.IsInstanceOf<ErrorResponse>(result);
+            StringAssert.Contains("Transform", ((ErrorResponse)result).Error);
+            CollectionAssert.AreEqual(before, testGo.GetComponents<Component>());
+            Assert.IsTrue(collider != null);
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(testGo));
         }
 
         [TestCase("State.X")]
