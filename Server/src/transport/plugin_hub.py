@@ -219,6 +219,14 @@ class _ResultWork:
 
 
 @dataclass(frozen=True, slots=True)
+class _LargeResultFailure:
+    """Expected decode failure without a payload-owning exception traceback."""
+
+    reason: str
+    command_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class _IngressWork:
     """One raw frame and decoded graph, owned through dispatch's frame cleanup."""
 
@@ -3240,6 +3248,20 @@ class PluginHub(WebSocketEndpoint):
             raise LargeResultProtocolError("invalid_result_envelope", completed.command_id)
         return CommandResultMessage(**message)
 
+    @classmethod
+    def _decode_large_result_outcome(
+        cls, completed: CompletedLargeResult, max_retained_bytes: int
+    ) -> CommandResultMessage | _LargeResultFailure:
+        # An executor can publish an exception before dropping its traceback.
+        # Contain expected failures here so completion callbacks cannot retain
+        # rejected buffers after the loop releases their byte reservation.
+        try:
+            return cls._decode_large_result(completed, max_retained_bytes)
+        except LargeResultProtocolError as error:
+            return _LargeResultFailure(error.reason, completed.command_id)
+        except (ValueError, RecursionError):
+            return _LargeResultFailure("invalid_result_envelope", completed.command_id)
+
     async def _handle_large_result(
         self, websocket: WebSocket, data: bytes | dict[str, Any]
     ) -> None:
@@ -3300,9 +3322,12 @@ class PluginHub(WebSocketEndpoint):
                 # without returning capacity that a running worker still owns.
                 assembler.discard(generation, command_id)
             payload = await response_work(
-                lambda: cls._decode_large_result(completed, work.max_retained_bytes), large=True
+                lambda: cls._decode_large_result_outcome(completed, work.max_retained_bytes),
+                large=True,
             )
             completed = None
+            if isinstance(payload, _LargeResultFailure):
+                raise LargeResultProtocolError(payload.reason, payload.command_id)
             await self._handle_command_result(websocket, payload, _work=work)
         except LargeResultProtocolError as exc:
             if exc.reason in {

@@ -1,11 +1,13 @@
 """Malformed large-result buffers must die before asynchronous close cleanup."""
 
-from tests.timing import await_signal
+from tests.timing import await_signal, watchdog_timeout
 
 import asyncio
 import gc
 import gzip
 import json
+from concurrent.futures import ThreadPoolExecutor
+import threading
 from types import SimpleNamespace
 import weakref
 
@@ -22,6 +24,53 @@ from transport.plugin_registry import PluginRegistry
 
 CID = "11111111-2222-4333-8444-555555555555"
 SIZE = 1024 * 1024
+
+
+@pytest_asyncio.fixture(params=[False, True], ids=["normal", "held_executor_completion"])
+async def executor_handoff(request, monkeypatch):
+    if not request.param:
+        yield None
+        return
+
+    import services.tools.response_work as workers
+
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), threading.Event()
+    submitted = []
+
+    class CompletionExecutor(ThreadPoolExecutor):
+        def submit(self, function, /, *args, **kwargs):
+            future = super().submit(function, *args, **kwargs)
+            submitted.append(future)
+            return future
+
+    executor = CompletionExecutor(max_workers=1)
+    original = workers.submit_owned_executor
+
+    def completed(_future):
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(watchdog_timeout()), "test must release executor completion"
+
+    def submit(owner_loop, _executor, operation):
+        ready = threading.Event()
+
+        def run():
+            assert ready.wait(watchdog_timeout()), "test must install completion callback"
+            return operation()
+
+        future = original(owner_loop, executor, run)
+        # Run after the asyncio handoff callback, for both results and exceptions.
+        # The loop can resume while the executor still owns its completed Future.
+        submitted.pop().add_done_callback(completed)
+        ready.set()
+        return future
+
+    monkeypatch.setattr(workers, "submit_owned_executor", submit)
+    try:
+        yield entered
+    finally:
+        release.set()
+        executor.shutdown(wait=True)
 
 
 @pytest_asyncio.fixture
@@ -129,11 +178,13 @@ async def failed_transfer(state, kind):
 @pytest.mark.parametrize(
     "kind", ["crc", "bomb", "invalid_utf8", "invalid_json", "wrong_id", "wrong_type"]
 )
-async def test_failure_releases_buffer_before_close_can_suspend(owned_hub, kind):
+async def test_failure_releases_buffer_before_close_can_suspend(owned_hub, kind, executor_handoff):
     state = owned_hub
     task = asyncio.create_task(failed_transfer(state, kind))
     try:
         await await_signal(state.entered, "state.entered")
+        if executor_handoff is not None and kind not in {"crc", "bomb"}:
+            await await_signal(executor_handoff, "executor completion callback")
         gc.collect()
         assert state.cls._raw_results.total_bytes == 0
         assert state.cls._large_results.retained_bytes == 0
@@ -150,7 +201,7 @@ async def test_failure_releases_buffer_before_close_can_suspend(owned_hub, kind)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["crc", "wrong_id"])
+@pytest.mark.parametrize("kind", ["crc", "wrong_id", "invalid_json"])
 async def test_cancel_during_failed_transfer_close_does_not_retain_buffer(owned_hub, kind):
     state = owned_hub
     task = asyncio.create_task(failed_transfer(state, kind))
@@ -172,7 +223,27 @@ async def test_cancel_during_failed_transfer_close_does_not_retain_buffer(owned_
 
 
 @pytest.mark.asyncio
-async def test_failure_close_keeps_other_generation_allocation_and_owner_charge(owned_hub):
+async def test_unexpected_worker_failure_preserves_diagnostics(owned_hub, monkeypatch):
+    state = owned_hub
+    error = RuntimeError("unexpected decode failure")
+
+    def fail(_completed, _max_retained_bytes):
+        raise error
+
+    monkeypatch.setattr(state.cls, "_decode_large_result", fail)
+    with pytest.raises(RuntimeError) as caught:
+        await failed_transfer(state, "invalid_json")
+    assert caught.value is error
+    assert not state.entered.is_set()
+    assert not state.future.done()
+    assert state.cls._raw_results.total_bytes == 0
+    assert state.cls._retained_results.total_bytes == 0
+    assert state.cls._large_results.retained_bytes == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["crc", "invalid_json"])
+async def test_failure_close_keeps_other_generation_allocation_and_owner_charge(owned_hub, kind):
     state = owned_hub
     other = "22222222-2222-4333-8444-555555555555"
     other_socket = SimpleNamespace(
@@ -185,7 +256,7 @@ async def test_failure_close_keeps_other_generation_allocation_and_owner_charge(
     state.cls._large_results.begin("bob-generation", other, SIZE, 17)
     other_buffer = state.buffers[0]
     other_charge = state.cls._raw_results.total_bytes
-    task = asyncio.create_task(failed_transfer(state, "crc"))
+    task = asyncio.create_task(failed_transfer(state, kind))
     try:
         await await_signal(state.entered, "state.entered")
         gc.collect()
