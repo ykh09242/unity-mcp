@@ -128,7 +128,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 }
             }
 
-            internal void Begin()
+            internal void Begin(Func<bool> continueDispatch = null)
             {
                 if (_began)
                     throw new InvalidOperationException("Reset BeginReset cannot be replayed.");
@@ -141,6 +141,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
                         participants[index] = Borrow(index);
                     for (int index = 0; index < participants.Length; index++)
                     {
+                        if (continueDispatch?.Invoke() == false)
+                            return;
                         if (!ReferenceEquals(Borrow(index), participants[index]))
                             throw Missing(_ids[index]);
                         participants[index].BeginReset();
@@ -152,11 +154,17 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 }
             }
 
-            internal bool Complete()
+            internal bool Complete(Func<bool> continueDispatch = null)
             {
                 bool complete = true;
                 for (int index = 0; index < _ids.Length; index++)
+                {
+                    if (continueDispatch?.Invoke() == false)
+                        return false;
                     complete &= Borrow(index).IsResetComplete;
+                }
+                if (continueDispatch?.Invoke() == false)
+                    return false;
                 // Project callbacks may release or replace a participant already polled.
                 // Revalidate the entire captured set without replaying any project code.
                 for (int index = 0; index < _ids.Length; index++)

@@ -9,6 +9,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     public sealed partial class PlayScenarioEngine
     {
         private PlayScenarioResetRegistry.Snapshot _resetSnapshot;
+        private bool _resetCallbackActive;
+        private long? _resetOutcomeAt;
+        private bool _resetInterrupted;
         private PlayScenarioStateRegistry.Snapshot _stateSnapshot;
         private PlayScenarioStateValue _stateExpected;
         private PlayScenarioNumericCondition.Predicate _stateNumeric;
@@ -29,20 +32,42 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return EvaluateState(step, firstPoll);
             if (step.Action == "reset_state")
             {
-                if (firstPoll)
+                _resetCallbackActive = true;
+                try
                 {
-                    _resetSnapshot = PlayScenarioResetRegistry.Resolve(step.ResetIds);
-                    _resetSnapshot.Begin();
-                }
-                if (_resetSnapshot == null)
-                    throw new PlayScenarioException(
-                        Failure("reset_participant_unavailable", "A started reset cannot be resumed or replayed after losing its snapshot.")
+                    if (firstPoll)
+                        _resetSnapshot = PlayScenarioResetRegistry.Resolve(step.ResetIds);
+                    var snapshot = _resetSnapshot;
+                    if (snapshot == null)
+                        throw new PlayScenarioException(
+                            Failure("reset_participant_unavailable", "A started reset cannot be resumed or replayed after losing its snapshot.")
+                        );
+                    bool ContinueDispatch() => Running && ReferenceEquals(_resetSnapshot, snapshot);
+                    if (firstPoll)
+                        snapshot.Begin(ContinueDispatch);
+                    bool complete = ContinueDispatch() && snapshot.Complete(ContinueDispatch);
+                    return new PlayScenarioObservation(
+                        complete,
+                        complete ? "All requested reset participants completed." : "Waiting for requested reset participants."
                     );
-                bool complete = _resetSnapshot.Complete();
-                return new PlayScenarioObservation(
-                    complete,
-                    complete ? "All requested reset participants completed." : "Waiting for requested reset participants."
-                );
+                }
+                finally
+                {
+                    _resetCallbackActive = false;
+                    // Final reports must include resources acquired after a callback requests
+                    // cancellation. Cleanup also starts only after project code has unwound.
+                    if (_resetOutcomeAt.HasValue)
+                    {
+                        long now = _resetOutcomeAt.Value;
+                        bool interrupted = _resetInterrupted;
+                        _resetOutcomeAt = null;
+                        _resetInterrupted = false;
+                        if (interrupted)
+                            Interrupt(State.PendingError, now);
+                        else
+                            ContinueRequestedOutcome(now);
+                    }
+                }
             }
             var queryHost = _host as IPlayScenarioQueryHost;
             if (queryHost == null && State.Scenario.QueryBudget?.Enabled == true)

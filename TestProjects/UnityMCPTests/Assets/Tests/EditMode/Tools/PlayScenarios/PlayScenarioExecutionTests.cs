@@ -240,6 +240,82 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That(engine.State.Steps.Single(step => step.Stage == "cleanup").Status, Is.EqualTo("passed"));
         }
 
+        [TestCase(false, false, false)]
+        [TestCase(false, true, false)]
+        [TestCase(true, false, false)]
+        [TestCase(true, true, false)]
+        [TestCase(false, false, true)]
+        [TestCase(false, true, true)]
+        [TestCase(true, false, true)]
+        [TestCase(true, true, true)]
+        public void ResetCallbackTerminationStopsDispatchAndWaitsForUnwind(bool interrupt, bool cleanup, bool completion)
+        {
+            var first = new ResetParticipant { CompleteAfter = 1 };
+            var second = new ResetParticipant { CompleteAfter = 1 };
+            Register("execution.terminate.first", first);
+            Register("execution.terminate.second", second);
+            JObject json = Json();
+            json["resources"] = JObject.Parse("{'enabled':true,'max_handles':0}");
+            if (!cleanup)
+                json["cleanup_steps"] = new JArray();
+            ((JArray)json["setup_steps"]).Add(
+                JObject.Parse("{'name':'reset','action':'reset_state','reset_ids':['execution.terminate.first','execution.terminate.second']}")
+            );
+            bool inCallback = false;
+            int capturesInCallback = 0;
+            var host = new Host
+            {
+                Capture = () =>
+                {
+                    if (inCallback)
+                        capturesInCallback++;
+                    return PlayScenarioResourceTracker.Capture();
+                },
+            };
+            var engine = Engine(host, json);
+            int? releasesInsideCallback = null;
+            bool? runningInsideCallback = null;
+            int? checksInsideCallback = null;
+            Action terminate = () =>
+            {
+                inCallback = true;
+                if (interrupt)
+                    engine.Interrupt("reset interrupted", 1100);
+                else
+                    engine.Cancel(1100);
+                // Reentry must neither poll another reset nor begin cleanup while this
+                // callback still owns execution and may acquire further resources.
+                engine.Tick(1150, true);
+                releasesInsideCallback = host.Releases;
+                runningInsideCallback = engine.Running;
+                checksInsideCallback = engine.State.ResourceChecks.Count;
+                _registrations.Add(PlayScenarioResourceTracker.RegisterHandle("after reset termination"));
+                inCallback = false;
+            };
+            if (completion)
+                first.Poll = terminate;
+            else
+                first.Begin = terminate;
+            Finish(engine);
+            Assert.That(engine.State.Status, Is.EqualTo(interrupt ? "failed" : "cancelled"));
+            Assert.That(runningInsideCallback, Is.True, "Do not publish a terminal report before project code unwinds.");
+            Assert.That(releasesInsideCallback, Is.Zero, "Do not release the host while it is dispatching project code.");
+            Assert.That(checksInsideCallback, Is.Zero);
+            Assert.That(capturesInCallback, Is.Zero);
+            Assert.That(first.Begins, Is.EqualTo(1));
+            Assert.That(second.Begins, Is.EqualTo(completion ? 1 : 0));
+            Assert.That(second.Polls, Is.Zero);
+            Assert.That(host.Releases, Is.EqualTo(1));
+            PlayScenarioResourceCheck check = engine.State.ResourceChecks.Single();
+            Assert.That(check.Passed, Is.False);
+            if (interrupt)
+                Assert.That(check.Error, Does.Contain("unavailable after interruption"));
+            else
+                Assert.That(check.NewHandles, Is.EqualTo(1), "Account for acquisition after Cancel returns.");
+            if (cleanup)
+                Assert.That(engine.State.Steps.Single(step => step.Stage == "cleanup").Status, Is.EqualTo(interrupt ? "skipped" : "passed"));
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         private WeakReference RegisterWeak()
         {

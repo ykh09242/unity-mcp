@@ -122,6 +122,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         public void Tick(long now, bool ready)
         {
+            // Project reset callbacks can synchronously reenter the engine.
+            if (_resetCallbackActive)
+                return;
             (_host as MCPForUnity.Runtime.PlayScenarios.IPlayScenarioInputHost)?.MaintainInput();
             if (!Running)
                 return;
@@ -370,6 +373,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             State.Failure = State.Failure ?? Attribute(Failure("interrupted", reason));
             State.PendingStatus = State.PendingStatus ?? "failed";
             State.PendingError = State.PendingError ?? Bounded(reason, 4096);
+            if (_resetCallbackActive)
+            {
+                _resetSnapshot = null;
+                _resetOutcomeAt = now;
+                _resetInterrupted = true;
+                return;
+            }
             CaptureFailure(now);
             if (
                 IterationStarted(ActiveIteration)
@@ -405,6 +415,16 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 ClearStateProbe();
                 ClearEventProbe();
             }
+            if (_resetCallbackActive)
+            {
+                _resetOutcomeAt = now;
+                return;
+            }
+            ContinueRequestedOutcome(now);
+        }
+
+        private void ContinueRequestedOutcome(long now)
+        {
             CaptureFailure(now);
             Revision++;
             if (_completingIteration.HasValue)
@@ -417,14 +437,14 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             {
                 if (began)
                     VerifyResources(now);
-                Finish(status, error, now);
+                Finish(State.PendingStatus, State.PendingError, now);
                 return;
             }
             foreach (PlayScenarioStepResult result in State.Steps.Where(result => result.Iteration == iteration && result.Stage != "cleanup"))
             {
                 if (result.Status == "running")
                 {
-                    result.Status = status;
+                    result.Status = State.PendingStatus;
                     result.Detail = Bounded(State.PendingError, 2048);
                     result.FinishedUnixMs = now;
                 }
