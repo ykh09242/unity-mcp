@@ -42,6 +42,12 @@ async def test_pending_scan_advances_within_the_throttle_window(local_scanner, a
             cursors.append(cursor)
         if results[-1]["external_changes_scan_complete"]:
             break
+        if asynchronous:
+            # A continuation can own the lock while this poll returns cached state.
+            # Let that owned slice finish before spending another bounded poll.
+            future = scanner._worker_future
+            if future is not None:
+                await asyncio.wait_for(asyncio.shield(future), watchdog_timeout(2))
     assert results[0]["external_changes_scan_complete"] is False
     assert results[-1]["external_changes_scan_complete"] is True, (
         "A pending cursor must advance even when polls are faster than the rescan interval"
