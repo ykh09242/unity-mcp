@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
@@ -690,6 +692,36 @@ namespace MCPForUnityTests.Editor.Services.Characterization
         #endregion
 
         #region ClearUvxCache Tests
+
+        [Test]
+        public void ClearUvxCache_ResolvedBatchPathPreservesExecutableAndArguments()
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                Assert.Ignore("Windows batch-shim regression.");
+            string root = Path.Combine(Path.GetTempPath(), "mcp-cache-process-" + Guid.NewGuid().ToString("N"));
+            string directory = Path.Combine(root, "Program Files (owned-shim) ^");
+            Directory.CreateDirectory(directory);
+            string uv = Path.Combine(directory, "uv.cmd");
+            File.WriteAllText(uv, "@echo off\r\necho %~1^|%~2^|%~3\r\nif not \"%~4\"==\"\" exit /b 2\r\nexit /b 0\r\n");
+            var originalPaths = MCPServiceLocator.Paths;
+            string observed = null;
+            Application.LogCallback capture = (message, _, _) => observed = message;
+            try
+            {
+                MCPServiceLocator.Register<IPathResolverService>(
+                    new MCPForUnityTests.Editor.Helpers.SyntheticClientPaths { UvxPath = Path.Combine(directory, "uvx.cmd") }
+                );
+                Application.logMessageReceived += capture;
+                Assert.IsTrue(_service.ClearUvxCache(), "The owned fake uv must be launched successfully.");
+                StringAssert.Contains("cache|clean|mcp-for-unity", observed);
+            }
+            finally
+            {
+                Application.logMessageReceived -= capture;
+                MCPServiceLocator.Register<IPathResolverService>(originalPaths);
+                Directory.Delete(root, true);
+            }
+        }
 
         [Test]
         public void ClearUvxCache_DoesNotThrow()

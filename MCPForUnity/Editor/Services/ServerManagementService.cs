@@ -180,34 +180,9 @@ namespace MCPForUnity.Editor.Services
 
         private bool ExecuteUvCommand(string uvCommand, string args, out string stdout, out string stderr)
         {
-            stdout = null;
-            stderr = null;
-
-            string uvxPath = MCPServiceLocator.Paths.GetUvxPath();
-            string uvPath = BuildUvPathFromUvx(uvxPath);
-
-            if (!string.Equals(uvCommand, uvPath, StringComparison.OrdinalIgnoreCase))
-            {
-                return ExecPath.TryRun(uvCommand, args, Application.dataPath, out stdout, out stderr, 30000);
-            }
-
-            string command = $"{uvPath} {args}";
-            string extraPathPrepend = GetPlatformSpecificPathPrepend();
-
-            if (Application.platform == RuntimePlatform.WindowsEditor)
-            {
-                return ExecPath.TryRun("cmd.exe", $"/c {command}", Application.dataPath, out stdout, out stderr, 30000, extraPathPrepend);
-            }
-
-            string shell = File.Exists("/bin/bash") ? "/bin/bash" : "/bin/sh";
-
-            if (!string.IsNullOrEmpty(shell) && File.Exists(shell))
-            {
-                string escaped = command.Replace("\"", "\\\"");
-                return ExecPath.TryRun(shell, $"-lc \"{escaped}\"", Application.dataPath, out stdout, out stderr, 30000, extraPathPrepend);
-            }
-
-            return ExecPath.TryRun(uvPath, args, Application.dataPath, out stdout, out stderr, 30000, extraPathPrepend);
+            // Keep the resolved executable separate from its arguments. ExecPath also owns
+            // Windows batch-shim compatibility; another shell would re-parse literal paths.
+            return ExecPath.TryRun(uvCommand, args, Application.dataPath, out stdout, out stderr, 30000, GetPlatformSpecificPathPrepend());
         }
 
         private string BuildUvPathFromUvx(string uvxPath)
