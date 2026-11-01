@@ -228,3 +228,160 @@ async def test_cancellation_closes_response_and_releases_work(auth_service):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert stream.closed and not service._inflight and not service._cache
+
+
+@pytest.mark.asyncio
+async def test_progressing_loopback_response_has_one_shared_total_deadline(auth_service):
+    service, _, _ = auth_service
+    service.REVALIDATION_TIMEOUT = 0.15
+    service.MAX_INFLIGHT_VALIDATIONS = 1
+    started, disconnected = asyncio.Event(), asyncio.Event()
+    requests, handlers = [], set()
+    chunks = []
+
+    async def provider(reader, writer):
+        task = asyncio.current_task()
+        handlers.add(task)
+        disconnect = None
+        try:
+            headers = await reader.readuntil(b"\r\n\r\n")
+            length = next(
+                int(line.split(b":", 1)[1])
+                for line in headers.split(b"\r\n")
+                if line.lower().startswith(b"content-length:")
+            )
+            key = json.loads(await reader.readexactly(length))["api_key"]
+            requests.append(key)
+            body = b'{"valid":true,"user_id":"fixture-user"}'
+            if key != KEY:
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: "
+                    + str(len(body)).encode()
+                    + b"\r\nConnection: close\r\n\r\n"
+                    + body
+                )
+                await writer.drain()
+                return
+            writer.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+            await writer.drain()
+            started.set()
+            disconnect = asyncio.create_task(reader.read())
+            # Each chunk arrives within HTTPX's read timeout, but the body as a
+            # whole takes far longer than the shared authentication deadline.
+            for _ in range(100):
+                done, _ = await asyncio.wait({disconnect}, timeout=0.01)
+                if done:
+                    disconnected.set()
+                    return
+                writer.write(b"1\r\n \r\n")
+                await writer.drain()
+                chunks.append(1)
+            writer.write(f"{len(body):x}\r\n".encode() + body + b"\r\n0\r\n\r\n")
+            await writer.drain()
+        except (ConnectionError, asyncio.IncompleteReadError):
+            disconnected.set()
+        finally:
+            if disconnect is not None:
+                disconnect.cancel()
+                await asyncio.gather(disconnect, return_exceptions=True)
+            writer.close()
+            await writer.wait_closed()
+            handlers.discard(task)
+
+    server = await asyncio.start_server(provider, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    await service._client.aclose()
+    service._client = httpx.AsyncClient(timeout=0.08, trust_env=False)
+    # Only this hermetic test replaces the production HTTPS endpoint after
+    # construction, so the real HTTPX socket transport can exercise slow reads.
+    service._validation_url = f"http://127.0.0.1:{port}/validate"
+    waiters = [asyncio.create_task(service.validate(KEY))]
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        waiters.append(asyncio.create_task(service.validate(KEY)))
+        done, pending = await asyncio.wait(waiters, timeout=0.45)
+        assert not pending, "progressing auth bodies must not hold cold validation indefinitely"
+        assert len(done) == 2 and requests == [KEY] and len(chunks) > 1
+        for task in waiters:
+            result = task.result()
+            assert not result.valid and not result.cacheable
+            assert result.error == "Auth service timeout"
+        await asyncio.wait_for(disconnected.wait(), timeout=0.5)
+        assert not service._cache and not service._inflight
+        assert (await service.validate("unrelated-key")).valid
+        # A deadline failure is transient, so the original key can retry too.
+        assert (await service.validate(KEY + "-retry")).valid
+    finally:
+        for task in waiters:
+            task.cancel()
+        await asyncio.gather(*waiters, return_exceptions=True)
+        await service.aclose()
+        server.close()
+        await server.wait_closed()
+        for task in tuple(handlers):
+            task.cancel()
+        await asyncio.gather(*handlers, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_total_deadline_includes_retry_backoff(auth_service):
+    service, requests, responses = auth_service
+    service.REVALIDATION_TIMEOUT = 0.03
+    failed = TrackedStream([b"{"], failure=httpx.ReadTimeout("fixture timeout"))
+    reply, success = response(b'{"valid":true,"user_id":"fixture-user"}')
+    responses.extend([httpx.Response(200, stream=failed), reply])
+    result = await service.validate(KEY)
+    assert not result.valid and not result.cacheable
+    assert result.error == "Auth service timeout"
+    assert len(requests) == 1 and failed.closed and not success.closed
+    await asyncio.gather(
+        *(flight.task for flight in service._inflight.values()), return_exceptions=True
+    )
+    assert not service._cache and not service._inflight
+    assert (await service.validate(KEY)).valid
+    assert len(requests) == 2 and success.closed
+
+
+@pytest.mark.asyncio
+async def test_deadline_holds_slot_and_fences_late_positive_until_worker_exits(auth_service):
+    service, _, responses = auth_service
+    service.REVALIDATION_TIMEOUT = 0.03
+    service.MAX_INFLIGHT_VALIDATIONS = 1
+    release = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class DelayedCancellationStream(TrackedStream):
+        async def __aiter__(self):
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                while not release.is_set():
+                    try:
+                        await release.wait()
+                    except asyncio.CancelledError:
+                        pass
+            yield b'{"valid":true,"user_id":"fixture-user"}'
+
+    stream = DelayedCancellationStream([])
+    responses.append(httpx.Response(200, stream=stream))
+    waiter = asyncio.create_task(service.validate(KEY))
+    try:
+        done, _ = await asyncio.wait({waiter}, timeout=0.3)
+        assert done, "deadline rejection must not wait for provider cancellation cleanup"
+        assert not waiter.result().valid and not waiter.result().cacheable
+        await cancelled.wait()
+        assert len(service._inflight) == 1 and not stream.closed
+        assert (await service.validate("unrelated-key")).overloaded
+        release.set()
+        await asyncio.gather(*(flight.task for flight in service._inflight.values()))
+        assert stream.closed and not service._inflight
+        assert not service._cache and not service._lease_records
+        reply, _ = response(b'{"valid":true,"user_id":"fixture-user"}')
+        responses.append(reply)
+        assert (await service.validate("unrelated-key")).valid
+    finally:
+        release.set()
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)

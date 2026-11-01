@@ -154,8 +154,10 @@ async def test_renewal_timeout_retires_before_noncooperative_work_exits(monkeypa
             await await_signal(entered, "renewal validator", producers=(checking,))
             with pytest.raises(CredentialLeaseError):
                 await await_completion(checking, "expired renewal")
-            assert len(timeouts) == 1
-            assert 0 < timeouts[0] <= fixture.service.REVALIDATION_TIMEOUT
+            # Renewal and its cold validation may each wait independently;
+            # every wait must respect the common finite authentication budget.
+            assert timeouts
+            assert all(0 < timeout <= fixture.service.REVALIDATION_TIMEOUT for timeout in timeouts)
             assert len(fixture.service._inflight) == 1
             assert not (await fixture.service.validate("fixture-key")).valid
         finally:

@@ -39,6 +39,7 @@ class ValidationResult:
 @dataclass
 class _ValidationFlight:
     task: asyncio.Task[ValidationResult]
+    deadline: float
     waiters: int = 0
     generation: object = field(default_factory=object)
     invalidated: bool = False
@@ -92,6 +93,7 @@ class ApiKeyService:
     MAX_ACTIVE_LEASES: int = 1024
     MAX_LEASE_OWNERS: int = 128
     MAX_OWNERS_PER_LEASE: int = 16
+    # Absolute budget shared by cold validation flights and lease renewals.
     REVALIDATION_TIMEOUT: float = 11.0
     MAX_CACHE_ENTRIES: int = 1024
     MAX_KEY_LENGTH: int = 4096
@@ -250,6 +252,7 @@ class ApiKeyService:
                     asyncio.create_task(
                         self._validate_and_cache(api_key, digest, generation), context=Context()
                     ),
+                    deadline=asyncio.get_running_loop().time() + self.REVALIDATION_TIMEOUT,
                     generation=generation,
                 )
                 self._inflight[digest] = flight
@@ -261,8 +264,16 @@ class ApiKeyService:
             ApiKeyService._global_validation_waiters += 1
 
         try:
-            # A cancelled caller must not cancel another caller's shared validation.
-            result = await asyncio.shield(flight.task)
+            # One absolute deadline covers headers, body reads and all retries.
+            # wait() neither propagates caller cancellation nor waits for a
+            # cancellation-resistant provider to finish its cleanup.
+            loop = asyncio.get_running_loop()
+            remaining = max(0, flight.deadline - loop.time())
+            done, _ = await asyncio.wait({flight.task}, timeout=remaining)
+            if not done or loop.time() >= flight.deadline:
+                flight.invalidated = True
+                return ValidationResult(valid=False, error="Auth service timeout", cacheable=False)
+            result = flight.task.result()
             # Invalidation fences returned positives as well as cache publication.
             if self._closed or flight.invalidated or self._inflight.get(digest) is not flight:
                 return ValidationResult(
@@ -343,6 +354,7 @@ class ApiKeyService:
             or flight is None
             or flight.generation is not generation
             or flight.invalidated
+            or asyncio.get_running_loop().time() >= flight.deadline
             or flight.waiters == 0
         ):
             return ValidationResult(valid=False, error="Authentication changed", cacheable=False)
@@ -359,6 +371,7 @@ class ApiKeyService:
                     or flight is None
                     or flight.generation is not generation
                     or flight.invalidated
+                    or asyncio.get_running_loop().time() >= flight.deadline
                     or flight.waiters == 0
                 ):
                     return ValidationResult(
