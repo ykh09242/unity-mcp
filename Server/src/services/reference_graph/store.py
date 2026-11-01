@@ -21,6 +21,8 @@ import time
 import threading
 from copy import deepcopy
 
+from services.reference_graph.response_budget import PageBudget, bounded_rows
+
 
 class RevisionConflict(ValueError):
     """Read the current version before retrying a mutation or page."""
@@ -639,24 +641,29 @@ class GraphStore:
                     "reason": "excluded_by_collection_policy",
                 }
             column = "owner" if direction == "outgoing" else "target"
-            rows = connection.execute(
+            rows = bounded_rows(
+                connection,
                 f"SELECT e.rowid AS cursor_row,e.*,o.state,n.present,c.published AS provenance FROM edges e JOIN sources s ON s.provider=e.provider LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider LEFT JOIN nodes n ON n.id=e.target WHERE e.{column}=? AND e.id>? AND s.enabled=1 AND (SELECT ready FROM graph_admission WHERE id=1)=1 AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.owner OR x.id=e.target) ORDER BY e.id LIMIT ?",
                 (node, last, limit + 1),
-            ).fetchall()
-            more = len(rows) > limit
-            rows = rows[:limit]
-            edges = [
-                {
-                    **json.loads(row["payload"]),
-                    "id": row["id"],
-                    "owner": row["owner"],
-                    "provider": row["provider"],
-                    "provenance": json.loads(row["provenance"] or "{}"),
-                    "stale": row["state"] != "ready" and row["provider"] != "manual",
-                    "target_exists": None if row["present"] is None else bool(row["present"]),
-                }
-                for row in rows
-            ]
+            )
+            edges, page_budget, more, anchor = [], PageBudget(), False, None
+            for row in rows:
+                if len(edges) == limit or not page_budget.admit(row):
+                    more = True
+                    break
+                edges.append(
+                    {
+                        **json.loads(row["payload"]),
+                        "id": row["id"],
+                        "owner": row["owner"],
+                        "provider": row["provider"],
+                        "provenance": json.loads(row["provenance"] or "{}"),
+                        "stale": row["state"] != "ready" and row["provider"] != "manual",
+                        "target_exists": None if row["present"] is None else bool(row["present"]),
+                    }
+                )
+                anchor = row
+            rows.close()
             next_cursor = (
                 base64.urlsafe_b64encode(
                     _json(
@@ -665,8 +672,8 @@ class GraphStore:
                             "revision": revision,
                             # A 64-bit row anchor keeps long persisted IDs out of
                             # the token; the digest rejects a moved/reused rowid.
-                            "last_row": rows[-1]["cursor_row"],
-                            "last_hash": _hash(rows[-1]["id"]),
+                            "last_row": anchor["cursor_row"],
+                            "last_hash": _hash(anchor["id"]),
                         }
                     ).encode("utf-8")
                 ).decode("ascii")
@@ -705,17 +712,23 @@ class GraphStore:
         self._bump(connection)
         return version
 
-    def sources(self) -> list[dict]:
+    def sources(self, *, bounded: bool = False) -> list[dict]:
         with self._connect() as connection:
-            return [
-                {
-                    "provider": row["provider"],
-                    "version": row["version"],
-                    "enabled": bool(row["enabled"]),
-                    "config": json.loads(row["config"]),
-                }
-                for row in connection.execute("SELECT * FROM sources ORDER BY provider")
-            ]
+            statement = "SELECT * FROM sources ORDER BY provider"
+            rows = bounded_rows(connection, statement) if bounded else connection.execute(statement)
+            budget, sources = PageBudget(), []
+            for row in rows:
+                if bounded:
+                    budget.require(row)
+                sources.append(
+                    {
+                        "provider": row["provider"],
+                        "version": row["version"],
+                        "enabled": bool(row["enabled"]),
+                        "config": json.loads(row["config"]),
+                    }
+                )
+            return sources
 
     def put_declaration(
         self, identity: str, owner: str, edge: Edge, *, expected_version: int
@@ -752,21 +765,28 @@ class GraphStore:
             self._bump(connection)
             return expected_version + 1
 
-    def declarations(self, *, include_deleted: bool = False) -> list[dict]:
+    def declarations(self, *, include_deleted: bool = False, bounded: bool = False) -> list[dict]:
         with self._connect() as connection:
-            return [
-                {
-                    "id": row["id"],
-                    "owner": row["owner"],
-                    "version": row["version"],
-                    "deleted": bool(row["deleted"]),
-                    "edge": json.loads(row["payload"]),
-                }
-                for row in connection.execute(
-                    "SELECT * FROM declarations WHERE deleted=0 OR ? ORDER BY id",
-                    (include_deleted,),
+            statement = "SELECT * FROM declarations WHERE deleted=0 OR ? ORDER BY id"
+            rows = (
+                bounded_rows(connection, statement, (include_deleted,))
+                if bounded
+                else connection.execute(statement, (include_deleted,))
+            )
+            budget, declarations = PageBudget(), []
+            for row in rows:
+                if bounded:
+                    budget.require(row)
+                declarations.append(
+                    {
+                        "id": row["id"],
+                        "owner": row["owner"],
+                        "version": row["version"],
+                        "deleted": bool(row["deleted"]),
+                        "edge": json.loads(row["payload"]),
+                    }
                 )
-            ]
+            return declarations
 
     def put_rule(self, identity: str, payload: dict, *, expected_version: int) -> int:
         with self._connect(write=True) as connection:
@@ -794,13 +814,22 @@ class GraphStore:
     def rules(self) -> list[dict]:
         return self.rules_state()["rules"]
 
-    def rules_state(self) -> dict:
+    def rules_state(self, *, bounded: bool = False) -> dict:
         with self._connect() as connection:
             revision = connection.execute("SELECT rules_revision FROM graph_meta").fetchone()[0]
-            rules = [
-                {"id": row["id"], "version": row["version"], "config": json.loads(row["payload"])}
-                for row in connection.execute("SELECT * FROM rules ORDER BY id")
-            ]
+            statement = "SELECT * FROM rules ORDER BY id"
+            rows = bounded_rows(connection, statement) if bounded else connection.execute(statement)
+            budget, rules = PageBudget(), []
+            for row in rows:
+                if bounded:
+                    budget.require(row)
+                rules.append(
+                    {
+                        "id": row["id"],
+                        "version": row["version"],
+                        "config": json.loads(row["payload"]),
+                    }
+                )
             return {"revision": revision, "rules": rules}
 
     def rebuild(self) -> None:

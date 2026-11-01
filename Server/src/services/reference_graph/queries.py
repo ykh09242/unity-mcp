@@ -13,6 +13,12 @@ import uuid
 
 from services.reference_graph.store import GraphStore, RevisionConflict, _hash, _json
 from services.reference_graph import snapshot_storage
+from services.reference_graph.response_budget import (
+    MAX_REPLAY_BYTES,
+    PageBudget,
+    bounded_rows,
+    require_response,
+)
 
 
 _SELECT = """SELECT e.*,o.state,n.present,n.path AS target_path,src.path AS source_path,
@@ -64,11 +70,14 @@ class GraphQueries:
 
     @staticmethod
     def _sources(connection) -> dict:
-        return dict(
-            connection.execute(
-                "SELECT provider,version FROM sources WHERE enabled=1 AND (provider LIKE 'external:%' OR provider LIKE 'runtime:%')"
-            )
-        )
+        budget, sources = PageBudget(), {}
+        for row in bounded_rows(
+            connection,
+            "SELECT provider,version FROM sources WHERE enabled=1 AND (provider LIKE 'external:%' OR provider LIKE 'runtime:%')",
+        ):
+            budget.require(row)
+            sources[row["provider"]] = row["version"]
+        return sources
 
     @staticmethod
     def _evidence(row) -> dict:
@@ -131,7 +140,14 @@ class GraphQueries:
         identity, sequence = position.get("id"), position.get("sequence")
         if not isinstance(identity, str) or type(sequence) is not int or sequence < 0:
             raise ValueError("Invalid job cursor")
-        row = connection.execute("SELECT * FROM graph_queries WHERE id=?", (identity,)).fetchone()
+        row = bounded_rows(
+            connection,
+            "SELECT * FROM graph_queries WHERE id=?",
+            (identity,),
+            max_bytes=MAX_REPLAY_BYTES,
+        ).fetchone()
+        if row is not None:
+            PageBudget(max_bytes=MAX_REPLAY_BYTES).require(row)
         if row is None or row["abandoned"] or row["kind"] != kind or row["signature"] != signature:
             raise ValueError("Cursor belongs to another or released query")
         if row["revision"] != revision:
@@ -140,6 +156,7 @@ class GraphQueries:
             result = json.loads(row["result"])
             if kind == "snapshot":
                 result = snapshot_storage.replay(connection, result)
+            require_response(result)
             return dict(row), result, False
         if sequence != row["sequence"] or row["finished"]:
             raise RevisionConflict("Query continuation has already advanced")
@@ -155,6 +172,8 @@ class GraphQueries:
             if more
             else None,
         }
+        # Admission must precede committing continuation state or snapshot history.
+        require_response(result)
         persisted = result
         if job["kind"] == "snapshot":
             persisted = {
@@ -176,10 +195,14 @@ class GraphQueries:
         if not isinstance(identity, str) or not identity:
             raise ValueError("An edge id is required")
         with self.store._connect() as connection:
-            rows = connection.execute(_SELECT + "e.id=?", (identity,)).fetchall()
+            rows = bounded_rows(connection, _SELECT + "e.id=?", (identity,))
+            budget, edges = PageBudget(), []
+            for row in rows:
+                budget.require(row)
+                edges.append(self._evidence(row))
             return {
                 "revision": self._revision(connection),
-                "edges": [self._evidence(row) for row in rows],
+                "edges": edges,
                 "explanation_coverage": "recorded_evidence",
                 "sources": self._sources(connection),
             }
@@ -262,9 +285,10 @@ class GraphQueries:
                     "INSERT INTO graph_query_queue(job,node) VALUES (?,?)", (job["id"], node)
                 )
             edges, budget = [], limit * 2
+            page_budget, full = PageBudget(), False
             examined = 0
             route_node = job["last"] or (node if target == node else "")
-            while not route_node and budget and examined < limit:
+            while not route_node and budget and examined < limit and not full:
                 queued = connection.execute(
                     "SELECT q.*,n.depth,n.via FROM graph_query_queue q JOIN graph_query_nodes n ON n.job=q.job AND n.node=q.node WHERE q.job=? ORDER BY q.seq LIMIT 1",
                     (job["id"],),
@@ -279,11 +303,20 @@ class GraphQueries:
                     continue
                 column = "owner" if direction == "outgoing" else "target"
                 count = min(limit - examined, max(1, budget), 256)
-                rows = connection.execute(
+                rows = bounded_rows(
+                    connection,
                     _SELECT + f"e.{column}=? AND e.id>? ORDER BY e.id LIMIT ?",
                     (queued["node"], queued["last"], count),
-                ).fetchall()
+                )
+                processed, last_edge = 0, None
                 for row in rows:
+                    if target is None:
+                        if not page_budget.admit(row):
+                            full = True
+                            break
+                    else:
+                        # Search retains only parent links, never aggregate evidence.
+                        PageBudget().require(row)
                     neighbor = row["target"] if direction == "outgoing" else row["owner"]
                     inserted = connection.execute(
                         "INSERT OR IGNORE INTO graph_query_nodes VALUES (?,?,?,?)",
@@ -308,18 +341,21 @@ class GraphQueries:
                         # chosen route, but need not retain its decoded payload.
                         self._evidence(row)
                     examined += 1
+                    processed += 1
+                    last_edge = row["id"]
                     if target == neighbor:
                         route_node = neighbor
                         break
-                budget = max(0, budget - len(rows))
-                if len(rows) < count:
+                rows.close()
+                budget = max(0, budget - processed)
+                if processed < count and not full:
                     connection.execute(
                         "DELETE FROM graph_query_queue WHERE seq=?", (queued["seq"],)
                     )
-                else:
+                elif processed:
                     connection.execute(
                         "UPDATE graph_query_queue SET last=? WHERE seq=?",
-                        (rows[-1]["id"], queued["seq"]),
+                        (last_edge, queued["seq"]),
                     )
             more = (
                 connection.execute(
@@ -342,7 +378,11 @@ class GraphQueries:
                             "SELECT depth,via FROM graph_query_nodes WHERE job=? AND node=?",
                             (job["id"], route_node),
                         ).fetchone()
-                        row = connection.execute(_SELECT + "e.id=?", (parent["via"],)).fetchone()
+                        row = bounded_rows(
+                            connection, _SELECT + "e.id=?", (parent["via"],)
+                        ).fetchone()
+                        if not page_budget.admit(row):
+                            break
                         edges.append({**self._evidence(row), "depth": parent["depth"]})
                         route_node = row["owner"] if direction == "outgoing" else row["target"]
                     more = route_node != node
@@ -395,11 +435,16 @@ class GraphQueries:
                         connection.execute("PRAGMA schema_version").fetchone()[0],
                     ),
                 )
-            rows = connection.execute(
-                _SELECT + "e.id>? ORDER BY e.id LIMIT ?", (job["last"], limit + 1)
-            ).fetchall()
-            more = len(rows) > limit
-            edges = [self._evidence(row) for row in rows[:limit]]
+            rows = bounded_rows(
+                connection, _SELECT + "e.id>? ORDER BY e.id LIMIT ?", (job["last"], limit + 1)
+            )
+            edges, page_budget, more = [], PageBudget(), False
+            for row in rows:
+                if len(edges) == limit or not page_budget.admit(row):
+                    more = True
+                    break
+                edges.append(self._evidence(row))
+            rows.close()
             snapshot_storage.append(connection, job["id"], edges)
             connection.execute(
                 "UPDATE graph_snapshots SET captured=captured+?,state=? WHERE id=?",
@@ -482,7 +527,8 @@ class GraphQueries:
                 last = anchor["id"]
             # Page candidate IDs before comparing payloads. Filtering unchanged
             # rows first would scan a whole identical snapshot in one request.
-            rows = connection.execute(
+            rows = bounded_rows(
+                connection,
                 """WITH ids AS (
  SELECT id FROM graph_snapshot_edges WHERE snapshot=? AND id>?
  UNION SELECT id FROM graph_snapshot_edges WHERE snapshot=? AND id>?
@@ -493,10 +539,15 @@ class GraphQueries:
  LEFT JOIN graph_snapshot_edges b ON b.snapshot=? AND b.id=ids.id
  ORDER BY ids.id""",
                 (old_backing, last, new_backing, last, limit + 1, old_backing, new_backing),
-            ).fetchall()
-            more = len(rows) > limit
+            )
+            more, compared, anchor, page_budget = False, 0, None, PageBudget()
             changes, access, manual_nodes = [], set(), set()
-            for row in rows[:limit]:
+            for row in rows:
+                if compared == limit or not page_budget.admit(row):
+                    more = True
+                    break
+                compared += 1
+                anchor = row
                 previous = json.loads(row["previous"]) if row["previous"] else None
                 current = (
                     previous
@@ -542,6 +593,7 @@ class GraphQueries:
                             "after": current,
                         }
                     )
+            rows.close()
             return {
                 "revision": self._revision(connection),
                 "before": old,
@@ -551,16 +603,16 @@ class GraphQueries:
                 "_history_nodes": sorted(manual_nodes),
                 "sources": {**old["sources"], **new["sources"]},
                 "historical": True,
-                "compared": min(limit, len(rows)),
+                "compared": compared,
                 "next_cursor": self._encode(
                     {
                         "before": before,
                         "after": after,
                         # Immutable snapshot rows recover the ordered ID without
                         # copying an unbounded declaration identity into a token.
-                        "last_row": rows[limit - 1]["old_row"] or rows[limit - 1]["new_row"],
-                        "last_side": "before" if rows[limit - 1]["old_row"] else "after",
-                        "last_hash": _hash(rows[limit - 1]["id"]),
+                        "last_row": anchor["old_row"] or anchor["new_row"],
+                        "last_side": "before" if anchor["old_row"] else "after",
+                        "last_hash": _hash(anchor["id"]),
                     }
                 )
                 if more

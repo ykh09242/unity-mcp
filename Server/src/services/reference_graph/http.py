@@ -3,9 +3,11 @@
 from starlette.responses import JSONResponse
 
 from core.config import config
+from models.response_limits import MAX_RESPONSE_BYTES, response_size
 from services.credential_lease import CredentialLeaseError, bind_credential_lease
 from services.operation_permissions import OperationPermissionError
 from services.reference_graph.store import RevisionConflict
+from services.reference_graph.response_budget import GraphResponseTooLarge
 from transport.local_auth_middleware import AUTHENTICATED_LOCAL_STATE
 from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
 
@@ -63,10 +65,19 @@ async def handle(request, service):
             result = await service.execute(ctx, body["action"], body.get("options", {}))
             if lease is not None:
                 await lease.check()
-        return JSONResponse(result)
+        if response_size(result, max_bytes=MAX_RESPONSE_BYTES) is None:
+            raise GraphResponseTooLarge()
+        response = JSONResponse(result)
+        if len(response.body) > MAX_RESPONSE_BYTES:
+            raise GraphResponseTooLarge()
+        return response
     except (CredentialLeaseError, OperationPermissionError):
         return JSONResponse(
             {"success": False, "error": "authorization_unavailable"}, status_code=403
+        )
+    except GraphResponseTooLarge:
+        return JSONResponse(
+            {"success": False, "error": "reference_graph_response_too_large"}, status_code=413
         )
     except RevisionConflict:
         return JSONResponse(

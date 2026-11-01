@@ -373,9 +373,9 @@ def test_inventory_admission_compiles_and_reads_policy_per_batch_not_per_path(se
     counts = {"policy_reads": 0, "compiles": 0}
     original_state, original_rules = workspace._state, module.GitIgnoreRules
 
-    def state(connection, key, fallback=None):
+    def state(connection, key, fallback=None, *, bounded=False):
         counts["policy_reads"] += key == "policy"
-        return original_state(connection, key, fallback)
+        return original_state(connection, key, fallback, bounded=bounded)
 
     def rules(*args, **kwargs):
         counts["compiles"] += 1

@@ -12,6 +12,7 @@ import time
 from services.reference_graph.analysis import Analysis
 from services.reference_graph.external import _pattern
 from services.reference_graph.ignore import GitIgnoreRules
+from services.reference_graph.response_budget import PageBudget, bounded_rows
 from services.reference_graph.store import (
     Edge,
     GraphStore,
@@ -157,8 +158,15 @@ class GraphWorkspace:
         )
 
     @staticmethod
-    def _state(connection, key: str, fallback=None):
-        row = connection.execute("SELECT value FROM graph_state WHERE key=?", (key,)).fetchone()
+    def _state(connection, key: str, fallback=None, *, bounded: bool = False):
+        if bounded:
+            row = bounded_rows(
+                connection, "SELECT value AS payload FROM graph_state WHERE key=?", (key,)
+            ).fetchone()
+            if row is not None:
+                PageBudget().require(row)
+        else:
+            row = connection.execute("SELECT value FROM graph_state WHERE key=?", (key,)).fetchone()
         return json.loads(row[0]) if row else fallback
 
     @staticmethod
@@ -168,12 +176,12 @@ class GraphWorkspace:
             (key, _json(value)),
         )
 
-    def state(self, key: str, fallback=None):
+    def state(self, key: str, fallback=None, *, bounded: bool = False):
         with self.store._connect() as connection:
-            return self._state(connection, key, fallback)
+            return self._state(connection, key, fallback, bounded=bounded)
 
-    def progress(self) -> dict:
-        return self.state("progress", {"phase": "not_initialized"})
+    def progress(self, *, bounded: bool = False) -> dict:
+        return self.state("progress", {"phase": "not_initialized"}, bounded=bounded)
 
     def ensure_analysis_version(self, worker: str, version: int) -> None:
         with self._write(worker) as connection:
@@ -274,19 +282,24 @@ class GraphWorkspace:
         with self._write(worker) as connection:
             self._set(connection, "progress", value)
 
-    def policy(self) -> dict:
-        return {"respect_gitignore": True, **self.state("policy", {"version": 0, "exclude": []})}
+    def policy(self, *, bounded: bool = False) -> dict:
+        return {
+            "respect_gitignore": True,
+            **self.state("policy", {"version": 0, "exclude": []}, bounded=bounded),
+        }
 
-    def _admission(self, connection):
+    def _admission(self, connection, *, bounded: bool = False):
         policy = {
             "respect_gitignore": True,
-            **self._state(connection, "policy", {"version": 0, "exclude": []}),
+            **self._state(connection, "policy", {"version": 0, "exclude": []}, bounded=bounded),
         }
-        key = (policy["version"], self._state(connection, "ignore_key"))
+        key = (policy["version"], self._state(connection, "ignore_key", bounded=bounded))
         cache = self._admission_cache
         if cache is None or cache[0] != key:
             files = (
-                self._state(connection, "ignore_files", []) if policy["respect_gitignore"] else []
+                self._state(connection, "ignore_files", [], bounded=bounded)
+                if policy["respect_gitignore"]
+                else []
             )
             cache = (
                 key,
@@ -320,14 +333,14 @@ class GraphWorkspace:
                 ).fetchone()
             )
 
-    def ignore_current(self, editor: dict) -> bool:
+    def ignore_current(self, editor: dict, *, bounded: bool = False) -> bool:
         with self.store._connect() as connection:
-            policy = self._state(connection, "policy", {})
+            policy = self._state(connection, "policy", {}, bounded=bounded)
             if not policy.get("respect_gitignore", True):
                 return bool(
                     connection.execute("SELECT ready FROM graph_admission WHERE id=1").fetchone()[0]
                 )
-            known = self._state(connection, "ignore_status", {})
+            known = self._state(connection, "ignore_status", {}, bounded=bounded)
             return (
                 editor.get("ignore_state") == "available"
                 and known.get("epoch") == editor.get("epoch")
@@ -1213,36 +1226,50 @@ class GraphWorkspace:
                     "excluded": True,
                     "reason": "excluded_by_collection_policy",
                 }
-            rows = connection.execute(
+            rows = bounded_rows(
+                connection,
                 "SELECT i.provider,i.payload FROM graph_issues i JOIN sources s USING(provider) WHERE i.owner=? AND s.enabled=1 ORDER BY i.provider,i.ordinal LIMIT ? OFFSET ?",
                 (owner, limit + 1, offset),
-            ).fetchall()
-            issues = []
-            for provider, payload in rows[:limit]:
-                issue = json.loads(payload)
+            )
+            issues, budget, more = [], PageBudget(), False
+            for row in rows:
+                if len(issues) == limit or not budget.admit(row):
+                    more = True
+                    break
+                provider, issue = row["provider"], json.loads(row["payload"])
                 # Old databases can still contain raw unknown external values.
                 # Redact at delivery without discarding resolved graph edges.
                 if provider.startswith("external:") and "key" in issue:
                     issue.pop("key")
                     issue["key_redacted"] = True
                 issues.append({"provider": provider, **issue})
+            rows.close()
+            coverage, coverage_budget = [], PageBudget()
+            for row in bounded_rows(
+                connection,
+                "SELECT a.provider,a.coverage,o.state,o.error FROM graph_analysis a JOIN sources s USING(provider) LEFT JOIN observations o ON o.owner=a.owner AND o.provider=a.provider WHERE a.owner=? AND s.enabled=1 ORDER BY a.provider",
+                (owner,),
+            ):
+                coverage_budget.require(row)
+                coverage.append({key: row[key] for key in row.keys() if key != "_response_bytes"})
+            for row in bounded_rows(
+                connection,
+                "SELECT state,version,error FROM graph_addressables WHERE owner=?",
+                (owner,),
+            ):
+                coverage_budget.require(row)
+                coverage.append(
+                    {
+                        "provider": "addressables",
+                        "coverage": "catalog_keys",
+                        **{key: row[key] for key in row.keys() if key != "_response_bytes"},
+                    }
+                )
             return {
                 "revision": connection.execute("SELECT revision FROM graph_meta").fetchone()[0],
-                "coverage": [
-                    dict(row)
-                    for row in connection.execute(
-                        "SELECT a.provider,a.coverage,o.state,o.error FROM graph_analysis a JOIN sources s USING(provider) LEFT JOIN observations o ON o.owner=a.owner AND o.provider=a.provider WHERE a.owner=? AND s.enabled=1 ORDER BY a.provider",
-                        (owner,),
-                    )
-                ]
-                + [
-                    {"provider": "addressables", "coverage": "catalog_keys", **dict(row)}
-                    for row in connection.execute(
-                        "SELECT state,version,error FROM graph_addressables WHERE owner=?", (owner,)
-                    )
-                ],
+                "coverage": coverage,
                 "issues": issues,
-                "next_offset": offset + limit if len(rows) > limit else None,
+                "next_offset": offset + len(issues) if more else None,
             }
 
     def counts(self) -> dict:
@@ -1327,31 +1354,40 @@ class GraphWorkspace:
     def external_validation(self, pairs: Iterable[tuple[str, str]], *, admission: bool = False):
         """One request-local metadata snapshot, never a cached permission grant."""
         with self.store._connect() as connection:
-            metadata = {
-                (row["provider"], row["owner"]): dict(row)
-                for row in connection.execute(
-                    "SELECT e.*,s.enabled,s.version,s.config,c.published AS provenance FROM json_each(?) r JOIN graph_external e ON e.provider=json_extract(r.value,'$[0]') AND e.owner=json_extract(r.value,'$[1]') JOIN sources s USING(provider) LEFT JOIN evidence_context c ON c.provider=e.provider AND c.owner=e.owner",
-                    (_json(list(pairs)),),
-                )
-            }
+            budget, metadata = PageBudget(), {}
+            for row in bounded_rows(
+                connection,
+                "SELECT e.*,s.enabled,s.version,s.config,c.published AS provenance FROM json_each(?) r JOIN graph_external e ON e.provider=json_extract(r.value,'$[0]') AND e.owner=json_extract(r.value,'$[1]') JOIN sources s USING(provider) LEFT JOIN evidence_context c ON c.provider=e.provider AND c.owner=e.owner",
+                (_json(list(pairs)),),
+            ):
+                # Authorization is complete or fails, including repeated source configs.
+                budget.require(row)
+                metadata[row["provider"], row["owner"]] = {
+                    key: row[key] for key in row.keys() if key != "_response_bytes"
+                }
             if admission:
                 return (
                     metadata,
-                    {"respect_gitignore": True, **self._state(connection, "policy", {})},
-                    self._admission(connection),
+                    {
+                        "respect_gitignore": True,
+                        **self._state(connection, "policy", {}, bounded=True),
+                    },
+                    self._admission(connection, bounded=True),
                 )
             return metadata
 
     def external_nodes(self, owners: Iterable[str]) -> list[dict]:
         """Resolve manual endpoint identities to their exact granted source roots in one read."""
         with self.store._connect() as connection:
-            return [
-                dict(row)
-                for row in connection.execute(
-                    "SELECT e.owner,e.path,s.provider,s.enabled,s.config FROM json_each(?) r JOIN graph_external_paths e ON e.owner=r.value JOIN sources s USING(provider)",
-                    (_json(list(owners)),),
-                )
-            ]
+            budget, nodes = PageBudget(), []
+            for row in bounded_rows(
+                connection,
+                "SELECT e.owner,e.path,s.provider,s.enabled,s.config FROM json_each(?) r JOIN graph_external_paths e ON e.owner=r.value JOIN sources s USING(provider)",
+                (_json(list(owners)),),
+            ):
+                budget.require(row)
+                nodes.append({key: row[key] for key in row.keys() if key != "_response_bytes"})
+            return nodes
 
     def hide_external(self, worker: str, paths: Iterable[tuple[str, str]]) -> None:
         with self._write(worker) as connection:
@@ -1414,7 +1450,7 @@ class GraphWorkspace:
             self._key_cache = cache
         return cache[1]
 
-    def provider_status(self) -> dict:
+    def provider_status(self, *, bounded: bool = False) -> dict:
         identity = []
         with self.store._connect(_identity=identity) as connection:
             revision = connection.execute("SELECT revision FROM graph_meta").fetchone()[0]
@@ -1437,13 +1473,16 @@ class GraphWorkspace:
             result = {
                 "addressables": self.store._summary("addressables", revision, identity, aggregate)
             }
-            for provider, version in connection.execute(
-                "SELECT provider,version FROM sources WHERE enabled=1 AND provider LIKE 'external:%'"
-            ):
-                state = self._state(connection, "external_scan:" + provider, {})
-                if state.get("source_version") != version:
+            statement = "SELECT s.provider,s.version,g.value AS payload FROM sources s LEFT JOIN graph_state g ON g.key='external_scan:'||s.provider WHERE s.enabled=1 AND s.provider LIKE 'external:%'"
+            rows = bounded_rows(connection, statement) if bounded else connection.execute(statement)
+            budget = PageBudget()
+            for row in rows:
+                if bounded:
+                    budget.require(row)
+                state = json.loads(row["payload"]) if row["payload"] else {}
+                if state.get("source_version") != row["version"]:
                     state = {}
-                result[provider] = {
+                result[row["provider"]] = {
                     "state": "not_verified",
                     "last_verified_at": None,
                     **state,

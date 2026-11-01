@@ -7,6 +7,7 @@ import sqlite3
 from typing import Final
 
 from services.reference_graph.store import _hash, _json
+from services.reference_graph.response_budget import MAX_REPLAY_BYTES, PageBudget, bounded_rows
 
 
 EVIDENCE_FORMAT: Final = 1
@@ -107,13 +108,17 @@ def replay(connection: sqlite3.Connection, result: dict) -> dict:
     if "_snapshot_after" not in result:
         return result
     after, count = result.pop("_snapshot_after"), result.pop("_snapshot_count")
-    result["edges"] = [
-        json.loads(row[0])
-        for row in connection.execute(
-            "SELECT payload FROM graph_snapshot_edges WHERE snapshot=? AND id>? ORDER BY id LIMIT ?",
-            (backing(connection, result["snapshot"]["id"]), after, count),
-        )
-    ]
+    budget, edges = PageBudget(max_bytes=MAX_REPLAY_BYTES), []
+    for row in bounded_rows(
+        connection,
+        "SELECT payload FROM graph_snapshot_edges WHERE snapshot=? AND id>? ORDER BY id LIMIT ?",
+        (backing(connection, result["snapshot"]["id"]), after, count),
+        max_bytes=MAX_REPLAY_BYTES,
+    ):
+        # Replay cannot shorten a previously delivered page or advance its cursor.
+        budget.require(row)
+        edges.append(json.loads(row["payload"]))
+    result["edges"] = edges
     return result
 
 

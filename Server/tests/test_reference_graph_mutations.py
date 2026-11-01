@@ -389,10 +389,10 @@ async def test_receipt_metadata_survives_unrelated_graph_progress(service_graph,
     store = entry.workspace.store
     sources = store.sources
 
-    def progressing_sources():
+    def progressing_sources(*, bounded=False):
         with store._connect(write=True) as connection:
             store._bump(connection)
-        return sources()
+        return sources(bounded=bounded)
 
     monkeypatch.setattr(store, "sources", progressing_sources)
 

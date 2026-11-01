@@ -9,6 +9,7 @@ import time
 from services.reference_graph.store import _hash
 from services.reference_graph import snapshot_storage
 from services.reference_graph.storage_budget import file_sizes
+from services.reference_graph.response_budget import PageBudget, bounded_rows
 
 
 CONFIG_FIELDS = {
@@ -64,13 +65,19 @@ def export_config(workspace, *, kind, after="", limit=100):
         raise ValueError("Export kind must be rule, source or policy with a string after cursor")
     if type(limit) is not int or not 1 <= limit <= 1000:
         raise ValueError("Use 1-1000 entries per page and continue with next_after")
+    items, budget, more = [], PageBudget(), False
     with workspace.store._connect() as db:
         if kind == "policy":
-            policy = workspace._state(db, "policy", {"version": 0, "exclude": []})
-            rows = (
-                []
-                if after
-                else [
+            if not after:
+                row = bounded_rows(
+                    db, "SELECT value AS payload FROM graph_state WHERE key='policy'"
+                ).fetchone()
+                if row is not None:
+                    budget.require(row)
+                policy = (
+                    json.loads(row["payload"]) if row is not None else {"version": 0, "exclude": []}
+                )
+                items.append(
                     {
                         "id": "policy",
                         "version": policy["version"],
@@ -79,37 +86,43 @@ def export_config(workspace, *, kind, after="", limit=100):
                             "respect_gitignore": policy.get("respect_gitignore", True),
                         },
                     }
-                ]
-            )
+                )
         elif kind == "rule":
-            rows = [
-                {
-                    "id": row["id"],
-                    "version": row["version"],
-                    "config": configuration(kind, json.loads(row["payload"])),
-                }
-                for row in db.execute(
-                    "SELECT * FROM rules WHERE id>? ORDER BY id LIMIT ?", (after, limit + 1)
+            for row in bounded_rows(
+                db, "SELECT * FROM rules WHERE id>? ORDER BY id LIMIT ?", (after, limit + 1)
+            ):
+                if len(items) == limit or not budget.admit(row):
+                    more = True
+                    break
+                items.append(
+                    {
+                        "id": row["id"],
+                        "version": row["version"],
+                        "config": configuration(kind, json.loads(row["payload"])),
+                    }
                 )
-            ]
         else:
-            rows = [
-                {
-                    "id": row["provider"][9:],
-                    "version": row["version"],
-                    "enabled": bool(row["enabled"]),
-                    "config": configuration(kind, json.loads(row["config"])),
-                }
-                for row in db.execute(
-                    "SELECT * FROM sources WHERE provider LIKE 'external:%' AND provider>? ORDER BY provider LIMIT ?",
-                    ("external:" + after, limit + 1),
+            for row in bounded_rows(
+                db,
+                "SELECT * FROM sources WHERE provider LIKE 'external:%' AND provider>? ORDER BY provider LIMIT ?",
+                ("external:" + after, limit + 1),
+            ):
+                if len(items) == limit or not budget.admit(row):
+                    more = True
+                    break
+                items.append(
+                    {
+                        "id": row["provider"][9:],
+                        "version": row["version"],
+                        "enabled": bool(row["enabled"]),
+                        "config": configuration(kind, json.loads(row["config"])),
+                    }
                 )
-            ]
     return {
         "schema_version": 1,
         "kind": kind,
-        "items": rows[:limit],
-        "next_after": rows[limit - 1]["id"] if len(rows) > limit else None,
+        "items": items,
+        "next_after": items[-1]["id"] if more else None,
         "transfer": "per_item_versions_not_an_atomic_snapshot",
         "source_reauthorization_required": True,
     }
@@ -130,9 +143,12 @@ def overview(entry):
             ("graph_runtime_sessions", "state"),
         ):
             if table in tables:
-                jobs[table] = dict(
-                    db.execute(f"SELECT {column},count(*) FROM {table} GROUP BY {column}")
-                )
+                jobs[table] = {
+                    str(state): count
+                    for state, count in db.execute(
+                        f"SELECT {column},count(*) FROM {table} GROUP BY {column}"
+                    )
+                }
         staging = db.execute("SELECT count(*) FROM graph_staging").fetchone()[0]
     return {
         "identity": {
