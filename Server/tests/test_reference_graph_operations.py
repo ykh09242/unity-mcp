@@ -75,8 +75,10 @@ async def test_cleanup_reclaims_obsolete_scratch_but_preserves_resumable_work(se
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["impact", "snapshot"])
 @pytest.mark.parametrize("failure_call", [1, 2])
+@pytest.mark.parametrize("page_limit", [1, 100])
+@pytest.mark.parametrize("cleanup_before_failure", [False, True])
 async def test_cleanup_reclaims_undelivered_first_page_after_validation_failure(
-    setup, monkeypatch, kind, failure_call
+    setup, monkeypatch, kind, failure_call, page_limit, cleanup_before_failure
 ):
     from services.reference_graph.operations import cleanup
 
@@ -97,6 +99,8 @@ async def test_cleanup_reclaims_undelivered_first_page_after_validation_failure(
             nonlocal calls
             calls += 1
             if calls == failure_call:
+                if cleanup_before_failure:
+                    cleanup(workspace, before=time.time() + 1, limit=100)
                 raise PermissionError("source access revoked")
             return validate(workspace, result)
 
@@ -105,7 +109,7 @@ async def test_cleanup_reclaims_undelivered_first_page_after_validation_failure(
             {"node": "a", "direction": "outgoing"} if kind == "impact" else {"name": "partial"}
         )
         with pytest.raises(PermissionError, match="source access revoked"):
-            await service.execute(ctx, kind, {**arguments, "limit": 1})
+            await service.execute(ctx, kind, {**arguments, "limit": page_limit})
         for _ in range(20):
             result = cleanup(workspace, before=time.time() + 1, limit=1)
             assert result["query_scratch_rows_removed"] <= 1
@@ -118,6 +122,9 @@ async def test_cleanup_reclaims_undelivered_first_page_after_validation_failure(
                 "graph_query_queue",
                 "graph_snapshots",
                 "graph_snapshot_edges",
+                "graph_snapshot_refs",
+                "graph_snapshot_versions",
+                "graph_snapshot_contents",
             ):
                 assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
     finally:
@@ -537,8 +544,54 @@ async def test_editor_explorer_routes_preserve_paging_and_scope(setup):
 
 
 @pytest.mark.asyncio
+async def test_failed_ready_capture_cleanup_preserves_disclosed_shared_snapshot(setup, monkeypatch):
+    from services.reference_graph.operations import cleanup
+    from services.reference_graph import snapshot_storage
+
+    service, ctx = setup
+    try:
+        # Given a ready snapshot disclosed through the production service.
+        entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
+        entry.watching = True
+        workspace, store = entry.workspace, entry.workspace.store
+        for index in range(4):
+            store.put_declaration(str(index), "a", Edge(str(index), "manual"), expected_version=0)
+        saved = (await service.execute(ctx, "snapshot", {"name": "saved"}))["data"]
+
+        # When a shared alias fails delivery after cleanup has retired both finished jobs.
+        def cleanup_and_reject(*_):
+            cleanup(workspace, before=time.time() + 1, limit=100)
+            raise PermissionError("source access revoked")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(service, "_validate_exploration", cleanup_and_reject)
+            with pytest.raises(PermissionError):
+                await service.execute(ctx, "snapshot", {"name": "undisclosed"})
+        for _ in range(10):
+            result = cleanup(workspace, before=time.time() + 1, limit=1)
+            if not result["more"]:
+                break
+
+        # Then only the disclosed snapshot owns the intact and still reusable backing.
+        with store._connect() as db:
+            snapshots = list(db.execute("SELECT id FROM graph_snapshots"))
+            assert [row[0] for row in snapshots] == [saved["snapshot"]["id"]]
+            assert db.execute("SELECT count(*) FROM graph_snapshot_edges").fetchone()[0] == 4
+            assert db.execute("SELECT count(*) FROM graph_snapshot_refs").fetchone()[0] == 1
+            backing = snapshot_storage.backing(db, saved["snapshot"]["id"])
+        fresh = (await service.execute(ctx, "snapshot", {"name": "fresh"}))["data"]
+        assert fresh["edges"] == saved["edges"]
+        with store._connect() as db:
+            assert snapshot_storage.backing(db, fresh["snapshot"]["id"]) == backing
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["impact", "snapshot"])
 async def test_failed_continuation_remains_replayable_and_ready_snapshot_survives(
-    setup, monkeypatch
+    setup, monkeypatch, kind
 ):
     from services.reference_graph.operations import cleanup
 
@@ -553,7 +606,10 @@ async def test_failed_continuation_remains_replayable_and_ready_snapshot_survive
                 str(index), "a", Edge(str(index), "manual"), expected_version=0
             )
         queries = workspace.queries()
-        first = queries.impact("a", direction="outgoing", limit=1)
+        arguments = (
+            {"node": "a", "direction": "outgoing"} if kind == "impact" else {"name": "resumable"}
+        )
+        first = (await service.execute(ctx, kind, {**arguments, "limit": 1}))["data"]
         ready = queries.snapshot(name="ready", limit=100)["snapshot"]["id"]
 
         def reject(*_):
@@ -563,11 +619,11 @@ async def test_failed_continuation_remains_replayable_and_ready_snapshot_survive
         with pytest.raises(PermissionError):
             await service.execute(
                 ctx,
-                "impact",
-                {"node": "a", "direction": "outgoing", "limit": 1, "cursor": first["next_cursor"]},
+                kind,
+                {**arguments, "limit": 1, "cursor": first["next_cursor"]},
             )
         cleanup(workspace, before=time.time() + 1, limit=100)
-        assert queries.impact("a", direction="outgoing", limit=1, cursor=first["next_cursor"])
+        assert getattr(queries, kind)(**arguments, limit=1, cursor=first["next_cursor"])
         assert queries.diff(ready, ready)["changes"] == []
     finally:
         await service.aclose()

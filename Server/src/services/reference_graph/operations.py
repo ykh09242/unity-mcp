@@ -195,26 +195,27 @@ def cleanup(workspace, *, before, limit=100):
         eligible = "used<? AND (finished=1 OR abandoned=1 OR revision<>?)"
         rows = list(
             db.execute(
-                f"SELECT id,finished FROM graph_queries WHERE {eligible} ORDER BY used,id LIMIT ?",
+                f"SELECT id,finished,abandoned FROM graph_queries WHERE {eligible} ORDER BY used,id LIMIT ?",
                 (before, revision, limit),
             )
         )
         removed, obsolete, scratch, budget = 0, 0, 0, limit
-        for identity, finished in rows:
+        for identity, finished, abandoned in rows:
             tables = [
                 ("graph_query_nodes", "job", identity),
                 ("graph_query_queue", "job", identity),
             ]
-            partial_snapshot = db.execute(
-                "SELECT 1 FROM graph_snapshots WHERE id=? AND state<>'ready'", (identity,)
+            reclaim_snapshot = db.execute(
+                "SELECT 1 FROM graph_snapshots WHERE id=? AND (state<>'ready' OR ?=1)",
+                (identity, abandoned),
             ).fetchone()
-            if partial_snapshot:
+            if reclaim_snapshot:
                 backing = snapshot_storage.backing(db, identity)
                 if not db.execute(
                     "SELECT 1 FROM graph_snapshot_refs WHERE backing=? AND snapshot<>? LIMIT 1",
                     (backing, identity),
                 ).fetchone():
-                    # A sole partial alias can still own a formerly ready backing.
+                    # Partial or undisclosed captures can own a ready backing.
                     # Retire reuse atomically before the first bounded edge deletion.
                     snapshot_storage.retire(db, backing)
                     tables.append(("graph_snapshot_edges", "snapshot", backing))
@@ -231,7 +232,7 @@ def cleanup(workspace, *, before, limit=100):
             ):
                 break
             if (
-                partial_snapshot
+                reclaim_snapshot
                 and db.execute(
                     "SELECT 1 FROM graph_snapshot_refs WHERE snapshot=?", (identity,)
                 ).fetchone()
@@ -241,7 +242,7 @@ def cleanup(workspace, *, before, limit=100):
                 scratch += 1
                 budget -= 1
             db.execute("DELETE FROM graph_queries WHERE id=?", (identity,))
-            if partial_snapshot:
+            if reclaim_snapshot:
                 snapshot_storage.discard(db, identity)
             removed += int(bool(finished))
             obsolete += int(not finished)

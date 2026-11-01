@@ -638,6 +638,14 @@ class GraphQueries:
         """Retire an undelivered first page; explicit cleanup reclaims it in batches."""
         with self.store._connect(write=True) as connection:
             connection.execute("UPDATE graph_queries SET abandoned=1 WHERE id=?", (identity,))
+            # Cleanup can retire a finished query while its first response is
+            # still being validated. Recreate only its cleanup marker if the
+            # undisclosed ready snapshot survived; never reload evidence or a
+            # replay payload, and never resurrect an explicitly deleted capture.
+            connection.execute(
+                "INSERT OR IGNORE INTO graph_queries(id,kind,signature,revision,sequence,last,finished,used,abandoned) SELECT id,'snapshot','',revision,0,'',1,created,1 FROM graph_snapshots WHERE id=? AND state='ready'",
+                (identity,),
+            )
 
     def delete_snapshot(self, identity: str) -> bool:
         with self.store._connect(write=True) as connection:

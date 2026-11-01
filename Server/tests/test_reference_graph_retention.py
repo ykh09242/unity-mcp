@@ -76,7 +76,10 @@ def test_concurrent_captures_merge_backing_and_last_alias_reclaims_rows(tmp_path
 
 
 @pytest.mark.parametrize("change_revision", [False, True])
-def test_cleanup_retires_partial_alias_before_new_capture_reuses_backing(tmp_path, change_revision):
+@pytest.mark.parametrize("capture_limit", [1, 100])
+def test_cleanup_retires_partial_alias_before_new_capture_reuses_backing(
+    tmp_path, change_revision, capture_limit
+):
     # Given a partial alias that becomes the sole owner of a formerly ready backing.
     store = GraphStore.open(tmp_path, GraphScope("user", "editor", "project"))
     workspace = GraphWorkspace(store)
@@ -84,7 +87,7 @@ def test_cleanup_retires_partial_alias_before_new_capture_reuses_backing(tmp_pat
         store.put_declaration(str(index), "owner", Edge(str(index), "declared"), expected_version=0)
     queries = workspace.queries()
     original = capture(queries)
-    partial = queries.snapshot(name="partial", limit=1)["snapshot"]["id"]
+    partial = queries.snapshot(name="partial", limit=capture_limit)["snapshot"]["id"]
     queries.delete_snapshot(original)
     queries.abandon(partial)
 
@@ -133,7 +136,8 @@ def test_cleanup_retires_partial_alias_before_new_capture_reuses_backing(tmp_pat
     assert reopened.diff(saved, completed["snapshot"]["id"])["changes"] == []
 
 
-def test_cleanup_partial_alias_preserves_other_ready_alias_and_reuse(tmp_path):
+@pytest.mark.parametrize("capture_limit", [1, 100])
+def test_cleanup_partial_alias_preserves_other_ready_alias_and_reuse(tmp_path, capture_limit):
     # Given another saved alias that still owns all immutable backing evidence.
     store = GraphStore.open(tmp_path, GraphScope("user", "editor", "project"))
     workspace = GraphWorkspace(store)
@@ -142,7 +146,7 @@ def test_cleanup_partial_alias_preserves_other_ready_alias_and_reuse(tmp_path):
     queries = workspace.queries()
     original = capture(queries)
     saved = capture(queries, "saved")
-    partial = queries.snapshot(name="partial", limit=1)["snapshot"]["id"]
+    partial = queries.snapshot(name="partial", limit=capture_limit)["snapshot"]["id"]
     queries.delete_snapshot(original)
     queries.abandon(partial)
 
