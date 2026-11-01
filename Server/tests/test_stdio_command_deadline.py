@@ -1,12 +1,10 @@
 """Whole production transport calls with clocked inert socket boundaries."""
 
 import os
-from pathlib import Path
-import subprocess
-import sys
 import textwrap
 
 import pytest
+from tests.sdk_scenarios import run_sdk_scenario, sdk_scenario_host  # noqa: F401
 
 COMMON = r"""
 import json
@@ -84,12 +82,9 @@ def _run(source, tmp_path):
         directory.mkdir()
         env[key] = str(directory)
     env.pop("UNITY_MCP_DEFAULT_INSTANCE", None)
-    result = subprocess.run(
-        [sys.executable, "-c", COMMON + textwrap.dedent(source)],
-        cwd=Path(__file__).resolve().parents[1],
+    result = run_sdk_scenario(
+        COMMON + textwrap.dedent(source),
         env=env,
-        capture_output=True,
-        text=True,
         timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
