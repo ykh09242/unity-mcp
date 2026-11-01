@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 from types import SimpleNamespace
+from xml.etree import ElementTree
 
 import pytest
 
@@ -36,19 +37,72 @@ def _install_baseline_overlay():
     sys.meta_path.insert(0, BaselineFinder())
 
 
-def _run_sdk_child(request, tmp_path):
-    """Keep real SDK cases independent of legacy integration collection stubs."""
-    if os.environ.get("MCP_HOST_BOUNDARY_CHILD") == "1":
-        return False
-    node_id = str(Path(__file__).resolve()) + "::" + request.node.nodeid.split("::", 1)[1]
+SDK_TESTS = (
+    "test_remote_editor_and_jobs_never_touch_host",
+    "test_local_resource_uses_selected_root_and_key",
+    "test_local_public_job_nudges_only_when_opted_in",
+    "test_sdk_cases_start_with_independent_mutable_state",
+)
+
+
+@pytest.fixture(scope="module")
+def sdk_child_results(tmp_path_factory):
+    """Import the real SDK once, retaining ordinary per-case pytest fixtures."""
+    from tests.stdio_process import native_python
+
+    owned = tmp_path_factory.mktemp("host-boundary-sdk")
+    server = Path(__file__).resolve().parents[1]
+    command = native_python(
+        [str(Path(__file__).resolve()), "sdk-module", str(owned)], (server, server / "src")
+    )
+    command.insert(1, "-B")
     result = subprocess.run(
-        [sys.executable, "-B", __file__, node_id, str(tmp_path / "sdk-child")],
+        command,
         capture_output=True,
         text=True,
         timeout=30,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    report = owned / "results.xml"
+    assert report.is_file(), result.stdout + result.stderr
+    cases = ElementTree.parse(report).findall(".//testcase")
+    results = {case.attrib["name"]: case for case in cases}
+    assert len(results) == len(cases) == 9, result.stdout + result.stderr
+    assert result.returncode in (0, 1), result.stdout + result.stderr
+    return results
+
+
+def _run_sdk_child(request, tmp_path):
+    """Report each original SDK case from the isolated module's real pytest run."""
+    if os.environ.get("MCP_HOST_BOUNDARY_CHILD") == "1":
+        return False
+    case = request.getfixturevalue("sdk_child_results")[request.node.name]
+    assert not list(case), ElementTree.tostring(case, encoding="unicode")
     return True
+
+
+@pytest.fixture(autouse=True)
+def fresh_sdk_case_state(monkeypatch):
+    if os.environ.get("MCP_HOST_BOUNDARY_CHILD") != "1":
+        return
+    from collections import OrderedDict
+    from itertools import count
+    from services.resources import editor_state
+    from services.state.external_changes_scanner import ExternalChangesScanner
+    from services.tools import run_tests
+    from services.tools.shared_tool_reads import SharedToolReads
+
+    # These used to be fresh implicitly because each case started a process.
+    monkeypatch.setattr(editor_state, "external_changes_scanner", ExternalChangesScanner())
+    monkeypatch.setattr(run_tests, "_background_tasks", set())
+    monkeypatch.setattr(run_tests, "_active_nudge_task", None)
+    monkeypatch.setattr(run_tests, "_nudge_states", OrderedDict())
+    monkeypatch.setattr(run_tests, "_terminal_nudge_jobs", OrderedDict())
+    monkeypatch.setattr(run_tests, "_poll_observation_order", count())
+    monkeypatch.setattr(
+        run_tests,
+        "_job_status_reads",
+        SharedToolReads(freshness_s=2.0, copy_preparer=run_tests._prepare_status_copy),
+    )
 
 
 @pytest.mark.asyncio
@@ -419,6 +473,23 @@ def test_remote_scanner_guard_precedes_state_and_filesystem(monkeypatch):
     assert calls == []
 
 
+@pytest.mark.parametrize("case", ["first", "second"])
+def test_sdk_cases_start_with_independent_mutable_state(request, tmp_path, case):
+    if _run_sdk_child(request, tmp_path):
+        return
+    from services.resources import editor_state
+    from services.tools import run_tests
+
+    assert not run_tests._nudge_states
+    assert not run_tests._terminal_nudge_jobs
+    assert not run_tests._background_tasks
+    assert run_tests._active_nudge_task is None
+    assert not editor_state.external_changes_scanner._states
+    run_tests._nudge_states[case] = object()
+    run_tests._terminal_nudge_jobs[case] = 1.0
+    editor_state.external_changes_scanner._states[case] = object()
+
+
 if __name__ == "__main__":
     import socket
 
@@ -475,8 +546,22 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
     _install_baseline_overlay()
+    selected = (
+        [str(Path(__file__).resolve()) + "::" + name for name in SDK_TESTS]
+        if sys.argv[1] == "sdk-module"
+        else [sys.argv[1]]
+    )
     raise SystemExit(
         pytest.main(
-            ["-q", "-p", "no:cacheprovider", "--basetemp", str(owned / "pytest"), sys.argv[1]]
+            [
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                "--basetemp",
+                str(owned / "pytest"),
+                "--junitxml",
+                str(owned / "results.xml"),
+                *selected,
+            ]
         )
     )
