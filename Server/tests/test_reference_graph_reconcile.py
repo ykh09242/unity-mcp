@@ -68,6 +68,9 @@ async def test_partial_declaration_rebinding_refreshes_ready_callers(setup, cach
 @pytest.mark.asyncio
 async def test_analysis_reuses_unchanged_facts_and_reloads_after_cache_eviction(setup, monkeypatch):
     store, workspace, editor, engine = setup
+    # Keep every unrelated document while avoiding artificial census checkpoints;
+    # continuation and interrupted-page recovery have dedicated tests below.
+    editor.inventory_page_size = 256
     target = editor.add(
         1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
     )
@@ -306,6 +309,7 @@ class Editor:
         self.compiling = False
         self.snapshot = None
         self.fail_offset = None
+        self.inventory_page_size = 2
         self.ignore_files = {}
         self.ignore_revision = 0
 
@@ -382,7 +386,7 @@ class Editor:
                 raise OSError("interrupted page")
             ids, revision = self.snapshot
             # Small pages exercise continuation without a production workload cap.
-            end = min(offset + 2, len(ids))
+            end = min(offset + min(self.inventory_page_size, params["page_size"]), len(ids))
             return {
                 "snapshot": "snapshot",
                 "epoch": self.epoch,
