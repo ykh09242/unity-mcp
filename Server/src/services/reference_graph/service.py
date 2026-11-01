@@ -879,14 +879,22 @@ class ReferenceGraphService:
         created_queries: list,
     ) -> dict:
         workspace, store = entry.workspace, entry.workspace.store
-        ignore_changed = not await drained_thread(workspace.ignore_current, editor, bounded=True)
-        if ignore_changed:
-            await drained_thread(workspace.block_admission)
         if action == "import_config":
             from services.reference_graph.operations import import_action
 
             action, options = import_action(options)
             fields = set(options)
+        # An authenticated CAS replacement is also the repair path for an old
+        # oversized policy. Do not read that policy before replacing it; normal
+        # bounded admission checks resume below after the write has succeeded.
+        replacing_policy = action == "set_policy"
+        ignore_changed = False
+        if not replacing_policy:
+            ignore_changed = not await drained_thread(
+                workspace.ignore_current, editor, bounded=True
+            )
+            if ignore_changed:
+                await drained_thread(workspace.block_admission)
         external_changed = False
         if action in {"declare", "remove_declaration", "set_source", "set_rule", "set_policy"}:
             if type(options.get("expected_version")) is not int or options["expected_version"] < 0:
@@ -935,11 +943,14 @@ class ReferenceGraphService:
             and action not in {"runtime_release", "runtime_sessions", "runtime_status"}
         )
         fallback = (
-            editor.get("ignore_watchers") is False
+            not replacing_policy
+            and editor.get("ignore_watchers") is False
             and (await drained_thread(workspace.policy, bounded=True))["respect_gitignore"]
         )
         ignore_verified = consistency == "checked"
-        admission_current = await drained_thread(workspace.ignore_current, editor, bounded=True)
+        admission_current = not replacing_policy and await drained_thread(
+            workspace.ignore_current, editor, bounded=True
+        )
         if protected and fallback and admission_current and not ignore_verified:
             ignore_verified = await entry.engine.validate_ignore()
         if protected and (not admission_current or fallback and not ignore_verified):

@@ -554,19 +554,25 @@ class GraphWorkspace:
             raise ValueError("Policy accepts an exclude pattern list")
         for pattern in patterns:
             _pattern(pattern)
+        replacement = {
+            "version": expected_version + 1,
+            "exclude": patterns,
+            "respect_gitignore": policy.get("respect_gitignore", True),
+        }
         with self.store._connect(write=True) as connection:
-            current = self._state(connection, "policy", {"version": 0})
-            if current["version"] != expected_version:
+            # Replacement must remain possible for legacy oversized policies without
+            # loading their payload. The writer transaction still owns the CAS.
+            current = connection.execute(
+                "SELECT COALESCE((SELECT json_extract(value,'$.version') FROM graph_state WHERE key='policy'),0)"
+            ).fetchone()[0]
+            if current != expected_version:
                 raise RevisionConflict("Graph policy changed")
-            self._set(
-                connection,
-                "policy",
-                {
-                    "version": expected_version + 1,
-                    "exclude": patterns,
-                    "respect_gitignore": policy.get("respect_gitignore", True),
-                },
+            # Apply the same raw JSON row admission as every bounded policy read
+            # before changing authored state or retiring collection ownership.
+            PageBudget().require(
+                bounded_rows(connection, "SELECT ? AS payload", (_json(replacement),)).fetchone()
             )
+            self._set(connection, "policy", replacement)
             # Retire the old worker before clearing its inputs. It cannot renew
             # or publish a pre-policy page while a fresh census is being admitted.
             connection.execute("DELETE FROM graph_worker")
