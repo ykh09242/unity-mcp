@@ -4,6 +4,8 @@ using System.Threading;
 using MCPForUnity.Editor.Services;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -100,6 +102,30 @@ namespace MCPForUnityTests.Editor.Services
                 NativeTick.Invoke(null, null);
                 Update.Invoke(null, null);
                 Assert.That(laterCalls, Is.Zero);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ThrowingWork_DoesNotLoseLaterOrCancelledWork(bool nativeTick)
+        {
+            int laterCalls = 0;
+            int cancelledCalls = 0;
+            IDisposable cancelled = null;
+            using var throwing = EditorMainThreadWakeup.Schedule(() =>
+            {
+                cancelled.Dispose();
+                throw new InvalidOperationException("Scheduled callback regression");
+            });
+            using var later = EditorMainThreadWakeup.Schedule(() => laterCalls++);
+            using (cancelled = EditorMainThreadWakeup.Schedule(() => cancelledCalls++))
+            {
+                LogAssert.Expect(LogType.Exception, new System.Text.RegularExpressions.Regex("InvalidOperationException: Scheduled callback regression"));
+                Assert.DoesNotThrow(() => (nativeTick ? NativeTick : Update).Invoke(null, null));
+                NativeTick.Invoke(null, null);
+                Update.Invoke(null, null);
+                Assert.That(laterCalls, Is.EqualTo(1));
+                Assert.That(cancelledCalls, Is.Zero);
             }
         }
 

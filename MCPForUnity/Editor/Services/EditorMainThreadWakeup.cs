@@ -98,7 +98,16 @@ namespace MCPForUnity.Editor.Services
                 if (Volatile.Read(ref _stopped) != 0)
                     scheduled.Clear();
                 else
-                    scheduled.Invoke();
+                {
+                    try
+                    {
+                        scheduled.Invoke();
+                    }
+                    catch (Exception exception)
+                    {
+                        UnityEngine.Debug.LogException(exception);
+                    }
+                }
             }
         }
 

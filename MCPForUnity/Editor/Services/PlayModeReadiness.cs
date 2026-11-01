@@ -48,6 +48,9 @@ namespace MCPForUnity.Editor.Services
 
         private static void Restore()
         {
+            _playRequest?.Dispose();
+            _playRequest = null;
+            _job = null;
             string saved = SessionState.GetString(SessionKey, "");
             if (!string.IsNullOrEmpty(saved))
             {
@@ -62,6 +65,7 @@ namespace MCPForUnity.Editor.Services
                         _job.deadline_editor_seconds = Now() + remaining;
                         Persist();
                     }
+                    SchedulePlayRequest();
                 }
                 catch (JsonException)
                 {
@@ -102,8 +106,7 @@ namespace MCPForUnity.Editor.Services
             }
             Persist();
             // Return the job ID before requesting the transition that may destroy this domain.
-            _playRequest?.Dispose();
-            _playRequest = EditorMainThreadWakeup.Schedule(RequestPlay);
+            SchedulePlayRequest();
             return new SuccessResponse("Play mode readiness job started; poll get_play_mode_job.", Snapshot());
         }
 
@@ -130,8 +133,30 @@ namespace MCPForUnity.Editor.Services
             Persist();
         }
 
+        private static void SchedulePlayRequest()
+        {
+            _playRequest?.Dispose();
+            _playRequest = null;
+            if (
+                _job == null
+                || _job.status != "running"
+                || _job.transition_requested
+                || _job.entered
+                || !Guid.TryParseExact(_job.job_id, "N", out _)
+                || (_job.wait_until != "scene_loaded" && _job.wait_until != "first_frame")
+                || double.IsNaN(_job.deadline_editor_seconds)
+                || double.IsInfinity(_job.deadline_editor_seconds)
+                || Now() >= _job.deadline_editor_seconds
+                || EditorApplication.isPlayingOrWillChangePlaymode
+            )
+                return;
+            _playRequest = EditorMainThreadWakeup.Schedule(RequestPlay);
+        }
+
         private static void RequestPlay()
         {
+            _playRequest?.Dispose();
+            _playRequest = null;
             Tick();
             if (_job == null || _job.status != "running" || _job.transition_requested)
                 return;

@@ -425,21 +425,33 @@ namespace MCPForUnityTests.EditMode.Tools
         private FieldInfo _jobField;
         private object _originalJob;
         private string _originalSaved;
+        private IDisposable _originalRequest;
+        private bool _capturedState;
 
         [SetUp]
         public void SetUp()
         {
+            _capturedState = false;
             Assert.IsFalse(EditorApplication.isPlayingOrWillChangePlaymode, "Readiness unit fixture requires Edit Mode.");
             _service = typeof(ManageEditor).Assembly.GetType("MCPForUnity.Editor.Services.PlayModeReadiness", true);
             _jobField = _service.GetField("_job", Flags);
             _originalJob = _jobField.GetValue(null);
             _originalSaved = SessionState.GetString(SessionKey, "");
+            _originalRequest = (IDisposable)_service.GetField("_playRequest", Flags).GetValue(null);
+            if (_originalRequest != null || (!string.IsNullOrEmpty(_originalSaved) && JObject.Parse(_originalSaved).Value<string>("status") == "running"))
+                Assert.Ignore("An existing readiness job must not be replaced by this fixture.");
+            _capturedState = true;
+            _service.GetField("_playRequest", Flags).SetValue(null, null);
             _jobField.SetValue(null, null);
         }
 
         [TearDown]
         public void TearDown()
         {
+            if (!_capturedState)
+                return;
+            ((IDisposable)_service.GetField("_playRequest", Flags).GetValue(null))?.Dispose();
+            _service.GetField("_playRequest", Flags).SetValue(null, _originalRequest);
             var callback = (EditorApplication.CallbackFunction)
                 Delegate.CreateDelegate(typeof(EditorApplication.CallbackFunction), _service.GetMethod("RequestPlay", Flags));
             EditorApplication.delayCall -= callback;
@@ -520,6 +532,120 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(!cancel, late["data"].Value<bool>("observed_after_deadline"));
             Assert.AreEqual(id, late["data"].Value<string>("job_id"));
             Assert.IsFalse(EditorApplication.isPlayingOrWillChangePlaymode);
+        }
+
+        [Test]
+        public void RestoreUndispatchedJob_QueuesOneRequestAndCancellationRemovesIt()
+        {
+            Clock(100);
+            Ready(false);
+            string id = PersistPendingJob("running", false, 200);
+            _service.GetMethod("Restore", Flags).Invoke(null, null);
+            Assert.IsTrue(HasPendingRequest());
+            _service.GetMethod("Restore", Flags).Invoke(null, null);
+            Assert.AreEqual(1, PendingReadinessRequests(), "Repeated restore must replace, rather than duplicate, the deferred request.");
+            Invoke("cancel_play_mode_job", new JObject { ["job_id"] = id });
+            Assert.IsFalse(HasPendingRequest());
+            Assert.AreEqual(0, PendingReadinessRequests());
+            DrainScheduler();
+            Assert.IsFalse(EditorApplication.isPlayingOrWillChangePlaymode);
+        }
+
+        [Test]
+        public void RestoredRequest_ExecutesOnceAndHonorsDeadlineBeforeDispatch()
+        {
+            Clock(100);
+            int observations = 0;
+            _service
+                .GetField("_readinessOverride", Flags)
+                .SetValue(
+                    null,
+                    (Func<bool>)(
+                        () =>
+                        {
+                            observations++;
+                            return false;
+                        }
+                    )
+                );
+            PersistPendingJob("running", false, 200);
+            _service.GetMethod("Restore", Flags).Invoke(null, null);
+            Assert.IsTrue(HasPendingRequest());
+            observations = 0;
+            Clock(201);
+            DrainScheduler();
+            DrainScheduler();
+            Assert.AreEqual(1, observations);
+            Assert.AreEqual("timed_out", JObject.Parse(SessionState.GetString(SessionKey, "")).Value<string>("status"));
+            Assert.IsFalse(EditorApplication.isPlayingOrWillChangePlaymode);
+        }
+
+        [TestCase("cancelled", false, 200)]
+        [TestCase("running", true, 200)]
+        [TestCase("running", false, 99)]
+        [TestCase("succeeded", false, 200)]
+        [TestCase("timed_out", false, 200)]
+        public void RestoreDoesNotReplayTerminalExpiredOrDispatchedJobs(string status, bool dispatched, double deadline)
+        {
+            Clock(100);
+            Ready(false);
+            PersistPendingJob(status, dispatched, deadline);
+            _service.GetMethod("Restore", Flags).Invoke(null, null);
+            Assert.IsFalse(HasPendingRequest());
+            Assert.AreEqual(0, PendingReadinessRequests());
+            DrainScheduler();
+            Assert.IsFalse(EditorApplication.isPlayingOrWillChangePlaymode);
+        }
+
+        [TestCase("invalid", "first_frame")]
+        [TestCase("0123456789abcdef0123456789abcdef", "unsupported")]
+        public void RestoreDoesNotQueueMalformedJobs(string id, string waitUntil)
+        {
+            Clock(100);
+            PersistPendingJob("running", false, 200, id, waitUntil);
+            _service.GetMethod("Restore", Flags).Invoke(null, null);
+            Assert.IsFalse(HasPendingRequest());
+            Assert.AreEqual(0, PendingReadinessRequests());
+        }
+
+        private string PersistPendingJob(string status, bool dispatched, double deadline, string id = null, string waitUntil = "first_frame")
+        {
+            id ??= Guid.NewGuid().ToString("N");
+            SessionState.SetString(
+                SessionKey,
+                new JObject
+                {
+                    ["job_id"] = id,
+                    ["status"] = status,
+                    ["wait_until"] = waitUntil,
+                    ["deadline_editor_seconds"] = deadline,
+                    ["deadline_unix_ms"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 100000,
+                    ["transition_requested"] = dispatched,
+                    ["timeout_seconds"] = 100,
+                }.ToString()
+            );
+            return id;
+        }
+
+        private bool HasPendingRequest() => (bool)_service.GetProperty("HasPendingPlayRequest", Flags).GetValue(null);
+
+        private int PendingReadinessRequests()
+        {
+            Type scheduler = _service.Assembly.GetType("MCPForUnity.Editor.Services.EditorMainThreadWakeup", true);
+            var pending = (IEnumerable)scheduler.GetField("Pending", Flags).GetValue(null);
+            return pending
+                .Cast<object>()
+                .Count(item =>
+                {
+                    var callback = (Action)item.GetType().GetField("_callback", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(item);
+                    return callback?.Method.DeclaringType == _service;
+                });
+        }
+
+        private void DrainScheduler()
+        {
+            Type scheduler = _service.Assembly.GetType("MCPForUnity.Editor.Services.EditorMainThreadWakeup", true);
+            scheduler.GetMethod("Drain", Flags).Invoke(null, null);
         }
 
         [Test]
