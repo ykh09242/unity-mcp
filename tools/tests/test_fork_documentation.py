@@ -51,15 +51,21 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("relative", PAGES)
-def test_onboarding_links_have_local_targets(relative: str) -> None:
-    # Given a maintained page and the site's declared routes.
-    page = ROOT / relative
+@pytest.fixture(scope="module")
+def site_routes() -> frozenset[str]:
+    """Read the unchanged documentation route inventory once for all maintained pages."""
     routes: set[str] = set()
     for target in SITE.rglob("*.md"):
         explicit = re.search(r"^slug:\s*(\S+)", _read(target), re.MULTILINE)
         default = "/" + target.relative_to(SITE).with_suffix("").as_posix()
         routes.add(explicit.group(1).rstrip("/") if explicit else default)
+    return frozenset(routes)
+
+
+@pytest.mark.parametrize("relative", PAGES)
+def test_onboarding_links_have_local_targets(relative: str, site_routes: frozenset[str]) -> None:
+    # Given a maintained page and the site's declared routes.
+    page = ROOT / relative
     text = FENCES.sub("", _read(page))
 
     # When resolving authored Markdown links (not fenced examples or remote sites).
@@ -68,9 +74,9 @@ def test_onboarding_links_have_local_targets(relative: str) -> None:
         if address.netloc == "ykh09242.github.io":
             assert address.path.startswith("/unity-mcp/"), raw
             route = address.path.removeprefix("/unity-mcp").rstrip("/")
-            assert not route or route in routes, (relative, raw)
+            assert not route or route in site_routes, (relative, raw)
         elif not address.scheme and address.path.startswith("/"):
-            assert address.path.rstrip("/") in routes, (relative, raw)
+            assert address.path.rstrip("/") in site_routes, (relative, raw)
         elif not address.scheme and address.path:
             target = (page.parent / unquote(address.path)).resolve()
             if not target.suffix and not target.exists():
