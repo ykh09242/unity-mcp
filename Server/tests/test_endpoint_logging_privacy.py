@@ -131,7 +131,8 @@ async def test_auth_request_logs_and_errors_hide_url_credentials(diagnostics, mo
         assert request.headers["X-Service-Token"] == "service-token"
         if failure is not None:
             raise failure(f"{UNTRUSTED} {KEY}")
-        return httpx.Response(200, json={"valid": True, "user_id": "owner"})
+        # The validator consumes raw wire bytes; json= pre-consumes the mock body.
+        return httpx.Response(200, stream=httpx.ByteStream(b'{"valid":true,"user_id":"owner"}'))
 
     service._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
     try:
