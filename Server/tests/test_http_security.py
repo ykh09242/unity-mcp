@@ -61,6 +61,9 @@ def test_local_http_security_regressions(tmp_path, pytestconfig):
         "UNITY_MCP_SKIP_STARTUP_CONNECT": "1",
         "UNITY_MCP_LOG_DIR": str(tmp_path / "logs"),
         "UNITY_MCP_HTTP_TEST_PROGRESS_DIR": str(progress_dir),
+        "PYTHONPATH": os.pathsep.join(
+            filter(None, (str(server_root.parent / "tools"), os.environ.get("PYTHONPATH")))
+        ),
     }
     report_args = []
     if xmlpath := pytestconfig.getoption("xmlpath", default=None):
@@ -77,6 +80,10 @@ def test_local_http_security_regressions(tmp_path, pytestconfig):
                 str(_HTTP_WORKERS),
                 "--dist=loadfile",
                 "--max-worker-restart=0",
+                "-p",
+                "pytest_ci_schedule",
+                "--no-loadscope-reorder",
+                "--ci-first-file=http/test_client_assurance_wire.py",
                 "-vv",
                 "--tb=short",
                 "-W",
@@ -92,7 +99,8 @@ def test_local_http_security_regressions(tmp_path, pytestconfig):
             env=env,
             capture_output=True,
             text=True,
-            # Four workers overlap isolated SDK subprocesses without multiplying by host CPUs.
+            # Start the expensive real-client file before short, highly parametrized files.
+            # Keep whole files and their fixture lifetimes on the same four workers.
             # The suite watchdog is distinct from the request deadlines asserted inside.
             # Operators can increase the shared multiplier for slow/oversubscribed hosts.
             timeout=watchdog_timeout(900),

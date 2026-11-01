@@ -21,10 +21,15 @@ class _Config:
 
 
 @pytest.mark.parametrize(("scale", "expected_timeout"), [("1", 900), ("2", 1800)])
+@pytest.mark.parametrize("pythonpath", [None, "existing-python-path"])
 def test_wrapper_preserves_child_command_and_success(
-    tmp_path, monkeypatch, scale, expected_timeout
+    tmp_path, monkeypatch, scale, expected_timeout, pythonpath
 ):
     monkeypatch.setenv("UNITY_MCP_TEST_TIMEOUT_SCALE", scale)
+    if pythonpath is None:
+        monkeypatch.delenv("PYTHONPATH", raising=False)
+    else:
+        monkeypatch.setenv("PYTHONPATH", pythonpath)
     observed = {}
 
     def completed(args, **kwargs):
@@ -39,6 +44,12 @@ def test_wrapper_preserves_child_command_and_success(
     kwargs = observed["kwargs"]
     assert args[:4] == [sys.executable, "-m", "pytest", "tests/http"]
     assert args[4:8] == ["-n", "4", "--dist=loadfile", "--max-worker-restart=0"]
+    assert args[8:12] == [
+        "-p",
+        "pytest_ci_schedule",
+        "--no-loadscope-reorder",
+        "--ci-first-file=http/test_client_assurance_wire.py",
+    ]
     assert "-vv" in args
     assert "-q" not in args
     assert args[args.index("--basetemp") + 1] == str(tmp_path / "http-tmp")
@@ -49,6 +60,10 @@ def test_wrapper_preserves_child_command_and_success(
     assert kwargs["env"]["UNITY_MCP_SKIP_STARTUP_CONNECT"] == "1"
     assert kwargs["env"]["UNITY_MCP_LOG_DIR"] == str(tmp_path / "logs")
     assert kwargs["env"]["UNITY_MCP_HTTP_TEST_PROGRESS_DIR"] == str(tmp_path / "http-progress")
+    assert kwargs["env"]["PYTHONPATH"].split(os.pathsep) == [
+        str(Path(wrapper.__file__).resolve().parents[2] / "tools"),
+        *([pythonpath] if pythonpath is not None else []),
+    ]
     assert kwargs["capture_output"] is True
     assert kwargs["text"] is True
     assert kwargs["timeout"] == expected_timeout
