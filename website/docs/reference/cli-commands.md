@@ -1246,8 +1246,8 @@ Read a source file. Examples: unity-mcp code read "Assets/Scripts/Player.cs" uni
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | path | text | required | nargs=1 | — | — |  |
-| --start-line / -s | integer | optional | nargs=1 | — | — | Starting line number (1-based). |
-| --line-count / -n | integer | optional | nargs=1 | — | — | Number of lines to read. |
+| --start-line / -s | integer range: [1..None] | optional | nargs=1 | — | — | Starting line number (1-based). |
+| --line-count / -n | integer range: [1..None] | optional | nargs=1 | — | — | Number of lines to read. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp code replay`
@@ -1261,13 +1261,13 @@ Replay a history entry by index. Examples: unity-mcp code replay 0 unity-mcp cod
 
 ## `unity-mcp code search`
 
-Search for patterns in Unity scripts using regex. PATTERN is a regex pattern to search for. PATH is the script path (e.g., Assets/Scripts/Player.cs). Examples: unity-mcp code search "class.*Player" "Assets/Scripts/Player.cs" unity-mcp code search "private.*int" "Assets/Scripts/GameManager.cs" unity-mcp code search "TODO\|FIXME" "Assets/Scripts/Utils.cs"
+Search for patterns in Unity scripts using regex. PATTERN is a regex pattern to search for. PATH is the script path (e.g., Assets/Scripts/Player.cs). Results stop at --max-results (at most 1000). Excerpts are limited to 500 characters and match text to 200. JSON data.count is the number returned; data.truncated indicates further matches, without counting the entire file. Examples: unity-mcp code search "class.*Player" "Assets/Scripts/Player.cs" unity-mcp code search "private.*int" "Assets/Scripts/GameManager.cs" unity-mcp code search "TODO\|FIXME" "Assets/Scripts/Utils.cs"
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | pattern | text | required | nargs=1 | — | — |  |
 | path | text | required | nargs=1 | — | — |  |
-| --max-results / -n | integer | optional | nargs=1 | 50 | — | Maximum number of results (default: 50). |
+| --max-results / -n | integer range: [1..None] | optional | nargs=1 | 50 | — | Maximum results (default: 50; output capped at 1000 with bounded excerpts). |
 | --case-sensitive / -c | boolean | optional | nargs=1, flag | — | — | Make search case-sensitive (default: case-insensitive). |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
