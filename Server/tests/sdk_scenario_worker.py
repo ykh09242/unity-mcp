@@ -3,12 +3,14 @@
 from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
 import gc
+import hmac
 import io
 import json
 import logging
 import os
 from pathlib import Path
 import random
+import secrets
 import socket
 import sys
 import threading
@@ -31,14 +33,17 @@ from fastmcp.tools.function_tool import _wrap_body_errors  # noqa: E402
 from fastmcp.utilities.types import get_cached_typeadapter  # noqa: E402
 from uncalled_for.introspection import _parameter_cache, _signature_cache  # noqa: E402
 
+_ABSENT = object()
 _GLOBALS = [
     (socket.socket, "connect", socket.socket.connect),
     (socket.socket, "connect_ex", socket.socket.connect_ex),
     (socket, "create_connection", socket.create_connection),
-    (Path, "home", Path.__dict__["home"]),
+    (Path, "home", vars(Path).get("home", _ABSENT)),
     (time, "monotonic", time.monotonic),
     (time, "sleep", time.sleep),
     (random, "uniform", random.uniform),
+    (secrets, "token_hex", secrets.token_hex),
+    (hmac, "compare_digest", hmac.compare_digest),
     (dereference, "dereference_refs", dereference.dereference_refs),
 ]
 _SETTINGS_OBJECT = fastmcp.settings
@@ -64,9 +69,17 @@ class _Output(io.StringIO):
         return super().write(value)
 
 
-def _reset():
+def _restore_globals():
     for target, name, value in _GLOBALS:
-        setattr(target, name, value)
+        if value is _ABSENT:
+            if name in vars(target):
+                delattr(target, name)
+        else:
+            setattr(target, name, value)
+
+
+def _reset():
+    _restore_globals()
     fastmcp.settings = _SETTINGS_OBJECT
     vars(_SETTINGS_OBJECT).clear()
     vars(_SETTINGS_OBJECT).update(deepcopy(_SETTINGS))

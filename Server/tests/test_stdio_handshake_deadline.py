@@ -1,6 +1,7 @@
 """Fresh connection admission uses one complete, timely handshake."""
 
 import pytest
+from tests.sdk_scenarios import sdk_scenario_host  # noqa: F401
 
 from .test_stdio_command_deadline import _run
 

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock
 
 import pytest
+from tests.sdk_scenarios import sdk_scenario_host  # noqa: F401
 
 from services.tools import refresh_unity as refresh
 

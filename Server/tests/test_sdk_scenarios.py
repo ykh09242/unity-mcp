@@ -12,7 +12,7 @@ from tests.sdk_scenarios import run_sdk_scenario, sdk_scenario_host  # noqa: F40
 
 def test_real_sdk_state_and_callable_graphs_do_not_survive_a_scenario():
     first = run_sdk_scenario("""
-        import builtins, json, logging, os, random, socket, sys, time, warnings, weakref
+        import builtins, hmac, json, logging, os, random, secrets, socket, sys, time, warnings, weakref
         from importlib.metadata import version
         from pathlib import Path
         import anyio
@@ -43,6 +43,8 @@ def test_real_sdk_state_and_callable_graphs_do_not_survive_a_scenario():
         time.monotonic = lambda: -1
         time.sleep = lambda seconds: None
         random.uniform = lambda *args: -1
+        secrets.token_hex = lambda count: "poison"
+        hmac.compare_digest = lambda *args: False
         dereference.dereference_refs = lambda value: "poison"
         fastmcp.settings.log_level = "CRITICAL"
         os.environ["SDK_SCENARIO_POISON"] = "present"
@@ -59,7 +61,7 @@ def test_real_sdk_state_and_callable_graphs_do_not_survive_a_scenario():
         "sdk": version("fastmcp"),
     }
     second = run_sdk_scenario("""
-        import builtins, logging, os, random, socket, time, warnings
+        import builtins, hmac, logging, os, random, secrets, socket, time, warnings
         from pathlib import Path
         import fastmcp
         import fastmcp.server.middleware.dereference as dereference
@@ -75,6 +77,8 @@ def test_real_sdk_state_and_callable_graphs_do_not_survive_a_scenario():
         assert socket.create_connection.__name__ == "create_connection"
         assert time.monotonic() > 0 and time.sleep.__name__ == "sleep"
         assert random.uniform(0, 1) >= 0
+        assert secrets.token_hex(4) != "poison", "secrets.token_hex was retained"
+        assert hmac.compare_digest(b"same", b"same") is True, "hmac.compare_digest was retained"
         assert dereference.dereference_refs.__name__ == "dereference_refs"
         assert fastmcp.settings.log_level != "CRITICAL"
         assert "SDK_SCENARIO_POISON" not in os.environ
@@ -86,6 +90,34 @@ def test_real_sdk_state_and_callable_graphs_do_not_survive_a_scenario():
         del builtins._sdk_case_app_ref
     """)
     assert second.returncode == 0, second.stderr
+
+
+def test_path_home_restoration_preserves_descriptor_inheritance_and_ownership():
+    result = run_sdk_scenario("""
+        from inspect import getattr_static
+        from pathlib import Path
+        from tests import sdk_scenario_worker as worker
+        class InheritedPath(type(Path())):
+            pass
+        class OwnedPath(type(Path())):
+            @classmethod
+            def home(cls):
+                return cls("original")
+        for path_type in (Path, InheritedPath, OwnedPath):
+            descriptor = getattr_static(path_type, "home")
+            owner = next(base for base in path_type.__mro__ if "home" in vars(base))
+            owns = "home" in vars(path_type)
+            expected = path_type.home()
+            worker._GLOBALS = [(path_type, "home", vars(path_type).get("home", worker._ABSENT))]
+            path_type.home = classmethod(lambda cls: cls("poison"))
+            assert path_type.home() == path_type("poison")
+            worker._restore_globals()
+            assert ("home" in vars(path_type)) is owns
+            assert getattr_static(path_type, "home") is descriptor
+            assert next(base for base in path_type.__mro__ if "home" in vars(base)) is owner
+            assert path_type.home() == expected
+    """)
+    assert result.returncode == 0, result.stderr
 
 
 def test_failed_scenario_returns_its_traceback_and_discards_the_process(sdk_scenario_host):

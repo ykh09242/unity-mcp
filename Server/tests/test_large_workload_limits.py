@@ -3,6 +3,7 @@
 import math
 
 import pytest
+from tests.sdk_scenarios import sdk_scenario_host  # noqa: F401
 
 from cli.utils.config import CLIConfig
 from core.config import config
