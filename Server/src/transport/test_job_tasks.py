@@ -318,6 +318,8 @@ class TestJobTasks(ServerExtension):
         # AnyIO shielding also covers normal SDK request cancellation. Raw
         # asyncio deadlines may cancel the awaiting Task directly, so defer that
         # cancellation until the actual thread exits and its result is adopted.
+        task = asyncio.current_task()
+        cancellations = task.cancelling()
         self._io_owners += 1
         io = asyncio.create_task(
             anyio.to_thread.run_sync(lambda: function(*args, **kwargs)), context=Context()
@@ -329,14 +331,30 @@ class TestJobTasks(ServerExtension):
                     try:
                         await asyncio.shield(io)
                     except asyncio.CancelledError:
+                        count = task.cancelling()
+                        if not count:
+                            raise
+                        # A preceding journal call may be reissuing an existing
+                        # request without increasing its cancellation count.
+                        cancellations = min(cancellations, count - 1)
                         cancelled = True
                 return io.result()
             finally:
                 self._io_owners -= 1
                 self._close_if_idle()
                 if cancelled:
-                    task = asyncio.current_task()
-                    asyncio.get_running_loop().call_soon(task.cancel)
+
+                    def redeliver():
+                        # The caller adopts the durable result before yielding.
+                        # Its owning timeout may exit and consume cancellation
+                        # before this callback; never cancel outside that scope.
+                        if not task.done() and task.cancelling() > cancellations:
+                            # Reissue the consumed request, without adding one:
+                            # asyncio.timeout must remove exactly its own count.
+                            task.uncancel()
+                            task.cancel()
+
+                    asyncio.get_running_loop().call_soon(redeliver)
 
     async def intercept_tool_call(self, params, context, call_next):
         request_context = context.request_context

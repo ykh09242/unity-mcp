@@ -101,11 +101,11 @@ async def test_authenticated_production_tool_task_matches_whole_modern_ordinary_
     command_hub, tmp_path, monkeypatch, case
 ):
     from transport.models import CommandResultMessage
-    from transport.plugin_hub import PluginHub
+    from transport.plugin_hub import PluginHub, http_request_budget
 
     async def answer(message):
         command_hub.sent.append(message)
-        if message["type"] != "execute" or case == "outer_no_reply":
+        if message["type"] != "execute":
             return
         response = {
             "success": True,
@@ -118,12 +118,21 @@ async def test_authenticated_production_tool_task_matches_whole_modern_ordinary_
             response = {"success": False, "error": "Existing native job unavailable"}
         elif case == "invalid_native":
             response = {"success": True, "data": {"status": "failed"}}
-        await command_hub.endpoint._handle_command_result(
-            command_hub.websocket, CommandResultMessage(id=message["id"], result=response)
-        )
+        if case != "outer_no_reply":
+            await command_hub.endpoint._handle_command_result(
+                command_hub.websocket, CommandResultMessage(id=message["id"], result=response)
+            )
+        if case.startswith("outer_"):
+            # Expire the real owning guard only after native dispatch. A tiny
+            # setup budget can instead expire during selection or journal I/O
+            # on a busy runner, exercising a different phase in each request.
+            request = http_request_budget.get()
+            assert request is not None
+            request.scope.reschedule(asyncio.get_running_loop().time())
+            await asyncio.sleep(0)
 
     command_hub.websocket.send_json = answer
-    monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 3 if case == "inner_running" else 0.18)
+    monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", watchdog_timeout())
     async with bound_http(tmp_path, monkeypatch) as (client, runtime):
         params = {"name": "get_test_job", "arguments": {"job_id": case, "wait_timeout": 1}}
         ordinary = await bound_call(client, "tools/call", params)
