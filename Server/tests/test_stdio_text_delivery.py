@@ -56,7 +56,6 @@ async def test_text_output_releases_last_response_reference_before_idle_receive(
             await wait_until(lambda: owner.released)
             for _ in range(5):
                 await asyncio.sleep(0)
-            gc.collect()
             try:
                 assert not ledger
                 assert reference() is None, (
@@ -327,5 +326,6 @@ async def test_text_output_cancellation_waits_for_real_thread_io_before_releasin
             pass
     assert settled.is_set() and owner.released and not ledger
     del server
-    gc.collect()
+    # The completed writer's acyclic response must be released immediately;
+    # a full heap collection would hide an accidental reference cycle here.
     assert all(reference() is None for reference in references)

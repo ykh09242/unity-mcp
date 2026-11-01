@@ -4,7 +4,6 @@ from tests.timing import await_signal, watchdog_timeout
 
 import asyncio
 from datetime import datetime, timezone
-import gc
 import weakref
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -76,7 +75,8 @@ def polling(monkeypatch):
         state.calls += 1
         state.observations.append(len(OwnedHub._retained_results))
         if state.inspect_payloads:
-            gc.collect()
+            # These JSON strings have no cycles: discarded observations must
+            # lose their last reference before the next dispatch, without GC.
             state.retained_payloads.append(sum(ref() is not None for ref in state.payload_refs))
         if state.calls == state.blocked_at:
             state.blocked.set()
@@ -162,7 +162,6 @@ async def test_many_custom_polls_finish_under_two_response_budget(polling, monke
         assert result.error == ("Build failed" if status == "error" else None)
         assert max(polling.observations) <= 1
         assert len(polling.hub._retained_results) == len(owner.entries) == 1
-        gc.collect()
         assert all(ref() is None for ref in polling.payload_refs[:-1])
         assert polling.payload_refs[-1]() is not None
     finally:
@@ -186,7 +185,6 @@ async def test_cancelled_custom_poll_releases_results_before_parent_delivery(pol
         assert not polling.hub._retained_results
         assert not polling.hub._pending
         assert polling.service._active_polls == 0
-        gc.collect()
         assert all(ref() is None for ref in polling.payload_refs)
     finally:
         task.cancel()
@@ -251,7 +249,6 @@ async def test_custom_poll_timeout_delivers_only_last_successful_observation(pol
         assert not result.success and "Timeout" in result.message
         assert result.data["data"]["value"] == 2
         assert len(polling.hub._retained_results) == len(owner.entries) == 1
-        gc.collect()
         assert polling.payload_refs[0]() is None
         assert polling.payload_refs[1]() is not None
     finally:
