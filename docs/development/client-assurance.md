@@ -1,9 +1,13 @@
 # MCP client assurance
 
-`Server/tests/http/test_client_assurance_wire.py` runs the pinned official MCP
-Python client against the production CLI, FastMCP registration, request middleware,
-authentication, and transport lifecycles. It belongs to the existing isolated HTTP
-test group so legacy test-module stubs cannot replace the real SDK.
+The client assurance tests run the pinned official MCP Python client against the
+production CLI, FastMCP registration, request middleware, authentication, and
+transport lifecycles. `Server/tests/http/test_client_assurance_wire.py` keeps the
+shared-server routing and retention scenarios together. The independent profile
+matrix lives in `test_client_assurance_profiles.py`; authenticated HTTP and framed
+stdio ownership scenarios live in `test_client_assurance_identity.py`. All three
+belong to the existing isolated HTTP test group so legacy test-module stubs cannot
+replace the real SDK.
 
 The test-only CLI entry point adds 512 scalar tools through the production
 registry and a resource exposing retained-state counters. It does not replace
@@ -41,7 +45,8 @@ Use the existing Server environment, from `Server/`:
 $env:UNITY_MCP_RUN_HTTP_TESTS = '1'
 $env:DISABLE_TELEMETRY = '1'
 $env:PYTHONPATH = 'src'
-.venv/Scripts/python.exe -m pytest tests/http/test_client_assurance_wire.py -q -W error
+.venv/Scripts/python.exe -m pytest tests/http/test_client_assurance_wire.py `
+  tests/http/test_client_assurance_profiles.py tests/http/test_client_assurance_identity.py -q -W error
 ```
 
 The default routing run uses 64 iterations per target, with two targets and two
