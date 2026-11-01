@@ -83,10 +83,18 @@ class OperationLease:
     def __init__(self, scheduler: OperationScheduler, request: OperationAdmission) -> None:
         self._scheduler = scheduler
         self._loop = asyncio.get_running_loop()
-        self.request = request
+        self._request = request
         self._references = 1
         self._reference_lock = threading.Lock()
         self.closed = False
+
+    @property
+    def request(self) -> OperationAdmission:
+        return self._request
+
+    @request.setter
+    def request(self, request: OperationAdmission) -> None:
+        self._scheduler._replace_request(self, request)
 
     def acquire_worker(self) -> _WorkerPin:
         with self._reference_lock:
@@ -140,14 +148,17 @@ class OperationScheduler:
         max_participants: int = 1024,
         max_instances: int = 256,
         max_retained_bytes: int = 1024 * 1024 * 1024,
+        max_retained_bytes_per_principal: int = 512 * 1024 * 1024,
         max_per_instance: int = 256,
     ) -> None:
         self._states: dict[tuple[str, str], _Instance] = {}
         self._participants = 0
         self._retained_bytes = 0
+        self._principal_bytes: dict[str, int] = {}
         self._max_participants = max_participants
         self._max_instances = max_instances
         self._max_retained_bytes = max_retained_bytes
+        self._max_retained_bytes_per_principal = max_retained_bytes_per_principal
         self._max_per_instance = max_per_instance
 
     def snapshot(self) -> SchedulerSnapshot:
@@ -166,11 +177,43 @@ class OperationScheduler:
             and len(state.active) + len(state.waiting) >= self._max_per_instance
             or request.retained_bytes < 0
             or self._participants >= self._max_participants
-            or self._retained_bytes + request.retained_bytes > self._max_retained_bytes
             or request.scope.key not in self._states
             and len(self._states) >= self._max_instances
         ):
             raise OperationCapacityError()
+        self._check_retained_capacity(request.scope.principal, request.retained_bytes)
+
+    def _check_retained_capacity(self, principal: str, delta: int) -> None:
+        # OperationScope's local sentinel represents the single local authority.
+        # Other principals share the hosted budget across all their instances.
+        principal_limit = (
+            self._max_retained_bytes
+            if principal == "local"
+            else self._max_retained_bytes_per_principal
+        )
+        if (
+            self._retained_bytes + delta > self._max_retained_bytes
+            or self._principal_bytes.get(principal, 0) + delta > principal_limit
+        ):
+            raise OperationCapacityError()
+
+    def _charge(self, principal: str, delta: int) -> None:
+        self._retained_bytes += delta
+        remaining = self._principal_bytes.get(principal, 0) + delta
+        if remaining:
+            self._principal_bytes[principal] = remaining
+        else:
+            self._principal_bytes.pop(principal, None)
+
+    def _replace_request(self, owner: OperationLease, request: OperationAdmission) -> None:
+        if owner.closed or request.scope.key != owner.request.scope.key:
+            raise OperationScopeChanged()
+        if request.retained_bytes < 0:
+            raise OperationCapacityError()
+        delta = request.retained_bytes - owner.request.retained_bytes
+        self._check_retained_capacity(request.scope.principal, delta)
+        self._charge(request.scope.principal, delta)
+        owner._request = request
 
     def _grant(self, state: _Instance, ticket: _Ticket) -> None:
         request = ticket.request
@@ -214,7 +257,7 @@ class OperationScheduler:
 
     def _forget(self, request: OperationAdmission) -> None:
         self._participants -= 1
-        self._retained_bytes -= request.retained_bytes
+        self._charge(request.scope.principal, -request.retained_bytes)
 
     def _prune(self, key: tuple[str, str], state: _Instance) -> None:
         if not state.active and not state.waiting and self._states.get(key) is state:
@@ -238,7 +281,7 @@ class OperationScheduler:
         state = self._states.setdefault(key, _Instance())
         ticket = _Ticket(request, loop.create_future())
         self._participants += 1
-        self._retained_bytes += request.retained_bytes
+        self._charge(request.scope.principal, request.retained_bytes)
         if request.mode == "control":
             self._grant(state, ticket)
             self._prune(key, state)
