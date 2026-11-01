@@ -26,10 +26,7 @@ def find_shell(shell):
     return found
 
 
-@pytest.mark.parametrize("shell", ["bash", "powershell", "pwsh"])
-@pytest.mark.parametrize("scenario", ["stable", "preview", "override", "prepare_failure"])
-def test_local_docker_runner_resolves_default_images(tmp_path, shell, scenario):
-    executable = find_shell(shell)
+def scenario_program(tmp_path: Path, shell: str, scenario: str) -> str:
     version = "6000.7.0b2" if scenario in {"preview", "prepare_failure"} else "6000.3.25f1"
     tag = "base-3.2.2" if scenario == "override" else "base-3"
     image = PREVIEW if version.endswith("b2") else STABLE
@@ -66,9 +63,8 @@ docker() {{
 }}
 {function}
 run_docker '{version}' '{log.as_posix()}'
-exit $?
+printf '%s' "$?" > '{(tmp_path / "returncode").as_posix()}'
 """
-        command = [executable, "-c", program]
     else:
         text = (ROOT / "tools/check-unity-versions.ps1").read_text(encoding="utf-8")
         function = text[text.index("function Invoke-DockerUnity(") : text.index("$pass = 0;")]
@@ -90,10 +86,35 @@ function docker {{
 }}
 {function}
 $result = Invoke-DockerUnity {quote(version)} {quote(log)}
-exit $result
+[System.IO.File]::WriteAllText({quote(tmp_path / "returncode")}, [string]$result)
 """
-        script = tmp_path / "runner.ps1"
+    return program
+
+
+@pytest.fixture(scope="module")
+def shell(request, tmp_path_factory):
+    """Reuse shell startup, keeping every scenario's files and result independent."""
+    name = request.param
+    executable = find_shell(name)
+    root = tmp_path_factory.mktemp(f"docker-{name}")
+    cases = {}
+    programs = []
+    # Run the failure before successes so it cannot silently abort the remaining cases.
+    for scenario in ("prepare_failure", "stable", "preview", "override"):
+        directory = root / scenario
+        directory.mkdir()
+        cases[scenario] = directory
+        program = scenario_program(directory, name, scenario)
+        # PowerShell scope and native exit state must not leak between cases.
+        programs.append(program if name == "bash" else "& {\n" + program + "\n}")
+    program = "\n".join(programs)
+    if name == "bash":
+        script = root / "runner.sh"
         script.write_text(program, encoding="utf-8")
+        command = [executable, str(script)]
+    else:
+        script = root / "runner.ps1"
+        script.write_text(program + "\nexit 0\n", encoding="utf-8")
         command = [
             executable,
             "-NoProfile",
@@ -124,16 +145,29 @@ exit $result
     }
     # These controls must exist before PowerShell starts, including in stripped environments.
     env.update(POWERSHELL_TELEMETRY_OPTOUT="1", POWERSHELL_UPDATECHECK="Off")
-    result = subprocess.run(
-        command, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30
-    )
+    result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return cases, result
+
+
+@pytest.mark.parametrize("shell", ["bash", "powershell", "pwsh"], indirect=True, scope="module")
+@pytest.mark.parametrize("scenario", ["stable", "preview", "override", "prepare_failure"])
+def test_local_docker_runner_resolves_default_images(shell, scenario):
+    cases, result = shell
+    tmp_path = cases[scenario]
+    helper_trace = tmp_path / "helper.json"
+    docker_trace = tmp_path / "docker.txt"
+    returncode = int((tmp_path / "returncode").read_text())
+    version = "6000.7.0b2" if scenario in {"preview", "prepare_failure"} else "6000.3.25f1"
+    tag = "base-3.2.2" if scenario == "override" else "base-3"
+    image = PREVIEW if version.endswith("b2") else STABLE
     expected_image = f"unityci/editor:ubuntu-{version}-{tag}" if scenario == "override" else image
     calls = docker_trace.read_text().splitlines() if docker_trace.exists() else []
     if scenario == "prepare_failure":
-        assert result.returncode == 1, result.stdout + result.stderr
+        assert returncode == 1, result.stdout + result.stderr
         assert calls == []
     else:
-        assert result.returncode == 0, result.stdout + result.stderr
+        assert returncode == 0, result.stdout + result.stderr
         expected = [] if scenario == "preview" else [f"pull:{expected_image}"]
         assert calls == [*expected, f"run:{expected_image}"]
     if scenario == "override":
