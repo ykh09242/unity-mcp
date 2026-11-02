@@ -4233,6 +4233,16 @@ Print NAME's complete schema receipt as JSON, regardless of --format. Project-de
 | --protocol | choice: auto, legacy | optional | nargs=1 | "auto" | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp tool search`
+
+Search the offline local catalog by task purpose, without a Unity connection. Advertisement and project readiness remain unobserved in this offline scope.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| query | text | required | nargs=1 | — | — |  |
+| --limit | integer range: [1..20] | optional | nargs=1 | 5 | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp ui`
 
 UI operations - create and modify UI elements.

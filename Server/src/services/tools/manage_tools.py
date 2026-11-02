@@ -16,6 +16,7 @@ from typing import Annotated, Any, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
+from pydantic import Field, ValidationError
 from transport.protocol import is_sessionless
 
 from services.registry import (
@@ -37,7 +38,8 @@ logger = logging.getLogger("mcp-for-unity-server")
         "Actions: list_groups (show all groups and their status), "
         "activate/deactivate (select exactly one group or tool), "
         "sync (refresh availability from Unity Editor's toggle states), "
-        "reset (restore configured profile), describe (full schema for one tool). "
+        "reset (restore configured profile), describe (full schema for one tool), "
+        "search (bounded local task-purpose suggestions, without activation). "
         "Selection changes server tools/list; it does not confirm the client's callable inventory. "
         "Use sync after toggling tools in the Unity Editor GUI."
     ),
@@ -52,7 +54,7 @@ logger = logging.getLogger("mcp-for-unity-server")
 async def manage_tools(
     ctx: Context,
     action: Annotated[
-        Literal["list_groups", "activate", "deactivate", "sync", "reset", "describe"],
+        Literal["list_groups", "activate", "deactivate", "sync", "reset", "describe", "search"],
         "Action to perform.",
     ],
     group: Annotated[
@@ -64,15 +66,34 @@ async def manage_tools(
         str | None,
         "Single tool name for activate/deactivate/describe. Discover names with list_groups.",
     ] = None,
+    query: Annotated[
+        str | None, Field(max_length=512), "Task-purpose query for search (1..512 characters)."
+    ] = None,
+    limit: Annotated[int, Field(strict=True, ge=1, le=20), "Maximum search results (1..20)."] = 5,
 ) -> dict[str, Any]:
     from services.tool_discovery import REFRESH_GUIDANCE, UNSCOPED_GUIDANCE
 
     discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
     modern = is_sessionless(ctx)
+    if action == "search":
+        from services.registry.task_search import SearchRequest, search_catalog
+
+        if group is not None or tool is not None:
+            return {"error": "search accepts query and limit, without a group or tool selector."}
+        try:
+            request = SearchRequest(query=query, limit=limit)
+        except ValidationError:
+            return {
+                "error": "search requires a nonempty query of at most 512 characters and limit 1..20."
+            }
+        visible_names = {item.name for item in await _visible_tools(ctx)}
+        return search_catalog(request, get_registered_tools(), visible_names=visible_names)
     if action in ("activate", "deactivate", "reset") and modern:
         if discovery is None or await discovery.scope_key(ctx) is None:
             return {"error": UNSCOPED_GUIDANCE}
     if action == "describe":
+        from services.registry.task_search import action_maturity
+
         if group is not None or not tool:
             return {"error": "describe requires a tool name and no group."}
         definition = discovery.definitions.get(tool.strip()) if discovery is not None else None
@@ -80,6 +101,15 @@ async def manage_tools(
             return {"error": "Unknown built-in tool. Use list_groups to discover names."}
         return {
             "tool": definition.to_mcp_tool().model_dump(mode="json", exclude_none=True),
+            "maturity": next(
+                (
+                    item.get("maturity", "stable")
+                    for item in get_registered_tools()
+                    if item["name"] == tool.strip()
+                ),
+                "stable",
+            ),
+            "action_maturity": action_maturity(tool.strip()),
             "note": "Description only; selection and permissions are unchanged.",
         }
     if action == "list_groups":

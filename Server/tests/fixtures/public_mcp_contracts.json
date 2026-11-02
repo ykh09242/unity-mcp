@@ -20352,13 +20352,32 @@
                   "deactivate",
                   "sync",
                   "reset",
-                  "describe"
+                  "describe",
+                  "search"
                 ],
                 "type": "string"
               },
               "group": {
                 "anyOf": [
                   {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "limit": {
+                "default": 5,
+                "maximum": 20,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "query": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
                     "type": "string"
                   },
                   {
@@ -45558,13 +45577,32 @@
                   "deactivate",
                   "sync",
                   "reset",
-                  "describe"
+                  "describe",
+                  "search"
                 ],
                 "type": "string"
               },
               "group": {
                 "anyOf": [
                   {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "limit": {
+                "default": 5,
+                "maximum": 20,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "query": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
                     "type": "string"
                   },
                   {

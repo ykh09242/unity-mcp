@@ -115,6 +115,6 @@ def test_snapshot_observes_real_modern_and_legacy_tools_list_in_isolated_process
     assert set(result["protocols"]) == {"modern", "legacy"}
     for protocol in result["protocols"].values():
         probe = protocol["tools"]["manage_tools"]
-        assert "list_groups" in probe["inputSchema"]["properties"]["action"]["enum"]
+        assert "search" in probe["inputSchema"]["properties"]["action"]["enum"]
         assert "outputSchema" in probe
         assert probe["annotations"]["destructiveHint"] is False
