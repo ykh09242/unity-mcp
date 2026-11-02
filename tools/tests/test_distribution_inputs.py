@@ -1,5 +1,8 @@
 """Container inputs stay bounded without inspecting a developer's private files."""
 
+import argparse
+import ast
+from fnmatch import fnmatchcase
 import json
 from pathlib import Path
 import re
@@ -7,6 +10,9 @@ import shlex
 import tomllib
 
 import pytest
+import yaml
+
+from tools import ci_scope
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -142,3 +148,64 @@ def test_precise_container_copy_preserves_install_metadata_and_package_source_lo
     assert json.loads(
         next(line.removeprefix("ENTRYPOINT ") for line in lines if line.startswith("ENTRYPOINT "))
     ) == ["uv", "run", "mcp-for-unity"]
+
+
+@pytest.mark.parametrize("compose_name", ["docker-compose.yml", "docker-compose.remote.yml"])
+def test_compose_image_arguments_parse_as_intended_http_startup(compose_name):
+    service = yaml.safe_load((ROOT / compose_name).read_text())["services"]["unity-mcp-server"]
+    assert "entrypoint" not in service
+    dockerfile = ROOT / service["build"]["context"] / service["build"]["dockerfile"]
+    entrypoint = json.loads(
+        next(
+            line.removeprefix("ENTRYPOINT ")
+            for line in dockerfile.read_text().splitlines()
+            if line.startswith("ENTRYPOINT ")
+        )
+    )
+    effective_argv = entrypoint + service["command"]
+    metadata = tomllib.loads((ROOT / "Server/pyproject.toml").read_text())
+    target = metadata["project"]["scripts"][effective_argv[2]]
+    assert effective_argv[:2] == ["uv", "run"]
+    module, function = target.split(":")
+    source_path = ROOT / "Server/src" / f"{module.replace('.', '/')}.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    main = next(
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function
+    )
+    # Execute the real parser setup only: no imports, runtime setup, token generation or listener.
+    parse_index = next(
+        index
+        for index, node in enumerate(main.body)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and node.value.func.attr == "parse_args"
+    )
+    namespace = {"argparse": argparse}
+    exec(  # pylint: disable=exec-used
+        compile(
+            ast.Module(body=main.body[:parse_index], type_ignores=[]), str(source_path), "exec"
+        ),
+        namespace,
+    )
+    args = namespace["parser"].parse_args(effective_argv[3:])
+    assert (args.transport, args.http_host, args.http_port) == ("http", "0.0.0.0", 8080)
+    assert args.project_scoped_tools is (compose_name == "docker-compose.remote.yml")
+
+
+@pytest.mark.parametrize("compose_name", ["docker-compose.yml", "docker-compose.remote.yml"])
+@pytest.mark.parametrize(
+    "workflow_name,event,branch",
+    [
+        ("python-tests.yml", "pull_request", "main"),
+        ("python-tests.yml", "pull_request", "beta"),
+        ("fork-beta-tools.yml", "push", "beta"),
+    ],
+)
+def test_compose_changes_select_required_validation(compose_name, workflow_name, event, branch):
+    workflow = yaml.safe_load((ROOT / ".github/workflows" / workflow_name).read_text())
+    triggers = workflow.get("on", workflow.get(True))
+    assert branch in triggers[event]["branches"]
+    assert any(fnmatchcase(compose_name, pattern) for pattern in triggers[event]["paths"])
+    assert ci_scope.classify(f"M\0{compose_name}\0") == "full"
+    assert ci_scope.classify(f"M\0tools/ci_test_performance.py\0M\0{compose_name}\0") == "full"

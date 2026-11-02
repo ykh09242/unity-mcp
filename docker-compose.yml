@@ -10,4 +10,4 @@ services:
     restart: unless-stopped
     environment:
       - PYTHONPATH=/app/Server/src
-    command: ["uv", "run", "python", "src/main.py", "--transport", "http", "--http-host", "0.0.0.0", "--http-port", "8080"]
+    command: ["--transport", "http", "--http-host", "0.0.0.0", "--http-port", "8080"]
