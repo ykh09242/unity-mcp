@@ -23,6 +23,66 @@ from transport import unity_instance_middleware
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "grants,allowed",
+    [
+        (["read"], True),
+        (["read", "test", "edit", "run"], True),
+        (["edit", "test", "run"], False),
+        ([], False),
+        (None, True),
+    ],
+)
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"action": "search", "query": "prefab hierarchy"},
+        {"action": "describe", "tool": "manage_tools"},
+    ],
+)
+async def test_hosted_discovery_reads_require_read_without_changing_legacy_authority(
+    hosted_catalog, monkeypatch, grants, allowed, arguments
+):
+    app, _runtime = hosted_catalog
+    service = ApiKeyService.get_instance()
+
+    async def validate(_key):
+        return ValidationResult(
+            valid=True,
+            user_id="alice",
+            metadata=None if grants is None else {"unity_mcp_permissions": grants},
+        )
+
+    monkeypatch.setattr(service, "_validate_external", validate)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+            headers={"Accept": "application/json, text/event-stream"},
+        ) as http:
+            # Given real hosted authentication and registered discovery handlers,
+            # when the public MCP wire requests a local discovery read, then only
+            # explicit READ or the existing unscoped compatibility mode admits it.
+            response = await http.post(
+                "/mcp",
+                headers={**_headers("tools/call", name="manage_tools"), "x-api-key": "alice-key"},
+                json=_body("tools/call", {"name": "manage_tools", "arguments": arguments}),
+            )
+            message = _message(response)
+            if allowed:
+                result = message["result"]
+                assert not result.get("isError"), result
+                content = result["structuredContent"]
+                assert "error" not in content, content
+                if arguments["action"] == "describe":
+                    assert content["tool"]["name"] == "manage_tools"
+                else:
+                    assert content["query"] == arguments["query"]
+            else:
+                assert "error" in message or message.get("result", {}).get("isError") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "name,arguments",
     [
         ("manage_editor", {"action": "play"}),
