@@ -29,8 +29,6 @@ namespace MCPForUnityTests.EditMode.Tools
         private GameObject _target;
         private MeshRenderer _renderer;
         private readonly List<UnityEngine.Object> _transient = new List<UnityEngine.Object>();
-        private const string NativeInstanceLog =
-            "Instantiating material due to calling renderer.material during edit mode. This will leak materials into the scene. You most likely want to use renderer.sharedMaterial instead.";
 
         [OneTimeSetUp]
         public void OneTimeSetUp() => _sceneFixture.PrepareRunnerBootstrap();
@@ -117,6 +115,120 @@ namespace MCPForUnityTests.EditMode.Tools
 
         private void Fails(JObject request) => Assert.That(Call(request).Value<bool>("success"), Is.False);
 
+        [TestCase("set_material_color")]
+        [TestCase("set_material_shader_property")]
+        [TestCase("texture_instruction")]
+        [TestCase("set_renderer_color")]
+        public void PersistentMaterialEditSavesOnlyTargetAndSurvivesReimport(string action)
+        {
+            string path = AssetDatabase.GetAssetPath(_material);
+            AssetDatabase.SaveAssetIfDirty(_material);
+            byte[] targetBefore = File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(path));
+            Material unrelated = Persist(_root + "/Unrelated.mat");
+            AssetDatabase.SaveAssetIfDirty(unrelated);
+            string unrelatedFile = AssetPathUtility.GetFullAssetPath(AssetDatabase.GetAssetPath(unrelated));
+            byte[] unrelatedBefore = File.ReadAllBytes(unrelatedFile);
+            unrelated.SetColor("_Color", Color.magenta);
+            EditorUtility.SetDirty(unrelated);
+
+            JObject request;
+            Texture2D texture = null;
+            if (action == "set_renderer_color")
+                request = ColorRequest("shared", 1);
+            else if (action == "texture_instruction")
+            {
+                texture = new Texture2D(1, 1);
+                AssetDatabase.CreateAsset(texture, _root + "/Replacement.asset");
+                request = new JObject
+                {
+                    ["action"] = "set_material_shader_property",
+                    ["materialPath"] = path,
+                    ["property"] = "_MainTex",
+                    ["value"] = new JObject { ["find"] = AssetDatabase.GetAssetPath(texture) },
+                };
+            }
+            else
+                request = new JObject
+                {
+                    ["action"] = action,
+                    ["materialPath"] = path,
+                    ["property"] = "_Color",
+                    ["color"] = new JArray(0, 0, 0, 0),
+                    ["value"] = new JArray(0, 0, 0, 0),
+                };
+
+            JObject result = Call(request);
+
+            Assert.That(result.Value<bool>("success"), Is.True, result.ToString());
+            Assert.That(File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(path)), Is.Not.EqualTo(targetBefore), "The selected asset must be serialized.");
+            CollectionAssert.AreEqual(unrelatedBefore, File.ReadAllBytes(unrelatedFile));
+            Assert.That(EditorUtility.IsDirty(unrelated), Is.True, "Unrelated unsaved edits must remain dirty.");
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
+            _material = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (texture != null)
+                Assert.That(_material.GetTexture("_MainTex"), Is.EqualTo(texture));
+            else
+                Assert.That(_material.GetColor("_Color"), Is.EqualTo(Color.clear));
+            CollectionAssert.AreEqual(unrelatedBefore, File.ReadAllBytes(unrelatedFile));
+            Assert.That(unrelated.GetColor("_Color"), Is.EqualTo(Color.magenta));
+            Assert.That(EditorUtility.IsDirty(unrelated), Is.True);
+        }
+
+        [TestCase("shared")]
+        [TestCase("create_unique")]
+        public void PrefabMaterialAssignmentSupportsUndoAndSurvivesSceneReload(string mode)
+        {
+            string prefabPath = _root + "/Fixture.prefab";
+            _target.transform.localPosition = new Vector3(2, 3, 4);
+            GameObject prefab = PrefabUtility.SaveAsPrefabAsset(_target, prefabPath);
+            Assert.That(prefab, Is.Not.Null);
+            byte[] prefabBefore = File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(prefabPath));
+            UnityEngine.Object.DestroyImmediate(_target);
+            _target = (GameObject)PrefabUtility.InstantiatePrefab(prefab, _scene);
+            _renderer = _target.GetComponent<MeshRenderer>();
+            Material replacement = Persist(_root + "/Replacement.mat");
+            Undo.IncrementCurrentGroup();
+
+            JObject request =
+                mode == "create_unique"
+                    ? ColorRequest(mode, 1)
+                    : new JObject
+                    {
+                        ["action"] = "assign_material_to_renderer",
+                        ["target"] = _target.GetInstanceIDCompat().ToString(),
+                        ["searchMethod"] = "by_id",
+                        ["materialPath"] = AssetDatabase.GetAssetPath(replacement),
+                        ["slot"] = 1,
+                        ["mode"] = mode,
+                    };
+            JObject result = Call(request);
+            Assert.That(result.Value<bool>("success"), Is.True, result.ToString());
+            Material assigned = _renderer.sharedMaterials[1];
+            string assignedPath = AssetDatabase.GetAssetPath(assigned);
+            Assert.That(assigned, Is.Not.EqualTo(_material));
+            Assert.That(
+                PrefabUtility.GetPropertyModifications(_target)?.Any(modification => modification.propertyPath == "m_Materials.Array.data[1]"),
+                Is.True,
+                "The renderer slot assignment must be recorded as a prefab instance override."
+            );
+            Undo.FlushUndoRecordObjects();
+            Undo.IncrementCurrentGroup();
+            Undo.PerformUndo();
+            Assert.That(_renderer.sharedMaterials[1], Is.EqualTo(_material));
+            Undo.PerformRedo();
+            Assert.That(_renderer.sharedMaterials[1], Is.EqualTo(assigned));
+            Assert.That(EditorSceneManager.SaveScene(_scene), Is.True);
+            _scene = _sceneFixture.ReopenSavedScene();
+            _target = _scene.GetRootGameObjects().Single(go => go.name == "Fixture");
+            _renderer = _target.GetComponent<MeshRenderer>();
+
+            Assert.That(AssetDatabase.GetAssetPath(_renderer.sharedMaterials[1]), Is.EqualTo(assignedPath));
+            Assert.That(_renderer.sharedMaterials[0], Is.EqualTo(_material));
+            Assert.That(_target.transform.localPosition, Is.EqualTo(new Vector3(2, 3, 4)));
+            Assert.That(prefab.GetComponent<MeshRenderer>().sharedMaterials, Is.EqualTo(new[] { _material, _material }));
+            CollectionAssert.AreEqual(prefabBefore, File.ReadAllBytes(AssetPathUtility.GetFullAssetPath(prefabPath)));
+        }
+
         private sealed class AssetIdentity
         {
             private readonly UnityEngine.Object _asset;
@@ -178,11 +290,16 @@ namespace MCPForUnityTests.EditMode.Tools
             var vendorStacks = new List<string>();
             void CaptureFixtureLog(string condition, string stack, LogType type)
             {
+                bool builtIn =
+                    stack.Contains("UnityEditor.Rendering.BuiltIn.MaterialPostprocessor.OnPostprocessAllAssets")
+                    && stack.Contains("MaterialPostprocessor.cs:77");
+                bool universal =
+                    stack.Contains("UnityEditor.Rendering.Universal.MaterialPostprocessor.OnPostprocessAllAssets")
+                    && stack.Contains("MaterialPostprocessor.cs:137");
                 if (
                     type == LogType.Exception
                     && condition == "NullReferenceException: Object reference not set to an instance of an object"
-                    && stack.Contains("UnityEditor.Rendering.BuiltIn.MaterialPostprocessor.OnPostprocessAllAssets")
-                    && stack.Contains("MaterialPostprocessor.cs:77")
+                    && (builtIn || universal)
                 )
                 {
                     vendorStacks.Add(stack);
@@ -190,8 +307,8 @@ namespace MCPForUnityTests.EditMode.Tools
                 }
             }
 
-            // The pinned ShaderGraph postprocessor assumes every .mat main asset is a
-            // Material. Capture only its known setup exception for this non-Material fixture.
+            // ShaderGraph and URP 17.0.4 dereference a Material for every .mat main asset.
+            // Recognize only their observed setup stacks while creating this non-Material fixture.
             Application.logMessageReceived += CaptureFixtureLog;
             try
             {
@@ -201,12 +318,14 @@ namespace MCPForUnityTests.EditMode.Tools
             {
                 Application.logMessageReceived -= CaptureFixtureLog;
             }
-            Assert.That(vendorStacks.Count, Is.LessThanOrEqualTo(1));
-            foreach (string stack in vendorStacks)
-            {
-                StringAssert.Contains("UnityEditor.Rendering.BuiltIn.MaterialPostprocessor.OnPostprocessAllAssets", stack);
-                StringAssert.Contains("MaterialPostprocessor.cs:77", stack);
-            }
+            Assert.That(
+                vendorStacks.Count(stack => stack.Contains("UnityEditor.Rendering.BuiltIn.MaterialPostprocessor.OnPostprocessAllAssets")),
+                Is.LessThanOrEqualTo(1)
+            );
+            Assert.That(
+                vendorStacks.Count(stack => stack.Contains("UnityEditor.Rendering.Universal.MaterialPostprocessor.OnPostprocessAllAssets")),
+                Is.LessThanOrEqualTo(1)
+            );
             Assert.That(AssetDatabase.Contains(texture), Is.True);
             new AssetIdentity(texture).AssertUnchanged(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path));
             LogAssert.NoUnexpectedReceived();
@@ -317,36 +436,23 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
-        public void InstanceColorRetainsNativeMaterializationBehaviorForOtherSlots()
+        public void InstanceColorPreservesUnrelatedNullSlotAndReusesSelectedClone()
         {
-            var control = new GameObject("NativeMaterializationControl");
-            control.transform.SetParent(_target.transform);
-            var controlRenderer = control.AddComponent<MeshRenderer>();
-            controlRenderer.sharedMaterials = new Material[] { null, _material };
-            // The pinned Editor emits the native warning once for each of these two slots.
-            LogAssert.Expect(LogType.Error, NativeInstanceLog);
-            LogAssert.Expect(LogType.Error, NativeInstanceLog);
-            var nativeMaterials = controlRenderer.materials;
-            LogAssert.NoUnexpectedReceived();
-            foreach (var material in nativeMaterials)
-                if (material != null && !EditorUtility.IsPersistent(material))
-                    _transient.Add(material);
             string original = EditorJsonUtility.ToJson(_material);
             _renderer.sharedMaterials = new Material[] { null, _material };
 
-            LogAssert.Expect(LogType.Error, NativeInstanceLog);
-            LogAssert.Expect(LogType.Error, NativeInstanceLog);
             Succeeds(ColorRequest("instance", 1));
             LogAssert.NoUnexpectedReceived();
 
             var actual = _renderer.sharedMaterials;
-            Assert.That(actual.Length, Is.EqualTo(nativeMaterials.Length));
-            Assert.That(actual[0] == null, Is.EqualTo(nativeMaterials[0] == null));
-            if (actual[0] != null)
-                Assert.That(EditorJsonUtility.ToJson(actual[0]), Is.EqualTo(EditorJsonUtility.ToJson(nativeMaterials[0])));
+            Assert.That(actual.Length, Is.EqualTo(2));
+            Assert.That(actual[0], Is.Null);
             Assert.That(EditorUtility.IsPersistent(actual[1]), Is.False);
             Assert.That(actual[1] != _material, Is.True);
             Assert.That(actual[1].GetColor("_Color"), Is.EqualTo(new Color(0, 0, 0, 0)));
+            Succeeds(ColorRequest("instance", 1));
+            Assert.That(_renderer.sharedMaterials[0], Is.Null);
+            Assert.That(_renderer.sharedMaterials[1], Is.EqualTo(actual[1]));
             Assert.That(EditorJsonUtility.ToJson(_material), Is.EqualTo(original));
         }
 
