@@ -790,7 +790,7 @@ namespace MCPForUnity.Editor.Tools
                         EnsureGameView();
                     // A Task<object>, not a response: the capture waits for the end of the frame,
                     // and CommandRegistry awaits a Task<object> that a synchronous handler returns.
-                    return CaptureCompositedScreenshotAsync(cmd, fileName, resolvedSuperSize, maxResolution);
+                    return CaptureCompositedScreenshotAsync(cmd, fileName, resolvedSuperSize, maxResolution, cancellationToken);
                 }
 
                 if (includeImage)
@@ -939,14 +939,22 @@ namespace MCPForUnity.Editor.Tools
             return data;
         }
 
-        private static async Task<object> CaptureCompositedScreenshotAsync(SceneCommand cmd, string fileName, int resolvedSuperSize, int maxResolution)
+        private static async Task<object> CaptureCompositedScreenshotAsync(
+            SceneCommand cmd,
+            string fileName,
+            int resolvedSuperSize,
+            int maxResolution,
+            CancellationToken cancellationToken
+        )
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string folderOverride = ScreenshotPreferences.Resolve(cmd.outputFolder);
             ScreenshotCaptureResult result;
             try
             {
                 result = await ScreenshotUtility
                     .CaptureCompositedAsync(
+                        cancellationToken,
                         fileName,
                         resolvedSuperSize,
                         ensureUniqueFileName: true,
@@ -965,6 +973,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse(ex.Message);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             if (ScreenshotUtility.IsUnderAssets(result.ProjectRelativePath))
                 AssetDatabase.ImportAsset(result.ProjectRelativePath, ImportAssetOptions.ForceSynchronousImport);
 

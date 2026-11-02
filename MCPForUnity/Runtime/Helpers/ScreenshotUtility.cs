@@ -255,8 +255,30 @@ namespace MCPForUnity.Runtime.Helpers
             bool includeImage = false,
             int maxResolution = 0,
             string folderOverride = null
+        ) =>
+            CaptureFromCameraToProjectFolder(
+                camera,
+                CancellationToken.None,
+                fileName,
+                superSize,
+                ensureUniqueFileName,
+                includeImage,
+                maxResolution,
+                folderOverride
+            );
+
+        public static ScreenshotCaptureResult CaptureFromCameraToProjectFolder(
+            Camera camera,
+            CancellationToken cancellationToken,
+            string fileName = null,
+            int superSize = 1,
+            bool ensureUniqueFileName = true,
+            bool includeImage = false,
+            int maxResolution = 0,
+            string folderOverride = null
         )
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (camera == null)
             {
                 throw new ArgumentNullException(nameof(camera));
@@ -280,6 +302,7 @@ namespace MCPForUnity.Runtime.Helpers
             {
                 camera.targetTexture = rt;
                 camera.Render();
+                cancellationToken.ThrowIfCancellationRequested();
 
                 RenderTexture.active = rt;
                 tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
@@ -287,6 +310,7 @@ namespace MCPForUnity.Runtime.Helpers
                 tex.Apply();
 
                 byte[] png = tex.EncodeToPNG();
+                cancellationToken.ThrowIfCancellationRequested();
                 WriteCaptureBytes(result.FullPath, png, ensureUniqueFileName);
 
                 if (includeImage)
@@ -332,7 +356,17 @@ namespace MCPForUnity.Runtime.Helpers
         /// When no end of frame can arrive, this returns a camera render instead and sets
         /// <see cref="ScreenshotCaptureResult.FallbackReason"/>.
         /// </summary>
+        public static Task<ScreenshotCaptureResult> CaptureCompositedAsync(
+            string fileName = null,
+            int superSize = 1,
+            bool ensureUniqueFileName = true,
+            bool includeImage = false,
+            int maxResolution = 0,
+            string folderOverride = null
+        ) => CaptureCompositedAsync(CancellationToken.None, fileName, superSize, ensureUniqueFileName, includeImage, maxResolution, folderOverride);
+
         public static async Task<ScreenshotCaptureResult> CaptureCompositedAsync(
+            CancellationToken cancellationToken,
             string fileName = null,
             int superSize = 1,
             bool ensureUniqueFileName = true,
@@ -341,44 +375,60 @@ namespace MCPForUnity.Runtime.Helpers
             string folderOverride = null
         )
         {
+            cancellationToken.ThrowIfCancellationRequested();
             ValidateCaptureDimensions(Mathf.Max(1, Screen.width), Mathf.Max(1, Screen.height), superSize, out _, out _);
             ValidateMaxResolution(maxResolution);
 
-            if (!OptionalUnityModules.ScreenCapture)
-            {
-                return CaptureWithCameraInstead(
-                    fileName,
-                    superSize,
-                    ensureUniqueFileName,
-                    includeImage,
-                    maxResolution,
-                    folderOverride,
-                    OptionalUnityModules.ScreenCaptureUnavailableReason
-                );
-            }
-
-            // Batch mode renders no frames, so WaitForEndOfFrame never resumes there and every
-            // capture would sit out the timeout before falling back.
-            if (Application.isBatchMode)
-            {
-                return CaptureWithCameraInstead(
-                    fileName,
-                    superSize,
-                    ensureUniqueFileName,
-                    includeImage,
-                    maxResolution,
-                    folderOverride,
-                    "Batch mode renders no frames"
-                );
-            }
-
-            if (!await CompositedCaptureGate.WaitAsync(TimeSpan.FromSeconds(ScreenshotCapturer.DefaultTimeoutSeconds * 4)).ConfigureAwait(true))
+            if (
+                !await CompositedCaptureGate
+                    .WaitAsync(TimeSpan.FromSeconds(ScreenshotCapturer.DefaultTimeoutSeconds * 4), cancellationToken)
+                    .ConfigureAwait(true)
+            )
             {
                 throw new TimeoutException("Another composited screenshot capture is still in progress. Retry shortly.");
             }
             try
             {
-                return await CaptureCompositedAsyncUngated(fileName, superSize, ensureUniqueFileName, includeImage, maxResolution, folderOverride)
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!OptionalUnityModules.ScreenCapture)
+                {
+                    return CaptureWithCameraInstead(
+                        fileName,
+                        superSize,
+                        ensureUniqueFileName,
+                        includeImage,
+                        maxResolution,
+                        folderOverride,
+                        OptionalUnityModules.ScreenCaptureUnavailableReason,
+                        cancellationToken
+                    );
+                }
+
+                // Batch mode renders no frames, so WaitForEndOfFrame never resumes there and every
+                // capture would sit out the timeout before falling back.
+                if (Application.isBatchMode)
+                {
+                    return CaptureWithCameraInstead(
+                        fileName,
+                        superSize,
+                        ensureUniqueFileName,
+                        includeImage,
+                        maxResolution,
+                        folderOverride,
+                        "Batch mode renders no frames",
+                        cancellationToken
+                    );
+                }
+
+                return await CaptureCompositedAsyncUngated(
+                        fileName,
+                        superSize,
+                        ensureUniqueFileName,
+                        includeImage,
+                        maxResolution,
+                        folderOverride,
+                        cancellationToken
+                    )
                     .ConfigureAwait(true);
             }
             finally
@@ -387,28 +437,31 @@ namespace MCPForUnity.Runtime.Helpers
             }
         }
 
-        private static Task<ScreenshotCaptureResult> CaptureCompositedAsyncUngated(
+        private static async Task<ScreenshotCaptureResult> CaptureCompositedAsyncUngated(
             string fileName,
             int superSize,
             bool ensureUniqueFileName,
             bool includeImage,
             int maxResolution,
-            string folderOverride
+            string folderOverride,
+            CancellationToken cancellationToken
         )
         {
+            cancellationToken.ThrowIfCancellationRequested();
             // Fail fast on a bad folder, but pick the file name only when the image is written:
             // a camera capture that runs during the wait could otherwise take the same unique
             // name, and this write would then replace that file.
             ResolveFolderAbsolute(folderOverride);
             var tcs = new TaskCompletionSource<ScreenshotCaptureResult>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            ScreenshotCapturer.Begin(
+            var capturer = ScreenshotCapturer.Begin(
                 Mathf.Max(1, superSize),
                 (tex, timedOut) =>
                 {
                     Texture2D downscaled = null;
                     try
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         // Not an error: the caller still gets an image, and the result says it is a
                         // camera render rather than the composited Game view.
                         if (timedOut)
@@ -422,7 +475,8 @@ namespace MCPForUnity.Runtime.Helpers
                                     maxResolution,
                                     folderOverride,
                                     $"No frame was rendered within {ScreenshotCapturer.DefaultTimeoutSeconds:0.#} s "
-                                        + "(for example, the game is paused or the Editor is not rendering while unfocused)"
+                                        + "(for example, the game is paused or the Editor is not rendering while unfocused)",
+                                    cancellationToken
                                 )
                             );
                             return;
@@ -438,14 +492,21 @@ namespace MCPForUnity.Runtime.Helpers
                                     includeImage,
                                     maxResolution,
                                     folderOverride,
-                                    "ScreenCapture returned no image"
+                                    "ScreenCapture returned no image",
+                                    cancellationToken
                                 )
                             );
                             return;
                         }
 
                         var prepared = PrepareCaptureResult(fileName, superSize, ensureUniqueFileName, folderOverride: folderOverride, isAsync: false);
-                        tcs.TrySetResult(EncodeAndSaveComposited(tex, prepared, includeImage, maxResolution, ensureUniqueFileName, ref downscaled));
+                        tcs.TrySetResult(
+                            EncodeAndSaveComposited(tex, prepared, includeImage, maxResolution, ensureUniqueFileName, ref downscaled, cancellationToken)
+                        );
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        tcs.TrySetCanceled(cancellationToken);
                     }
                     catch (Exception ex)
                     {
@@ -456,10 +517,20 @@ namespace MCPForUnity.Runtime.Helpers
                         DestroyTexture(tex);
                         DestroyTexture(downscaled);
                     }
-                }
+                },
+                cancellationToken: cancellationToken
             );
 
-            return tcs.Task;
+            try
+            {
+                return await tcs.Task.ConfigureAwait(true);
+            }
+            finally
+            {
+                // Image callback completion precedes capturer cleanup. Keep admission owned until
+                // its coroutine is stopped and its hidden GameObject has been destroyed as well.
+                await capturer.Settlement.ConfigureAwait(true);
+            }
         }
 
         /// <summary>Renders a scene camera in place of a composited capture; <paramref name="cause"/> says why.</summary>
@@ -470,15 +541,18 @@ namespace MCPForUnity.Runtime.Helpers
             bool includeImage,
             int maxResolution,
             string folderOverride,
-            string cause
+            string cause,
+            CancellationToken cancellationToken
         )
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var cam = FindAvailableCamera();
             if (cam == null)
                 throw new InvalidOperationException(cause + ", and there is no camera to render instead.");
 
             var r = CaptureFromCameraToProjectFolder(
                 cam,
+                cancellationToken,
                 fileName,
                 superSize,
                 ensureUniqueFileName,
@@ -506,13 +580,16 @@ namespace MCPForUnity.Runtime.Helpers
             bool includeImage,
             int maxResolution,
             bool ensureUniqueFileName,
-            ref Texture2D downscaled
+            ref Texture2D downscaled,
+            CancellationToken cancellationToken = default
         )
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int width = tex.width;
             int height = tex.height;
             ValidateFrameDimensions(width, height);
             byte[] png = tex.EncodeToPNG();
+            cancellationToken.ThrowIfCancellationRequested();
             WriteCaptureBytes(prepared.FullPath, png, ensureUniqueFileName);
 
             if (!includeImage)
@@ -1120,16 +1197,41 @@ namespace MCPForUnity.Runtime.Helpers
         private double _startedAt;
         private bool _finished;
         private bool _destroying;
+        private CancellationToken _cancellationToken;
+        private readonly TaskCompletionSource<bool> _settlement = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal Task Settlement => _settlement.Task;
 
         /// <summary>Spawns a hidden GameObject, attaches a capturer, returns immediately.</summary>
         public static ScreenshotCapturer Begin(int superSize, Action<Texture2D> onComplete, float timeoutSeconds = DefaultTimeoutSeconds)
         {
-            return Begin(superSize, onComplete == null ? (Action<Texture2D, bool>)null : (tex, _) => onComplete(tex), timeoutSeconds);
+            return Begin(superSize, onComplete, CancellationToken.None, timeoutSeconds);
+        }
+
+        public static ScreenshotCapturer Begin(
+            int superSize,
+            Action<Texture2D> onComplete,
+            CancellationToken cancellationToken,
+            float timeoutSeconds = DefaultTimeoutSeconds
+        )
+        {
+            return Begin(superSize, onComplete == null ? (Action<Texture2D, bool>)null : (tex, _) => onComplete(tex), cancellationToken, timeoutSeconds);
         }
 
         /// <summary>Spawns a hidden GameObject, attaches a capturer, returns immediately.</summary>
         public static ScreenshotCapturer Begin(int superSize, Action<Texture2D, bool> onComplete, float timeoutSeconds = DefaultTimeoutSeconds)
         {
+            return Begin(superSize, onComplete, CancellationToken.None, timeoutSeconds);
+        }
+
+        public static ScreenshotCapturer Begin(
+            int superSize,
+            Action<Texture2D, bool> onComplete,
+            CancellationToken cancellationToken,
+            float timeoutSeconds = DefaultTimeoutSeconds
+        )
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!OptionalUnityModules.ScreenCapture)
                 throw new NotSupportedException(OptionalUnityModules.ScreenCaptureUnavailableReason);
             if (float.IsNaN(timeoutSeconds) || float.IsInfinity(timeoutSeconds) || timeoutSeconds <= 0 || timeoutSeconds > 86400)
@@ -1140,9 +1242,18 @@ namespace MCPForUnity.Runtime.Helpers
             c._superSize = superSize;
             c._onComplete = onComplete;
             c._timeoutSeconds = Mathf.Max(0.05f, timeoutSeconds);
+            c._cancellationToken = cancellationToken;
             c._startedAt = Time.realtimeSinceStartupAsDouble;
             c.ArmTimeout();
             return c;
+        }
+
+        // Cancellation callbacks may run on arbitrary threads. Observe the signal only from
+        // Unity's main-thread loops, including editor updates when no frame is being rendered.
+        private void Update()
+        {
+            if (!_finished && _cancellationToken.IsCancellationRequested)
+                Complete(null, timedOut: false);
         }
 
         private void ArmTimeout()
@@ -1174,6 +1285,11 @@ namespace MCPForUnity.Runtime.Helpers
         {
             if (_finished)
                 return;
+            if (_cancellationToken.IsCancellationRequested)
+            {
+                Complete(null, timedOut: false);
+                return;
+            }
             if (Time.realtimeSinceStartupAsDouble - _startedAt < _timeoutSeconds)
                 return;
             Complete(null, timedOut: true);
@@ -1192,6 +1308,11 @@ namespace MCPForUnity.Runtime.Helpers
             yield return new WaitForEndOfFrame();
             if (_finished)
                 yield break;
+            if (_cancellationToken.IsCancellationRequested)
+            {
+                Complete(null, timedOut: false);
+                yield break;
+            }
 
             Texture2D tex = null;
             try
@@ -1242,16 +1363,25 @@ namespace MCPForUnity.Runtime.Helpers
             }
             finally
             {
+                _cancellationToken = default;
                 // `this == null` once something else destroyed the capturer: outside play mode
                 // Unity sends it no OnDestroy, so _destroying stays false, and touching
                 // gameObject then throws MissingReferenceException.
-                if (!_destroying && this != null)
+                try
                 {
+                    if (!_destroying && this != null)
+                    {
+                        StopAllCoroutines();
 #if UNITY_EDITOR
-                    DestroyImmediate(gameObject);
+                        DestroyImmediate(gameObject);
 #else
-                    Destroy(gameObject);
+                        Destroy(gameObject);
 #endif
+                    }
+                }
+                finally
+                {
+                    _settlement.TrySetResult(true);
                 }
             }
         }

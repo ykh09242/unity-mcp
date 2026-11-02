@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Runtime.Helpers;
 using NUnit.Framework;
 using UnityEngine;
@@ -64,8 +66,60 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.IsTrue(texture == null, "no caller accepted ownership of the captured texture");
         }
 
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        public void CancellationAndCompletionRaceConsumesCallbackExactlyOnce(bool completeFirst, bool destroyFirst)
+        {
+            using var cancel = new CancellationTokenSource();
+            int callbacks = 0;
+            int callbackThread = 0;
+            int mainThread = Thread.CurrentThread.ManagedThreadId;
+            var owner = ScreenshotCapturer.Begin(
+                1,
+                (Texture2D texture, bool timeout) =>
+                {
+                    callbacks++;
+                    callbackThread = Thread.CurrentThread.ManagedThreadId;
+                },
+                cancel.Token,
+                60
+            );
+            owned.Add(owner);
+            if (completeFirst)
+                Assert.IsFalse(Finish(owner, null, false));
+            Assert.IsTrue(Task.Run(() => cancel.Cancel()).Wait(2000));
+            if (!completeFirst)
+            {
+                Assert.AreEqual(0, callbacks, "The cancellation thread must not invoke a Unity-owned callback.");
+                if (destroyFirst)
+                    UnityEngine.Object.DestroyImmediate(owner.gameObject);
+                typeof(ScreenshotCapturer).GetMethod("TickTimeout", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(owner, null);
+            }
+            Assert.AreEqual(1, callbacks);
+            Assert.AreEqual(mainThread, callbackThread);
+            Assert.IsTrue(owner == null);
+            Assert.IsFalse(Finish(owner, null, true), "A late timeout/destruction callback must be harmless.");
+            Assert.AreEqual(1, callbacks);
+        }
+
+        [Test]
+        public void CancellationReleasesConsumedRequestFromRetainedWrapper()
+        {
+            using var cancel = new CancellationTokenSource();
+            var pair = BeginCaptured(false, cancel.Token);
+            owned.Add(pair.owner);
+            Collect();
+            Assert.IsTrue(pair.request.IsAlive);
+            cancel.Cancel();
+            typeof(ScreenshotCapturer).GetMethod("TickTimeout", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(pair.owner, null);
+            Collect();
+            Assert.IsFalse(pair.request.IsAlive, "Canceled wrapper must release its consumed callback capture.");
+            GC.KeepAlive(pair.owner);
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static (ScreenshotCapturer owner, WeakReference request) BeginCaptured(bool throws)
+        private static (ScreenshotCapturer owner, WeakReference request) BeginCaptured(bool throws, CancellationToken cancellationToken = default)
         {
             byte[] request = new byte[4 * 1024 * 1024];
             var owner = ScreenshotCapturer.Begin(
@@ -76,6 +130,7 @@ namespace MCPForUnityTests.Editor.Helpers
                     if (throws)
                         throw new InvalidOperationException("Synthetic callback failure.");
                 },
+                cancellationToken,
                 60
             );
             return (owner, new WeakReference(request));
