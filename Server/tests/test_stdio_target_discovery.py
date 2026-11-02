@@ -233,10 +233,14 @@ def test_duplicate_target_statuses_keep_newest_viable_port(target_environment, t
 
 def test_exact_target_real_pong_does_not_override_newer_port_identity(monkeypatch, tmp_path):
     monkeypatch.setenv("UNITY_MCP_STATUS_DIR", str(tmp_path))
+    # This test checks which identity owns a responding port. Allow the real peer
+    # thread to be scheduled on a busy runner; the probe deadline has its own test.
+    timeout = watchdog_timeout(5)
+    monkeypatch.setattr(PortDiscovery, "CONNECT_TIMEOUT", timeout)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen(2)
-        listener.settimeout(2)
+        listener.settimeout(timeout)
         port = listener.getsockname()[1]
         main_path = tmp_path / "unity-mcp-status-deadbeef.json"
         main_path.write_text(
@@ -249,7 +253,7 @@ def test_exact_target_real_pong_does_not_override_newer_port_identity(monkeypatc
             for _ in range(2):
                 peer, _ = listener.accept()
                 with peer:
-                    peer.settimeout(2)
+                    peer.settimeout(timeout)
                     peer.sendall(b"MCP/0.1 FRAMING=1\n")
                     request = bytearray()
                     while len(request) < 12:
