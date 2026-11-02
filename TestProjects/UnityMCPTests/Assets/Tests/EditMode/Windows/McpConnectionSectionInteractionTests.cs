@@ -32,8 +32,6 @@ namespace MCPForUnityTests.Editor.Windows
         private bool previousHttp;
         private bool hadHttp;
         private bool wasPinned;
-        private bool hadResume;
-        private bool previousResume;
         private int previousGeneration;
         private FakeBridge bridge;
         private FakeServer server;
@@ -52,12 +50,17 @@ namespace MCPForUnityTests.Editor.Windows
             wasPinned = SessionState.GetBool("MCPForUnity.ForceStdioForSession", false);
             hadPort = EditorPrefs.HasKey(EditorPrefKeys.UnitySocketPort);
             previousPort = EditorPrefs.GetInt(EditorPrefKeys.UnitySocketPort);
-            hadResume = EditorPrefs.HasKey(EditorPrefKeys.ResumeStdioAfterReload);
-            previousResume = EditorPrefs.GetBool(EditorPrefKeys.ResumeStdioAfterReload);
             previousGeneration = (int)typeof(McpConnectionSection).GetField("autoStartGeneration", StaticFlags).GetValue(null);
             typeof(McpConnectionSection).GetField("autoStartGeneration", StaticFlags).SetValue(null, 0);
             foreach (
-                string key in new[] { "MCPForUnity.ResumeHttpAfterReload", "HttpAutoStartHandler.ConnectPending", "MCPForUnity.ResumeHttpAfterReload.Migrated" }
+                string key in new[]
+                {
+                    "MCPForUnity.ResumeHttpAfterReload",
+                    "HttpAutoStartHandler.ConnectPending",
+                    "MCPForUnity.ResumeHttpAfterReload.Migrated",
+                    StdioBridgeReloadHandler.ResumeSessionKey,
+                    StdioBridgeReloadHandler.ResumeSessionKey + ".Migrated",
+                }
             )
             {
                 bool value = SessionState.GetBool(key, false);
@@ -75,7 +78,7 @@ namespace MCPForUnityTests.Editor.Windows
             EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "https://server-a.example");
             EditorPrefs.SetString(EditorPrefKeys.ApiKey, "memory-key");
             EditorPrefs.SetInt(EditorPrefKeys.UnitySocketPort, 1234);
-            EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
+            SessionState.EraseBool(StdioBridgeReloadHandler.ResumeSessionKey);
         }
 
         [TearDown]
@@ -95,10 +98,6 @@ namespace MCPForUnityTests.Editor.Windows
                 EditorPrefs.SetInt(EditorPrefKeys.UnitySocketPort, previousPort);
             else
                 EditorPrefs.DeleteKey(EditorPrefKeys.UnitySocketPort);
-            if (hadResume)
-                EditorPrefs.SetBool(EditorPrefKeys.ResumeStdioAfterReload, previousResume);
-            else
-                EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
             if (wasPinned)
                 EditorConfigurationCache.Instance.PinStdioForSession();
             EditorConfigurationCache.Instance.Refresh();

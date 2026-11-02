@@ -1,7 +1,6 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Services.Transport.Transports;
@@ -16,6 +15,9 @@ namespace MCPForUnity.Editor.Services
     [InitializeOnLoad]
     internal static class StdioBridgeReloadHandler
     {
+        // Reload intent belongs to one Editor process, and must not survive its exit.
+        internal const string ResumeSessionKey = "MCPForUnity.ResumeStdioAfterReload";
+        private const string MigratedSessionKey = ResumeSessionKey + ".Migrated";
         private static readonly TimeSpan[] ResumeRetrySchedule =
         {
             TimeSpan.Zero,
@@ -27,6 +29,10 @@ namespace MCPForUnity.Editor.Services
         };
 
         private static CancellationTokenSource _retryCts;
+        private static int _resumeGeneration;
+        private static EditorApplication.CallbackFunction _resumeCallback;
+
+        internal static bool IsResumePending => SessionState.GetBool(ResumeSessionKey, false);
 
         static StdioBridgeReloadHandler()
         {
@@ -35,16 +41,40 @@ namespace MCPForUnity.Editor.Services
                 return;
             }
 
+            MigrateLegacyResumeIntent();
             AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
             AssemblyReloadEvents.afterAssemblyReload += OnAfterAssemblyReload;
-            EditorApplication.quitting += CancelRetries;
+            EditorApplication.quitting += CancelPendingResume;
+        }
+
+        internal static void MigrateLegacyResumeIntent()
+        {
+            // Never import machine-wide intent: it may belong to another Editor or a
+            // crashed process. Clean it only once per session, as the HTTP handler does.
+            if (SessionState.GetBool(MigratedSessionKey, false))
+                return;
+            EditorPrefs.DeleteKey(ResumeSessionKey);
+            SessionState.SetBool(MigratedSessionKey, true);
+        }
+
+        internal static void CancelPendingResume()
+        {
+            CancelRetries();
+            SessionState.EraseBool(ResumeSessionKey);
         }
 
         private static void CancelRetries()
         {
+            _resumeGeneration++;
+            if (_resumeCallback != null)
+                EditorApplication.delayCall -= _resumeCallback;
+            _resumeCallback = null;
+            var previous = _retryCts;
+            _retryCts = null;
             try
             {
-                _retryCts?.Cancel();
+                // The suspended loop owns disposal until its awaited start settles.
+                previous?.Cancel();
             }
             catch { }
         }
@@ -58,22 +88,12 @@ namespace MCPForUnity.Editor.Services
             {
                 // A second reload can arrive before the first reload's deferred resume.
                 // Preserve that intent until resume succeeds or an explicit stop/switch clears it.
-                bool useHttp = EditorConfigurationCache.Instance.UseHttpTransport;
                 // Check both TransportManager AND StdioBridgeHost directly, because CI starts via StdioBridgeHost
                 // bypassing TransportManager state.
                 bool tmRunning = MCPServiceLocator.TransportManager.IsRunning(TransportMode.Stdio);
                 bool hostRunning = StdioBridgeHost.IsRunning;
                 bool isRunning = tmRunning || hostRunning;
-                bool shouldResume = !useHttp && (isRunning || EditorPrefs.GetBool(EditorPrefKeys.ResumeStdioAfterReload, false));
-
-                if (shouldResume)
-                {
-                    EditorPrefs.SetBool(EditorPrefKeys.ResumeStdioAfterReload, true);
-                }
-                else
-                {
-                    EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
-                }
+                bool shouldResume = PersistResumeIntent(isRunning);
 
                 if (isRunning)
                 {
@@ -106,19 +126,29 @@ namespace MCPForUnity.Editor.Services
             }
         }
 
+        internal static bool PersistResumeIntent(bool isRunning)
+        {
+            bool shouldResume = !EditorConfigurationCache.Instance.UseHttpTransport && (isRunning || IsResumePending);
+            if (shouldResume)
+                SessionState.SetBool(ResumeSessionKey, true);
+            else
+                SessionState.EraseBool(ResumeSessionKey);
+            return shouldResume;
+        }
+
         private static void OnAfterAssemblyReload()
         {
             bool resume = false;
             try
             {
-                bool resumeFlag = EditorPrefs.GetBool(EditorPrefKeys.ResumeStdioAfterReload, false);
+                bool resumeFlag = IsResumePending;
                 bool useHttp = EditorConfigurationCache.Instance.UseHttpTransport;
                 resume = resumeFlag && !useHttp;
 
                 // If we're not going to resume, clear the flag immediately to avoid stuck "Resuming..." state
                 if (!resume)
                 {
-                    EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
+                    CancelPendingResume();
                 }
             }
             catch (Exception ex)
@@ -142,102 +172,137 @@ namespace MCPForUnity.Editor.Services
             }
 
             // Fallback when compiling: schedule on the editor loop
-            EditorApplication.delayCall += () =>
-            {
-                _ = ResumeStdioWithRetriesAsync();
-            };
+            ScheduleResumeAfterDelay();
         }
 
-        private static async Task ResumeStdioWithRetriesAsync()
+        private static void ScheduleResumeAfterDelay()
         {
+            int generation = _resumeGeneration;
+            if (_resumeCallback != null)
+                EditorApplication.delayCall -= _resumeCallback;
+            EditorApplication.CallbackFunction callback = null;
+            callback = () =>
+            {
+                EditorApplication.delayCall -= callback;
+                if (ReferenceEquals(_resumeCallback, callback))
+                    _resumeCallback = null;
+                if (generation == _resumeGeneration && IsResumePending)
+                    _ = ResumeStdioWithRetriesAsync();
+            };
+            _resumeCallback = callback;
+            EditorApplication.delayCall += callback;
+        }
+
+        internal static async Task ResumeStdioWithRetriesAsync(TimeSpan[] scheduleOverride = null)
+        {
+            if (!IsResumePending)
+                return;
             // Cancel any previous retry loop and create a fresh token.
             CancelRetries();
             var cts = _retryCts = new CancellationTokenSource();
             var token = cts.Token;
+            int generation = _resumeGeneration;
+            TimeSpan[] schedule = scheduleOverride ?? ResumeRetrySchedule;
+            bool OwnsResume() => !token.IsCancellationRequested && generation == _resumeGeneration && IsResumePending;
 
             Exception lastException = null;
 
-            for (int i = 0; i < ResumeRetrySchedule.Length; i++)
+            try
             {
-                if (token.IsCancellationRequested)
-                    return;
-
-                int attempt = i + 1;
-                McpLog.Debug($"[Stdio Reload] Resume attempt {attempt}/{ResumeRetrySchedule.Length}");
-
-                TimeSpan delay = ResumeRetrySchedule[i];
-                if (delay > TimeSpan.Zero)
+                for (int i = 0; i < schedule.Length; i++)
                 {
-                    McpLog.Debug($"[Stdio Reload] Waiting {delay.TotalSeconds:0.#}s before resume attempt {attempt}");
-                    try
-                    {
-                        await Task.Delay(delay, token);
-                    }
-                    catch (OperationCanceledException)
-                    {
+                    if (!OwnsResume())
                         return;
-                    }
-                }
 
-                // Abort retries if the user switched transports while we were waiting.
-                if (EditorConfigurationCache.Instance.UseHttpTransport)
-                {
-                    try
-                    {
-                        EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
-                    }
-                    catch { }
-                    return;
-                }
+                    int attempt = i + 1;
+                    McpLog.Debug($"[Stdio Reload] Resume attempt {attempt}/{schedule.Length}");
 
-                try
-                {
-                    bool started = await MCPServiceLocator.TransportManager.StartAsync(TransportMode.Stdio);
-                    if (started)
+                    TimeSpan delay = schedule[i];
+                    if (delay > TimeSpan.Zero)
                     {
-                        McpLog.Debug($"[Stdio Reload] Resume succeeded on attempt {attempt}");
+                        McpLog.Debug($"[Stdio Reload] Waiting {delay.TotalSeconds:0.#}s before resume attempt {attempt}");
                         try
                         {
-                            EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
+                            await Task.Delay(delay, token);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            return;
+                        }
+                    }
+
+                    if (!OwnsResume())
+                        return;
+                    // Abort retries if the user switched transports while we were waiting.
+                    if (EditorConfigurationCache.Instance.UseHttpTransport)
+                    {
+                        try
+                        {
+                            CancelPendingResume();
                         }
                         catch { }
-                        MCPForUnityEditorWindow.RequestHealthVerification();
                         return;
                     }
 
-                    var state = MCPServiceLocator.TransportManager.GetState(TransportMode.Stdio);
-                    string reason = string.IsNullOrWhiteSpace(state?.Error) ? "no error detail" : state.Error;
-                    McpLog.Debug($"[Stdio Reload] Resume attempt {attempt} failed: {reason}");
+                    try
+                    {
+                        bool started = await MCPServiceLocator.TransportManager.StartAsync(TransportMode.Stdio);
+                        if (!OwnsResume())
+                            return;
+                        if (started)
+                        {
+                            McpLog.Debug($"[Stdio Reload] Resume succeeded on attempt {attempt}");
+                            try
+                            {
+                                SessionState.EraseBool(ResumeSessionKey);
+                            }
+                            catch { }
+                            MCPForUnityEditorWindow.RequestHealthVerification();
+                            return;
+                        }
+
+                        var state = MCPServiceLocator.TransportManager.GetState(TransportMode.Stdio);
+                        string reason = string.IsNullOrWhiteSpace(state?.Error) ? "no error detail" : state.Error;
+                        McpLog.Debug($"[Stdio Reload] Resume attempt {attempt} failed: {reason}");
+                    }
+                    catch (Exception ex)
+                    {
+                        lastException = ex;
+                        McpLog.Debug($"[Stdio Reload] Resume attempt {attempt} threw: {ex.Message}");
+                    }
                 }
-                catch (Exception ex)
+
+                if (!OwnsResume())
+                    return;
+                try
                 {
-                    lastException = ex;
-                    McpLog.Debug($"[Stdio Reload] Resume attempt {attempt} threw: {ex.Message}");
+                    SessionState.EraseBool(ResumeSessionKey);
+                }
+                catch { }
+
+                // Clear the stale "reloading" heartbeat so clients stop seeing reloading=true.
+                // The bridge isn't running, so clients will get connection-refused (recoverable)
+                // instead of hanging on a zombie socket or being rejected by the preflight check.
+                try
+                {
+                    StdioBridgeHost.WriteHeartbeat(false, "stopped");
+                }
+                catch { }
+
+                if (lastException != null)
+                {
+                    McpLog.Warn($"Failed to resume stdio bridge after domain reload: {lastException.Message}");
+                }
+                else
+                {
+                    McpLog.Warn("Failed to resume stdio bridge after domain reload");
                 }
             }
-
-            try
+            finally
             {
-                EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
-            }
-            catch { }
-
-            // Clear the stale "reloading" heartbeat so clients stop seeing reloading=true.
-            // The bridge isn't running, so clients will get connection-refused (recoverable)
-            // instead of hanging on a zombie socket or being rejected by the preflight check.
-            try
-            {
-                StdioBridgeHost.WriteHeartbeat(false, "stopped");
-            }
-            catch { }
-
-            if (lastException != null)
-            {
-                McpLog.Warn($"Failed to resume stdio bridge after domain reload: {lastException.Message}");
-            }
-            else
-            {
-                McpLog.Warn("Failed to resume stdio bridge after domain reload");
+                if (ReferenceEquals(_retryCts, cts))
+                    _retryCts = null;
+                cts.Dispose();
             }
         }
     }

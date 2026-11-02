@@ -18,7 +18,6 @@ namespace MCPForUnity.Editor.Constants
         internal const string DebugLogs = "MCPForUnity.DebugLogs";
         internal const string ValidationLevel = "MCPForUnity.ValidationLevel";
         internal const string UnitySocketPort = "MCPForUnity.UnitySocketPort";
-        internal const string ResumeStdioAfterReload = "MCPForUnity.ResumeStdioAfterReload";
 
         internal const string UvxPathOverride = "MCPForUnity.UvxPath";
         internal const string ClaudeCliPathOverride = "MCPForUnity.ClaudeCliPath";

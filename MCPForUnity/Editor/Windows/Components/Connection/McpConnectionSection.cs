@@ -220,7 +220,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 // Clear any stale resume flags when user manually changes transport
                 try
                 {
-                    EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
+                    StdioBridgeReloadHandler.CancelPendingResume();
                 }
                 catch { }
                 HttpBridgeReloadHandler.CancelPendingResume();
@@ -457,7 +457,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             {
                 // Check if we're resuming the stdio bridge after a domain reload.
                 // During this brief window, show "Resuming..." instead of "No Session" to avoid UI flicker.
-                bool isStdioResuming = stdioSelected && EditorPrefs.GetBool(EditorPrefKeys.ResumeStdioAfterReload, false);
+                bool isStdioResuming = stdioSelected && StdioBridgeReloadHandler.IsResumePending;
                 bool isHttpResuming = !stdioSelected && HttpBridgeReloadHandler.IsResumePending;
                 string resumeStatus = !stdioSelected ? HttpBridgeReloadHandler.ResumeStatus : string.Empty;
                 connectionStatusLabel.tooltip = resumeStatus;
@@ -960,7 +960,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     // domain reload that started just before the user clicked End Session)
                     try
                     {
-                        EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
+                        StdioBridgeReloadHandler.CancelPendingResume();
                     }
                     catch { }
                     HttpBridgeReloadHandler.CancelPendingResume();
@@ -1054,7 +1054,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 // Clear resume flags to prevent getting stuck in "Resuming..." state
                 try
                 {
-                    EditorPrefs.DeleteKey(EditorPrefKeys.ResumeStdioAfterReload);
+                    StdioBridgeReloadHandler.CancelPendingResume();
                 }
                 catch { }
                 HttpBridgeReloadHandler.CancelPendingResume();

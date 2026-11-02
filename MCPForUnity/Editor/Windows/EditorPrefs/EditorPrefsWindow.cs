@@ -51,7 +51,6 @@ namespace MCPForUnity.Editor.Windows
             // Boolean prefs
             { EditorPrefKeys.DebugLogs, EditorPrefType.Bool },
             { EditorPrefKeys.UseHttpTransport, EditorPrefType.Bool },
-            { EditorPrefKeys.ResumeStdioAfterReload, EditorPrefType.Bool },
             { EditorPrefKeys.UseEmbeddedServer, EditorPrefType.Bool },
             { EditorPrefKeys.LockCursorConfig, EditorPrefType.Bool },
             { EditorPrefKeys.AutoRegisterEnabled, EditorPrefType.Bool },

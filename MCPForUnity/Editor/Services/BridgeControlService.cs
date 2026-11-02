@@ -83,6 +83,7 @@ namespace MCPForUnity.Editor.Services
 
         public async Task<bool> StartAsync()
         {
+            StdioBridgeReloadHandler.CancelPendingResume();
             var mode = ResolvePreferredMode();
             try
             {
@@ -124,6 +125,7 @@ namespace MCPForUnity.Editor.Services
 
         public async Task StopAsync()
         {
+            StdioBridgeReloadHandler.CancelPendingResume();
             try
             {
                 var mode = ResolvePreferredMode();

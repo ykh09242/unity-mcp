@@ -121,6 +121,8 @@ namespace UnityEditor
 
     public static class EditorApplication
     {
+        public delegate void CallbackFunction();
+
         public static bool isUpdating;
         public static int UpdateSubscriptions,
             QuittingSubscriptions,
@@ -135,19 +137,11 @@ namespace UnityEditor
             add { QuittingSubscriptions++; }
             remove { }
         }
-        public static event Action delayCall
+        public static event CallbackFunction delayCall
         {
             add { DelaySubscriptions++; }
             remove { }
         }
-    }
-}
-
-namespace MCPForUnity.Editor.Constants
-{
-    public static class EditorPrefKeys
-    {
-        public const string ResumeStdioAfterReload = "MCPForUnity.ResumeStdioAfterReload";
     }
 }
 
@@ -258,6 +252,7 @@ public static class ReloadBatchIsolationHarness
     private const string HttpResume = "MCPForUnity.ResumeHttpAfterReload";
     private const string Migrated = "MCPForUnity.ResumeHttpAfterReload.Migrated";
     private const string StdioResume = "MCPForUnity.ResumeStdioAfterReload";
+    private const string StdioMigrated = StdioResume + ".Migrated";
     private static int checks,
         failures;
 
@@ -288,7 +283,13 @@ public static class ReloadBatchIsolationHarness
         UnityEditor.EditorPrefs.Values[HttpResume] = true;
         UnityEditor.EditorPrefs.Values[StdioResume] = true;
         if (migrated)
+        {
             UnityEditor.SessionState.Values[Migrated] = true;
+            UnityEditor.SessionState.Values[StdioMigrated] = true;
+        }
+        bool pendingStdio = scenario == "interactive-stdio-pending" || scenario == "interactive-stdio-switch";
+        if (pendingStdio)
+            UnityEditor.SessionState.Values[StdioResume] = true;
 
         RuntimeHelpers.RunClassConstructor(typeof(HttpBridgeReloadHandler).TypeHandle);
         // Assert HTTP in isolation so a future guard accidentally placed after migration
@@ -300,6 +301,9 @@ public static class ReloadBatchIsolationHarness
         Check(UnityEditor.AssemblyReloadEvents.AfterSubscriptions == (blocked ? 0 : 1), "HTTP after-reload subscription");
 
         RuntimeHelpers.RunClassConstructor(typeof(StdioBridgeReloadHandler).TypeHandle);
+        Check(UnityEditor.EditorPrefs.Deletes == (blocked || migrated ? 0 : 2), "both legacy migrations run only for an eligible fresh session");
+        Check(UnityEditor.SessionState.Reads == (blocked ? 0 : 2), "combined session reads policy");
+        Check(UnityEditor.SessionState.Writes == (blocked || migrated ? 0 : 2), "combined migration writes policy");
         Check(UnityEditor.AssemblyReloadEvents.BeforeSubscriptions == (blocked ? 0 : 2), "combined before-reload subscriptions");
         Check(UnityEditor.AssemblyReloadEvents.AfterSubscriptions == (blocked ? 0 : 2), "combined after-reload subscriptions");
         Check(UnityEditor.EditorApplication.QuittingSubscriptions == (blocked ? 0 : 1), "stdio quitting subscription");
@@ -309,7 +313,14 @@ public static class ReloadBatchIsolationHarness
         );
         Check(UnityEditor.EditorPrefs.Reads == 0 && UnityEditor.EditorPrefs.Writes == 0, "no resume consumption during construction");
         Check(UnityEditor.EditorPrefs.Values.ContainsKey(HttpResume) == (blocked || migrated), "HTTP preference retained only when migration is skipped");
-        Check(UnityEditor.EditorPrefs.Values.TryGetValue(StdioResume, out bool stdioPending) && stdioPending, "stdio interactive pending resume retained");
+        Check(
+            UnityEditor.EditorPrefs.Values.ContainsKey(StdioResume) == (blocked || migrated),
+            "stdio legacy preference retained only when migration is skipped"
+        );
+        Check(
+            UnityEditor.SessionState.Values.ContainsKey(StdioResume) == pendingStdio,
+            "stdio construction preserves session intent without adopting global intent"
+        );
         Check(MCPForUnity.Editor.Services.Transport.TransportManager.Calls == 0, "no transport lifecycle during construction");
         if (blocked)
         {
@@ -332,19 +343,21 @@ public static class ReloadBatchIsolationHarness
             bool active = scenario == "interactive-stdio-active";
             MCPForUnity.Editor.Helpers.EditorConfigurationCache.Instance.UseHttpTransport = switched;
             transport.StdioRunning = active;
-            if (stopped || active)
-                UnityEditor.EditorPrefs.Values.Remove(StdioResume);
             UnityEditor.AssemblyReloadEvents.RaiseBefore();
-            Check(UnityEditor.EditorPrefs.Values.ContainsKey(StdioResume) == (!switched && !stopped), "first reload preserves only requested stdio resume");
+            Check(UnityEditor.SessionState.Values.ContainsKey(StdioResume) == (!switched && !stopped), "first reload preserves only requested stdio resume");
             Check(!transport.StdioRunning, "old stdio bridge stops before reload");
             UnityEditor.AssemblyReloadEvents.RaiseBefore();
             Check(
-                UnityEditor.EditorPrefs.Values.ContainsKey(StdioResume) == (!switched && !stopped),
+                UnityEditor.SessionState.Values.ContainsKey(StdioResume) == (!switched && !stopped),
                 "second reload retains pending resume without a running bridge"
             );
             UnityEditor.AssemblyReloadEvents.RaiseAfter();
             Check(transport.StdioRunning == (!switched && !stopped), "post-reload resume occurs only for the retained intent");
-            Check(!UnityEditor.EditorPrefs.Values.ContainsKey(StdioResume), "successful resume consumes intent; explicit stop and switch remain cleared");
+            Check(
+                !UnityEditor.SessionState.Values.ContainsKey(StdioResume),
+                "successful resume consumes session intent; explicit stop and switch remain cleared"
+            );
+            Check(!UnityEditor.EditorPrefs.Values.ContainsKey(StdioResume), "reload lifecycle never recreates machine-wide intent");
         }
         Console.WriteLine(scenario + ": " + (checks - failures) + "/" + checks + " checks passed");
         return failures == 0 ? 0 : 1;
