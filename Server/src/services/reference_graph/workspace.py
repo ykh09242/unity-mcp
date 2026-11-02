@@ -548,6 +548,12 @@ class GraphWorkspace:
                 self.store._bump(connection)
 
     def set_policy(self, policy: dict, *, expected_version: int) -> int:
+        version, _ = self._set_policy(policy, expected_version=expected_version)
+        return version
+
+    def _set_policy(
+        self, policy: dict, *, expected_version: int, _rebuild: bool = False
+    ) -> tuple[int, bool]:
         patterns = policy.get("exclude", [])
         if (
             set(policy) - {"exclude", "respect_gitignore"}
@@ -566,9 +572,10 @@ class GraphWorkspace:
         with self.store._connect(write=True) as connection:
             # Replacement must remain possible for legacy oversized policies without
             # loading their payload. The writer transaction still owns the CAS.
-            current = connection.execute(
-                "SELECT COALESCE((SELECT json_extract(value,'$.version') FROM graph_state WHERE key='policy'),0)"
-            ).fetchone()[0]
+            current, authored = connection.execute(
+                "SELECT COALESCE((SELECT json_extract(value,'$.version') FROM graph_state WHERE key='policy'),0),"
+                "EXISTS(SELECT 1 FROM graph_state WHERE key='policy')"
+            ).fetchone()
             if current != expected_version:
                 raise RevisionConflict("Graph policy changed")
             # Apply the same raw JSON row admission as every bounded policy read
@@ -576,6 +583,23 @@ class GraphWorkspace:
             PageBudget().require(
                 bounded_rows(connection, "SELECT ? AS payload", (_json(replacement),)).fetchone()
             )
+            # Compare inside SQLite so a legacy oversized value never crosses the
+            # connection boundary. Unknown authored fields are not equivalent.
+            identical = connection.execute(
+                "SELECT EXISTS(SELECT 1 FROM graph_state WHERE key='policy' "
+                "AND json_type(value)='object' "
+                "AND json_remove(value,'$.version','$.exclude','$.respect_gitignore')='{}' "
+                "AND COALESCE(json_type(value,'$.exclude'),'array')='array' "
+                "AND COALESCE(json_extract(value,'$.exclude'),'[]')=json(?) "
+                "AND COALESCE(json_type(value,'$.respect_gitignore'),'true')=?)",
+                (_json(patterns), "true" if replacement["respect_gitignore"] else "false"),
+            ).fetchone()[0]
+            if not _rebuild:
+                if identical:
+                    return current, False
+                if not authored and not patterns and replacement["respect_gitignore"]:
+                    self._set(connection, "policy", replacement)
+                    return expected_version + 1, False
             self._set(connection, "policy", replacement)
             # Retire the old worker before clearing its inputs. It cannot renew
             # or publish a pre-policy page while a fresh census is being admitted.
@@ -586,13 +610,14 @@ class GraphWorkspace:
             connection.execute(
                 "UPDATE graph_admission SET revision=(SELECT revision FROM graph_meta),ready=0 WHERE id=1"
             )
-            return expected_version + 1
+            return expected_version + 1, True
 
     def rebuild(self) -> None:
         policy = self.policy()
-        self.set_policy(
+        self._set_policy(
             {key: policy[key] for key in ("exclude", "respect_gitignore")},
             expected_version=policy["version"],
+            _rebuild=True,
         )
 
     def set_source(

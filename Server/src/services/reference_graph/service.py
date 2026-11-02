@@ -923,6 +923,7 @@ class ReferenceGraphService:
         # oversized policy. Do not read that policy before replacing it; normal
         # bounded admission checks resume below after the write has succeeded.
         replacing_policy = action == "set_policy"
+        policy_changed = False
         ignore_changed = False
         if not replacing_policy:
             ignore_changed = not await drained_thread(
@@ -1163,13 +1164,12 @@ class ReferenceGraphService:
         elif action == "policy":
             data = await drained_thread(workspace.policy, bounded=True)
         elif action == "set_policy":
-            data = {
-                "version": await drained_thread(
-                    workspace.set_policy,
-                    options.get("config", {}),
-                    expected_version=options["expected_version"],
-                )
-            }
+            version, policy_changed = await drained_thread(
+                workspace._set_policy,
+                options.get("config", {}),
+                expected_version=options["expected_version"],
+            )
+            data = {"version": version}
         elif action == "rebuild":
             await drained_thread(workspace.rebuild)
             data = {"scheduled": True}
@@ -1235,7 +1235,7 @@ class ReferenceGraphService:
                 )
             if action == "watch" and not options["enabled"]:
                 entry.watching = False
-            else:
+            elif action != "set_policy" or policy_changed or external_changed or ignore_changed:
                 self.start(
                     entry,
                     # Cached validation detects stamps or repository identity.

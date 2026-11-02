@@ -27,6 +27,12 @@ keeps its default of `true`; an explicit `false` disables Gitignore matching for
 that scope. Additional `exclude` patterns retain their existing glob semantics
 and are additive: they do not re-include paths excluded by `.gitignore`.
 
+Saving or importing the same policy preserves indexed results, the running
+collector and the policy version. The first explicit save of the default policy
+records version 1 and keeps any work already collected under those defaults.
+An out-of-date `expected_version` still fails. Use `rebuild` to request a fresh
+collection with the current policy.
+
 ## Rule semantics and boundaries
 
 Root and nested `.gitignore` files use Gitignore pattern syntax, including
