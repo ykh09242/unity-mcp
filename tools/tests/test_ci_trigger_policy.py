@@ -134,3 +134,19 @@ def test_package_integrity_changes_select_python_pr_gate(target, change, path):
         step.get("run", "") for step in workflow("python-tests.yml")["jobs"]["test"]["steps"]
     )
     assert 'python -m pytest "$GITHUB_WORKSPACE/tools/tests/"' in runs
+
+
+@pytest.mark.parametrize(
+    "name,event,branch,activity",
+    [
+        ("python-tests.yml", "pull_request", "main", "synchronize"),
+        ("python-tests.yml", "pull_request", "beta", "synchronize"),
+        ("fork-beta-tools.yml", "push", "beta", None),
+    ],
+)
+@pytest.mark.parametrize(
+    "path", [".dockerignore", "docker-compose.yml", "docker-compose.remote.yml"]
+)
+def test_docker_context_changes_select_distribution_contracts(name, event, branch, activity, path):
+    assert selected(name, event, branch, path, activity)
+    assert not selected(name, event, branch, "unrelated/example.txt", activity)

@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [main, beta]
     paths:
+      - .dockerignore
       - docker-compose.yml
       - docker-compose.remote.yml
       - Server/**

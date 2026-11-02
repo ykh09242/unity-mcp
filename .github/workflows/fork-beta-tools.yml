@@ -7,6 +7,7 @@ on:
   push:
     branches: [beta]
     paths:
+      - .dockerignore
       - docker-compose.yml
       - docker-compose.remote.yml
       - Server/**
