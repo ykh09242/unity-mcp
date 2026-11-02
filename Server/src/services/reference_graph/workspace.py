@@ -532,8 +532,12 @@ class GraphWorkspace:
                 connection.execute(
                     "UPDATE graph_admission SET revision=(SELECT revision FROM graph_meta),ready=0 WHERE id=1"
                 )
-            else:
-                connection.execute("UPDATE graph_admission SET ready=1 WHERE id=1")
+            elif connection.execute(
+                "UPDATE graph_admission SET ready=1 WHERE id=1 AND ready=0"
+            ).rowcount:
+                # Restored visibility must not reuse a revision captured while
+                # admission was blocked, even when the rules themselves match.
+                self.store._bump(connection)
             return changed
 
     def finish_admission(self, worker: str) -> None:

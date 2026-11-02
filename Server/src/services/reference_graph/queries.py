@@ -410,6 +410,8 @@ class GraphQueries:
         if not isinstance(name, str):
             raise ValueError("Snapshot name must be a string")
         with self.store._connect(write=True) as connection:
+            if not connection.execute("SELECT ready FROM graph_admission WHERE id=1").fetchone()[0]:
+                raise RevisionConflict("Graph admission is incomplete; retry snapshot capture")
             job, replay, created = self._job(
                 connection, "snapshot", {"name": name, "limit": limit}, cursor
             )

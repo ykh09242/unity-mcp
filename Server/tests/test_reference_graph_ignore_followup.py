@@ -1,12 +1,193 @@
 """Integration regressions for previously captured evidence and final delivery races."""
 
+import json
+
 import pytest
 
 from services.reference_graph.analysis import Analysis
+from services.reference_graph.queries import GraphQueries
 from services.reference_graph.runtime import RuntimeObservations
 from services.reference_graph.service import ReferenceGraphService
 from services.reference_graph.store import Edge, RevisionConflict
 from tests.test_reference_graph_reconcile import setup
+
+
+@pytest.mark.asyncio
+async def test_identical_ignore_restoration_advances_revision_only_when_reopening_admission(setup):
+    store, workspace, editor, engine = setup
+    assert await engine.reconcile()
+    initial = workspace.delivery_fence()
+    workspace.block_admission()
+    blocked = workspace.delivery_fence()
+    assert blocked[0] > initial[0] and blocked[2] == 0
+    assert workspace.acquire("restore")
+    try:
+        assert not workspace.set_ignore_rules("restore", [], workspace.ignore_status())
+        restored = workspace.delivery_fence()
+        assert restored[0] > blocked[0]
+        assert restored[1:] == initial[1:]
+        assert not workspace.set_ignore_rules("restore", [], workspace.ignore_status())
+        assert workspace.delivery_fence() == restored
+    finally:
+        workspace.release("restore")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("continuation", [False, True])
+async def test_snapshot_refuses_unready_admission_without_writing_history(setup, continuation):
+    store, workspace, editor, engine = setup
+    assert await engine.reconcile()
+    for number in range(2):
+        store.put_declaration(str(number), "owner", Edge(str(number), "manual"), expected_version=0)
+    queries = workspace.queries()
+    cursor = queries.snapshot(limit=1)["next_cursor"] if continuation else None
+    workspace.block_admission()
+    with store._connect() as connection:
+        before = connection.execute("SELECT count(*) FROM graph_snapshots").fetchone()[0]
+    # Ordinary queries still hide inadmissible evidence; captures must refuse it.
+    assert store.query("owner")["edges"] == []
+    with pytest.raises(RevisionConflict):
+        queries.snapshot(limit=1, cursor=cursor)
+    with store._connect() as connection:
+        assert connection.execute("SELECT count(*) FROM graph_snapshots").fetchone()[0] == before
+
+
+@pytest.mark.asyncio
+async def test_identical_ignore_restore_during_service_snapshot_preserves_disk_history(
+    tmp_path, monkeypatch
+):
+    from core.config import config
+    from services.reference_graph import snapshot_storage
+    from tests.test_reference_graph_service import Context, Sender
+
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    sender = Sender()
+    ignore_revision = 0
+
+    async def native(instance, values):
+        response = await sender(instance, values)
+        response["ignore_revision"] = ignore_revision
+        return response
+
+    service = ReferenceGraphService(tmp_path, send=native)
+    monkeypatch.setattr(service, "start", lambda *args, **kwargs: None)
+    ctx = Context(service)
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
+        workspace, store = entry.workspace, entry.workspace.store
+        empty = (await service.execute(ctx, "snapshot", {"name": "empty"}))["data"]["snapshot"][
+            "id"
+        ]
+        for number in range(3):
+            store.put_declaration(
+                str(number), "owner", Edge(str(number), "manual"), expected_version=0
+            )
+        snapshot = GraphQueries.snapshot
+        raced = []
+
+        def capture_while_blocked(queries, **options):
+            nonlocal ignore_revision
+            # This boundary follows the real service readiness check and precedes
+            # the real SQLite capture; restoration precedes final delivery guards.
+            workspace.block_admission()
+            try:
+                result = snapshot(queries, **options)
+                raced.append(result)
+                return result
+            finally:
+                ignore_revision += 1
+                assert workspace.acquire("restore")
+                try:
+                    assert not workspace.set_ignore_rules(
+                        "restore",
+                        [],
+                        {
+                            "epoch": "epoch",
+                            "ignore_revision": ignore_revision,
+                            "snapshot": "ignore",
+                        },
+                    )
+                finally:
+                    workspace.release("restore")
+
+        with monkeypatch.context() as race_patch:
+            race_patch.setattr(GraphQueries, "snapshot", capture_while_blocked)
+            try:
+                accepted = (await service.execute(ctx, "snapshot", {"name": "raced"}))["data"]
+            except RevisionConflict:
+                accepted = None
+
+        current = (await service.execute(ctx, "snapshot", {"name": "current"}))["data"]
+        with store._connect() as connection:
+            backing = snapshot_storage.backing(connection, current["snapshot"]["id"])
+            persisted = [
+                json.loads(row[0])
+                for row in connection.execute(
+                    "SELECT payload FROM graph_snapshot_edges WHERE snapshot=? ORDER BY id",
+                    (backing,),
+                )
+            ]
+            assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert len(current["edges"]) == current["snapshot"]["captured"] == 3
+        assert persisted == current["edges"], (
+            "Returned edges must equal the durable snapshot backing"
+        )
+        assert accepted is None or accepted["edges"] == current["edges"]
+        if accepted is None and raced:
+            with store._connect() as connection:
+                assert connection.execute(
+                    "SELECT abandoned FROM graph_queries WHERE id=?", (raced[0]["query_id"],)
+                ).fetchone()[0]
+        first = (await service.execute(ctx, "snapshot", {"name": "paged", "limit": 1}))["data"]
+    finally:
+        await service.aclose()
+
+    # Reopen the on-disk service and continue both capture and historical diff.
+    reopened = ReferenceGraphService(tmp_path, send=native)
+    monkeypatch.setattr(reopened, "start", lambda *args, **kwargs: None)
+    ctx = Context(reopened)
+    try:
+        page, edges = first, list(first["edges"])
+        for _ in range(2):
+            assert page["next_cursor"]
+            page = (
+                await reopened.execute(
+                    ctx, "snapshot", {"name": "paged", "limit": 1, "cursor": page["next_cursor"]}
+                )
+            )["data"]
+            edges.extend(page["edges"])
+        assert page["next_cursor"] is None
+        assert page["snapshot"]["captured"] == len(edges) == 3
+        assert edges == current["edges"]
+        cursor, changes = None, []
+        for number in range(3):
+            delta = (
+                await reopened.execute(
+                    ctx,
+                    "diff",
+                    {
+                        "before": empty,
+                        "after": page["snapshot"]["id"],
+                        "limit": 1,
+                        "cursor": cursor,
+                    },
+                )
+            )["data"]
+            assert delta["historical"]
+            changes.extend(delta["changes"])
+            cursor = delta["next_cursor"]
+            assert bool(cursor) is (number < 2)
+        assert [change["after"] for change in changes] == edges
+        assert all(change["change"] == "added" for change in changes)
+        unchanged = (
+            await reopened.execute(
+                ctx, "diff", {"before": current["snapshot"]["id"], "after": page["snapshot"]["id"]}
+            )
+        )["data"]
+        assert unchanged["changes"] == [] and unchanged["compared"] == 3
+    finally:
+        await reopened.aclose()
 
 
 @pytest.mark.asyncio
