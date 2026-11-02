@@ -185,12 +185,21 @@ each other's change events. The native journal is nondestructive and contains no
 user grants. Multiple MCP servers for the same exact scope coordinate through a
 renewable SQLite worker lease; stale workers cannot overwrite new evidence.
 
-Normal domain reload preserves the Editor identity and journal. A complete Editor
-restart creates a **new isolated graph**, with a fresh census and no implicit copy
-of another instance's grants or declarations. Read `sources`, `rules`, `policy`, and
-`declarations` before closing an instance if you want to explicitly recreate its
-authored setup in a new one. Old database files remain retained; there is no silent
-cross-instance recovery or automatic deletion of authored state.
+Normal domain reload preserves the Editor identity and journal. After a complete
+Editor restart, the new graph checks the current inventory and can reuse static
+evidence from a previous Editor for the same user and project. It compares each
+asset's current identity, file stamp and imported dependency hash, and checks the
+dependency set against the current inventory and exclusions. Changed inputs are
+collected again. Source analysis also has to match the parser version and, for
+C#, the current compilation context.
+
+The new session enforces `.gitignore` and preserves attributable graph exclusions.
+If it cannot safely recover a previous policy, `status` and `policy` expose the
+required policy choice. Read the version and use `set_policy` to supply the
+intended exclusions before collecting. External source grants, rules, manual
+declarations, runtime captures, snapshots and mutation receipts belong to their
+original Editor. Use `export_config` and `import_config` to transfer authored
+configuration explicitly.
 
 `watch` with `enabled:false` stops the current server's watcher. The next graph
 operation can activate it again; this is not a project-wide disable switch.

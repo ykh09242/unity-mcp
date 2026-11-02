@@ -203,7 +203,8 @@ class GraphStore:
                 # Summary reads validate this ownership-check identity again
                 # after establishing their SQL snapshot.
                 _identity.append((info.st_dev, info.st_ino))
-        connection = sqlite3.connect(self.path, timeout=30)
+        # ATTACH uses a mode=ro URI for a verified prior Editor's static facts.
+        connection = sqlite3.connect(self.path, timeout=30, uri=True)
         connection.row_factory = sqlite3.Row
         try:
             connection.execute("PRAGMA synchronous=FULL")

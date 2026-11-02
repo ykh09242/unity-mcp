@@ -25,9 +25,14 @@ from services.reference_graph.store import (
 
 class GraphWorkspace:
     LEASE_SECONDS = 120
+    RESTART_POLICY_HINT = (
+        "The previous collection exclusions could not be safely inherited. "
+        "Use set_policy with expected_version=0 and the intended exclusions."
+    )
 
     def __init__(self, store: GraphStore):
         self.store = store
+        self.restart_policy_pending = False
         self._queries = None
         self._mutations = None
         self._admission_cache = None
@@ -132,6 +137,10 @@ class GraphWorkspace:
 
             self._mutations = MutationReceipts(self)
         return self._mutations
+
+    def require_restart_policy(self) -> None:
+        if self.restart_policy_pending and self.state("restart_policy_pending"):
+            raise RevisionConflict(self.RESTART_POLICY_HINT)
 
     def queries(self):
         """Lazily create scoped exploration state; the handle owns no connection."""
@@ -610,12 +619,15 @@ class GraphWorkspace:
                 (_json(patterns), "true" if replacement["respect_gitignore"] else "false"),
             ).fetchone()[0]
             if not _rebuild:
+                connection.execute("DELETE FROM graph_state WHERE key='restart_policy_pending'")
                 if identical:
                     return current, False
                 if not authored and not patterns and replacement["respect_gitignore"]:
                     self._set(connection, "policy", replacement)
                     return expected_version + 1, False
             self._set(connection, "policy", replacement)
+            if _rebuild:
+                connection.execute("DELETE FROM graph_state WHERE key='restart_from'")
             # Retire the old worker before clearing its inputs. It cannot renew
             # or publish a pre-policy page while a fresh census is being admitted.
             connection.execute("DELETE FROM graph_worker")

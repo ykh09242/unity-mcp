@@ -30,7 +30,6 @@ from services.reference_graph.response_budget import require_response
 from services.reference_graph.store import (
     Edge,
     GraphScope,
-    GraphStore,
     RevisionConflict,
     _hash,
     _json,
@@ -286,7 +285,15 @@ class ReferenceGraphService:
         self._resolve_tasks.add(request)
         self._resolved.clear()
         try:
-            return await self._resolve(ctx, action)
+            entry, status = await self._resolve(ctx, action)
+            if entry.workspace.restart_policy_pending and action not in {
+                "status",
+                "policy",
+                "set_policy",
+                "import_config",
+            }:
+                await drained_thread(entry.workspace.require_restart_policy)
+            return entry, status
         finally:
             self._resolving -= 1
             self._resolve_tasks.discard(request)
@@ -352,9 +359,9 @@ class ReferenceGraphService:
                 await self._join(drains)
             entry = self.entries.get(scope.key)
             if entry is None:
-                workspace = await drained_thread(
-                    lambda: GraphWorkspace(GraphStore.open(self.root or state_root(), scope))
-                )
+                from services.reference_graph.restart import open_workspace
+
+                workspace = await drained_thread(open_workspace, self.root or state_root(), scope)
                 await request_check()
                 async with self.lock:
                     if self.closed:
@@ -955,6 +962,13 @@ class ReferenceGraphService:
         # oversized policy. Do not read that policy before replacing it; normal
         # bounded admission checks resume below after the write has succeeded.
         replacing_policy = action == "set_policy"
+        policy_choice_required = (
+            workspace.restart_policy_pending
+            and not replacing_policy
+            and await drained_thread(workspace.state, "restart_policy_pending", False)
+        )
+        if policy_choice_required and action not in {"status", "policy"}:
+            await drained_thread(workspace.require_restart_policy)
         policy_changed = False
         ignore_changed = False
         if not replacing_policy:
@@ -1304,7 +1318,9 @@ class ReferenceGraphService:
                 )
             if action == "watch" and not options["enabled"]:
                 entry.watching = False
-            elif action != "set_policy" or policy_changed or external_changed or ignore_changed:
+            elif not policy_choice_required and (
+                action != "set_policy" or policy_changed or external_changed or ignore_changed
+            ):
                 self.start(
                     entry,
                     # Cached validation detects stamps or repository identity.
@@ -1439,6 +1455,13 @@ class ReferenceGraphService:
             )
             if hint:
                 graph_status["hint"] = hint
+        if policy_choice_required:
+            graph_status.update(
+                current=False,
+                native_current=False,
+                policy_choice_required=True,
+                hint=workspace.RESTART_POLICY_HINT,
+            )
         return {
             "success": True,
             "data": {**data, "scope": store.scope.key, "graph_status": graph_status},

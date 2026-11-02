@@ -526,14 +526,7 @@ namespace MCPForUnity.Editor.Tools
                 throw new ArgumentException("Dependency continuation requires its snapshot.");
             if (dependencies == null || dependencyGuid != guid || dependencyToken != currentToken)
             {
-                dependencies = AssetDatabase
-                    .GetDependencies(path, false)
-                    .Where(target => target != path && Admitted(target))
-                    .Select(AssetDatabase.AssetPathToGUID)
-                    .Where(target => !string.IsNullOrEmpty(target))
-                    .Distinct(StringComparer.Ordinal)
-                    .OrderBy(target => target, StringComparer.Ordinal)
-                    .ToArray();
+                dependencies = DirectDependencyGuids(path).OrderBy(target => target, StringComparer.Ordinal).ToArray();
                 dependencyGuid = guid;
                 dependencyEpoch = ReferenceGraphJournal.Epoch;
                 dependencyRevision = ReferenceGraphJournal.Revision;
@@ -553,6 +546,14 @@ namespace MCPForUnity.Editor.Tools
             asset["next_offset"] = end < dependencies.Length ? (JToken)end : JValue.CreateNull();
             return asset;
         }
+
+        private static IEnumerable<string> DirectDependencyGuids(string path) =>
+            AssetDatabase
+                .GetDependencies(path, false)
+                .Where(target => target != path && Admitted(target))
+                .Select(AssetDatabase.AssetPathToGUID)
+                .Where(target => !string.IsNullOrEmpty(target))
+                .Distinct(StringComparer.Ordinal);
 
         private static JObject Source(JObject request)
         {
@@ -687,17 +688,25 @@ namespace MCPForUnity.Editor.Tools
                 bool folder = Directory.Exists(resolved);
                 string stamp = folder ? null : FileStamp(path);
                 string guid = AssetDatabase.AssetPathToGUID(path);
-                rows.Add(
-                    new JObject
-                    {
-                        ["path"] = path,
-                        ["guid"] = guid,
-                        ["present"] = folder || stamp != null,
-                        ["folder"] = folder,
-                        ["stamp"] = stamp,
-                        ["dependency"] = !folder && stamp != null && !string.IsNullOrEmpty(guid) ? AssetDatabase.GetAssetDependencyHash(path).ToString() : null,
-                    }
-                );
+                bool asset = !folder && stamp != null && !string.IsNullOrEmpty(guid);
+                var row = new JObject
+                {
+                    ["path"] = path,
+                    ["guid"] = guid,
+                    ["present"] = folder || stamp != null,
+                    ["folder"] = folder,
+                    ["stamp"] = stamp,
+                    ["dependency"] = asset ? AssetDatabase.GetAssetDependencyHash(path).ToString() : null,
+                };
+                if (asset && request.Value<bool>("static_proof"))
+                {
+                    // Older graphs stored only policy-filtered edges. Prove that
+                    // the retained set was complete before transferring it.
+                    row["dependency_count"] = DirectDependencyGuids(path).Count();
+                    if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && ReferenceGraphCompilation.Status().Value<string>("state") == "available")
+                        row["binding"] = ReferenceGraphCompilation.Binding(path, resolved);
+                }
+                rows.Add(row);
             }
             return new JObject
             {

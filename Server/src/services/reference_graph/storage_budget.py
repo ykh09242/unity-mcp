@@ -272,6 +272,18 @@ class StorageBudget:
             )
         self.capacity, self.reserved = self._reserve(requested)
 
+    def previous_files(self) -> list[str]:
+        """Only examine older scopes admitted for this exact authenticated principal."""
+        with self._ledger() as db:
+            return [
+                row[0]
+                for row in db.execute(
+                    "SELECT name FROM scopes WHERE owner=? AND rowid < "
+                    "(SELECT rowid FROM scopes WHERE name=?) ORDER BY rowid DESC",
+                    (self.owner, self.path.name),
+                )
+            ]
+
     @contextmanager
     def writer(self, connection: sqlite3.Connection) -> Iterator["WriteMeter"]:
         with file_lock(Path(str(self.path) + ".lock")):

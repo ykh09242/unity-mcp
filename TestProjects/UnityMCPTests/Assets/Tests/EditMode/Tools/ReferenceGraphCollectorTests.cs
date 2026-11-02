@@ -709,6 +709,13 @@ namespace MCPForUnityTests.EditMode.Tools
             }
             Assert.IsTrue(targets.Values<string>().Contains(guid));
             Assert.IsFalse(targets.Values<string>().Contains(ownerGuid));
+            string scriptPath = AssetDatabase.GetAssetPath(MonoScript.FromScriptableObject(asset));
+            var proofs = (JArray)Call("probe", "paths", new[] { owner, scriptPath }, "static_proof", true)["targets"];
+            Assert.AreEqual(targets.Count, proofs[0].Value<int>("dependency_count"));
+            Assert.AreEqual(dependencies["fingerprint"], proofs[0]["dependency"]);
+            JObject source = Call("source", "guid", AssetDatabase.AssetPathToGUID(scriptPath));
+            Assert.AreEqual(source["compilation_context"]["binding_revision"], proofs[1]["binding"]);
+            Assert.IsNull(Call("probe", "paths", new[] { owner })["targets"][0]["dependency_count"]);
         }
 
         [Test]

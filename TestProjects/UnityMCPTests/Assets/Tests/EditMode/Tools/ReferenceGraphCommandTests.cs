@@ -3,6 +3,7 @@ using System.Threading;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
@@ -59,6 +60,33 @@ namespace MCPForUnityTests.EditMode.Tools
         {
             Assert.That(Call(new JObject { ["action"] = "changes", ["after"] = "0" }).Value<bool>("success"), Is.False);
             Assert.That(Call(new JObject { ["action"] = "status", ["expected_instance_id"] = JValue.CreateNull() }).Value<bool>("success"), Is.False);
+        }
+
+        [Test]
+        public void ProbeAcceptsOptionalBooleanStaticProof()
+        {
+            JToken status = Call(new JObject { ["action"] = "status" })["data"];
+            string guid = AssetDatabase.FindAssets("ReferenceGraphCommandTests t:MonoScript")[0];
+            var request = new JObject
+            {
+                ["action"] = "probe",
+                ["paths"] = new JArray(AssetDatabase.GUIDToAssetPath(guid)),
+                ["expected_project_id"] = status["project_id"],
+                ["expected_instance_id"] = status["instance_id"],
+            };
+            Assert.IsNull(Call(request)["data"]["targets"][0]["dependency_count"]);
+            request["static_proof"] = false;
+            Assert.IsNull(Call(request)["data"]["targets"][0]["dependency_count"]);
+            request["static_proof"] = true;
+            JObject result = Call(request);
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(guid, result["data"]["targets"][0].Value<string>("guid"));
+            Assert.AreEqual(JTokenType.Integer, result["data"]["targets"][0]["dependency_count"].Type);
+            foreach (JToken invalid in new JArray("true", 1, JValue.CreateNull()))
+            {
+                request["static_proof"] = invalid;
+                Assert.IsFalse(Call(request).Value<bool>("success"));
+            }
         }
 
         [TestCase("ignore_rules")]

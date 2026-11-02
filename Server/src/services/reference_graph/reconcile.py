@@ -231,6 +231,8 @@ class Reconciler:
             await drained_task(asyncio.create_task(self._release(heartbeat)))
 
     async def _run_reconcile(self, *, force_external: bool) -> bool:
+        if self.workspace.restart_policy_pending:
+            await drained_thread(self.workspace.require_restart_policy)
         status = await self.collect("status")
         await self._phase("checking", editor=status, error=None)
         if any(status.get(key) for key in ("compiling", "importing", "compilation_failed")):
@@ -626,16 +628,73 @@ class Reconciler:
     async def _assets(self) -> None:
         await self._phase("collecting")
         after = ""
+        donor = (
+            await drained_thread(self.workspace.state, "restart_from")
+            if not self.progress.get("completed_at")
+            else None
+        )
         while batch := await drained_thread(self.workspace.dirty_assets, after=after):
+            reused = await self._reuse_batch(donor, batch) if donor else {}
             for asset in batch:
                 await self.check()
+                after = asset["guid"]
                 try:
-                    await self._asset(asset)
+                    if after not in reused:
+                        await self._asset(asset)
+                    elif version := reused[after]:
+                        await self._source(asset)
+                        await drained_thread(
+                            self.workspace.clean_asset, self.worker, after, version=version
+                        )
                 except RevisionConflict:
                     raise
                 except (OSError, ValueError, RecursionError) as error:
                     await drained_thread(self.workspace.fail_asset, self.worker, asset, error)
-                after = asset["guid"]
+
+    async def _reuse_batch(self, donor: str, batch: list[dict]) -> dict[str, dict | None]:
+        from services.reference_graph.restart import reuse_assets
+
+        reused = {}
+        for offset in range(0, len(batch), 32):
+            assets = batch[offset : offset + 32]
+            try:
+                page = await self.collect(
+                    "probe", paths=[a["path"] for a in assets], static_proof=True
+                )
+            except OSError:
+                # An unprobeable path must still use normal per-asset error handling.
+                continue
+            if (page.get("epoch"), page.get("revision")) != (
+                self.progress["epoch"],
+                self.progress["after"],
+            ):
+                continue
+            targets = rows(page, "targets", len(assets))
+            self._budget.admit_items(len(targets))
+            proofs = []
+            for asset, row in zip(assets, targets):
+                if (
+                    isinstance(row, dict)
+                    and row.get("path") == asset["path"]
+                    and row.get("guid") == asset["guid"]
+                    and row.get("present") is True
+                    and row.get("folder") is False
+                    and isinstance(row.get("stamp"), str)
+                    and row["stamp"]
+                    and isinstance(row.get("dependency"), str)
+                    and row["dependency"].strip("0")
+                    and type(row.get("dependency_count")) is int
+                    and row["dependency_count"] >= 0
+                ):
+                    proofs.append(row)
+            if proofs:
+                await self.check()
+                reused.update(
+                    await drained_thread(
+                        reuse_assets, self.workspace, self.worker, donor, proofs, self._budget
+                    )
+                )
+        return reused
 
     async def _compilation(self, context: dict | None) -> None:
         if context == await drained_thread(self.workspace.state, "compilation_context"):

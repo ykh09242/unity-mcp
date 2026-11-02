@@ -59,7 +59,7 @@ namespace MCPForUnity.Editor.Tools
                         fields = new[] { "paths", "revision" };
                         break;
                     case "probe":
-                        fields = new[] { "paths" };
+                        fields = new[] { "paths", "static_proof" };
                         break;
                     case "copy_destination":
                         fields = new[] { "path" };
@@ -86,10 +86,10 @@ namespace MCPForUnity.Editor.Tools
                             throw new ArgumentException("Collection paths must be an array of strings.");
                         continue;
                     }
-                    if (property.Name == "validate")
+                    if (property.Name == "validate" || property.Name == "static_proof")
                     {
                         if (property.Value.Type != JTokenType.Boolean)
-                            throw new ArgumentException("Ignore validation requires a boolean.");
+                            throw new ArgumentException(property.Name + " requires a boolean.");
                         continue;
                     }
                     bool number = property.Name == "offset" || property.Name == "after" || property.Name == "page_size";
