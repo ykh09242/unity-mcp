@@ -26,16 +26,22 @@ def _previous(store: GraphStore) -> tuple[str | None, list[str] | None, dict[str
     retained_bytes = 0
     versions: dict[str, int] = {}
     covered: dict[str, int] = {}
+    missing: set[str] = set()
+    acknowledged_missing: set[str] = set()
     uncertain = False
-    if scope.project_id == "default":
-        return donor, [], versions
     for name in store._budget.previous_files():
         if not re.fullmatch(r"[a-f0-9]{64}\.sqlite", name):
             continue
         path = store.path.with_name(name)
+        key = name[:-7]
         try:
             path.lstat()
         except FileNotFoundError:
+            # The ledger knows the principal, but no longer has this file's
+            # project or final policy. Record absence separately from every
+            # nonnegative policy version, including in subsequent repairs.
+            versions[key] = -1
+            missing.add(key)
             continue
         # Before the new Editor owns an explicit policy, an unreadable
         # candidate cannot safely be treated as a permissive or absent one.
@@ -57,14 +63,18 @@ def _previous(store: GraphStore) -> tuple[str | None, list[str] | None, dict[str
                 "FROM graph_meta m LEFT JOIN graph_state i ON i.key='editor_identity' "
                 "LEFT JOIN graph_state p ON p.key='progress'"
             ).fetchone()
-            if identity is None or (identity[2] and identity[2] != scope.project_id):
+            if identity is None:
                 continue
-            key = name[:-7]
+            # "default" is the native fallback when the physical project path
+            # could not be identified. Two such values cannot establish a match.
+            identified = scope.project_id != "default" and identity[2] not in (None, "", "default")
+            if identified and identity[2] != scope.project_id:
+                continue
             version, restricted = db.execute(
                 "SELECT coalesce(json_extract(value,'$.version'),0),json_array_length(value,'$.exclude')>0 "
                 "FROM graph_state WHERE key='policy'"
             ).fetchone() or (0, False)
-            if not identity[2] or not identity[1]:
+            if not identified or not identity[1]:
                 if restricted:
                     versions[key] = version
                     uncertain |= covered.get(key, -1) < version
@@ -81,7 +91,12 @@ def _previous(store: GraphStore) -> tuple[str | None, list[str] | None, dict[str
                 for ancestor, seen in GraphWorkspace._state(
                     db, "restart_policy_inputs", {}
                 ).items():
-                    covered[ancestor] = max(covered.get(ancestor, -1), seen)
+                    # Earlier records cannot acknowledge a later disappearance
+                    # or conceal a policy restored after an acknowledged absence.
+                    if seen == -1 and ancestor not in covered:
+                        acknowledged_missing.add(ancestor)
+                    elif seen >= 0 and ancestor not in acknowledged_missing:
+                        covered[ancestor] = max(covered.get(ancestor, -1), seen)
             if covered.get(key, -1) < version:
                 uncertain |= pending
                 if restricted and not uncertain:
@@ -108,7 +123,11 @@ def _previous(store: GraphStore) -> tuple[str | None, list[str] | None, dict[str
                     donor = earlier
                 else:
                     donor = previous.instance_id
-    return donor, None if uncertain else sorted(exclusions), versions
+    return (
+        donor,
+        None if uncertain or missing - acknowledged_missing else sorted(exclusions),
+        versions,
+    )
 
 
 def open_workspace(root: Path, scope: GraphScope) -> GraphWorkspace:
@@ -192,6 +211,8 @@ def reuse_assets(
 ) -> dict[str, dict | None]:
     """Promote only verified inputs in one receiver-owned, lease-fenced transaction."""
     scope = workspace.store.scope
+    if scope.project_id == "default":
+        return {}
     previous = GraphScope(scope.user_id, instance, scope.project_id)
     path = workspace.store.path.with_name(previous.key + ".sqlite")
     if not proofs or not path.exists():

@@ -340,3 +340,71 @@ async def test_oversized_combined_policy_is_inspectable_and_repairable(tmp_path,
         assert (await service.execute(context, "policy", {}))["data"]["version"] == 1
     finally:
         await service.aclose()
+
+
+@pytest.mark.parametrize(
+    ("prior_project", "current_project"),
+    [("resolved", "default"), ("default", "resolved"), ("default", "default")],
+)
+@pytest.mark.parametrize("restricted", [False, True])
+def test_native_default_project_id_never_identifies_a_static_donor(
+    tmp_path, prior_project, current_project, restricted
+):
+    old = open_workspace(tmp_path, GraphScope("alice", "first", prior_project))
+    if restricted:
+        old.set_policy({"exclude": ["Assets/Confidential/**"]}, expected_version=0)
+    new = open_workspace(tmp_path, GraphScope("alice", "second", current_project))
+    assert new.state("restart_from") is None
+    assert new.policy()["exclude"] == []
+    if restricted:
+        with pytest.raises(RevisionConflict, match="set_policy"):
+            new.require_restart_policy()
+        new.set_policy({"exclude": []}, expected_version=0)
+    new.require_restart_policy()
+    if current_project != "default":
+        subsequent = open_workspace(tmp_path, GraphScope("alice", "third", current_project))
+        subsequent.require_restart_policy()
+        assert not subsequent.policy()["exclude"]
+
+
+def test_unresolved_intermediate_session_does_not_block_a_proven_distinct_project(tmp_path):
+    old = open_workspace(tmp_path, GraphScope("alice", "first", "project-a"))
+    old.set_policy({"exclude": ["Assets/ProjectA/**"]}, expected_version=0)
+    unknown = open_workspace(tmp_path, GraphScope("alice", "second", "default"))
+    with pytest.raises(RevisionConflict, match="set_policy"):
+        unknown.require_restart_policy()
+    distinct = open_workspace(tmp_path, GraphScope("alice", "third", "project-b"))
+    distinct.require_restart_policy()
+    assert distinct.state("restart_from") is None
+    assert distinct.policy()["exclude"] == []
+
+
+def test_missing_policy_requires_explicit_repair_and_restored_policy_is_reconsidered(tmp_path):
+    def scope(instance):
+        return open_workspace(tmp_path, GraphScope("alice", instance, "project"))
+
+    old = scope("first")
+    old.set_policy({"exclude": ["Assets/Restricted/**"]}, expected_version=0)
+    before_archive = scope("second")
+    assert before_archive.policy()["exclude"] == ["Assets/Restricted/**"]
+    archive = old.store.path.with_suffix(".archived")
+    old.store.path.rename(archive)
+
+    unresolved = scope("third")
+    with pytest.raises(RevisionConflict, match="set_policy"):
+        unresolved.require_restart_policy()
+    # Reopening the same pending scope cannot grant a permissive policy.
+    with pytest.raises(RevisionConflict, match="set_policy"):
+        scope("third").require_restart_policy()
+    unresolved.set_policy({"exclude": []}, expected_version=0)
+    repaired = scope("fourth")
+    repaired.require_restart_policy()
+    assert repaired.policy()["exclude"] == []
+
+    archive.rename(old.store.path)
+    restored = scope("fifth")
+    restored.require_restart_policy()
+    assert restored.policy()["exclude"] == ["Assets/Restricted/**"]
+    old.store.path.rename(archive)
+    with pytest.raises(RevisionConflict, match="set_policy"):
+        scope("sixth").require_restart_policy()

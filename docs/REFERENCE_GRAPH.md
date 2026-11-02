@@ -196,10 +196,11 @@ C#, the current compilation context.
 The new session enforces `.gitignore` and preserves attributable graph exclusions.
 If it cannot safely recover a previous policy, `status` and `policy` expose the
 required policy choice. Read the version and use `set_policy` to supply the
-intended exclusions before collecting. External source grants, rules, manual
-declarations, runtime captures, snapshots and mutation receipts belong to their
-original Editor. Use `export_config` and `import_config` to transfer authored
-configuration explicitly.
+intended exclusions before collecting. A provisional project identity cannot
+authorize reuse of an earlier Editor's static evidence. External source grants,
+rules, manual declarations, runtime captures, snapshots and mutation receipts
+belong to their original Editor. Use `export_config` and `import_config` to
+transfer authored configuration explicitly.
 
 `watch` with `enabled:false` stops the current server's watcher. The next graph
 operation can activate it again; this is not a project-wide disable switch.
