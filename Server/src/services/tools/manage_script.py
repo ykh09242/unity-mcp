@@ -32,6 +32,25 @@ def _is_missing_script_read(response: dict[str, Any]) -> bool:
     )
 
 
+def _is_expected_script_read(response: dict[str, Any], expected_contents: str | None) -> bool:
+    """Confirm explicit creation contents without guessing the Editor's default template."""
+    if not expected_contents or response.get("success") is not True:
+        return False
+    data = response.get("data")
+    if not isinstance(data, dict):
+        return False
+    if data.get("contentsEncoded") is True:
+        encoded = data.get("encodedContents")
+        if not isinstance(encoded, str):
+            return False
+        try:
+            observed = base64.b64decode(encoded, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return False
+        return observed == expected_contents
+    return data.get("contents") == expected_contents
+
+
 def _script_lines_and_starts(text: str) -> tuple[list[str], list[int]]:
     """Match Unity's CR, LF and CRLF lines with codepoint start offsets."""
     lines: list[str] = []
@@ -674,7 +693,7 @@ async def create_script(
             "manage_script",
             {"action": "read", "name": name, "path": directory},
         )
-        if isinstance(verify, dict) and verify.get("success"):
+        if isinstance(verify, dict) and _is_expected_script_read(verify, contents):
             return {
                 "success": True,
                 "message": "Script created (verified after domain reload).",
@@ -883,7 +902,11 @@ async def manage_script(
                     "manage_script",
                     {"action": "read", "name": name, "path": path},
                 )
-                if action == "create" and isinstance(verify, dict) and verify.get("success"):
+                if (
+                    action == "create"
+                    and isinstance(verify, dict)
+                    and _is_expected_script_read(verify, contents)
+                ):
                     return {
                         "success": True,
                         "message": "Script created (verified after domain reload).",

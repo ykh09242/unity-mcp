@@ -1,5 +1,6 @@
 """A changed file alone is not proof that a disconnected mutation succeeded."""
 
+import base64
 import importlib
 from unittest.mock import AsyncMock
 
@@ -69,3 +70,72 @@ async def test_disconnected_public_edit_reports_unconfirmed_without_replay(monke
     assert result["success"] is False
     assert result["data"]["execution_status"] == "unknown"
     assert result["data"]["retry_safe"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entrypoint", ["create_script", "manage_script"])
+@pytest.mark.parametrize(
+    "requested,readback,created",
+    [
+        ("class Foo {}", {"contents": "class Foo {}"}, True),
+        ("class Foo {}", {"contents": "class Existing {}"}, False),
+        ("// 😀 café\r\nclass Foo {}\r\n", {"contents": "// 😀 café\r\nclass Foo {}\r\n"}, True),
+        ("class Foo {}\r\n", {"contents": "class Foo {}\n"}, False),
+        ("\ufeffclass Foo {}", {"contents": "class Foo {}"}, False),
+        ("", {"contents": ""}, False),
+        ("", {"contents": "class Foo {}\n"}, False),
+        ("class Foo {}", {}, False),
+        ("class Foo {}", {"contents": None}, False),
+        (
+            "class Foo {}",
+            {
+                "contentsEncoded": True,
+                "encodedContents": base64.b64encode(b"class Foo {}").decode("ascii"),
+            },
+            True,
+        ),
+        ("class Foo {}", {"contentsEncoded": True, "encodedContents": "%%%"}, False),
+        ("class Foo {}", {"contentsEncoded": True, "encodedContents": "/w=="}, False),
+    ],
+)
+async def test_disconnected_creation_requires_expected_contents(
+    monkeypatch, entrypoint, requested, readback, created
+):
+    # Given a lost create response and readback from the actual recovery boundary.
+    disconnect = {"success": False, "error": "connection closed"}
+    sender = AsyncMock(side_effect=[disconnect, {"success": True, "data": readback}])
+    monkeypatch.setattr(scripts, "get_unity_instance_from_context", AsyncMock(return_value=None))
+    monkeypatch.setattr(scripts, "send_with_unity_instance", sender)
+    monkeypatch.setattr(refresh.unity_transport, "send_with_unity_instance", sender)
+    monkeypatch.setattr(refresh, "wait_for_editor_ready", AsyncMock(return_value=(True, 0)))
+
+    # When either creation entrypoint attempts to verify its requested final result.
+    if entrypoint == "create_script":
+        response = await scripts.create_script(AsyncMock(), "Assets/Scripts/Foo.cs", requested)
+    else:
+        response = await scripts.manage_script(
+            AsyncMock(), "create", "Foo", "Assets/Scripts", requested
+        )
+
+    # Then only exact content evidence confirms creation; uncertainty never replays it.
+    assert response["success"] is created
+    if not created:
+        assert response == disconnect
+    assert [call.args[3]["action"] for call in sender.await_args_list] == ["create", "read"]
+
+
+@pytest.mark.asyncio
+async def test_disconnected_default_template_creation_remains_unconfirmed(monkeypatch):
+    disconnect = {"success": False, "error": "connection closed"}
+    sender = AsyncMock(
+        side_effect=[disconnect, {"success": True, "data": {"contents": "class Foo {}\n"}}]
+    )
+    monkeypatch.setattr(scripts, "get_unity_instance_from_context", AsyncMock(return_value=None))
+    monkeypatch.setattr(scripts, "send_with_unity_instance", sender)
+    monkeypatch.setattr(refresh.unity_transport, "send_with_unity_instance", sender)
+    monkeypatch.setattr(refresh, "wait_for_editor_ready", AsyncMock(return_value=(True, 0)))
+
+    response = await scripts.manage_script(AsyncMock(), "create", "Foo", "Assets/Scripts")
+
+    assert response == disconnect
+    assert [call.args[3]["action"] for call in sender.await_args_list] == ["create", "read"]
