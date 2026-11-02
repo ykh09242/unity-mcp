@@ -21,6 +21,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
         private readonly DropdownField view,
             direction;
         private readonly Label status,
+            collectionHint,
             explanation;
         private readonly Foldout details;
         private readonly Button next,
@@ -76,6 +77,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             actions.Add(release);
             status = Note(root, "", "graph-explorer-status");
             status.AddToClassList("hidden");
+            collectionHint = Note(root, "", "graph-explorer-collection-hint");
+            collectionHint.AddToClassList("hidden");
             actionFeedback = new VisualElement();
             root.Add(actionFeedback);
             rows = new VisualElement { name = "graph-explorer-rows" };
@@ -170,6 +173,7 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             cursor = pageAction = null;
             pageOptions = null;
             pageNumber = 0;
+            SetCollectionHint(null);
             root.Add(details);
             details.AddToClassList("hidden");
             rows.Clear();
@@ -180,6 +184,12 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             status.RemoveFromClassList("hidden");
             status.text = "Ready to explore. No references have been queried for this selection.";
             SetAvailable(available);
+        }
+
+        internal void SetCollectionHint(string hint)
+        {
+            collectionHint.text = pageNumber == 0 ? "" : hint ?? "";
+            collectionHint.EnableInClassList("hidden", string.IsNullOrEmpty(collectionHint.text));
         }
 
         internal void Clear()
@@ -333,12 +343,10 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                     )
                     : "";
             status.RemoveFromClassList("hidden");
-            string collectionHint = data["graph_status"]?.Value<string>("hint");
             status.text =
                 $"Page {pageNumber} · {edges.Count} references · revision {data["revision"] ?? data["graph_status"]?["revision"]}. "
                 + (cursor != null ? "More work is available on the next page." : "End of this query.")
                 + route
-                + (string.IsNullOrEmpty(collectionHint) ? "" : "\n" + collectionHint)
                 + "\nCoverage is partial. External sources have separate verification times below. No result proves an asset safe to delete.";
             pageStatus = status.text;
             SetAvailable(available);

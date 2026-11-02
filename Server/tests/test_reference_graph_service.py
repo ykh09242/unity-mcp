@@ -132,6 +132,7 @@ async def test_delivery_native_status_downgrades_freshness(setup, monkeypatch, c
         status = response["data"]["graph_status"]
         assert status["native_current"] is (not change)
         assert status["current"] is (not change)
+        assert ("hint" in status) is bool(change)
         assert status["consistency"] == (
             "checked_snapshot" if consistency == "checked" else "cached"
         )

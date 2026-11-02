@@ -89,7 +89,7 @@ def _native_matches_progress(progress: dict, editor: dict) -> bool:
     )
 
 
-def _collection_hint(graph: dict) -> str | None:
+def _collection_hint(graph: dict, matches_editor: bool) -> str | None:
     progress = graph["progress"]
     phase = progress.get("phase")
     if (
@@ -101,7 +101,7 @@ def _collection_hint(graph: dict) -> str | None:
         or graph["providers"]["addressables"]["errors"]
     ):
         return "Collection reported an error. References may be missing. Check graph status before retrying."
-    if phase == "idle" and graph["queue_idle"] and not graph["dirty_assets"]:
+    if phase == "idle" and matches_editor and graph["queue_idle"] and not graph["dirty_assets"]:
         return None
     if phase == "waiting_for_editor":
         return "Collection is waiting for the Editor. More references may appear after it resumes."
@@ -1187,10 +1187,10 @@ class ReferenceGraphService:
         providers = await drained_thread(workspace.provider_status, bounded=True)
         admission_current = await drained_thread(workspace.ignore_current, editor, bounded=True)
         ignore_changed = not admission_current
+        matches_editor = admission_current and _native_matches_progress(progress, editor)
         native_current = (
-            admission_current
+            matches_editor
             and (not fallback or ignore_verified)
-            and _native_matches_progress(progress, editor)
             and status["queue_idle"]
             and not providers["addressables"]["errors"]
         )
@@ -1300,7 +1300,8 @@ class ReferenceGraphService:
             if fallback and not await entry.engine.validate_ignore():
                 raise RevisionConflict("Ignore rules changed before delivery; retry collection")
             latest = await entry.collect("status")
-            native_current = native_current and _native_matches_progress(progress, latest)
+            matches_editor = matches_editor and _native_matches_progress(progress, latest)
+            native_current = native_current and matches_editor
             current = current and native_current
             if not await drained_thread(workspace.ignore_current, latest, bounded=True):
                 await drained_thread(workspace.block_admission)
@@ -1330,7 +1331,7 @@ class ReferenceGraphService:
             "impact",
             "path",
         } and not data.get("historical"):
-            hint = _collection_hint(graph_status)
+            hint = _collection_hint(graph_status, matches_editor)
             if hint:
                 graph_status["hint"] = hint
         return {

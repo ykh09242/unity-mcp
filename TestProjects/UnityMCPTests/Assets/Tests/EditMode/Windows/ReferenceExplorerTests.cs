@@ -91,6 +91,8 @@ namespace MCPForUnityTests.EditMode.Windows
                 (action, options, token) =>
                 {
                     var data = Status();
+                    if (action == "overview" && pages > 0)
+                        data["graph_status"]["native_current"] = true;
                     if (action == "query")
                     {
                         pages++;
@@ -145,7 +147,14 @@ namespace MCPForUnityTests.EditMode.Windows
             asset.value = Asset();
             Assert.AreEqual(0, pages);
             Click("graph-explorer-search");
-            StringAssert.Contains(progressHint, Root.Q<Label>("graph-explorer-status").text);
+            var hint = Root.Q<Label>("graph-explorer-collection-hint");
+            Assert.That(hint.text, Is.EqualTo(progressHint));
+            Assert.IsFalse(hint.ClassListContains("hidden"));
+            string displayedPage = Root.Q<Label>("graph-explorer-status").text;
+            await section.Run("overview", new JObject());
+            Assert.IsTrue(hint.ClassListContains("hidden"));
+            Assert.That(hint.text, Is.Empty);
+            Assert.AreEqual(displayedPage, Root.Q<Label>("graph-explorer-status").text);
             Click("graph-explorer-explain-edge-0");
             Assert.AreEqual(25, Root.Q("graph-explorer-rows").childCount);
             Assert.IsTrue(Root.Q<Button>("graph-explorer-next").enabledSelf);
@@ -162,7 +171,7 @@ namespace MCPForUnityTests.EditMode.Windows
             } while (true);
             Assert.AreEqual(1001, seen.Count);
             Assert.AreEqual(41, pages);
-            StringAssert.DoesNotContain(progressHint, Root.Q<Label>("graph-explorer-status").text);
+            Assert.IsTrue(hint.ClassListContains("hidden"));
             Assert.AreEqual(1, explanations);
             StringAssert.Contains("partial", Root.Q<Label>("graph-explorer-status").text);
             Click("graph-explorer-explain-edge-1000");

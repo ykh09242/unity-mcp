@@ -718,6 +718,8 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                             : "Status loaded. Provider freshness is reported separately from native progress.";
                 if (action == "overview")
                     message.AddToClassList("hidden");
+                if (action == "overview" || action == "status" || McpReferenceExplorer.Handles(action))
+                    explorer.SetCollectionHint(data["graph_status"]?.Value<string>("hint"));
             }
             catch (OperationCanceledException)
             {
