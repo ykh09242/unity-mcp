@@ -321,7 +321,7 @@ _ACTIONS: Final = {
     },
     "manage_graphics": {
         Permission.READ: _names(
-            "ping volume_get_info volume_list_effects bake_status bake_get_settings stats_get stats_list_counters stats_get_memory pipeline_get_info pipeline_get_settings feature_list skybox_get"
+            "ping volume_get_info volume_list_effects bake_status bake_get_settings stats_get stats_list_counters stats_get_memory pipeline_get_info pipeline_get_diagnostics pipeline_get_settings feature_list skybox_get"
         ),
         Permission.RUN: _names("bake_start bake_cancel bake_reflection_probe"),
         Permission.EDIT: _names(

@@ -182,7 +182,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
         DisplayName = "Render Pipeline & Quality", Description = "Inspect the render pipeline or change quality and pipeline settings.")]
     public static class ManageRenderPipeline
     {
-        private static readonly string[] Actions = { "ping", "pipeline_get_info", "pipeline_set_quality", "pipeline_get_settings", "pipeline_set_settings" };
+        private static readonly string[] Actions = { "ping", "pipeline_get_info", "pipeline_get_diagnostics", "pipeline_set_quality", "pipeline_get_settings", "pipeline_set_settings" };
         public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
             ToolCapabilityDispatch.InvokeAsync(parameters, Actions, MCPForUnity.Editor.Tools.Graphics.ManageGraphics.HandleCommand, cancellationToken);
         public static object HandleCommand(JObject parameters) =>

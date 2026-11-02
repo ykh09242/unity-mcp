@@ -2,7 +2,7 @@ from typing import Annotated, Any, Optional
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import AliasChoices, Field
 
 from services.registry.capability_adapter import capability_command
 from services.registry import mcp_for_unity_tool
@@ -43,6 +43,7 @@ STATS_ACTIONS = [
 
 PIPELINE_ACTIONS = [
     "pipeline_get_info",
+    "pipeline_get_diagnostics",
     "pipeline_set_quality",
     "pipeline_get_settings",
     "pipeline_set_settings",
@@ -96,7 +97,8 @@ ALL_ACTIONS = (
         "- stats_list_counters: Available profiler counters for category (default Render)\n"
         "- stats_set_scene_debug, stats_get_memory\n\n"
         "PIPELINE:\n"
-        "- pipeline_get_info, pipeline_set_quality, pipeline_get_settings, pipeline_set_settings\n\n"
+        "- pipeline_get_info, pipeline_set_quality, pipeline_get_settings, pipeline_set_settings\n"
+        "- pipeline_get_diagnostics: Experimental read-only renderer routing and RenderGraph observations; execution remains unknown.\n\n"
         "FEATURES (URP only):\n"
         "- feature_list, feature_add, feature_remove, feature_configure, feature_toggle, feature_reorder\n\n"
         "SKYBOX / ENVIRONMENT:\n"
@@ -140,6 +142,14 @@ async def manage_graphics(
     index: Annotated[
         Optional[int],
         Field(description="Feature index."),
+    ] = None,
+    renderer_index: Annotated[
+        Optional[int],
+        Field(
+            ge=-1,
+            validation_alias=AliasChoices("renderer_index", "rendererIndex"),
+            description="Pipeline renderer index; -1 or omitted uses its default. Distinct from feature index. Mutually exclusive with target. Alias: rendererIndex.",
+        ),
     ] = None,
     active: Annotated[Optional[bool], "Feature active state."] = None,
     order: Annotated[Optional[list[int]], "Feature reorder indices."] = None,
@@ -206,6 +216,7 @@ async def manage_graphics(
         "box_projection": box_projection,
         "positions": positions,
         "index": index,
+        "renderer_index": renderer_index,
         "active": active,
         "order": order,
         "async": async_bake,

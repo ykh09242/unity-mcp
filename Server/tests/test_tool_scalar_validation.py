@@ -3,11 +3,13 @@
 import asyncio
 import importlib
 import inspect
-from typing import Annotated, Optional, get_type_hints
+from typing import Annotated, Optional
 
 import pytest
 from fastmcp import Client, Context, FastMCP
-from pydantic import AfterValidator, BeforeValidator, Field, TypeAdapter
+from fastmcp.server.dependencies import without_injected_parameters
+from fastmcp.utilities.types import get_cached_typeadapter
+from pydantic import AfterValidator, BeforeValidator, Field
 
 from services.registry import get_registered_tools, mcp_for_unity_tool
 import services.registry.tool_registry as registry
@@ -298,9 +300,14 @@ def test_entire_registered_catalog_has_strict_scalar_leaf_schemas():
     ]
     assert len(tools) >= 51
     for tool in tools:
-        hints = get_type_hints(tool["func"], include_extras=True)
-        for name in inspect.signature(tool["func"]).parameters:
-            if name != "ctx" and name in hints:
-                visit(TypeAdapter(hints[name]).core_schema, tool["name"] + "." + name)
+        # Inspect the same callable argument context used by FastMCP. Standalone
+        # TypeAdapter(annotation) discards field-only metadata such as aliases.
+        schema = get_cached_typeadapter(without_injected_parameters(tool["func"])).core_schema
+        call_schema = schema["schema"] if schema["type"] == "definitions" else schema
+        assert call_schema["type"] == "call", tool["name"]
+        for argument in call_schema["arguments_schema"]["arguments_schema"]:
+            visit(argument["schema"], tool["name"] + "." + argument["name"])
+        for definition in schema.get("definitions", ()):
+            visit(definition, tool["name"] + ".definitions")
     assert len(checked) >= 150
     assert not failures, failures

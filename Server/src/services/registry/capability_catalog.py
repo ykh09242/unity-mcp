@@ -187,8 +187,9 @@ CAPABILITIES: tuple[Capability, ...] = (
         "manage_graphics",
         "graphics",
         "Render Pipeline & Quality",
-        "ping pipeline_get_info pipeline_set_quality pipeline_get_settings pipeline_set_settings",
-        "level settings",
+        "ping pipeline_get_info pipeline_get_diagnostics pipeline_set_quality pipeline_get_settings pipeline_set_settings",
+        "level settings target renderer_index",
+        experimental_actions=("pipeline_get_diagnostics",),
     ),
     _feature(
         "manage_renderer_features",
@@ -196,7 +197,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "graphics",
         "Renderer Features",
         "feature_list feature_add feature_remove feature_configure feature_toggle feature_reorder",
-        "feature_type name material properties settings index active order",
+        "feature_type name material properties settings index active order target renderer_index",
     ),
     _feature(
         "manage_render_environment",

@@ -112,6 +112,8 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         return RenderingStatsOps.GetMemory(@params);
 
                     // --- Pipeline actions (always available) ---
+                    case "pipeline_get_diagnostics":
+                        return RenderGraphDiagnostics.GetDiagnostics(@params);
                     case "pipeline_get_info":
                         return RenderPipelineOps.GetInfo(@params);
                     case "pipeline_set_quality":
@@ -129,7 +131,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     case "feature_toggle":
                     case "feature_reorder":
                     {
-                        if (!GraphicsHelpers.HasURP)
+                        if (!GraphicsHelpers.HasURP && p.GetRaw("target")?.Type is null or JTokenType.Null)
                             return new ErrorResponse("Renderer features require URP (Universal Render Pipeline).");
 
                         return action switch
@@ -169,7 +171,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                                 + "bake_get_settings, bake_set_settings, bake_create_light_probe_group, "
                                 + "bake_create_reflection_probe, bake_set_probe_positions, "
                                 + "stats_get, stats_list_counters, stats_set_scene_debug, stats_get_memory, "
-                                + "pipeline_get_info, pipeline_set_quality, pipeline_get_settings, pipeline_set_settings, "
+                                + "pipeline_get_info, pipeline_get_diagnostics, pipeline_set_quality, pipeline_get_settings, pipeline_set_settings, "
                                 + "feature_list, feature_add, feature_remove, feature_configure, feature_toggle, feature_reorder, "
                                 + "skybox_get, skybox_set_material, skybox_set_properties, skybox_set_ambient, "
                                 + "skybox_set_fog, skybox_set_reflection, skybox_set_sun."

@@ -7,16 +7,13 @@ using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Rendering;
 
 namespace MCPForUnity.Editor.Tools.Graphics
 {
     internal static class RendererFeatureOps
     {
         // Cached URP types (resolved via reflection to avoid hard dependency)
-        private static Type _scriptableRendererDataType;
         private static Type _scriptableRendererFeatureType;
-        private static Type _universalRenderPipelineAssetType;
         private static bool _typesResolved;
 
         private static void EnsureTypes()
@@ -25,19 +22,16 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 return;
             _typesResolved = true;
 
-            _scriptableRendererDataType = Type.GetType("UnityEngine.Rendering.Universal.ScriptableRendererData, Unity.RenderPipelines.Universal.Runtime");
             _scriptableRendererFeatureType = Type.GetType("UnityEngine.Rendering.Universal.ScriptableRendererFeature, Unity.RenderPipelines.Universal.Runtime");
-            _universalRenderPipelineAssetType = Type.GetType(
-                "UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset, Unity.RenderPipelines.Universal.Runtime"
-            );
         }
 
         // === feature_list ===
         internal static object ListFeatures(JObject @params)
         {
-            var rendererData = GetRendererData(@params);
-            if (rendererData == null)
-                return new ErrorResponse("Could not find URP ScriptableRendererData. Ensure URP is active.");
+            var selectionError = RenderGraphDiagnostics.ResolveRenderer(@params, false, out var selection);
+            if (selectionError != null)
+                return selectionError;
+            var rendererData = selection.Renderer;
 
             var featuresProp = rendererData.GetType().GetProperty("rendererFeatures", BindingFlags.Public | BindingFlags.Instance);
             if (featuresProp == null)
@@ -49,7 +43,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     success = true,
                     message = "No renderer features.",
-                    data = new { features = new object[0] },
+                    data = new { renderer = selection.Describe(), features = new object[0] },
                 };
 
             var features = new List<object>();
@@ -77,7 +71,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Found {features.Count} renderer feature(s).",
-                data = new { rendererDataName = (rendererData as ScriptableObject)?.name, features },
+                data = new
+                {
+                    rendererDataName = rendererData.name,
+                    renderer = selection.Describe(),
+                    features,
+                },
             };
         }
 
@@ -92,9 +91,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (string.IsNullOrEmpty(typeName))
                 return new ErrorResponse("'type' parameter required (e.g., 'FullScreenPassRendererFeature', 'RenderObjects').");
 
-            var rendererData = GetRendererData(@params);
-            if (rendererData == null)
-                return new ErrorResponse("Could not find URP ScriptableRendererData.");
+            var selectionError = RenderGraphDiagnostics.ResolveRenderer(@params, false, out var selection);
+            if (selectionError != null)
+                return selectionError;
+            var rendererData = selection.Renderer;
             var ownershipError = GraphicsMutationGuard.Validate(rendererData, requirePersistent: true);
             if (ownershipError != null)
                 return ownershipError;
@@ -191,6 +191,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         name = displayName,
                         type = featureType.Name,
                         instanceId = feature.GetInstanceIDCompat(),
+                        renderer = selection.Describe(),
                     },
                 };
             }
@@ -213,9 +214,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
             int? index = p.GetInt("index");
             string name = p.Get("name");
 
-            var rendererData = GetRendererData(@params);
-            if (rendererData == null)
-                return new ErrorResponse("Could not find URP ScriptableRendererData.");
+            var selectionError = RenderGraphDiagnostics.ResolveRenderer(@params, false, out var selection);
+            if (selectionError != null)
+                return selectionError;
+            var rendererData = selection.Renderer;
             var ownershipError = GraphicsMutationGuard.Validate(rendererData);
             if (ownershipError != null)
                 return ownershipError;
@@ -287,7 +289,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 {
                     success = true,
                     message = $"Removed renderer feature '{featureName}' at index {targetIndex}, but runtime resource cleanup failed.",
-                    data = new { removed = true, cleanupSucceeded = false },
+                    data = new
+                    {
+                        removed = true,
+                        cleanupSucceeded = false,
+                        renderer = selection.Describe(),
+                    },
                     warnings = new[]
                     {
                         new
@@ -299,7 +306,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     },
                 };
 
-            return new { success = true, message = $"Removed renderer feature '{featureName}' at index {targetIndex}." };
+            return new
+            {
+                success = true,
+                message = $"Removed renderer feature '{featureName}' at index {targetIndex}.",
+                data = new { renderer = selection.Describe() },
+            };
         }
 
         private static string DisposeRemovedFeatureResources(IDisposable feature)
@@ -329,9 +341,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (propertiesToken == null)
                 return new ErrorResponse("'properties' (or 'settings') dict is required.");
 
-            var rendererData = GetRendererData(@params);
-            if (rendererData == null)
-                return new ErrorResponse("Could not find URP ScriptableRendererData.");
+            var selectionError = RenderGraphDiagnostics.ResolveRenderer(@params, false, out var selection);
+            if (selectionError != null)
+                return selectionError;
+            var rendererData = selection.Renderer;
             var ownershipError = GraphicsMutationGuard.Validate(rendererData);
             if (ownershipError != null)
                 return ownershipError;
@@ -362,7 +375,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
             {
                 success = true,
                 message = $"Configured '{feature.name}': {result.changed.Count} set, {result.failed.Count} failed.",
-                data = new { result.changed, result.failed },
+                data = new
+                {
+                    result.changed,
+                    result.failed,
+                    renderer = selection.Describe(),
+                },
             };
         }
 
@@ -375,9 +393,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var activeToken = p.GetRaw("active");
             bool active = activeToken == null || activeToken.Type == JTokenType.Null ? true : p.GetBool("active");
 
-            var rendererData = GetRendererData(@params);
-            if (rendererData == null)
-                return new ErrorResponse("Could not find URP ScriptableRendererData.");
+            var selectionError = RenderGraphDiagnostics.ResolveRenderer(@params, false, out var selection);
+            if (selectionError != null)
+                return selectionError;
+            var rendererData = selection.Renderer;
             var ownershipError = GraphicsMutationGuard.Validate(rendererData);
             if (ownershipError != null)
                 return ownershipError;
@@ -410,7 +429,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
             EditorUtility.SetDirty(rendererData as UnityEngine.Object);
             AssetDatabase.SaveAssetIfDirty(rendererData as UnityEngine.Object);
 
-            return new { success = true, message = $"Feature '{feature.name}' {(newState ? "enabled" : "disabled")}." };
+            return new
+            {
+                success = true,
+                message = $"Feature '{feature.name}' {(newState ? "enabled" : "disabled")}.",
+                data = new { renderer = selection.Describe() },
+            };
         }
 
         // === feature_reorder ===
@@ -421,9 +445,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
             if (orderToken == null)
                 return new ErrorResponse("'order' parameter required (array of indices, e.g. [2, 0, 1]).");
 
-            var rendererData = GetRendererData(@params);
-            if (rendererData == null)
-                return new ErrorResponse("Could not find URP ScriptableRendererData.");
+            var selectionError = RenderGraphDiagnostics.ResolveRenderer(@params, false, out var selection);
+            if (selectionError != null)
+                return selectionError;
+            var rendererData = selection.Renderer;
             var ownershipError = GraphicsMutationGuard.Validate(rendererData);
             if (ownershipError != null)
                 return ownershipError;
@@ -491,7 +516,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
             EditorUtility.SetDirty(rendererData as UnityEngine.Object);
             AssetDatabase.SaveAssetIfDirty(rendererData as UnityEngine.Object);
 
-            return new { success = true, message = $"Reordered {featuresList.Count} renderer features." };
+            return new
+            {
+                success = true,
+                message = $"Reordered {featuresList.Count} renderer features.",
+                data = new { renderer = selection.Describe() },
+            };
         }
 
         private static ErrorResponse ValidateStringParameter(ToolParams parameters, string key)
@@ -511,52 +541,6 @@ namespace MCPForUnity.Editor.Tools.Graphics
             // An occupied ObjectReference can be cleared first; an empty slot shrinks immediately.
             if (features.arraySize == previousSize)
                 features.DeleteArrayElementAtIndex(index);
-        }
-
-        private static object GetRendererData(JObject @params)
-        {
-            EnsureTypes();
-            if (_universalRenderPipelineAssetType == null || _scriptableRendererDataType == null)
-                return null;
-
-            var pipelineAsset = GraphicsSettings.currentRenderPipeline;
-            if (pipelineAsset == null || !_universalRenderPipelineAssetType.IsInstanceOfType(pipelineAsset))
-                return null;
-
-            var p = new ToolParams(@params);
-            int rendererIndex = p.GetInt("renderer_index") ?? -1;
-
-            // Get renderer data from the URP asset
-            // Try scriptableRendererData property or GetRenderer method
-            if (rendererIndex >= 0)
-            {
-                // Use SerializedObject to get specific renderer
-                using (var so = new SerializedObject(pipelineAsset))
-                {
-                    using var renderersProp = so.FindProperty("m_RendererDataList");
-                    if (renderersProp == null || rendererIndex >= renderersProp.arraySize)
-                        return null;
-
-                    using var element = renderersProp.GetArrayElementAtIndex(rendererIndex);
-                    return element.objectReferenceValue;
-                }
-            }
-
-            // Default: get the active renderer (index from m_DefaultRendererIndex)
-            using (var so = new SerializedObject(pipelineAsset))
-            {
-                using var defaultIndex = so.FindProperty("m_DefaultRendererIndex");
-                int idx = defaultIndex != null ? defaultIndex.intValue : 0;
-
-                using var renderersProp = so.FindProperty("m_RendererDataList");
-                if (renderersProp != null && idx < renderersProp.arraySize)
-                {
-                    using var element = renderersProp.GetArrayElementAtIndex(idx);
-                    return element.objectReferenceValue;
-                }
-            }
-
-            return null;
         }
 
         private static Type ResolveFeatureType(string typeName)

@@ -193,6 +193,27 @@ def pipeline_info():
     click.echo(format_output(result, config.format))
 
 
+@graphics.command("pipeline-diagnostics")
+@click.option("--target", default=None, help="Camera name/ID or renderer data asset path/name/ID.")
+@click.option(
+    "--renderer-index",
+    type=click.IntRange(min=-1),
+    default=None,
+    help="Pipeline renderer index; -1 uses its default.",
+)
+@handle_unity_errors
+def pipeline_diagnostics(target, renderer_index):
+    """Observe renderer routing and RenderGraph compatibility without modifying assets (experimental)."""
+    config = get_config()
+    params = {"action": "pipeline_get_diagnostics"}
+    if target is not None:
+        params["target"] = target
+    if renderer_index is not None:
+        params["renderer_index"] = renderer_index
+    result = run_command("manage_graphics", params, config)
+    click.echo(format_output(result, config.format))
+
+
 @graphics.command("pipeline-set-quality")
 @click.option("--level", "-l", required=True, help="Quality level name or index.")
 @handle_unity_errors
@@ -387,15 +408,42 @@ def stats_debug_mode(mode):
 
 
 @graphics.command("feature-list")
+@click.option(
+    "--target",
+    default=None,
+    help="Renderer data asset path/name/ID (exclusive with --renderer-index).",
+)
+@click.option(
+    "--renderer-index",
+    type=click.IntRange(min=-1),
+    default=None,
+    help="Pipeline renderer index; -1 uses its default.",
+)
 @handle_unity_errors
-def feature_list():
+def feature_list(target, renderer_index):
     """List URP renderer features."""
     config = get_config()
-    result = run_command("manage_graphics", {"action": "feature_list"}, config)
+    params = {"action": "feature_list"}
+    if target is not None:
+        params["target"] = target
+    if renderer_index is not None:
+        params["renderer_index"] = renderer_index
+    result = run_command("manage_graphics", params, config)
     click.echo(format_output(result, config.format))
 
 
 @graphics.command("feature-add")
+@click.option(
+    "--target",
+    default=None,
+    help="Renderer data asset path/name/ID (exclusive with --renderer-index).",
+)
+@click.option(
+    "--renderer-index",
+    type=click.IntRange(min=-1),
+    default=None,
+    help="Pipeline renderer index; -1 uses its default.",
+)
 @click.option(
     "--type",
     "-t",
@@ -405,21 +453,36 @@ def feature_list():
 )
 @click.option("--name", "-n", default=None, help="Display name.")
 @handle_unity_errors
-def feature_add(feature_type, name):
+def feature_add(feature_type, name, target, renderer_index):
     """Add a renderer feature."""
     config = get_config()
     params = {"action": "feature_add", "type": feature_type}
     if name:
         params["name"] = name
+    if target is not None:
+        params["target"] = target
+    if renderer_index is not None:
+        params["renderer_index"] = renderer_index
     result = run_command("manage_graphics", params, config)
     click.echo(format_output(result, config.format))
 
 
 @graphics.command("feature-remove")
+@click.option(
+    "--target",
+    default=None,
+    help="Renderer data asset path/name/ID (exclusive with --renderer-index).",
+)
+@click.option(
+    "--renderer-index",
+    type=click.IntRange(min=-1),
+    default=None,
+    help="Pipeline renderer index; -1 uses its default.",
+)
 @click.option("--index", "-i", type=int, default=None, help="Feature index.")
 @click.option("--name", "-n", default=None, help="Feature name.")
 @handle_unity_errors
-def feature_remove(index, name):
+def feature_remove(index, name, target, renderer_index):
     """Remove a renderer feature."""
     config = get_config()
     params = {"action": "feature_remove"}
@@ -427,18 +490,33 @@ def feature_remove(index, name):
         params["index"] = index
     if name:
         params["name"] = name
+    if target is not None:
+        params["target"] = target
+    if renderer_index is not None:
+        params["renderer_index"] = renderer_index
     result = run_command("manage_graphics", params, config)
     click.echo(format_output(result, config.format))
 
 
 @graphics.command("feature-configure")
+@click.option(
+    "--target",
+    default=None,
+    help="Renderer data asset path/name/ID (exclusive with --renderer-index).",
+)
+@click.option(
+    "--renderer-index",
+    type=click.IntRange(min=-1),
+    default=None,
+    help="Pipeline renderer index; -1 uses its default.",
+)
 @click.option("--index", "-i", type=int, default=None, help="Feature index.")
 @click.option("--name", "-n", default=None, help="Feature name.")
 @click.option(
     "--prop", "-p", multiple=True, type=(str, str), required=True, help="Property key-value pair."
 )
 @handle_unity_errors
-def feature_configure(index, name, prop):
+def feature_configure(index, name, prop, target, renderer_index):
     """Configure properties on a renderer feature."""
     config = get_config()
     properties = {key: _coerce_cli_value(val) for key, val in prop}
@@ -447,16 +525,31 @@ def feature_configure(index, name, prop):
         params["index"] = index
     if name:
         params["name"] = name
+    if target is not None:
+        params["target"] = target
+    if renderer_index is not None:
+        params["renderer_index"] = renderer_index
     result = run_command("manage_graphics", params, config)
     click.echo(format_output(result, config.format))
 
 
 @graphics.command("feature-reorder")
 @click.option(
+    "--target",
+    default=None,
+    help="Renderer data asset path/name/ID (exclusive with --renderer-index).",
+)
+@click.option(
+    "--renderer-index",
+    type=click.IntRange(min=-1),
+    default=None,
+    help="Pipeline renderer index; -1 uses its default.",
+)
+@click.option(
     "--order", "-o", required=True, help="Comma-separated list of indices (e.g., '2,0,1')."
 )
 @handle_unity_errors
-def feature_reorder(order):
+def feature_reorder(order, target, renderer_index):
     """Reorder renderer features."""
     config = get_config()
     try:
@@ -470,16 +563,31 @@ def feature_reorder(order):
             "Order must contain each index exactly once from 0 to N-1.", param_hint="--order"
         )
     params = {"action": "feature_reorder", "order": order_list}
+    if target is not None:
+        params["target"] = target
+    if renderer_index is not None:
+        params["renderer_index"] = renderer_index
     result = run_command("manage_graphics", params, config)
     click.echo(format_output(result, config.format))
 
 
 @graphics.command("feature-toggle")
+@click.option(
+    "--target",
+    default=None,
+    help="Renderer data asset path/name/ID (exclusive with --renderer-index).",
+)
+@click.option(
+    "--renderer-index",
+    type=click.IntRange(min=-1),
+    default=None,
+    help="Pipeline renderer index; -1 uses its default.",
+)
 @click.option("--index", "-i", type=int, default=None, help="Feature index.")
 @click.option("--name", "-n", default=None, help="Feature name.")
 @click.option("--active/--inactive", default=True, help="Enable or disable.")
 @handle_unity_errors
-def feature_toggle(index, name, active):
+def feature_toggle(index, name, active, target, renderer_index):
     """Enable/disable a renderer feature."""
     config = get_config()
     params = {"action": "feature_toggle", "active": active}
@@ -487,6 +595,10 @@ def feature_toggle(index, name, active):
         params["index"] = index
     if name:
         params["name"] = name
+    if target is not None:
+        params["target"] = target
+    if renderer_index is not None:
+        params["renderer_index"] = renderer_index
     result = run_command("manage_graphics", params, config)
     click.echo(format_output(result, config.format))
 

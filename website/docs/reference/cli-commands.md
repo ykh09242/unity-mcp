@@ -1839,6 +1839,8 @@ Add a renderer feature.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
+| --target | text | optional | nargs=1 | — | — | Renderer data asset path/name/ID (exclusive with --renderer-index). |
+| --renderer-index | integer range: [-1..None] | optional | nargs=1 | — | — | Pipeline renderer index; -1 uses its default. |
 | --type / -t | text | required | nargs=1 | — | — | Feature type (e.g., FullScreenPassRendererFeature). |
 | --name / -n | text | optional | nargs=1 | — | — | Display name. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
@@ -1849,6 +1851,8 @@ Configure properties on a renderer feature.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
+| --target | text | optional | nargs=1 | — | — | Renderer data asset path/name/ID (exclusive with --renderer-index). |
+| --renderer-index | integer range: [-1..None] | optional | nargs=1 | — | — | Pipeline renderer index; -1 uses its default. |
 | --index / -i | integer | optional | nargs=1 | — | — | Feature index. |
 | --name / -n | text | optional | nargs=1 | — | — | Feature name. |
 | --prop / -p | tuple: text, text | required | nargs=2, repeatable | — | — | Property key-value pair. |
@@ -1860,6 +1864,8 @@ List URP renderer features.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
+| --target | text | optional | nargs=1 | — | — | Renderer data asset path/name/ID (exclusive with --renderer-index). |
+| --renderer-index | integer range: [-1..None] | optional | nargs=1 | — | — | Pipeline renderer index; -1 uses its default. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp graphics feature-remove`
@@ -1868,6 +1874,8 @@ Remove a renderer feature.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
+| --target | text | optional | nargs=1 | — | — | Renderer data asset path/name/ID (exclusive with --renderer-index). |
+| --renderer-index | integer range: [-1..None] | optional | nargs=1 | — | — | Pipeline renderer index; -1 uses its default. |
 | --index / -i | integer | optional | nargs=1 | — | — | Feature index. |
 | --name / -n | text | optional | nargs=1 | — | — | Feature name. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
@@ -1878,6 +1886,8 @@ Reorder renderer features.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
+| --target | text | optional | nargs=1 | — | — | Renderer data asset path/name/ID (exclusive with --renderer-index). |
+| --renderer-index | integer range: [-1..None] | optional | nargs=1 | — | — | Pipeline renderer index; -1 uses its default. |
 | --order / -o | text | required | nargs=1 | — | — | Comma-separated list of indices (e.g., '2,0,1'). |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
@@ -1887,6 +1897,8 @@ Enable/disable a renderer feature.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
+| --target | text | optional | nargs=1 | — | — | Renderer data asset path/name/ID (exclusive with --renderer-index). |
+| --renderer-index | integer range: [-1..None] | optional | nargs=1 | — | — | Pipeline renderer index; -1 uses its default. |
 | --index / -i | integer | optional | nargs=1 | — | — | Feature index. |
 | --name / -n | text | optional | nargs=1 | — | — | Feature name. |
 | --active / --inactive | boolean | optional | nargs=1, flag | true | — | Enable or disable. |
@@ -1898,6 +1910,16 @@ Check graphics system status.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp graphics pipeline-diagnostics`
+
+Observe renderer routing and RenderGraph compatibility without modifying assets (experimental).
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --target | text | optional | nargs=1 | — | — | Camera name/ID or renderer data asset path/name/ID. |
+| --renderer-index | integer range: [-1..None] | optional | nargs=1 | — | — | Pipeline renderer index; -1 uses its default. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp graphics pipeline-info`

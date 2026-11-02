@@ -68,7 +68,7 @@ def test_no_duplicate_actions():
 
 
 def test_all_actions_count():
-    assert len(ALL_ACTIONS) == 40
+    assert len(ALL_ACTIONS) == 41
 
 
 def test_volume_actions_count():
@@ -84,7 +84,7 @@ def test_stats_actions_count():
 
 
 def test_pipeline_actions_count():
-    assert len(PIPELINE_ACTIONS) == 4
+    assert len(PIPELINE_ACTIONS) == 5
 
 
 def test_feature_actions_count():

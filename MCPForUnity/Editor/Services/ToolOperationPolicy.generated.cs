@@ -60,7 +60,7 @@ namespace MCPForUnity.Editor.Services
             { "manage_physics_settings", new Partition("manage_physics", new[] { "ping", "get_settings", "set_settings", "get_collision_matrix", "set_collision_matrix" }) },
             { "manage_render_environment", new Partition("manage_graphics", new[] { "skybox_get", "skybox_set_material", "skybox_set_properties", "skybox_set_ambient", "skybox_set_sun" }) },
             { "manage_render_fog", new Partition("manage_graphics", new[] { "skybox_set_fog" }) },
-            { "manage_render_pipeline", new Partition("manage_graphics", new[] { "ping", "pipeline_get_info", "pipeline_set_quality", "pipeline_get_settings", "pipeline_set_settings" }) },
+            { "manage_render_pipeline", new Partition("manage_graphics", new[] { "ping", "pipeline_get_info", "pipeline_get_diagnostics", "pipeline_set_quality", "pipeline_get_settings", "pipeline_set_settings" }) },
             { "manage_render_reflections", new Partition("manage_graphics", new[] { "skybox_set_reflection" }) },
             { "manage_render_volumes", new Partition("manage_graphics", new[] { "volume_create", "volume_add_effect", "volume_set_effect", "volume_remove_effect", "volume_get_info", "volume_set_properties", "volume_list_effects", "volume_create_profile" }) },
             { "manage_renderer_features", new Partition("manage_graphics", new[] { "feature_list", "feature_add", "feature_remove", "feature_configure", "feature_toggle", "feature_reorder" }) },

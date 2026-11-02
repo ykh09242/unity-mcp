@@ -9881,6 +9881,18 @@
                 ],
                 "default": null
               },
+              "renderer_index": {
+                "anyOf": [
+                  {
+                    "minimum": -1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "resolution": {
                 "anyOf": [
                   {
@@ -17283,6 +17295,7 @@
                 "enum": [
                   "ping",
                   "pipeline_get_info",
+                  "pipeline_get_diagnostics",
                   "pipeline_set_quality",
                   "pipeline_get_settings",
                   "pipeline_set_settings"
@@ -17300,11 +17313,34 @@
                 ],
                 "default": null
               },
+              "renderer_index": {
+                "anyOf": [
+                  {
+                    "minimum": -1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "settings": {
                 "anyOf": [
                   {
                     "additionalProperties": true,
                     "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string"
                   },
                   {
                     "type": "null"
@@ -17705,11 +17741,34 @@
                 ],
                 "default": null
               },
+              "renderer_index": {
+                "anyOf": [
+                  {
+                    "minimum": -1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "settings": {
                 "anyOf": [
                   {
                     "additionalProperties": true,
                     "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string"
                   },
                   {
                     "type": "null"
@@ -35028,6 +35087,18 @@
                 ],
                 "default": null
               },
+              "renderer_index": {
+                "anyOf": [
+                  {
+                    "minimum": -1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "resolution": {
                 "anyOf": [
                   {
@@ -42430,6 +42501,7 @@
                 "enum": [
                   "ping",
                   "pipeline_get_info",
+                  "pipeline_get_diagnostics",
                   "pipeline_set_quality",
                   "pipeline_get_settings",
                   "pipeline_set_settings"
@@ -42447,11 +42519,34 @@
                 ],
                 "default": null
               },
+              "renderer_index": {
+                "anyOf": [
+                  {
+                    "minimum": -1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "settings": {
                 "anyOf": [
                   {
                     "additionalProperties": true,
                     "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string"
                   },
                   {
                     "type": "null"
@@ -42852,11 +42947,34 @@
                 ],
                 "default": null
               },
+              "renderer_index": {
+                "anyOf": [
+                  {
+                    "minimum": -1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "settings": {
                 "anyOf": [
                   {
                     "additionalProperties": true,
                     "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string"
                   },
                   {
                     "type": "null"
