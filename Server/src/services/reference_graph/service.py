@@ -89,6 +89,27 @@ def _native_matches_progress(progress: dict, editor: dict) -> bool:
     )
 
 
+def _collection_hint(graph: dict) -> str | None:
+    progress = graph["progress"]
+    phase = progress.get("phase")
+    if (
+        phase == "error"
+        or graph["worker_error"]
+        or graph["errors"]
+        or graph["failed_assets"]
+        or progress.get("external_errors")
+        or graph["providers"]["addressables"]["errors"]
+    ):
+        return "Collection reported an error. References may be missing. Check graph status before retrying."
+    if phase == "idle" and graph["queue_idle"] and not graph["dirty_assets"]:
+        return None
+    if phase == "waiting_for_editor":
+        return "Collection is waiting for the Editor. More references may appear after it resumes."
+    if phase in {"not_initialized", "changes_pending", "idle"}:
+        return "Reference collection is pending. More references may appear after it finishes."
+    return "Reference collection is in progress. More references may appear. Run the query again after collection finishes."
+
+
 async def native_send(instance: str, params: dict) -> dict:
     result = await send_with_unity_instance(
         async_send_command_with_retry,
@@ -1288,22 +1309,31 @@ class ReferenceGraphService:
                 raise RevisionConflict(
                     "Graph admission changed before delivery; restart the request"
                 )
+        graph_status = {
+            **status,
+            **counts,
+            "current": bool(current),
+            "native_current": bool(native_current),
+            "providers": providers,
+            "consistency": "checked_snapshot" if consistency == "checked" else "cached",
+            "external_inputs_changed": external_changed,
+            "coverage": "partial_static",
+            "progress": progress,
+            "worker_error": entry.error,
+        }
+        if action in {
+            "status",
+            "overview",
+            "query",
+            "diagnostics",
+            "explain",
+            "impact",
+            "path",
+        } and not data.get("historical"):
+            hint = _collection_hint(graph_status)
+            if hint:
+                graph_status["hint"] = hint
         return {
             "success": True,
-            "data": {
-                **data,
-                "scope": store.scope.key,
-                "graph_status": {
-                    **status,
-                    **counts,
-                    "current": bool(current),
-                    "native_current": bool(native_current),
-                    "providers": providers,
-                    "consistency": "checked_snapshot" if consistency == "checked" else "cached",
-                    "external_inputs_changed": external_changed,
-                    "coverage": "partial_static",
-                    "progress": progress,
-                    "worker_error": entry.error,
-                },
-            },
+            "data": {**data, "scope": store.scope.key, "graph_status": graph_status},
         }

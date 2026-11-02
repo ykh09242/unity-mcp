@@ -35,6 +35,64 @@ REQUEST_MARKER = ContextVar("graph_test_request_marker", default=None)
 
 
 @pytest.mark.asyncio
+async def test_live_query_hints_follow_collection_and_disappear_on_completion(setup, monkeypatch):
+    service, _, ctx = setup
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    entry, _ = await service.resolve(ctx, "status")
+    entry.workspace.set_policy({"respect_gitignore": False}, expected_version=0)
+    for owner in ("first", "second"):
+        await service.execute(
+            ctx,
+            "declare",
+            {
+                "id": owner,
+                "owner": owner,
+                "edge": {"target": "shared", "kind": "declared"},
+                "expected_version": 0,
+            },
+        )
+    assert await entry.engine.reconcile()
+    started, release = asyncio.Event(), asyncio.Event()
+    collect = entry.engine.collect
+
+    async def paused(action, **params):
+        if action == "changes" and not started.is_set():
+            started.set()
+            await release.wait()
+            raise OSError("interrupted collection")
+        return await collect(action, **params)
+
+    async def query(node):
+        response = await manage_reference_graph(
+            ctx, "query", {"node": node, "direction": "incoming", "limit": 1}
+        )
+        assert response["success"], response
+        return response["data"]
+
+    monkeypatch.setattr(entry.engine, "collect", paused)
+    work = asyncio.create_task(entry.engine.reconcile())
+    try:
+        await asyncio.wait_for(started.wait(), watchdog_timeout())
+        page, empty = await query("shared"), await query("missing")
+        assert len(page["edges"]) == 1 and not empty["edges"]
+        assert "more references" in page["graph_status"]["hint"].lower()
+        assert empty["graph_status"]["hint"] == page["graph_status"]["hint"]
+        release.set()
+        with pytest.raises(OSError, match="interrupted collection"):
+            await work
+        assert "error" in (await query("shared"))["graph_status"]["hint"].lower()
+        assert await entry.engine.reconcile()
+        finished = await query("shared")
+        assert finished["next_cursor"] is not None
+        assert "hint" not in finished["graph_status"]
+        assert "hint" not in (await query("missing"))["graph_status"]
+    finally:
+        release.set()
+        await asyncio.gather(work, return_exceptions=True)
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("consistency", ["cached", "checked"])
 @pytest.mark.parametrize(
     "change",
@@ -183,6 +241,7 @@ async def test_empty_external_result_requires_explicit_checked_snapshot(
     assert response["edges"] == []
     assert not response["graph_status"]["current"]
     assert response["graph_status"]["native_current"]
+    assert "hint" not in response["graph_status"]
     assert response["graph_status"]["providers"]["external:fixture"]["last_verified_at"]
     checked = (
         await service.execute(
@@ -509,6 +568,7 @@ async def test_exploration_actions_through_tool_keep_scope_and_authored_evidence
     after = (await call("snapshot", name="after"))["snapshot"]["id"]
     delta = await call("diff", before=before, after=after)
     assert delta["historical"] and not delta["graph_status"]["current"]
+    assert "hint" not in delta["graph_status"]
     assert delta["changes"][0]["change"] == "modified"
     assert (await call("release_query", id=impact["query_id"]))["released"]
     assert (await call("delete_snapshot", id=before))["deleted"]

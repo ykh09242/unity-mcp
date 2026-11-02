@@ -20,6 +20,12 @@ from another user, Editor or project cannot select that scope.
 
 ## Continuation and large workloads
 
+Live queries and status responses include `data.graph_status.hint` while collection is
+pending, in progress, waiting for the Editor, or reporting an error. A page can already
+contain references, or be empty, before indexing finishes. Run a fresh query after
+collection completes. Completed collection omits the hint even when the result has
+another page or an external source uses cached verification.
+
 Page size defaults to 100 and accepts 1 through 1,000. This is a response/work page,
 not a total graph, result, memory or elapsed-time limit. Omit `max_depth` for all
 reachable nodes. Follow `next_cursor` until null even when a page has no edges or

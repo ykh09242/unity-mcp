@@ -333,13 +333,13 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
                     )
                     : "";
             status.RemoveFromClassList("hidden");
+            string collectionHint = data["graph_status"]?.Value<string>("hint");
             status.text =
                 $"Page {pageNumber} · {edges.Count} references · revision {data["revision"] ?? data["graph_status"]?["revision"]}. "
                 + (cursor != null ? "More work is available on the next page." : "End of this query.")
                 + route
-                + "\nCoverage is partial. "
-                + (data["graph_status"]?.Value<bool?>("native_current") == true ? "Native collection is current." : "Native collection is still updating.")
-                + " External sources have separate verification times below. No result proves an asset safe to delete.";
+                + (string.IsNullOrEmpty(collectionHint) ? "" : "\n" + collectionHint)
+                + "\nCoverage is partial. External sources have separate verification times below. No result proves an asset safe to delete.";
             pageStatus = status.text;
             SetAvailable(available);
         }

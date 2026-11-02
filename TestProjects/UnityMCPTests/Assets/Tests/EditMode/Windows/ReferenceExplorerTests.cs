@@ -82,6 +82,7 @@ namespace MCPForUnityTests.EditMode.Windows
         [Test]
         public async Task AssetReferencesPageWithoutDroppingResultsOrEagerExplanations()
         {
+            const string progressHint = "More references may appear after collection finishes.";
             int pages = 0,
                 explanations = 0;
             string expectedNode = "asset:" + AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(Asset()));
@@ -93,6 +94,10 @@ namespace MCPForUnityTests.EditMode.Windows
                     if (action == "query")
                     {
                         pages++;
+                        if (pages == 1)
+                            data["graph_status"]["hint"] = progressHint;
+                        else
+                            data["graph_status"]["native_current"] = true;
                         Assert.AreEqual(expectedNode, options.Value<string>("node"));
                         Assert.AreEqual("incoming", options.Value<string>("direction"));
                         Assert.AreEqual(25, options.Value<int>("limit"));
@@ -140,6 +145,7 @@ namespace MCPForUnityTests.EditMode.Windows
             asset.value = Asset();
             Assert.AreEqual(0, pages);
             Click("graph-explorer-search");
+            StringAssert.Contains(progressHint, Root.Q<Label>("graph-explorer-status").text);
             Click("graph-explorer-explain-edge-0");
             Assert.AreEqual(25, Root.Q("graph-explorer-rows").childCount);
             Assert.IsTrue(Root.Q<Button>("graph-explorer-next").enabledSelf);
@@ -156,6 +162,7 @@ namespace MCPForUnityTests.EditMode.Windows
             } while (true);
             Assert.AreEqual(1001, seen.Count);
             Assert.AreEqual(41, pages);
+            StringAssert.DoesNotContain(progressHint, Root.Q<Label>("graph-explorer-status").text);
             Assert.AreEqual(1, explanations);
             StringAssert.Contains("partial", Root.Q<Label>("graph-explorer-status").text);
             Click("graph-explorer-explain-edge-1000");

@@ -795,18 +795,23 @@ namespace MCPForUnity.Editor.Windows.Components.ReferenceGraph
             diagnosticGraph = McpDiagnosticBundle.GraphSummary(graph as JObject);
             long errors = graph?.Value<long?>("errors") ?? 0;
             string workerError = graph?.Value<string>("worker_error");
-            bool failed = errors > 0 || !string.IsNullOrEmpty(workerError);
+            string phase = graph["progress"]?.Value<string>("phase");
+            bool failed = errors > 0 || !string.IsNullOrEmpty(workerError) || phase == "error";
             bool current = graph?.Value<bool?>("native_current") == true;
             status.text =
                 failed ? "Collection needs attention"
                 : current ? "Editor references are up to date"
+                : phase == "waiting_for_editor" ? "Waiting for the Editor"
                 : "Collecting references";
             summary.EnableInClassList("graph-attention", failed);
             summary.EnableInClassList("graph-current", !failed && current);
             summaryDetail.text =
-                failed ? "Some evidence is incomplete. Review the source status below, fix access or compilation, then retry."
-                : current ? "Native collection is current. External sources keep their own verification time."
-                : "Collection continues in the background. Refresh to see the latest progress.";
+                graph.Value<string>("hint")
+                ?? (
+                    failed ? "Some evidence is incomplete. Review the source status below, fix access or compilation, then retry."
+                    : current ? "Native collection is current. External sources keep their own verification time."
+                    : "Refresh to see the latest collection status."
+                );
             if (!string.IsNullOrEmpty(workerError))
                 summaryDetail.text += "\n" + workerError;
             readyCount.text = Number(graph?["ready"]);
