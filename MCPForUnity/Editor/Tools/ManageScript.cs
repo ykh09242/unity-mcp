@@ -57,6 +57,7 @@ namespace MCPForUnity.Editor.Tools
         private static Func<bool> _parentEnabledForTests = null;
         private static Action<string, bool> _preparedRefreshForTests = null;
         private static Action<string> _preparedCommitStageForTests = null;
+        private static Action<string> _scriptWriteBeforeCommitForTests = null;
 
         internal static ErrorResponse RequireExplicitConsent()
         {
@@ -406,65 +407,20 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static void WriteScriptFile(string fullPath, string contents, bool overwrite)
+        private static void WriteScriptFile(string fullPath, string contents, bool overwrite, string expectedDigest = null)
         {
             byte[] bytes = StrictFileUtf8.GetBytes(contents ?? string.Empty);
-            string attempt = Guid.NewGuid().ToString("N");
-            string tempPath = fullPath + "." + attempt + ".tmp";
-            string backupPath = fullPath + "." + attempt + ".bak";
-            bool ownsTemp = false;
-            bool writeCompleted = false;
-            try
+            if (overwrite)
             {
-                using (var stream = File.Open(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                {
-                    ownsTemp = true;
-                    stream.Write(bytes, 0, bytes.Length);
-                }
-
-                if (!overwrite)
-                {
-                    // A destination created since validation belongs to another writer.
-                    File.Move(tempPath, fullPath);
-                }
-                else
-                {
-                    try
-                    {
-                        File.Replace(tempPath, fullPath, backupPath);
-                    }
-                    catch (PlatformNotSupportedException)
-                    {
-                        File.Copy(tempPath, fullPath, true);
-                    }
-                    catch (IOException)
-                    {
-                        File.Copy(tempPath, fullPath, true);
-                    }
-                }
-                writeCompleted = true;
+                if (expectedDigest == null)
+                    throw new ArgumentException("Script replacement requires the prepared source digest.", nameof(expectedDigest));
+                AtomicAssetFile.Replace(fullPath, bytes, expectedDigest, () => _scriptWriteBeforeCommitForTests?.Invoke(fullPath));
             }
-            finally
+            else
             {
-                if (ownsTemp)
-                {
-                    try
-                    {
-                        if (File.Exists(tempPath))
-                            File.Delete(tempPath);
-                    }
-                    catch { }
-                }
-                // Keep this attempt's recovery backup if replacement/fallback failed.
-                if (writeCompleted)
-                {
-                    try
-                    {
-                        if (File.Exists(backupPath))
-                            File.Delete(backupPath);
-                    }
-                    catch { }
-                }
+                if (Directory.Exists(fullPath))
+                    throw new IOException("Destination is a directory; creation did not replace it.");
+                AtomicAssetFile.Create(fullPath, bytes);
             }
         }
 
@@ -502,7 +458,13 @@ namespace MCPForUnity.Editor.Tools
 
         private static string ReadScriptContents(string fullPath)
         {
+            return ReadScriptContentsWithDigest(fullPath, out _);
+        }
+
+        private static string ReadScriptContentsWithDigest(string fullPath, out string rawDigest)
+        {
             byte[] bytes = File.ReadAllBytes(fullPath);
+            rawDigest = AtomicAssetFile.Digest(bytes);
             System.Text.Encoding encoding = StrictFileUtf8;
             int offset = 0;
             // Keep ReadAllText's Unicode BOM detection while rejecting malformed bytes.
@@ -543,6 +505,16 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("Content is required for the 'update' action.");
             }
 
+            string originalDigest;
+            try
+            {
+                originalDigest = AtomicAssetFile.DigestFile(fullPath);
+            }
+            catch (Exception ex)
+            {
+                return new ErrorResponse($"Failed to read script: {ex.Message}");
+            }
+
             // Validate syntax with detailed error reporting using GUI setting
             ValidationLevel validationLevel = GetValidationLevelFromGUI();
             bool isValid = ValidateScriptSyntax(contents, validationLevel, out string[] validationErrors);
@@ -558,7 +530,7 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                WriteScriptFile(fullPath, contents, overwrite: true);
+                WriteScriptFile(fullPath, contents, overwrite: true, expectedDigest: originalDigest);
 
                 // Prepare success response BEFORE any operation that can trigger a domain reload
                 var uri = $"mcpforunity://path/{relativePath}";
@@ -616,9 +588,10 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("No edits provided.");
 
             string original;
+            string originalDigest = null;
             try
             {
-                original = computeOnly ? sourceBuffer : ReadScriptContents(fullPath);
+                original = computeOnly ? sourceBuffer : ReadScriptContentsWithDigest(fullPath, out originalDigest);
             }
             catch (Exception ex)
             {
@@ -838,7 +811,7 @@ namespace MCPForUnity.Editor.Tools
                 return ScriptPreviewResponse(fullPath, relativePath, original, working, spans.Count);
             try
             {
-                WriteScriptFile(fullPath, working, overwrite: true);
+                WriteScriptFile(fullPath, working, overwrite: true, expectedDigest: originalDigest);
 
                 // Respect refresh mode: immediate vs debounced
                 bool immediate =
@@ -2157,9 +2130,10 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("No edits provided.");
 
             string original;
+            string originalDigest = null;
             try
             {
-                original = computeOnly ? sourceBuffer : ReadScriptContents(fullPath);
+                original = computeOnly ? sourceBuffer : ReadScriptContentsWithDigest(fullPath, out originalDigest);
             }
             catch (Exception ex)
             {
@@ -2664,7 +2638,7 @@ namespace MCPForUnity.Editor.Tools
                 bool immediate = refreshMode == "immediate" || refreshMode == "sync";
 
                 // Persist changes atomically (no BOM), then compute/return new file SHA
-                WriteScriptFile(fullPath, working, overwrite: true);
+                WriteScriptFile(fullPath, working, overwrite: true, expectedDigest: originalDigest);
 
                 var newSha = ComputeSha256(working);
                 var ok = new SuccessResponse(
