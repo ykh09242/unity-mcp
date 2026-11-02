@@ -1074,16 +1074,21 @@ class ReferenceGraphService:
 
         def fallback_admission():
             with store.read_snapshot():
+                policy = workspace.policy(bounded=True)
                 return (
-                    workspace.policy(bounded=True)["respect_gitignore"],
+                    policy["respect_gitignore"],
                     workspace.ignore_current(editor, bounded=True),
+                    policy.get("version", 0),
                 )
 
         fallback = False
         admission_current = False
+        fallback_policy_version = None
         if not replacing_policy:
             if editor.get("ignore_watchers") is False:
-                fallback, admission_current = await drained_thread(fallback_admission)
+                fallback, admission_current, fallback_policy_version = await drained_thread(
+                    fallback_admission
+                )
             else:
                 admission_current = await drained_thread(
                     workspace.ignore_current, editor, bounded=True
@@ -1125,6 +1130,14 @@ class ReferenceGraphService:
             )
         else:
             admission_fence, exclusions_apply, catalog_progress = None, False, None
+        if (
+            protected
+            and fallback_policy_version is not None
+            and fallback_policy_version != admission_fence[3]
+        ):
+            async with self.lock:
+                self.start(entry, wake=True)
+            raise RevisionConflict("Collection policy changed during admission; retry the request")
         if admission_pending and admission_fence[2]:
             raise RevisionConflict("Graph admission changed; retry the query")
         catalog_pending = False

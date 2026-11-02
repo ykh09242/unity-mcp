@@ -591,6 +591,100 @@ async def test_cached_query_batches_sqlite_read_snapshots(setup, monkeypatch, wa
 
 
 @pytest.mark.asyncio
+async def test_unwatched_policy_change_before_opening_fences_cached_query(setup, monkeypatch):
+    import hashlib
+
+    from services.reference_graph.ignore import GitIgnoreRules
+    from services.reference_graph import service as service_module
+
+    service, sender, ctx = setup
+    wakes = []
+    monkeypatch.setattr(service, "start", lambda _entry, **kwargs: wakes.append(kwargs))
+    nested_ignore = False
+    ignore_content = b"Private.prefab\n"
+    assert GitIgnoreRules([("Assets/.gitignore", ignore_content.decode())]).ignored(
+        "Assets/Private.prefab"
+    )
+
+    async def send(instance, params):
+        result = await sender(instance, params)
+        if params["action"] == "status":
+            result["ignore_watchers"] = False
+        elif params["action"] == "ignore_rules" and nested_ignore:
+            result["files"] = [
+                {
+                    "path": "Assets/.gitignore",
+                    "fingerprint": hashlib.sha256(ignore_content).hexdigest(),
+                    "size_bytes": len(ignore_content),
+                }
+            ]
+        return result
+
+    service.send = send
+    entry, _ = await service.resolve(ctx, "status")
+    entry.workspace.set_policy({"respect_gitignore": False}, expected_version=0)
+    assert await entry.engine.reconcile()
+    other = ReferenceGraphService(service.root, send=send)
+    monkeypatch.setattr(other, "start", lambda *_args, **_kwargs: None)
+    other_entry, _ = await other.resolve(Context(other), "status")
+    caller, target = "asset:" + "1" * 32, "asset:" + "2" * 32
+    rows = [
+        {"guid": caller[6:], "path": "Assets/Caller.cs", "kind": "script", "source_format": "none"},
+        {
+            "guid": target[6:],
+            "path": "Assets/Private.prefab",
+            "kind": "asset",
+            "source_format": "none",
+        },
+    ]
+    original = service_module.drained_thread
+    query = entry.workspace.store.query
+    transitioned = False
+
+    def introduce_nested_ignore(*args, **kwargs):
+        nonlocal nested_ignore
+        nested_ignore = True
+        return query(*args, **kwargs)
+
+    async def race(function, *args, **kwargs):
+        nonlocal transitioned
+        result = await original(function, *args, **kwargs)
+        if getattr(function, "__name__", "") == "fallback_admission" and not transitioned:
+            transitioned = True
+            workspace = other_entry.workspace
+            workspace.set_policy({"respect_gitignore": True}, expected_version=1)
+            assert await other_entry.engine.reconcile()
+            assert workspace.acquire("race-fixture")
+            try:
+                workspace.record_page("race-fixture", rows, workspace.progress(), "scan")
+                generation = workspace.store.observe(
+                    caller, "unity", "fixture", path=rows[0]["path"]
+                )
+                workspace.publish(
+                    "race-fixture",
+                    caller,
+                    "unity",
+                    generation,
+                    Analysis([Edge(target, "dependency")]),
+                )
+            finally:
+                workspace.release("race-fixture")
+            assert workspace.store.query(caller)["edges"]
+        return result
+
+    monkeypatch.setattr(service_module, "drained_thread", race)
+    monkeypatch.setattr(entry.workspace.store, "query", introduce_nested_ignore)
+    try:
+        with pytest.raises(RevisionConflict, match="policy changed during admission"):
+            await service.execute(ctx, "query", {"node": caller})
+        assert transitioned and not nested_ignore
+        assert any(wake.get("wake") for wake in wakes)
+    finally:
+        await service.aclose()
+        await other.aclose()
+
+
+@pytest.mark.asyncio
 async def test_exploration_actions_through_tool_keep_scope_and_authored_evidence(
     setup, monkeypatch
 ):
