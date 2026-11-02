@@ -2,6 +2,8 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -76,6 +78,7 @@ namespace MCPForUnity.Editor.Tools.Navigation
         {
             if ((string)job["state"] != "queued")
                 return false;
+            NativeCommandArbitrator.Lease lease = null;
             try
             {
                 if (job["native_invoked"]?.Type != JTokenType.Boolean || (bool)job["native_invoked"])
@@ -89,6 +92,23 @@ namespace MCPForUnity.Editor.Tools.Navigation
                 if (reason != null)
                 {
                     job["detail"] = "Waiting before native bake: " + reason;
+                    save();
+                    return false;
+                }
+                // The request's command lease ended when it returned the queued job.
+                // Own validation and synchronous native settlement as a fresh operation.
+                if (
+                    !NativeCommandArbitrator.Shared.TryAcquire(
+                        ToolOperationMode.Exclusive,
+                        "manage_navigation",
+                        new JObject { ["action"] = "bake" },
+                        null,
+                        out lease,
+                        out var admission
+                    )
+                )
+                {
+                    job["detail"] = "Waiting before native bake: " + admission.Reason;
                     save();
                     return false;
                 }
@@ -122,6 +142,10 @@ namespace MCPForUnity.Editor.Tools.Navigation
                 job["finished_utc"] = DateTime.UtcNow.ToString("O");
                 save();
                 return false;
+            }
+            finally
+            {
+                lease?.Dispose();
             }
         }
     }

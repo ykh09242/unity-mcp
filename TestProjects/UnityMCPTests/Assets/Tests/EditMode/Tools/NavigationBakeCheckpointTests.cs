@@ -1,7 +1,13 @@
 using System;
+using System.Collections;
 using System.Reflection;
+using System.Threading.Tasks;
+using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
@@ -45,6 +51,181 @@ namespace MCPForUnityTests.EditMode.Tools
 
         private bool Advance(JObject job, Action validate, Action bake, Func<string> blocked = null, Action save = null) =>
             (bool)Call("Advance", job, DateTime.UtcNow, validate, bake, blocked ?? (() => null), save ?? (() => { }));
+
+        private static async Task HoldExclusiveUntil(Task settlement)
+        {
+            Assert.IsTrue(
+                NativeCommandArbitrator.Shared.TryAcquire(ToolOperationMode.Exclusive, "execute_code", null, null, out var lease, out var reason),
+                reason.Reason
+            );
+            using (lease)
+                await settlement;
+        }
+
+        private static bool ExclusiveIsHeld()
+        {
+            bool acquired = NativeCommandArbitrator.Shared.TryAcquire(
+                ToolOperationMode.Exclusive,
+                "manage_navigation",
+                new JObject { ["action"] = "bake" },
+                null,
+                out var lease,
+                out var blocker
+            );
+            lease?.Dispose();
+            return !acquired && blocker.Reason == "operation_busy";
+        }
+
+        private static void AssertSharedIsReleased()
+        {
+            bool acquired = NativeCommandArbitrator.Shared.TryAcquire(
+                ToolOperationMode.Exclusive,
+                "manage_navigation",
+                new JObject { ["action"] = "bake" },
+                null,
+                out var lease,
+                out var reason
+            );
+            lease?.Dispose();
+            Assert.IsTrue(acquired, reason.Reason);
+        }
+
+        [UnityTest]
+        public IEnumerator DeferredPumpWaitsForActualExclusiveAsyncOwnerThenInvokesOnce()
+        {
+            JObject job = Queued();
+            var settlement = new TaskCompletionSource<bool>();
+            Task owner = HoldExclusiveUntil(settlement.Task);
+            int polls = 0;
+            int validations = 0;
+            int invocations = 0;
+            bool validationOwned = false;
+            bool invocationOwned = false;
+            bool saveOwned = true;
+            int ownedSaves = 0;
+            EditorApplication.CallbackFunction pump = () =>
+            {
+                polls++;
+                Advance(
+                    job,
+                    () =>
+                    {
+                        validations++;
+                        validationOwned = ExclusiveIsHeld();
+                    },
+                    () =>
+                    {
+                        invocations++;
+                        invocationOwned = ExclusiveIsHeld();
+                    },
+                    save: () =>
+                    {
+                        if ((string)job["state"] == "running" || (string)job["state"] == "completed")
+                        {
+                            ownedSaves++;
+                            saveOwned &= ExclusiveIsHeld();
+                        }
+                    }
+                );
+            };
+            EditorApplication.update += pump;
+            try
+            {
+                for (int frame = 0; frame < 3; frame++)
+                    yield return null;
+                Assert.Greater(polls, 0, "The deferred callback must run while the async owner is unsettled.");
+                Assert.IsFalse(owner.IsCompleted);
+                Assert.AreEqual("queued", (string)job["state"]);
+                Assert.IsFalse((bool)job["native_invoked"]);
+                Assert.AreEqual(0, validations, "Target validation must also wait for ownership.");
+                Assert.AreEqual(0, invocations);
+                StringAssert.Contains("operation_busy", (string)job["detail"]);
+
+                // Round-trip exactly the retained, unstarted reservation while ownership is held.
+                string deadline = (string)job["deadline_utc"];
+                job = (JObject)Restore(job)[0];
+                Assert.AreEqual(deadline, (string)job["deadline_utc"]);
+                Assert.IsFalse(Advance(job, () => validations++, () => invocations++));
+                settlement.SetResult(true);
+                for (int frame = 0; frame < 20 && (!owner.IsCompleted || invocations == 0); frame++)
+                    yield return null;
+                Assert.IsTrue(owner.IsCompleted);
+                Assert.IsFalse(owner.IsFaulted, owner.Exception?.ToString());
+                Assert.AreEqual("completed", (string)job["state"]);
+                Assert.AreEqual(1, validations);
+                Assert.AreEqual(1, invocations);
+                Assert.IsTrue(validationOwned);
+                Assert.IsTrue(invocationOwned);
+                Assert.IsTrue(saveOwned);
+                Assert.AreEqual(2, ownedSaves, "The invocation marker and final completion save must both retain the lease.");
+                yield return null;
+                Assert.AreEqual(1, invocations, "Later updates must never replay native entry.");
+                AssertSharedIsReleased();
+            }
+            finally
+            {
+                EditorApplication.update -= pump;
+                settlement.TrySetResult(true);
+            }
+        }
+
+        [TestCase("cancel")]
+        [TestCase("validation_error")]
+        [TestCase("native_error")]
+        [TestCase("save_error")]
+        [TestCase("final_barrier")]
+        public void ActualSharedLeaseReleasesAfterEverySettlement(string outcome)
+        {
+            JObject job = Queued();
+            int invokes = 0;
+            int barriers = 0;
+            bool validationOwned = false;
+            bool invocationOwned = false;
+            bool saveOwned = false;
+            Action run = () =>
+                Advance(
+                    job,
+                    () =>
+                    {
+                        validationOwned = ExclusiveIsHeld();
+                        if (outcome == "cancel")
+                            job["state"] = "cancelled";
+                        if (outcome == "validation_error")
+                            throw new InvalidOperationException("validation failed");
+                    },
+                    () =>
+                    {
+                        invokes++;
+                        invocationOwned = ExclusiveIsHeld();
+                        throw new InvalidOperationException("native completion uncertain");
+                    },
+                    () => ++barriers == 2 && outcome == "final_barrier" ? "native_job_active" : null,
+                    () =>
+                    {
+                        saveOwned = ExclusiveIsHeld();
+                        if (outcome == "save_error")
+                            throw new InvalidOperationException("checkpoint write failed");
+                    }
+                );
+            if (outcome == "save_error")
+                Assert.Throws<InvalidOperationException>(() => run());
+            else
+                run();
+            Assert.IsTrue(validationOwned);
+            Assert.AreEqual(outcome == "native_error" ? 1 : 0, invokes);
+            if (invokes > 0)
+                Assert.IsTrue(invocationOwned);
+            if (outcome != "cancel")
+                Assert.IsTrue(saveOwned);
+            AssertSharedIsReleased();
+
+            JObject restored = (JObject)Restore(job)[0];
+            if (outcome == "final_barrier")
+                Assert.IsTrue(Advance(restored, () => { }, () => invokes++));
+            else
+                Assert.IsFalse(Advance(restored, () => Assert.Fail("validation replay"), () => Assert.Fail("native replay")));
+            AssertSharedIsReleased();
+        }
 
         [Test]
         public void RepeatedReloadOfQueuedJobPreservesIdDeadlineAndInvokesOnce()
@@ -117,6 +298,7 @@ namespace MCPForUnityTests.EditMode.Tools
                     () => { },
                     () =>
                     {
+                        Assert.IsTrue(ExclusiveIsHeld());
                         JObject durable = (JObject)JArray.Parse(saved)[0];
                         Assert.AreEqual(true, (bool)durable["native_invoked"]);
                         Assert.AreEqual("interrupted", (string)((JArray)Call("Restore", saved))[0]["state"]);
@@ -124,6 +306,7 @@ namespace MCPForUnityTests.EditMode.Tools
                     save: () => saved = new JArray(job).ToString()
                 )
             );
+            AssertSharedIsReleased();
         }
 
         [Test]
