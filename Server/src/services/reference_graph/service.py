@@ -111,6 +111,20 @@ async def native_send(instance: str, params: dict) -> dict:
         )
         if reason == "reference_scope_changed":
             raise ScopeChanged("The selected Editor instance or project changed")
+        if params.get("action") == "inventory" and (
+            reason == "reference_inventory_snapshot_invalid"
+            or reason == "reference_collection_unavailable"
+            # Earlier Editors report an invalid inventory cursor only in the message.
+            and result.get("message")
+            in (
+                "Inventory snapshot expired; restart the census.",
+                "Inventory continuation requires its snapshot.",
+                "Inventory offset is past the snapshot.",
+            )
+        ):
+            raise RevisionConflict(
+                str(result.get("message") or "Inventory snapshot is no longer valid")
+            )
         if reason == "reference_collection_unavailable":
             raise ReferenceCollectionError(str(result.get("message", reason)))
         raise RuntimeError(str(reason))

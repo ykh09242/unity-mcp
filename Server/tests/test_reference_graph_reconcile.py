@@ -744,17 +744,91 @@ async def test_add_edit_wrapper_move_delete_and_idle_do_not_reread_unchanged_sou
 @pytest.mark.asyncio
 async def test_census_failure_keeps_previous_evidence_and_resumes_complete_scan(setup):
     store, workspace, editor, engine = setup
-    for number in range(5):
+    target = editor.add(
+        0, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    for number in range(1, 4):
         editor.add(number, f"Assets/{number}.asset")
+    owner = editor.add(
+        4,
+        "Assets/Loader.cs",
+        'using UnityEngine; class Loader { void Go() { Resources.Load("One"); } }',
+    )
     editor.fail_offset = 2
     with pytest.raises(OSError):
         await engine.reconcile()
     assert workspace.counts()["assets"] == 2
-    assert not workspace.progress()["initialized"]
+    assert not workspace.progress().get("initialized")
+    assert workspace.progress()["census"]["offset"] == 2
     editor.fail_offset = None
+    editor.calls.clear()
     assert await Reconciler(workspace, editor, allowed).reconcile()
+    assert [params["offset"] for action, params in editor.calls if action == "inventory"] == [2, 4]
     assert workspace.counts()["assets"] == 5
     assert store.status()["queue_idle"]
+    edge = next(item for item in store.query(owner)["edges"] if item["target"] == target)
+    assert edge in store.query(target, direction="incoming")["edges"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,offset", [("record_page", 2), ("finish_census", 4)])
+async def test_failed_census_commit_does_not_publish_the_next_checkpoint(
+    setup, monkeypatch, method, offset
+):
+    _, workspace, editor, engine = setup
+    for number in range(5):
+        editor.add(number, f"Assets/{number}.asset")
+    original = getattr(workspace, method)
+
+    def interrupted(*args, **kwargs):
+        if method == "finish_census" or args[1][0]["guid"] == f"{offset:032x}":
+            raise OSError("injected commit failure")
+        return original(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(workspace, method, interrupted)
+        with pytest.raises(OSError, match="injected commit failure"):
+            await engine.reconcile()
+    assert not workspace.progress().get("initialized")
+    assert workspace.progress()["census"]["offset"] == offset
+    editor.calls.clear()
+    assert await Reconciler(workspace, editor, allowed).reconcile()
+    assert (
+        next(params["offset"] for action, params in editor.calls if action == "inventory") == offset
+    )
+    assert workspace.counts()["assets"] == 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code", ["reference_inventory_snapshot_invalid", "reference_collection_unavailable"]
+)
+async def test_expired_native_inventory_snapshot_restarts_the_census(setup, monkeypatch, code):
+    from services.reference_graph import service
+
+    _, workspace, editor, _ = setup
+    for number in range(3):
+        editor.add(number, f"Assets/{number}.asset")
+
+    async def expired(*_args, **_kwargs):
+        return {
+            "success": False,
+            "error": code,
+            "message": "Inventory snapshot expired; restart the census.",
+        }
+
+    async def collect(action, **params):
+        if action == "inventory" and params["offset"]:
+            return await service.native_send("editor", {"action": action, **params})
+        return await editor(action, **params)
+
+    monkeypatch.setattr(service, "send_with_unity_instance", expired)
+    with pytest.raises(RevisionConflict, match="snapshot expired"):
+        await Reconciler(workspace, collect, allowed).reconcile()
+    assert workspace.progress()["census"] is None
+    editor.calls.clear()
+    assert await Reconciler(workspace, editor, allowed).reconcile()
+    assert next(params["offset"] for action, params in editor.calls if action == "inventory") == 0
 
 
 @pytest.mark.asyncio

@@ -129,7 +129,9 @@ namespace MCPForUnity.Editor.Tools
                 return new
                 {
                     success = false,
-                    error = "reference_collection_unavailable",
+                    error = error is ReferenceGraphCollector.InvalidInventorySnapshotException
+                        ? "reference_inventory_snapshot_invalid"
+                        : "reference_collection_unavailable",
                     message = parameters?["action"]?.Type == JTokenType.String
                     && ((string)parameters["action"]).StartsWith("runtime_", StringComparison.Ordinal)
                         ? "Runtime capture unavailable (" + error.GetType().Name + "). Inspect capture status, then retry or release it."

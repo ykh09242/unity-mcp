@@ -19,6 +19,12 @@ namespace MCPForUnity.Editor.Tools
     /// <summary>Read-only, paged native evidence. Persistent user state belongs to the server.</summary>
     internal static class ReferenceGraphCollector
     {
+        internal sealed class InvalidInventorySnapshotException : InvalidOperationException
+        {
+            internal InvalidInventorySnapshotException(string message)
+                : base(message) { }
+        }
+
         private static string[] inventory;
         private static string inventoryToken;
         private static string inventoryEpoch;
@@ -328,7 +334,7 @@ namespace MCPForUnity.Editor.Tools
             if (token == null)
             {
                 if (offset != 0)
-                    throw new ArgumentException("Inventory continuation requires its snapshot.");
+                    throw new InvalidInventorySnapshotException("Inventory continuation requires its snapshot.");
                 if (inventory == null || inventoryEpoch != ReferenceGraphJournal.Epoch || (refresh && inventoryRevision != ReferenceGraphJournal.Revision))
                 {
                     inventoryEpoch = ReferenceGraphJournal.Epoch;
@@ -339,9 +345,9 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
             else if (inventory == null || token != inventoryToken || inventoryEpoch != ReferenceGraphJournal.Epoch)
-                throw new InvalidOperationException("Inventory snapshot expired; restart the census.");
+                throw new InvalidInventorySnapshotException("Inventory snapshot expired; restart the census.");
             if (offset > inventory.Length)
-                throw new ArgumentException("Inventory offset is past the snapshot.");
+                throw new InvalidInventorySnapshotException("Inventory offset is past the snapshot.");
             var rows = new JArray();
             int end = offset + Math.Min(count, inventory.Length - offset);
             for (int i = offset; i < end; i++)

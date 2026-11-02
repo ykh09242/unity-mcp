@@ -417,39 +417,42 @@ class Reconciler:
                     (row.get("guid") for row in assets), census.get("last_guid", "")
                 )
                 self._budget.admit_items(len(assets))
-            except CollectionBudgetExceeded:
-                # A finite attempt can resume its durable census after provisioning.
-                raise
-            except Exception:
-                # An expired native snapshot must restart, never skip a page.
+            except RevisionConflict:
+                # Only an invalid snapshot or inconsistent page invalidates the cursor.
                 await self._phase("census", census=None, initialized=False)
                 raise
-            census.update(
-                snapshot=snapshot,
-                offset=following or 0,
-                epoch=epoch,
-                revision=revision,
-                last_guid=last_guid,
-            )
-            self.progress.update(
-                census=census,
-                epoch=page["epoch"],
-                after=page["revision"],
-                catalog_through=census["through"],
-            )
+            progress = {
+                **self.progress,
+                "epoch": epoch,
+                "after": revision,
+                "catalog_through": census["through"],
+            }
+            if following is not None:
+                census = {
+                    **census,
+                    "snapshot": snapshot,
+                    "offset": following,
+                    "epoch": epoch,
+                    "revision": revision,
+                    "last_guid": last_guid,
+                }
+                progress["census"] = census
+            # On the last page retain its starting cursor until the sweep commits.
             await drained_thread(
                 self.workspace.record_page,
                 self.worker,
-                page["assets"],
-                self.progress,
+                assets,
+                progress,
                 census["seen"],
                 force=census["force"],
             )
-            if page["next_offset"] is None:
-                self.progress.update(census=None, initialized=True, phase="changes")
+            self.progress = progress
+            if following is None:
+                finished = {**progress, "census": None, "initialized": True, "phase": "changes"}
                 await drained_thread(
-                    self.workspace.finish_census, self.worker, census["seen"], self.progress
+                    self.workspace.finish_census, self.worker, census["seen"], finished
                 )
+                self.progress = finished
                 return
 
     async def _changes(self) -> None:

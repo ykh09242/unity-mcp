@@ -30,6 +30,9 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.That(result["data"].Value<string>("instance_id"), Is.EqualTo(instance));
             Assert.That(result["data"].Value<string>("project_id"), Is.EqualTo(project));
             Assert.That(result["data"]["assets"], Is.TypeOf<JArray>());
+            request["offset"] = 1;
+            request["snapshot"] = "retired-inventory";
+            Assert.That(Call(request).Value<string>("error"), Is.EqualTo("reference_inventory_snapshot_invalid"));
         }
 
         [TestCase("user_id")]
