@@ -31,6 +31,8 @@ on:
       - website/docs/guides/multi-instance.md
       - website/docs/reference/**
       - tools/generate_docs_reference.py
+      - tools/public_contracts.py
+      - Server/tests/fixtures/public_mcp_contracts.json
       - tools/generate_tool_capabilities.py
       - MCPForUnity/Editor/Tools/ToolCapabilities.generated.cs
       - .github/workflows/docs-generate.yml
@@ -53,6 +55,8 @@ on:
       - website/docs/guides/multi-instance.md
       - website/docs/reference/**
       - tools/generate_docs_reference.py
+      - tools/public_contracts.py
+      - Server/tests/fixtures/public_mcp_contracts.json
       - tools/generate_tool_capabilities.py
       - MCPForUnity/Editor/Tools/ToolCapabilities.generated.cs
       - .github/workflows/docs-generate.yml

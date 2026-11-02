@@ -10,6 +10,8 @@ description: "Enable or configure scene fog."
 
 **Group:** `graphics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Enable or configure scene fog.

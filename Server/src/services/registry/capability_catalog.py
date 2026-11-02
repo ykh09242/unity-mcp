@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from services.registry.action_contracts import action_help
+from services.registry.tool_registry import ToolMaturity
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,8 @@ class Capability:
     actions: tuple[str, ...]
     parameters: tuple[str, ...]
     effects: CapabilityEffects = MUTATING_EFFECTS
+    maturity: ToolMaturity = "stable"
+    experimental_actions: tuple[str, ...] = ()
 
     @property
     def native_actions(self) -> tuple[str, ...]:
@@ -63,9 +66,28 @@ class Capability:
         )
 
 
-def _feature(name, source, group, title, actions, parameters, *, effects=MUTATING_EFFECTS):
+def _feature(
+    name,
+    source,
+    group,
+    title,
+    actions,
+    parameters,
+    *,
+    effects=MUTATING_EFFECTS,
+    maturity="stable",
+    experimental_actions=(),
+):
     return Capability(
-        name, source, group, title, tuple(actions.split()), tuple(parameters.split()), effects
+        name,
+        source,
+        group,
+        title,
+        tuple(actions.split()),
+        tuple(parameters.split()),
+        effects,
+        maturity,
+        experimental_actions,
     )
 
 

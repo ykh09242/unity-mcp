@@ -10,6 +10,8 @@ description: "Create, configure and assign physics materials."
 
 **Group:** `physics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Create, configure and assign physics materials.

@@ -10,6 +10,8 @@ description: "Manage rendering graphics: volumes, post-processing, light baking,
 
 **Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_graphics`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Manage rendering graphics: volumes, post-processing, light baking, rendering stats, pipeline settings, and URP renderer features. Use ping to check pipeline and available features.

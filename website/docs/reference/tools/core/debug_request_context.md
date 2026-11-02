@@ -10,6 +10,8 @@ description: "Return the current FastMCP request context details (client_id, ses
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.debug_request_context`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Return the current FastMCP request context details (client_id, session_id, and meta dump).

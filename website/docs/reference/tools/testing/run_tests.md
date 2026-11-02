@@ -10,6 +10,8 @@ description: "Starts a Unity test run asynchronously and returns a job_id immedi
 
 **Group:** `testing` &nbsp;·&nbsp; **Module:** `services.tools.run_tests`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Starts a Unity test run asynchronously and returns a job_id immediately. Poll with get_test_job for progress.

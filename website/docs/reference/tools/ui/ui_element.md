@@ -10,6 +10,8 @@ description: "Change a visual element's text, classes, style or state."
 
 **Group:** `ui` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Change a visual element's text, classes, style or state.

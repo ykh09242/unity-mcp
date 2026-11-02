@@ -91,6 +91,7 @@ def register_capability(capability: Capability, implementation: Callable) -> Cal
         name=capability.name,
         description=capability.description,
         group=capability.group,
+        maturity=capability.maturity,
         **(
             {"output_schema": {"type": "object", **BUNDLE_RESULT.json_schema()}}
             if capability.name == "asset_bundles"

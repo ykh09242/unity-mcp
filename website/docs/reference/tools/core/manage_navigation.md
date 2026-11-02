@@ -10,6 +10,8 @@ description: "Read and explicitly author navigation surfaces, agents, obstacles 
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_navigation`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Read and explicitly author navigation surfaces, agents, obstacles and links. Use capabilities to detect the optional AI Navigation package/version. Scene operations require an explicit loaded scene_handle; targets are exact component or GameObject instance IDs. add creates one component, configure applies supported public properties with Undo. Bake requires an active surface using Children collection and returns a queued job; poll bake_status for native completion. Queued jobs can be cancelled; the synchronous native bake cannot be interrupted. No automatic global bake or project-setting changes. Path and sample queries use agent_type_id/area_mask and report scene attribution limits of Unity's global NavMesh. Save authored scenes explicitly.

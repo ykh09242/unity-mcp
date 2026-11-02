@@ -10,6 +10,8 @@ description: "Manage Unity player builds — trigger builds, switch platforms, c
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_build`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Manage Unity player builds — trigger builds, switch platforms, configure settings, manage build scenes and profiles, run batch builds across platforms. Actions: plan, build_from_plan, build, status, platform, settings, scenes, profiles, batch, cancel, clean_output, report_history, report, compare_reports.  plan observes one ordinary build without applying settings; build_from_plan requires its expected_plan_sha256 and rejects drift. These actions do not support build profiles or batch targets. clean_output previews an explicit Builds/ descendant by default; dry_run=false deletes it. Refuses links, active builds, project source paths, and scans over 5000 entries. Read-only report_history/report/compare_reports retain bounded completed build summaries, paged steps/packed_assets and semantic comparisons across domain reload. Active observations after reload are interrupted, not resumed. Absolute paths/messages are omitted. Reports expire after 30 days or bounded eviction; missing/corrupt/partial evidence is explicit.

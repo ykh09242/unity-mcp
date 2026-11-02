@@ -10,6 +10,8 @@ description: "Inspect or change 2D/3D physics settings and layer collision rules
 
 **Group:** `physics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect or change 2D/3D physics settings and layer collision rules.

@@ -10,6 +10,8 @@ description: "Create or list cameras, select targets and configure lenses or pri
 
 **Group:** `camera` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Create or list cameras, select targets and configure lenses or priority.

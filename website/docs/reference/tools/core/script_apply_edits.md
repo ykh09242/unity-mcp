@@ -10,6 +10,8 @@ description: "Edit C# source using operations scoped to the intended members or 
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.script_apply_edits`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Edit C# source using operations scoped to the intended members or text.

@@ -10,6 +10,8 @@ description: "Create, load, save or close scenes and organize loaded scene objec
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Create, load, save or close scenes and organize loaded scene objects.

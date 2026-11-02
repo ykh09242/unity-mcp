@@ -10,6 +10,8 @@ description: "Author optional Input System1.7+ .inputactions assets in idle Edit
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_input_actions`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Author optional Input System1.7+ .inputactions assets in idle Edit Mode. capabilities/read are bounded reads; read returns exact map/action/binding GUIDs and a raw source revision. create_asset requires an unoccupied Assets path and existing parent. add_map/add_action/add_binding/set_binding/remove_binding require expected_revision; exact GUID selectors avoid name ambiguity. Simple bindings only; existing composite/control-scheme data and PlayerInput asset linkage are preserved. Edits save/import immediately; configured importer wrapper generation may compile scripts. Conditional file-backed Undo/Redo is limited to32 edits in the current Editor domain, refuses external drift and does not survive domain reload. Asset creation is not Undoable. Does not simulate input, pair devices, enable actions or install packages.

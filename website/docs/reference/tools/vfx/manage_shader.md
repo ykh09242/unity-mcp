@@ -10,6 +10,8 @@ description: "Manages shader scripts in Unity (create, read, update, delete)."
 
 **Group:** `vfx` &nbsp;·&nbsp; **Module:** `services.tools.manage_shader`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Manages shader scripts in Unity (create, read, update, delete). Read-only: read, inspect_graph. read returns a bounded source page (64 KiB by default); follow data.nextOffset with read_offset while hasMore is true. Offsets and limits count source bytes after the BOM. inspect_graph takes a full Assets/*.shadergraph path and returns bounded, paged serialized nodes, edges, properties and keywords (modern MultiJSON GraphData v0-3; 4 MiB files; at most 100 results per collection per page). This is structural inspection, not package validation or graph editing. Modifying actions: create, update, delete.

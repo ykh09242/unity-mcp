@@ -10,6 +10,8 @@ description: "Observe an existing build, package query/mutation/resolve, or sing
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.wait_for_operation`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Observe an existing build, package query/mutation/resolve, or single scenario job. Never starts, retries or cancels native work. wait_timeout bounds only this observation (0 is one poll). Reports waiting/running/finalizing/terminal/unknown with the original job evidence; a failed job is a valid observation. An authenticated connection is captured once; reload/disconnect requires a fresh explicit observation. Opt-in modern HTTP Tasks can durably retain this bounded wait; other clients receive ordinary polling results.

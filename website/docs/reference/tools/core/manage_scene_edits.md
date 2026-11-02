@@ -10,6 +10,8 @@ description: "Preview or apply 1-1000 allowlisted native Transform, BoxCollider,
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_scene_edits`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Preview or apply 1-1000 allowlisted native Transform, BoxCollider, SphereCollider, Rigidbody, or CapsuleCollider serialized property edits in a stable Edit-mode scene. Preview returns before/after values and a one-attempt token valid for 10 minutes. Apply accepts preview_id, or edits with expected_old for every field. Rejects drift before mutation; one named Undo restores supported recorded component values. No arbitrary transaction or filesystem, build, package, custom callback, dirty-flag rollback is promised. preview_structure takes an integer scene-root target scope and 1-256 ordered create/delete/reparent operations. Only ordinary Transform-only subtrees are supported; prefab instances and custom/native component subtrees are refused. create assigns a $temporary ID that later operations may reference. reparent preserves local transforms. apply_structure requires the preview token and rejects hierarchy/state drift before its one Undo group.

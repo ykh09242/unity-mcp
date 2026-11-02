@@ -48,8 +48,10 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 if __package__:
     from .cli_reference import prepare_cli_reference
+    from .public_contracts import CONTRACT_OUT, public_contract_drift, render_public_contracts
 else:
     from cli_reference import prepare_cli_reference
+    from public_contracts import CONTRACT_OUT, public_contract_drift, render_public_contracts
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SERVER_SRC = REPO_ROOT / "Server" / "src"
@@ -351,6 +353,7 @@ def render_tool_page(tool: dict[str, Any], existing_examples: str) -> str:
         f"{GENERATED_BANNER}\n\n"
         f"**Group:** `{group}` &nbsp;·&nbsp; "
         f"**Module:** `{module}`\n\n"
+        f"**Maturity:** `{tool.get('maturity', 'stable')}` (support status; independent of enabled state, readiness and permissions).\n\n"
         f"## Description\n\n"
         f"{description or '_No description provided._'}\n\n"
         f"## Parameters\n\n"
@@ -690,6 +693,7 @@ def main(argv: list[str] | None = None) -> int:
     # parser-only example checks isolated, and finish them before any writes.
     try:
         cli_reference = prepare_cli_reference(REPO_ROOT).markdown
+        public_contracts = render_public_contracts()
     except ValueError as error:
         print(str(error), file=sys.stderr)
         return 1
@@ -717,6 +721,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[--check] generated tree retained at {tmp_root}")
 
             diffs = []
+            diffs.extend(public_contract_drift(public_contracts, CONTRACT_OUT))
             diffs.extend(_diff_trees(TOOLS_OUT, tmp_tools))
             diffs.extend(_diff_trees(RESOURCES_OUT, tmp_resources))
             if not CLI_OUT.is_file() or CLI_OUT.read_text(encoding="utf-8") != cli_reference:
@@ -737,6 +742,8 @@ def main(argv: list[str] | None = None) -> int:
                 ctx.__exit__(None, None, None)
 
     stats = generate()
+    if _write(CONTRACT_OUT, public_contracts):
+        stats["writes"] += 1
     if _write(CLI_OUT, cli_reference):
         stats["writes"] += 1
     print(

@@ -10,6 +10,8 @@ description: "Gets messages from or clears the Unity Editor console."
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.read_console`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Gets messages from or clears the Unity Editor console. Defaults to 10 most recent entries, excluding MCP internal logs; set include_mcp_logs=true for troubleshooting. Use page_size/cursor for paging. Note: For maximum client compatibility, pass count as a quoted string (e.g., '5'). The 'get' action is read-only; 'clear' modifies ephemeral UI state (not project data).

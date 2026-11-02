@@ -10,6 +10,8 @@ description: "Read compilation status, bounded diagnostics and the last successf
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.get_compile_job`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Read compilation status, bounded diagnostics and the last successful compile by compile_id. Unknown means incomplete evidence; readiness and source-revision proof are separate.

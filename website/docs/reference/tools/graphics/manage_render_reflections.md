@@ -10,6 +10,8 @@ description: "Configure environment reflection mode, intensity, bounces and reso
 
 **Group:** `graphics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Configure environment reflection mode, intensity, bounces and resolution.

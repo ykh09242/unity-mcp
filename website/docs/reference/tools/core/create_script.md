@@ -10,6 +10,8 @@ description: "Create a new C# script at the given project path."
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_script`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Create a new C# script at the given project path.

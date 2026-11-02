@@ -10,6 +10,8 @@ description: "Export completed Unity test evidence as JSON or JUnit."
 
 **Group:** `testing` &nbsp;·&nbsp; **Module:** `services.tools.export_test_job`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Export completed Unity test evidence as JSON or JUnit. Returns one bounded UTF-8 chunk; pass next_cursor to continue. No remote output paths.

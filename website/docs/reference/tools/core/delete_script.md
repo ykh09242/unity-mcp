@@ -10,6 +10,8 @@ description: "Delete a C# script by URI or Assets-relative path."
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_script`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Delete a C# script by URI or Assets-relative path.

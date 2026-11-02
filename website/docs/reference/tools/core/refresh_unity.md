@@ -10,6 +10,8 @@ description: "Refresh assets and optionally request compilation."
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.refresh_unity`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Refresh assets and optionally request compilation. Reports no_op when nothing was dispatched, compilation.status and last_successful_compilation separately from Editor readiness. wait_for_ready waits for native readiness, not background scan coverage or source-revision proof. Timeout retains the latest evidence and its age; it does not replay or cancel native work.

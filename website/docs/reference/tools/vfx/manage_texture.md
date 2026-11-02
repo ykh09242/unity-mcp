@@ -10,6 +10,8 @@ description: "Procedural texture generation for Unity."
 
 **Group:** `vfx` &nbsp;·&nbsp; **Module:** `services.tools.manage_texture`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Procedural texture generation for Unity. Creates textures with solid fills, patterns (checkerboard, stripes, dots, grid, brick), gradients, and noise. Actions: create, modify, delete, create_sprite, apply_pattern, apply_gradient, apply_noise, set_import_settings

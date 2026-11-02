@@ -10,6 +10,8 @@ description: "Generate audio (sound effects and background music) with fal.ai mo
 
 **Group:** `asset_gen` &nbsp;·&nbsp; **Module:** `services.tools.generate_audio`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Generate audio (sound effects and background music) with fal.ai models and import them as AudioClips into the Unity project. Bring-your-own-key: the fal key lives in the editor's secure store (shared with image generation) and never crosses the bridge.

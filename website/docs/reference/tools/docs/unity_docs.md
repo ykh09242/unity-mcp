@@ -10,6 +10,8 @@ description: "Fetch official Unity documentation from docs.unity3d.com."
 
 **Group:** `docs` &nbsp;·&nbsp; **Module:** `services.tools.unity_docs`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Fetch official Unity documentation from docs.unity3d.com. Returns descriptions, parameter details, code examples, and caveats. Use after unity_reflect confirms a type exists, to get usage patterns, gotchas, and code examples before writing implementation code.

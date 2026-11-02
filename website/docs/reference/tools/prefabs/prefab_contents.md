@@ -10,6 +10,8 @@ description: "Edit prefab contents, inspect changes without saving with modify_c
 
 **Group:** `prefabs` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Edit prefab contents, inspect changes without saving with modify_contents preview_only, or preview and apply a guarded transform change. Action inputs: modify_contents: requires prefab_path; excludes non-null preview_id. preview_modify_contents: requires prefab_path; excludes non-null target, name, tag, layer, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties, preview_only, preview_id. apply_preview: requires preview_id; excludes non-null prefab_path, target, position, rotation, scale, name, tag, layer, set_active, parent, components_to_add, components_to_remove, create_child, delete_child, component_properties, preview_only.

@@ -10,6 +10,8 @@ description: "Control light baking and configure light or reflection probes."
 
 **Group:** `graphics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Control light baking and configure light or reflection probes.

@@ -10,6 +10,8 @@ description: "Inspect and edit existing TerrainData with bounded region/index re
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_terrain`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect and edit existing TerrainData with bounded region/index requests. get_info lists identities/resolutions/layers/prototypes; get_region/set_region use heights, alphamaps, holes (true=surface) or details with exact [y][x] arrays. Regions are at most32x32 and4096 scalars. get_trees/set_trees use1..64 exact existing indices; get_layer/set_layer replace one existing layer slot, preserving count and weights within a65536-scalar full-alphamap verification budget. Writes require expected_data_guid and the exact scoped expected_revision from the corresponding read. Shared loaded users and boundary patches require explicit acknowledgements; neighboring terrains are never changed. Authoring refuses native Undo snapshot estimates above16777216 scalar units. Native Undo is registered; failures use conditional compensation and preserve external writers. Edits mark TerrainData dirty; no global asset save is performed. No terrain creation/resolution change, tree/prototype insertion or whole-terrain dump.

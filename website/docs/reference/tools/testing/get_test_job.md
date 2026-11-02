@@ -10,6 +10,8 @@ description: "Polls an async Unity test job by job_id."
 
 **Group:** `testing` &nbsp;·&nbsp; **Module:** `services.tools.run_tests`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Polls an async Unity test job by job_id.

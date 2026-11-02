@@ -10,6 +10,8 @@ description: "Attach UI documents and configure Panel Settings."
 
 **Group:** `ui` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Attach UI documents and configure Panel Settings.

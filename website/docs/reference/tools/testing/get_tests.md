@@ -10,6 +10,8 @@ description: "Lists Unity tests without running them."
 
 **Group:** `testing` &nbsp;·&nbsp; **Module:** `services.tools.get_tests`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Lists Unity tests without running them. Returns one page with totalCount, nextCursor, hasMore and partial; pass nextCursor as cursor to read further pages. Omit mode to discover both EditMode and PlayMode tests.

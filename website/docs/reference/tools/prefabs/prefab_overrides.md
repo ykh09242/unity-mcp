@@ -10,6 +10,8 @@ description: "List, apply or revert explicitly selected prefab overrides."
 
 **Group:** `prefabs` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 List, apply or revert explicitly selected prefab overrides.

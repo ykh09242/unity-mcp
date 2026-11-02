@@ -10,6 +10,8 @@ description: "Create a GameObject with transform, components and optional prefab
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Create a GameObject with transform, components and optional prefab output.

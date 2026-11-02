@@ -10,6 +10,8 @@ description: "Manage Unity packages: query, install, remove, embed, and configur
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_packages`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Manage Unity packages: query, install, remove, embed, and configure registries.

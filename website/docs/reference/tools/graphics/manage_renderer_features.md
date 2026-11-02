@@ -10,6 +10,8 @@ description: "Add, configure, reorder or remove URP renderer features."
 
 **Group:** `graphics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Add, configure, reorder or remove URP renderer features.

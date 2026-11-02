@@ -10,6 +10,8 @@ description: "Inspect dependencies and reverse references, or preview asset move
 
 **Group:** `assets` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect dependencies and reverse references, or preview asset moves and deletion. Read-only inspection; results can change with Unity state.

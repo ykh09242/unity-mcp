@@ -10,6 +10,8 @@ description: "Add, configure or remove 2D/3D joints."
 
 **Group:** `physics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Add, configure or remove 2D/3D joints.

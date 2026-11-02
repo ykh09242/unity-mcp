@@ -10,6 +10,8 @@ description: "Execute multiple native MCP commands in one request."
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.batch_execute`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Execute multiple native MCP commands in one request. Batch independent operations whose inputs are already known; keep operations needing earlier returned IDs/results in separate calls. Batching reduces round trips, with no guaranteed latency or token savings. It is not transactional: inspect each indexed outcome, and observe uncertain writes before retrying. The command limit is configurable in the Unity MCP Tools window (default 100, hard max 1000). Use small bounded batches. Preview validates supported scope without running children; applying a target guard rechecks targets/permissions without a rollback guarantee.

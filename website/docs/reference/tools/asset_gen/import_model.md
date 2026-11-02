@@ -10,6 +10,8 @@ description: "Import 3D models from the Sketchfab marketplace into the Unity pro
 
 **Group:** `asset_gen` &nbsp;·&nbsp; **Module:** `services.tools.import_model`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Import 3D models from the Sketchfab marketplace into the Unity project. Bring-your-own-key: the Sketchfab token lives in the editor's secure store and never crosses the bridge.

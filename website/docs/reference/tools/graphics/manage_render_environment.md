@@ -10,6 +10,8 @@ description: "Inspect the environment or configure skybox, ambient light and sun
 
 **Group:** `graphics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect the environment or configure skybox, ambient light and sun.

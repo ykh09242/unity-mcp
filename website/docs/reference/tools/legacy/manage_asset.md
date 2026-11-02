@@ -10,6 +10,8 @@ description: "Performs asset operations (import, create, modify, delete, etc.) i
 
 **Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_asset`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Performs asset operations (import, create, modify, delete, etc.) in Unity. Read-only get_dependencies/get_reverse_references/preview_move/preview_delete use bounded AssetDatabase references, explicit scan_root, work/assets budgets and pages up to 100. reference_snapshot retains scalar pages; reference_cursor reuses them until expiry/import changes. reference_revision rechecks observations and optionally guards move/delete using matching scan options. String/custom-loader/Addressables references are not comprehensively discovered. Read-only list_asset_bundles/get_bundle_assets/get_bundle_dependencies inspect AssetDatabase assignments, not built bundle files; use bundle_name and pages of at most 100.

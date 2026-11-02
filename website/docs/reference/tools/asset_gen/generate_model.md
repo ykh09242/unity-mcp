@@ -10,6 +10,8 @@ description: "Generate 3D models with AI providers (Tripo, Meshy, fal) and impor
 
 **Group:** `asset_gen` &nbsp;·&nbsp; **Module:** `services.tools.generate_model`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Generate 3D models with AI providers (Tripo, Meshy, fal) and import them into the Unity project. Bring-your-own-key: provider keys live in the editor's secure store and never cross the bridge.

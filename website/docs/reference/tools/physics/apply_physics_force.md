@@ -10,6 +10,8 @@ description: "Apply forces, torque or explosions to rigidbodies."
 
 **Group:** `physics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Apply forces, torque or explosions to rigidbodies.

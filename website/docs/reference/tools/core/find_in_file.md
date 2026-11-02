@@ -10,6 +10,8 @@ description: "Searches a C# script with a regex pattern and returns line numbers
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.find_in_file`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Searches a C# script with a regex pattern and returns line numbers and excerpts.

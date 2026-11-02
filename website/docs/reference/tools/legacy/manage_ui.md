@@ -10,6 +10,8 @@ description: "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity
 
 **Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_ui`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer components). Read-only actions: ping, read, get_visual_tree, diagnose, list.  Modifying actions: create, update, delete, attach_ui_document, detach_ui_document, create_panel_settings, update_panel_settings, modify_visual_element.

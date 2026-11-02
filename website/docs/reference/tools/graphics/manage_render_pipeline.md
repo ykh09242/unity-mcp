@@ -10,6 +10,8 @@ description: "Inspect the render pipeline or change quality and pipeline setting
 
 **Group:** `graphics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect the render pipeline or change quality and pipeline settings.

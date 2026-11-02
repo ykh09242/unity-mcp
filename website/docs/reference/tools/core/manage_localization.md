@@ -10,6 +10,8 @@ description: "Inspect optional Unity Localization locale/table identities, share
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_localization`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect optional Unity Localization locale/table identities, shared keys, missing translations, static Smart String selectors and asset GUID references. No runtime formatting, loading or locale activation. inspect requires 1..256 explicit table_paths; argument_names is the caller's available root-selector inventory, not proof of custom formatter or runtime variable behavior. list_locales/list_tables use optional exact paths or bounded Assets discovery. set_string_entry corrects an existing shared key ID in one table and preserves is_smart when omitted. set_fallbacks replaces only explicit locale fallback metadata, refusing cycles. Writes require expected_revision from inspection and save the exact asset with native Undo. Revision includes loaded serialization and source bytes; external process races are not excluded. set_asset_entry explicitly refuses: supported package authoring also changes Addressables groups/labels/shared metadata. No asset/table/locale creation, key deletion or implicit Addressables changes.
