@@ -23,7 +23,7 @@ from services.credential_lease import (
     require_credential_lease,
 )
 from services.operation_permissions import OperationPermissionError, authorize_operation
-from services.reference_graph.analysis import validate_rule
+from services.reference_graph.analysis import ANALYSIS_VERSION, validate_rule
 from services.reference_graph.external import ExternalSource
 from services.reference_graph.reconcile import Reconciler, drained_thread
 from services.reference_graph.response_budget import require_response
@@ -132,6 +132,10 @@ def _collection_hint(graph: dict, matches_editor: bool) -> str | None:
         or graph["providers"]["addressables"]["errors"]
     ):
         return "Collection reported an error. References may be missing. Check graph status before retrying."
+    if graph.get("analysis_pending"):
+        return (
+            "Reference analysis is being refreshed. More references may appear after it finishes."
+        )
     if phase == "idle" and matches_editor and graph["queue_idle"] and not graph["dirty_assets"]:
         return None
     if phase == "waiting_for_editor":
@@ -1269,13 +1273,22 @@ class ReferenceGraphService:
         admission_current = await drained_thread(workspace.ignore_current, editor, bounded=True)
         ignore_changed = not admission_current
         matches_editor = admission_current and _native_matches_progress(progress, editor)
+        counts = await drained_thread(workspace.counts)
+        analysis_version_pending = (
+            await drained_thread(workspace.state, "analysis_version", bounded=True)
+            != ANALYSIS_VERSION
+        )
+        analysis_pending = analysis_version_pending or await drained_thread(
+            workspace.state, "analysis_dirty", False, bounded=True
+        )
         native_current = (
             matches_editor
             and (not fallback or ignore_verified)
             and status["queue_idle"]
+            and not counts["dirty_assets"]
+            and not analysis_pending
             and not providers["addressables"]["errors"]
         )
-        counts = await drained_thread(workspace.counts)
         if action in {"query", "diagnostics"}:
             external_changed |= await drained_thread(
                 self._validate_external, workspace, data, options.get("node")
@@ -1328,6 +1341,8 @@ class ReferenceGraphService:
                     # Rehash all inputs only for an explicit force/checked request.
                     force=options.get("force", False),
                     wake=catalog_pending
+                    or analysis_pending
+                    or bool(counts["dirty_assets"])
                     or external_changed
                     or ignore_changed
                     or (
@@ -1421,6 +1436,8 @@ class ReferenceGraphService:
             "providers": providers,
             "consistency": "checked_snapshot" if consistency == "checked" else "cached",
             "external_inputs_changed": external_changed,
+            "analysis_version_pending": analysis_version_pending,
+            "analysis_pending": bool(analysis_pending),
             "coverage": "partial_static",
             "progress": progress,
             # A foreground checked query or another worker can finish after this

@@ -1677,3 +1677,62 @@ def test_completed_shutdown_can_be_observed_after_its_event_loop_closed(setup, m
             assert asyncio.run(service.aclose()) is True
         assert service._close_task.done()
         assert service._close_task.get_loop().is_closed()
+
+
+@pytest.mark.asyncio
+async def test_cached_reopened_graph_marks_old_analysis_pending_until_migrated(setup, monkeypatch):
+    from services.reference_graph.analysis import ANALYSIS_VERSION
+    from tests.test_reference_graph_reconcile import Editor
+
+    service, _, ctx = setup
+    editor = Editor()
+    script = editor.add(1, "Assets/Use.cs", "class Use {}")
+    yaml_owner = editor.add(2, "Assets/Scene.asset", "%YAML 1.1\n---\nAsset: ok\n")
+    editor.assets[yaml_owner[6:]]["source_format"] = "unity_yaml"
+
+    async def sender(instance, params):
+        page = await editor(
+            params["action"],
+            **{k: v for k, v in params.items() if k != "action" and not k.startswith("expected_")},
+        )
+        page.update(instance_id="editor", project_id="project")
+        if params["action"] == "source" and params["guid"] == yaml_owner[6:]:
+            page["source_format"] = "unity_yaml"
+        return page
+
+    service.send = sender
+    monkeypatch.setattr(service, "start", lambda *args, **kwargs: None)
+    entry, _ = await service.resolve(ctx, "status")
+    assert await entry.engine.reconcile()
+    with entry.workspace.store._connect(write=True) as connection:
+        entry.workspace._set(connection, "analysis_version", 7)
+    await service.aclose()
+    reopened = ReferenceGraphService(service.root, send=sender)
+    calls = []
+    monkeypatch.setattr(reopened, "start", lambda *args, **kwargs: calls.append(kwargs))
+    ctx.service = reopened
+    editor.calls.clear()
+    try:
+        before = (await reopened.execute(ctx, "query", {"node": script}))["data"]["graph_status"]
+        assert not before["native_current"] and not before["current"]
+        assert before["analysis_version_pending"]
+        assert "analysis" in before["hint"].lower()
+        assert any(call.get("wake") for call in calls)
+        assert not [p for action, p in editor.calls if action == "source"]
+        entry2, _ = await reopened.resolve(ctx, "status")
+        assert entry2.workspace.acquire("migration-test")
+        entry2.workspace.ensure_analysis_version("migration-test", ANALYSIS_VERSION)
+        entry2.workspace.release("migration-test")
+        during = (await reopened.execute(ctx, "query", {"node": script}))["data"]["graph_status"]
+        assert not during["native_current"] and not during["current"]
+        assert not during["analysis_version_pending"]
+        assert "analysis" in during["hint"].lower()
+        assert await entry2.engine.reconcile()
+        reads = [p["guid"] for action, p in editor.calls if action == "source"]
+        assert reads and set(reads) == {script[6:]}
+        assert entry2.workspace.state("analysis_version") == ANALYSIS_VERSION
+        after = (await reopened.execute(ctx, "query", {"node": script}))["data"]["graph_status"]
+        assert after["native_current"] and after["current"]
+        assert not after["analysis_version_pending"] and "hint" not in after
+    finally:
+        await reopened.aclose()
