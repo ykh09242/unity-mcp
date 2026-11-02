@@ -67,7 +67,7 @@ async def test_authoritative_principal_and_selected_plugin_grants_precede_writer
         await auth.attach_socket(socket, "plugin")
         target = await capture_http_target("owned", hub=hub)
 
-        async def capture(instance, *, user_id=None):
+        async def capture(instance, *, user_id=None, deadline=None):
             assert instance == "Owned@deadbeef" and user_id == "alice"
             return target
 

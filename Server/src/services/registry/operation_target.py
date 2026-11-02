@@ -30,7 +30,7 @@ class OperationTarget:
 
 
 async def capture_target(
-    instance: str | None, *, user_id: str | None = None
+    instance: str | None, *, user_id: str | None = None, deadline: float | None = None
 ) -> OperationTarget | None:
     """Pin a resolved instance's actual socket generation before waiting."""
     if (config.transport_mode or "stdio").lower() == "http":
@@ -46,10 +46,9 @@ async def capture_target(
             return None
         return await capture_http_target(session_id)
     from transport.legacy import unity_connection as legacy
-    from services.execution_receipt_context import owned_to_thread
 
     try:
-        connection = await owned_to_thread(legacy.get_unity_connection, instance)
+        connection = await legacy._select_connection(instance, deadline, None)
     except (ConnectionError, RuntimeError):
         return None
     return capture_stdio_target(connection)

@@ -301,7 +301,7 @@ async def _wait_for_pending_target(
     _LOGGER.debug("Unity operation waiting_for_reload before callback admission")
     async with asyncio.timeout_at(expires_at):
         while True:
-            fresh = await capture_target(instance, user_id=user)
+            fresh = await capture_target(instance, user_id=user, deadline=expires_at)
             if fresh is not None:
                 if (
                     fresh.scope.key != original.scope.key
@@ -374,7 +374,7 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
 
             user = (await require_credential_lease()).user_id
         async with asyncio.timeout_at(expires_at):
-            target = await capture_target(instance, user_id=user)
+            target = await capture_target(instance, user_id=user, deadline=expires_at)
         if target is None:
             # Unselected/unavailable instances keep their existing selection
             # refusal path. Native admission still applies if a target is resolved.

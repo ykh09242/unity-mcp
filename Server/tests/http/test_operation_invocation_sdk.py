@@ -57,7 +57,7 @@ class InvocationBoundary:
     async def selected_instance(self, ctx):
         return self.metadata(ctx).get("qa_instance", "Owned@aa11bb22")
 
-    async def capture_target(self, instance, *, user_id=None):
+    async def capture_target(self, instance, *, user_id=None, deadline=None):
         self.targets.append(instance)
         return OperationTarget(
             OperationScope(self.principal, instance.rsplit("@", 1)[-1], "owned-generation"),

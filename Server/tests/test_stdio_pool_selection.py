@@ -13,6 +13,7 @@ from core.config import config
 from models.models import UnityInstanceInfo
 from tests.timing import watchdog_timeout
 import transport.legacy.unity_connection as uc
+from services.registry import operation_invocation
 
 
 @pytest.fixture
@@ -36,6 +37,87 @@ def selection_pool(monkeypatch):
     monkeypatch.setattr(uc.UnityConnection, "send_command", lambda *a, **kw: {"success": True})
     yield pool, targets
     pool.disconnect_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_public_abandoned_selection_never_connects_after_predecessor(
+    selection_pool, monkeypatch, cancel
+):
+    # Given a public call waiting behind a genuine target selection owner.
+    pool, _ = selection_pool
+    monkeypatch.setattr(config, "transport_mode", "stdio")
+    entered, finished = asyncio.Event(), Event()
+    loop = asyncio.get_running_loop()
+    predecessor = Event()
+    pool._selection_owners["Main@deadbeef"] = predecessor
+    connected = []
+    handlers = []
+    deadlines = []
+    original = pool.get_connection
+
+    class Context:
+        async def get_state(self, key, default=None):
+            return "Main@deadbeef" if key == "unity_instance" else default
+
+    def select(identity):
+        if identity != "Main@deadbeef":
+            return original(identity)
+        selection = uc._connection_selection.get()
+        deadlines.append(selection.deadline if selection is not None else None)
+        loop.call_soon_threadsafe(entered.set)
+        try:
+            return original(identity)
+        finally:
+            finished.set()
+
+    def connect(connection, **kwargs):
+        connected.append(connection.instance_id)
+        connection.sock = Mock()
+        return True
+
+    async def handler(ctx):
+        handlers.append(True)
+
+    expires_at = time.monotonic() + (30 if cancel else 1)
+    monkeypatch.setattr(operation_invocation, "_deadline", lambda *a, **kw: expires_at)
+    monkeypatch.setattr(pool, "get_connection", select)
+    monkeypatch.setattr(uc.UnityConnection, "connect", connect)
+    request = asyncio.create_task(
+        operation_invocation.wrap_tool(handler, "manage_scene", "manage_scene")(Context())
+    )
+    settled_before_release = False
+    try:
+        await asyncio.wait_for(entered.wait(), watchdog_timeout(5))
+        # When the public caller abandons selection, another target still progresses.
+        other = await asyncio.wait_for(
+            uc._select_connection("Other@cafebabe", None, None), watchdog_timeout(5)
+        )
+        assert other.instance_id == "Other@cafebabe"
+        if cancel:
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+        else:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(request, watchdog_timeout(5))
+        settled_before_release = await asyncio.to_thread(finished.wait, watchdog_timeout(1))
+        assert pool._selection_owners["Main@deadbeef"] is predecessor
+    finally:
+        with pool._pool_lock:
+            pool._selection_owners.pop("Main@deadbeef", None)
+            predecessor.set()
+        await asyncio.to_thread(finished.wait, watchdog_timeout(5))
+        if not request.done():
+            request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+
+    # Then release cannot connect or publish the abandoned target, or run its handler.
+    assert connected == ["Other@cafebabe"]
+    assert "Main@deadbeef" not in pool._connections
+    assert handlers == []
+    assert settled_before_release
+    assert deadlines == [expires_at]
 
 
 @pytest.mark.parametrize("mode", ["initial", "reconnect", "port_change"])
@@ -197,8 +279,12 @@ async def test_abandoned_same_target_waiter_keeps_connect_owner(
 
 
 @pytest.mark.asyncio
-async def test_cancelled_executor_queued_selection_never_connects(selection_pool, monkeypatch):
+@pytest.mark.parametrize("public_entry", [False, True])
+async def test_cancelled_executor_queued_selection_never_connects(
+    selection_pool, monkeypatch, public_entry
+):
     pool, _ = selection_pool
+    monkeypatch.setattr(config, "transport_mode", "stdio")
     entered, release, submitted = Event(), Event(), asyncio.Event()
     loop = asyncio.get_running_loop()
     real_submit = uc.submit_owned_executor
@@ -221,13 +307,25 @@ async def test_cancelled_executor_queued_selection_never_connects(selection_pool
             return worker
 
         monkeypatch.setattr(uc, "submit_owned_executor", submit)
-        request = asyncio.create_task(
-            uc.async_send_command_with_retry(
+        if public_entry:
+
+            class Context:
+                async def get_state(self, key, default=None):
+                    return "Main@deadbeef" if key == "unity_instance" else default
+
+            async def handler(ctx):
+                pytest.fail("Abandoned public selection ran its handler")
+
+            call = operation_invocation.wrap_tool(handler, "manage_scene", "manage_scene")(
+                Context()
+            )
+        else:
+            call = uc.async_send_command_with_retry(
                 "manage_scene",
                 {"action": "get_active"},
                 instance_id="Main@deadbeef",
             )
-        )
+        request = asyncio.create_task(call)
         await asyncio.wait_for(submitted.wait(), watchdog_timeout(5))
         try:
             request.cancel()
