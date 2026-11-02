@@ -681,7 +681,7 @@ async def authorize_remote_operation(
     if not config.http_remote_hosted:
         return
     lease = await require_credential_lease()
-    if name == "get_execution_receipt":
+    if name in {"get_execution_receipt", "read_response"}:
         # This server-only control operation authorizes the stored policy floor
         # in its handler, before and after I/O. It is not an unconditional read.
         return

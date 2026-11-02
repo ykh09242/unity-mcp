@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import time
 from dataclasses import asdict
@@ -86,7 +87,9 @@ class _SdkResultKernel:
             raise RuntimeError("Unsupported Tasks SDK result shape")
 
     def serialize(self, result: ToolResult) -> dict:
-        bounded = self.admission.admit_tool_result(result)
+        # The durable journal retains the full existing workload. Only the later
+        # tasks/get response is adapted to the client's smaller wire budget.
+        bounded = self.admission.admit_tool_result(result, final_delivery=False)
         normalized = self.normalize(bounded.to_mcp_result())
         return self.runner._serialize("tools/call", "2026-07-28", normalized)
 
@@ -253,6 +256,53 @@ def install_test_job_tasks(
         finally:
             test_job_wait_deadline.reset(token)
 
+    async def result_delivery(_ctx, record):
+        from models.response_limits import response_size
+        from services.credential_lease import require_credential_lease
+        from services.response_delivery import ResponseAuthority, ResponseScope, response_store
+        from services.tools.response_work import response_work
+        from transport.local_project_context import full_hash
+        from transport.response_delivery import (
+            MCP_RESULT_BYTES,
+            ResponseDelivery,
+            ResponseOutcome,
+            delivery_meta,
+            retained_response,
+            response_summary,
+        )
+
+        original = record.result
+        if response_size(original, max_bytes=MCP_RESULT_BYTES - 32_768) is not None:
+            return original
+        # tasks/get already checked current authenticated ownership and READ
+        # grants. Keep modern task handles in that same sessionless domain.
+        principal = "local"
+        if remote_hosted:
+            lease = await require_credential_lease(record.operation.user_id)
+            principal = "remote:" + lease.user_id
+        project = full_hash(record.operation.instance)
+        delivery = (
+            ResponseDelivery(
+                response_store(server),
+                ResponseAuthority(ResponseScope(principal, project, ""), frozenset({"read"})),
+            )
+            if project is not None and project == full_hash(record.operation.project)
+            else None
+        )
+        handle = await response_work(lambda: retained_response(original, delivery), large=True)
+        is_error = original.get("isError") is True
+        summary = response_summary(
+            handle,
+            ResponseOutcome(is_error, original.get("structuredContent"), original.get("_meta")),
+        )
+        return {
+            "resultType": "complete",
+            "content": [{"type": "text", "text": json.dumps(summary)}],
+            "structuredContent": summary,
+            "isError": is_error,
+            "_meta": delivery_meta(original.get("_meta")),
+        }
+
     runtime = TestJobTasks(
         journal,
         capture=capture,
@@ -260,6 +310,7 @@ def install_test_job_tasks(
         owner=owner,
         fallback=fallback,
         executor_owns_deadline=True,
+        result_delivery=result_delivery,
     )
     server.add_extension(runtime)
     server._test_job_tasks = runtime

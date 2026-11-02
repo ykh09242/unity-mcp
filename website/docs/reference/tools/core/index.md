@@ -42,6 +42,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_tools`](./manage_tools.md)** — Manage visible groups or individual feature tools in this session.
 - **[`prefab_inspect`](./prefab_inspect.md)** — Inspect prefab metadata or a bounded hierarchy page.
 - **[`read_console`](./read_console.md)** — Gets messages from or clears the Unity Editor console.
+- **[`read_response`](./read_response.md)** — Reads one fixed 256 KiB base64 page of a retained oversized MCP response.
 - **[`refresh_unity`](./refresh_unity.md)** — Refresh assets and optionally request compilation.
 - **[`scene_inspect`](./scene_inspect.md)** — Inspect loaded scenes, hierarchy and build settings, or frame the Scene view.
 - **[`scene_lifecycle`](./scene_lifecycle.md)** — Create, load, save or close scenes and organize loaded scene objects.

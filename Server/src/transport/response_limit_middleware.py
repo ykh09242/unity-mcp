@@ -9,10 +9,12 @@ from hashlib import sha256
 from typing import Any
 from urllib.parse import parse_qs
 
-from fastmcp.server.middleware import Middleware, MiddlewareContext, CallNext
+from fastmcp.server.middleware import MiddlewareContext, CallNext
 from fastmcp.tools.base import ToolResult
 from fastmcp.resources.base import ResourceResult
-from mcp_types import CallToolResult
+from fastmcp.exceptions import FastMCPError
+from mcp_types import CallToolResult, TextContent
+from mcp.shared.exceptions import MCPError
 from pydantic import BaseModel, ConfigDict
 
 from models.tool_outcome import is_execution_failure
@@ -27,6 +29,16 @@ from services.tools.response_work import needs_response_worker, response_work
 from transport.remote_auth_middleware import AUTHENTICATED_USER_STATE
 from transport.stdio_response_delivery import stdio_delivery
 from transport.test_job_tasks import CreateWaitTaskResult
+from transport.response_catalog_limits import ResponseCatalogLimits
+from transport.response_delivery import (
+    MCP_RESULT_BYTES,
+    ResponseOutcome,
+    capture_response_delivery,
+    delivery_meta,
+    response_delivery,
+    response_summary,
+    retained_response,
+)
 
 # Only owners of admitted plugin results enter this map; PluginHub's global
 # retained-byte and pending-command budgets also bound this bookkeeping.
@@ -86,7 +98,7 @@ def _release_http_owner(key: tuple[str, str, type, str], *, closing: bool = Fals
         owner.release()
 
 
-class ResponseLimitMiddleware(Middleware):
+class ResponseLimitMiddleware(ResponseCatalogLimits):
     """Measure both text and structured content before the final MCP serializer."""
 
     class _WireCallToolResult(CallToolResult):
@@ -168,6 +180,13 @@ class ResponseLimitMiddleware(Middleware):
             held_result = bool(owner.entries)
             owner.release()
             if held_result and isinstance(error, Exception):
+                # Bounded protocol errors can carry a recoverable resource or
+                # prompt-error handle after its original native owner is freed.
+                if (
+                    isinstance(error, MCPError)
+                    and response_size(error.error, max_bytes=MCP_RESULT_BYTES) is not None
+                ):
+                    raise
                 # Do not turn a rejected/failed plugin consumer's arbitrary
                 # exception string into another unbounded protocol payload.
                 raise ValueError("Unity response could not be completed") from None
@@ -178,15 +197,40 @@ class ResponseLimitMiddleware(Middleware):
                 owner.release()
 
     async def on_call_tool(self, context: MiddlewareContext, call_next: CallNext) -> ToolResult:
-        result = await call_next(context)
-        return await response_work(
-            lambda: self.admit_tool_result(result), large=needs_response_worker(result)
+        try:
+            result = await call_next(context)
+        except FastMCPError as error:
+            # The SDK normally serializes expected visible errors after this
+            # middleware. Keep that path unchanged when its text fits; admit an
+            # oversized error through the same recoverable result delivery.
+            message = str(error)
+            if response_size(message, max_bytes=MCP_RESULT_BYTES - 2048) is not None:
+                raise
+            result = ToolResult(content=[TextContent(type="text", text=message)], is_error=True)
+        large = needs_response_worker(result)
+        delivery = (
+            await capture_response_delivery(context.fastmcp_context)
+            if large and context is not None
+            else None
         )
 
-    def admit_tool_result(self, result):
+        def admit():
+            # Executor workers deliberately do not inherit a live request context.
+            token = response_delivery.set(delivery)
+            try:
+                return self.admit_tool_result(result)
+            finally:
+                response_delivery.reset(token)
+
+        return await response_work(admit, large=large)
+
+    def admit_tool_result(self, result, *, final_delivery=True):
         """Share the existing ordinary projection/admission with detached waits."""
         if type(result) is CreateWaitTaskResult:
-            if response_size(result, max_bytes=MAX_RESPONSE_BYTES - 32_768) is None:
+            if (
+                response_size(result, max_bytes=min(MCP_RESULT_BYTES, MAX_RESPONSE_BYTES - 32_768))
+                is None
+            ):
                 error = response_limit_error()
                 return ToolResult(content=error, structured_content=error, is_error=True)
             return result
@@ -201,8 +245,14 @@ class ResponseLimitMiddleware(Middleware):
                 "isError": result.is_error,
             }
         )
-        # Reserve envelope overhead independently of the plugin graph ceiling.
-        if response_size(wire, max_bytes=MAX_RESPONSE_BYTES - 32_768) is None:
+        # Ordinary small responses need one admission traversal. A result that
+        # exceeds the client's budget still gets the independent workload check.
+        fits_delivery = (
+            final_delivery
+            and response_size(wire, max_bytes=min(MCP_RESULT_BYTES, MAX_RESPONSE_BYTES - 32_768))
+            is not None
+        )
+        if not fits_delivery and response_size(wire, max_bytes=MAX_RESPONSE_BYTES - 32_768) is None:
             error = response_limit_error()
             return ToolResult(content=error, structured_content=error, is_error=True)
         if raw is not None:
@@ -224,15 +274,42 @@ class ResponseLimitMiddleware(Middleware):
             if admitted_raw is not None:
                 admitted_raw.is_error = True
                 result._raw_mcp_result = admitted_raw
+        if final_delivery and not fits_delivery:
+            wire = result._raw_mcp_result or {
+                "content": result.content,
+                "structuredContent": result.structured_content,
+                "_meta": result.meta,
+                "isError": result.is_error,
+            }
+            handle = retained_response(wire, response_delivery.get())
+            summary = response_summary(
+                handle, ResponseOutcome(result.is_error, result.structured_content, result.meta)
+            )
+            return ToolResult(
+                content=summary,
+                structured_content=summary,
+                meta=delivery_meta(result.meta),
+                is_error=result.is_error,
+            )
         return result
 
     async def on_read_resource(
         self, context: MiddlewareContext, call_next: CallNext
     ) -> ResourceResult:
-        result = await call_next(context)
+        try:
+            result = await call_next(context)
+        except FastMCPError as error:
+            bounded = await self._visible_error(error, context)
+            if bounded is not None:
+                raise bounded from None
+            raise
         wire = result.to_mcp_result(str(context.message.uri))
         if response_size(wire, max_bytes=MAX_RESPONSE_BYTES - 32_768) is None:
             return ResourceResult(json.dumps(response_limit_error()))
+        if response_size(wire, max_bytes=MCP_RESULT_BYTES) is None:
+            delivery = await capture_response_delivery(context.fastmcp_context)
+            handle = await response_work(lambda: retained_response(wire, delivery), large=True)
+            return ResourceResult(json.dumps({"delivery": handle}))
         return result
 
 

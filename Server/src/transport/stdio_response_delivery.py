@@ -14,9 +14,10 @@ from typing import Any, BinaryIO, Final
 import anyio
 from mcp.server import stdio as sdk_stdio
 from mcp.shared.message import SessionMessage
-from mcp.types import JSONRPCError, JSONRPCResponse, jsonrpc_message_adapter
+from mcp.types import ErrorData, JSONRPCError, JSONRPCResponse, jsonrpc_message_adapter
 
 from models.response_limits import ResponseOwner
+from transport.response_delivery import MAX_MCP_RESPONSE_BYTES
 
 
 MAX_STDIO_INPUT_BYTES: Final = 64 * 1024 * 1024
@@ -404,13 +405,35 @@ async def _owned_stdio_server(
                     if isinstance(message, (JSONRPCResponse, JSONRPCError)):
                         entry = delivery.pending.get((type(message.id), message.id))
                     try:
-                        if text_output:
-                            payload = message.model_dump_json(by_alias=True, exclude_unset=True)
-                            await _settled_text_write(stdout, payload)
-                        else:
-                            payload = jsonrpc_message_adapter.dump_json(
-                                message, by_alias=True, exclude_unset=True
+                        payload = jsonrpc_message_adapter.dump_json(
+                            message, by_alias=True, exclude_unset=True
+                        )
+                        # The ordinary middleware retains oversized operation
+                        # results. This final exact-byte guard also covers SDK
+                        # envelopes, extension methods and protocol errors.
+                        if len(payload) + 1 >= MAX_MCP_RESPONSE_BYTES:
+                            if not isinstance(message, (JSONRPCResponse, JSONRPCError)):
+                                raise ValueError("MCP outgoing message exceeds the transport limit")
+                            request_id = message.id
+                            if type(request_id) is str and len(request_id) > 4096:
+                                request_id = None
+                            fallback = JSONRPCError(
+                                jsonrpc="2.0",
+                                id=request_id,
+                                error=ErrorData(
+                                    code=-32000,
+                                    message="Response delivery exceeds the client byte limit; the "
+                                    "operation may have completed. Do not retry mutations.",
+                                    data={
+                                        "reason": "response_transport_limit",
+                                        "outcome": "unknown",
+                                    },
+                                ),
                             )
+                            payload = jsonrpc_message_adapter.dump_json(fallback, by_alias=True)
+                        if text_output:
+                            await _settled_text_write(stdout, payload.decode("utf-8"))
+                        else:
                             await _settled_binary_write(stdout, payload)
                     finally:
                         payload = message = envelope = None

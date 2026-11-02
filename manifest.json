@@ -443,6 +443,10 @@
       "description": "Read Unity Editor console output; MCP logs are excluded unless include_mcp_logs is enabled"
     },
     {
+      "name": "read_response",
+      "description": "Read fixed base64 pages of an owned retained oversized MCP response or release its handle without repeating the operation"
+    },
+    {
       "name": "refresh_unity",
       "description": "Refresh Unity Editor asset database"
     },

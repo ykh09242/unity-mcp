@@ -821,17 +821,17 @@ async def test_detached_wait_reuses_ordinary_response_limits_before_persistence(
     command_hub, tmp_path, monkeypatch, over, ceiling
 ):
     from models.response_limits import MAX_RESPONSE_BYTES, response_size
+    from transport.response_delivery import MCP_RESULT_BYTES
     from transport.models import CommandResultMessage
     from transport.plugin_hub import PluginHub
 
     monkeypatch.setattr("transport.response_limit_middleware.MAX_RESPONSE_BYTES", ceiling)
 
     # Native input fits its existing limit; SDK text+structured duplication is
-    # just below/above the SAME ordinary wire budget, including envelope slack.
-    # At the real 32MiB ceiling this duplicate SDK graph already exceeds the
-    # ordinary 256MiB retained-memory bound; both paths must preserve refusal.
-    # The smaller ceiling isolates byte-boundary admission without relaxing that
-    # production memory policy or a Task-only record limit.
+    # just below/above the same complete-result workload budget. The smaller
+    # ceiling isolates admission without changing native or retained-memory
+    # bounds. A graph admitted above the client wire limit stays complete in the
+    # journal while ordinary/Task observations expose bounded delivery summaries.
     text = "x" * ((ceiling - 32_768) // 2 + (2048 if over else -2048))
 
     async def answer(message):
@@ -854,13 +854,25 @@ async def test_detached_wait_reuses_ordinary_response_limits_before_persistence(
         ordinary = (await bound_call(client, "tools/call", params))["result"]
         created = await completed_wait(client, runtime, params)
         final = created["result"]
-        assert final == ordinary
         refused = over or ceiling == MAX_RESPONSE_BYTES
         assert final["isError"] is refused
+        assert ordinary["isError"] is refused
         assert response_size(final, max_bytes=MAX_RESPONSE_BYTES) is not None
         if refused:
+            assert final == ordinary
             assert final["structuredContent"]["data"]["reason"] == "response_payload_limit"
+        elif ceiling > MCP_RESULT_BYTES:
+            assert final["structuredContent"] == ordinary["structuredContent"]
+            # This inert legacy fixture has the intentionally noncanonical
+            # project hash 'hash'; neither path may promise an unreadable handle.
+            assert final["structuredContent"]["delivery"]["state"] == "unavailable"
+            stored = runtime.journal.get(created["taskId"], runtime.journal.local_owner).result
+            assert stored["structuredContent"]["result"]["data"]["error"] == text
+            assert response_size(stored, max_bytes=ceiling - 32_768) is not None
+            assert response_size(stored, max_bytes=MCP_RESULT_BYTES) is None
+            assert response_size(final, max_bytes=MCP_RESULT_BYTES) is not None
         else:
+            assert final == ordinary
             assert final["structuredContent"]["result"]["data"]["error"] == text
 
 

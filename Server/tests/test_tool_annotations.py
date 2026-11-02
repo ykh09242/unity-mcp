@@ -61,6 +61,8 @@ READ_ONLY = {
 }
 
 NON_DESTRUCTIVE = {
+    # Reads/releases process-local response artifacts; no Unity calls, refresh or project writes.
+    "read_response",
     # Owns a temporary preview scene; no prefab save, but edit-time callbacks may execute.
     "capture_prefab",
     # Cancels an already owned native job; session control, no test start or project-asset writes.

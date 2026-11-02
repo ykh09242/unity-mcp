@@ -22778,6 +22778,55 @@
             "type": "object"
           }
         },
+        "read_response": {
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "offset": {
+                "default": 0,
+                "maximum": 67108864,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "release": {
+                "default": false,
+                "type": "boolean"
+              },
+              "response_id": {
+                "maxLength": 32,
+                "pattern": "^[0-9a-f]{32}$",
+                "type": "string"
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "response_id"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
         "refresh_unity": {
           "annotations": {
             "destructiveHint": true
@@ -48080,6 +48129,55 @@
           },
           "outputSchema": {
             "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "read_response": {
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "offset": {
+                "default": 0,
+                "maximum": 67108864,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "release": {
+                "default": false,
+                "type": "boolean"
+              },
+              "response_id": {
+                "maxLength": 32,
+                "pattern": "^[0-9a-f]{32}$",
+                "type": "string"
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "response_id"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": {},
             "type": "object"
           }
         },
