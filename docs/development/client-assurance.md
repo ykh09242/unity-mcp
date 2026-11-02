@@ -90,3 +90,71 @@ executed. Record their versions, source commit, platform, reload settings and
 test project identities separately. Claude, Cursor, Codex host UI, macOS, Linux,
 proxy deployments, reconnect after Editor crashes, and hours-long idle sessions
 require their own execution evidence; this suite does not claim those outcomes.
+
+## Actual Codex client regression
+
+`tools/check_codex_interop.py` drives the installed **Codex CLI 0.166.0**
+`app-server` through its experimental direct MCP RPCs. These are the actual Rust
+`codex-rmcp-client` transport and decoder, not the Python client configured with a
+Codex name. The fixture starts the production CLI, registry and all normal
+middleware, adds the existing 512-tool catalog pressure, and registers small
+test-only echo, error, slow and payload tools. `manage_tools.describe` and the
+production retained-response reader also execute through that client.
+
+```powershell
+Server/.venv/Scripts/python.exe tools/check_codex_interop.py `
+  --codex /path/to/codex --output .work/codex-interop
+```
+
+The machine-readable receipt records the exact binary version, legacy initialize
+exchange, actual per-request protocol, catalog count, deadline error and verified
+size cases. The Windows run on 2026-11-02 passed all four protocol/transport cases. The matrix uses both the legacy default and the installed experimental
+`mcp_2026_07_28` feature over stdio and locally authenticated streamable HTTP.
+Modern stdio also sets the supported `CODEX_MCP_PROTOCOL_VERSION=2026-07-28`
+server opt-in. Every actual tool request must use the selected protocol:
+**2025-06-18** for legacy and **2026-07-28** for modern. Silent fallback fails the
+check. Modern request protocol evidence is recorded directly because that
+lifecycle can use `server/discover` without an initialize exchange.
+
+Each transport checks complete discovery, a production tool description, Unicode
+echo, MCP `isError`, strict input rejection, resource reads, a configured tool
+deadline followed by same-connection recovery, and a fresh ephemeral runtime after
+configuration reload with another observed legacy handshake or modern catalog
+request. Cancellation is
+recorded only when the fixture catches and re-raises the cancellation exception,
+and must be observed before the reload. Normal completion and teardown cannot
+create a false cancellation pass. This is **deadline-triggered cancellation**; the pinned direct
+MCP RPC API has no per-call cancel operation. Explicit caller cancellation remains
+covered by the independent Python wire tests.
+
+Size cases verify an inline payload within 512 bytes of the production result
+budget, an 8 MiB ASCII payload and a 9 MiB UTF-8 Unicode payload. Oversized
+responses must return a retained handle; the actual Codex client reads every page,
+verifies the complete byte count and SHA256, reconstructs the original text, then
+releases the handle. The check fails on truncation, a lost handle, a decoder error
+or a failed connection after the deadline.
+
+Every run allocates a fresh temporary `CODEX_HOME` and empty working directory,
+uses file-only credential stores, strips inherited authentication variables,
+disables plugins, analytics and feedback, and selects a loopback-only offline
+provider. It never starts a model turn, loads user authentication/configuration,
+or creates a sidebar chat. All test processes and temporary configuration belong
+to the run. This proves the app-server MCP client surface, not Codex desktop UI
+adoption or a native Unity Editor scenario.
+
+The dedicated [Codex interoperability workflow](../../.github/workflows/codex-interop.yml)
+uses the official release archive with its published SHA256 digest pinned in the
+workflow. The binary version check is mandatory; upgrading the pin requires
+rerunning all four protocol/transport cases and reviewing the observed protocol. Protocol
+contracts come from the installed experimental schema and the
+[official app-server documentation](https://learn.chatgpt.com/docs/app-server).
+The client implementation is documented by the
+[pinned Rust source](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/rmcp-client/src/rmcp_client.rs),
+and the binary comes from the
+[official 0.166.0 release](https://github.com/openai/codex/releases/tag/rust-v0.166.0).
+
+The pinned client's [protocol selection policy](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/rmcp-client/src/protocol_mode.rs)
+requires both the feature and server opt-in for modern stdio. `codex features
+list`, run inside the isolated temporary home, independently exposes the feature
+as under development in 0.166.0. This opt-in coverage does not imply that modern
+MCP is enabled in a user's default Codex configuration.
