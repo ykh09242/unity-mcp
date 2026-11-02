@@ -276,6 +276,85 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void RepairMesh_BindsInstalledPackageBoolContract()
+        {
+            Type validation = Type.GetType("UnityEngine.ProBuilder.MeshOperations.MeshValidation, Unity.ProBuilder", true);
+            MethodInfo method = ProBuilderMeshUtils.GetRepairMethod(validation, meshType);
+            Assert.IsNotNull(method, "The installed package must expose the supported repair signature.");
+            Assert.AreEqual(typeof(bool), method.ReturnType);
+            Assert.AreEqual(typeof(List<int>), method.GetParameters()[1].ParameterType);
+            Assert.IsTrue(method.GetParameters()[1].IsOptional);
+        }
+
+        [Test]
+        public void RepairMesh_RemovesRealDegenerateTriangleAndReportsTrianglesNotVertices()
+        {
+            SetResolutionField("_meshValidationType", Type.GetType("UnityEngine.ProBuilder.MeshOperations.MeshValidation, Unity.ProBuilder", true));
+            var positions = ((IEnumerable<Vector3>)meshType.GetProperty("positions").GetValue(mesh)).ToList();
+            positions[2] = (positions[0] + positions[1]) * 0.5f;
+            meshType.GetProperty("positions").SetValue(mesh, positions);
+            Assert.AreEqual(2, meshType.GetProperty("triangleCount").GetValue(mesh));
+
+            JObject result = Send("repair_mesh");
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(1, result["data"].Value<int>("degenerateTrianglesRemoved"), "One deleted triangle can remove three unused vertices.");
+            Assert.AreEqual(1, meshType.GetProperty("triangleCount").GetValue(mesh));
+            Assert.AreEqual(3, meshType.GetProperty("vertexCount").GetValue(mesh));
+            Assert.AreEqual(3, mesh.GetComponent<MeshFilter>().sharedMesh.triangles.Length);
+        }
+
+        [Test]
+        public void RepairMesh_CleanMeshRetainsTopologyAndReportsZero()
+        {
+            SetResolutionField("_meshValidationType", Type.GetType("UnityEngine.ProBuilder.MeshOperations.MeshValidation, Unity.ProBuilder", true));
+            Vector3[] before = WorldVertices();
+            JObject result = Send("repair_mesh");
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(0, result["data"].Value<int>("degenerateTrianglesRemoved"));
+            Assert.AreEqual(2, meshType.GetProperty("triangleCount").GetValue(mesh));
+            CollectionAssert.AreEqual(before, WorldVertices());
+        }
+
+        private static class IncompatibleMeshValidation<T>
+        {
+            public static int RemoveDegenerateTriangles(T mesh, List<int> removed = null) => 0;
+        }
+
+        private static class FailingMeshValidation<T>
+        {
+            public static bool RemoveDegenerateTriangles(T mesh, List<int> removed = null) => throw new InvalidOperationException("Fixture repair failure");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RepairMesh_UnsupportedApiFailsWithoutMutation(bool incompatible)
+        {
+            SetResolutionField("_meshValidationType", incompatible ? typeof(IncompatibleMeshValidation<>).MakeGenericType(meshType) : null);
+            SaveOwnedScene();
+            Vector3[] before = WorldVertices();
+            int dirty = EditorUtility.GetDirtyCount(mesh);
+
+            JObject result = Send("repair_mesh");
+
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("Unsupported ProBuilder mesh repair API", result.Value<string>("error"));
+            CollectionAssert.AreEqual(before, WorldVertices());
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(mesh));
+            Assert.IsFalse(ownedScene.isDirty);
+        }
+
+        [Test]
+        public void RepairMesh_PackageInvocationFailureIsReported()
+        {
+            SetResolutionField("_meshValidationType", typeof(FailingMeshValidation<>).MakeGenericType(meshType));
+            JObject result = Send("repair_mesh");
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("Fixture repair failure", result.Value<string>("error"));
+        }
+
+        [Test]
         public void MergeObjects_InvalidLaterMeshPreservesEarlierOrdinaryMesh()
         {
             var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -304,10 +383,11 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase(true)]
         public void SetFaceColor_ReusesCompatibleMaterialAcrossRepeatedRequests(bool alreadyCompatible)
         {
-            var vertexShader = Shader.Find("ProBuilder/Standard Vertex Color");
+            var vertexShader =
+                Shader.Find("ProBuilder/Standard Vertex Color") ?? Shader.Find("ProBuilder/Diffuse Vertex Color") ?? Shader.Find("Sprites/Default");
             var standardShader = Shader.Find("Standard");
-            if (vertexShader == null || standardShader == null)
-                Assert.Ignore("Standard and ProBuilder Standard Vertex Color shaders are required.");
+            Assert.IsNotNull(vertexShader, "A supported vertex-color shader fallback must be available.");
+            Assert.IsNotNull(standardShader, "The Standard conversion-source shader must be available.");
             var renderer = mesh.GetComponent<Renderer>();
             Assert.IsNotNull(renderer);
             var borrowed = renderer.sharedMaterial;
