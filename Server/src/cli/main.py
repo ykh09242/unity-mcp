@@ -149,7 +149,7 @@ def cli(
     Environment Variables:
         UNITY_MCP_HOST      Server host (default: 127.0.0.1)
         UNITY_MCP_HTTP_PORT Server port (default: 8080)
-        UNITY_MCP_TIMEOUT   Timeout in seconds (default: 30)
+        UNITY_MCP_TIMEOUT   Timeout in seconds (default: 300)
         UNITY_MCP_FORMAT    Output format (default: text)
         UNITY_MCP_INSTANCE  Target Unity instance
     """
@@ -165,6 +165,9 @@ def cli(
     from cli.utils.project_context import ProjectContextError, resolve_project_context
 
     parameters = click.get_current_context()
+    from cli.utils.config_diagnostics import capture_cli_configuration
+
+    capture_cli_configuration(config, parameters)
     try:
         config = resolve_project_context(
             config,

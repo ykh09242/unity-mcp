@@ -5,6 +5,7 @@ from fastmcp import Context
 from core.sdk_compatibility import runtime_sdk_report
 
 from models.doctor import DoctorResourceResponse
+from models.effective_config import EffectiveConfigReport
 from services.doctor import query_doctor
 from services.registry import mcp_for_unity_resource
 
@@ -31,3 +32,15 @@ async def get_runtime_doctor(ctx: Context) -> dict:
     if discovery is not None:
         report["discovery"] = await discovery.capability(ctx)
     return report
+
+
+@mcp_for_unity_resource(
+    uri="mcpforunity://doctor/config",
+    name="effective_server_configuration",
+    description="Read this server process's redacted effective settings and captured origins without contacting Unity. Does not describe local CLI or another server configuration.",
+)
+async def get_config_doctor(ctx: Context) -> "EffectiveConfigReport":
+    """Read only the current process's bounded configuration sidecar."""
+    from core.config import effective_server_configuration
+
+    return effective_server_configuration()

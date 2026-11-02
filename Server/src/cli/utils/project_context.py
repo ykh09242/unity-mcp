@@ -136,6 +136,11 @@ def resolve_project_context(
         path = Path(selected).absolute() if selected else None if disabled else _discover()
         if path is not None:
             model, root = _read(path)
+            from cli.utils.config_diagnostics import (
+                record_project_configuration,
+                record_project_override,
+            )
+
             for name in ("host", "port", "timeout", "format", "instance"):
                 if sources.get(name) == ParameterSource.DEFAULT:
                     setattr(
@@ -145,9 +150,21 @@ def resolve_project_context(
                         if name == "instance"
                         else getattr(model, name),
                     )
+                    record_project_configuration(
+                        config, "unity_instance" if name == "instance" else name
+                    )
+                else:
+                    record_project_override(
+                        config, "unity_instance" if name == "instance" else name
+                    )
             config.expected_project_root = str(root)
+            record_project_configuration(config, "expected_project_root")
         if expected is not None:
             config.expected_project_root = str(_root(Path(expected)))
+            # The explicit guard is separate from project-file defaults.
+            from cli.utils.config_diagnostics import record_expected_project
+
+            record_expected_project(config, path is not None)
         if config.expected_project_root and not is_loopback(config.host):
             raise ProjectContextError("context_requires_local_server")
         return config

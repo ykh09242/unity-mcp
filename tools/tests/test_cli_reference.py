@@ -15,6 +15,51 @@ from cli_example_validation import ExampleValidationError, extract_examples, val
 from cli_reference import prepare_cli_reference, render_reference, walk_commands
 
 
+@pytest.mark.parametrize(
+    "kind_name,valid,invalid",
+    [("HTTP_PORT_TYPE", "8080", "0"), ("OUTPUT_FORMAT_TYPE", "json", "yaml")],
+)
+def test_reviewed_configuration_types_use_inert_base_converters(
+    kind_name, valid, invalid, monkeypatch
+):
+    # Given: reviewed Click subclasses change failure prose only.
+    source = TOOLS.parent / "Server/src"
+    monkeypatch.syspath_prepend(str(source))
+    from cli.utils import config
+    from cli_example_validation import inert_type
+
+    original = getattr(config, kind_name)
+    monkeypatch.setattr(type(original), "convert", forbidden)
+    command = click.Command(
+        "probe", callback=forbidden, params=[click.Argument(["value"], type=original)]
+    )
+
+    # When: the documented contract is projected and parsed without product conversion.
+    converted = inert_type(original)
+    root = click.Group("unity-mcp")
+    root.add_command(command)
+    parsed = validate_argv(root, ["probe", valid])
+
+    # Then: base-type bounds/choices survive and custom converter code remains untouched.
+    assert type(converted) in (click.IntRange, click.Choice)
+    assert parsed == ("unity-mcp", "probe")
+    with pytest.raises(ExampleValidationError):
+        validate_argv(root, ["probe", invalid])
+
+
+def test_unknown_range_subclass_is_not_certified_by_builtin_inheritance():
+    # Given: a custom converter can alter successful values even with a known base.
+    from cli_example_validation import inert_type
+
+    class UnreviewedRange(click.IntRange):
+        def convert(self, value, param, ctx):
+            forbidden()
+
+    # When / Then: its semantics remain unsupported, without invoking conversion.
+    with pytest.raises(ExampleValidationError):
+        inert_type(UnreviewedRange(1, 10))
+
+
 def forbidden(*args, **kwargs):
     raise AssertionError("Documentation must not execute command behavior")
 

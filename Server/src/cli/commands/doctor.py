@@ -15,9 +15,22 @@ from models.doctor import EXACT_TARGET_PATTERN, DoctorCLIReceipt
 @click.option(
     "--protocol", type=click.Choice(["auto", "legacy"]), default="auto", show_default=True
 )
-def doctor(protocol: Literal["auto", "legacy"]):
+@click.option(
+    "--config",
+    "show_config",
+    is_flag=True,
+    help="Read local CLI effective configuration offline; does not observe a running server.",
+)
+def doctor(protocol: Literal["auto", "legacy"], show_config: bool = False):
     """Verify this diagnostic SDK connection; does not attest another desktop client's session."""
     config = get_config()
+    if show_config:
+        from cli.utils.config_diagnostics import local_configuration
+
+        click.echo(
+            format_output(local_configuration(config).model_dump(mode="json"), config.format)
+        )
+        return
     if not re.fullmatch(EXACT_TARGET_PATTERN, config.unity_instance or ""):
         receipt = DoctorCLIReceipt(
             requested_protocol=protocol,

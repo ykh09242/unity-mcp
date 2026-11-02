@@ -14,7 +14,7 @@ Examples are checked for Click syntax and inert scalar types only. File/Path val
 
 ## `unity-mcp`
 
-Unity MCP (ykh09242) Command Line Interface. Control Unity Editor directly from the command line using the Model Context Protocol. Examples: unity-mcp status unity-mcp gameobject find "Player" unity-mcp --format json scene hierarchy unity-mcp editor play Environment Variables: UNITY_MCP_HOST Server host (default: 127.0.0.1) UNITY_MCP_HTTP_PORT Server port (default: 8080) UNITY_MCP_TIMEOUT Timeout in seconds (default: 30) UNITY_MCP_FORMAT Output format (default: text) UNITY_MCP_INSTANCE Target Unity instance
+Unity MCP (ykh09242) Command Line Interface. Control Unity Editor directly from the command line using the Model Context Protocol. Examples: unity-mcp status unity-mcp gameobject find "Player" unity-mcp --format json scene hierarchy unity-mcp editor play Environment Variables: UNITY_MCP_HOST Server host (default: 127.0.0.1) UNITY_MCP_HTTP_PORT Server port (default: 8080) UNITY_MCP_TIMEOUT Timeout in seconds (default: 300) UNITY_MCP_FORMAT Output format (default: text) UNITY_MCP_INSTANCE Target Unity instance
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -25,9 +25,9 @@ Unity MCP (ykh09242) Command Line Interface. Control Unity Editor directly from 
 | --format / -f | choice: text, json, table | optional | nargs=1 | "text" | UNITY_MCP_FORMAT | Output format. |
 | --instance / -i | text | optional | nargs=1 | — | UNITY_MCP_INSTANCE | Target Unity instance (hash or Name@hash). |
 | --verbose / -v | boolean | optional | nargs=1, flag | — | — | Print each command sent to Unity and its raw response to stderr. |
-| --project-context | file/path (lexical only) | optional | nargs=1 | — | — | Select a project-local CLI context file. |
+| --project-context | text | optional | nargs=1 | — | — | Select a project-local CLI context file. |
 | --no-project-context | boolean | optional | nargs=1, flag | — | — | Disable automatic project context discovery. |
-| --expect-project | file/path (lexical only) | optional | nargs=1 | — | — | Verify this local Unity root for every command dispatch. |
+| --expect-project | text | optional | nargs=1 | — | — | Verify this local Unity root for every command dispatch. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp animation`
@@ -748,7 +748,7 @@ Execute commands from a JSON file. The JSON file should contain an array of comm
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| file | file/path (lexical only) | required | nargs=1 | — | — |  |
+| file | text | required | nargs=1 | — | — |  |
 | --parallel | boolean | optional | nargs=1, flag | — | — | Execute read-only commands in parallel. |
 | --fail-fast | boolean | optional | nargs=1, flag | — | — | Stop on first failure. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
@@ -759,7 +759,7 @@ Generate a sample batch commands file. Examples: unity-mcp batch template &gt; c
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| --output / -o | file/path (lexical only) | optional | nargs=1 | — | — | Output file (default: stdout) |
+| --output / -o | text | optional | nargs=1 | — | — | Output file (default: stdout) |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp blender`
@@ -827,7 +827,7 @@ Execute Python inside Blender and print its stdout.
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | --code | text | optional | nargs=1 | — | — | Python source to run inside Blender. |
-| --file | file/path (lexical only) | optional | nargs=1 | — | — | Read the Python source from this file instead of --code. |
+| --file | text | optional | nargs=1 | — | — | Read the Python source from this file instead of --code. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp blender scene-info`
@@ -1226,7 +1226,7 @@ Execute C# code in Unity Editor. Code runs as a method body with access to Unity
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | source | text | optional | nargs=1 | — | — |  |
-| --file / -f | file/path (lexical only) | optional | nargs=1 | — | — | Read code from a file instead of argument. |
+| --file / -f | text | optional | nargs=1 | — | — | Read code from a file instead of argument. |
 | --no-safety-checks | boolean | optional | nargs=1, flag | — | — | Disable blocked-pattern checks (allows File.Delete, Process.Start, etc). |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
@@ -1356,7 +1356,7 @@ Create a new CLASS_NAME custom tool without contacting an Editor. Existing sourc
 | class_name | text | required | nargs=1 | — | — |  |
 | --namespace | text | required | nargs=1 | — | — | Explicit C# namespace; pass an empty value for global. |
 | --tool-name | text | required | nargs=1 | — | — | Explicit unchanged wire name; uniqueness is unverified. |
-| --project-root | file/path (lexical only) | optional | nargs=1 | nonliteral (not evaluated) | — |  |
+| --project-root | text | optional | nargs=1 | nonliteral (not evaluated) | — |  |
 | --output | text | optional | nargs=1 | — | — | New relative .cs path under an Assets/Editor folder. |
 | --template | choice: sync, async-polling | optional | nargs=1 | "sync" | — |  |
 | --dry-run | boolean | optional | nargs=1, flag | — | — | Validate/render without creating files or reserving a path. |
@@ -1388,6 +1388,7 @@ Verify this diagnostic SDK connection; does not attest another desktop client's 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | --protocol | choice: auto, legacy | optional | nargs=1 | "auto" | — |  |
+| --config | boolean | optional | nargs=1, flag | — | — | Read local CLI effective configuration offline; does not observe a running server. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp editor`
@@ -1474,7 +1475,7 @@ Export completed test evidence to a new local JSON or JUnit file.
 | --- | --- | --- | --- | --- | --- | --- |
 | job_id | text | required | nargs=1 | — | — |  |
 | --format | choice: json, junit | optional | nargs=1 | "json" | — |  |
-| --output | file/path (lexical only) | required | nargs=1 | — | — |  |
+| --output | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp editor game-view-size`
@@ -2636,8 +2637,8 @@ Analyze &lt;=64 explicit run.json files offline. Exit 0 analyzed, 2 incomplete. 
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| reports | file/path (lexical only) | required | nargs=-1 | — | — |  |
-| --output | file/path (lexical only) | optional | nargs=1 | — | — |  |
+| reports | text | required | nargs=-1 | — | — |  |
+| --output | text | optional | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario analyze-history`
@@ -2646,8 +2647,8 @@ Analyze &lt;=16 explicit session/soak summaries offline. Exit 0 analyzed, 2 inco
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| histories | file/path (lexical only) | required | nargs=-1 | — | — |  |
-| --output | file/path (lexical only) | optional | nargs=1 | — | — |  |
+| histories | text | required | nargs=-1 | — | — |  |
+| --output | text | optional | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario baseline`
@@ -2656,7 +2657,7 @@ Register immutable successful soaks and audit explicit pin selections.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| --registry | file/path (lexical only) | required | nargs=1 | — | — | Explicit local registry file or existing directory. |
+| --registry | text | required | nargs=1 | — | — | Explicit local registry file or existing directory. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario baseline check`
@@ -2665,9 +2666,9 @@ Apply the existing exact budget gate to a revalidated named baseline.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| candidate | file/path (lexical only) | required | nargs=1 | — | — |  |
+| candidate | text | required | nargs=1 | — | — |  |
 | --name | text | optional | nargs=1 | — | — | Require this compatible pinned name; required if several match. |
-| --policy | file/path (lexical only) | required | nargs=1 | — | — |  |
+| --policy | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario baseline compare`
@@ -2676,7 +2677,7 @@ Compare a candidate against one compatible, revalidated pinned baseline.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| candidate | file/path (lexical only) | required | nargs=1 | — | — |  |
+| candidate | text | required | nargs=1 | — | — |  |
 | --name | text | optional | nargs=1 | — | — | Require this compatible pinned name; required if several match. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
@@ -2713,7 +2714,7 @@ Admit one saved soak under a new immutable name.
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | name | text | required | nargs=1 | — | — |  |
-| directory | file/path (lexical only) | required | nargs=1 | — | — |  |
+| directory | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario baseline unpin`
@@ -2745,8 +2746,8 @@ Save a complete bounded UI tree to a new file; missing evidence fails capture.
 | --target | text | required | nargs=1 | — | — | Unique scene hierarchy path or instance ID. |
 | --max-nodes | integer range: [1..1000] | optional | nargs=1 | 200 | — |  |
 | --component-type | choice: auto, ui_document, panel_renderer | optional | nargs=1 | — | — | UI Toolkit component to capture; explicit selection records the actual component kind. |
-| --output | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --identity-map-file | file/path (lexical only) | optional | nargs=1 | — | — | Optional bounded JSON object containing identity_map; emits v3 comparison IDs, not mutation handles. |
+| --output | text | required | nargs=1 | — | — |  |
+| --identity-map-file | text | optional | nargs=1 | — | — | Optional bounded JSON object containing identity_map; emits v3 comparison IDs, not mutation handles. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario check-soak-budget`
@@ -2755,9 +2756,9 @@ Gate saved soak regression limits offline: 0 within, 1 exceeded, 2 not comparabl
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| baseline_directory | file/path (lexical only) | required | nargs=1 | — | — |  |
-| candidate_directory | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --policy | file/path (lexical only) | required | nargs=1 | — | — |  |
+| baseline_directory | text | required | nargs=1 | — | — |  |
+| candidate_directory | text | required | nargs=1 | — | — |  |
+| --policy | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario compare-queries`
@@ -2779,8 +2780,8 @@ Compare complete saved soak diagnostics offline; 0 computed, 2 insufficient/inva
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| baseline_directory | file/path (lexical only) | required | nargs=1 | — | — |  |
-| candidate_directory | file/path (lexical only) | required | nargs=1 | — | — |  |
+| baseline_directory | text | required | nargs=1 | — | — |  |
+| candidate_directory | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario compare-ui-snapshots`
@@ -2789,11 +2790,11 @@ Compare saved JSONs offline: exit 0 same, 1 changed, 2 not comparable.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| baseline | file/path (lexical only) | required | nargs=1 | — | — |  |
-| candidate | file/path (lexical only) | required | nargs=1 | — | — |  |
+| baseline | text | required | nargs=1 | — | — |  |
+| candidate | text | required | nargs=1 | — | — |  |
 | --geometry-tolerance | float range: [0..10000] | optional | nargs=1 | 0.0 | — |  |
 | --require-occlusion | boolean | optional | nargs=1, flag | — | — | Require actual occlusion proof (unavailable). |
-| --output | file/path (lexical only) | optional | nargs=1 | — | — |  |
+| --output | text | optional | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario compare-visual`
@@ -2802,10 +2803,10 @@ Compare explicit PNGs offline: exit 0 within budget, 1 exceeded, 2 not comparabl
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| baseline | file/path (lexical only) | required | nargs=1 | — | — |  |
-| candidate | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --policy | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --output-dir | file/path (lexical only) | optional | nargs=1 | — | — |  |
+| baseline | text | required | nargs=1 | — | — |  |
+| candidate | text | required | nargs=1 | — | — |  |
+| --policy | text | required | nargs=1 | — | — |  |
+| --output-dir | text | optional | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario compare-visual-reports`
@@ -2814,14 +2815,14 @@ Compare one named native capture offline: exit 0 within, 1 exceeded, 2 invalid. 
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| baseline | file/path (lexical only) | required | nargs=1 | — | — |  |
-| candidate | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --policy | file/path (lexical only) | required | nargs=1 | — | — |  |
+| baseline | text | required | nargs=1 | — | — |  |
+| candidate | text | required | nargs=1 | — | — |  |
+| --policy | text | required | nargs=1 | — | — |  |
 | --checkpoint | text | required | nargs=1 | — | — |  |
 | --stage | choice: setup, main, cleanup | required | nargs=1 | — | — |  |
 | --step-index | integer range: [0..63] | required | nargs=1 | — | — |  |
 | --iteration | integer range: [1..10] | required | nargs=1 | — | — |  |
-| --output-dir | file/path (lexical only) | optional | nargs=1 | — | — |  |
+| --output-dir | text | optional | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario delete`
@@ -2839,12 +2840,12 @@ Export a run/suite JSON or saved soak directory to one new offline HTML file. --
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| source | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --output | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --comparison | file/path (lexical only) | optional | nargs=1 | — | — |  |
-| --analysis | file/path (lexical only) | optional | nargs=1 | — | — |  |
-| --visual | file/path (lexical only) | optional | nargs=1 | — | — |  |
-| --baseline | file/path (lexical only) | optional | nargs=1 | — | — |  |
+| source | text | required | nargs=1 | — | — |  |
+| --output | text | required | nargs=1 | — | — |  |
+| --comparison | text | optional | nargs=1 | — | — |  |
+| --analysis | text | optional | nargs=1 | — | — |  |
+| --visual | text | optional | nargs=1 | — | — |  |
+| --baseline | text | optional | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario get`
@@ -2870,8 +2871,8 @@ Launch an explicit local Player bundle, wait, and export actual run.json plus JU
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| build_directory | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
+| build_directory | text | required | nargs=1 | — | — |  |
+| --output-dir | text | required | nargs=1 | — | — |  |
 | --repeat-count | integer range: [1..100] | optional | nargs=1 | 1 | — |  |
 | --timeout-seconds | integer range: [1..86400] | optional | nargs=1 | 300 | — |  |
 | --source-revision | text | optional | nargs=1 | — | — |  |
@@ -2888,8 +2889,8 @@ Run bounded verified Player batches and stream outcomes with explicit process sc
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| build_directory | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
+| build_directory | text | required | nargs=1 | — | — |  |
+| --output-dir | text | required | nargs=1 | — | — |  |
 | --mode | choice: shared-batches, fresh-process, compare | optional | nargs=1 | "shared-batches" | — |  |
 | --iterations | integer range: [1..1000] | optional | nargs=1 | 100 | — |  |
 | --batch-size | integer range: [2..100] | optional | nargs=1 | 10 | — |  |
@@ -2911,8 +2912,8 @@ Recover an incomplete evidence snapshot without replaying or modifying the sourc
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| session_directory | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
+| session_directory | text | required | nargs=1 | — | — |  |
+| --output-dir | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario player-soak`
@@ -2921,8 +2922,8 @@ Execute bounded iterations in one verified native Player process and export evid
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| build_directory | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
+| build_directory | text | required | nargs=1 | — | — |  |
+| --output-dir | text | required | nargs=1 | — | — |  |
 | --iterations | integer range: [2..1000] | optional | nargs=1 | 100 | — |  |
 | --max-runtime-seconds | integer range: [1..86400] | optional | nargs=1 | 3600 | — |  |
 | --timeout-seconds | integer range: [1..86400] | optional | nargs=1 | 300 | — |  |
@@ -2942,7 +2943,7 @@ Freeze a saved suite and build its scene union once in the selected Editor. Expl
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | name | text | required | nargs=1 | — | — |  |
-| --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
+| --output-dir | text | required | nargs=1 | — | — |  |
 | --target | choice: windows64, linux64, macos | optional | nargs=1 | "windows64" | — |  |
 | --backend | choice: mono, il2cpp | optional | nargs=1 | "mono" | — |  |
 | --failure-policy | choice: stop, continue | optional | nargs=1 | — | — |  |
@@ -2956,8 +2957,8 @@ Run all frozen children from one verified build, with child and suite JUnit. Fre
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| build_directory | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
+| build_directory | text | required | nargs=1 | — | — |  |
+| --output-dir | text | required | nargs=1 | — | — |  |
 | --failure-policy | choice: stop, continue | optional | nargs=1 | — | — |  |
 | --isolation | choice: fresh-process | optional | nargs=1 | "fresh-process" | — |  |
 | --timeout-seconds | integer range: [1..86400] | optional | nargs=1 | 300 | — |  |
@@ -2975,8 +2976,8 @@ Run one explicit profile: exit 0 passed, 1 failed, 2 unavailable, 130 cancelled.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| profile | file/path (lexical only) | required | nargs=1 | — | — |  |
-| --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
+| profile | text | required | nargs=1 | — | — |  |
+| --output-dir | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario reports`
@@ -3007,7 +3008,7 @@ Save a whole scenario from a UTF-8 JSON file (or - for stdin).
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| definition | file/path (lexical only) | required | nargs=1 | — | — |  |
+| definition | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario status`
@@ -3074,7 +3075,7 @@ Run one native suite, explicitly wait, and save suite.json plus junit.xml. Requi
 | --repeat-count | integer range: [1..100] | optional | nargs=1 | 1 | — |  |
 | --timeout-seconds | integer range: [1..86400] | optional | nargs=1 | 300 | — |  |
 | --source-revision | text | optional | nargs=1 | — | — |  |
-| --output-dir | file/path (lexical only) | required | nargs=1 | — | — |  |
+| --output-dir | text | required | nargs=1 | — | — |  |
 | --poll-interval-seconds | float range: [0.1..10] | optional | nargs=1 | 0.5 | — |  |
 | --cleanup-wait-seconds | integer range: [1..3600] | optional | nargs=1 | 1860 | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
@@ -3085,7 +3086,7 @@ Save a bounded native suite definition from UTF-8 JSON or stdin.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| definition | file/path (lexical only) | required | nargs=1 | — | — |  |
+| definition | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp play-scenario suite-status`
@@ -3831,7 +3832,7 @@ Apply exactly one of --preview-id or --edits-file.
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | --preview-id | text | optional | nargs=1 | — | — | Use a one-attempt token returned by preview. |
-| --edits-file | file/path (lexical only) | optional | nargs=1 | — | — | Direct apply JSON; each entry requires expected_old. |
+| --edits-file | text | optional | nargs=1 | — | — | Direct apply JSON; each entry requires expected_old. |
 | --undo-name | text | optional | nargs=1 | "MCP Scene Edits" | — | Undo group label (1-80 characters). |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
@@ -3841,7 +3842,7 @@ Preview the JSON array in EDITS_FILE without mutating scene values.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| edits_file | file/path (lexical only) | required | nargs=1 | — | — |  |
+| edits_file | text | required | nargs=1 | — | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp script`
@@ -3923,7 +3924,7 @@ Create a new shader. Examples: unity-mcp shader create "MyShader" --path "Assets
 | name | text | required | nargs=1 | — | — |  |
 | --path / -p | text | optional | nargs=1 | "Assets/Shaders" | — | Directory to create shader in. |
 | --contents / -c | text | optional | nargs=1 | — | — | Shader code (reads from stdin if not provided). |
-| --file / -f | file/path (lexical only) | optional | nargs=1 | — | — | Read shader code from file. |
+| --file / -f | text | optional | nargs=1 | — | — | Read shader code from file. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp shader delete`
@@ -3956,7 +3957,7 @@ Update an existing shader. Examples: unity-mcp shader update "Assets/Shaders/MyS
 | --- | --- | --- | --- | --- | --- | --- |
 | path | text | required | nargs=1 | — | — |  |
 | --contents / -c | text | optional | nargs=1 | — | — | New shader code. |
-| --file / -f | file/path (lexical only) | optional | nargs=1 | — | — | Read shader code from file. |
+| --file / -f | text | optional | nargs=1 | — | — | Read shader code from file. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp sprite`
@@ -4194,7 +4195,7 @@ Create a new CLASS_NAME custom tool without contacting an Editor. Existing sourc
 | class_name | text | required | nargs=1 | — | — |  |
 | --namespace | text | required | nargs=1 | — | — | Explicit C# namespace; pass an empty value for global. |
 | --tool-name | text | required | nargs=1 | — | — | Explicit unchanged wire name; uniqueness is unverified. |
-| --project-root | file/path (lexical only) | optional | nargs=1 | nonliteral (not evaluated) | — |  |
+| --project-root | text | optional | nargs=1 | nonliteral (not evaluated) | — |  |
 | --output | text | optional | nargs=1 | — | — | New relative .cs path under an Assets/Editor folder. |
 | --template | choice: sync, async-polling | optional | nargs=1 | "sync" | — |  |
 | --dry-run | boolean | optional | nargs=1, flag | — | — | Validate/render without creating files or reserving a path. |

@@ -1289,8 +1289,22 @@ Examples:
         os.environ["UNITY_MCP_DEFAULT_INSTANCE"] = args.default_instance
         logger.info(f"Using default Unity instance from command-line: {args.default_instance}")
 
+    from core.config import configuration_trace
+    from core.config_startup import argument_origin, cli_or_environment, environment_or_cli
+    from core.config_provenance import safe_config_value
+    from models.effective_config import ConfigOrigin
+
+    configuration_trace.declare("http_url", "http://127.0.0.1:8080")
+    configuration_trace.declare("http_host", "127.0.0.1")
+    configuration_trace.declare("http_port", 8080)
+
     # Set transport mode
     config.transport_mode = args.transport or os.environ.get("UNITY_MCP_TRANSPORT", "stdio")
+    configuration_trace.record(
+        "transport_mode",
+        config.transport_mode,
+        cli_or_environment("--transport", "UNITY_MCP_TRANSPORT", bool(args.transport)),
+    )
     logger.info(f"Transport mode: {config.transport_mode}")
 
     config.http_remote_hosted = bool(args.http_remote_hosted) or os.environ.get(
@@ -1299,6 +1313,22 @@ Examples:
     config.http_behind_tls_proxy = bool(args.http_behind_tls_proxy) or os.environ.get(
         "UNITY_MCP_HTTP_BEHIND_TLS_PROXY", ""
     ).lower() in ("true", "1", "yes", "on")
+    configuration_trace.record(
+        "http_remote_hosted",
+        config.http_remote_hosted,
+        cli_or_environment(
+            "--http-remote-hosted", "UNITY_MCP_HTTP_REMOTE_HOSTED", bool(args.http_remote_hosted)
+        ),
+    )
+    configuration_trace.record(
+        "http_behind_tls_proxy",
+        config.http_behind_tls_proxy,
+        cli_or_environment(
+            "--http-behind-tls-proxy",
+            "UNITY_MCP_HTTP_BEHIND_TLS_PROXY",
+            bool(args.http_behind_tls_proxy),
+        ),
+    )
     config.http_trusted_proxy_networks = ()
     if config.http_remote_hosted:
         try:
@@ -1309,6 +1339,19 @@ Examples:
             logger.error("%s", error)
             raise SystemExit(1) from None
 
+    configuration_trace.record(
+        "http_trusted_proxy_networks",
+        [str(network) for network in config.http_trusted_proxy_networks],
+        ConfigOrigin(
+            source="environment"
+            if config.http_remote_hosted and "UNITY_MCP_AUTH_TRUSTED_PROXY_CIDRS" in os.environ
+            else "default",
+            source_detail="UNITY_MCP_AUTH_TRUSTED_PROXY_CIDRS"
+            if config.http_remote_hosted and "UNITY_MCP_AUTH_TRUSTED_PROXY_CIDRS" in os.environ
+            else "built_in",
+        ),
+    )
+
     # API key authentication configuration
     config.api_key_validation_url = args.api_key_validation_url or os.environ.get(
         "UNITY_MCP_API_KEY_VALIDATION_URL"
@@ -1316,14 +1359,38 @@ Examples:
     config.api_key_login_url = args.api_key_login_url or os.environ.get(
         "UNITY_MCP_API_KEY_LOGIN_URL"
     )
+    for name, option, environment in (
+        ("api_key_validation_url", "--api-key-validation-url", "UNITY_MCP_API_KEY_VALIDATION_URL"),
+        ("api_key_login_url", "--api-key-login-url", "UNITY_MCP_API_KEY_LOGIN_URL"),
+    ):
+        configuration_trace.record(
+            name,
+            getattr(config, name),
+            cli_or_environment(option, environment, bool(getattr(args, name))),
+        )
     try:
         cache_ttl_env = os.environ.get("UNITY_MCP_API_KEY_CACHE_TTL")
         config.api_key_cache_ttl = float(cache_ttl_env) if cache_ttl_env else args.api_key_cache_ttl
         if not math.isfinite(config.api_key_cache_ttl) or config.api_key_cache_ttl < 0:
             raise ValueError("Cache TTL must be finite and nonnegative")
+        cache_origin = (
+            environment_or_cli("UNITY_MCP_API_KEY_CACHE_TTL", "--api-key-cache-ttl")
+            if cache_ttl_env
+            else argument_origin("--api-key-cache-ttl")
+        )
+        if cache_ttl_env == "":
+            cache_origin = cache_origin.model_copy(
+                update={"diagnostics": ("empty_environment_ignored",)}
+            )
     except ValueError:
         logger.warning("Invalid UNITY_MCP_API_KEY_CACHE_TTL value, using default 300.0")
         config.api_key_cache_ttl = 300.0
+        cache_origin = ConfigOrigin(
+            diagnostics=("invalid_environment_ignored",)
+            if cache_ttl_env
+            else ("invalid_cli_ignored",)
+        )
+    configuration_trace.record("api_key_cache_ttl", config.api_key_cache_ttl, cache_origin)
 
     try:
         max_age_env = os.environ.get("UNITY_MCP_API_KEY_MAX_AUTH_AGE")
@@ -1332,9 +1399,24 @@ Examples:
         )
         if not math.isfinite(config.api_key_max_auth_age) or config.api_key_max_auth_age <= 0:
             raise ValueError("Maximum authentication age must be finite and positive")
+        age_origin = (
+            ConfigOrigin(
+                source="environment",
+                source_detail="UNITY_MCP_API_KEY_MAX_AUTH_AGE",
+                overrides=("built_in",),
+            )
+            if max_age_env
+            else configuration_trace.origin("api_key_max_auth_age", config.api_key_max_auth_age)
+        )
+        if max_age_env == "":
+            age_origin = age_origin.model_copy(
+                update={"diagnostics": (*age_origin.diagnostics, "empty_environment_ignored")}
+            )
     except ValueError:
         logger.warning("Invalid maximum authentication age, using default 300.0")
         config.api_key_max_auth_age = 300.0
+        age_origin = ConfigOrigin(diagnostics=("invalid_environment_ignored",))
+    configuration_trace.record("api_key_max_auth_age", config.api_key_max_auth_age, age_origin)
 
     # Service token for authenticating to validation endpoint
     config.api_key_service_token_header = args.api_key_service_token_header or os.environ.get(
@@ -1343,6 +1425,20 @@ Examples:
     config.api_key_service_token = args.api_key_service_token or os.environ.get(
         "UNITY_MCP_API_KEY_SERVICE_TOKEN"
     )
+
+    for name, option, environment in (
+        (
+            "api_key_service_token_header",
+            "--api-key-service-token-header",
+            "UNITY_MCP_API_KEY_SERVICE_TOKEN_HEADER",
+        ),
+        ("api_key_service_token", "--api-key-service-token", "UNITY_MCP_API_KEY_SERVICE_TOKEN"),
+    ):
+        configuration_trace.record(
+            name,
+            getattr(config, name),
+            cli_or_environment(option, environment, bool(getattr(args, name))),
+        )
 
     # Validate: remote-hosted HTTP mode requires API key validation URL
     if (
@@ -1385,10 +1481,50 @@ Examples:
     try:
         _env_port = int(_env_port_str) if _env_port_str is not None else None
     except ValueError:
-        logger.warning("Invalid UNITY_MCP_HTTP_PORT value '%s', ignoring", _env_port_str)
+        logger.warning("Invalid UNITY_MCP_HTTP_PORT value, ignoring")
         _env_port = None
 
     http_port = args.http_port or _env_port or parsed_url.port or 8080
+
+    url_origin = (
+        environment_or_cli("UNITY_MCP_HTTP_URL", "--http-url")
+        if "UNITY_MCP_HTTP_URL" in os.environ
+        else argument_origin("--http-url")
+    )
+    configuration_trace.record("http_url", http_url, url_origin)
+    host_origin = cli_or_environment("--http-host", "UNITY_MCP_HTTP_HOST", bool(args.http_host))
+    if not args.http_host and not os.environ.get("UNITY_MCP_HTTP_HOST"):
+        host_origin = (
+            url_origin.model_copy(update={"source_detail": "http_url.hostname"})
+            if parsed_url.hostname
+            else ConfigOrigin()
+        )
+    configuration_trace.record("http_host", http_host, host_origin)
+    port_origin = (
+        argument_origin("--http-port")
+        if args.http_port
+        else ConfigOrigin(source="environment", source_detail="UNITY_MCP_HTTP_PORT")
+        if _env_port
+        else url_origin.model_copy(update={"source_detail": "http_url.port"})
+        if parsed_url.port
+        else ConfigOrigin()
+    )
+    port_diagnostics = (
+        ("invalid_environment_ignored",)
+        if _env_port_str is not None and _env_port is None
+        else ("zero_environment_ignored",)
+        if _env_port == 0
+        else ()
+    )
+    if _env_port_str == "":
+        port_diagnostics = ("empty_environment_ignored",)
+    if args.http_port and _env_port_str is not None:
+        port_origin = port_origin.model_copy(
+            update={"overrides": ("UNITY_MCP_HTTP_PORT", "http_url.port")}
+        )
+    configuration_trace.record(
+        "http_port", http_port, port_origin.model_copy(update={"diagnostics": port_diagnostics})
+    )
 
     os.environ["UNITY_MCP_HTTP_HOST"] = http_host
     os.environ["UNITY_MCP_HTTP_PORT"] = str(http_port)
@@ -1407,9 +1543,9 @@ Examples:
             logger.warning("Failed to write pidfile '%s': %s", args.pidfile, exc)
 
     if args.http_url != "http://127.0.0.1:8080":
-        logger.info(f"HTTP URL set to: {http_url}")
+        logger.info("HTTP URL set to: %s", safe_config_value("http_url", http_url))
     if args.http_host:
-        logger.info(f"HTTP host override: {http_host}")
+        logger.info("HTTP host override: %s", safe_config_value("http_host", http_host))
     if args.http_port:
         logger.info(f"HTTP port override: {http_port}")
 
@@ -1484,6 +1620,11 @@ Examples:
         else:
             with local_auth_token(port) as token:
                 config.local_auth_token = token
+                configuration_trace.record(
+                    "local_auth_token",
+                    token,
+                    ConfigOrigin(source="runtime", source_detail="local_auth_context"),
+                )
                 logger.info(
                     "Local HTTP authentication enabled; token file: %s",
                     local_auth_token_path(port),
@@ -1492,6 +1633,11 @@ Examples:
                     mcp.run(transport=transport, host=host, port=port)
                 finally:
                     config.local_auth_token = None
+                    configuration_trace.record(
+                        "local_auth_token",
+                        None,
+                        ConfigOrigin(source="runtime", source_detail="local_auth_context_closed"),
+                    )
     else:
         # Use stdio transport for traditional MCP
         logger.info("Starting FastMCP with stdio transport")
