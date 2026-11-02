@@ -37,8 +37,9 @@ def register(socket, editor=EDITOR, *, origin=False, path=None):
     return socket.receive_json()
 
 
-def respond(socket, command, state, payload=None):
+def respond(socket, command, state, payload=None, *, refusal_reason=None):
     waiting = state in {"queued", "executing"}
+    reason = "operation_busy" if waiting else refusal_reason
     socket.send_json(
         {
             "type": "command_result",
@@ -53,9 +54,9 @@ def respond(socket, command, state, payload=None):
                 "payload": {
                     "native_arbitration": {
                         **command["arbitration"],
-                        "disposition": "not_started" if waiting else "started",
+                        "disposition": "not_started" if reason else "started",
                         "retryable": waiting,
-                        **({"reason": "operation_busy"} if waiting else {}),
+                        **({"reason": reason} if reason else {}),
                     },
                     "payload": payload or {"success": True, "data": {"applied": 1}},
                 },
@@ -236,6 +237,27 @@ def test_origin_extension_requires_negotiation_and_covers_preflight_reads(wire_c
         else:
             with pytest.raises(CommandResumeProtocolError):
                 future.result(watchdog_timeout())
+        assert not PluginHub._pending
+
+
+def test_journal_capacity_is_returned_before_dispatch_without_replaying(wire_client):
+    with wire_client.websocket_connect("/hub/plugin") as socket:
+        ack = register(socket)
+        future = wire_client.portal.start_task_soon(
+            partial(PluginHub.send_command, ack["session_id"], "manage_scene", {"action": "save"})
+        )
+        command = socket.receive_json()
+        respond(
+            socket,
+            command,
+            "unavailable",
+            {"code": "command_resume_capacity", "error": "Journal full"},
+            refusal_reason="command_resume_capacity",
+        )
+        result = future.result(watchdog_timeout())
+        assert result["success"] is False
+        assert result["code"] == "command_resume_capacity"
+        assert result["data"]["execution"] == "not_started"
         assert not PluginHub._pending
 
 

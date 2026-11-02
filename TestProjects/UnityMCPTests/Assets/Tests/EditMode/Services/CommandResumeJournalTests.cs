@@ -170,10 +170,17 @@ namespace MCPForUnityTests.Editor.Services
         {
             for (int i = 0; i < CommandResumeJournal.MaxEntries; i++)
                 Assert.IsNotNull(journal.Admit(Request(id: i.ToString("x32")), "test", new JObject()).Ticket);
-            Assert.AreEqual("unavailable", journal.Admit(Request(id: "ffffffffffffffffffffffffffffffff"), "test", new JObject()).State);
+            var full = journal.Admit(Request(id: "ffffffffffffffffffffffffffffffff"), "test", new JObject());
+            Assert.AreEqual("unavailable", full.State);
+            Assert.IsNull(full.Ticket);
+            Assert.IsTrue(full.NotStarted);
+            Assert.AreEqual("command_resume_capacity", full.RefusalReason);
+            Assert.AreEqual(full.RefusalReason, (string)full.Payload["code"]);
             stored = "{broken";
             journal = Open();
-            Assert.AreEqual("unavailable", journal.Admit(Request(), "test", new JObject()).State);
+            var corrupt = journal.Admit(Request(), "test", new JObject());
+            Assert.AreEqual("unavailable", corrupt.State);
+            Assert.IsFalse(corrupt.NotStarted);
         }
 
         [Test]

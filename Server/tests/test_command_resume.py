@@ -170,3 +170,23 @@ def test_native_terminal_uncertainty_keeps_structured_outcome(state, code):
     assert result["code"] == code
     if state == "unavailable":
         assert result["data"]["execution"] == "completed"
+
+
+@pytest.mark.parametrize("proved", [False, True])
+def test_journal_capacity_only_reports_nonexecution_with_pre_dispatch_proof(proved):
+    invocation = CommandResumeInvocation.create("a" * 32, time.monotonic() + 60)
+    invocation.state = "unavailable"
+    reply = NativeReply(
+        {"status": "error", "code": "command_resume_capacity", "error": "Journal full"},
+        not_started=proved,
+        reason="command_resume_capacity" if proved else None,
+    )
+    invocation.validate_reply(reply)
+    normalized = invocation.normalize_reply("manage_scene", reply)
+    assert not normalized.retryable
+    if proved:
+        assert normalized.payload["data"]["execution"] == "not_started"
+        assert normalized.payload["data"]["reason"] == "command_resume_capacity"
+    else:
+        assert normalized.payload["data"]["reason"] == "outcome_unknown"
+        assert normalized.payload["hint"] == "inspect_state_before_retry"

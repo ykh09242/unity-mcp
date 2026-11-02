@@ -157,18 +157,25 @@ class CommandResumeInvocation:
         )
         code = reply.payload.get("code")
         code = code[:64] if isinstance(code, str) else "command_resume_" + self.state
+        capacity = (
+            self.state == "unavailable"
+            and reply.not_started
+            and reply.reason == "command_resume_capacity"
+        )
         data: dict[str, JsonValue] = {
-            "reason": "outcome_unknown",
+            "reason": "command_resume_capacity" if capacity else "outcome_unknown",
             "command": command,
             "native_resume_state": self.state,
         }
-        if code == "completed_result_not_retained":
+        if capacity:
+            data["execution"] = "not_started"
+        elif code == "completed_result_not_retained":
             data["execution"] = "completed"
         return NativeReply(
             {
                 "success": False,
                 "error": detail,
-                "hint": "inspect_state_before_retry",
+                "hint": "retry_after_journal_expiry" if capacity else "inspect_state_before_retry",
                 "code": code,
                 "data": data,
             },

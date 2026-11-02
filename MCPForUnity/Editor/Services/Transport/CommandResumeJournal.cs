@@ -225,7 +225,22 @@ namespace MCPForUnity.Editor.Services.Transport
                     )
                         entries.Remove(expired);
                     if (entries.Count >= MaxEntries)
-                        return Reply(request, "unavailable");
+                    {
+                        const string reason = "command_resume_capacity";
+                        var refusal = Reply(
+                            request,
+                            "unavailable",
+                            new JObject
+                            {
+                                ["status"] = "error",
+                                ["code"] = reason,
+                                ["error"] = "The Editor command resume journal is full. Retry after older command records expire.",
+                            }
+                        );
+                        refusal.NotStarted = true;
+                        refusal.RefusalReason = reason;
+                        return refusal;
+                    }
                     entry = new Entry
                     {
                         id = id,
