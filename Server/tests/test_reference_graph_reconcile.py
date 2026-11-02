@@ -303,6 +303,7 @@ class Editor:
     def __init__(self):
         self.assets = {}
         self.sources = {}
+        self.failed_sources = set()
         self.events = []
         self.epoch = "epoch"
         self.calls = []
@@ -424,6 +425,8 @@ class Editor:
                 "next_offset": None,
             }
         if action == "source":
+            if guid in self.failed_sources:
+                raise OSError("Synthetic source collection failure")
             content = self.sources[guid]
             offset = params["offset"]
             end = min(offset + 37, len(content))
@@ -1164,7 +1167,7 @@ async def test_unchanged_reimport_recovers_wrapper_and_dependent_evidence(setup)
 async def test_bad_source_does_not_starve_good_assets_and_repair_bypasses_backoff(setup):
     store, workspace, editor, engine = setup
     bad = editor.add(1, "Assets/Bad.cs", "class Bad {}")
-    editor.sources[bad[6:]] = b"// unsupported source encoding \xff\nclass Bad {}"
+    editor.failed_sources.add(bad[6:])
     target = editor.add(
         2, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
     )
@@ -1182,7 +1185,7 @@ async def test_bad_source_does_not_starve_good_assets_and_repair_bypasses_backof
     editor.calls.clear()
     assert not await engine.reconcile()
     assert not [params for action, params in editor.calls if action == "source"]
-    editor.sources[bad[6:]] = b"class Bad {}"
+    editor.failed_sources.remove(bad[6:])
     editor.event("Assets/Bad.cs")
     assert await engine.reconcile()
     assert workspace.counts()["failed_assets"] == 0
@@ -1201,12 +1204,13 @@ async def test_failed_wrapper_keeps_previous_dependents_stale_until_repaired(set
     caller = editor.add(3, "Assets/Caller.cs", "class Caller { void Go() { Loader.Get(); } }")
     assert await engine.reconcile()
     previous = editor.sources[wrapper[6:]]
-    editor.sources[wrapper[6:]] = b"\xffinvalid"
+    editor.failed_sources.add(wrapper[6:])
     editor.event("Assets/Loader.cs")
     assert not await engine.reconcile()
     assert store.query(caller)["edges"][0]["stale"]
     assert not await engine.reconcile()
     assert store.query(caller)["edges"][0]["stale"]
+    editor.failed_sources.remove(wrapper[6:])
     editor.sources[wrapper[6:]] = previous
     editor.event("Assets/Loader.cs")
     assert await engine.reconcile()
@@ -1226,12 +1230,13 @@ async def test_same_byte_wrapper_repair_rechecks_new_callers_added_during_failur
     )
     assert await engine.reconcile()
     original = editor.sources[wrapper[6:]]
-    editor.sources[wrapper[6:]] = b"\xffinvalid"
+    editor.failed_sources.add(wrapper[6:])
     editor.event("Assets/Loader.cs")
     assert not await engine.reconcile()
     caller = editor.add(3, "Assets/Caller.cs", "class Caller { void Go() { Loader.Get(); } }")
     editor.event("Assets/Caller.cs")
     assert not await engine.reconcile()
+    editor.failed_sources.remove(wrapper[6:])
     editor.sources[wrapper[6:]] = original
     editor.event("Assets/Loader.cs")
     assert await engine.reconcile()
@@ -1980,3 +1985,78 @@ async def test_analysis_version_upgrade_scopes_only_known_migration(setup, previ
     assert manifest[script]["state"] == "pending"
     assert (manifest[serialized]["state"] == "pending") is dirty_yaml
     workspace.release("migration-test")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("format_", ["unity_yaml", "csharp"])
+async def test_undecodable_optional_source_keeps_direct_evidence_and_recovers(setup, format_):
+    store, workspace, editor, engine = setup
+    target = editor.add(1, "Assets/Target.asset")
+    path = "Assets/Owner.cs" if format_ == "csharp" else "Assets/Owner.asset"
+    owner = editor.add(2, path, "initial")
+    editor.assets[owner[6:]]["source_format"] = format_
+    editor.sources[owner[6:]] = (
+        b"%YAML 1.1\n---\nAsset: " if format_ == "unity_yaml" else b"// "
+    ) + b"\xff"
+    original = editor.__call__
+
+    async def collector(action, **params):
+        page = await original(action, **params)
+        if action == "dependencies" and params["guid"] == owner[6:]:
+            page["targets"] = [target[6:]]
+        if action == "source" and params["guid"] == owner[6:]:
+            page["source_format"] = format_
+        return page
+
+    engine._collector = collector
+    assert await engine.reconcile()
+    assert any(
+        edge["target"] == target and edge["provider"] == "unity" and not edge["stale"]
+        for edge in store.query(owner)["edges"]
+    )
+    assert any(
+        issue["reason"] == "source_encoding_incomplete"
+        for issue in workspace.diagnostics(owner)["issues"]
+    )
+    editor.calls.clear()
+    assert await engine.reconcile()
+    assert not [params for action, params in editor.calls if action == "source"]
+    editor.sources[owner[6:]] = (
+        b"%YAML 1.1\n---\nAsset: fixed\n" if format_ == "unity_yaml" else b"class Fixed {}"
+    )
+    editor.event(path)
+    assert await engine.reconcile()
+    assert not any(
+        issue["reason"] == "source_encoding_incomplete"
+        for issue in workspace.diagnostics(owner)["issues"]
+    )
+    assert any(
+        edge["target"] == target and not edge["stale"] for edge in store.query(owner)["edges"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_undecodable_wrapper_does_not_leave_old_caller_edges_current(setup):
+    store, workspace, editor, engine = setup
+    target = editor.add(
+        1, "Assets/Resources/One.prefab", keys=[{"scheme": "resources", "value": "One"}]
+    )
+    wrapper = editor.add(
+        2,
+        "Assets/Loader.cs",
+        'using UnityEngine; class Loader { public static Object Get() => Resources.Load("One"); }',
+    )
+    caller = editor.add(3, "Assets/Caller.cs", "class Caller { void Go() { Loader.Get(); } }")
+    assert await engine.reconcile()
+    assert store.query(caller)["edges"][0]["target"] == target
+    editor.sources[wrapper[6:]] = b"\xffinvalid"
+    editor.event("Assets/Loader.cs")
+    assert await engine.reconcile()
+    assert not store.query(caller)["edges"]
+    assert any(
+        issue["reason"] == "source_encoding_incomplete"
+        for issue in workspace.diagnostics(wrapper)["issues"]
+    )
+    assert any(
+        row["coverage"] == "partial_static" for row in workspace.diagnostics(caller)["coverage"]
+    )

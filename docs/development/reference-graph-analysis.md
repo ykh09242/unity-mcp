@@ -67,7 +67,8 @@ preserves source positions. Unity's importer owns document validity.
 
 If a serialized document cannot be scanned, `diagnostics` reports
 `serialized_scan_incomplete`. An unsupported or malformed C# conditional block
-reports `conditional_scan_incomplete`. Both cases retain Unity's direct asset
+reports `conditional_scan_incomplete`. Source bytes that cannot be decoded
+report `source_encoding_incomplete`. All three cases retain Unity's direct asset
 dependencies. Optional source analysis resumes when its input changes. These
 diagnostics distinguish missing coverage from a source with no references.
 Binary serialized files retain the collector's explicit unavailable coverage.

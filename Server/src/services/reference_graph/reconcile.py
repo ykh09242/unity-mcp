@@ -84,6 +84,10 @@ async def drained_thread(function, *args, _cancel_event: threading.Event | None 
     return await drained_task(future, _cancel_event=_cancel_event)
 
 
+class SourceEncodingError(ValueError):
+    """Optional source bytes could not be decoded."""
+
+
 class Reconciler:
     def __init__(
         self,
@@ -699,11 +703,13 @@ class Reconciler:
                         check=self._check_thread,
                         _cancel_event=self.stopped,
                     )
-                except (SerializedScanError, ConditionalScanError) as error:
+                except (SerializedScanError, ConditionalScanError, SourceEncodingError) as error:
                     reason = (
                         "serialized_scan_incomplete"
                         if isinstance(error, SerializedScanError)
                         else "conditional_scan_incomplete"
+                        if isinstance(error, ConditionalScanError)
+                        else "source_encoding_incomplete"
                     )
                     format_ = "summary"
                     payload = {
@@ -733,9 +739,12 @@ class Reconciler:
         check: Callable[[], None] = lambda: None,
     ) -> tuple:
         check()
-        text = content.decode(
-            "utf-16" if content[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
-        )
+        try:
+            text = content.decode(
+                "utf-16" if content[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
+            )
+        except UnicodeDecodeError as error:
+            raise SourceEncodingError("Optional source encoding is unsupported") from error
         fingerprint = hashlib.sha256(content).hexdigest()
         if asset["source_format"] == "csharp":
             facts = parse_csharp(
