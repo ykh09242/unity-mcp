@@ -1028,15 +1028,24 @@ class ReferenceGraphService:
             or action.startswith("runtime_")
             and action not in {"runtime_release", "runtime_sessions", "runtime_status"}
         )
-        fallback = (
-            not replacing_policy
-            and editor.get("ignore_watchers") is False
-            and (await drained_thread(workspace.policy, bounded=True))["respect_gitignore"]
-        )
+
+        def fallback_admission():
+            with store.read_snapshot():
+                return (
+                    workspace.policy(bounded=True)["respect_gitignore"],
+                    workspace.ignore_current(editor, bounded=True),
+                )
+
+        fallback = False
+        admission_current = False
+        if not replacing_policy:
+            if editor.get("ignore_watchers") is False:
+                fallback, admission_current = await drained_thread(fallback_admission)
+            else:
+                admission_current = await drained_thread(
+                    workspace.ignore_current, editor, bounded=True
+                )
         ignore_verified = consistency == "checked"
-        admission_current = not replacing_policy and await drained_thread(
-            workspace.ignore_current, editor, bounded=True
-        )
         if protected and fallback and admission_current and not ignore_verified:
             ignore_verified = await entry.engine.validate_ignore()
         admission_pending = False
@@ -1056,16 +1065,25 @@ class ReferenceGraphService:
                         "Current ignore rules are unavailable; graph admission is incomplete"
                     )
                 ignore_verified = True
-        admission_fence = await drained_thread(workspace.delivery_fence) if protected else None
+
+        def opening_snapshot():
+            with store.read_snapshot():
+                fence = workspace.delivery_fence()
+                exclusions = not admission_pending and workspace.has_exclusions(bounded=True)
+                progress = workspace.progress(bounded=True) if exclusions else None
+                return fence, exclusions, progress
+
+        if protected:
+            admission_fence, exclusions_apply, catalog_progress = await drained_thread(
+                opening_snapshot
+            )
+        else:
+            admission_fence, exclusions_apply, catalog_progress = None, False, None
         if admission_pending and admission_fence[2]:
             raise RevisionConflict("Graph admission changed; retry the query")
-        exclusions_apply = False
         catalog_pending = False
-        catalog_progress = None
         if protected and not admission_pending:
-            exclusions_apply = await drained_thread(workspace.has_exclusions, bounded=True)
             if exclusions_apply:
-                catalog_progress = await drained_thread(workspace.progress, bounded=True)
                 if not _catalog_matches_editor(catalog_progress, editor):
                     if action == "query" and consistency == "cached":
                         catalog_pending = True
@@ -1267,20 +1285,41 @@ class ReferenceGraphService:
         if action == "sync" and type(options.get("force", False)) is not bool:
             raise ValueError("force must be boolean")
         await entry.check()
-        status = await drained_thread(store.status)
-        progress = await drained_thread(workspace.progress, bounded=True)
-        providers = await drained_thread(workspace.provider_status, bounded=True)
-        admission_current = await drained_thread(workspace.ignore_current, editor, bounded=True)
+
+        def result_snapshot():
+            with store.read_snapshot():
+                status = store.status()
+                progress = workspace.progress(bounded=True)
+                providers = workspace.provider_status(bounded=True)
+                admission_current = workspace.ignore_current(editor, bounded=True)
+                counts = workspace.counts()
+                version_pending = (
+                    workspace.state("analysis_version", bounded=True) != ANALYSIS_VERSION
+                )
+                analysis_pending = version_pending or workspace.state(
+                    "analysis_dirty", False, bounded=True
+                )
+                return (
+                    status,
+                    progress,
+                    providers,
+                    admission_current,
+                    counts,
+                    version_pending,
+                    analysis_pending,
+                )
+
+        (
+            status,
+            progress,
+            providers,
+            admission_current,
+            counts,
+            analysis_version_pending,
+            analysis_pending,
+        ) = await drained_thread(result_snapshot)
         ignore_changed = not admission_current
         matches_editor = admission_current and _native_matches_progress(progress, editor)
-        counts = await drained_thread(workspace.counts)
-        analysis_version_pending = (
-            await drained_thread(workspace.state, "analysis_version", bounded=True)
-            != ANALYSIS_VERSION
-        )
-        analysis_pending = analysis_version_pending or await drained_thread(
-            workspace.state, "analysis_dirty", False, bounded=True
-        )
         native_current = (
             matches_editor
             and (not fallback or ignore_verified)
@@ -1408,6 +1447,7 @@ class ReferenceGraphService:
                 latest = await entry.collect("status")
                 if not _partial_proof_current(entry, latest, produced_fence):
                     raise RevisionConflict("Partial graph proof changed; retry the query")
+                final_fence = await drained_thread(workspace.delivery_fence)
             elif not admission_pending:
                 latest = await entry.collect("status")
                 if (
@@ -1421,10 +1461,21 @@ class ReferenceGraphService:
                 matches_editor = matches_editor and _native_matches_progress(progress, latest)
                 native_current = native_current and matches_editor
                 current = current and native_current
-                if not await drained_thread(workspace.ignore_current, latest, bounded=True):
+
+                def final_snapshot():
+                    with store.read_snapshot():
+                        return (
+                            workspace.ignore_current(latest, bounded=True),
+                            workspace.delivery_fence(),
+                        )
+
+                final_current, final_fence = await drained_thread(final_snapshot)
+                if not final_current:
                     await drained_thread(workspace.block_admission)
                     raise RevisionConflict("Ignore rules changed before delivery; retry collection")
-            if await drained_thread(workspace.delivery_fence) != produced_fence:
+            else:
+                final_fence = await drained_thread(workspace.delivery_fence)
+            if final_fence != produced_fence:
                 raise RevisionConflict(
                     "Graph admission changed before delivery; restart the request"
                 )

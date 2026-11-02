@@ -133,6 +133,7 @@ class GraphStore:
         self._budget: StorageBudget | None = None
         self._summaries = {}
         self._summary_lock = threading.Lock()
+        self._read_local = threading.local()
         self.path = check_owned_path(Path(path))
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         check_owned_path(self.path)
@@ -190,6 +191,15 @@ class GraphStore:
     def _connect(
         self, *, write: bool = False, _identity: list[tuple[int, int]] | None = None
     ) -> Iterator[sqlite3.Connection]:
+        snapshot = getattr(self._read_local, "snapshot", None)
+        if snapshot is not None:
+            if write:
+                raise RuntimeError("Cannot write inside a graph read snapshot")
+            connection, identity = snapshot
+            if _identity is not None:
+                _identity.extend(identity)
+            yield connection
+            return
         for suffix in ("", "-wal", "-shm", "-journal"):
             candidate = check_owned_path(Path(str(self.path) + suffix))
             try:
@@ -257,6 +267,19 @@ class GraphStore:
                     raise
         finally:
             connection.close()
+
+    @contextmanager
+    def read_snapshot(self):
+        """Share one short, synchronous SQLite read among related operations."""
+        if getattr(self._read_local, "snapshot", None) is not None:
+            raise RuntimeError("Graph read snapshots cannot be nested")
+        identity = []
+        with self._connect(_identity=identity) as connection:
+            self._read_local.snapshot = (connection, identity)
+            try:
+                yield
+            finally:
+                del self._read_local.snapshot
 
     def _initialize(self) -> None:
         # Reopening a current store must not manufacture a header write or need

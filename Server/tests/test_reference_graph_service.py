@@ -534,6 +534,63 @@ def setup(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("watchers", [True, False])
+async def test_cached_query_batches_sqlite_read_snapshots(setup, monkeypatch, watchers):
+    import sqlite3
+    from contextlib import contextmanager
+
+    service, sender, ctx = setup
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+
+    async def send(instance, params):
+        result = await sender(instance, params)
+        if params["action"] == "status":
+            result["ignore_watchers"] = watchers
+        return result
+
+    service.send = send
+    entry, _ = await service.resolve(ctx, "status")
+    for owner in ("first", "second"):
+        await service.execute(
+            ctx,
+            "declare",
+            {
+                "id": owner,
+                "owner": owner,
+                "edge": {"target": "shared", "kind": "declared"},
+                "expected_version": 0,
+            },
+        )
+    assert await entry.engine.reconcile()
+    options = {"node": "shared", "direction": "incoming"}
+    await service.execute(ctx, "query", options)
+    connections = 0
+    connect = sqlite3.connect
+
+    def counted(*args, **kwargs):
+        nonlocal connections
+        connections += 1
+        return connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", counted)
+    actual = await service.execute(ctx, "query", options)
+    batched = connections
+
+    @contextmanager
+    def unbatched():
+        yield
+
+    monkeypatch.setattr(entry.workspace.store, "read_snapshot", unbatched)
+    connections = 0
+    baseline = await service.execute(ctx, "query", options)
+    assert actual == baseline
+    assert len(actual["data"]["edges"]) == 2
+    print(f"ignore_watchers={watchers}: {connections} -> {batched} SQLite connections")
+    assert connections - batched >= 5, (batched, connections)
+    await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_exploration_actions_through_tool_keep_scope_and_authored_evidence(
     setup, monkeypatch
 ):
