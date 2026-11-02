@@ -303,6 +303,10 @@
       "description": "Unity Profiler session control, counter reads, memory snapshots, and Frame Debugger (group: profiling)"
     },
     {
+      "name": "manage_project_auditor",
+      "description": "Experimental optional Project Auditor 1.0.1 availability checks, explicit audits and bounded diagnostic pages (group: profiling)"
+    },
+    {
       "name": "manage_recording",
       "description": "Start, poll and stop bounded silent Game View or Scene View MP4 recording on supported interactive Editors (group: core)"
     },

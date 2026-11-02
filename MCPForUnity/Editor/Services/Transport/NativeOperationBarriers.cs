@@ -2,6 +2,7 @@ using System;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Tools.Build;
+using MCPForUnity.Editor.Tools.ProjectAuditor;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 
@@ -50,7 +51,7 @@ namespace MCPForUnity.Editor.Services.Transport
             // callback reattachment. An unrelated run cannot clear its ownership.
             if (retired != null && TestJobManager.ControlFor(retired.JobId) is { Released: false })
                 retired = null;
-            var recovery = PreferRecovery(TestJobManager.NativeRecoveryDetails, retired);
+            var recovery = PreferRecovery(PreferRecovery(TestJobManager.NativeRecoveryDetails, retired), ProjectAuditorJobs.RecoveryDetails);
             if (BuildRunner.NativeRecoveryRequired)
                 recovery = PreferRecovery(
                     recovery,
@@ -78,7 +79,8 @@ namespace MCPForUnity.Editor.Services.Transport
                     || (buildJobId == null ? BuildRunner.HasNativeOwner : BuildRunner.HasForeignNativeOwner(buildJobId, buildBatchId))
                     || BuildPipeline.isBuildingPlayer
                     || PlayScenarioService.IsBusy
-                    || PlayScenarioSuiteService.IsBusy,
+                    || PlayScenarioSuiteService.IsBusy
+                    || ProjectAuditorJobs.HasNativeOwner,
                 RecoveryRequired = RequiresRecovery(recovery),
                 RecoveryDetails = recovery,
                 OwnedCompilation = CompilationJobTracker.Reservation.Blocker(EditorApplication.timeSinceStartup),

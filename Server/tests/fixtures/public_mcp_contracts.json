@@ -16757,6 +16757,86 @@
             "type": "object"
           }
         },
+        "manage_project_auditor": {
+          "annotations": {
+            "destructiveHint": true,
+            "readOnlyHint": false
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "availability",
+                  "start",
+                  "status",
+                  "issues"
+                ],
+                "type": "string"
+              },
+              "audit_id": {
+                "anyOf": [
+                  {
+                    "maxLength": 32,
+                    "minLength": 32,
+                    "pattern": "^[a-f0-9]{32}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "cursor": {
+                "anyOf": [
+                  {
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "page_size": {
+                "anyOf": [
+                  {
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
         "manage_recording": {
           "annotations": {
             "destructiveHint": true,
@@ -41970,6 +42050,86 @@
                   }
                 ],
                 "default": null
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          "outputSchema": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "manage_project_auditor": {
+          "annotations": {
+            "destructiveHint": true,
+            "readOnlyHint": false
+          },
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "availability",
+                  "start",
+                  "status",
+                  "issues"
+                ],
+                "type": "string"
+              },
+              "audit_id": {
+                "anyOf": [
+                  {
+                    "maxLength": 32,
+                    "minLength": 32,
+                    "pattern": "^[a-f0-9]{32}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "cursor": {
+                "anyOf": [
+                  {
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "page_size": {
+                "anyOf": [
+                  {
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "unity_instance": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [

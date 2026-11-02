@@ -3609,6 +3609,51 @@ Stop the Unity Profiler and any active recording.
 | --- | --- | --- | --- | --- | --- | --- |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
+## `unity-mcp project-auditor`
+
+Optional Project Auditor 1.0.1 analysis; requires the installed package and rules.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp project-auditor availability`
+
+Check installed package/API/rules without starting analysis.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp project-auditor issues`
+
+Read one bounded page of captured diagnostics after native completion.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| audit_id | text | required | nargs=1 | — | — |  |
+| --page-size | integer range: [1..100] | optional | nargs=1 | 50 | — |  |
+| --cursor | text | optional | nargs=1 | — | — | Opaque cursor returned by the previous page. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp project-auditor start`
+
+Start one audit of the current build target; may compile Player code.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| --audit-id | text | optional | nargs=1 | — | — | Reuse an existing audit identity after uncertainty. |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
+## `unity-mcp project-auditor status`
+
+Observe one audit without starting or cancelling work.
+
+| Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| audit_id | text | required | nargs=1 | — | — |  |
+| --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
+
 ## `unity-mcp raw`
 
 Send a raw command to Unity. Examples: unity-mcp raw manage_scene '&#123;"action": "get_hierarchy"&#125;' unity-mcp raw read_console '&#123;"count": 10&#125;' JSON input also accepts @file or -/@- stdin.
