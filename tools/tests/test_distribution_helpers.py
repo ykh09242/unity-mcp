@@ -40,7 +40,8 @@ def test_bundle_stages_selected_files_and_replaces_output(bundle_fixture, monkey
     output.write_bytes(b"old bundle")
     versions = []
 
-    def pack(command, *, cwd, **kwargs):
+    def pack(command, cwd):
+        assert command[:3] == ["@anthropic-ai/mcpb", "pack", "."]
         build = Path(cwd)
         manifest = json.loads((build / "manifest.json").read_text())
         versions.append(manifest["version"])
@@ -55,7 +56,7 @@ def test_bundle_stages_selected_files_and_replaces_output(bundle_fixture, monkey
         Path(command[-1]).write_bytes(manifest["version"].encode())
         return SimpleNamespace(stdout="packed")
 
-    monkeypatch.setattr(helper.subprocess, "run", pack)
+    monkeypatch.setattr(helper, "run_npx", pack)
     assert helper.generate_mcpb("1.2.3", output, icon) == output
     assert output.read_bytes() == b"1.2.3"
     helper.generate_mcpb("1.2.4", output, icon)
@@ -81,14 +82,14 @@ def test_bundle_failure_preserves_existing_output(bundle_fixture, monkeypatch, f
     helper, _, icon, output = bundle_fixture
     output.write_bytes(b"old bundle")
 
-    def pack(command, **kwargs):
+    def pack(command, cwd):
         if failure != "no_output":
             Path(command[-1]).write_bytes(b"partial" if failure == "pack_error" else b"")
         if failure == "pack_error":
             raise subprocess.CalledProcessError(1, command, stderr="synthetic failure")
         return SimpleNamespace(stdout="packed")
 
-    monkeypatch.setattr(helper.subprocess, "run", pack)
+    monkeypatch.setattr(helper, "run_npx", pack)
     with pytest.raises((RuntimeError, subprocess.CalledProcessError)):
         helper.generate_mcpb("1.2.3", output, icon)
     assert output.read_bytes() == b"old bundle"
@@ -99,7 +100,7 @@ def test_bundle_rejects_icon_filename_collisions(bundle_fixture, monkeypatch, re
     helper, repo, _, output = bundle_fixture
     output.write_bytes(b"old bundle")
     called = []
-    monkeypatch.setattr(helper.subprocess, "run", lambda *args, **kwargs: called.append(args))
+    monkeypatch.setattr(helper, "run_npx", lambda *args, **kwargs: called.append(args))
     with pytest.raises(ValueError, match="Icon filename conflicts"):
         helper.generate_mcpb("1.2.3", output, repo / reserved_name)
     assert not called

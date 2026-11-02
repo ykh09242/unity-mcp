@@ -16,23 +16,27 @@ LONG_SOURCE = (
 
 def git(root: Path, *arguments: str, data: bytes | None = None) -> bytes:
     """Use per-command long-path support, without changing anyone's Git config."""
-    return subprocess.run(
-        [
-            "git",
-            "-c",
-            "core.longpaths=true",
-            "-c",
-            "core.safecrlf=false",
-            "-c",
-            f"safe.directory={root.as_posix()}",
-            "-C",
-            str(root),
-            *arguments,
-        ],
-        input=data,
-        capture_output=True,
-        check=True,
-    ).stdout
+    try:
+        return subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.longpaths=true",
+                "-c",
+                "core.safecrlf=false",
+                "-c",
+                f"safe.directory={root.as_posix()}",
+                "-C",
+                str(root),
+                *arguments,
+            ],
+            input=data,
+            capture_output=True,
+            check=True,
+        ).stdout
+    except subprocess.CalledProcessError as error:
+        error.add_note("Git stderr: " + error.stderr.decode("utf-8", errors="replace"))
+        raise
 
 
 def make_seed(tmp_path: Path, autocrlf: str, attributes: bytes) -> tuple[Path, dict[str, bytes]]:
@@ -65,7 +69,11 @@ def make_seed(tmp_path: Path, autocrlf: str, attributes: bytes) -> tuple[Path, d
 def test_fresh_deep_worktree_preserves_vendor_bytes_and_removes_cleanly(tmp_path, autocrlf):
     seed, originals = make_seed(tmp_path, autocrlf, (ROOT / ".gitattributes").read_bytes())
 
-    checkout = tmp_path / ("deep-worktree-" + "x" * 60) / "checkout with spaces"
+    checkout = tmp_path / "checkout with spaces"
+    padding = max(0, 261 - len(str(checkout / LONG_SOURCE)))
+    if padding:
+        checkout = tmp_path / ("deep-" + "x" * padding) / "checkout with spaces"
+    # Exercise long tracked paths without overflowing Git's separate $GIT_DIR limit.
     assert len(str(checkout / LONG_SOURCE)) > 260
     assert checkout.resolve().is_relative_to(tmp_path.resolve())
     try:
