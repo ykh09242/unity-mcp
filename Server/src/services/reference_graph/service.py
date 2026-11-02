@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager, contextmanager, nullcontext
+from contextlib import ExitStack, asynccontextmanager, contextmanager, nullcontext
 import contextvars
 from dataclasses import dataclass, field
 import getpass
@@ -26,7 +26,7 @@ from services.operation_permissions import OperationPermissionError, authorize_o
 from services.reference_graph.analysis import ANALYSIS_VERSION, validate_rule
 from services.reference_graph.collection_protocol import integer, text
 from services.reference_graph.external import ExternalSource
-from services.reference_graph.reconcile import Reconciler, drained_thread
+from services.reference_graph.reconcile import Reconciler, RequestedAssetChanged, drained_thread
 from services.reference_graph.response_budget import require_response
 from services.reference_graph.store import (
     Edge,
@@ -183,6 +183,11 @@ async def native_send(instance: str, params: dict) -> dict:
                 str(result.get("message") or "Inventory snapshot is no longer valid")
             )
         if reason == "reference_collection_unavailable":
+            if (
+                "asset_guard" in params
+                and result.get("message") == "Unsupported reference collection fields."
+            ):
+                raise RequestedAssetChanged
             raise ReferenceCollectionError(str(result.get("message", reason)))
         raise RuntimeError(str(reason))
     return result["data"]
@@ -455,6 +460,34 @@ class ReferenceGraphService:
             if candidate is not None:
                 candidate.check_now()
 
+        async def send_requested_page(parameters: dict, lease: CredentialLease | None):
+            from services.operation_policy import OperationMode
+            from services.registry import operation_invocation as invocation
+
+            target = await invocation.capture_target(
+                instance, user_id=lease.user_id if lease else None
+            )
+            if target is None:
+                raise RequestedAssetChanged
+            admission = invocation.admission_for(target, OperationMode.EXCLUSIVE, expires_at=None)
+            # A public policy replacement may already own the Editor. Wait for
+            # Editor admission before checking the durable lease and path, then
+            # dispatch under this same owner. Hold no SQLite lock while waiting.
+            async with invocation.operation_session(admission):
+                with ExitStack() as gate:
+                    await drained_thread(gate.enter_context, workspace.requested_page_guard())
+                    await check()
+                    proof = entry.engine.partial_proof
+                    eligible = await drained_thread(
+                        workspace.requested_asset,
+                        entry.engine.worker,
+                        (parameters["guid"],),
+                        proof[0][0] if proof else None,
+                    )
+                    if not eligible or eligible["path"] != parameters["asset_guard"]["path"]:
+                        raise RequestedAssetChanged
+                    return await self.send(instance, parameters)
+
         async def collect(action: str, **values):
             await check()
             parameters = {
@@ -464,8 +497,12 @@ class ReferenceGraphService:
             parameters.update(
                 expected_instance_id=scope.instance_id, expected_project_id=scope.project_id
             )
-            with bind_credential_lease(active_lease()):
-                data = await self.send(instance, parameters)
+            lease = active_lease()
+            with bind_credential_lease(lease):
+                if "asset_guard" in parameters:
+                    data = await send_requested_page(parameters, lease)
+                else:
+                    data = await self.send(instance, parameters)
             await check()
             if (
                 data.get("instance_id") != scope.instance_id
@@ -1437,6 +1474,15 @@ class ReferenceGraphService:
             elif not policy_choice_required and (
                 action != "set_policy" or policy_changed or external_changed or ignore_changed
             ):
+                if (
+                    action == "query"
+                    and consistency == "cached"
+                    and options.get("direction", "outgoing") == "outgoing"
+                    and not options.get("cursor")
+                    and entry.engine.supports_asset_guard(editor)
+                    and (not matches_editor or counts["dirty_assets"])
+                ):
+                    entry.engine.request_asset(options["node"])
                 self.start(
                     entry,
                     # Cached validation detects stamps or repository identity.

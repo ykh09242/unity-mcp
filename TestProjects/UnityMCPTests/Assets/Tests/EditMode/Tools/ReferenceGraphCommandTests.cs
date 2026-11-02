@@ -136,6 +136,52 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsFalse(Call(new JObject { ["action"] = "status", ["validate_ignore_current"] = "true" }).Value<bool>("success"));
         }
 
+        [TestCase("dependencies")]
+        [TestCase("source")]
+        public void RequestedAssetGuardChecksPathRevisionAndIgnoreBeforeCollection(string action)
+        {
+            const string path = "Assets/Tests/EditMode/Tools/ReferenceGraphCommandTests.cs";
+            JObject status = (JObject)Call(new JObject { ["action"] = "status" })["data"];
+            Assert.AreEqual(1, status.Value<int>("asset_guard_version"));
+            var request = new JObject
+            {
+                ["action"] = "ignore_rules",
+                ["expected_instance_id"] = status["instance_id"],
+                ["expected_project_id"] = status["project_id"],
+            };
+            Assert.IsTrue(Call(request).Value<bool>("success"));
+            JObject proof = (JObject)Call(new JObject { ["action"] = "status", ["validate_ignore_current"] = true })["data"];
+            Assert.IsTrue(proof.Value<bool>("ignore_current_verified"));
+            var guard = new JObject
+            {
+                ["path"] = path,
+                ["epoch"] = proof["epoch"],
+                ["revision"] = proof["revision"],
+                ["ignore_digest"] = proof["ignore_snapshot_digest"],
+            };
+            request["action"] = action;
+            request["guid"] = AssetDatabase.AssetPathToGUID(path);
+            request["asset_guard"] = guard;
+            JObject collected = Call(request);
+            Assert.IsTrue(collected.Value<bool>("success"), collected.ToString());
+            Assert.IsTrue(collected["data"].Value<bool>("asset_guard_current"));
+
+            foreach (string field in new[] { "path", "epoch", "revision", "ignore_digest" })
+            {
+                JObject stale = (JObject)request.DeepClone();
+                stale["asset_guard"][field] = field == "revision" ? (JToken)(-1) : "stale";
+                // Guard even a continuation whose offset would otherwise be invalid.
+                stale["offset"] = int.MaxValue;
+                JObject result = Call(stale);
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                Assert.IsFalse(result["data"].Value<bool>("asset_guard_current"));
+                Assert.IsNull(result["data"]["targets"]);
+                Assert.IsNull(result["data"]["bytes_base64"]);
+            }
+            guard.Remove("ignore_digest");
+            Assert.IsFalse(Call(request).Value<bool>("success"));
+        }
+
         [Test]
         public void CombinedStatusDoesNotProveAnObsoleteIgnoreSnapshot()
         {

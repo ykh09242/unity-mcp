@@ -141,6 +141,16 @@ namespace MCPForUnity.Editor.Tools
                 return ReferenceGraphJournal.Read(request.Value<string>("epoch"), request.Value<long?>("after") ?? 0, count);
             if (EditorApplication.isCompiling || EditorApplication.isUpdating)
                 throw new InvalidOperationException("The Editor is importing or compiling; retry collection when idle.");
+            if (request["asset_guard"] is JObject guard && (action == "dependencies" || action == "source"))
+            {
+                bool current = AssetGuardCurrent(guard, ValidateGuid(request));
+                JObject result =
+                    !current ? new JObject()
+                    : action == "dependencies" ? Dependencies(request, count)
+                    : Source(request);
+                result["asset_guard_current"] = current;
+                return result;
+            }
             switch (action)
             {
                 case "inventory":
@@ -185,6 +195,7 @@ namespace MCPForUnity.Editor.Tools
             JObject result = new JObject
             {
                 ["ignore_current_validation"] = 1,
+                ["asset_guard_version"] = 1,
                 ["instance_id"] = ReferenceGraphJournal.InstanceId,
                 ["project_id"] = ProjectIdentityUtility.GetProjectHash(),
                 ["epoch"] = ReferenceGraphJournal.Epoch,
@@ -540,6 +551,31 @@ namespace MCPForUnity.Editor.Tools
             addressableEvent = null;
             AssemblyReloadEvents.beforeAssemblyReload -= ReleaseAddressablesObserver;
             EditorApplication.quitting -= ReleaseAddressablesObserver;
+        }
+
+        private static bool AssetGuardCurrent(JObject guard, string guid)
+        {
+            string epoch = guard.Value<string>("epoch");
+            long revision = guard.Value<long>("revision");
+            if (epoch != ReferenceGraphJournal.Epoch || revision != ReferenceGraphJournal.Revision)
+                return false;
+            string digest = guard.Value<string>("ignore_digest");
+            if (digest != null)
+            {
+                try
+                {
+                    if (IgnoreRules(true).ValidateCurrent(epoch, revision) != digest)
+                        return false;
+                }
+                catch (Exception)
+                {
+                    // An unavailable proof leaves this asset to ordinary collection.
+                    return false;
+                }
+            }
+            return epoch == ReferenceGraphJournal.Epoch
+                && revision == ReferenceGraphJournal.Revision
+                && string.Equals(AssetDatabase.GUIDToAssetPath(guid), guard.Value<string>("path"), StringComparison.Ordinal);
         }
 
         private static JObject Dependencies(JObject request, int count)

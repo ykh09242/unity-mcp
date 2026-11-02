@@ -41,10 +41,10 @@ namespace MCPForUnity.Editor.Tools
                         fields = new[] { "path", "guid" };
                         break;
                     case "dependencies":
-                        fields = new[] { "guid", "offset", "snapshot", "page_size" };
+                        fields = new[] { "guid", "offset", "snapshot", "page_size", "asset_guard" };
                         break;
                     case "source":
-                        fields = new[] { "guid", "offset", "fingerprint" };
+                        fields = new[] { "guid", "offset", "fingerprint", "asset_guard" };
                         break;
                     case "ignore_rules":
                         fields = new[] { "offset", "snapshot", "page_size", "validate" };
@@ -80,6 +80,19 @@ namespace MCPForUnity.Editor.Tools
                     throw new ArgumentException("Unsupported reference collection fields.");
                 foreach (JProperty property in parameters.Properties())
                 {
+                    if (property.Name == "asset_guard")
+                    {
+                        if (
+                            !(property.Value is JObject guard)
+                            || guard.Count != 4
+                            || guard["path"]?.Type != JTokenType.String
+                            || guard["epoch"]?.Type != JTokenType.String
+                            || guard["revision"]?.Type != JTokenType.Integer
+                            || (guard["ignore_digest"]?.Type != JTokenType.String && guard["ignore_digest"]?.Type != JTokenType.Null)
+                        )
+                            throw new ArgumentException("Invalid asset collection guard.");
+                        continue;
+                    }
                     if (property.Name == "paths")
                     {
                         if (!(property.Value is JArray paths) || paths.Any(path => path.Type != JTokenType.String))

@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 import hashlib
 from itertools import chain, islice
+import re
 import time
 import threading
 import uuid
@@ -88,7 +89,13 @@ class SourceEncodingError(ValueError):
     """Optional source bytes could not be decoded."""
 
 
+class RequestedAssetChanged(Exception):
+    """A speculative ordering hint lost its proof. Its durable dirty job remains."""
+
+
 class Reconciler:
+    MAX_REQUESTED_ASSETS = 32
+
     def __init__(
         self,
         workspace: GraphWorkspace,
@@ -115,6 +122,19 @@ class Reconciler:
         self._analysis_cache = None
         self._analysis_used = 0.0
         self.partial_proof = None
+        self._requested_guids: dict[str, None] = {}
+
+    def request_asset(self, node: str) -> None:
+        """Keep only bounded opaque hints on this scope's event loop until collection."""
+        if len(self._requested_guids) < self.MAX_REQUESTED_ASSETS and re.fullmatch(
+            r"asset:[0-9a-f]{32}", node
+        ):
+            self._requested_guids[node[6:]] = None
+
+    @staticmethod
+    def supports_asset_guard(editor: dict) -> bool:
+        version = editor.get("asset_guard_version")
+        return type(version) is int and version == 1
 
     async def collect(self, action: str, **params) -> dict:
         self._budget.request()
@@ -323,7 +343,7 @@ class Reconciler:
                 )
             ):
                 self.partial_proof = (partial_fence[1:], partial_status)
-        await self._assets()
+        await self._assets(ignore_snapshot)
         await self._analysis()
         await self._external(force=force_external)
         if ignore_snapshot is not None:
@@ -648,7 +668,7 @@ class Reconciler:
         await drained_thread(self.workspace.remove_path, self.worker, path)
         return {destination} if destination and not ambiguous else set()
 
-    async def _assets(self) -> None:
+    async def _assets(self, ignore_snapshot: str | None) -> None:
         await self._phase("collecting")
         after = ""
         donor = (
@@ -656,23 +676,70 @@ class Reconciler:
             if not self.progress.get("completed_at")
             else None
         )
+        ignore_digest = (
+            hashlib.sha256(ignore_snapshot.encode()).hexdigest() if ignore_snapshot else None
+        )
+        promote = self.supports_asset_guard(self.progress["editor"])
         while batch := await drained_thread(self.workspace.dirty_assets, after=after):
             reused = await self._reuse_batch(donor, batch) if donor else {}
+            batch_guids = {asset["guid"] for asset in batch}
             for asset in batch:
-                await self.check()
                 after = asset["guid"]
-                try:
-                    if after not in reused:
-                        await self._asset(asset)
-                    elif version := reused[after]:
-                        await self._source(asset)
-                        await drained_thread(
-                            self.workspace.clean_asset, self.worker, after, version=version
-                        )
-                except RevisionConflict:
-                    raise
-                except (OSError, ValueError, RecursionError) as error:
-                    await drained_thread(self.workspace.fail_asset, self.worker, asset, error)
+                if after not in batch_guids:
+                    continue
+                # At most one promotion per regular job. Do not advance the
+                # ordinary GUID cursor for an out-of-order asset.
+                if promote and self._requested_guids:
+                    try:
+                        promoted = await self._promote_requested(after, ignore_digest)
+                    except RequestedAssetChanged:
+                        # Keep the regular job. Refresh the catalog/rules on the
+                        # next pass before attempting any further promotions.
+                        promote = False
+                    else:
+                        if promoted:
+                            batch_guids.discard(promoted)
+                await self._collect_dirty_asset(asset, reused)
+        self._requested_guids.clear()
+
+    async def _promote_requested(self, regular: str, ignore_digest: str | None) -> str | None:
+        candidates = tuple(self._requested_guids)
+        requested = await drained_thread(
+            self.workspace.requested_asset,
+            self.worker,
+            candidates,
+            self.partial_proof[0][0] if self.partial_proof else None,
+        )
+        for guid in candidates:
+            self._requested_guids.pop(guid, None)
+            if requested and guid == requested["guid"]:
+                break
+        if not requested or requested["guid"] == regular:
+            return None
+        guard = {
+            "path": requested["path"],
+            "epoch": self.progress["epoch"],
+            "revision": self.progress["after"],
+            "ignore_digest": ignore_digest,
+        }
+        await self._collect_dirty_asset(requested, {}, guard)
+        return requested["guid"]
+
+    async def _collect_dirty_asset(
+        self, asset: dict, reused: dict, guard: dict | None = None
+    ) -> None:
+        guid = asset["guid"]
+        await self.check()
+        try:
+            if guid not in reused:
+                await self._asset(asset, guard)
+            elif version := reused[guid]:
+                await self._source(asset)
+                await drained_thread(self.workspace.clean_asset, self.worker, guid, version=version)
+        except RevisionConflict:
+            raise
+        except (OSError, ValueError, RecursionError) as error:
+            await drained_thread(self.workspace.fail_asset, self.worker, asset, error)
 
     async def _reuse_batch(self, donor: str, batch: list[dict]) -> dict[str, dict | None]:
         from services.reference_graph.restart import reuse_assets
@@ -754,12 +821,20 @@ class Reconciler:
             self.workspace.ensure_compilation_context, self.worker, context, checked=checked
         )
 
-    async def _asset(self, asset: dict) -> None:
+    async def _collect_asset_page(self, action: str, guard: dict | None, **params) -> dict:
+        if guard is None:
+            return await self.collect(action, **params)
+        page = await self.collect(action, **params, asset_guard=guard)
+        if page.get("asset_guard_current") is not True:
+            raise RequestedAssetChanged
+        return page
+
+    async def _asset(self, asset: dict, guard: dict | None = None) -> None:
         guid, owner = asset["guid"], "asset:" + asset["guid"]
         targets, offset, snapshot, fingerprint = [], 0, None, None
         while True:
-            page = await self.collect(
-                "dependencies", guid=guid, offset=offset, snapshot=snapshot, page_size=1000
+            page = await self._collect_asset_page(
+                "dependencies", guard, guid=guid, offset=offset, snapshot=snapshot, page_size=1000
             )
             if not boolean(page.get("present"), "present"):
                 await drained_thread(self.workspace.remove_path, self.worker, asset["path"])
@@ -793,7 +868,7 @@ class Reconciler:
                 await drained_thread(
                     self.workspace.publish, self.worker, owner, "unity", generation, result
                 )
-                await self._source(asset)
+                await self._source(asset, guard)
                 await drained_thread(
                     self.workspace.clean_asset,
                     self.worker,
@@ -802,7 +877,7 @@ class Reconciler:
                 )
                 return
 
-    async def _source(self, asset: dict) -> None:
+    async def _source(self, asset: dict, guard: dict | None = None) -> None:
         if asset["source_format"] == "none":
             await drained_thread(
                 self.workspace.drop_document, self.worker, "asset:" + asset["guid"]
@@ -810,8 +885,8 @@ class Reconciler:
             return
         content, offset, fingerprint, context = bytearray(), 0, None, None
         while True:
-            page = await self.collect(
-                "source", guid=asset["guid"], offset=offset, fingerprint=fingerprint
+            page = await self._collect_asset_page(
+                "source", guard, guid=asset["guid"], offset=offset, fingerprint=fingerprint
             )
             source_format = page.get("source_format")
             if source_format not in {asset["source_format"], "binary"}:

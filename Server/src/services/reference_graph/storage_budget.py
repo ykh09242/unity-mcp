@@ -89,7 +89,7 @@ def file_sizes(path: Path) -> dict[str, int]:
 
 
 @contextmanager
-def file_lock(path: Path) -> Iterator[None]:
+def file_lock(path: Path, *, wait: bool = True) -> Iterator[None]:
     """Keep a stable inode; removing lock files can split cross-process ownership."""
     _regular(path)
     descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
@@ -110,6 +110,8 @@ def file_lock(path: Path) -> Iterator[None]:
                     fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except OSError as error:
+                if not wait and error.errno in (errno.EACCES, errno.EAGAIN):
+                    raise BlockingIOError("Reference graph lock is busy") from error
                 if error.errno not in (errno.EACCES, errno.EAGAIN) or time.monotonic() >= deadline:
                     raise StorageBudgetError(
                         "Reference graph budget lock is busy; retry"

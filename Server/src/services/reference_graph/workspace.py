@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
 import json
 import stat
@@ -13,6 +13,7 @@ from services.reference_graph.analysis import Analysis
 from services.reference_graph.external import _pattern
 from services.reference_graph.ignore import GitIgnoreRules
 from services.reference_graph.response_budget import PageBudget, bounded_rows
+from services.reference_graph.storage_budget import file_lock
 from services.reference_graph.store import (
     Edge,
     GraphStore,
@@ -291,10 +292,14 @@ class GraphWorkspace:
     @contextmanager
     def _write(self, owner: str):
         with self.store._connect(write=True) as connection:
-            row = connection.execute("SELECT owner,expires FROM graph_worker WHERE id=1").fetchone()
-            if row is None or row[0] != owner or row[1] <= time.time():
-                raise RevisionConflict("Reference reconciliation ownership changed")
+            self._require_worker(connection, owner)
             yield connection
+
+    @staticmethod
+    def _require_worker(connection, owner: str) -> None:
+        row = connection.execute("SELECT owner,expires FROM graph_worker WHERE id=1").fetchone()
+        if row is None or row[0] != owner or row[1] <= time.time():
+            raise RevisionConflict("Reference reconciliation ownership changed")
 
     def set_progress(self, worker: str, value: dict) -> None:
         with self._write(worker) as connection:
@@ -575,6 +580,18 @@ class GraphWorkspace:
         version, _ = self._set_policy(policy, expected_version=expected_version)
         return version
 
+    @contextmanager
+    def requested_page_guard(self):
+        """Serialize one promoted read with effective policy changes across scoped servers."""
+        with ExitStack() as acquired:
+            try:
+                acquired.enter_context(
+                    file_lock(self.store.path.with_suffix(".policy.lock"), wait=False)
+                )
+            except BlockingIOError as error:
+                raise RevisionConflict("Reference collection policy is in use; retry") from error
+            yield
+
     def _set_policy(
         self, policy: dict, *, expected_version: int, _rebuild: bool = False
     ) -> tuple[int, bool]:
@@ -593,7 +610,7 @@ class GraphWorkspace:
             "exclude": patterns,
             "respect_gitignore": policy.get("respect_gitignore", True),
         }
-        with self.store._connect(write=True) as connection:
+        with ExitStack() as guard, self.store._connect(write=True) as connection:
             # Replacement must remain possible for legacy oversized policies without
             # loading their payload. The writer transaction still owns the CAS.
             current, authored = connection.execute(
@@ -625,6 +642,7 @@ class GraphWorkspace:
                 if not authored and not patterns and replacement["respect_gitignore"]:
                     self._set(connection, "policy", replacement)
                     return expected_version + 1, False
+            guard.enter_context(self.requested_page_guard())
             self._set(connection, "policy", replacement)
             if _rebuild:
                 connection.execute("DELETE FROM graph_state WHERE key='restart_from'")
@@ -916,6 +934,22 @@ class GraphWorkspace:
                     (after, time.time(), limit),
                 )
             ]
+
+    def requested_asset(
+        self, worker: str, guids: tuple[str, ...], partial_revision: int | None
+    ) -> dict | None:
+        """Choose a queued GUID only from this worker's admitted, eligible inventory."""
+        with self.store._connect() as connection:
+            self._require_worker(connection, worker)
+            row = connection.execute(
+                "SELECT a.payload FROM json_each(?) q CROSS JOIN graph_assets a "
+                "ON a.guid=q.value LEFT JOIN graph_asset_failures f USING(guid) "
+                "WHERE a.dirty=1 AND (f.guid IS NULL OR f.retry_at<=?) "
+                "AND EXISTS (SELECT 1 FROM graph_admission WHERE id=1 AND (ready=1 OR revision=?)) "
+                "ORDER BY q.key LIMIT 1",
+                (_json(guids), time.time(), partial_revision),
+            ).fetchone()
+            return json.loads(row[0]) if row else None
 
     def clean_asset(self, worker: str, guid: str, *, version: dict | None = None) -> None:
         with self._write(worker) as connection:

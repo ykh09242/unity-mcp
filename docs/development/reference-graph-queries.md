@@ -26,6 +26,16 @@ contain references, or be empty, before indexing finishes. Run a fresh query aft
 collection completes. Completed collection omits the hint even when the result has
 another page or an external source uses cached verification.
 
+During collection, the first page of a cached outgoing query can bring an
+admitted, pending asset forward. The response contains the available evidence
+while the worker processes the request. Query the node again to see newly
+collected direct dependencies. Repeated requests for one GUID share a place in the bounded
+queue, and the collector continues its ordinary scan between requested assets.
+Incoming queries can gain references as other owners are collected. An older
+Editor continues its ordinary inventory scan. If several MCP servers use the
+same graph database, upgrade them together so each server coordinates policy
+changes with a requested asset read on the others.
+
 Page size defaults to 100 and accepts 1 through 1,000. This is a response/work page,
 not a total graph, result, memory or elapsed-time limit. Omit `max_depth` for all
 reachable nodes. Follow `next_cursor` until null even when a page has no edges or
