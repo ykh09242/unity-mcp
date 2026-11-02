@@ -387,6 +387,212 @@ namespace MCPForUnityTests.Editor.Helpers
         }
 
         [Test]
+        public void OpenCodeConfigurePreservesSameEndpointSettingsAndRotatesOwnedHeaders()
+        {
+            WithOpenCode(
+                (configurator, path) =>
+                {
+                    configurator.Configure();
+                    var document = JObject.Parse(File.ReadAllText(path));
+                    document["theme"] = "retained-theme";
+                    document["mcp"]["other"] = new JObject { ["enabled"] = false };
+                    var entry = (JObject)document["mcp"]["unityMCP"];
+                    entry["timeout"] = 123456;
+                    entry["custom"] = new JObject { ["value"] = false };
+                    entry["oauth"] = new JObject { ["clientId"] = "synthetic-client" };
+                    entry["headers"]["Authorization"] = "synthetic-user-credential";
+                    entry["headers"]["x-unity-mcp-token"] = "synthetic-stale-duplicate";
+                    File.WriteAllText(path, document.ToString());
+                    File.WriteAllText(_tokenPath, "second-test-launch");
+
+                    configurator.Configure();
+
+                    var updated = JObject.Parse(File.ReadAllText(path));
+                    var actual = (JObject)updated["mcp"]["unityMCP"];
+                    Assert.AreEqual(123456, (int)actual["timeout"]);
+                    Assert.IsTrue(JToken.DeepEquals(entry["custom"], actual["custom"]));
+                    Assert.IsTrue(JToken.DeepEquals(entry["oauth"], actual["oauth"]));
+                    Assert.AreEqual("synthetic-user-credential", (string)actual["headers"]["Authorization"]);
+                    Assert.AreEqual("second-test-launch", (string)actual["headers"]["X-Unity-MCP-Token"]);
+                    Assert.IsNull(actual["headers"]["x-unity-mcp-token"]);
+                    Assert.AreEqual("retained-theme", (string)updated["theme"]);
+                    Assert.IsTrue(JToken.DeepEquals(document["mcp"]["other"], updated["mcp"]["other"]));
+                    string once = File.ReadAllText(path);
+                    configurator.Configure();
+                    Assert.AreEqual(once, File.ReadAllText(path));
+                }
+            );
+        }
+
+        [Test]
+        public void OpenCodeConfigureChangedEndpointDropsPreviousCredentialsButKeepsTimeout()
+        {
+            WithOpenCode(
+                (configurator, path) =>
+                {
+                    File.WriteAllText(
+                        path,
+                        new JObject
+                        {
+                            ["mcp"] = new JObject
+                            {
+                                ["unityMCP"] = new JObject
+                                {
+                                    ["type"] = "remote",
+                                    ["url"] = "https://previous.invalid/mcp",
+                                    ["timeout"] = 123456,
+                                    ["headers"] = new JObject { ["Authorization"] = "synthetic-old", ["X-API-Key"] = "synthetic-old-key" },
+                                    ["oauth"] = new JObject { ["clientSecret"] = "synthetic-old-oauth" },
+                                },
+                            },
+                        }.ToString()
+                    );
+                    configurator.Configure();
+                    var entry = JObject.Parse(File.ReadAllText(path))["mcp"]["unityMCP"];
+                    Assert.AreEqual(123456, (int)entry["timeout"]);
+                    Assert.AreEqual(HttpEndpointUtility.GetMcpRpcUrl(), (string)entry["url"]);
+                    Assert.IsNull(entry["oauth"]);
+                    Assert.IsNull(entry["headers"]["Authorization"]);
+                    Assert.IsNull(entry["headers"]["X-API-Key"]);
+                    Assert.AreEqual("first-test-launch", (string)entry["headers"]["X-Unity-MCP-Token"]);
+                }
+            );
+        }
+
+        [Test]
+        public void OpenCodeConfigureTransportSwitchRetainsCompatibleSettingsAndLocalEnvironment()
+        {
+            WithOpenCode(
+                (configurator, path) =>
+                {
+                    EditorConfigCache.Instance.SetUseHttpTransport(false);
+                    configurator.Configure();
+                    var document = JObject.Parse(File.ReadAllText(path));
+                    var entry = (JObject)document["mcp"]["unityMCP"];
+                    entry["timeout"] = 123456;
+                    entry["environment"] = new JObject { ["SYNTHETIC_SETTING"] = "preserved" };
+                    File.WriteAllText(path, document.ToString());
+                    configurator.Configure();
+                    entry = (JObject)JObject.Parse(File.ReadAllText(path))["mcp"]["unityMCP"];
+                    Assert.AreEqual("preserved", (string)entry["environment"]["SYNTHETIC_SETTING"]);
+                    Assert.AreEqual(123456, (int)entry["timeout"]);
+
+                    EditorConfigCache.Instance.SetUseHttpTransport(true);
+                    configurator.Configure();
+                    document = JObject.Parse(File.ReadAllText(path));
+                    entry = (JObject)document["mcp"]["unityMCP"];
+                    Assert.IsNull(entry["environment"]);
+                    Assert.IsNull(entry["command"]);
+                    Assert.AreEqual(123456, (int)entry["timeout"]);
+                    entry["oauth"] = false;
+                    File.WriteAllText(path, document.ToString());
+                    EditorConfigCache.Instance.SetUseHttpTransport(false);
+                    configurator.Configure();
+                    entry = (JObject)JObject.Parse(File.ReadAllText(path))["mcp"]["unityMCP"];
+                    Assert.IsNull(entry["url"]);
+                    Assert.IsNull(entry["headers"]);
+                    Assert.IsNull(entry["oauth"]);
+                    Assert.AreEqual("local", (string)entry["type"]);
+                    Assert.AreEqual(123456, (int)entry["timeout"]);
+                    Assert.IsInstanceOf<JArray>(entry["command"]);
+                }
+            );
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void OpenCodeConfigurePreservesConcurrentEditOrCreation(bool missing)
+        {
+            WithOpenCode(
+                (configurator, path) =>
+                {
+                    if (!missing)
+                        File.WriteAllText(path, "{\"theme\":\"original\"}");
+                    var service = ClientConfigurationChangeService.Shared;
+                    var field = service.GetType().GetField("beforeCommitComparison", BindingFlags.Instance | BindingFlags.NonPublic);
+                    var original = field.GetValue(service);
+                    const string concurrent = "{\"theme\":\"concurrent\"}";
+                    try
+                    {
+                        field.SetValue(service, new Action(() => File.WriteAllText(path, concurrent)));
+                        Assert.Throws<McpConfigurationHelper.ConfigurationConflictException>(configurator.Configure);
+                        Assert.AreEqual(concurrent, File.ReadAllText(path));
+                    }
+                    finally
+                    {
+                        field.SetValue(service, original);
+                    }
+                }
+            );
+        }
+
+        private void WithOpenCode(Action<OwnedOpenCode, string> action)
+        {
+            string path = _tokenPath + ".opencode.json";
+            bool hadLock = EditorPrefs.HasKey(EditorPrefKeys.LockCursorConfig);
+            bool originalLock = EditorPrefs.GetBool(EditorPrefKeys.LockCursorConfig, false);
+            try
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, false);
+                action(new OwnedOpenCode(path), path);
+            }
+            finally
+            {
+                File.Delete(path);
+                if (hadLock)
+                    EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, originalLock);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.LockCursorConfig);
+            }
+        }
+
+        [Test]
+        public void OpenCodePreviewUsesFlatSchemaAndRefusesStaleSnapshot()
+        {
+            WithOpenCode(
+                (configurator, path) =>
+                {
+                    File.WriteAllText(
+                        path,
+                        "{\"theme\":\"retained\",\"mcp\":{\"unityMCP\":{\"type\":\"local\",\"command\":[\"old\"],\"timeout\":123456,\"environment\":{\"CUSTOM\":\"retained\"}}}}"
+                    );
+                    var inputs = new ClientConfigurationInputs(
+                        false,
+                        null,
+                        "synthetic-command",
+                        new[] { "synthetic-arg" },
+                        null,
+                        null,
+                        false,
+                        null,
+                        null,
+                        false
+                    );
+                    var service = new ClientConfigurationChangeService(
+                        _ => inputs,
+                        selected => new ClientConfigurationFileTarget(selected, selected.Id, path, "json", new McpClient { ServerContainerKey = "mcp" })
+                    );
+                    var preview = service.Prepare(configurator);
+                    Assert.AreEqual("prepared", preview.Code);
+                    File.AppendAllText(path, " ");
+                    string concurrent = File.ReadAllText(path);
+                    Assert.AreEqual("stale_file", service.Apply(preview, configurator).Code);
+                    Assert.AreEqual(concurrent, File.ReadAllText(path));
+
+                    preview = service.Prepare(configurator);
+                    Assert.AreEqual("applied", service.Apply(preview, configurator).Code);
+                    var document = JObject.Parse(File.ReadAllText(path));
+                    var entry = document["mcp"]["unityMCP"];
+                    CollectionAssert.AreEqual(new[] { "synthetic-command", "synthetic-arg" }, entry["command"].ToObject<string[]>());
+                    Assert.AreEqual("local", (string)entry["type"]);
+                    Assert.AreEqual(123456, (int)entry["timeout"]);
+                    Assert.AreEqual("retained", (string)entry["environment"]["CUSTOM"]);
+                    Assert.AreEqual("retained", (string)document["theme"]);
+                }
+            );
+        }
+
+        [Test]
         public void OpenClawStatusNeverRepairsAnUnownedEndpoint()
         {
             string path = _tokenPath + ".json";

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Clients;
+using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
@@ -203,7 +204,10 @@ namespace MCPForUnity.Editor.Services
                 if (target.Format == "json")
                 {
                     var root = ParseJson(document);
-                    ConfigJsonBuilder.ApplyUnityServerToExistingConfig(root, null, target.Descriptor, inputs, false);
+                    if (client is OpenCodeConfigurator)
+                        OpenCodeConfigurator.ApplyConfiguration(root, inputs, bytes == null);
+                    else
+                        ConfigJsonBuilder.ApplyUnityServerToExistingConfig(root, null, target.Descriptor, inputs, false);
                     proposal = root.ToString(Formatting.Indented);
                 }
                 else if (target.Format == "toml")
@@ -352,15 +356,15 @@ namespace MCPForUnity.Editor.Services
 
         // Unregister shares the same bounded reader and final guarded replacement as preview/apply.
         // The transformation runs on the snapshot; no writer may silently replace a later edit.
-        internal void MutateFile(string path, Func<string, string> transform)
+        internal void MutateFile(string path, Func<string, string> transform, bool createIfMissing = false)
         {
             if (readLock())
                 throw new ConfigurationLockedException();
             byte[] original = Read(path);
-            if (original == null)
+            if (original == null && !createIfMissing)
                 return;
             string document = Decode(original, out bool bom);
-            string updated = transform(document);
+            string updated = transform(original == null ? null : document);
             if (updated != document)
                 Commit(path, updated, bom, original);
         }
@@ -524,7 +528,7 @@ namespace MCPForUnity.Editor.Services
                 return null;
             var declaration = client.GetType().GetMethod("Configure")?.DeclaringType;
             string format =
-                declaration == typeof(JsonFileMcpConfigurator) ? "json"
+                declaration == typeof(JsonFileMcpConfigurator) || declaration == typeof(OpenCodeConfigurator) ? "json"
                 : declaration == typeof(CodexMcpConfigurator) ? "toml"
                 : null;
             return format == null ? null : new ClientConfigurationFileTarget(client, client.Id, client.GetConfigPath(), format, known.Client);

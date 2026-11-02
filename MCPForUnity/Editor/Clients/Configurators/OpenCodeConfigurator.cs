@@ -5,6 +5,7 @@ using System.Linq;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
+using MCPForUnity.Editor.Services;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -30,6 +31,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
                     windowsConfigPath = BuildConfigPath(),
                     macConfigPath = BuildConfigPath(),
                     linuxConfigPath = BuildConfigPath(),
+                    ServerContainerKey = "mcp",
                 }
             ) { }
 
@@ -128,33 +130,33 @@ namespace MCPForUnity.Editor.Clients.Configurators
             try
             {
                 string path = GetConfigPath();
-                McpConfigurationHelper.EnsureConfigDirectoryExists(path);
-
-                // Load existing config or start fresh, preserving all other properties and MCP servers
-                var config = TryLoadConfig(path) ?? new JObject();
-
-                // Only add $schema if creating a new file
-                if (!File.Exists(path))
-                {
-                    config["$schema"] = SchemaUrl;
-                }
-
-                // Preserve existing mcp section and only update our server entry
-                if (config["mcp"] != null && !(config["mcp"] is JObject))
-                {
-                    throw new InvalidOperationException("OpenCode 'mcp' must be an object. The existing configuration was not changed.");
-                }
-                var mcpSection = config["mcp"] as JObject;
-                if (mcpSection == null)
-                {
-                    mcpSection = new JObject();
-                    config["mcp"] = mcpSection;
-                }
-
-                mcpSection[ServerName] = BuildServerEntry();
-
-                McpConfigurationHelper.WriteAtomicFile(path, JsonConvert.SerializeObject(config, Formatting.Indented));
-                GeneratedClientConfigOwnership.Record("OpenCode", path, GeneratedStdioEntry((JObject)mcpSection[ServerName]));
+                JObject writtenEntry = null;
+                ClientConfigurationChangeService.Shared.MutateFile(
+                    path,
+                    document =>
+                    {
+                        JObject config;
+                        try
+                        {
+                            config =
+                                document == null
+                                    ? new JObject()
+                                    : JObject.Parse(document, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
+                        }
+                        catch (JsonException ex)
+                        {
+                            throw new InvalidOperationException(
+                                "The existing OpenCode configuration is not a JSON object. Fix it manually; it was not changed.",
+                                ex
+                            );
+                        }
+                        ApplyConfiguration(config, null, document == null);
+                        writtenEntry = (JObject)config["mcp"][ServerName];
+                        return config.ToString(Formatting.Indented);
+                    },
+                    createIfMissing: true
+                );
+                GeneratedClientConfigOwnership.Record("OpenCode", path, GeneratedStdioEntry(writtenEntry));
                 CheckStatus(attemptAutoRewrite: false);
             }
             catch (Exception ex)
@@ -162,6 +164,63 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 client.SetStatus(McpStatus.Error, ex.Message);
                 throw;
             }
+        }
+
+        internal static void ApplyConfiguration(JObject config, ClientConfigurationInputs inputs, bool addSchema)
+        {
+            if (config["mcp"] != null && config["mcp"] is not JObject)
+                throw new InvalidOperationException("OpenCode 'mcp' must be an object. The existing configuration was not changed.");
+            var servers = config["mcp"] as JObject;
+            if (servers?[ServerName] != null && servers[ServerName] is not JObject)
+                throw new InvalidOperationException("OpenCode 'mcp.unityMCP' must be an object. The existing configuration was not changed.");
+            var existing = servers?[ServerName] as JObject;
+            if (existing?["headers"] != null && existing["headers"] is not JObject)
+                throw new InvalidOperationException("OpenCode 'headers' must be an object. The existing configuration was not changed.");
+            if (existing?["headersHelper"] != null || existing?["http_headers_helper"] != null)
+                throw new InvalidOperationException("Custom OpenCode authentication must be migrated manually. The existing configuration was not changed.");
+
+            var generated = BuildServerEntry(inputs);
+            var entry = existing?.DeepClone() as JObject ?? new JObject();
+            bool remote = (string)generated["type"] == RemoteType;
+            bool sameEndpoint =
+                remote
+                && string.Equals((string)existing?["type"], RemoteType, StringComparison.OrdinalIgnoreCase)
+                && string.Equals((string)existing?["url"], (string)generated["url"], StringComparison.Ordinal);
+            if (remote)
+            {
+                entry.Remove("command");
+                entry.Remove("environment");
+                // Unknown headers may contain credentials. Only retain them for the exact same recipient.
+                var headers = sameEndpoint ? entry["headers"] as JObject ?? new JObject() : new JObject();
+                foreach (
+                    var property in headers
+                        .Properties()
+                        .Where(property =>
+                            string.Equals(property.Name, AuthConstants.ApiKeyHeader, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(property.Name, AuthConstants.LocalTokenHeader, StringComparison.OrdinalIgnoreCase)
+                        )
+                        .ToArray()
+                )
+                    property.Remove();
+                foreach (var header in ((JObject)generated["headers"]).Properties())
+                    headers[header.Name] = header.Value.DeepClone();
+                generated["headers"] = headers;
+                if (!sameEndpoint)
+                    entry.Remove("oauth");
+            }
+            else
+            {
+                entry.Remove("url");
+                entry.Remove("headers");
+                entry.Remove("oauth");
+            }
+            foreach (var property in generated.Properties())
+                entry[property.Name] = property.Value.DeepClone();
+            if (servers == null)
+                config["mcp"] = servers = new JObject();
+            servers[ServerName] = entry;
+            if (addSchema)
+                config["$schema"] = SchemaUrl;
         }
 
         private static string GeneratedStdioEntry(JObject entry)
@@ -195,18 +254,19 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 "The Unity MCP server should be detected automatically",
             };
 
-        private static JObject BuildServerEntry()
+        private static JObject BuildServerEntry(ClientConfigurationInputs inputs = null)
         {
-            if (HttpEndpointUtility.GetCurrentServerTransport() == ConfiguredTransport.Stdio)
+            if (inputs != null ? !inputs.UseHttp : HttpEndpointUtility.GetCurrentServerTransport() == ConfiguredTransport.Stdio)
             {
-                var (uvxPath, _, packageName) = AssetPathUtility.GetUvxCommandParts();
+                var parts = inputs == null ? AssetPathUtility.GetUvxCommandParts() : (inputs.Command, (string)null, (string)null);
+                string uvxPath = parts.Item1;
                 if (string.IsNullOrWhiteSpace(uvxPath))
                 {
                     throw new InvalidOperationException("uvx not found. Install uv/uvx or set the override in Advanced Settings.");
                 }
 
                 var command = new JArray { uvxPath };
-                foreach (string value in ConfigJsonBuilder.BuildUvxArgs(null, packageName))
+                foreach (string value in inputs?.Args ?? ConfigJsonBuilder.BuildUvxArgs(null, parts.Item3).ToArray())
                 {
                     command.Add(value);
                 }
@@ -222,8 +282,8 @@ namespace MCPForUnity.Editor.Clients.Configurators
             return new JObject
             {
                 ["type"] = RemoteType,
-                ["url"] = HttpEndpointUtility.GetMcpRpcUrl(),
-                ["headers"] = JObject.FromObject(HttpEndpointUtility.GetAuthHeaders()),
+                ["url"] = inputs?.Endpoint ?? HttpEndpointUtility.GetMcpRpcUrl(),
+                ["headers"] = JObject.FromObject(inputs?.Headers ?? HttpEndpointUtility.GetAuthHeaders()),
                 ["enabled"] = true,
             };
         }
