@@ -23,9 +23,34 @@ _STATES: Final = frozenset(
     {"queued", "executing", "completed", "canceled", "expired", "unknown", "unavailable"}
 )
 
+# These built-in native reads can maintain observation caches and still need their
+# normal arbitration. They do not need durable mutation fences between pages.
+_JOURNAL_FREE_READS: Final = {
+    "manage_reference_graph": frozenset(
+        {
+            "status",
+            "inventory",
+            "changes",
+            "asset",
+            "dependencies",
+            "source",
+            "compilation",
+            "ignore_rules",
+            "ignore_source",
+            "probe",
+            "copy_destination",
+            "runtime_read",
+        }
+    ),
+    "unity_reflect": frozenset({"get_type", "get_member", "search"}),
+}
+
 
 def resume_eligible(command: str, params: dict[str, JsonValue], *, custom: bool = False) -> bool:
     """Observations retain their existing read recovery without consuming mutation fences."""
+    action = params.get("action")
+    if not custom and isinstance(action, str) and action in _JOURNAL_FREE_READS.get(command, ()):
+        return False
     return (
         resolve_operation_policy(command, params, native=True, trusted_builtin=not custom).mode
         == OperationMode.EXCLUSIVE

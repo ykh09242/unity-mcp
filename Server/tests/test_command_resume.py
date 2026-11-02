@@ -4,11 +4,24 @@ import time
 
 import pytest
 
-from transport.command_resume import CommandResumeInvocation, CommandResumeProtocolError
+from transport.command_resume import (
+    CommandResumeInvocation,
+    CommandResumeProtocolError,
+    resume_eligible,
+)
 from transport.native_arbitration import NativeArbitrationRequest, NativeReply, decode_native_reply
 from tests.test_http_command_outcome import command_hub, dispatch  # noqa: F401
 from transport.plugin_hub import PluginHub
 from services.operation_permissions import OperationPermissionError
+
+
+def test_only_known_builtin_graph_and_reflection_observations_bypass_the_journal():
+    assert not resume_eligible("manage_reference_graph", {"action": "dependencies"})
+    assert not resume_eligible("unity_reflect", {"action": "get_member"})
+    assert resume_eligible("manage_reference_graph", {"action": "inventory"}, custom=True)
+    assert resume_eligible("unity_reflect", {"action": "search"}, custom=True)
+    for action in ("runtime_start", "runtime_stop", "runtime_release", "set_policy", "unknown", []):
+        assert resume_eligible("manage_reference_graph", {"action": action})
 
 
 def envelope(invocation, state, payload):

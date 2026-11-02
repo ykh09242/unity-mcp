@@ -239,18 +239,35 @@ def test_origin_extension_requires_negotiation_and_covers_preflight_reads(wire_c
         assert not PluginHub._pending
 
 
-def test_job_polling_does_not_consume_mutation_continuation_fences(wire_client):
-    # Given a negotiated Editor and more polls than the native journal's capacity.
+def test_observation_bursts_leave_mutation_continuation_fences_available(wire_client):
+    scope = {"expected_instance_id": EDITOR, "expected_project_id": "owned"}
+    reads = [("get_test_job", {"job_id": "owned"})] * 130
+    reads.extend(
+        (
+            "manage_reference_graph",
+            {
+                "action": "inventory",
+                "page_size": 256,
+                "offset": page * 256,
+                **scope,
+                **({"snapshot": "owned-inventory"} if page else {}),
+            },
+        )
+        for page in range(130)
+    )
+    reads.extend(
+        [
+            ("manage_reference_graph", {"action": "status"}),
+            ("unity_reflect", {"action": "get_type", "class_name": "UnityEngine.Vector3"}),
+        ]
+    )
     with wire_client.websocket_connect("/hub/plugin") as socket:
         ack = register(socket)
-        for _ in range(130):
+        for tool, params in reads:
             future = wire_client.portal.start_task_soon(
-                partial(
-                    PluginHub.send_command, ack["session_id"], "get_test_job", {"job_id": "owned"}
-                )
+                partial(PluginHub.send_command, ack["session_id"], tool, params)
             )
             command = socket.receive_json()
-            # When a reviewed job observation uses the native transport.
             assert "resume" not in command
             socket.send_json(
                 {
