@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Literal
 
 import anyio
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -128,6 +128,11 @@ class ResourceCohort(FrozenModel):
     normalization_paths: list[str]
 
 
+class DeliveryCleanup(FrozenModel):
+    release_calls: int = Field(default=0, ge=0)
+    elapsed_ms: float = Field(default=0, ge=0)
+
+
 class ModeCapture(FrozenModel):
     mode: Literal["stdio", "http"]
     cold_launch_to_initialized_ms: float
@@ -138,6 +143,7 @@ class ModeCapture(FrozenModel):
     tool_schemas: list[dict[str, JsonValue]]
     fixture_metadata: Metadata
     client_rpc_counts: dict[str, int]
+    delivery_cleanup: DeliveryCleanup = DeliveryCleanup()
     text_structured_parity: Literal[True]
     native_child_interpreter: str
     resource_contract: list[ResourceCohort] | None = None
@@ -299,6 +305,38 @@ def check_contract(capture: Capture) -> None:
             if {name: count for name, count in delta.items() if count} != expected_partial:
                 raise ValueError("Partial-transfer peer RPC counts changed")
         counts = row.client_rpc_counts
+        delivery_calls = 0
+        paged_cohorts: set[str] = set()
+        for observation in row.observations:
+            pages = observation.delivery_page_calls
+            if pages:
+                if (
+                    observation.delivery_artifact_bytes <= 0
+                    or pages != (observation.delivery_artifact_bytes + 262_143) // 262_144
+                ):
+                    raise ValueError("Paged result delivery evidence is incomplete")
+                parts = observation.correlation.split(":")
+                cohort = (
+                    f"{parts[0]}:warm:{int(parts[-1]) // capture.options.concurrency}"
+                    if parts[1] == "warm"
+                    else observation.correlation
+                )
+                paged_cohorts.add(cohort)
+            elif observation.delivery_artifact_bytes:
+                raise ValueError("Inline observation claims retained result delivery")
+            if (
+                observation.workload == "large"
+                and observation.output_bytes <= capture.options.large_bytes
+            ):
+                raise ValueError("Large workload measured a summary or truncated payload")
+            delivery_calls += pages
+        releases = row.delivery_cleanup.release_calls
+        paged = sum(observation.delivery_page_calls > 0 for observation in row.observations)
+        if not len(paged_cohorts) <= releases <= paged:
+            raise ValueError("Retained result cohort cleanup count is invalid")
+        delivery_calls += releases
+        if counts.get("delivery_tools/call", 0) != delivery_calls:
+            raise ValueError("Retained result RPC counts do not match observations")
         if (
             counts.get("initialize") != 1
             or counts.get("tools/list") != 1
@@ -308,7 +346,7 @@ def check_contract(capture: Capture) -> None:
         expected_tool_calls = 4 * n + 9 + (7 if row.mode == "http" else 0)
         if capture.options.resource_contract and row.mode == "http":
             expected_tool_calls += 10
-        if counts.get("tools/call") != expected_tool_calls:
+        if counts.get("tools/call") != expected_tool_calls + delivery_calls:
             raise ValueError("Explicit MCP control/public RPC count changed")
         if row.fixture_metadata.child_packages != capture.runtime.get("packages"):
             raise ValueError("Child dependencies differ from the pinned parent runtime")
@@ -323,6 +361,13 @@ def check_contract(capture: Capture) -> None:
             check_resources(row)
         elif row.resource_contract is not None:
             raise ValueError("Resource contract unexpectedly mixed into latency capture")
+
+
+def original_rpc_counts(counts: dict[str, int]) -> dict[str, int]:
+    """Compare original operations/controls while retaining separately audited page RPCs."""
+    original = dict(counts)
+    original["tools/call"] -= original.pop("delivery_tools/call", 0)
+    return original
 
 
 def compare(baseline: Capture, candidate: Capture) -> dict[str, JsonValue]:
@@ -364,7 +409,8 @@ def compare(baseline: Capture, candidate: Capture) -> dict[str, JsonValue]:
                 raise ValueError(f"Candidate downgraded {field} sharing strategy")
         if (
             left.native_child_interpreter != right.native_child_interpreter
-            or left.client_rpc_counts != right.client_rpc_counts
+            or original_rpc_counts(left.client_rpc_counts)
+            != original_rpc_counts(right.client_rpc_counts)
             or fingerprint(sorted(left.tool_schemas, key=lambda item: str(item["name"])))
             != fingerprint(sorted(right.tool_schemas, key=lambda item: str(item["name"])))
         ):

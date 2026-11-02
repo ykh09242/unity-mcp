@@ -784,3 +784,21 @@ def test_resource_parity_preserves_diagnostic_semantics(change) -> None:
     second = {"success": True, "data": {**data, "diagnostics": diagnostics}}
     # When/Then: ignoring elapsed heartbeat time must retain other semantic differences.
     assert fingerprint(normalize_resource(first)) != fingerprint(normalize_resource(second))
+
+
+def test_paged_cleanup_requires_each_serial_cohort_even_when_rpc_counters_agree(report):
+    raw = report.model_dump(mode="json")
+    row = raw["results"][0]
+    for observation in row["observations"]:
+        if observation["workload"] == "large":
+            observation["delivery_page_calls"] = 2
+            observation["delivery_artifact_bytes"] = 300000
+    row["delivery_cleanup"] = {"release_calls": 1, "elapsed_ms": 0}
+    row["client_rpc_counts"]["delivery_tools/call"] = 5
+    row["client_rpc_counts"]["tools/call"] += 5
+    with pytest.raises(ValueError, match="cohort cleanup"):
+        comparator.check_contract(Capture.model_validate(raw))
+    row["delivery_cleanup"]["release_calls"] = 2
+    row["client_rpc_counts"]["delivery_tools/call"] = 6
+    row["client_rpc_counts"]["tools/call"] += 1
+    comparator.check_contract(Capture.model_validate(raw))

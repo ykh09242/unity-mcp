@@ -48,6 +48,7 @@ from tools.bench_transport_report import (
 )
 from tools.bench_transport_process import cleanup_process, native_python
 from tools.bench_transport_resource import observe_resources
+from tools.bench_transport_delivery import DeliveryReads
 from tools.bench_transport_diagnostic import (
     DiagnosticError,
     Trace,
@@ -105,7 +106,27 @@ def validate_output(result: CallToolResult) -> JsonValue:
         raise RuntimeError("Owned public tool omitted structured content")
     if not isinstance(value, dict) or value.get("success") is not True:
         raise RuntimeError(f"Owned workload failed: {value}")
+    if "delivery" in value:
+        raise RuntimeError("Unresolved delivery summary is not an owned workload payload")
     return value
+
+
+def validate_large_output(value: JsonValue, expected_bytes: int) -> None:
+    """Require the requested native ASCII body, not a successful summary envelope."""
+    data = value.get("data") if isinstance(value, dict) else None
+    lines = data.get("lines") if isinstance(data, dict) else None
+    if not isinstance(lines, list) or len(lines) != 1 or not isinstance(lines[0], dict):
+        raise RuntimeError("Large workload omitted its single owned log message")
+    message = lines[0].get("message")
+    if (
+        not isinstance(message, str)
+        or len(message) != expected_bytes
+        or any(
+            message[start : start + 65_536] != "x" * min(65_536, expected_bytes - start)
+            for start in range(0, expected_bytes, 65_536)
+        )
+    ):
+        raise RuntimeError("Large workload bytes differ from the requested payload")
 
 
 async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str, JsonValue]:
@@ -241,6 +262,7 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
                     "tools/call": 0,
                     "public_tools/call": 0,
                 }
+                delivery_reads = DeliveryReads(session, client_counts)
 
                 async def control(
                     name: str, arguments: dict[str, JsonValue] | None = None
@@ -264,8 +286,12 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
                     else:
                         with diagnostic.correlated(correlation):
                             response = await invoke(session, correlation)
+                    initial_ms = (time.perf_counter() - begin) * 1000
+                    recovered = await delivery_reads.recover(response)
                     total = (time.perf_counter() - begin) * 1000
-                    value = validate_output(response)
+                    value = validate_output(recovered.result)
+                    if correlation.split(":", 1)[0] == "large":
+                        validate_large_output(value, options.large_bytes)
                     digest, size = fingerprint(value)
                     observations.append(
                         Observation(
@@ -275,6 +301,10 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
                             client_total_ms=total,
                             output_sha256=digest,
                             output_bytes=size,
+                            client_initial_response_ms=initial_ms,
+                            delivery_retrieval_ms=recovered.delivery.elapsed_ms,
+                            delivery_page_calls=recovered.delivery.page_calls,
+                            delivery_artifact_bytes=recovered.delivery.artifact_bytes,
                         )
                     )
 
@@ -285,11 +315,13 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
                         )
                         diagnostic_calls += 1
                         cpu_started, wall_started = time.process_time_ns(), time.perf_counter_ns()
-                    await observe(f"{workload}:cold", "cold")
+                    async with delivery_reads.batch():
+                        await observe(f"{workload}:cold", "cold")
                     for index in range(options.warmup):
-                        await observe(f"{workload}:warmup:{index}", "warmup")
+                        async with delivery_reads.batch():
+                            await observe(f"{workload}:warmup:{index}", "warmup")
                     for start in range(0, options.samples, options.concurrency):
-                        async with anyio.create_task_group() as group:
+                        async with delivery_reads.batch(), anyio.create_task_group() as group:
                             for index in range(
                                 start, min(start + options.concurrency, options.samples)
                             ):
@@ -420,6 +452,10 @@ async def measure_mode(mode: str, options: Options, directory: Path) -> dict[str
         "lifecycle": lifecycle,
         "tool_schemas": schemas,
         "client_rpc_counts": client_counts,
+        "delivery_cleanup": {
+            "release_calls": delivery_reads.release_calls,
+            "elapsed_ms": delivery_reads.cleanup_ms,
+        },
         "fixture_metadata": metadata,
         "native_child_interpreter": command[0],
         "text_structured_parity": True,
@@ -517,6 +553,7 @@ async def run(options: Options) -> dict[str, JsonValue]:
             "sha256_after": sources_after,
         },
         "limits": [
+            "client_total_ms includes actual retained-result page RPCs and bounded page decoding/checksum/reassembly when needed; initial response and retrieval timing/RPC counts are recorded separately. Shared-handle release occurs only after the cohort settles, outside per-observation latency, with its RPC count and elapsed time reported in delivery_cleanup. Final public text/structured parity and canonical output hashing remain outside the measured span.",
             "Owned synthetic Unity peers; no actual Editor execution or Editor main-thread timing.",
             "HTTP peer negotiates plain large_result_v1 chunks only; large_result_gzip_v1 is excluded, so captures do not measure the new gzip path.",
             "UnityMCP subset uses actual product stdio adapter and response limits; main import included, full catalog registration/discovery excluded.",

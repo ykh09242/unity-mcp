@@ -8,8 +8,8 @@ from typing import assert_never
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 SCHEMA_ID = "unity-mcp-transport-bench-v1"
-INSTANCE = "OwnedBench@01234567"
-PROJECT_HASH = "01234567"
+INSTANCE = "OwnedBench@0123456789abcdef"
+PROJECT_HASH = "0123456789abcdef"
 
 
 class Workload(StrEnum):

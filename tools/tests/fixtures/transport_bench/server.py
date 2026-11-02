@@ -273,6 +273,17 @@ async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
 
     mcp = UnityMCP("OwnedTransportBench", lifespan=lifespan)
     mcp.add_middleware(ResponseLimitMiddleware())
+
+    @mcp.tool(name="read_response")
+    async def read_response(
+        ctx: Context, response_id: str, offset: int = 0, release: bool = False
+    ) -> dict[str, JsonValue]:
+        # Common fixture schema across selected products. Historical products
+        # without paged delivery never return a handle and never call this tool.
+        reader = importlib.import_module("services.tools.read_response").read_response
+        await ctx.set_state("unity_instance", INSTANCE)
+        return await reader(ctx, response_id, offset=offset, release=release)
+
     resources = (
         ResourceContract(state, accounting, Path(args.directory))
         if args.resource_contract and args.transport == "http"
