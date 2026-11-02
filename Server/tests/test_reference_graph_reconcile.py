@@ -1896,3 +1896,87 @@ async def test_inventory_rejects_changed_snapshot_identity_before_recording(setu
         await Reconciler(workspace, collect, allowed).reconcile()
     assert workspace.counts()["assets"] == 2
     assert not workspace.progress().get("initialized")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "format_,source,reason",
+    [
+        ("unity_yaml", '%YAML 1.1\nnotes: "unterminated', "serialized_scan_incomplete"),
+        ("csharp", "#if ENABLED\nclass Broken {}", "conditional_scan_incomplete"),
+    ],
+)
+async def test_optional_scan_failure_preserves_direct_dependencies_and_is_not_retried(
+    setup, format_, source, reason
+):
+    store, workspace, editor, engine = setup
+    target = editor.add(1, "Assets/Target.asset")
+    owner = editor.add(
+        2, "Assets/Owner.cs" if format_ == "csharp" else "Assets/Owner.asset", source
+    )
+    editor.assets[owner[6:]]["source_format"] = format_
+    original = editor.__call__
+
+    async def collector(action, **params):
+        page = await original(action, **params)
+        if action == "dependencies" and params["guid"] == owner[6:]:
+            page["targets"] = [target[6:]]
+        if action == "source" and params["guid"] == owner[6:]:
+            page["source_format"] = format_
+            if format_ == "csharp" and params["offset"] == 0:
+                page["compilation_context"] = {
+                    "state": "available",
+                    "assembly": "Test",
+                    "defines": [],
+                }
+        return page
+
+    engine._collector = collector
+    assert await engine.reconcile()
+    assert any(
+        edge["target"] == target and edge["provider"] == "unity"
+        for edge in store.query(owner)["edges"]
+    )
+    assert any(issue["reason"] == reason for issue in workspace.diagnostics(owner)["issues"])
+    editor.calls.clear()
+    assert await engine.reconcile()
+    assert not [params for action, params in editor.calls if action == "source"]
+    editor.sources[owner[6:]] = (
+        '%YAML 1.1\n---\nnotes: "fixed"'
+        if format_ == "unity_yaml"
+        else "#if ENABLED\nclass Fixed {}\n#endif\n"
+    ).encode()
+    editor.event(editor.assets[owner[6:]]["path"])
+    assert await engine.reconcile()
+    assert not any(issue["reason"] == reason for issue in workspace.diagnostics(owner)["issues"])
+    assert any(edge["target"] == target for edge in store.query(owner)["edges"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous,dirty_yaml", [(7, False), (6, True)])
+async def test_analysis_version_upgrade_scopes_only_known_migration(setup, previous, dirty_yaml):
+    store, workspace, editor, engine = setup
+    script = editor.add(1, "Assets/Owner.cs", "class Owner {}")
+    serialized = editor.add(2, "Assets/Owner.asset", "%YAML 1.1\n---\nAsset:\n  name: owner\n")
+    editor.assets[serialized[6:]]["source_format"] = "unity_yaml"
+    original = editor.__call__
+
+    async def collector(action, **params):
+        page = await original(action, **params)
+        if action == "source" and params["guid"] == serialized[6:]:
+            page["source_format"] = "unity_yaml"
+        return page
+
+    engine._collector = collector
+    assert await engine.reconcile()
+    assert workspace.acquire("migration-test")
+    with store._connect(write=True) as connection:
+        workspace._set(connection, "analysis_version", previous)
+    workspace.ensure_analysis_version("migration-test", 8)
+    dirty = {row["guid"] for row in workspace.dirty_assets()}
+    assert script[6:] in dirty
+    assert (serialized[6:] in dirty) is dirty_yaml
+    manifest = workspace.document_manifest()
+    assert manifest[script]["state"] == "pending"
+    assert (manifest[serialized]["state"] == "pending") is dirty_yaml
+    workspace.release("migration-test")

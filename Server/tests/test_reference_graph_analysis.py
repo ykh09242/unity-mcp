@@ -685,3 +685,61 @@ custom: {{m_AssetGUID: {"b" * 32}}}
 def test_unscannable_yaml_remains_an_explicit_collection_failure():
     with pytest.raises(ValueError, match="YAML"):
         serialized_references('notes: "unterminated', catalog())
+
+
+def test_unity_stripped_document_header_keeps_reference_lines():
+    source = f"""%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &-123 stripped
+GameObject:
+  m_AssetGUID: {"b" * 32}
+"""
+    result = serialized_references(source, catalog())
+    assert [(edge.target, edge.line) for edge in result.edges] == [("asset:" + "b" * 32, 5)]
+
+
+@pytest.mark.parametrize("prefix", ["@", "$@", "@$"])
+def test_verbatim_escaped_quote_does_not_hide_following_endif(prefix):
+    from services.reference_graph.compilation import source_for_build
+
+    source = "#if true\nconst string Quote = " + prefix + '"""";\n#endif\n'
+    filtered, _, issues = source_for_build(
+        source, {"state": "available", "assembly": "Test", "defines": []}
+    )
+    assert "const string Quote" in filtered
+    assert not issues
+
+
+def test_raw_literal_does_not_treat_embedded_directives_as_code():
+    from services.reference_graph.compilation import source_for_build
+
+    source = '#if true\nvar text = """\n#endif\n""";\n#endif\n'
+    filtered, _, issues = source_for_build(
+        source, {"state": "available", "assembly": "Test", "defines": []}
+    )
+    assert "var text" in filtered
+    assert "#endif" in filtered
+    assert not issues
+
+
+def test_multiline_verbatim_literal_does_not_treat_embedded_directive_as_code():
+    from services.reference_graph.compilation import source_for_build
+
+    source = '#if true\nvar text = @"""\n#endif\nstill text";\n#endif\n'
+    filtered, _, issues = source_for_build(
+        source, {"state": "available", "assembly": "Test", "defines": []}
+    )
+    assert "#endif\nstill text" in filtered
+    assert not issues
+
+
+def test_verbatim_escaped_quote_does_not_hide_later_load():
+    source = '#if true\nusing UnityEngine; class C { void M() { var quote = @""""; Resources.Load("UI/Menu"); } }\n#endif\n'
+    facts = parse_csharp(
+        "script",
+        "Assets/Use.cs",
+        source,
+        context={"state": "available", "assembly": "Game", "defines": []},
+    )
+    result = AnalysisIndex([facts], catalog()).analyze("script")
+    assert {edge.key for edge in result.edges} == {"UI/Menu"}

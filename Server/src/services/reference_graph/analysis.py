@@ -32,7 +32,7 @@ from services.reference_graph.store import Edge
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
-ANALYSIS_VERSION = 7
+ANALYSIS_VERSION = 8
 # Limit both the semantic value and nonliteral representation before allocating
 # expanded storage. Source size alone cannot bound repeated constant expansion.
 MAX_EXPRESSION_CHARS = 65536
@@ -189,7 +189,11 @@ def _tokens(source: str, check: Callable[[], None] = lambda: None) -> list[Token
             marker = prefix[1]
             head = prefix[0]
             dynamic, verbatim = "$" in head, "@" in head
-            offset += len(head)
+            if verbatim:
+                offset += len(head) - len(marker) + 1
+                marker = '"'
+            else:
+                offset += len(head)
             content = offset
             if len(marker) >= 3:
                 end = source.find(marker, offset)
@@ -1561,6 +1565,10 @@ class AnalysisIndex:
         return result
 
 
+class SerializedScanError(ValueError):
+    """Serialized source cannot be safely scanned."""
+
+
 def serialized_references(source: str, catalog: Catalog) -> Analysis:
     result = Analysis(coverage="lexical_serialized_guid_fields_untyped")
     window = deque(maxlen=4)
@@ -1600,6 +1608,13 @@ def serialized_references(source: str, catalog: Catalog) -> Analysis:
                 )
             )
 
+    # Unity adds an unquoted marker to stripped object document headers.
+    # Replace only that marker, retaining all line and column positions.
+    source = re.sub(
+        r"(?m)^(---[ \t]+!u!\d+[ \t]+&-?\d+[ \t]+)(stripped)(?=[ \t]*(?:\r?$|#))",
+        lambda match: match[1] + " " * len(match[2]),
+        source,
+    )
     # Scan tokens only: never construct tagged objects or expand YAML aliases.
     # Scalar contents, comments and quoted text cannot masquerade as mapping keys.
     try:
@@ -1627,8 +1642,8 @@ def serialized_references(source: str, catalog: Catalog) -> Analysis:
                 continue
             fields = mappings[-1]
             if field_name.value in fields:
-                raise ValueError("Duplicate serialized identity field")
+                raise SerializedScanError("Duplicate serialized identity field")
             fields[field_name.value] = (value.value, field_name.start_mark.line + 1)
     except yaml.YAMLError as error:
-        raise ValueError("Serialized YAML could not be scanned") from error
+        raise SerializedScanError("Serialized YAML could not be scanned") from error
     return result

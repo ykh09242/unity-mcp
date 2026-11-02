@@ -62,11 +62,14 @@ scalars and multiline quoted strings cannot introduce fields. A real mapping
 field named `m_AssetGUID` produces `serialized_guid_field` evidence, including
 dangling targets, with `possible` confidence: a custom class may use that field
 name too. Without serialized field/type metadata it is not an observed
-AssetReference. Coverage is explicitly lexical and untyped. Scanner-detected
-errors (such as unterminated strings) remain collection errors with prior evidence
-stale; token extraction does not certify complete YAML grammar validity. Unity's
-importer remains responsible for document validity, including its special repeated
-document tags and stripped-object headers.
+AssetReference. The scanner accepts Unity's `stripped` document headers and
+preserves source positions. Unity's importer owns document validity.
+
+If a serialized document cannot be scanned, `diagnostics` reports
+`serialized_scan_incomplete`. An unsupported or malformed C# conditional block
+reports `conditional_scan_incomplete`. Both cases retain Unity's direct asset
+dependencies. Optional source analysis resumes when its input changes. These
+diagnostics distinguish missing coverage from a source with no references.
 Binary serialized files retain the collector's explicit unavailable coverage.
 
 The loader registry follows Unity's [Resources.Load path rules](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Resources.Load.html)

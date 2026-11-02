@@ -185,15 +185,24 @@ class GraphWorkspace:
 
     def ensure_analysis_version(self, worker: str, version: int) -> None:
         with self._write(worker) as connection:
-            if self._state(connection, "analysis_version") == version:
+            previous = self._state(connection, "analysis_version")
+            if previous == version:
                 return
-            connection.execute(
-                "UPDATE graph_assets SET dirty=1 WHERE json_extract(payload,'$.source_format')<>'none'"
-            )
-            self._invalidate(
-                connection,
-                (row[0] for row in connection.execute("SELECT owner FROM graph_documents")),
-            )
+            if previous == 7 and version == 8:
+                # This migration changes C# lexical analysis only. Failed YAML
+                # scans were never published and remain in the retry queue.
+                connection.execute(
+                    "UPDATE graph_assets SET dirty=1 WHERE json_extract(payload,'$.source_format')='csharp'"
+                )
+                owners = connection.execute(
+                    "SELECT 'asset:' || guid FROM graph_assets WHERE json_extract(payload,'$.source_format')='csharp'"
+                )
+            else:
+                connection.execute(
+                    "UPDATE graph_assets SET dirty=1 WHERE json_extract(payload,'$.source_format')<>'none'"
+                )
+                owners = connection.execute("SELECT owner FROM graph_documents")
+            self._invalidate(connection, (row[0] for row in owners))
             self._set(connection, "analysis_version", version)
             self.store._bump(connection)
 

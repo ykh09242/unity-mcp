@@ -11,6 +11,10 @@ _PRECEDENCE = {"||": 1, "&&": 2, "==": 3, "!=": 3, "!": 4}
 _STRING_PREFIX = re.compile(r'(?:\$+@?|@\$?)?("{3,}|"|\')')
 
 
+class ConditionalScanError(ValueError):
+    """Conditional directives cannot be safely analyzed."""
+
+
 def condition(text: str, defines: set[str], *, check: Callable[[], None] = lambda: None) -> bool:
     """Evaluate C# conditional symbols with an iterative boolean parser."""
     values, operators = [], []
@@ -39,21 +43,21 @@ def condition(text: str, defines: set[str], *, check: Callable[[], None] = lambd
             check()
             match = _CONDITION.match(text, offset)
             if match is None:
-                raise ValueError("Unsupported conditional expression")
+                raise ConditionalScanError("Unsupported conditional expression")
             token, offset = match[1], match.end()
             if operand:
                 if token in {"!", "("}:
                     operators.append(token)
                     continue
                 if _WORD.fullmatch(token) is None:
-                    raise ValueError("A conditional symbol is required")
+                    raise ConditionalScanError("A conditional symbol is required")
                 values.append(token == "true" or token != "false" and token in defines)
                 operand = False
             elif token == ")":
                 while operators and operators[-1] != "(":
                     apply()
                 if not operators:
-                    raise ValueError("Unmatched conditional parenthesis")
+                    raise ConditionalScanError("Unmatched conditional parenthesis")
                 operators.pop()
             elif token in _PRECEDENCE and token != "!":
                 while (
@@ -65,18 +69,18 @@ def condition(text: str, defines: set[str], *, check: Callable[[], None] = lambd
                 operators.append(token)
                 operand = True
             else:
-                raise ValueError("A conditional operator is required")
+                raise ConditionalScanError("A conditional operator is required")
         if operand:
-            raise ValueError("Incomplete conditional expression")
+            raise ConditionalScanError("Incomplete conditional expression")
         while operators:
             if operators[-1] == "(":
-                raise ValueError("Unmatched conditional parenthesis")
+                raise ConditionalScanError("Unmatched conditional parenthesis")
             apply()
         if len(values) != 1:
-            raise ValueError("Invalid conditional expression")
+            raise ConditionalScanError("Invalid conditional expression")
         return values[0]
     except IndexError as error:
-        raise ValueError("Invalid conditional expression") from error
+        raise ConditionalScanError("Invalid conditional expression") from error
 
 
 def _lexical_state(line: str, state: str, check: Callable[[], None] = lambda: None) -> str:
@@ -110,8 +114,14 @@ def _lexical_state(line: str, state: str, check: Callable[[], None] = lambda: No
             state, offset = "/*", offset + 2
         elif line[offset] in "$@\"'" and (match := _STRING_PREFIX.match(line, offset)):
             marker = match[1]
-            state = '@"' if marker == '"' and "@" in match[0] else marker
-            offset += len(match[0])
+            if "@" in match[0]:
+                # Verbatim strings start with one quote even when their first
+                # character is an escaped quote (two more quote characters).
+                state = '@"'
+                offset += len(match[0]) - len(marker) + 1
+            else:
+                state = marker
+                offset += len(match[0])
         else:
             offset += 1
     return state
@@ -203,7 +213,7 @@ def source_for_build(
                 active = active and selected
             elif kind in {"elif", "else"}:
                 if not stack or stack[-1][2]:
-                    raise ValueError(f"Invalid conditional branch at line {number}")
+                    raise ConditionalScanError(f"Invalid conditional branch at line {number}")
                 parent, taken, _ = stack[-1]
                 selected = condition(text, defines, check=check) if kind == "elif" else True
                 active = parent and not taken and selected
@@ -211,12 +221,12 @@ def source_for_build(
                 stack[-1][2] = kind == "else"
             elif kind == "endif":
                 if not stack:
-                    raise ValueError(f"Unmatched endif at line {number}")
+                    raise ConditionalScanError(f"Unmatched endif at line {number}")
                 active = stack.pop()[0]
             elif kind in {"define", "undef"} and active:
                 symbol = text.split("//", 1)[0].strip()
                 if not _WORD.fullmatch(symbol) or symbol in {"true", "false"}:
-                    raise ValueError(f"Invalid conditional symbol at line {number}")
+                    raise ConditionalScanError(f"Invalid conditional symbol at line {number}")
                 if kind == "define":
                     defines.add(symbol)
                 else:
@@ -228,7 +238,7 @@ def source_for_build(
         else:
             output.append(_blank_line(line, check))
     if known and stack:
-        raise ValueError("Unclosed conditional compilation block")
+        raise ConditionalScanError("Unclosed conditional compilation block")
     issues = (
         ({"reason": "build_context_unavailable", "line": 0},)
         if not known and (conditional or context.get("state") == "unavailable")

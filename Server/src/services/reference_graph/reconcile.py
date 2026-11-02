@@ -25,9 +25,11 @@ from services.reference_graph.analysis import (
     AnalysisIndex,
     Catalog,
     Facts,
+    SerializedScanError,
     parse_csharp,
     serialized_references,
 )
+from services.reference_graph.compilation import ConditionalScanError
 from services.reference_graph.collection_protocol import (
     CollectionBudget,
     CollectionBudgetExceeded,
@@ -688,14 +690,30 @@ class Reconciler:
             content.extend(base64.b64decode(page["bytes_base64"], validate=True))
             offset = following
             if offset is None:
-                format_, payload, fingerprint = await drained_thread(
-                    self._parse,
-                    asset,
-                    content,
-                    context,
-                    check=self._check_thread,
-                    _cancel_event=self.stopped,
-                )
+                try:
+                    format_, payload, fingerprint = await drained_thread(
+                        self._parse,
+                        asset,
+                        content,
+                        context,
+                        check=self._check_thread,
+                        _cancel_event=self.stopped,
+                    )
+                except (SerializedScanError, ConditionalScanError) as error:
+                    reason = (
+                        "serialized_scan_incomplete"
+                        if isinstance(error, SerializedScanError)
+                        else "conditional_scan_incomplete"
+                    )
+                    format_ = "summary"
+                    payload = {
+                        "path": asset["path"],
+                        "kind": asset["kind"],
+                        "coverage": reason,
+                        "edges": [],
+                        "unresolved": [{"reason": reason}],
+                    }
+                    fingerprint = _hash([hashlib.sha256(content).hexdigest(), context, reason])
                 break
         await drained_thread(
             self.workspace.save_document,
@@ -856,7 +874,7 @@ class Reconciler:
                 "code",
                 row["fingerprint"],
                 path=row["data"].get("path", ""),
-                kind="script" if row["format"] == "csharp" else "asset",
+                kind=row["data"].get("kind", "script" if row["format"] == "csharp" else "asset"),
                 force=True,
                 rules_revision=rules_revision,
                 provenance={
