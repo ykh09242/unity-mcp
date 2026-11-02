@@ -212,56 +212,38 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
         internal static object RepairMesh(JObject @params)
         {
             var pbMesh = ManageProBuilder.RequireProBuilderMesh(@params);
+            MethodInfo removeMethod = GetRepairMethod(ManageProBuilder._meshValidationType, ManageProBuilder._proBuilderMeshType);
+            PropertyInfo triangleCount = ManageProBuilder._proBuilderMeshType.GetProperty("triangleCount", BindingFlags.Instance | BindingFlags.Public);
+            if (removeMethod == null || triangleCount?.PropertyType != typeof(int) || triangleCount.GetMethod == null)
+                return new ErrorResponse(
+                    "Unsupported ProBuilder mesh repair API. Expected bool RemoveDegenerateTriangles(ProBuilderMesh, List<int>) and int triangleCount."
+                );
 
+            int before = (int)triangleCount.GetValue(pbMesh);
             Undo.RecordObject(pbMesh, "Repair Mesh");
-
-            int repaired = 0;
-
-            // Try MeshValidation.RemoveDegenerateTriangles
-            if (ManageProBuilder._meshValidationType != null)
+            bool changed;
+            try
             {
-                var removeMethod = ManageProBuilder._meshValidationType.GetMethod("RemoveDegenerateTriangles", BindingFlags.Static | BindingFlags.Public);
-
-                if (removeMethod != null)
-                {
-                    var allFaces = ManageProBuilder.GetFacesArray(pbMesh);
-                    try
-                    {
-                        var result = removeMethod.Invoke(null, new object[] { pbMesh, allFaces });
-                        if (result is int count)
-                            repaired = count;
-                    }
-                    catch
-                    {
-                        // Some overloads differ; try without faces param
-                        try
-                        {
-                            var altMethod = ManageProBuilder._meshValidationType.GetMethod(
-                                "RemoveDegenerateTriangles",
-                                BindingFlags.Static | BindingFlags.Public,
-                                null,
-                                new[] { ManageProBuilder._proBuilderMeshType },
-                                null
-                            );
-                            if (altMethod != null)
-                            {
-                                var result = altMethod.Invoke(null, new object[] { pbMesh });
-                                if (result is int count)
-                                    repaired = count;
-                            }
-                        }
-                        catch
-                        {
-                            // Ignore fallback failure
-                        }
-                    }
-                }
+                changed = (bool)removeMethod.Invoke(null, new object[] { pbMesh, null });
+            }
+            catch (TargetInvocationException exception)
+            {
+                return new ErrorResponse(
+                    $"ProBuilder mesh repair failed: {exception.InnerException?.Message ?? exception.Message}. Inspect the mesh before retrying; the package may have changed it."
+                );
             }
 
-            ManageProBuilder.RefreshMesh(pbMesh);
+            // ProBuilder 6.1.4 returns a bool and its optional list contains removed vertex
+            // indices. Neither value measures the number of triangles removed.
+            int repaired = before - (int)triangleCount.GetValue(pbMesh);
+
+            if (changed || repaired > 0)
+                ManageProBuilder.RefreshMesh(pbMesh);
 
             return new SuccessResponse(
-                repaired > 0 ? $"Repaired {repaired} degenerate triangle(s)" : "No repairs needed",
+                repaired > 0 ? $"Repaired {repaired} degenerate triangle(s)"
+                    : changed ? "Repaired mesh; no degenerate triangles removed"
+                    : "No repairs needed",
                 new
                 {
                     degenerateTrianglesRemoved = repaired,
@@ -269,6 +251,18 @@ namespace MCPForUnity.Editor.Tools.ProBuilder
                     vertexCount = ManageProBuilder.GetVertexCount(pbMesh),
                 }
             );
+        }
+
+        internal static MethodInfo GetRepairMethod(Type validationType, Type meshType)
+        {
+            MethodInfo method = validationType?.GetMethod(
+                "RemoveDegenerateTriangles",
+                BindingFlags.Static | BindingFlags.Public,
+                null,
+                new[] { meshType, typeof(List<int>) },
+                null
+            );
+            return method?.ReturnType == typeof(bool) ? method : null;
         }
 
         private static float Round(float v) => ManageProBuilder.Round(v);

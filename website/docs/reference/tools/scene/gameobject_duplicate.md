@@ -10,6 +10,8 @@ description: "Duplicate a GameObject with optional name, parent and position cha
 
 **Group:** `scene` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Duplicate a GameObject with optional name, parent and position changes.

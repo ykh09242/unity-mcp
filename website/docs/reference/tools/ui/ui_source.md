@@ -10,6 +10,8 @@ description: "Create, read or edit UXML/USS assets, link stylesheets or preview 
 
 **Group:** `ui` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Create, read or edit UXML/USS assets, link stylesheets or preview source patches.

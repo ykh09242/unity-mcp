@@ -86,7 +86,7 @@ def _text(value: str) -> str:
 
 def _type_label(kind: click.ParamType) -> str:
     try:
-        inert_type(kind)
+        kind = inert_type(kind)
     except ExampleValidationError:
         return f"{type(kind).__name__} (custom/nonliteral conversion not validated)"
     if type(kind) is click.Choice:

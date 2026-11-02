@@ -271,3 +271,21 @@ def test_worker_progress_and_both_output_tails_remain_bounded(tmp_path, monkeypa
     for worker in range(4):
         assert f"gw{worker}: call: http/test_owned.py::test_long[" in message
     assert len(message) < 13000
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows read handles deny replacing an open file")
+def test_worker_progress_updates_while_windows_reader_holds_current_snapshot(tmp_path, monkeypatch):
+    from importlib import import_module
+
+    worker = import_module("tests.http.conftest")
+    path = tmp_path / "gw0.json"
+    path.write_text(json.dumps({"nodeid": "prior", "phase": "call"}), encoding="utf-8")
+    monkeypatch.setattr(worker, "_progress_path", path)
+    monkeypatch.setattr(worker, "_last_nodeid", "prior")
+    # A normal observer may keep the current diagnostic snapshot open during a phase change.
+    with path.open(encoding="utf-8"):
+        worker._record_progress("teardown", "http/test_owned.py::test_observed")
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "nodeid": "http/test_owned.py::test_observed",
+        "phase": "teardown",
+    }

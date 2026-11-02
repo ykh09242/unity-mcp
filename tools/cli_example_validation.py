@@ -22,6 +22,19 @@ class Example:
 
 def inert_type(original: click.ParamType) -> click.ParamType:
     """Build trusted scalar converters without calling original/custom converters."""
+    declared_type = type(original)
+    # These repository-owned subclasses only redact rejected input in errors.
+    # Copy their literal contracts into base Click converters; never instantiate
+    # or call their overrides, and do not approve arbitrary Click subclasses.
+    reviewed = {
+        ("cli.utils.config", "ConfigurationIntRange"): click.IntRange,
+        ("cli.utils.config", "ConfigurationFormat"): click.Choice,
+    }.get((declared_type.__module__, declared_type.__qualname__))
+    kind = (
+        reviewed
+        if reviewed is not None and declared_type.__bases__ == (reviewed,)
+        else declared_type
+    )
     primitives = {
         type(click.STRING): click.STRING,
         type(click.INT): click.INT,
@@ -30,11 +43,11 @@ def inert_type(original: click.ParamType) -> click.ParamType:
         type(click.UUID): click.UUID,
         type(click.UNPROCESSED): click.UNPROCESSED,
     }
-    if type(original) in primitives:
-        return type(primitives[type(original)])()
-    if type(original) in (click.File, click.Path):
+    if kind in primitives:
+        return type(primitives[kind])()
+    if kind in (click.File, click.Path):
         return click.types.StringParamType()
-    if type(original) is click.Choice:
+    if kind is click.Choice:
         if type(original.choices) not in (tuple, list) or not all(
             type(value) in (str, int, float, bool) for value in original.choices
         ):
@@ -42,7 +55,7 @@ def inert_type(original: click.ParamType) -> click.ParamType:
         if type(original.case_sensitive) is not bool:
             raise ExampleValidationError("unsupported nonliteral choice configuration")
         return click.Choice(tuple(original.choices), case_sensitive=original.case_sensitive)
-    if type(original) in (click.IntRange, click.FloatRange):
+    if kind in (click.IntRange, click.FloatRange):
         if any(
             value is not None and type(value) not in (int, float, bool)
             for value in (original.min, original.max)
@@ -51,14 +64,14 @@ def inert_type(original: click.ParamType) -> click.ParamType:
             for value in (original.min_open, original.max_open, original.clamp)
         ):
             raise ExampleValidationError("unsupported nonliteral range configuration")
-        return type(original)(
+        return kind(
             original.min, original.max, original.min_open, original.max_open, original.clamp
         )
-    if type(original) is click.Tuple:
+    if kind is click.Tuple:
         if type(original.types) not in (tuple, list):
             raise ExampleValidationError("unsupported nonliteral tuple configuration")
         return click.Tuple(tuple(inert_type(item) for item in original.types))
-    if type(original) is click.DateTime:
+    if kind is click.DateTime:
         if type(original.formats) not in (tuple, list) or not all(
             type(value) is str for value in original.formats
         ):

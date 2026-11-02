@@ -245,6 +245,15 @@ def test_actual_transports_when_owned_peers_complete_cancel_and_reconnect(tmp_pa
         assert state["commands"]["read_console"] == 9
         assert state["commands"]["get_editor_state"] == state["commands"]["get_test_job"] == 3
         assert result["warmed"]["large"]["output_bytes"] > 4194304
+        large = [item for item in result["observations"] if item["workload"] == "large"]
+        assert all(item["delivery_page_calls"] > 0 for item in large)
+        assert all(item["delivery_artifact_bytes"] > 8 * 1024 * 1024 for item in large)
+        assert (
+            result["client_rpc_counts"]["delivery_tools/call"]
+            == sum(item["delivery_page_calls"] for item in result["observations"])
+            + result["delivery_cleanup"]["release_calls"]
+        )
+        assert result["delivery_cleanup"]["release_calls"] == 2
 
 
 def test_fixture_failure_releases_held_peer_before_shutdown(tmp_path: Path) -> None:

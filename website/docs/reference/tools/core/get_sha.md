@@ -10,6 +10,8 @@ description: "Get SHA256 and basic metadata for a Unity C# script without return
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_script`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Get SHA256 and basic metadata for a Unity C# script without returning file contents. Requires uri (script path under Assets/ or mcpforunity://path/Assets/... or file://...).

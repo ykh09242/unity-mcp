@@ -10,7 +10,7 @@ cannot be disabled by the group system (used for server meta-tools like
 ``set_active_instance`` and ``manage_tools``).
 """
 
-from typing import Callable, Any
+from typing import Callable, Any, Literal
 
 from services.registry.scalar_validation import enforce_strict_tool_inputs
 
@@ -40,12 +40,15 @@ TOOL_GROUPS: dict[str, str] = {
 
 DEFAULT_ENABLED_GROUPS: set[str] = {"core"}
 
+ToolMaturity = Literal["experimental", "stable", "deprecated"]
+
 
 def mcp_for_unity_tool(
     name: str | None = None,
     description: str | None = None,
     unity_target: str | None = "self",
     group: str | None = "core",
+    maturity: ToolMaturity = "stable",
     **kwargs,
 ) -> Callable:
     """
@@ -64,6 +67,9 @@ def mcp_for_unity_tool(
             - A group name string (e.g. "core", "vfx") assigns the tool to
               that group and adds a ``tags={"group:<name>"}`` entry.
             - None: the tool is *always visible* (server meta-tools).
+        maturity: Support status only; independent of visibility, readiness and permissions.
+            Existing declarations default to stable. Experimental contracts may evolve;
+            deprecated contracts remain available subject to normal selection/admission.
         **kwargs: Additional arguments passed to @mcp.tool()
 
     Example:
@@ -71,6 +77,9 @@ def mcp_for_unity_tool(
         async def my_custom_tool(ctx: Context, ...):
             pass
     """
+
+    if maturity not in ("experimental", "stable", "deprecated"):
+        raise ValueError(f"Invalid tool maturity: {maturity!r}")
 
     def decorator(func: Callable) -> Callable:
         tool_name = name if name is not None else func.__name__
@@ -113,6 +122,7 @@ def mcp_for_unity_tool(
                 "description": description,
                 "unity_target": normalized_unity_target,
                 "group": resolved_group,
+                "maturity": maturity,
                 "kwargs": tool_kwargs,
             }
         )

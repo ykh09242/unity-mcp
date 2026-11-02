@@ -10,6 +10,8 @@ description: "Manage cameras (Unity Camera + Cinemachine)."
 
 **Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_camera`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Manage cameras (Unity Camera + Cinemachine). Works without Cinemachine using basic Camera; unlocks presets, pipelines, and blending when Cinemachine is installed. Use ping to check Cinemachine availability.

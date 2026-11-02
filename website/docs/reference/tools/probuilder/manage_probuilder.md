@@ -10,6 +10,8 @@ description: "Manage ProBuilder meshes for in-editor 3D modeling."
 
 **Group:** `probuilder` &nbsp;·&nbsp; **Module:** `services.tools.manage_probuilder`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Manage ProBuilder meshes for in-editor 3D modeling. Requires com.unity.probuilder package.

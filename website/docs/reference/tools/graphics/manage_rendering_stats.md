@@ -10,6 +10,8 @@ description: "Inspect rendering counters and memory, or select a scene debug vie
 
 **Group:** `graphics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect rendering counters and memory, or select a scene debug view.

@@ -10,6 +10,8 @@ description: "Generate 2D images with AI providers (fal.ai, OpenRouter) and impo
 
 **Group:** `asset_gen` &nbsp;·&nbsp; **Module:** `services.tools.generate_image`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Generate 2D images with AI providers (fal.ai, OpenRouter) and import them as textures/sprites into the Unity project. Bring-your-own-key: provider keys live in the editor's secure store and never cross the bridge.

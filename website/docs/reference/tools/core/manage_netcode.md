@@ -10,6 +10,8 @@ description: "Inspect local Netcode for GameObjects configuration without starti
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_netcode`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect local Netcode for GameObjects configuration without starting a network session. capabilities reports optional package detection/version; preflight requires an explicit loaded scene_handle and checks managers, active same-scene transports, raw serialized prefab registrations, root NetworkObject references and supported scalar settings. expected_settings compares selected values; omitted/null values add no expectation. Multiple managers compare unspecified settings against the first manager. Limits: 16 managers, 10000 scene objects, max_prefabs total registrations and 200 diagnostics; budget overflow fails without reporting readiness. Package absence is explicit. Static configuration only: no connectivity, peer/build compatibility, hosting, deployment, runtime prefab or callback guarantee; no implicit installation or configuration edits.

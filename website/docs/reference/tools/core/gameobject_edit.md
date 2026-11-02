@@ -10,6 +10,8 @@ description: "Modify or delete an existing GameObject and its components."
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Modify or delete an existing GameObject and its components.

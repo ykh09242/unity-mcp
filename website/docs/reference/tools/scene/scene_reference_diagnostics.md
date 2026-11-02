@@ -10,6 +10,8 @@ description: "Inspect scene references within explicit work and result budgets."
 
 **Group:** `scene` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect scene references within explicit work and result budgets. Inspection may load assets or invoke user-defined callbacks.

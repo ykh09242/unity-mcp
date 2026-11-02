@@ -10,6 +10,8 @@ description: "Request cancellation of an owned native test job."
 
 **Group:** `testing` &nbsp;·&nbsp; **Module:** `services.tools.cancel_test_job`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Request cancellation of an owned native test job. Acceptance is intent; poll native_control for confirmed framework scheduler termination after task-cleanup attempts. User iterator finally, NUnit TearDown and UnityTearDown are not guaranteed. Unsupported versions reject without cancellation.

@@ -10,6 +10,8 @@ description: "Create a prefab asset from an existing GameObject."
 
 **Group:** `prefabs` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Create a prefab asset from an existing GameObject.

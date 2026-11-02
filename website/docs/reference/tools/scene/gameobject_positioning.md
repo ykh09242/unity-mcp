@@ -10,6 +10,8 @@ description: "Move or orient a GameObject selected by target (or name). move_rel
 
 **Group:** `scene` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Move or orient a GameObject selected by target (or name). move_relative requires reference_object plus direction or offset; look_at requires look_at_target. Action inputs: move_relative: requires reference_object. look_at: requires look_at_target.

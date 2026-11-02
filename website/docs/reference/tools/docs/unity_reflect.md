@@ -10,6 +10,8 @@ description: "Inspect Unity's live C# API via reflection."
 
 **Group:** `docs` &nbsp;·&nbsp; **Module:** `services.tools.unity_reflect`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect Unity's live C# API via reflection. Use this to verify that classes, methods, and properties exist before writing C# code — training data may be wrong or outdated.

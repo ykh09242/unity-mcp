@@ -10,6 +10,8 @@ description: "Slice 2D sprite sheets and build AnimationClips and an AnimatorCon
 
 **Group:** `animation` &nbsp;·&nbsp; **Module:** `services.tools.manage_sprite`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Slice 2D sprite sheets and build AnimationClips and an AnimatorController from the frames. Actions: get_info returns a sheet's import settings and slices (paged with page_size / cursor) and, for a PNG or JPEG source, the sheet as an image block for vision analysis; slice_sheet applies a grid, replacing the sheet's existing slices; setup_clips creates AnimationClips from the slices; setup_controller builds a controller from clip names (idle = default state, one walk/run clip = a plain state and two or more = a Speed-driven 1D blend tree, jump/attack/hurt-type names = trigger states that fire from any state, other names = plain states); full_setup runs slice → clips → controller in one call. get_geometry reads paged exact Sprite identities, rect, pivot, border and render outlines. set_geometry edits an existing Multiple TextureImporter sprite using guid, sprite_id, file_id and expected_revision. It preserves omitted fields, names, siblings, physics outlines and AnimationClip references. Geometry requires optional 2D Sprite providers; capability_mode distinguishes advertised flags from the verified built-in legacy provider. Missing/denied modern capabilities and unknown providers are refused. Asset reimport does not promise Undo or arbitrary callback rollback.

@@ -10,6 +10,8 @@ description: "Get manage_script capabilities (supported ops, limits, and guards)
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_script`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Get manage_script capabilities (supported ops, limits, and guards).

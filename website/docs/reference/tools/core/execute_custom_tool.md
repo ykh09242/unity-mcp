@@ -10,6 +10,8 @@ description: "Execute a project-scoped custom tool registered by Unity."
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.execute_custom_tool`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Execute a project-scoped custom tool registered by Unity. Built-in tools and internal native aliases require their canonical public API.

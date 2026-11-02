@@ -81,6 +81,9 @@ POLICY_RULES: Final = (
         )
     ),
     PolicyRule("manage_build", ("status", "cancel"), CONTROL, public=True),
+    PolicyRule(
+        "manage_project_auditor", ("availability", "status", "issues"), CONTROL, public=True
+    ),
     # Ping captures registered metadata, readiness and cached ownership diagnostics;
     # it must remain reachable during recovery and never starts a Client request.
     PolicyRule("manage_packages", ("status", "ping"), CONTROL, public=True),
@@ -189,6 +192,7 @@ POLICY_RULES: Final = (
     ),
     PolicyRule("refresh_unity", (), EXCLUSIVE, TRIGGER_ONLY, public=True),
     PolicyRule("manage_navigation", ("bake",), EXCLUSIVE, TRIGGER_ONLY, public=True),
+    PolicyRule("manage_project_auditor", ("start",), EXCLUSIVE, TRIGGER_ONLY, public=True),
     PolicyRule(
         "manage_camera",
         ("screenshot", "screenshot_multiview"),

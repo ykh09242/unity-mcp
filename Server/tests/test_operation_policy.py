@@ -11,6 +11,27 @@ from services.operation_policy import (
 
 
 @pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("action", ["availability", "status", "issues"])
+def test_project_auditor_cached_observations_remain_control_during_native_scan(native, action):
+    # Given: the reviewed static audit exposes bounded cached scalar/page reads.
+    # When: the operation mode is resolved during ordinary or native dispatch.
+    policy = resolve_operation_policy("manage_project_auditor", {"action": action}, native=native)
+    # Then: polling is admitted while the native owner retains exclusive analysis.
+    assert policy.mode == OperationMode.CONTROL
+    assert policy.lifetime == OperationLifetime.COMMAND
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_project_auditor_start_retains_exclusive_native_ownership(native):
+    # Given: starting analysis may outlive the command response.
+    # When: its scheduling effects are resolved.
+    policy = resolve_operation_policy("manage_project_auditor", {"action": "start"}, native=native)
+    # Then: native ownership remains exclusive beyond dispatch.
+    assert policy.mode == OperationMode.EXCLUSIVE
+    assert policy.lifetime == OperationLifetime.TRIGGER_ONLY
+
+
+@pytest.mark.parametrize("native", [False, True])
 @pytest.mark.parametrize(
     "name,params",
     [

@@ -10,6 +10,8 @@ description: "Set the active Unity instance for this client/session."
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.set_active_instance`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Set the active Unity instance for this client/session. Accepts Name@hash, hash prefix, or port number (stdio only).

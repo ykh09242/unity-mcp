@@ -10,6 +10,8 @@ description: "Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, la
 
 **Group:** `ui` &nbsp;·&nbsp; **Module:** `services.tools.manage_ugui`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect and edit Canvas-based uGUI hierarchies, RectTransforms, layout, text and CanvasScaler settings. Read-only actions: ping, get_hierarchy, diagnose, diagnose_projection, diagnose_text, diagnose_raycast, diagnose_device_profiles. Mutating actions: create, set_rect, set_layout, set_text, set_canvas, set_image. Optional uGUI and TextMeshPro support is detected in the Editor. diagnose evaluates bounded Overlay screen-size candidates. diagnose_projection reads current mono camera geometry for Screen Camera/World Space without rendering or forcing layout; it is not rendered visibility. diagnose_text observes existing generated TMP layout only; dirty/uninitialized data is unknown, with no rebuild or hypothetical sizes. diagnose_raycast reports one current native hit order and separate module/handler facts, not event receipt. Custom filters are refused by default; explicit allow_custom_filters may run user code without rollback or a hard deadline. diagnose_device_profiles assesses 1..8 explicit virtual/observed profiles: built-in-only owned Overlay preview or same-resolution current camera geometry, with DPI/safe-area provenance and caller touch thresholds. The package dispatches no pointer/selection events or explicit source edits.

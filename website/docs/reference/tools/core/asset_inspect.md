@@ -10,6 +10,8 @@ description: "Search assets or inspect their metadata and components."
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Search assets or inspect their metadata and components.

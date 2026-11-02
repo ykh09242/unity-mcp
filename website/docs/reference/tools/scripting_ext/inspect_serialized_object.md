@@ -10,6 +10,8 @@ description: "Inspect one exact Component or ScriptableObject instance ID throug
 
 **Group:** `scripting_ext` &nbsp;·&nbsp; **Module:** `services.tools.inspect_serialized_object`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect one exact Component or ScriptableObject instance ID through SerializedObject. The initial Unity ID lookup MAY load a previously unloaded asset and invoke OnEnable or serialization callbacks before type/context admission. No explicit asset search/import/save is performed. Fields returns one immediate level; value reads one canonical property; array reads only the requested slice. Use canonical paths such as groups.Array.data[2].values. Managed and object references remain terminal descriptors. Pages are live, not snapshots: restart after edits/reload; IDs, field paths and array indices are not persistent identity. Maximum 64 records, 16 path hops, 2048 charged managed operations and 65536 response bytes. These limits do not bound synchronous Unity serialization or native lookup complexity. Native editability is separate from setter-specific supported input shapes; enum names are recommended for component writes. Requires a compatible Editor; no legacy fallback or reload retry.

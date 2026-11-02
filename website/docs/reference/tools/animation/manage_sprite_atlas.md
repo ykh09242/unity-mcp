@@ -10,6 +10,8 @@ description: "Inspect and explicitly author SpriteAtlas V2 Assets/*.spriteatlasv
 
 **Group:** `animation` &nbsp;·&nbsp; **Module:** `services.tools.manage_sprite_atlas`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect and explicitly author SpriteAtlas V2 Assets/*.spriteatlasv2 files. Actions: capabilities, create, read, configure, add_packables, remove_packables, pack. create requires properties.include_in_build; no overwrite or implicit folder creation. Existing writes require guid, file_id and expected_revision from read. Direct Sprite packables only, 128 references per request and 256 per atlas; no folders or texture expansion. properties supports include_in_build, packing, texture, platforms and exact master/master_revision with variant_scale. Read returns bounded packables pages, settings, master/variant and stored platform profiles; continuation requires revision. pack is synchronous editor preview for the explicit active build_target; a variant declares its master in the pack scope. Packing writes native caches/imported output and may unload/reload Sprites. It is not a Player build or proof of runtime delivery. Disabled/non-V2 modes refuse packing; no global settings, prebuild hooks or Addressables changes. Asset saves do not promise Undo or arbitrary callback rollback.

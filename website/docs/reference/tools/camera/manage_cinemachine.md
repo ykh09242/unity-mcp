@@ -10,6 +10,8 @@ description: "Configure Cinemachine brains, tracking, extensions and camera blen
 
 **Group:** `camera` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Configure Cinemachine brains, tracking, extensions and camera blends.

@@ -8,7 +8,7 @@ import math
 from collections import defaultdict
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 
 
 class Observation(BaseModel):
@@ -19,6 +19,10 @@ class Observation(BaseModel):
     client_total_ms: float
     output_sha256: str
     output_bytes: int
+    client_initial_response_ms: float = Field(default=0, ge=0)
+    delivery_retrieval_ms: float = Field(default=0, ge=0)
+    delivery_page_calls: int = Field(default=0, ge=0)
+    delivery_artifact_bytes: int = Field(default=0, ge=0, le=64 * 1024 * 1024)
     queue_ms: float = 0
     synthetic_unity_work_ms: float = 0
     peer_serialization_ms: float = 0
@@ -98,6 +102,8 @@ def attach_stages(observations: list[Observation], directory: Path) -> list[Obse
 def summarize(observations: list[Observation]) -> dict[str, JsonValue]:
     fields = (
         "client_total_ms",
+        "client_initial_response_ms",
+        "delivery_retrieval_ms",
         "queue_ms",
         "synthetic_unity_work_ms",
         "peer_serialization_ms",

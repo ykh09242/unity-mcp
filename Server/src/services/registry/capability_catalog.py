@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from services.registry.action_contracts import action_help
+from services.registry.tool_registry import ToolMaturity
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,8 @@ class Capability:
     actions: tuple[str, ...]
     parameters: tuple[str, ...]
     effects: CapabilityEffects = MUTATING_EFFECTS
+    maturity: ToolMaturity = "stable"
+    experimental_actions: tuple[str, ...] = ()
 
     @property
     def native_actions(self) -> tuple[str, ...]:
@@ -63,9 +66,28 @@ class Capability:
         )
 
 
-def _feature(name, source, group, title, actions, parameters, *, effects=MUTATING_EFFECTS):
+def _feature(
+    name,
+    source,
+    group,
+    title,
+    actions,
+    parameters,
+    *,
+    effects=MUTATING_EFFECTS,
+    maturity="stable",
+    experimental_actions=(),
+):
     return Capability(
-        name, source, group, title, tuple(actions.split()), tuple(parameters.split()), effects
+        name,
+        source,
+        group,
+        title,
+        tuple(actions.split()),
+        tuple(parameters.split()),
+        effects,
+        maturity,
+        experimental_actions,
     )
 
 
@@ -165,8 +187,9 @@ CAPABILITIES: tuple[Capability, ...] = (
         "manage_graphics",
         "graphics",
         "Render Pipeline & Quality",
-        "ping pipeline_get_info pipeline_set_quality pipeline_get_settings pipeline_set_settings",
-        "level settings",
+        "ping pipeline_get_info pipeline_get_diagnostics pipeline_set_quality pipeline_get_settings pipeline_set_settings",
+        "level settings target renderer_index",
+        experimental_actions=("pipeline_get_diagnostics",),
     ),
     _feature(
         "manage_renderer_features",
@@ -174,7 +197,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "graphics",
         "Renderer Features",
         "feature_list feature_add feature_remove feature_configure feature_toggle feature_reorder",
-        "feature_type name material properties settings index active order",
+        "feature_type name material properties settings index active order target renderer_index",
     ),
     _feature(
         "manage_render_environment",

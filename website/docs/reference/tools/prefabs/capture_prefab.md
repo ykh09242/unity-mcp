@@ -10,6 +10,8 @@ description: "Render a prefab asset to PNG in an isolated preview scene, then cl
 
 **Group:** `prefabs` &nbsp;·&nbsp; **Module:** `services.tools.capture_prefab`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Render a prefab asset to PNG in an isolated preview scene, then clean up. Supports root RectTransform UI and front-view renderer bounds. Edit Mode and graphics required. Does not save the prefab, initialize gameplay, animate or switch locales. Edit-time callbacks may execute.

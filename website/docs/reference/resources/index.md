@@ -81,6 +81,13 @@ All currently open editor windows with their titles, types, positions, and focus
 URI: mcpforunity://editor/windows
 
 
+## `effective_server_configuration`
+
+**URI:** `mcpforunity://doctor/config`
+
+Read this server process's redacted effective settings and captured origins without contacting Unity. Does not describe local CLI or another server configuration.
+
+
 ## `gameobject`
 
 **URI:** `mcpforunity://scene/gameobject/{instance_id}`

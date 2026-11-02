@@ -10,6 +10,8 @@ description: "Compatibility router for legacy script operations."
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_script`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Compatibility router for legacy script operations. Prefer apply_text_edits (ranges) or script_apply_edits (structured) for edits. Read-only action: read. Modifying actions: create, delete.

@@ -10,6 +10,8 @@ description: "Validate the scene, with optional explicit repair."
 
 **Group:** `scene` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Validate the scene, with optional explicit repair.

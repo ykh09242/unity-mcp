@@ -10,6 +10,8 @@ description: "Inspect prefab metadata or a bounded hierarchy page."
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect prefab metadata or a bounded hierarchy page. Inspection may load assets or invoke user-defined callbacks.

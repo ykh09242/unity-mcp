@@ -10,6 +10,8 @@ description: "Manage rendering graphics: volumes, post-processing, light baking,
 
 **Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_graphics`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Manage rendering graphics: volumes, post-processing, light baking, rendering stats, pipeline settings, and URP renderer features. Use ping to check pipeline and available features.
@@ -30,6 +32,7 @@ STATS:
 
 PIPELINE:
 - pipeline_get_info, pipeline_set_quality, pipeline_get_settings, pipeline_set_settings
+- pipeline_get_diagnostics: Experimental read-only renderer routing and RenderGraph observations; execution remains unknown.
 
 FEATURES (URP only):
 - feature_list, feature_add, feature_remove, feature_configure, feature_toggle, feature_reorder
@@ -71,6 +74,7 @@ SKYBOX / ENVIRONMENT:
 | `box_projection` | `bool \| None` | — | Box projection for reflection probes. |
 | `positions` | `list[list[float]] \| None` | — | Probe positions array. |
 | `index` | `int \| None` | — | Feature index. |
+| `renderer_index` | `int \| None` | — | Pipeline renderer index; -1 or omitted uses its default. Distinct from feature index. Mutually exclusive with target. Alias: rendererIndex. |
 | `active` | `bool \| None` | — | Feature active state. |
 | `order` | `list[int] \| None` | — | Feature reorder indices. |
 | `async_bake` | `bool \| None` | — | Async bake (default true). |

@@ -27,6 +27,10 @@ def isolated_cli_reference(tmp_path, monkeypatch):
         "prepare_cli_reference",
         lambda root: SimpleNamespace(markdown="Synthetic CLI reference.\n"),
     )
+    contracts = tmp_path / "public_contracts.json"
+    contracts.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(docs, "CONTRACT_OUT", contracts)
+    monkeypatch.setattr(docs, "render_public_contracts", lambda: "{}\n")
 
 
 def test_pep604_and_typing_unions_render_bare_collections_consistently():

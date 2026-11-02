@@ -47,6 +47,32 @@ def list_tools():
     _list_custom_tools()
 
 
+def _validate_query(_ctx, _param, value):
+    if not value.strip() or len(value) > 512:
+        raise click.BadParameter("use 1..512 characters including a non-whitespace character")
+    return value.strip()
+
+
+@tool.command("search")
+@click.argument("query", callback=_validate_query)
+@click.option("--limit", type=click.IntRange(1, 20), default=5, show_default=True)
+def search(query: str, limit: int) -> None:
+    """Search the offline local catalog by task purpose, without a Unity connection.
+
+    Advertisement and project readiness remain unobserved in this offline scope.
+    """
+    from pathlib import Path
+
+    import services.tools as tools_package
+    from services.registry import get_registered_tools
+    from services.registry.task_search import SearchRequest, search_catalog
+    from utils.module_discovery import discover_modules
+
+    list(discover_modules(Path(tools_package.__file__).parent, tools_package.__name__))
+    result = search_catalog(SearchRequest(query=query, limit=limit), get_registered_tools())
+    click.echo(format_output(result, get_config().format))
+
+
 def _validate_name(_ctx, _param, value):
     if not 1 <= len(value) <= 128 or not all(
         character.isalnum() or character in "_.-" for character in value

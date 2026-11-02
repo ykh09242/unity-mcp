@@ -10,6 +10,8 @@ description: "Inspect loaded scenes, hierarchy and build settings, or frame the 
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect loaded scenes, hierarchy and build settings, or frame the Scene view.

@@ -10,6 +10,8 @@ description: "Inspect menu existence/availability evidence or invoke a menu by e
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.execute_menu_item`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect menu existence/availability evidence or invoke a menu by exact path. Default execution reports invocation only; arbitrary completion and modal handling are not guaranteed. Only Window/General/Console supports console_window_open observation. CONTEXT execution is unsupported and File/Quit is blocked. Inspection and observation require native support; unsupported peers refuse without falling back to execution.

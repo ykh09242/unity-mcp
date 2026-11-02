@@ -10,6 +10,8 @@ description: "Diagnose observed scene audio state without proving output-device 
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_audio`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Diagnose observed scene audio state without proving output-device audibility; inspect or explicitly set existing mixer-group routing; read/apply per-platform AudioImporter policies. Routing records Undo and dirties the scene; saving the scene is separate. Importer policy saves/reimports and reads native settings back; reimport may limit Undo. Play or stop an existing scene AudioSource in Play mode. Play requires an active, enabled source and a usable AudioClip; optionally supply a clip asset path under Assets/ or Packages/. Stop also supports inactive, disabled or clipless sources. No component is created. A successful response confirms the request was issued, not audible output. Omit search_method for automatic ID, path or name resolution.

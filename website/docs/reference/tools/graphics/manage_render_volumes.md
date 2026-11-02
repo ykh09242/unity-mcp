@@ -10,6 +10,8 @@ description: "Create volumes and profiles, then inspect or configure post-proces
 
 **Group:** `graphics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Create volumes and profiles, then inspect or configure post-processing effects.

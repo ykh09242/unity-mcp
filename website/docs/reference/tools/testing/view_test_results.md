@@ -10,6 +10,8 @@ description: "Read one completed Unity test-result page (up to 100 failed/skippe
 
 **Group:** `testing` &nbsp;·&nbsp; **Module:** `services.tools.view_test_results`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Read one completed Unity test-result page (up to 100 failed/skipped details). An Apps host may show a local filter and expandable details for this page only.

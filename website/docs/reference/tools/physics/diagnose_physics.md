@@ -10,6 +10,8 @@ description: "Validate physics setup or inspect a pair of colliders and passive 
 
 **Group:** `physics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Validate physics setup or inspect a pair of colliders and passive contacts. May start or stop passive contact observation without advancing simulation.

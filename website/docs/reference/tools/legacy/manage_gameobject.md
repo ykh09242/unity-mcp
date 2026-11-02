@@ -10,6 +10,8 @@ description: "Performs CRUD operations on GameObjects."
 
 **Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_gameobject`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Performs CRUD operations on GameObjects. Actions: create, modify, delete, duplicate, move_relative, look_at, placement. Placement previews ordered align/distribute positions; apply requires the unchanged preview token. NOT for searching — use the find_gameobjects tool to search by name/tag/layer/component/path. NOT for component management — use the manage_components tool (add/remove/set_property) or mcpforunity://scene/gameobject/{id}/components resource (read).

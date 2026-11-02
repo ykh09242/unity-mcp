@@ -10,6 +10,8 @@ description: "Apply small text edits to a C# script identified by URI."
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_script`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Apply small text edits to a C# script identified by URI.

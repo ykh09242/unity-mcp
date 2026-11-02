@@ -10,6 +10,8 @@ description: "Prepare, apply, inspect or recover 1–256 existing C# source repl
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.script_change_set`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Prepare, apply, inspect or recover 1–256 existing C# source replacements as one bounded change set. Prepare takes final contents plus each original raw-byte SHA256 (including BOM), validates each file and retains a local recovery manifest without source writes. Apply checks all original source/metadata preconditions before writes. Failures retain ordered confirmed, restored or uncertain outcomes; recovery never overwrites a changed external source. This is not a filesystem-wide transaction, semantic rename or callback rollback. UTF-8 BOM/newlines and metadata are preserved. This request does not schedule a refresh; Unity automatic/deferred source import may still compile changed scripts.

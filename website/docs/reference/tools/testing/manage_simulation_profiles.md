@@ -10,6 +10,8 @@ description: "Capture named Time/Physics3D/Physics2D/Audio/Input configuration p
 
 **Group:** `testing` &nbsp;·&nbsp; **Module:** `services.tools.manage_simulation_profiles`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Capture named Time/Physics3D/Physics2D/Audio/Input configuration profiles, inspect per-domain applicability, diff/validate against current settings, explicitly apply, and conditionally restore confirmed changes. capabilities lists exact supported keys. capture optionally stores validated settings replacements without applying globals. apply requires profile_revision and current_revision returned by validate/diff. restore requires a retained receipt_id and preserves external writer drift, owner changes and uncertain writes. No cross-domain transaction, automatic simulation, input injection, hardware audibility, persistent Undo or asset save is promised. Profiles/receipts are bounded project-local Library metadata. delete removes a named profile plus its receipts and does not restore settings; restore first when needed.

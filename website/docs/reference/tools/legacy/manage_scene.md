@@ -10,6 +10,8 @@ description: "Performs CRUD operations on Unity scenes."
 
 **Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_scene`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Performs CRUD operations on Unity scenes. Read-only validate_references pages broken serialized PPtrs in active_scene/loaded_scenes or an explicit prefab/scriptable_object asset; page_size<=100, max_objects<=250000, max_work<=4000000. Ordinary nulls are excluded; unavailable GUID/fileID evidence is explicit. Read-only actions: get_hierarchy, get_active, get_build_settings, get_loaded_scenes, scene_view_frame. Modifying actions: create (with optional template), load (with optional additive flag), save, close_scene, set_active_scene, move_to_scene, validate (with optional auto_repair). For build settings management (add/remove/enable scenes), use manage_build(action='scenes'). For screenshots, use manage_camera (screenshot, screenshot_multiview actions).

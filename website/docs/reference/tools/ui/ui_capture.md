@@ -10,6 +10,8 @@ description: "Start, poll or cancel a bounded UI Toolkit render capture."
 
 **Group:** `ui` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Start, poll or cancel a bounded UI Toolkit render capture.

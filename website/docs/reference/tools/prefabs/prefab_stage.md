@@ -10,6 +10,8 @@ description: "Open, save or close the Prefab Stage."
 
 **Group:** `prefabs` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Open, save or close the Prefab Stage.

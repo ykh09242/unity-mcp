@@ -10,6 +10,8 @@ description: "Unity Profiler session control, counter reads, memory snapshots, a
 
 **Group:** `profiling` &nbsp;·&nbsp; **Module:** `services.tools.manage_profiler`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Unity Profiler session control, counter reads, memory snapshots, and Frame Debugger.

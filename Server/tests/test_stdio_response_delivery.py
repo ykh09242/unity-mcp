@@ -22,6 +22,7 @@ from transport.stdio_response_delivery import (
     retained_stdio_server,
     stdio_delivery,
 )
+from transport.response_delivery import MAX_MCP_RESPONSE_BYTES
 from .stdio_process import owned_sdk_process
 
 
@@ -87,6 +88,33 @@ class BlockedOutput:
             entered.set()
             await resume.wait()
         self.flushed.append(self.current)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("over", [False, True])
+async def test_exact_final_stdio_guard_includes_envelope_and_preserves_owner_flush(over):
+    stdin, stdout = IdleInput(), BlockedOutput("none")
+    retained = {"result": 1}
+    owner = ResponseOwner(entries=[(retained, "result")])
+    text = "x" * (MAX_MCP_RESPONSE_BYTES + 1 if over else MAX_MCP_RESPONSE_BYTES - 512)
+    async with owned_stdio_streams(stdin, stdout) as (_, write):
+        stdio_delivery.get().register("wire-boundary", owner)
+        await write.send(
+            SessionMessage(
+                JSONRPCResponse(jsonrpc="2.0", id="wire-boundary", result={"payload": text})
+            )
+        )
+        await await_condition(lambda: bool(stdout.flushed), "bounded response flushed")
+        wire = stdout.lines[0]
+        assert len(wire.encode("utf-8")) < MAX_MCP_RESPONSE_BYTES
+        message = json.loads(wire)
+        assert message["id"] == "wire-boundary"
+        if over:
+            assert message["error"]["data"]["outcome"] == "unknown"
+        else:
+            assert len(message["result"]["payload"]) == len(text)
+        assert owner.released
+        assert retained == {}
 
 
 def context(request_id):

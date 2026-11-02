@@ -10,6 +10,8 @@ description: "Import a local 3D model file that already exists within the Unity 
 
 **Group:** `asset_gen` &nbsp;·&nbsp; **Module:** `services.tools.import_model_file`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Import a local 3D model file that already exists within the Unity project's Assets folder (e.g. an FBX/OBJ/glTF exported from Blender or another DCC tool) into the Unity project. The file is copied under Assets/ and run through Unity's model-import pipeline (scale-normalize, material settings; glTF needs an active compatible importer such as glTFast). Carries no API keys and no file bytes over the bridge.

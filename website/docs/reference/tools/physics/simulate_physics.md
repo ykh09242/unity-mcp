@@ -10,6 +10,8 @@ description: "Advance physics by a bounded number of explicit simulation steps."
 
 **Group:** `physics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Advance physics by a bounded number of explicit simulation steps.

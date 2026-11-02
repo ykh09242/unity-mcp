@@ -10,6 +10,8 @@ description: "Run ray, shape and overlap queries in 2D or 3D."
 
 **Group:** `physics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Run ray, shape and overlap queries in 2D or 3D. Read-only inspection; results can change with Unity state.

@@ -10,6 +10,8 @@ description: "Add, configure, reorder or remove URP renderer features."
 
 **Group:** `graphics` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Add, configure, reorder or remove URP renderer features.
@@ -19,10 +21,12 @@ Add, configure, reorder or remove URP renderer features.
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `action` | `Literal['feature_list', 'feature_add', 'feature_remove', 'feature_configure', 'feature_toggle', 'feature_reorder']` | yes | Feature action to perform. |
+| `target` | `str \| None` | — | Target object name or instance ID. |
 | `properties` | `dict[str, Any] \| None` | — | Dict of properties to set. |
 | `settings` | `dict[str, Any] \| None` | — | Dict of settings (bake/pipeline). |
 | `name` | `str \| None` | — | Name for created objects. |
 | `index` | `int \| None` | — | Feature index. |
+| `renderer_index` | `int \| None` | — | Pipeline renderer index; -1 or omitted uses its default. Distinct from feature index. Mutually exclusive with target. Alias: rendererIndex. |
 | `active` | `bool \| None` | — | Feature active state. |
 | `order` | `list[int] \| None` | — | Feature reorder indices. |
 | `feature_type` | `str \| None` | — | Renderer feature type name. |

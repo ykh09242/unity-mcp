@@ -10,6 +10,8 @@ description: "Validate a C# script and report diagnostics, the effective validat
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_script`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Validate a C# script and report diagnostics, the effective validation engine, and context limitations. This does not trigger Unity project compilation.

@@ -10,6 +10,8 @@ description: "Manage physics settings, collision matrix, materials, joints, quer
 
 **Group:** `legacy` &nbsp;·&nbsp; **Module:** `services.tools.manage_physics`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Manage physics settings, collision matrix, materials, joints, queries, and validation.

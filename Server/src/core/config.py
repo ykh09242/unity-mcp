@@ -5,8 +5,14 @@ This file contains all configurable parameters for the server.
 
 import math
 import os
-from dataclasses import dataclass, field
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from ipaddress import IPv4Network, IPv6Network, collapse_addresses, ip_network
+
+from core.config_provenance import ConfigurationTrace
+from models.effective_config import ConfigOrigin, ConfigValue, EffectiveConfigReport
+
+_INITIAL_DEFAULTS: dict[str, ConfigValue] = {}
+_INITIAL_ORIGINS: dict[str, ConfigOrigin] = {}
 
 
 def parse_trusted_proxy_cidrs(value: str) -> tuple[IPv4Network | IPv6Network, ...]:
@@ -46,10 +52,27 @@ def _env_float(name: str, default: float) -> float:
     socket/timeout behaviour.
     """
     raw = os.environ.get(name)
+    field_name = name.removeprefix("UNITY_MCP_").lower()
+    _INITIAL_DEFAULTS[field_name] = default
+    _INITIAL_ORIGINS[field_name] = ConfigOrigin(
+        diagnostics=("empty_environment_ignored",)
+        if raw == ""
+        else ("invalid_environment_ignored",)
+        if raw is not None
+        else (),
+    )
     if raw:
         try:
             value = float(raw.strip())
             if math.isfinite(value) and value > 0:
+                _INITIAL_ORIGINS[field_name] = ConfigOrigin(
+                    source="environment",
+                    source_detail=name,
+                    overrides=("built_in",),
+                    diagnostics=("clamped_to_300",)
+                    if name == "UNITY_MCP_HANDSHAKE_TIMEOUT" and value > 300
+                    else (),
+                )
                 return value
         except (TypeError, ValueError):
             pass
@@ -61,7 +84,25 @@ def _permissions_strict_from_env() -> bool:
     value = os.environ.get("UNITY_MCP_API_KEY_PERMISSIONS_STRICT", "false").strip().lower()
     if value not in {"true", "false", "1", "0"}:
         raise ValueError("UNITY_MCP_API_KEY_PERMISSIONS_STRICT must be true/false or 1/0")
+    raw = os.environ.get("UNITY_MCP_API_KEY_PERMISSIONS_STRICT")
+    _INITIAL_DEFAULTS["api_key_permissions_strict"] = False
+    _INITIAL_ORIGINS["api_key_permissions_strict"] = ConfigOrigin(
+        source="environment" if raw is not None else "default",
+        source_detail="UNITY_MCP_API_KEY_PERMISSIONS_STRICT" if raw is not None else "built_in",
+        overrides=("built_in",) if raw is not None else (),
+    )
     return value in {"true", "1"}
+
+
+def _phase_diagnostics_from_env() -> bool:
+    raw = os.environ.get("UNITY_MCP_PHASE_DIAGNOSTICS")
+    _INITIAL_DEFAULTS["phase_diagnostics"] = False
+    _INITIAL_ORIGINS["phase_diagnostics"] = ConfigOrigin(
+        source="environment" if raw is not None else "default",
+        source_detail="UNITY_MCP_PHASE_DIAGNOSTICS" if raw is not None else "built_in",
+        overrides=("built_in",) if raw is not None else (),
+    )
+    return (raw or "").strip().lower() in {"1", "true"}
 
 
 @dataclass
@@ -74,11 +115,7 @@ class ServerConfig:
     mcp_port: int = 6500
 
     # Local payload-free phase diagnostics; never enables native logging remotely.
-    phase_diagnostics: bool = field(
-        default_factory=lambda: (
-            os.environ.get("UNITY_MCP_PHASE_DIAGNOSTICS", "").strip().lower() in {"1", "true"}
-        )
-    )
+    phase_diagnostics: bool = field(default_factory=_phase_diagnostics_from_env)
 
     # Transport settings
     transport_mode: str = "stdio"
@@ -154,3 +191,30 @@ class ServerConfig:
 
 # Create a global config instance
 config = ServerConfig()
+
+
+def _config_values() -> dict[str, ConfigValue]:
+    """Enumerate this known dataclass, never the environment or credential files."""
+    values = asdict(config)
+    values["http_trusted_proxy_networks"] = [
+        str(network) for network in config.http_trusted_proxy_networks
+    ]
+    return values
+
+
+_defaults = {
+    item.name: _INITIAL_DEFAULTS[item.name] if item.default is MISSING else item.default
+    for item in fields(config)
+}
+_defaults["http_trusted_proxy_networks"] = []
+configuration_trace = ConfigurationTrace(_defaults)
+for _name, _value in _config_values().items():
+    configuration_trace.record(_name, _value, _INITIAL_ORIGINS.get(_name, ConfigOrigin()))
+# Later test/consumer ServerConfig construction cannot change this process's captured origins.
+_INITIAL_DEFAULTS.clear()
+_INITIAL_ORIGINS.clear()
+
+
+def effective_server_configuration() -> EffectiveConfigReport:
+    """Describe this process only; unrecorded assignments retain unknown runtime origin."""
+    return configuration_trace.report("running_server_configuration", _config_values())

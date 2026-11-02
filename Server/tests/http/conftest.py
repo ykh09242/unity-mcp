@@ -24,11 +24,12 @@ def _record_progress(phase: str, nodeid: str | None = None) -> None:
         return
     if nodeid is not None:
         _last_nodeid = nodeid
-    # One file per owned worker keeps the last phase even when other workers produce
-    # more output than the wrapper's bounded tail. Replace atomically on timeout reads.
-    pending = _progress_path.with_suffix(".tmp")
-    pending.write_text(json.dumps({"nodeid": _last_nodeid, "phase": phase}), encoding="utf-8")
-    pending.replace(_progress_path)
+    # One file per owned worker keeps the last phase beyond the wrapper's output tail.
+    # Ordinary Windows read handles deny replacing their open file. Publish in place;
+    # the diagnostic reader already handles partial JSON without hiding the test result.
+    _progress_path.write_text(
+        json.dumps({"nodeid": _last_nodeid, "phase": phase}), encoding="utf-8"
+    )
 
 
 def pytest_configure(config):

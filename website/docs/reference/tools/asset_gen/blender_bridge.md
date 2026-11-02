@@ -10,6 +10,8 @@ description: "Bridge to a running Blender that has the BlenderMCP addon connecte
 
 **Group:** `asset_gen` &nbsp;·&nbsp; **Module:** `services.tools.blender_bridge`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Bridge to a running Blender that has the BlenderMCP addon connected (socket, default 127.0.0.1:9876; configured in Window > Unity MCP (ykh09242) > Generative > Blender Bridge). Unity talks to the addon directly, so no BlenderMCP client is needed.

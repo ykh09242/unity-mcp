@@ -42,7 +42,7 @@ Camera setup, Cinemachine and view capture
 - **[`manage_cameras`](./camera/manage_cameras.md)** — Create or list cameras, select targets and configure lenses or priority.
 - **[`manage_cinemachine`](./camera/manage_cinemachine.md)** — Configure Cinemachine brains, tracking, extensions and camera blends.
 
-## `core` &nbsp; (42 tools)
+## `core` &nbsp; (43 tools)
 Essential scene, script, asset, editor & view recording tools (always on by default)
 - **[`apply_text_edits`](./core/apply_text_edits.md)** — Apply small text edits to a C# script identified by URI.
 - **[`asset_inspect`](./core/asset_inspect.md)** — Search assets or inspect their metadata and components.
@@ -78,6 +78,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`manage_tools`](./core/manage_tools.md)** — Manage visible groups or individual feature tools in this session.
 - **[`prefab_inspect`](./core/prefab_inspect.md)** — Inspect prefab metadata or a bounded hierarchy page.
 - **[`read_console`](./core/read_console.md)** — Gets messages from or clears the Unity Editor console.
+- **[`read_response`](./core/read_response.md)** — Reads one fixed 256 KiB base64 page of a retained oversized MCP response.
 - **[`refresh_unity`](./core/refresh_unity.md)** — Refresh assets and optionally request compilation.
 - **[`scene_inspect`](./core/scene_inspect.md)** — Inspect loaded scenes, hierarchy and build settings, or frame the Scene view.
 - **[`scene_lifecycle`](./core/scene_lifecycle.md)** — Create, load, save or close scenes and organize loaded scene objects.
@@ -137,9 +138,10 @@ Prefab creation, contents, stages and overrides
 ProBuilder 3D modeling – requires com.unity.probuilder package
 - **[`manage_probuilder`](./probuilder/manage_probuilder.md)** — Manage ProBuilder meshes for in-editor 3D modeling.
 
-## `profiling` &nbsp; (1 tool)
+## `profiling` &nbsp; (2 tools)
 Unity Profiler session control, counters, memory snapshots & Frame Debugger
 - **[`manage_profiler`](./profiling/manage_profiler.md)** — Unity Profiler session control, counter reads, memory snapshots, and Frame Debugger.
+- **[`manage_project_auditor`](./profiling/manage_project_auditor.md)** — Optional Project Auditor 1.0.1 integration. availability checks the installed package, API and bundled rules without starting analysis. start requests one Editor-session audit and returns audit_id; reuse that ID after an uncertain respon…
 
 ## `scene` &nbsp; (5 tools)
 GameObject positioning, placement and scene diagnostics

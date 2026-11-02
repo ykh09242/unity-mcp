@@ -244,6 +244,8 @@ class TestJobTasks(ServerExtension):
         admission: WaitAdmission | None = None,
         fallback: Callable | None = None,
         executor_owns_deadline: bool = False,
+        result_delivery: Callable[[ServerRequestContext, WaitRecord], Awaitable[dict]]
+        | None = None,
     ):
         self.journal = journal
         self.capture = capture
@@ -251,6 +253,7 @@ class TestJobTasks(ServerExtension):
         self.owner = owner
         self.fallback = fallback
         self.executor_owns_deadline = executor_owns_deadline
+        self.result_delivery = result_delivery
         self.admission = admission if admission is not None else _worker_admission
         self.delivery_admission = _delivery_admission
         self._workers: dict[str, asyncio.Task] = {}
@@ -598,7 +601,11 @@ class TestJobTasks(ServerExtension):
             result = task_handle(record).model_dump(by_alias=True, exclude_none=True)
             result["resultType"] = "complete"
             if record.result is not None:
-                result["result"] = record.result
+                result["result"] = (
+                    await self.result_delivery(ctx, record)
+                    if self.result_delivery is not None
+                    else record.result
+                )
             if record.error is not None:
                 result["error"] = record.error
             return result

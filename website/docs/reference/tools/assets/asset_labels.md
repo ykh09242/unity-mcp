@@ -10,6 +10,8 @@ description: "Read or change asset labels with revision checks."
 
 **Group:** `assets` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Read or change asset labels with revision checks.

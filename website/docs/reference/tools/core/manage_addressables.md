@@ -10,6 +10,8 @@ description: "Inspect existing optional Addressables settings (groups, explicit 
 
 **Group:** `core` &nbsp;·&nbsp; **Module:** `services.tools.manage_addressables`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), run bounded preflight for duplicate addresses/missing references/profile issues, or analyze an existing native build-layout report for duplicated content. Stable Addressables 1.x, 2.x, 3.x and 4.x require compatible action APIs and stored profile schema 1. Layout reports must match the installed package version and actual native schema. Content Directory coverage is unsupported: reports whose native schema declares ContentDirectories require an empty array, and nonempty or malformed group ContentDirectoryName values are refused, including managed-reference data. Reads never create settings, evaluate arbitrary static profile properties or start content builds. Guarded set_address/move_entry/set_profile_value preserve existing GUIDs/labels. Supply explicit settings_path and exact expected_revision for edits/continuation pages. No group/asset creation, content-build action or remote deployment. Caps128groups/4096entries/32profiles/64variables,256preflightentries,100rows/256KiB per response. Native layout files are bounded to16MiB; unsupported versions are explicit.

@@ -79,7 +79,9 @@ async def test_text_output_keeps_installed_sdk_serialization_and_newline():
 
 
 @pytest.mark.asyncio
-async def test_async_file_drops_serialized_and_wire_text_while_workers_idle():
+async def test_async_file_drops_serialized_and_wire_text_while_workers_idle(monkeypatch):
+    import transport.stdio_response_delivery as stdio
+
     references = []
 
     class TrackedText(str):
@@ -91,9 +93,22 @@ async def test_async_file_drops_serialized_and_wire_text_while_workers_idle():
         def __add__(self, suffix):
             return TrackedText(super().__add__(suffix))
 
-    class TrackedResponse(JSONRPCResponse):
-        def model_dump_json(self, *args, **kwargs):
-            return TrackedText(super().model_dump_json(*args, **kwargs))
+    class TrackedBytes(bytes):
+        def decode(self, *args, **kwargs):
+            return TrackedText(super().decode(*args, **kwargs))
+
+    adapter = stdio.jsonrpc_message_adapter
+
+    class TrackedAdapter:
+        def dump_json(self, *args, **kwargs):
+            return TrackedBytes(adapter.dump_json(*args, **kwargs))
+
+        def validate_json(self, *args, **kwargs):
+            return adapter.validate_json(*args, **kwargs)
+
+    # The writer now measures canonical SDK bytes before decoding text stdout.
+    # Observe that real decode and LF append, preserving the idle-lifetime proof.
+    monkeypatch.setattr(stdio, "jsonrpc_message_adapter", TrackedAdapter())
 
     class DiscardFile:
         def write(self, text):
@@ -115,7 +130,7 @@ async def test_async_file_drops_serialized_and_wire_text_while_workers_idle():
         async with read, write:
             stdio_delivery.get().register(7, owner)
             await write.send(
-                SessionMessage(TrackedResponse(jsonrpc="2.0", id=7, result={"data": "x" * 65_536}))
+                SessionMessage(JSONRPCResponse(jsonrpc="2.0", id=7, result={"data": "x" * 65_536}))
             )
             await wait_until(lambda: owner.released)
             try:

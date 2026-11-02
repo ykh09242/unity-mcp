@@ -10,6 +10,8 @@ description: "Capture a bounded complete semantic scene UI snapshot for ugui or 
 
 **Group:** `ui` &nbsp;·&nbsp; **Module:** `services.tools.capture_ui_snapshot`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Capture a bounded complete semantic scene UI snapshot for ugui or uitoolkit. Returns stable hierarchy identities, text, active/render eligibility/interactable state, current bounds and renderer-cull evidence where available. Does not write files or change resolution/layout. Ambiguous identities, overflow and unavailable live UI trees fail. Actual occlusion, pixel visibility and event delivery are not proven. Default captures use schema version 2 with fixed typed control states. Recognized editable input contents and owned text renderers are omitted before text access; ordinary labels remain. Native inventory allocation/time is separate from managed processing bounds. Use matching updated plugin/server versions; legacy v1 is supported only for offline comparison. Optional identity_map associates current child paths with nonsecret caller item IDs in either framework, emitting schema version 3 comparison identities. Update associations after row rebinding/reorder; valid stale associations cannot be detected. Mapped IDs are not mutation handles. Omission preserves schema version 2 and semantic ambiguity refusal. For uitoolkit, optional component_type selects auto, ui_document or panel_renderer. Explicit selection emits the actual component kind in evidence; missing or unsupported components refuse without fallback. Omission retains legacy auto output. Snapshot IDs remain mutation handles only for the canonical auto root without identity_map.

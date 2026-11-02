@@ -1,0 +1,11 @@
+# ProBuilder mesh repair compatibility
+
+`manage_probuilder` loads ProBuilder through reflection so the package remains optional. Its `repair_mesh` action binds the public `bool MeshValidation.RemoveDegenerateTriangles(ProBuilderMesh, List<int> removed = null)` signature used by the ProBuilder 6.1.4 package pinned in `tools/unity-ci-packages.json`. The binder requires that exact parameter and return-type contract before modifying the mesh.
+
+The `degenerateTrianglesRemoved` response is the difference between the public `ProBuilderMesh.triangleCount` values before and after the package call. The optional `removed` list contains removed vertex indices, so its length does not measure removed triangles. The boolean return value also does not provide that count. The installed-package regression tests exercise a collinear triangle whose removal deletes three unused vertices, and a clean mesh whose topology remains unchanged.
+
+An unavailable or incompatible signature returns an error before recording Undo or invoking the package. A package invocation failure returns the underlying error instead of reporting successful repair. Inspect the mesh before retrying an invocation failure because the package may have partially changed it. A successful call reports zero triangles removed only after the supported package method has completed and the topology has been counted.
+
+The supported signature and count semantics are verified against the official package source: [MeshValidation.cs](https://github.com/Unity-Technologies/com.unity.probuilder/blob/abe59c1d568add17ab0817848edff7af604871db/Runtime/MeshOperations/MeshValidation.cs) and [ProBuilderMesh.cs](https://github.com/Unity-Technologies/com.unity.probuilder/blob/abe59c1d568add17ab0817848edff7af604871db/Runtime/Core/ProBuilderMesh.cs).
+
+The optional-package EditMode profile also exercises the vertex-color shader fallback supported by the tool: ProBuilder Standard Vertex Color, ProBuilder Diffuse Vertex Color, then Sprites/Default. ProBuilder 6.1.4 does not ship the first shader, so requiring that shader alone would skip valid fallback coverage. The regression requires an available supported shader and checks repeated edits reuse the selected material.

@@ -120,6 +120,7 @@ namespace MCPForUnity.Editor.Tools
                         Undo.RecordObject(mat, "Set Material Property");
                         mat.SetTexture(property, tex);
                         EditorUtility.SetDirty(mat);
+                        AssetDatabase.SaveAssetIfDirty(mat);
                         return new SuccessResponse($"Set texture property {property} on {mat.name}");
                     }
                 }
@@ -134,6 +135,7 @@ namespace MCPForUnity.Editor.Tools
                 Undo.RecordObject(mat, "Set Material Property");
                 apply();
                 EditorUtility.SetDirty(mat);
+                AssetDatabase.SaveAssetIfDirty(mat);
                 return new SuccessResponse($"Set property {property} on {mat.name}");
             }
             else
@@ -202,6 +204,7 @@ namespace MCPForUnity.Editor.Tools
                 Undo.RecordObject(mat, "Set Material Color");
                 apply();
                 EditorUtility.SetDirty(mat);
+                AssetDatabase.SaveAssetIfDirty(mat);
                 return new SuccessResponse($"Set color on {property}");
             }
             else
@@ -276,6 +279,7 @@ namespace MCPForUnity.Editor.Tools
                 Undo.RecordObject(renderer, "Assign Material");
                 sharedMats[slot] = mat;
                 renderer.sharedMaterials = sharedMats;
+                PrefabUtility.RecordPrefabInstancePropertyModifications(renderer);
             }
 
             EditorUtility.SetDirty(renderer);
@@ -396,6 +400,8 @@ namespace MCPForUnity.Editor.Tools
                     Undo.RecordObject(mat, "Set Material Color");
                     SetColorProperties(mat, color, assetPathValidated);
                     EditorUtility.SetDirty(mat);
+                    if (assetPathValidated)
+                        AssetDatabase.SaveAssetIfDirty(mat);
                     return new SuccessResponse("Set shared material color");
                 }
                 return new ErrorResponse("Invalid slot");
@@ -563,6 +569,7 @@ namespace MCPForUnity.Editor.Tools
                 sharedMats[slot] = existing;
                 renderer.sharedMaterials = sharedMats;
                 EditorUtility.SetDirty(renderer);
+                PrefabUtility.RecordPrefabInstancePropertyModifications(renderer);
 
                 folders.Complete();
                 return new SuccessResponse($"Created unique material at {matPath} and assigned to {go.name}", new { materialPath = matPath });

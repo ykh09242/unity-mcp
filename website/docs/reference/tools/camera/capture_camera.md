@@ -10,6 +10,8 @@ description: "Capture Game or Scene views, including surround and orbit batches.
 
 **Group:** `camera` &nbsp;·&nbsp; **Module:** `services.registry.capability_adapter`
 
+**Maturity:** `stable` (support status; independent of enabled state, readiness and permissions).
+
 ## Description
 
 Capture Game or Scene views, including surround and orbit batches.
