@@ -570,8 +570,9 @@ async def test_weaker_and_retired_same_owner_cannot_retrieve_retained_output(tmp
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("deadline", [False, True])
 async def test_cancel_during_real_admission_adopts_intent_without_entering_handler(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, deadline
 ):
     # Given actual durable admission held in its owned journal thread.
     monkeypatch.setattr(config, "http_remote_hosted", False)
@@ -598,6 +599,7 @@ async def test_cancel_during_real_admission_adopts_intent_without_entering_handl
         request=request(),
     )
     effects = []
+    guard = asyncio.timeout(None)
 
     async def body():
         effects.append("must-not-run-before-first-await")
@@ -605,6 +607,9 @@ async def test_cancel_during_real_admission_adopts_intent_without_entering_handl
 
     async def invoke():
         try:
+            if deadline:
+                async with guard:
+                    return await prepared.execute(body)
             return await prepared.execute(body)
         finally:
             prepared.close()
@@ -613,12 +618,21 @@ async def test_cancel_during_real_admission_adopts_intent_without_entering_handl
     try:
         assert await asyncio.to_thread(entered.wait, watchdog_timeout())
         # When cancellation precedes admission return, including a non-yielding body.
-        task.cancel()
+        if deadline:
+            guard.reschedule(asyncio.get_running_loop().time())
+            async with asyncio.timeout(watchdog_timeout()):
+                while not task.cancelling():
+                    await asyncio.sleep(0)
+        else:
+            task.cancel()
+        assert runtime.io_owners == 1 and not task.done()
         release.set()
-        with pytest.raises(asyncio.CancelledError):
+        with pytest.raises(TimeoutError if deadline else asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=watchdog_timeout())
         # Then the adopted intent settles as not_dispatched with no orphan wrapper.
         assert effects == []
+        assert runtime.io_owners == 0
+        assert task.cancelling() == (0 if deadline else 1)
         assert runtime.store.active_count == 0
         view = runtime.store.get(
             prepared.authority.scope,
@@ -634,6 +648,81 @@ async def test_cancel_during_real_admission_adopts_intent_without_entering_handl
         delivery.release()
         runtime.close()
     assert runtime.store is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol", ["2025-11-25", "2026-07-28"])
+async def test_sdk_deadline_during_receipt_admission_returns_canonical_timeout(
+    tmp_path, monkeypatch, protocol
+):
+    from transport.plugin_hub import PluginHub, http_request_budget
+
+    # Given the real SDK wire and middleware deadline owning a durable admission.
+    entered, release = Event(), Event()
+    observed = []
+    actual_selected = UnityInstanceMiddleware._call_selected_tool
+    actual_admit = ExecutionReceiptStore.admit
+
+    async def observe_selected(middleware, *args, **kwargs):
+        budget = http_request_budget.get()
+        assert budget is not None
+        observed.append((budget.scope, asyncio.current_task()))
+        return await actual_selected(middleware, *args, **kwargs)
+
+    async def sessions(**kwargs):
+        return SimpleNamespace(sessions={})
+
+    def blocked_admit(store, *args, **kwargs):
+        entered.set()
+        assert release.wait(watchdog_timeout())
+        return actual_admit(store, *args, **kwargs)
+
+    async with sdk_wire(tmp_path, monkeypatch, protocol) as (runtime, counts, call):
+        monkeypatch.setattr(config, "transport_mode", "http")
+        monkeypatch.setattr(PluginHub, "is_configured", lambda: True)
+        monkeypatch.setattr(PluginHub, "get_sessions", sessions)
+        monkeypatch.setattr(UnityInstanceMiddleware, "_call_selected_tool", observe_selected)
+        monkeypatch.setattr(ExecutionReceiptStore, "admit", blocked_admit)
+        task = asyncio.create_task(
+            call(
+                "tools/call",
+                {
+                    "name": "receipt_exercise",
+                    "arguments": {"checked": 4},
+                    "_meta": {META_KEY: options(runtime, retain=False)},
+                },
+                "deadline",
+            )
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, watchdog_timeout())
+            # When that exact production deadline expires before the commit returns.
+            guard, owner = observed[0]
+            guard.reschedule(asyncio.get_running_loop().time())
+            async with asyncio.timeout(watchdog_timeout()):
+                while not owner.cancelling():
+                    await asyncio.sleep(0)
+                assert runtime.io_owners == 1 and not task.done()
+                release.set()
+                reply = await task
+            # Then timeout conversion survives the wire and no handler instruction ran.
+            result = reply["result"]
+            assert result["isError"] is True
+            assert result["structuredContent"]["data"]["reason"] == "command_deadline_exceeded"
+            assert result["structuredContent"]["data"]["command"] == "receipt_exercise"
+            assert counts == {"body": 0, "validator": 0, "default": 0}
+            assert guard.expired() and owner.cancelling() == 0
+            assert runtime.io_owners == runtime.store.active_count == 0
+            view = runtime.store.get(
+                (await runtime.authority(PROJECT, request=request())).scope,
+                store_id=runtime.store.store_id,
+                idempotency_key=KEY,
+                grants=frozenset(p.value for p in Permission),
+            )
+            assert view.status == "not_dispatched"
+        finally:
+            release.set()
+            await settle_task(task)
 
 
 @pytest.mark.asyncio

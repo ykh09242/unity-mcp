@@ -574,6 +574,8 @@ class ExecutionReceipts:
         keeps request/credentials out of journal threads. The worker returns no
         result graph to an idle AnyIO thread: the holder belongs to this request.
         """
+        current = asyncio.current_task()
+        cancellations = current.cancelling()
         holder: list[T] = []
         operation = [function]
         self.io_owners += 1
@@ -589,6 +591,11 @@ class ExecutionReceipts:
                     try:
                         await asyncio.shield(task)
                     except asyncio.CancelledError:
+                        count = current.cancelling()
+                        if not count:
+                            raise
+                        # Follow-up I/O may consume a reissued existing request.
+                        cancellations = min(cancellations, count - 1)
                         cancelled = True
                 task.result()
                 return holder.pop()
@@ -598,9 +605,17 @@ class ExecutionReceipts:
             self.io_owners -= 1
             self.close_if_idle()
             if cancelled:
-                current = asyncio.current_task()
-                if current is not None:
-                    asyncio.get_running_loop().call_soon(current.cancel)
+
+                def redeliver():
+                    # Adoption precedes the next checkpoint. An owning timeout
+                    # may already have consumed its request when this runs.
+                    if not current.done() and current.cancelling() > cancellations:
+                        # Reissue without adding a count that would prevent
+                        # asyncio.timeout from recognizing its cancellation.
+                        current.uncancel()
+                        current.cancel()
+
+                asyncio.get_running_loop().call_soon(redeliver)
 
     def close_if_idle(self) -> None:
         if self.closed and self.io_owners == 0 and self.store is not None:
