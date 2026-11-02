@@ -24,6 +24,7 @@ from services.credential_lease import (
 )
 from services.operation_permissions import OperationPermissionError, authorize_operation
 from services.reference_graph.analysis import ANALYSIS_VERSION, validate_rule
+from services.reference_graph.collection_protocol import integer, text
 from services.reference_graph.external import ExternalSource
 from services.reference_graph.reconcile import Reconciler, drained_thread
 from services.reference_graph.response_budget import require_response
@@ -205,6 +206,8 @@ class Entry:
     requests_drained: asyncio.Event = field(default_factory=asyncio.Event)
     retired: bool = False
     watching: bool = True
+    combined_ignore_status: bool = False
+    combined_ignore_needed: bool = False
     drain: asyncio.Task | None = None
 
     def __post_init__(self):
@@ -281,7 +284,7 @@ class ReferenceGraphService:
             if not route.users:
                 self._routes.pop(key)
 
-    async def resolve(self, ctx, action: str) -> tuple[Entry, dict]:
+    async def resolve(self, ctx, action: str, *, combined: bool = False) -> tuple[Entry, dict]:
         if self.closed:
             raise RuntimeError("Reference graph service is stopping")
         self._resolving += 1
@@ -289,7 +292,7 @@ class ReferenceGraphService:
         self._resolve_tasks.add(request)
         self._resolved.clear()
         try:
-            entry, status = await self._resolve(ctx, action)
+            entry, status = await self._resolve(ctx, action, combined=combined)
             if entry.workspace.restart_policy_pending and action not in {
                 "status",
                 "policy",
@@ -304,7 +307,7 @@ class ReferenceGraphService:
             if not self._resolving:
                 self._resolved.set()
 
-    async def _resolve(self, ctx, action: str) -> tuple[Entry, dict]:
+    async def _resolve(self, ctx, action: str, *, combined: bool = False) -> tuple[Entry, dict]:
         instance = await get_unity_instance_from_context(ctx)
         if not isinstance(instance, str) or not instance:
             raise ValueError("Select a Unity instance before using its reference graph")
@@ -320,6 +323,7 @@ class ReferenceGraphService:
                 route,
                 ticket,
                 getattr(ctx, "reference_graph_expected_scope", None),
+                combined=combined,
             )
 
     async def _resolve_scope(
@@ -330,6 +334,8 @@ class ReferenceGraphService:
         route: _Route,
         ticket: int,
         expected_scope=None,
+        *,
+        combined: bool = False,
     ) -> tuple[Entry, dict]:
 
         async def request_check():
@@ -337,7 +343,33 @@ class ReferenceGraphService:
                 await lease.check()
 
         await request_check()
-        status = await self.send(instance, {"action": "status"})
+        # The optional request contains no cached scope, snapshot, or policy.
+        candidate = (
+            next(
+                (
+                    entry
+                    for entry in self.entries.values()
+                    if not entry.retired
+                    and entry.instance == instance
+                    and entry.workspace.store.scope.user_id == user
+                    and entry.combined_ignore_status
+                    and entry.combined_ignore_needed
+                ),
+                None,
+            )
+            if combined
+            else None
+        )
+        params = {"action": "status"}
+        if candidate is not None:
+            params["validate_ignore_current"] = True
+        try:
+            status = await self.send(instance, params)
+        except ReferenceCollectionError:
+            if candidate is None:
+                raise
+            # A route may have been replaced by an older Editor.
+            status = await self.send(instance, {"action": "status"})
         await request_check()
         scope = GraphScope(user, status.get("instance_id"), status.get("project_id"))
         if expected_scope is not None and expected_scope != (scope.instance_id, scope.project_id):
@@ -381,6 +413,11 @@ class ReferenceGraphService:
                 )
             now = self._now()
             entry.last_used = now
+            entry.combined_ignore_status = (
+                type(status.get("ignore_current_validation")) is int
+                and status.get("ignore_current_validation") == 1
+                and status.get("ignore_watchers") is False
+            )
             entry.leases = [
                 (candidate, used)
                 for candidate, used in entry.leases
@@ -913,7 +950,13 @@ class ReferenceGraphService:
             not isinstance(options.get("owner"), str) or not options["owner"]
         ):
             raise ValueError("A declaration owner id is required")
-        entry, editor = await self.resolve(ctx, action)
+        entry, editor = await self.resolve(
+            ctx,
+            action,
+            combined=action == "query" and options.get("consistency", "cached") == "cached",
+        )
+        if action in {"set_policy", "import_config"}:
+            entry.combined_ignore_needed = False
         entry.active_requests += 1
         request = asyncio.current_task()
         entry.request_tasks.add(request)
@@ -1047,7 +1090,10 @@ class ReferenceGraphService:
                 )
         ignore_verified = consistency == "checked"
         if protected and fallback and admission_current and not ignore_verified:
-            ignore_verified = await entry.engine.validate_ignore()
+            ignore_verified = await entry.engine.validate_ignore(editor)
+        if action == "query" and consistency == "cached":
+            # This is only a transport hint; admission and proof are checked again.
+            entry.combined_ignore_needed = bool(fallback and admission_current and ignore_verified)
         admission_pending = False
         if protected and (not admission_current or fallback and not ignore_verified):
             if action == "query" and consistency == "cached":
@@ -1096,7 +1142,12 @@ class ReferenceGraphService:
         partial_static = admission_pending and _partial_proof_current(
             entry, editor, admission_fence
         )
-        if partial_static and fallback and not await entry.engine.validate_ignore():
+        if (
+            partial_static
+            and fallback
+            and not ignore_verified
+            and not await entry.engine.validate_ignore(editor)
+        ):
             raise RevisionConflict("Ignore rules changed before partial delivery; retry collection")
         if action in {"overview", "export_config", "cleanup", "retry"}:
             from services.reference_graph import operations
@@ -1437,19 +1488,40 @@ class ReferenceGraphService:
                 raise RevisionConflict(
                     "Graph admission changed while producing the result; restart the request"
                 )
-            if (
-                (not admission_pending or partial_static)
-                and fallback
-                and not await entry.engine.validate_ignore()
-            ):
-                raise RevisionConflict("Ignore rules changed before delivery; retry collection")
+            latest = None
+            combined_final = False
+            if not admission_pending or partial_static:
+                combined_final = (
+                    action == "query"
+                    and consistency == "cached"
+                    and fallback
+                    and type(editor.get("ignore_current_validation")) is int
+                    and editor.get("ignore_current_validation") == 1
+                )
+                if combined_final:
+                    try:
+                        latest = await entry.collect("status", validate_ignore_current=True)
+                    except ReferenceCollectionError:
+                        # The selected Editor may have been replaced by an older one.
+                        combined_final = False
+                    else:
+                        if "ignore_current_verified" not in latest:
+                            # Some older collectors ignore unknown request fields.
+                            combined_final = False
+                            latest = None
+                if fallback and not await entry.engine.validate_ignore(latest):
+                    raise RevisionConflict("Ignore rules changed before delivery; retry collection")
+                if not combined_final:
+                    latest = await entry.collect("status")
+                    if fallback:
+                        text(latest.get("epoch"), "epoch")
+                        integer(latest.get("revision"), "revision")
+                        integer(latest.get("ignore_revision"), "ignore_revision")
             if partial_static:
-                latest = await entry.collect("status")
                 if not _partial_proof_current(entry, latest, produced_fence):
                     raise RevisionConflict("Partial graph proof changed; retry the query")
                 final_fence = await drained_thread(workspace.delivery_fence)
             elif not admission_pending:
-                latest = await entry.collect("status")
                 if (
                     exclusions_apply
                     and not catalog_pending

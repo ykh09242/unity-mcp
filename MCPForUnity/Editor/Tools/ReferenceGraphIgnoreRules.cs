@@ -143,6 +143,19 @@ namespace MCPForUnity.Editor.Tools
                 Invalidate();
         }
 
+        internal string ValidateCurrent(string currentEpoch, long currentRevision)
+        {
+            Observe(currentEpoch, currentRevision);
+            if (snapshot == null || error != null)
+                return null;
+            string expected = snapshot;
+            CheckSnapshot(expected, currentEpoch, currentRevision);
+            Validate();
+            CheckSnapshot(expected, currentEpoch, currentRevision);
+            using (SHA256 hash = SHA256.Create())
+                return string.Concat(hash.ComputeHash(System.Text.Encoding.UTF8.GetBytes(expected)).Select(value => value.ToString("x2")));
+        }
+
         internal JObject Rules(JObject request, int count, string currentEpoch, long currentRevision, Func<Dictionary<string, string>> discover)
         {
             Observe(currentEpoch, currentRevision);

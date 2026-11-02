@@ -83,8 +83,10 @@ Supported event-based watchers invalidate cached evidence, while explicit
 snapshot checks cover present and missing candidates. Unity Mono's polling-only
 or unavailable watcher backends remain inactive; protected requests validate
 the known rule candidates explicitly instead of starting a recurring recursive
-directory scan. This fallback does not require a manual rebuild. The server
-compiles and reuses matching rules
+directory scan. For a warm cached query, a supporting Editor checks the current
+rule snapshot with its opening and final status responses. A changed snapshot
+invalidates the proof. Older Editors perform the checks in separate calls.
+The server compiles and reuses matching rules
 by effective policy revision. Large rule files use bounded transport chunks and
 the existing operator-controlled collection budgets rather than a new total
 project-size limit.

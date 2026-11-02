@@ -80,7 +80,11 @@ namespace MCPForUnity.Editor.Tools
             return true;
         }
 
-        internal static JObject Handle(JObject request)
+        internal static JObject Handle(JObject request) => HandleCore(request, null);
+
+        internal static JObject HandleWithStatus(JObject request, JObject priorStatus) => HandleCore(request, priorStatus);
+
+        private static JObject HandleCore(JObject request, JObject priorStatus)
         {
             if (!ToolConsentThread.IsMainThread)
                 throw new InvalidOperationException("Reference collection requires the Editor thread.");
@@ -105,7 +109,34 @@ namespace MCPForUnity.Editor.Tools
             string action = request.Value<string>("action") ?? "status";
             int count = Integer(request, "page_size", 128, 1, 1000);
             if (action == "status")
+            {
+                if (request.Value<bool?>("validate_ignore_current") == true)
+                {
+                    JObject before = priorStatus ?? Status();
+                    string verified = null;
+                    try
+                    {
+                        if (!EditorApplication.isCompiling && !EditorApplication.isUpdating)
+                            verified = IgnoreRules(true).ValidateCurrent(ReferenceGraphJournal.Epoch, ReferenceGraphJournal.Revision);
+                    }
+                    catch (Exception)
+                    {
+                        // A failed proof is never authorization to serve cached results.
+                    }
+                    JObject checkedStatus = Status();
+                    bool valid =
+                        verified != null
+                        && checkedStatus.Value<string>("ignore_state") == "available"
+                        && JToken.DeepEquals(before["epoch"], checkedStatus["epoch"])
+                        && JToken.DeepEquals(before["revision"], checkedStatus["revision"])
+                        && JToken.DeepEquals(before["ignore_revision"], checkedStatus["ignore_revision"]);
+                    checkedStatus["ignore_current_verified"] = valid;
+                    if (valid)
+                        checkedStatus["ignore_snapshot_digest"] = verified;
+                    return checkedStatus;
+                }
                 return Status();
+            }
             if (action == "changes")
                 return ReferenceGraphJournal.Read(request.Value<string>("epoch"), request.Value<long?>("after") ?? 0, count);
             if (EditorApplication.isCompiling || EditorApplication.isUpdating)
@@ -153,6 +184,7 @@ namespace MCPForUnity.Editor.Tools
         {
             JObject result = new JObject
             {
+                ["ignore_current_validation"] = 1,
                 ["instance_id"] = ReferenceGraphJournal.InstanceId,
                 ["project_id"] = ProjectIdentityUtility.GetProjectHash(),
                 ["epoch"] = ReferenceGraphJournal.Epoch,

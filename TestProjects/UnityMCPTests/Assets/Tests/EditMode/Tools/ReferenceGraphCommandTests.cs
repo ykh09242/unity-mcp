@@ -1,4 +1,8 @@
 using System;
+using System.Linq;
+using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
@@ -104,6 +108,54 @@ namespace MCPForUnityTests.EditMode.Tools
         public void IgnoreValidationRequiresAnExactBoolean(object value)
         {
             Assert.IsFalse(Call(new JObject { ["action"] = "ignore_rules", ["validate"] = JToken.FromObject(value) }).Value<bool>("success"));
+        }
+
+        [Test]
+        public void CombinedStatusValidatesTheCurrentIgnoreSnapshot()
+        {
+            JObject status = (JObject)Call(new JObject { ["action"] = "status" })["data"];
+            var rules = Call(
+                new JObject
+                {
+                    ["action"] = "ignore_rules",
+                    ["expected_instance_id"] = status["instance_id"],
+                    ["expected_project_id"] = status["project_id"],
+                    ["page_size"] = 1,
+                }
+            );
+            Assert.IsTrue(rules.Value<bool>("success"), rules.ToString());
+            string snapshot = rules["data"].Value<string>("snapshot");
+            string digest;
+            using (SHA256 hash = SHA256.Create())
+                digest = string.Concat(hash.ComputeHash(Encoding.UTF8.GetBytes(snapshot)).Select(value => value.ToString("x2")));
+            JObject combined = Call(new JObject { ["action"] = "status", ["validate_ignore_current"] = true });
+            Assert.IsTrue(combined.Value<bool>("success"), combined.ToString());
+            Assert.IsTrue(combined["data"].Value<bool>("ignore_current_verified"));
+            Assert.AreEqual(digest, combined["data"].Value<string>("ignore_snapshot_digest"));
+            Assert.AreEqual(status.Value<string>("instance_id"), combined["data"].Value<string>("instance_id"));
+            Assert.IsFalse(Call(new JObject { ["action"] = "status", ["validate_ignore_current"] = "true" }).Value<bool>("success"));
+        }
+
+        [Test]
+        public void CombinedStatusDoesNotProveAnObsoleteIgnoreSnapshot()
+        {
+            JObject status = (JObject)Call(new JObject { ["action"] = "status" })["data"];
+            JObject captured = Call(
+                new JObject
+                {
+                    ["action"] = "ignore_rules",
+                    ["expected_instance_id"] = status["instance_id"],
+                    ["expected_project_id"] = status["project_id"],
+                }
+            );
+            Assert.IsTrue(captured.Value<bool>("success"), captured.ToString());
+            Type collector = typeof(ManageReferenceGraph).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphCollector");
+            object rules = collector.GetField("ignoreRules", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            rules.GetType().GetMethod("Invalidate", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(rules, null);
+            JObject result = Call(new JObject { ["action"] = "status", ["validate_ignore_current"] = true });
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.IsFalse(result["data"].Value<bool>("ignore_current_verified"));
+            Assert.IsNull(result["data"]["ignore_snapshot_digest"]);
         }
 
         [Test]

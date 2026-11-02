@@ -141,7 +141,7 @@ class Reconciler:
         self._analysis_cache = None
         self.store.clear_summaries()
 
-    async def validate_ignore(self) -> bool:
+    async def validate_ignore(self, status: dict | None = None) -> bool:
         """Validate a warm native snapshot without rereading assets or external documents."""
         if not (await drained_thread(self.workspace.policy))["respect_gitignore"]:
             return True
@@ -149,11 +149,34 @@ class Reconciler:
         if not known.get("snapshot"):
             return False
         try:
+            text(known.get("snapshot"), "snapshot")
+            known_epoch = text(known.get("epoch"), "epoch")
+            known_revision = integer(known.get("ignore_revision"), "ignore_revision")
+            if status is not None:
+                text(status.get("epoch"), "epoch")
+                integer(status.get("revision"), "revision")
+                integer(status.get("ignore_revision"), "ignore_revision")
+            if status is not None and "ignore_current_verified" in status:
+                digest = hashlib.sha256(known["snapshot"].encode("utf-8")).hexdigest()
+                if (
+                    type(status.get("ignore_current_validation")) is int
+                    and status.get("ignore_current_validation") == 1
+                    and status.get("ignore_current_verified") is True
+                    and status.get("ignore_snapshot_digest") == digest
+                    and status.get("epoch") == known_epoch
+                    and status.get("ignore_revision") == known_revision
+                ):
+                    return True
+                await drained_thread(self.workspace.invalidate_ignore)
+                return False
             page = await self._collector(
                 "ignore_rules", snapshot=known["snapshot"], offset=0, page_size=1, validate=True
             )
-            if page.get("ignore_state") == "available" and all(
-                page.get(key) == known.get(key) for key in ("snapshot", "epoch", "ignore_revision")
+            if (
+                page.get("ignore_state") == "available"
+                and text(page.get("snapshot"), "snapshot") == known["snapshot"]
+                and text(page.get("epoch"), "epoch") == known_epoch
+                and integer(page.get("ignore_revision"), "ignore_revision") == known_revision
             ):
                 return True
         except (OSError, ValueError, RuntimeError):
@@ -369,7 +392,7 @@ class Reconciler:
             text(status.get("epoch"), "epoch"),
             integer(status.get("ignore_revision"), "ignore_revision"),
         )
-        if identity == (known.get("epoch"), known.get("ignore_revision")):
+        if known.get("snapshot") and identity == (known.get("epoch"), known.get("ignore_revision")):
             self.progress.update(ignore_epoch=identity[0], ignore_revision=identity[1])
             # Validation must still recheck missing/present candidates at the end.
             return known.get("snapshot")

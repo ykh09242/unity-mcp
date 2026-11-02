@@ -32,7 +32,7 @@ namespace MCPForUnity.Editor.Tools
                 switch (action)
                 {
                     case "status":
-                        fields = Array.Empty<string>();
+                        fields = new[] { "validate_ignore_current" };
                         break;
                     case "inventory":
                         fields = new[] { "offset", "snapshot", "page_size" };
@@ -86,7 +86,7 @@ namespace MCPForUnity.Editor.Tools
                             throw new ArgumentException("Collection paths must be an array of strings.");
                         continue;
                     }
-                    if (property.Name == "validate" || property.Name == "static_proof")
+                    if (property.Name == "validate" || property.Name == "static_proof" || property.Name == "validate_ignore_current")
                     {
                         if (property.Value.Type != JTokenType.Boolean)
                             throw new ArgumentException(property.Name + " requires a boolean.");
@@ -113,7 +113,9 @@ namespace MCPForUnity.Editor.Tools
                 }
                 token.ThrowIfCancellationRequested();
                 JObject data =
-                    action == "status" ? status
+                    action == "status" && parameters.Value<bool?>("validate_ignore_current") == true
+                        ? ReferenceGraphCollector.HandleWithStatus(parameters, status)
+                    : action == "status" ? status
                     : action.StartsWith("runtime_", StringComparison.Ordinal) ? ReferenceGraphRuntimeCapture.Handle(parameters)
                     : ReferenceGraphCollector.Handle(parameters);
                 data["instance_id"] = instance;
