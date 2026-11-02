@@ -1,5 +1,13 @@
+using System.Collections.Generic;
+
 namespace MCPForUnity.Editor.Services.Server
 {
+    /// <summary>Literal launch arguments, separate from the command rendered for manual use.</summary>
+    public interface ILiteralServerCommandBuilder : IServerCommandBuilder
+    {
+        bool TryBuildLaunchCommand(out string fileName, out IReadOnlyList<string> arguments, out string error);
+    }
+
     /// <summary>
     /// Interface for building uvx/server command strings.
     /// Handles platform-specific command construction for starting the MCP HTTP server.
@@ -30,10 +38,10 @@ namespace MCPForUnity.Editor.Services.Server
         string GetPlatformSpecificPathPrepend();
 
         /// <summary>
-        /// Quotes a string if it contains spaces.
+        /// Encodes a value for the legacy command string. Structured launches bypass this rendering.
         /// </summary>
         /// <param name="input">The input string</param>
-        /// <returns>The string, wrapped in quotes if it contains spaces</returns>
+        /// <returns>The value, quoted and escaped when it contains command-line punctuation or whitespace</returns>
         string QuoteIfNeeded(string input);
     }
 }

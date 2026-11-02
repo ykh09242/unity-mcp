@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Constants;
@@ -13,14 +14,25 @@ namespace MCPForUnity.Editor.Services.Server
     /// Builds uvx/server command strings for starting the MCP HTTP server.
     /// Handles platform-specific command construction.
     /// </summary>
-    public class ServerCommandBuilder : IServerCommandBuilder
+    public class ServerCommandBuilder : ILiteralServerCommandBuilder
     {
         /// <inheritdoc/>
         public bool TryBuildCommand(out string fileName, out string arguments, out string displayCommand, out string error)
         {
-            fileName = null;
             arguments = null;
             displayCommand = null;
+            if (!TryBuildLaunchCommand(out fileName, out var literalArguments, out error))
+                return false;
+            arguments = string.Join(" ", literalArguments.Select(QuoteIfNeeded));
+            displayCommand = $"{QuoteIfNeeded(fileName)} {arguments}";
+            return true;
+        }
+
+        /// <inheritdoc/>
+        public bool TryBuildLaunchCommand(out string fileName, out IReadOnlyList<string> arguments, out string error)
+        {
+            fileName = null;
+            arguments = null;
             error = null;
 
             bool useHttpTransport = EditorConfigurationCache.Instance.UseHttpTransport;
@@ -57,19 +69,18 @@ namespace MCPForUnity.Editor.Services.Server
                 return false;
             }
 
-            string devFlags = AssetPathUtility.GetUvxDevFlags();
+            var args = new List<string>(AssetPathUtility.GetUvxDevFlagsList());
+            args.AddRange(AssetPathUtility.GetBetaServerFromArgsList());
+            args.AddRange(new[] { packageName, "--transport", "http", "--http-url", httpUrl });
             bool projectScopedTools = EditorPrefs.GetBool(EditorPrefKeys.ProjectScopedToolsLocalHttp, true);
-            string scopedFlag = projectScopedTools ? " --project-scoped-tools" : string.Empty;
-            string profileFlag = StartupToolProfile.CommandSuffix(StartupToolProfile.Selection);
-
-            // Use the same source resolver as JSON and TOML client configs.
-            string fromArgs = AssetPathUtility.GetBetaServerFromArgs(quoteFromPath: true);
-
-            string args = $"{devFlags}{fromArgs} {packageName} --transport http --http-url {httpUrl}{scopedFlag}{profileFlag}";
+            if (projectScopedTools)
+                args.Add("--project-scoped-tools");
+            string profile = StartupToolProfile.Selection;
+            if (!string.IsNullOrEmpty(profile))
+                args.AddRange(new[] { "--tool-profile", profile });
 
             fileName = uvxPath;
             arguments = args;
-            displayCommand = $"{QuoteIfNeeded(uvxPath)} {args}";
             return true;
         }
 
@@ -126,7 +137,7 @@ namespace MCPForUnity.Editor.Services.Server
         {
             if (string.IsNullOrEmpty(input))
                 return input;
-            return input.IndexOf(' ') >= 0 ? $"\"{input}\"" : input;
+            return input.All(c => char.IsLetterOrDigit(c) || "_-./:\\@#=+,".IndexOf(c) >= 0) ? input : TerminalLauncher.QuoteWindowsArgument(input);
         }
     }
 }

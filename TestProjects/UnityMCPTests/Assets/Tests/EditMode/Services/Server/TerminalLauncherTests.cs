@@ -1,5 +1,11 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text;
 using MCPForUnity.Editor.Services.Server;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Services.Server
@@ -290,6 +296,163 @@ namespace MCPForUnityTests.Editor.Services.Server
         }
 
         #endregion
+
+        [Test]
+        public void LiteralHeadlessLaunch_RecordsExactArgumentsAndOwnsLogUntilExit()
+        {
+            string python = Environment.GetEnvironmentVariable("MCP_UNITY_TEST_PYTHON");
+            if (string.IsNullOrEmpty(python) || !File.Exists(python))
+                Assert.Ignore("Set MCP_UNITY_TEST_PYTHON to an existing Python executable for the harmless argv recorder.");
+
+            string root = Path.Combine(_launcher.GetProjectRootPath(), "Library", "MCPForUnity", "Tests", "argv-" + Guid.NewGuid().ToString("N"));
+            string special = Path.Combine(root, "R&D %MCP_R3_EXPAND% $cash's!^ (space) 한글");
+            Directory.CreateDirectory(special);
+            string script = Path.Combine(special, "record.py");
+            string log = Path.Combine(special, "launch.log");
+            string record = Path.Combine(special, "argv.json");
+            string source = Path.Combine(special, "source");
+#if !UNITY_EDITOR_WIN
+            source += "\"quoted";
+#endif
+            string[] expected =
+            {
+                "--from",
+                source,
+                "--pidfile",
+                Path.Combine(special, "server.pid"),
+                "--unity-instance-token",
+                "synthetic-owned-launch",
+                "",
+                "quoted\"&echo should-stay-data",
+                "slash\\\"quote",
+                "trailing\\",
+                "line\nnext",
+                "$HOME `echo literal` %MCP_R3_EXPAND% ! ^ | < >",
+            };
+            File.WriteAllText(
+                script,
+                "import json, os, sys\n"
+                    + "with open(os.environ['MCP_R3_RECORD'], 'w', encoding='utf-8') as f: json.dump(sys.argv[1:], f, ensure_ascii=False)\n"
+                    + "assert sys.stdin.read() == ''\n"
+                    + "print('recorder stdout', flush=True)\n"
+                    + "print('recorder stderr', file=sys.stderr, flush=True)\n"
+                    + "sys.exit(7)\n",
+                new UTF8Encoding(false)
+            );
+            Process child = null;
+            try
+            {
+                var arguments = new List<string> { "-I", script };
+                arguments.AddRange(expected);
+                var info = _launcher.CreateHeadlessProcessStartInfo(python, arguments, log);
+                info.EnvironmentVariables["MCP_R3_RECORD"] = record;
+                info.EnvironmentVariables["MCP_R3_EXPAND"] = "must-not-expand";
+                Assert.IsFalse(info.RedirectStandardOutput, "Log handles must survive an Editor domain reload.");
+                Assert.IsFalse(info.RedirectStandardError);
+                Assert.IsFalse(info.UseShellExecute);
+                Assert.IsTrue(info.CreateNoWindow);
+                child = Process.Start(info);
+                Assert.IsNotNull(child);
+                Assert.IsTrue(child.WaitForExit(10000), "The harmless recorder must exit within the watchdog.");
+                Assert.AreEqual(7, child.ExitCode);
+                CollectionAssert.AreEqual(expected, JArray.Parse(File.ReadAllText(record)).Select(value => (string)value).ToArray());
+                string captured = File.ReadAllText(log);
+                StringAssert.Contains("recorder stdout", captured);
+                StringAssert.Contains("recorder stderr", captured);
+                using (File.Open(log, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+            }
+            finally
+            {
+                if (child != null)
+                {
+                    if (!child.HasExited)
+                    {
+                        child.Kill();
+                        child.WaitForExit(5000);
+                    }
+                    child.Dispose();
+                }
+                Directory.Delete(root, true);
+            }
+        }
+
+        [Test]
+        public void LiteralHeadlessLaunch_RejectsNulWithoutTruncatingArguments()
+        {
+            Assert.Throws<ArgumentException>(() => _launcher.CreateHeadlessProcessStartInfo("uvx", new[] { "before\0after" }, LogPath()));
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void LiteralHeadlessLaunch_PlatformAdapterKeepsValuesOutOfShellSource(bool windows)
+        {
+            const string executable = "fixture-executable &'$%!";
+            const string argument = "fixture-argument \'\" & %NAME% ! ^ $() `literal` \\";
+            string log = LogPath();
+            var info = TerminalLauncher.CreateLiteralHeadlessProcessStartInfo(executable, new[] { argument, "" }, log, windows);
+            StringAssert.DoesNotContain(executable, info.Arguments);
+            StringAssert.DoesNotContain(argument, info.Arguments);
+            StringAssert.DoesNotContain(log, info.Arguments);
+            Assert.AreEqual(windows ? TerminalLauncher.QuoteWindowsArgument(executable) : executable, info.EnvironmentVariables["MCP_UNITY_EXECUTABLE"]);
+            Assert.AreEqual(windows ? TerminalLauncher.QuoteWindowsArgument(argument) : argument, info.EnvironmentVariables["MCP_UNITY_ARGUMENT_0"]);
+            Assert.AreEqual(windows ? "\"\"" : "", info.EnvironmentVariables["MCP_UNITY_ARGUMENT_1"]);
+            if (windows)
+                StringAssert.StartsWith("/d /v:on /s /c", info.Arguments);
+            else
+            {
+                Assert.AreEqual("/bin/bash", info.FileName);
+                StringAssert.StartsWith("-c \"exec ", info.Arguments);
+            }
+        }
+
+#if UNITY_EDITOR_WIN
+        [Test]
+        public void LiteralHeadlessLaunch_RejectsExpandedWindowsCommandBeyondLimit()
+        {
+            var error = Assert.Throws<ArgumentException>(() => _launcher.CreateHeadlessProcessStartInfo("uvx", new[] { new string('a', 8192) }, LogPath()));
+            StringAssert.Contains("8191", error.Message);
+        }
+
+        [Test]
+        public void LiteralHeadlessLaunch_RejectsAggregateWindowsCommandBeyondLimit()
+        {
+            var error = Assert.Throws<ArgumentException>(() =>
+                _launcher.CreateHeadlessProcessStartInfo("uvx", Enumerable.Repeat(new string('a', 410), 20).ToArray(), LogPath())
+            );
+            StringAssert.Contains("8191", error.Message);
+        }
+
+        [Test]
+        public void LiteralHeadlessLaunch_ExecutablePathWithMetacharactersIsLiteral()
+        {
+            string root = Path.Combine(_launcher.GetProjectRootPath(), "Library", "MCPForUnity", "Tests", "executable-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            string executable = Path.Combine(root, "R&D %MCP_R3_EXPAND% $cash's!^.exe");
+            File.Copy(Path.Combine(Environment.SystemDirectory, "where.exe"), executable);
+            Process child = null;
+            try
+            {
+                var info = _launcher.CreateHeadlessProcessStartInfo(executable, new[] { "cmd.exe" }, Path.Combine(root, "launch.log"));
+                info.EnvironmentVariables["MCP_R3_EXPAND"] = "must-not-expand";
+                child = Process.Start(info);
+                Assert.IsTrue(child.WaitForExit(10000));
+                Assert.AreEqual(0, child.ExitCode);
+            }
+            finally
+            {
+                if (child != null)
+                {
+                    if (!child.HasExited)
+                    {
+                        child.Kill();
+                        child.WaitForExit(5000);
+                    }
+                    child.Dispose();
+                }
+                Directory.Delete(root, true);
+            }
+        }
+#endif
 
         #region Interface Implementation Tests
 

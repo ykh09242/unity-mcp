@@ -198,7 +198,7 @@ namespace MCPForUnity.Editor.Helpers
         /// separate entry and the child process keeps reading the original one. That silently made
         /// every extraPathPrepend on Windows a no-op.
         /// </summary>
-        private static void SetPathVariable(ProcessStartInfo psi, string value)
+        internal static void SetPathVariable(ProcessStartInfo psi, string value)
         {
             string key = "PATH";
             foreach (string existing in psi.EnvironmentVariables.Keys)

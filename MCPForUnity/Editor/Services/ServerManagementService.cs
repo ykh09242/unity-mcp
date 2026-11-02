@@ -210,7 +210,17 @@ namespace MCPForUnity.Editor.Services
                 return false;
             }
 
-            if (!TryGetLocalHttpServerCommandParts(out _, out _, out var displayCommand, out var error))
+            string executable = null;
+            string displayCommand = null;
+            string error;
+            IReadOnlyList<string> literalArguments = null;
+            bool literalLaunch = _commandBuilder is ILiteralServerCommandBuilder && _terminalLauncher is ILiteralTerminalLauncher;
+            // Keep the original command-string contracts for explicitly injected legacy adapters.
+            // The production builder and launcher carry literal values all the way to the OS boundary.
+            bool commandBuilt = literalLaunch
+                ? ((ILiteralServerCommandBuilder)_commandBuilder).TryBuildLaunchCommand(out executable, out literalArguments, out error)
+                : TryGetLocalHttpServerCommandParts(out executable, out _, out displayCommand, out error);
+            if (!commandBuilt)
             {
                 if (!quiet)
                 {
@@ -261,9 +271,13 @@ namespace MCPForUnity.Editor.Services
             string pidFilePath = portForPid > 0 ? GetLocalHttpServerPidFilePath(portForPid) : null;
 
             string launchCommand = displayCommand;
+            var launchArguments = literalLaunch ? new List<string>(literalArguments) : null;
             if (!string.IsNullOrEmpty(pidFilePath))
             {
-                launchCommand = $"{displayCommand} --pidfile {QuoteIfNeeded(pidFilePath)} --unity-instance-token {instanceToken}";
+                if (literalLaunch)
+                    launchArguments.AddRange(new[] { "--pidfile", pidFilePath, "--unity-instance-token", instanceToken });
+                else
+                    launchCommand = $"{displayCommand} --pidfile {QuoteIfNeeded(pidFilePath)} --unity-instance-token {instanceToken}";
             }
 
             // First-time-only confirmation. Subsequent launches (and the quiet auto-start path) skip the dialog.
@@ -322,7 +336,9 @@ namespace MCPForUnity.Editor.Services
 
                 // Launch the server headless (no terminal window); stdout+stderr go to the launch log.
                 string effectiveLog = launchLog ?? Path.Combine(Path.GetTempPath(), "mcp-for-unity-server-launch.log");
-                var startInfo = CreateHeadlessProcessStartInfo(launchCommand, effectiveLog);
+                var startInfo = literalLaunch
+                    ? ((ILiteralTerminalLauncher)_terminalLauncher).CreateHeadlessProcessStartInfo(executable, launchArguments, effectiveLog)
+                    : CreateHeadlessProcessStartInfo(launchCommand, effectiveLog);
 
                 // The headless shell is not a login shell, so it does not inherit the user's
                 // profile PATH (on macOS, GUI-launched Unity has a minimal PATH). Prepend the
@@ -332,9 +348,10 @@ namespace MCPForUnity.Editor.Services
                 if (!string.IsNullOrEmpty(extraPathPrepend))
                 {
                     string currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-                    startInfo.EnvironmentVariables["PATH"] = string.IsNullOrEmpty(currentPath)
-                        ? extraPathPrepend
-                        : (extraPathPrepend + Path.PathSeparator + currentPath);
+                    ExecPath.SetPathVariable(
+                        startInfo,
+                        string.IsNullOrEmpty(currentPath) ? extraPathPrepend : (extraPathPrepend + Path.PathSeparator + currentPath)
+                    );
                 }
 
                 _lastLaunchedProcess = System.Diagnostics.Process.Start(startInfo);
@@ -343,8 +360,8 @@ namespace MCPForUnity.Editor.Services
                 if (!string.IsNullOrEmpty(pidFilePath))
                 {
                     StoreLocalHttpServerHandshake(pidFilePath, instanceToken);
-                    // Both headless launchers run uv in the foreground: cmd /c
-                    // on Windows, bash -c on macOS/Linux. Their PID covers the
+                    // Windows waits for the foreground uv child; POSIX exec replaces
+                    // its redirection shim with uv. The launch PID covers the
                     // dependency/bootstrap period before Python writes its PID.
                     if (_pidFileManager is PidFileManager ownedPids)
                         ownedPids.StoreOwnedLaunchProcess(_lastLaunchedProcess.Id, portForPid, instanceToken);

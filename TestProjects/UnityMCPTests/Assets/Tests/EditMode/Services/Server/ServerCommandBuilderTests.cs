@@ -91,16 +91,15 @@ namespace MCPForUnityTests.Editor.Services.Server
         }
 
         [Test]
-        public void QuoteIfNeeded_AlreadyQuoted_AddsMoreQuotes()
+        public void QuoteIfNeeded_EmbeddedQuotes_AreLiteral()
         {
-            // Arrange - This is intentional behavior - don't double-escape
+            // Input quotes are data, not a pre-encoded command line.
             string input = "\"already quoted\"";
 
             // Act
             string result = _builder.QuoteIfNeeded(input);
 
-            // Assert - Has spaces so gets quoted
-            Assert.AreEqual("\"\"already quoted\"\"", result);
+            Assert.AreEqual("\"\\\"already quoted\\\"\"", result);
         }
 
         #endregion

@@ -1,7 +1,14 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 
 namespace MCPForUnity.Editor.Services.Server
 {
+    /// <summary>Launches an executable with literal arguments and reload-durable output redirection.</summary>
+    public interface ILiteralTerminalLauncher : ITerminalLauncher
+    {
+        ProcessStartInfo CreateHeadlessProcessStartInfo(string fileName, IReadOnlyList<string> arguments, string logFilePath);
+    }
+
     /// <summary>
     /// Interface for launching commands in platform-specific terminal windows.
     /// Supports macOS Terminal, Windows cmd, and Linux terminal emulators.

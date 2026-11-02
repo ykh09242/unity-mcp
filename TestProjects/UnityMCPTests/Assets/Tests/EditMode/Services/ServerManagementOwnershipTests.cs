@@ -407,6 +407,78 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(0, launcher.Calls);
         }
 
+        [Test]
+        public void Start_LiteralLaunchKeepsSourceAndOwnershipArguments()
+        {
+            _pids.ClearTracking();
+            _pids = new PidFileManager(Path.Combine(_root, "R&D %percent% $cash's!"));
+            _pidPath = _pids.GetPidFilePath(Port);
+            _detector.Listening = false;
+            var command = new LiteralCommandBuilder();
+            var launcher = new LiteralBlockingLauncher(_root);
+            _service = new ServerManagementService(_detector, _pids, _terminator, command, launcher);
+            LogAssert.Expect(LogType.Error, new Regex("Failed to start server: Fixture prevented literal process creation$"));
+
+            Assert.IsFalse(_service.StartLocalHttpServer(quiet: true));
+
+            Assert.AreEqual(command.Executable, launcher.Executable);
+            Assert.AreEqual(6, launcher.Arguments.Count);
+            Assert.AreEqual("--from", launcher.Arguments[0]);
+            Assert.AreEqual(command.Source, launcher.Arguments[1]);
+            Assert.AreEqual("--pidfile", launcher.Arguments[2]);
+            Assert.AreEqual(_pidPath, launcher.Arguments[3]);
+            Assert.AreEqual("--unity-instance-token", launcher.Arguments[4]);
+            Assert.That(launcher.Arguments[5], Does.Match("^[a-f0-9]{32}$"));
+            Assert.IsFalse(_pids.TryGetHandshake(out _, out _), "No process was started, so no launch can own this identity.");
+        }
+
+        private sealed class LiteralCommandBuilder : ILiteralServerCommandBuilder
+        {
+            internal readonly string Executable = "R&D %percent% $cash's!/uvx";
+            internal readonly string Source = "source R&D %percent% $cash's!";
+
+            public bool TryBuildLaunchCommand(out string fileName, out IReadOnlyList<string> arguments, out string error)
+            {
+                fileName = Executable;
+                arguments = new[] { "--from", Source };
+                error = null;
+                return true;
+            }
+
+            public bool TryBuildCommand(out string fileName, out string arguments, out string displayCommand, out string error) =>
+                throw new InvalidOperationException("Display commands must not enter the literal launch path.");
+
+            public string QuoteIfNeeded(string value) => throw new InvalidOperationException("Literal values must not be quoted here.");
+
+            public string BuildUvPathFromUvx(string value) => value;
+
+            public string GetPlatformSpecificPathPrepend() => string.Empty;
+        }
+
+        private sealed class LiteralBlockingLauncher : ILiteralTerminalLauncher
+        {
+            private readonly string _root;
+            internal string Executable;
+            internal IReadOnlyList<string> Arguments;
+
+            internal LiteralBlockingLauncher(string root) => _root = root;
+
+            public string GetProjectRootPath() => _root;
+
+            public System.Diagnostics.ProcessStartInfo CreateHeadlessProcessStartInfo(string fileName, IReadOnlyList<string> arguments, string logFilePath)
+            {
+                Executable = fileName;
+                Arguments = arguments;
+                throw new InvalidOperationException("Fixture prevented literal process creation");
+            }
+
+            public System.Diagnostics.ProcessStartInfo CreateHeadlessProcessStartInfo(string command, string logFilePath) =>
+                throw new InvalidOperationException("Unexpected command-string launch");
+
+            public System.Diagnostics.ProcessStartInfo CreateTerminalProcessStartInfo(string command) =>
+                throw new InvalidOperationException("Unexpected terminal launch");
+        }
+
         private BlockingLauncher BuildStartService()
         {
             var launcher = new BlockingLauncher(_root);
