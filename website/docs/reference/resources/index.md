@@ -219,15 +219,18 @@ URI: mcpforunity://prefab-api
 
 ## `prefab_hierarchy`
 
-**URI:** `mcpforunity://prefab/{encoded_path}/hierarchy`
+**URI:** `mcpforunity://prefab/{encoded_path}/hierarchy{?page_size,cursor,max_depth}`
 
-Get the full hierarchy of a prefab with nested prefab information. Returns all GameObjects with their components and nesting depth.
+Get one bounded prefab hierarchy page with components and nesting information. page_size defaults to 50 (1-500); max_depth defaults to 64 (0-128), root=0. Follow next_cursor with identical path/page_size/max_depth within 30 seconds. total may be null; inspect truncated and depth_limited. Cursors expire on source changes, reload or eviction.
 
-URI: mcpforunity://prefab/{encoded_path}/hierarchy
+URI: mcpforunity://prefab/{encoded_path}/hierarchy{?page_size,cursor,max_depth}
 
 **Parameters:**
 
 - `encoded_path` (`str`, required)
+- `page_size` (`int`, optional) — Objects per page, from 1 to 500; default 50.
+- `cursor` (`str | None`, optional) — Opaque next_cursor; omit to start. Keep identical path/page_size/max_depth.
+- `max_depth` (`int`, optional) — Inclusive depth scope, root=0; from 0 to 128, default 64.
 
 ## `prefab_info`
 

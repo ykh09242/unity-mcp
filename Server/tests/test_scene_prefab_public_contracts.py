@@ -96,7 +96,7 @@ prefab_cases = [
     (['info', 'Assets/Fixture.prefab', '--compact'],
      {'action': 'get_info', 'prefabPath': 'Assets/Fixture.prefab'}),
     (['hierarchy', 'Assets/Fixture.prefab', '--compact', '--show-prefab-info'],
-     {'action': 'get_hierarchy', 'prefabPath': 'Assets/Fixture.prefab'}),
+     {'action': 'get_hierarchy', 'prefabPath': 'Assets/Fixture.prefab', 'page_size': 50, 'max_depth': 64}),
     (['create', 'Root/Fixture', 'Assets/Fixture.prefab'],
      {'action': 'create_from_gameobject', 'target': 'Root/Fixture', 'prefabPath': 'Assets/Fixture.prefab'}),
     (['create', 'Root/Fixture', 'Assets/Fixture.prefab', '--overwrite',

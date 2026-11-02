@@ -120,6 +120,93 @@ def test_text_keeps_requested_summaries_and_guidance(domain_transport, command, 
     assert notice in result.output
 
 
+def test_prefab_hierarchy_pages_over_fifty_objects_without_loss_or_duplicates(monkeypatch):
+    requests = []
+    client_type = httpx.AsyncClient
+    items = [{"name": f"Object{i}", "path": f"Root/Object{i}"} for i in range(123)]
+
+    def respond(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        params = payload["params"]
+        assert params["prefabPath"] == PREFAB
+        assert params["page_size"] == 50 and params["max_depth"] == 7
+        start = int(params["cursor"], 16) if "cursor" in params else 0
+        end = min(start + params["page_size"], len(items))
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "items": items[start:end],
+                    "total": len(items) if end == len(items) else None,
+                    "next_cursor": f"{end:032x}" if end < len(items) else None,
+                    "truncated": end < len(items),
+                },
+            },
+        )
+
+    monkeypatch.setattr(
+        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+    )
+    monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
+    names = []
+    cursor = None
+    for _ in range(3):
+        command = ["prefab", "hierarchy", PREFAB, "--page-size", "50", "--max-depth", "7"]
+        if cursor is not None:
+            command += ["--cursor", cursor]
+        result = CliRunner().invoke(cli, ["--format", "json", *command])
+        assert result.exit_code == 0, result.output
+        page = json.loads(result.stdout)["data"]
+        names.extend(item["name"] for item in page["items"])
+        cursor = page["next_cursor"]
+    assert names == [item["name"] for item in items]
+    assert cursor is None and len(requests) == 3
+
+
+@pytest.mark.parametrize("flags", [["--compact"], ["--show-prefab-info"], ["--compact", "-p"]])
+def test_prefab_hierarchy_text_exposes_incomplete_pages_and_continuation(domain_transport, flags):
+    response, requests = domain_transport
+    response["data"].update(
+        total=None,
+        truncated=True,
+        next_cursor="a" * 32,
+        depth_limited=True,
+        max_depth=7,
+        page_size=50,
+    )
+    result = CliRunner().invoke(cli, ["prefab", "hierarchy", PREFAB, "--max-depth", "7", *flags])
+    assert result.exit_code == 0, result.output
+    assert "Page: 1 objects" in result.output
+    assert "Total: unknown" in result.output and "Total: None" not in result.output
+    assert "truncated" in result.output.lower()
+    assert f"--cursor {'a' * 32}" in result.output
+    assert "--page-size 50 --max-depth 7" in result.output
+    assert "Depth limited" in result.output
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--page-size", "0"],
+        ["--page-size", "501"],
+        ["--page-size", "bad"],
+        ["--max-depth", "-1"],
+        ["--max-depth", "129"],
+        ["--max-depth", "bad"],
+        ["--cursor", ""],
+        ["--cursor", "not-a-cursor"],
+    ],
+)
+def test_prefab_hierarchy_rejects_unbounded_or_malformed_requests(domain_transport, options):
+    _, requests = domain_transport
+    result = CliRunner().invoke(cli, ["prefab", "hierarchy", PREFAB, *options])
+    assert result.exit_code == 2, result.output
+    assert requests == []
+
+
 def test_prefab_modification_keeps_numeric_name_false_and_zero(domain_transport):
     _, requests = domain_transport
     result = CliRunner().invoke(

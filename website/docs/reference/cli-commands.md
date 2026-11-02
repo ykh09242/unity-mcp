@@ -3163,13 +3163,16 @@ Create a prefab from a scene GameObject. Examples: unity-mcp prefab create "Play
 
 ## `unity-mcp prefab hierarchy`
 
-Get the hierarchical structure of a prefab. Examples: unity-mcp prefab hierarchy "Assets/Prefabs/Player.prefab" unity-mcp prefab hierarchy "Assets/Prefabs/UI.prefab" --compact unity-mcp prefab hierarchy "Assets/Prefabs/Complex.prefab" --show-prefab-info
+Get one bounded page of a prefab hierarchy; follow next_cursor to continue. Examples: unity-mcp prefab hierarchy "Assets/Prefabs/Player.prefab" unity-mcp prefab hierarchy "Assets/Prefabs/UI.prefab" --compact unity-mcp prefab hierarchy "Assets/Prefabs/Complex.prefab" --show-prefab-info unity-mcp prefab hierarchy "Assets/Prefabs/Player.prefab" --page-size 50 --cursor TOKEN
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | path | text | required | nargs=1 | — | — |  |
 | --compact / -c | boolean | optional | nargs=1, flag | — | — | Show compact output (names and paths only). |
 | --show-prefab-info / -p | boolean | optional | nargs=1, flag | — | — | Show prefab nesting information. |
+| --page-size | integer range: [1..500] | optional | nargs=1 | 50 | — |  |
+| --cursor | text | optional | nargs=1 | — | — | Opaque next_cursor; keep identical path/page-size/max-depth. |
+| --max-depth | integer range: [0..128] | optional | nargs=1 | 64 | — |  |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp prefab info`

@@ -7,7 +7,7 @@ These resources provide read-only access to:
 - Currently open prefab stage (mcpforunity://editor/prefab-stage - see prefab_stage.py)
 """
 
-from typing import Any
+from typing import Annotated, Any
 from pydantic import BaseModel
 from fastmcp import Context
 
@@ -71,13 +71,15 @@ async def get_prefab_api_docs(_ctx: Context) -> MCPResponse:
                     "parentPrefab",
                 ],
             },
-            "mcpforunity://prefab/{encoded_path}/hierarchy": {
-                "description": "Get full prefab hierarchy with nested prefab information",
+            "mcpforunity://prefab/{encoded_path}/hierarchy{?page_size,cursor,max_depth}": {
+                "description": "Get one bounded prefab hierarchy page with nested prefab information",
                 "example": "mcpforunity://prefab/Assets%2FPrefabs%2FPlayer.prefab/hierarchy",
+                "paging": "page_size defaults to 50 (1-500), max_depth to 64 (0-128). Follow next_cursor with identical path/page_size/max_depth within 30 seconds; restart after source changes, reload or cursor expiry. No automatic aggregation.",
                 "returns": [
                     "prefabPath",
-                    "total",
+                    "total (null until known), total_known",
                     "items (with name, instanceId, path, componentTypes, prefab nesting info)",
+                    "next_cursor, truncated, depth_limited, max_depth, page_size",
                 ],
             },
             "mcpforunity://editor/prefab-stage": {
@@ -163,7 +165,13 @@ class PrefabHierarchyData(BaseModel):
     """Data for prefab hierarchy."""
 
     prefabPath: str
-    total: int = 0
+    total: int | None = None
+    total_known: bool = False
+    next_cursor: str | None = None
+    truncated: bool = False
+    depth_limited: bool = False
+    max_depth: int = 64
+    page_size: int = 50
     items: list[PrefabHierarchyItem] = []
 
 
@@ -174,19 +182,47 @@ class PrefabHierarchyResponse(MCPResponse):
 
 
 @mcp_for_unity_resource(
-    uri="mcpforunity://prefab/{encoded_path}/hierarchy",
+    uri="mcpforunity://prefab/{encoded_path}/hierarchy{?page_size,cursor,max_depth}",
     name="prefab_hierarchy",
-    description="Get the full hierarchy of a prefab with nested prefab information. Returns all GameObjects with their components and nesting depth.\n\nURI: mcpforunity://prefab/{encoded_path}/hierarchy",
+    description="Get one bounded prefab hierarchy page with components and nesting information. page_size defaults to 50 (1-500); max_depth defaults to 64 (0-128), root=0. Follow next_cursor with identical path/page_size/max_depth within 30 seconds. total may be null; inspect truncated and depth_limited. Cursors expire on source changes, reload or eviction.\n\nURI: mcpforunity://prefab/{encoded_path}/hierarchy{?page_size,cursor,max_depth}",
 )
-async def get_prefab_hierarchy(ctx: Context, encoded_path: str) -> MCPResponse:
-    """Get prefab hierarchy using the path already decoded by FastMCP."""
+async def get_prefab_hierarchy(
+    ctx: Context,
+    encoded_path: str,
+    page_size: Annotated[int, "Objects per page, from 1 to 500; default 50."] = 50,
+    cursor: Annotated[
+        str | None, "Opaque next_cursor; omit to start. Keep identical path/page_size/max_depth."
+    ] = None,
+    max_depth: Annotated[int, "Inclusive depth scope, root=0; from 0 to 128, default 64."] = 64,
+) -> MCPResponse:
+    """Read one bounded page using the path already decoded by FastMCP."""
+    if type(page_size) is not int or not 1 <= page_size <= 500:
+        return MCPResponse(success=False, error="page_size must be an integer between 1 and 500.")
+    if type(max_depth) is not int or not 0 <= max_depth <= 128:
+        return MCPResponse(success=False, error="max_depth must be an integer between 0 and 128.")
+    if cursor is not None and (
+        type(cursor) is not str
+        or len(cursor) != 32
+        or any(c not in "0123456789abcdef" for c in cursor)
+    ):
+        return MCPResponse(
+            success=False,
+            error="stale_cursor",
+            message="Use an opaque hierarchy cursor or restart the read.",
+        )
     unity_instance = await get_unity_instance_from_context(ctx)
 
     response = await send_with_unity_instance(
         async_send_command_with_retry,
         unity_instance,
         "manage_prefabs",
-        {"action": "get_hierarchy", "prefabPath": encoded_path},
+        {
+            "action": "get_hierarchy",
+            "prefabPath": encoded_path,
+            "page_size": page_size,
+            "max_depth": max_depth,
+            **({"cursor": cursor} if cursor is not None else {}),
+        },
     )
 
     return _normalize_response(response)

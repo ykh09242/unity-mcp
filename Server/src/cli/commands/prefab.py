@@ -196,57 +196,84 @@ def info(path: str, compact: bool):
 @click.argument("path")
 @click.option("--compact", "-c", is_flag=True, help="Show compact output (names and paths only).")
 @click.option("--show-prefab-info", "-p", is_flag=True, help="Show prefab nesting information.")
+@click.option("--page-size", default=50, show_default=True, type=click.IntRange(1, 500))
+@click.option("--cursor", help="Opaque next_cursor; keep identical path/page-size/max-depth.")
+@click.option("--max-depth", default=64, show_default=True, type=click.IntRange(0, 128))
 @handle_unity_errors
-def hierarchy(path: str, compact: bool, show_prefab_info: bool):
-    """Get the hierarchical structure of a prefab.
+def hierarchy(
+    path: str,
+    compact: bool,
+    show_prefab_info: bool,
+    page_size: int,
+    cursor: str | None,
+    max_depth: int,
+) -> None:
+    """Get one bounded page of a prefab hierarchy; follow next_cursor to continue.
 
     \b
     Examples:
         unity-mcp prefab hierarchy "Assets/Prefabs/Player.prefab"
         unity-mcp prefab hierarchy "Assets/Prefabs/UI.prefab" --compact
         unity-mcp prefab hierarchy "Assets/Prefabs/Complex.prefab" --show-prefab-info
+        unity-mcp prefab hierarchy "Assets/Prefabs/Player.prefab" --page-size 50 --cursor TOKEN
     """
+    if cursor is not None and (
+        len(cursor) != 32 or any(c not in "0123456789abcdef" for c in cursor)
+    ):
+        raise click.BadParameter(
+            "Use the opaque 32-character next_cursor or omit it to restart.", param_hint="--cursor"
+        )
     config = get_config()
 
     params: dict[str, Any] = {
         "action": "get_hierarchy",
         "prefabPath": path,
+        "page_size": page_size,
+        "max_depth": max_depth,
     }
+    if cursor is not None:
+        params["cursor"] = cursor
 
     result = run_command("manage_prefabs", params, config)
     # Get the actual response data from the wrapped result structure
     response_data = result.get("result", result)
     if (
         config.format != "json"
-        and compact
+        and (compact or show_prefab_info)
         and response_data.get("success")
         and response_data.get("data")
     ):
         data = response_data["data"]
         items = data.get("items", [])
         for item in items:
-            indent = "  " * item.get("path", "").count("/")
             prefab_info = ""
-            if show_prefab_info and item.get("prefab", {}).get("isNestedRoot"):
-                prefab_info = f" [nested: {item['prefab']['assetPath']}]"
-            click.echo(f"{indent}{item.get('name')}{prefab_info}")
-        click.echo(f"\nTotal: {data.get('total', 0)} objects")
-    elif config.format != "json" and show_prefab_info:
-        # Show prefab info in readable format
-        if response_data.get("success") and response_data.get("data"):
-            data = response_data["data"]
-            items = data.get("items", [])
-            for item in items:
-                prefab = item.get("prefab", {})
-                prefab_info = ""
+            prefab = item.get("prefab", {})
+            if compact:
+                indent = "  " * item.get("path", "").count("/")
+                if show_prefab_info and prefab.get("isNestedRoot"):
+                    prefab_info = f" [nested: {prefab['assetPath']}]"
+                click.echo(f"{indent}{item.get('name')}{prefab_info}")
+            else:
                 if prefab.get("isRoot"):
                     prefab_info = " [root]"
                 elif prefab.get("isNestedRoot"):
                     prefab_info = f" [nested: {prefab.get('nestingDepth', 0)}]"
                 click.echo(f"{item.get('path')}{prefab_info}")
-            click.echo(f"\nTotal: {data.get('total', 0)} objects")
+        click.echo(f"\nPage: {len(items)} objects")
+        total = data.get("total")
+        if total is None:
+            click.echo("Total: unknown")
         else:
-            click.echo(format_output(result, config.format))
+            click.echo(f"Total: {total} objects")
+        if data.get("truncated"):
+            click.echo("Incomplete page (truncated).")
+        if data.get("next_cursor"):
+            click.echo(
+                f"Continue with --cursor {data['next_cursor']} "
+                f"--page-size {page_size} --max-depth {max_depth} using the same path."
+            )
+        if data.get("depth_limited"):
+            click.echo(f"Depth limited: descendants below max_depth={max_depth} are excluded.")
     else:
         click.echo(format_output(result, config.format))
 
