@@ -594,11 +594,22 @@ class GraphStore:
             }
 
     def query(
-        self, node: str, *, direction: str = "outgoing", limit: int = 100, cursor: str | None = None
+        self,
+        node: str,
+        *,
+        direction: str = "outgoing",
+        limit: int = 100,
+        cursor: str | None = None,
+        partial_static: bool = False,
+        withhold_edges: bool = False,
     ) -> dict:
         if direction not in ("outgoing", "incoming") or not 1 <= limit <= 10000:
             raise ValueError("Use incoming/outgoing and a page size from 1 to 10000")
-        query_hash = _hash((self.scope.key, node, direction))
+        query_hash = _hash(
+            (self.scope.key, node, direction, "partial_static")
+            if partial_static
+            else (self.scope.key, node, direction)
+        )
         position = None
         if cursor is not None:
             try:
@@ -633,6 +644,8 @@ class GraphStore:
                     last = anchor["id"]
                 else:
                     last = position["last"]
+            if withhold_edges:
+                return {"revision": revision, "edges": [], "next_cursor": None}
             if connection.execute(
                 "SELECT 1 FROM graph_excluded_nodes WHERE id=?", (node,)
             ).fetchone():
@@ -644,9 +657,17 @@ class GraphStore:
                     "reason": "excluded_by_collection_policy",
                 }
             column = "owner" if direction == "outgoing" else "target"
+            admission_filter = (
+                "e.provider='unity' AND o.state='ready' AND e.owner GLOB 'asset:*' "
+                "AND e.target GLOB 'asset:*' "
+                "AND EXISTS (SELECT 1 FROM graph_assets a WHERE a.guid=substr(e.owner,7)) "
+                "AND EXISTS (SELECT 1 FROM graph_assets a WHERE a.guid=substr(e.target,7))"
+                if partial_static
+                else "(SELECT ready FROM graph_admission WHERE id=1)=1"
+            )
             rows = bounded_rows(
                 connection,
-                f"SELECT e.rowid AS cursor_row,e.*,o.state,n.present,c.published AS provenance FROM edges e JOIN sources s ON s.provider=e.provider LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider LEFT JOIN nodes n ON n.id=e.target WHERE e.{column}=? AND e.id>? AND s.enabled=1 AND (SELECT ready FROM graph_admission WHERE id=1)=1 AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.owner OR x.id=e.target) ORDER BY e.id LIMIT ?",
+                f"SELECT e.rowid AS cursor_row,e.*,o.state,n.present,c.published AS provenance FROM edges e JOIN sources s ON s.provider=e.provider LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider LEFT JOIN nodes n ON n.id=e.target WHERE e.{column}=? AND e.id>? AND s.enabled=1 AND {admission_filter} AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.owner OR x.id=e.target) ORDER BY e.id LIMIT ?",
                 (node, last, limit + 1),
             )
             edges, page_budget, more, anchor = [], PageBudget(), False, None

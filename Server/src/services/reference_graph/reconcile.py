@@ -114,6 +114,7 @@ class Reconciler:
         self._catalog_cache: tuple[int, Catalog] | None = None
         self._analysis_cache = None
         self._analysis_used = 0.0
+        self.partial_proof = None
 
     async def collect(self, action: str, **params) -> dict:
         self._budget.request()
@@ -178,12 +179,26 @@ class Reconciler:
             self.stopped.set()
             parent.cancel()
 
-    async def reconcile(self, *, force_external: bool = False) -> bool:
-        # A checked query joins this scope's watcher without running a second
-        # reconciliation using the same durable worker identity.
-        async with self._gate:
+    async def reconcile(self, *, force_external: bool = False, wait: bool = True) -> bool | None:
+        # Serialize use of the durable worker identity. Foreground requests
+        # must not wait while holding an Editor operation needed by the owner.
+        if wait:
+            await self._gate.acquire()
+        else:
+            try:
+                # A foreground Editor operation cannot wait for a background
+                # owner that may itself be queued for the same Editor.
+                async with asyncio.timeout(0):
+                    await self._gate.acquire()
+            except TimeoutError:
+                return None
+        try:
+            self.partial_proof = None
             self._budget = CollectionBudget(self.limits)
             return await self._reconcile(force_external=force_external)
+        finally:
+            self.partial_proof = None
+            self._gate.release()
 
     async def _reconcile(self, *, force_external: bool) -> bool:
         await self.check()
@@ -222,6 +237,7 @@ class Reconciler:
             await self._phase("waiting_for_editor")
             return False
         ignore_snapshot = await self._ignore_rules(status)
+        policy_fence = (await drained_thread(self.workspace.delivery_fence))[3:]
         self.progress["editor"] = status
         await drained_thread(self.workspace.ensure_analysis_version, self.worker, ANALYSIS_VERSION)
         compilation_context = status.get("compilation_context")
@@ -229,6 +245,59 @@ class Reconciler:
             await self._census(status, force=True)
         await self._changes()
         await self._compilation(compilation_context)
+        # A complete catalog and journal permit narrowly scoped, current Unity
+        # dependency pages while the remaining assets are being collected.
+        if not (await drained_thread(self.workspace.delivery_fence))[2]:
+            if ignore_snapshot is not None:
+                validated = False
+                try:
+                    verified = await self.collect(
+                        "ignore_rules",
+                        snapshot=ignore_snapshot,
+                        offset=0,
+                        page_size=1,
+                        validate=True,
+                    )
+                    if (
+                        verified.get("ignore_state") != "available"
+                        or verified.get("snapshot") != ignore_snapshot
+                        or (verified.get("epoch"), verified.get("ignore_revision"))
+                        != (self.progress["ignore_epoch"], self.progress["ignore_revision"])
+                    ):
+                        raise RevisionConflict(
+                            "Ignore rules changed before partial graph publication"
+                        )
+                    validated = True
+                finally:
+                    if not validated:
+                        await drained_thread(self.workspace.invalidate_ignore)
+            partial_status = await self.collect("status")
+            partial_fence = await drained_thread(self.workspace.delivery_fence)
+            if (
+                partial_fence[3:] == policy_fence
+                and not partial_fence[2]
+                and partial_status.get("epoch") == self.progress.get("epoch")
+                and partial_status.get("revision") == self.progress.get("after")
+                and partial_status.get("compilation_context") == compilation_context
+                and not any(
+                    partial_status.get(key)
+                    for key in (
+                        "compiling",
+                        "importing",
+                        "compilation_failed",
+                        "addressables_event_error",
+                    )
+                )
+                and (
+                    ignore_snapshot is None
+                    or (
+                        partial_status.get("ignore_state") == "available"
+                        and (partial_status.get("epoch"), partial_status.get("ignore_revision"))
+                        == (self.progress["ignore_epoch"], self.progress["ignore_revision"])
+                    )
+                )
+            ):
+                self.partial_proof = (partial_fence[1:], partial_status)
         await self._assets()
         await self._analysis()
         await self._external(force=force_external)

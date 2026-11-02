@@ -89,6 +89,38 @@ def _native_matches_progress(progress: dict, editor: dict) -> bool:
     )
 
 
+def _partial_proof_current(entry: Entry, editor: dict, fence: tuple) -> bool:
+    proof = entry.engine.partial_proof
+    return bool(
+        proof
+        and entry.engine._gate.locked()
+        and proof[0] == fence[1:]
+        and all(
+            editor.get(key) == proof[1].get(key)
+            for key in (
+                "epoch",
+                "revision",
+                "ignore_state",
+                "ignore_revision",
+                "compilation_context",
+            )
+        )
+        and not any(
+            editor.get(key)
+            for key in ("compiling", "importing", "compilation_failed", "addressables_event_error")
+        )
+    )
+
+
+def _catalog_matches_editor(progress: dict, editor: dict) -> bool:
+    return bool(
+        progress.get("initialized")
+        and not progress.get("census")
+        and progress.get("epoch") == editor.get("epoch")
+        and progress.get("after") == editor.get("revision")
+    )
+
+
 def _collection_hint(graph: dict, matches_editor: bool) -> str | None:
     progress = graph["progress"]
     phase = progress.get("phase")
@@ -954,9 +986,9 @@ class ReferenceGraphService:
                 raise ValueError(
                     "Use checked consistency on the first page, then its revision-bound continuation"
                 )
-            if not await entry.engine.reconcile(force_external=True):
+            if not await entry.engine.reconcile(force_external=True, wait=False):
                 raise RevisionConflict(
-                    "Reference inputs are not synchronized; inspect status and retry"
+                    "Reference collection is in progress or inputs are not synchronized; inspect status and retry"
                 )
             editor = await entry.collect("status")
             checked_providers = await drained_thread(workspace.provider_status, bounded=True)
@@ -989,18 +1021,47 @@ class ReferenceGraphService:
         )
         if protected and fallback and admission_current and not ignore_verified:
             ignore_verified = await entry.engine.validate_ignore()
+        admission_pending = False
         if protected and (not admission_current or fallback and not ignore_verified):
-            if not await entry.engine.reconcile():
-                raise RevisionConflict(
-                    "Current ignore rules are not synchronized; retry collection"
-                )
-            editor = await entry.collect("status")
-            if not await drained_thread(workspace.ignore_current, editor, bounded=True):
-                raise RevisionConflict(
-                    "Current ignore rules are unavailable; graph admission is incomplete"
-                )
-            ignore_verified = True
+            if action == "query" and consistency == "cached":
+                # A cached page never runs the full collection under its
+                # Editor operation. The worker will reopen admission first.
+                admission_pending = True
+            else:
+                if not await entry.engine.reconcile(wait=False):
+                    raise RevisionConflict(
+                        "Reference collection is in progress or current ignore rules are not synchronized; retry"
+                    )
+                editor = await entry.collect("status")
+                if not await drained_thread(workspace.ignore_current, editor, bounded=True):
+                    raise RevisionConflict(
+                        "Current ignore rules are unavailable; graph admission is incomplete"
+                    )
+                ignore_verified = True
         admission_fence = await drained_thread(workspace.delivery_fence) if protected else None
+        if admission_pending and admission_fence[2]:
+            raise RevisionConflict("Graph admission changed; retry the query")
+        exclusions_apply = False
+        catalog_pending = False
+        catalog_progress = None
+        if protected and not admission_pending:
+            exclusions_apply = await drained_thread(workspace.has_exclusions, bounded=True)
+            if exclusions_apply:
+                catalog_progress = await drained_thread(workspace.progress, bounded=True)
+                if not _catalog_matches_editor(catalog_progress, editor):
+                    if action == "query" and consistency == "cached":
+                        catalog_pending = True
+                    else:
+                        async with self.lock:
+                            self.start(entry, wake=True)
+                        raise RevisionConflict(
+                            "Reference inventory is catching up; retry collection"
+                        )
+        partial_static = admission_pending and _partial_proof_current(
+            entry, editor, admission_fence
+        )
+        if partial_static and fallback and not await entry.engine.validate_ignore():
+            raise RevisionConflict("Ignore rules changed before partial delivery; retry collection")
         if action in {"overview", "export_config", "cleanup", "retry"}:
             from services.reference_graph import operations
 
@@ -1056,6 +1117,12 @@ class ReferenceGraphService:
                     for key, value in options.items()
                     if key not in {"node", "consistency"}
                 },
+                **({"partial_static": True} if partial_static else {}),
+                **(
+                    {"withhold_edges": True}
+                    if catalog_pending or admission_pending and not partial_static
+                    else {}
+                ),
             )
             external_changed = await drained_thread(self._validate_external, workspace, data)
         elif action == "diagnostics":
@@ -1225,6 +1292,8 @@ class ReferenceGraphService:
             and native_current
             and all(provider["current"] for provider in external_providers.values())
         )
+        if catalog_pending:
+            matches_editor = native_current = current = False
         await entry.check()
         async with self.lock:
             if self.closed:
@@ -1242,7 +1311,8 @@ class ReferenceGraphService:
                     # The ordinary scan already handles both incrementally.
                     # Rehash all inputs only for an explicit force/checked request.
                     force=options.get("force", False),
-                    wake=external_changed
+                    wake=catalog_pending
+                    or external_changed
                     or ignore_changed
                     or (
                         not action.startswith("runtime_")
@@ -1297,15 +1367,32 @@ class ReferenceGraphService:
                 raise RevisionConflict(
                     "Graph admission changed while producing the result; restart the request"
                 )
-            if fallback and not await entry.engine.validate_ignore():
+            if (
+                (not admission_pending or partial_static)
+                and fallback
+                and not await entry.engine.validate_ignore()
+            ):
                 raise RevisionConflict("Ignore rules changed before delivery; retry collection")
-            latest = await entry.collect("status")
-            matches_editor = matches_editor and _native_matches_progress(progress, latest)
-            native_current = native_current and matches_editor
-            current = current and native_current
-            if not await drained_thread(workspace.ignore_current, latest, bounded=True):
-                await drained_thread(workspace.block_admission)
-                raise RevisionConflict("Ignore rules changed before delivery; retry collection")
+            if partial_static:
+                latest = await entry.collect("status")
+                if not _partial_proof_current(entry, latest, produced_fence):
+                    raise RevisionConflict("Partial graph proof changed; retry the query")
+            elif not admission_pending:
+                latest = await entry.collect("status")
+                if (
+                    exclusions_apply
+                    and not catalog_pending
+                    and not _catalog_matches_editor(catalog_progress, latest)
+                ):
+                    raise RevisionConflict(
+                        "Reference inventory changed before delivery; retry collection"
+                    )
+                matches_editor = matches_editor and _native_matches_progress(progress, latest)
+                native_current = native_current and matches_editor
+                current = current and native_current
+                if not await drained_thread(workspace.ignore_current, latest, bounded=True):
+                    await drained_thread(workspace.block_admission)
+                    raise RevisionConflict("Ignore rules changed before delivery; retry collection")
             if await drained_thread(workspace.delivery_fence) != produced_fence:
                 raise RevisionConflict(
                     "Graph admission changed before delivery; restart the request"
@@ -1326,6 +1413,12 @@ class ReferenceGraphService:
             if matches_editor and status["queue_idle"] and not counts["dirty_assets"]
             else entry.error,
         }
+        if admission_pending:
+            graph_status["admission_pending"] = True
+            if partial_static:
+                graph_status["partial_static"] = True
+        if catalog_pending:
+            graph_status["catalog_pending"] = True
         if action in {
             "status",
             "overview",
@@ -1335,7 +1428,15 @@ class ReferenceGraphService:
             "impact",
             "path",
         } and not data.get("historical"):
-            hint = _collection_hint(graph_status, matches_editor)
+            hint = (
+                "Collection is in progress. Only verified Unity dependencies are shown; more references may appear."
+                if partial_static
+                else "Reference inventory is catching up. No references can be returned yet; retry after collection progresses."
+                if catalog_pending
+                else "Collection policy is being synchronized. No references can be returned yet; retry after collection progresses."
+                if admission_pending
+                else _collection_hint(graph_status, matches_editor)
+            )
             if hint:
                 graph_status["hint"] = hint
         return {

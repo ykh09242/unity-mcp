@@ -10,6 +10,7 @@ from services.reference_graph.collection_protocol import boolean, change_page
 from services.reference_graph.mutations import MutationReceipts
 from services.reference_graph.reconcile import drained_thread
 from services.reference_graph.store import RevisionConflict
+from services.registry.operation_context import active_operation
 
 
 def checkpoint(editor):
@@ -157,11 +158,21 @@ async def execute(service, entry, editor, action, options):
         )
     service.start(entry, wake=True)
     deadline = time.monotonic() + wait
+    owner = active_operation()
     while True:
         await entry.check()
         async with service._coordinate(lock_key):
             data, reason = await step(entry, receipts, identity)
-        if reason is None or data["state"] == "open" or time.monotonic() >= deadline:
+        if (
+            reason is None
+            or data["state"] == "open"
+            or time.monotonic() >= deadline
+            # The collector needs the Editor operation currently held by this
+            # request. Return its durable receipt so it can make progress.
+            or reason == "awaiting_collection"
+            and owner is not None
+            and owner.request.mode != "control"
+        ):
             return {"receipt": data, "pending_reason": reason}
         # Advancing pages yield cooperatively; waiting for an import backs off.
         await asyncio.sleep(

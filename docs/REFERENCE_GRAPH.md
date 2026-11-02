@@ -46,6 +46,16 @@ includes `graph_status` with progress, errors, queue state, and freshness. Impor
 compilation failure, Addressables event-observer errors, journal gaps, unfinished
 work, or unavailable external inputs must be resolved before treating a scan as current.
 
+During initial collection, a cached `query` can return an empty page with
+`graph_status.admission_pending` while the collector verifies the inventory and
+exclusion rules. Once that check succeeds, `graph_status.partial_static` marks
+pages containing only the direct Unity dependencies verified so far. Neither
+kind of page establishes that a reference is absent. The response includes a
+progress hint until collection is current. Run the query again to see later
+results. With path exclusions enabled, `graph_status.catalog_pending` also
+withholds cached references while the collector checks imports, moves and
+deletions against the current exclusion rules.
+
 `graph_status.native_current` reports the native journal/analysis state. When external
 sources are enabled, ordinary cached responses keep `current:false`: validating the
 returned files cannot prove that another file has not gained an incoming reference.

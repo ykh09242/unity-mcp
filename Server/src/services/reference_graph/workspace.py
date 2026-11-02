@@ -297,7 +297,7 @@ class GraphWorkspace:
             **self.state("policy", {"version": 0, "exclude": []}, bounded=bounded),
         }
 
-    def _admission(self, connection, *, bounded: bool = False):
+    def _admission(self, connection, *, bounded: bool = False, exclusions_only: bool = False):
         policy = {
             "respect_gitignore": True,
             **self._state(connection, "policy", {"version": 0, "exclude": []}, bounded=bounded),
@@ -317,6 +317,8 @@ class GraphWorkspace:
             )
             self._admission_cache = cache
         _, rules, patterns = cache
+        if exclusions_only:
+            return bool(patterns or rules.has_exclusions())
         return lambda path: (
             not any(pattern.fullmatch(path) for pattern in patterns) and not rules.ignored(path)
         )
@@ -329,6 +331,10 @@ class GraphWorkspace:
         """Capture one compiled policy for a bounded request or reconciliation batch."""
         with self.store._connect() as connection:
             return self._admission(connection)
+
+    def has_exclusions(self, *, bounded: bool = False) -> bool:
+        with self.store._connect() as connection:
+            return self._admission(connection, bounded=bounded, exclusions_only=True)
 
     def ignore_status(self) -> dict:
         return self.state("ignore_status", {})

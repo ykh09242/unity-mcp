@@ -43,6 +43,8 @@ async def test_public_long_declarations_have_bounded_query_cursors(setup, monkey
             )
         listed = await call("declarations")
         assert {item["id"] for item in listed["declarations"]} == set(identities)
+        entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
         for node, direction in ((owner, "outgoing"), (target, "incoming")):
             cursor, seen = None, []
             for _ in identities:

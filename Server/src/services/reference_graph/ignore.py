@@ -95,6 +95,11 @@ class GitIgnoreRules:
         with self._cache_lock:
             self._directories.clear()
 
+    def has_exclusions(self) -> bool:
+        return any(
+            pattern.include is True for spec in self._specs.values() for pattern in spec.patterns
+        )
+
     def _matched(self, path: str, *, directory: bool) -> bool:
         ignored = False
         parts = path.split("/")
