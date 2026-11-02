@@ -147,6 +147,20 @@ tools/check-unity-versions.sh --full
 
 These helpers can launch installed Editors; `--full` runs native tests. Missing installations are not runtime passes. Inspect the helper's current flags and report exact versions that actually ran. [Unity compatibility](../architecture/unity-compat.md) documents shim policy.
 
+Full mode requires Python 3.11+ to validate NUnit XML with
+`tools/check_unity_test_results.py`. Each version writes `<version>.log.xml` beside its
+log under `tools/.unity-check-logs/`; the helper removes the previous XML before
+launching the Editor. Exit zero alone is insufficient: missing, empty, malformed,
+zero-test or failing results fail the check.
+Full mode lets Unity Test Framework exit after reporting results; it omits `-quit`,
+which can end the Editor before tests complete. Compile-only mode retains `-quit`.
+
+Docker mode mounts the repository at `/repository` and preserves the project's
+relative location, so the tracked test project's `file:../../../MCPForUnity` dependency
+resolves to the checked-out package. Projects outside the repository retain a separate
+`/project` mount; their local dependencies must be inside a declared mount. Full-mode
+XML is written through an additional results-directory mount and validated on the host.
+
 ### Local headless test harness
 
 Only when intentionally testing native runtime behavior:

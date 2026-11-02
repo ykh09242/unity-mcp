@@ -57,6 +57,21 @@ if (-not (Test-Path $VersionsJson)) { throw "Missing: $VersionsJson" }
 if (-not (Test-Path $ProjectPath))  { throw "Missing project: $ProjectPath" }
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
+# Full runs reuse the shared NUnit validator, including with custom Docker images.
+if ($Full -or ($Docker -and $DockerImageTag -eq "base-3")) {
+    foreach ($name in @("python3", "python")) {
+        $candidate = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue
+        if ($candidate) {
+            & $candidate.Source -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' *> $null
+            if ($LASTEXITCODE -eq 0) { $PythonBin = $candidate.Source; break }
+        }
+    }
+    if (-not $PythonBin) {
+        Write-Error "Full runs and default Docker images require Python 3.11+ (python3 or python on PATH)."
+        exit 2
+    }
+}
+
 # ---- mode setup --------------------------------------------------------------
 
 if ($Docker) {
@@ -86,19 +101,6 @@ if ($Docker) {
     Write-Host "(The same UNITY_LICENSE secret is what the GitHub Actions workflow uses; one .ulf works across all"
     Write-Host "matrix versions in practice -- Unity Personal activations are tied to the machine, not the editor version.)"
     exit 2
-  }
-  if ($DockerImageTag -eq "base-3") {
-    foreach ($name in @("python3", "python")) {
-      $candidate = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue
-      if ($candidate) {
-        & $candidate.Source -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' *> $null
-        if ($LASTEXITCODE -eq 0) { $PythonBin = $candidate.Source; break }
-      }
-    }
-    if (-not $PythonBin) {
-      Write-Error "Default -Docker images require Python 3.11+ (python3 or python on PATH)."
-      exit 2
-    }
   }
 } else {
   # Unity Hub installs editors under one of these roots on Windows.
@@ -150,15 +152,26 @@ function Invoke-LocalUnity([string]$Version, [string]$LogFile) {
 
   Write-Host -NoNewline "  [ .. ] $Version -- running...`r"
 
-  # -quit on both paths so Unity batchmode always exits; without it -runTests can hang on test framework shutdown.
+  $resultsFile = "$LogFile.xml"
   if ($Full) {
-    $unityArgs = @("-batchmode", "-quit", "-nographics", "-projectPath", $ProjectPath, "-runTests", "-testPlatform", "editmode", "-logFile", $LogFile)
+    if (Test-Path -LiteralPath $resultsFile) { Remove-Item -LiteralPath $resultsFile -Force }
+    # The test runner exits after writing results; -quit can terminate it before completion.
+    $unityArgs = @("-batchmode", "-nographics", "-projectPath", $ProjectPath, "-runTests", "-testPlatform", "editmode", "-testResults", $resultsFile, "-logFile", $LogFile)
   } else {
     $unityArgs = @("-batchmode", "-quit", "-nographics", "-projectPath", $ProjectPath, "-logFile", $LogFile)
   }
 
-  $proc = Start-Process -FilePath $unityBin -ArgumentList $unityArgs -NoNewWindow -PassThru -Wait
-  if ($proc.ExitCode -eq 0) { return 0 } else { return 1 }
+  # Start-Process joins arrays with spaces. Quote each argument, including trailing backslashes.
+  $commandLine = ($unityArgs | ForEach-Object {
+    '"' + ($_ -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"'
+  }) -join ' '
+  $proc = Start-Process -FilePath $unityBin -ArgumentList $commandLine -NoNewWindow -PassThru -Wait
+  if ($proc.ExitCode -ne 0) { return 1 }
+  if ($Full) {
+    & $PythonBin (Join-Path $RepoRoot "tools\check_unity_test_results.py") $resultsFile --runner-outcome success *>> $LogFile
+    if ($LASTEXITCODE -ne 0) { return 1 }
+  }
+  return 0
 }
 
 function Invoke-DockerUnity([string]$Version, [string]$LogFile) {
@@ -194,28 +207,49 @@ function Invoke-DockerUnity([string]$Version, [string]$LogFile) {
 
   Write-Host -NoNewline "  [ .. ] $Version -- running in container...`r"
 
-  # -quit on both paths (see Invoke-LocalUnity note).
-  $unityExtra = if ($Full) { "-quit -runTests -testPlatform editmode" } else { "-quit" }
+  $resultsFile = "$LogFile.xml"
+  if ($Full -and (Test-Path -LiteralPath $resultsFile)) { Remove-Item -LiteralPath $resultsFile -Force }
+  $unityExtra = if ($Full) { "-runTests -testPlatform editmode" } else { "-quit" }
+  if ($Full) { $unityExtra += " -testResults /unity-check-results/$Version.log.xml" }
 
-  # Convert Windows path to Docker-friendly format for -v.
-  $projectMount = $ProjectPath.Replace('\', '/')
+  # Preserve relative package references for any project inside the repository.
+  $repoMount = (Resolve-Path -LiteralPath $RepoRoot).Path.Replace('\', '/').TrimEnd('/')
+  $projectMount = (Resolve-Path -LiteralPath $ProjectPath).Path.Replace('\', '/').TrimEnd('/')
+  $containerProject = "/project"
+  $mountArgs = @("-v", "${repoMount}:/repository")
+  if ($projectMount -eq $repoMount) {
+    $containerProject = "/repository"
+  } elseif ($projectMount.StartsWith("$repoMount/", [StringComparison]::OrdinalIgnoreCase)) {
+    $containerProject = "/repository" + $projectMount.Substring($repoMount.Length)
+  } else {
+    $mountArgs += @("-v", "${projectMount}:/project")
+  }
+  if ($Full) {
+    $resultsMount = (Split-Path -Parent $LogFile).Replace('\', '/')
+    $mountArgs += @("-v", "${resultsMount}:/unity-check-results")
+  }
 
   $script = @"
 set -e
 mkdir -p /root/.local/share/unity3d/Unity
 printf '%s' "`$UNITY_LICENSE" > /root/.local/share/unity3d/Unity/Unity_lic.ulf
-/opt/unity/Editor/Unity -batchmode -nographics -projectPath /project $unityExtra -logFile /dev/stdout
+/opt/unity/Editor/Unity -batchmode -nographics -projectPath "`$1" $unityExtra -logFile /dev/stdout
 "@
 
   & docker run --rm `
     --platform linux/amd64 `
     -e UNITY_LICENSE `
-    -v "${projectMount}:/project" `
+    @mountArgs `
     --entrypoint /bin/bash `
     $image `
-    -c $script *>> $LogFile
+    -c $script unity-check $containerProject *>> $LogFile
 
-  if ($LASTEXITCODE -eq 0) { return 0 } else { return 1 }
+  if ($LASTEXITCODE -ne 0) { return 1 }
+  if ($Full) {
+    & $PythonBin (Join-Path $RepoRoot "tools\check_unity_test_results.py") $resultsFile --runner-outcome success *>> $LogFile
+    if ($LASTEXITCODE -ne 0) { return 1 }
+  }
+  return 0
 }
 
 $pass = 0; $fail = 0; $skip = 0

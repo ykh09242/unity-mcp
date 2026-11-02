@@ -74,6 +74,21 @@ fi
 
 mkdir -p "$LOG_DIR"
 
+# Full runs reuse the shared NUnit validator, including with custom Docker images.
+if [[ $FULL -eq 1 || ( $USE_DOCKER -eq 1 && "$DOCKER_IMAGE_TAG" == "base-3" ) ]]; then
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && \
+       "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+      PYTHON_BIN="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$PYTHON_BIN" ]]; then
+    echo "error: full runs and default Docker images require Python 3.11+ (python3 or python on PATH)" >&2
+    exit 2
+  fi
+fi
+
 # ---- mode setup ---------------------------------------------------------------------
 
 if [[ $USE_DOCKER -eq 1 ]]; then
@@ -104,20 +119,6 @@ One-time setup (free Personal license):
 versions in practice — Unity Personal activations are tied to the machine, not the editor version.)
 EOF
     exit 2
-  fi
-
-  if [[ "$DOCKER_IMAGE_TAG" == "base-3" ]]; then
-    for candidate in python3 python; do
-      if command -v "$candidate" >/dev/null 2>&1 && \
-         "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
-        PYTHON_BIN="$candidate"
-        break
-      fi
-    done
-    if [[ -z "$PYTHON_BIN" ]]; then
-      echo "error: default --docker images require Python 3.11+ (python3 or python on PATH)" >&2
-      exit 2
-    fi
   fi
 
   if [[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]]; then
@@ -183,16 +184,19 @@ run_local() {
 
   printf "  [ .. ] %s — running...\r" "$version"
 
-  # -quit on both paths so Unity batchmode always exits — without it -runTests can hang waiting
-  # on test framework shutdown on some Unity versions.
-  local args
+  local args results_file="${log_file}.xml"
   if [[ $FULL -eq 1 ]]; then
-    args=(-batchmode -quit -nographics -projectPath "$PROJECT_PATH" -runTests -testPlatform editmode -logFile "$log_file")
+    rm -f -- "$results_file" || return 1
+    # The test runner exits after writing results; -quit can terminate it before completion.
+    args=(-batchmode -nographics -projectPath "$PROJECT_PATH" -runTests -testPlatform editmode -testResults "$results_file" -logFile "$log_file")
   else
     args=(-batchmode -quit -nographics -projectPath "$PROJECT_PATH" -logFile "$log_file")
   fi
 
   if "$unity_bin" "${args[@]}" >/dev/null 2>&1; then
+    if [[ $FULL -eq 1 ]]; then
+      "$PYTHON_BIN" "${REPO_ROOT}/tools/check_unity_test_results.py" "$results_file" --runner-outcome success >>"$log_file" 2>&1 || return 1
+    fi
     return 0
   else
     return 1
@@ -227,25 +231,43 @@ run_docker() {
   # Write the license from env on container start, then run Unity with -logFile /dev/stdout so
   # everything (mkdir output, Unity compile log, errors) streams through docker's stdout into our
   # host log_file via a single `>> "$log_file"` redirection. No bind-mount race.
-  # -quit on both paths (see run_local note).
-  local unity_extra
+  local unity_extra results_file="${log_file}.xml"
   if [[ $FULL -eq 1 ]]; then
-    unity_extra="-quit -runTests -testPlatform editmode"
+    rm -f -- "$results_file" || return 1
+    unity_extra="-runTests -testPlatform editmode -testResults /unity-check-results/${version}.log.xml"
   else
     unity_extra="-quit"
+  fi
+
+  # Keep repository-relative file: packages available, while retaining external project support.
+  local repo_mount project_mount container_project=/project
+  repo_mount="$(cd "$REPO_ROOT" && pwd)" || return 1
+  project_mount="$(cd "$PROJECT_PATH" && pwd)" || return 1
+  local mount_args=(-v "${repo_mount}:/repository")
+  case "$project_mount" in
+    "$repo_mount") container_project=/repository ;;
+    "$repo_mount"/*) container_project="/repository${project_mount#"$repo_mount"}" ;;
+    *) mount_args+=(-v "${project_mount}:/project") ;;
+  esac
+  if [[ $FULL -eq 1 ]]; then
+    mount_args+=(-v "$(cd "$(dirname "$log_file")" && pwd):/unity-check-results")
   fi
 
   if docker run --rm \
        --platform linux/amd64 \
        -e UNITY_LICENSE \
-       -v "${PROJECT_PATH}:/project" \
+       "${mount_args[@]}" \
        --entrypoint /bin/bash \
        "$image" \
        -c 'set -e
            mkdir -p /root/.local/share/unity3d/Unity
            printf "%s" "$UNITY_LICENSE" > /root/.local/share/unity3d/Unity/Unity_lic.ulf
-           /opt/unity/Editor/Unity -batchmode -nographics -projectPath /project '"$unity_extra"' -logFile /dev/stdout' \
+           /opt/unity/Editor/Unity -batchmode -nographics -projectPath "$1" '"$unity_extra"' -logFile /dev/stdout' \
+       unity-check "$container_project" \
        >>"$log_file" 2>&1; then
+    if [[ $FULL -eq 1 ]]; then
+      "$PYTHON_BIN" "${REPO_ROOT}/tools/check_unity_test_results.py" "$results_file" --runner-outcome success >>"$log_file" 2>&1 || return 1
+    fi
     return 0
   else
     return 1
