@@ -1320,7 +1320,11 @@ class ReferenceGraphService:
             "external_inputs_changed": external_changed,
             "coverage": "partial_static",
             "progress": progress,
-            "worker_error": entry.error,
+            # A foreground checked query or another worker can finish after this
+            # watcher's last failure. Report the error only while work is outstanding.
+            "worker_error": None
+            if matches_editor and status["queue_idle"] and not counts["dirty_assets"]
+            else entry.error,
         }
         if action in {
             "status",

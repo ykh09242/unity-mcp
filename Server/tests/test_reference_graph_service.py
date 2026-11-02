@@ -80,8 +80,14 @@ async def test_live_query_hints_follow_collection_and_disappear_on_completion(se
         release.set()
         with pytest.raises(OSError, match="interrupted collection"):
             await work
+        # The watcher retains its last error while a foreground checked query recovers.
+        entry.error = "OSError: interrupted collection"
         assert "error" in (await query("shared"))["graph_status"]["hint"].lower()
-        assert await entry.engine.reconcile()
+        recovered = await manage_reference_graph(
+            ctx, "query", {"node": "shared", "direction": "incoming", "consistency": "checked"}
+        )
+        assert recovered["success"] and recovered["data"]["graph_status"]["current"]
+        assert "hint" not in recovered["data"]["graph_status"]
         finished = await query("shared")
         assert finished["next_cursor"] is not None
         assert "hint" not in finished["graph_status"]
