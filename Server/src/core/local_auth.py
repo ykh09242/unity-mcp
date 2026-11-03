@@ -33,6 +33,8 @@ def local_http_sockets(host: str, port: int) -> Iterator[list[socket.socket]]:
             try:
                 listener = stack.enter_context(socket.socket(family, kind, protocol))
                 if os.name == "nt":
+                    # The Windows socket option is absent from POSIX Python builds.
+                    # pylint: disable-next=no-member
                     listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
                 else:
                     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
