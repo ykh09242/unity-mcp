@@ -161,20 +161,56 @@ class Reconciler:
         self._analysis_cache = None
         self.store.clear_summaries()
 
+    @staticmethod
+    def matches_ignore_proof(status: dict, known: dict) -> bool:
+        """Check a combined Editor observation against the stored snapshot in this read."""
+        try:
+            integer(status.get("revision"), "revision")
+            return (
+                type(status.get("ignore_current_validation")) is int
+                and status["ignore_current_validation"] == 1
+                and status.get("ignore_current_verified") is True
+                and text(status.get("epoch"), "epoch") == text(known.get("epoch"), "epoch")
+                and integer(status.get("ignore_revision"), "ignore_revision")
+                == integer(known.get("ignore_revision"), "ignore_revision")
+                and status.get("ignore_snapshot_digest")
+                == hashlib.sha256(
+                    text(known.get("snapshot"), "snapshot").encode("utf-8")
+                ).hexdigest()
+            )
+        except ValueError:
+            return False
+
     async def validate_ignore(self, status: dict | None = None) -> bool:
         """Validate a warm native snapshot without rereading assets or external documents."""
 
         def validation_inputs():
             with self.store.read_snapshot():
-                enabled = self.workspace.policy()["respect_gitignore"]
-                return enabled, self.workspace.ignore_status() if enabled else {}
+                policy = self.workspace.policy()
+                enabled = policy["respect_gitignore"]
+                return (
+                    enabled,
+                    self.workspace.ignore_status() if enabled else {},
+                    policy.get("version", 0),
+                )
 
-        enabled, known = await drained_thread(validation_inputs)
+        enabled, known, policy_version = await drained_thread(validation_inputs)
         if not enabled:
             return True
+        return await self.validate_ignore_snapshot(status, known, policy_version)
+
+    async def validate_ignore_snapshot(
+        self, status: dict | None, known: dict, policy_version: int
+    ) -> bool:
+        """Validate the exact enabled snapshot captured by the caller."""
         if not known.get("snapshot"):
             return False
         try:
+            if status is not None and "ignore_current_verified" in status:
+                if self.matches_ignore_proof(status, known):
+                    return True
+                await drained_thread(self.workspace.invalidate_ignore, known, policy_version)
+                return False
             text(known.get("snapshot"), "snapshot")
             known_epoch = text(known.get("epoch"), "epoch")
             known_revision = integer(known.get("ignore_revision"), "ignore_revision")
@@ -182,19 +218,6 @@ class Reconciler:
                 text(status.get("epoch"), "epoch")
                 integer(status.get("revision"), "revision")
                 integer(status.get("ignore_revision"), "ignore_revision")
-            if status is not None and "ignore_current_verified" in status:
-                digest = hashlib.sha256(known["snapshot"].encode("utf-8")).hexdigest()
-                if (
-                    type(status.get("ignore_current_validation")) is int
-                    and status.get("ignore_current_validation") == 1
-                    and status.get("ignore_current_verified") is True
-                    and status.get("ignore_snapshot_digest") == digest
-                    and status.get("epoch") == known_epoch
-                    and status.get("ignore_revision") == known_revision
-                ):
-                    return True
-                await drained_thread(self.workspace.invalidate_ignore)
-                return False
             page = await self._collector(
                 "ignore_rules", snapshot=known["snapshot"], offset=0, page_size=1, validate=True
             )
@@ -208,7 +231,7 @@ class Reconciler:
         except (OSError, ValueError, RuntimeError):
             # Changed/expired proofs force normal acquisition; never an allow-all policy.
             pass
-        await drained_thread(self.workspace.invalidate_ignore)
+        await drained_thread(self.workspace.invalidate_ignore, known, policy_version)
         return False
 
     async def _phase(self, phase: str, **values) -> None:

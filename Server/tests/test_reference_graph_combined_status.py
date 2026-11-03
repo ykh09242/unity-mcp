@@ -7,6 +7,60 @@ from tests.test_reference_graph_service import setup
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["token", "policy"])
+async def test_stale_native_validation_cannot_invalidate_replacement(setup, change):
+    service, sender, ctx = setup
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
+        workspace = entry.workspace
+        known = workspace.ignore_status()
+        policy_version = workspace.policy()["version"]
+        replacement = {**known, "snapshot": "new-token"}
+
+        async def native(action, **params):
+            assert action == "ignore_rules"
+            with workspace.store._connect(write=True) as connection:
+                if change == "token":
+                    workspace._set(connection, "ignore_status", replacement)
+                else:
+                    workspace._set(connection, "policy", {"version": policy_version + 1})
+            return {"ignore_state": "unavailable"}
+
+        entry.engine._collector = native
+        assert not await entry.engine.validate_ignore_snapshot(None, known, policy_version)
+        assert workspace.ignore_status() == (replacement if change == "token" else known)
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_captured_combined_success_needs_no_connection_and_unchecked_invalidation_works(
+    setup, monkeypatch
+):
+    import sqlite3
+
+    service, sender, ctx = setup
+    try:
+        entry, status = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
+        known = entry.workspace.ignore_status()
+        version = entry.workspace.policy()["version"]
+        status.update(
+            ignore_current_validation=1,
+            ignore_current_verified=True,
+            ignore_snapshot_digest=hashlib.sha256(known["snapshot"].encode()).hexdigest(),
+        )
+        with monkeypatch.context() as scoped:
+            scoped.setattr(sqlite3, "connect", lambda *args, **kwargs: pytest.fail("opened DB"))
+            assert await entry.engine.validate_ignore_snapshot(status, known, version)
+        entry.workspace.invalidate_ignore()
+        assert not entry.workspace.ignore_status()
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("combined", [False, True])
 async def test_ignore_proof_reads_one_snapshot_and_releases_it_before_native_io(
     setup, monkeypatch, combined

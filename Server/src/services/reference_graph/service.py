@@ -1065,23 +1065,89 @@ class ReferenceGraphService:
         if policy_choice_required and action not in {"status", "policy"}:
             await drained_thread(workspace.require_restart_policy)
 
+        if action in {"query", "diagnostics", "impact", "path"} and (
+            not isinstance(options.get("node"), str) or not options["node"]
+        ):
+            raise ValueError("A node id is required, for example asset:<Unity GUID>")
+        consistency = options.get("consistency", "cached")
+        cached_query = action == "query" and consistency == "cached"
+
+        def read_page(*, partial_static=False, withhold_edges=False):
+            return store.query(
+                options["node"],
+                **{
+                    key: value
+                    for key, value in options.items()
+                    if key not in {"node", "consistency"}
+                },
+                **({"partial_static": True} if partial_static else {}),
+                **({"withhold_edges": True} if withhold_edges else {}),
+            )
+
+        def read_result_state(page_fence=None):
+            status = store.status()
+            progress = workspace.progress(bounded=True)
+            providers = workspace.provider_status(bounded=True)
+            current = workspace.ignore_current(editor, bounded=True)
+            counts = workspace.counts()
+            version_pending = workspace.state("analysis_version", bounded=True) != ANALYSIS_VERSION
+            analysis_pending = version_pending or workspace.state(
+                "analysis_dirty", False, bounded=True
+            )
+            return (
+                status,
+                progress,
+                providers,
+                current,
+                counts,
+                version_pending,
+                analysis_pending,
+                page_fence,
+            )
+
+        def read_opening(policy_version, pending):
+            fence = workspace.delivery_fence()
+            if policy_version is not None and policy_version != fence[3]:
+                return None
+            if pending and fence[2]:
+                raise RevisionConflict("Graph admission changed; retry the query")
+            exclusions = not pending and workspace.has_exclusions(bounded=True)
+            progress = workspace.progress(bounded=True) if exclusions else None
+            catalog_pending = exclusions and not _catalog_matches_editor(progress, editor)
+            page = state = None
+            if cached_query and not pending:
+                page = read_page(withhold_edges=catalog_pending)
+                if _is_unity_asset_page(page):
+                    state = read_result_state(fence)
+            return fence, exclusions, progress, catalog_pending, page, state
+
         def admission_snapshot():
-            if editor.get("ignore_watchers") is not False:
-                return False, workspace.ignore_current(editor, bounded=True), None
             with store.read_snapshot():
-                policy = workspace.policy(bounded=True)
-                return (
-                    policy["respect_gitignore"],
-                    workspace.ignore_current(editor, bounded=True),
-                    policy.get("version", 0),
-                )
+                current = workspace.ignore_current(editor, bounded=True)
+                fallback, version, opening, known = False, None, None, None
+                # A cached page can join this read if no native proof is needed between them.
+                if editor.get("ignore_watchers") is False:
+                    policy = workspace.policy(bounded=True)
+                    fallback, version = policy["respect_gitignore"], policy.get("version", 0)
+                    if cached_query and current and fallback:
+                        known = workspace.ignore_status(bounded=True)
+                        if entry.engine.matches_ignore_proof(editor, known):
+                            opening = read_opening(version, False)
+                elif cached_query and current:
+                    opening = read_opening(None, False)
+                return fallback, current, version, opening, known
 
         policy_changed = False
-        fallback, admission_current, fallback_policy_version = False, False, None
+        fallback = admission_current = False
+        fallback_policy_version = opening = known_ignore = None
         if not replacing_policy:
-            fallback, admission_current, fallback_policy_version = await drained_thread(
-                admission_snapshot
-            )
+            (
+                fallback,
+                admission_current,
+                fallback_policy_version,
+                opening,
+                known_ignore,
+            ) = await drained_thread(admission_snapshot)
             if not admission_current:
                 await drained_thread(workspace.block_admission)
         external_changed = False
@@ -1095,11 +1161,6 @@ class ReferenceGraphService:
             and (not isinstance(options.get("id"), str) or not options["id"])
         ):
             raise ValueError("An explicit stable id is required")
-        if action in {"query", "diagnostics", "impact", "path"} and (
-            not isinstance(options.get("node"), str) or not options["node"]
-        ):
-            raise ValueError("A node id is required, for example asset:<Unity GUID>")
-        consistency = options.get("consistency", "cached")
         if consistency not in {"cached", "checked"}:
             raise ValueError("consistency must be cached or checked")
         checked_providers = None
@@ -1135,21 +1196,34 @@ class ReferenceGraphService:
 
         # A blocked admission or checked reconciliation can change the initial read.
         if not replacing_policy and (not admission_current or consistency == "checked"):
-            fallback, admission_current, fallback_policy_version = await drained_thread(
-                admission_snapshot
+            (
+                fallback,
+                admission_current,
+                fallback_policy_version,
+                opening,
+                known_ignore,
+            ) = await drained_thread(admission_snapshot)
+
+        async def verify_ignore(status):
+            if known_ignore is None:
+                return await entry.engine.validate_ignore(status)
+            return await entry.engine.validate_ignore_snapshot(
+                status, known_ignore, fallback_policy_version
             )
-        ignore_verified = consistency == "checked"
+
+        ignore_verified = consistency == "checked" or opening is not None and fallback
         if protected and fallback and admission_current and not ignore_verified:
-            ignore_verified = await entry.engine.validate_ignore(editor)
-        if action == "query" and consistency == "cached":
+            ignore_verified = await verify_ignore(editor)
+        if cached_query:
             # This is only a transport hint; admission and proof are checked again.
             entry.combined_ignore_needed = bool(fallback and admission_current and ignore_verified)
         admission_pending = False
         if protected and (not admission_current or fallback and not ignore_verified):
-            if action == "query" and consistency == "cached":
+            if cached_query:
                 # A cached page never runs the full collection under its
                 # Editor operation. The worker will reopen admission first.
                 admission_pending = True
+                known_ignore = None
             else:
                 if not await entry.engine.reconcile(wait=False):
                     raise RevisionConflict(
@@ -1162,62 +1236,23 @@ class ReferenceGraphService:
                     )
                 ignore_verified = True
 
-        def read_page(*, partial_static=False, withhold_edges=False):
-            return store.query(
-                options["node"],
-                **{
-                    key: value
-                    for key, value in options.items()
-                    if key not in {"node", "consistency"}
-                },
-                **({"partial_static": True} if partial_static else {}),
-                **({"withhold_edges": True} if withhold_edges else {}),
-            )
-
-        def read_result_state(page_fence=None):
-            status = store.status()
-            progress = workspace.progress(bounded=True)
-            providers = workspace.provider_status(bounded=True)
-            current = workspace.ignore_current(editor, bounded=True)
-            counts = workspace.counts()
-            version_pending = workspace.state("analysis_version", bounded=True) != ANALYSIS_VERSION
-            analysis_pending = version_pending or workspace.state(
-                "analysis_dirty", False, bounded=True
-            )
-            return (
-                status,
-                progress,
-                providers,
-                current,
-                counts,
-                version_pending,
-                analysis_pending,
-                page_fence,
-            )
-
-        cached_query = action == "query" and consistency == "cached"
+        def require_same_ignore_snapshot():
+            # Equal rules can rotate the native token without advancing the graph revision.
+            if known_ignore is not None and _json(workspace.ignore_status(bounded=True)) != _json(
+                known_ignore
+            ):
+                raise RevisionConflict("Ignore snapshot changed during the query; retry collection")
 
         def opening_snapshot():
             with store.read_snapshot():
-                fence = workspace.delivery_fence()
-                if fallback_policy_version is not None and fallback_policy_version != fence[3]:
-                    return None
-                if admission_pending and fence[2]:
-                    raise RevisionConflict("Graph admission changed; retry the query")
-                exclusions = not admission_pending and workspace.has_exclusions(bounded=True)
-                progress = workspace.progress(bounded=True) if exclusions else None
-                catalog_pending = exclusions and not _catalog_matches_editor(progress, editor)
-                page = state = None
-                if cached_query and not admission_pending:
-                    page = read_page(withhold_edges=catalog_pending)
-                    if _is_unity_asset_page(page):
-                        state = read_result_state(fence)
-                return fence, exclusions, progress, catalog_pending, page, state
+                require_same_ignore_snapshot()
+                return read_opening(fallback_policy_version, admission_pending)
 
         admission_fence = catalog_progress = prepared_page = page_state = None
         exclusions_apply = catalog_pending = False
         if protected:
-            opening = await drained_thread(opening_snapshot)
+            if opening is None:
+                opening = await drained_thread(opening_snapshot)
             if opening is None:
                 async with self.lock:
                     self.start(entry, wake=True)
@@ -1599,7 +1634,7 @@ class ReferenceGraphService:
                             # Some older collectors ignore unknown request fields.
                             combined_final = False
                             latest = None
-                if fallback and not await entry.engine.validate_ignore(latest):
+                if fallback and not await verify_ignore(latest):
                     raise RevisionConflict("Ignore rules changed before delivery; retry collection")
                 if not combined_final:
                     latest = await entry.collect("status")
@@ -1626,6 +1661,7 @@ class ReferenceGraphService:
 
                 def final_snapshot():
                     with store.read_snapshot():
+                        require_same_ignore_snapshot()
                         return (
                             workspace.ignore_current(latest, bounded=True),
                             workspace.delivery_fence(),

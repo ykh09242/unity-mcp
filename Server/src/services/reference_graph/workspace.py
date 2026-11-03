@@ -350,8 +350,8 @@ class GraphWorkspace:
         with self.store._connect() as connection:
             return self._admission(connection, bounded=bounded, exclusions_only=True)
 
-    def ignore_status(self) -> dict:
-        return self.state("ignore_status", {})
+    def ignore_status(self, *, bounded: bool = False) -> dict:
+        return self.state("ignore_status", {}, bounded=bounded)
 
     def delivery_fence(self) -> tuple:
         """Bind a produced result to its graph and effective-admission generation."""
@@ -386,9 +386,18 @@ class GraphWorkspace:
                 connection.execute("UPDATE graph_admission SET ready=0 WHERE id=1")
                 self.store._bump(connection)
 
-    def invalidate_ignore(self) -> None:
+    def invalidate_ignore(
+        self, known: dict | None = None, policy_version: int | None = None
+    ) -> None:
         """Retire an expired native token so a retry acquires a fresh rule snapshot."""
         with self.store._connect(write=True) as connection:
+            if known is not None:
+                current = self._state(connection, "ignore_status", bounded=True)
+                version = connection.execute(
+                    "SELECT COALESCE((SELECT json_extract(value,'$.version') FROM graph_state WHERE key='policy'),0)"
+                ).fetchone()[0]
+                if current is None or _json(current) != _json(known) or version != policy_version:
+                    return
             connection.execute("DELETE FROM graph_state WHERE key='ignore_status'")
             connection.execute("UPDATE graph_admission SET ready=0 WHERE id=1")
             self.store._bump(connection)

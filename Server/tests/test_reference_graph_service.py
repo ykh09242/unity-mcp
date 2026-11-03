@@ -591,10 +591,14 @@ async def test_cached_query_batches_sqlite_read_snapshots(setup, monkeypatch, wa
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("watchers", "connection_budget"), [(True, 3), (False, 5)])
+@pytest.mark.parametrize(
+    ("watchers", "combined", "connection_budget"),
+    [(True, False, 2), (False, True, 2), (False, False, 3)],
+)
 async def test_cached_asset_pages_validate_only_relevant_providers(
-    setup, monkeypatch, watchers, connection_budget
+    setup, monkeypatch, watchers, combined, connection_budget
 ):
+    import hashlib
     import sqlite3
     from unittest.mock import patch
 
@@ -605,6 +609,13 @@ async def test_cached_asset_pages_validate_only_relevant_providers(
         result = await sender(instance, params)
         if params["action"] == "status":
             result["ignore_watchers"] = watchers
+            if combined:
+                result["ignore_current_validation"] = 1
+                if params.get("validate_ignore_current"):
+                    result.update(
+                        ignore_current_verified=True,
+                        ignore_snapshot_digest=hashlib.sha256(b"ignore").hexdigest(),
+                    )
         return result
 
     service.send = send
@@ -621,10 +632,16 @@ async def test_cached_asset_pages_validate_only_relevant_providers(
     try:
         assert await entry.engine.reconcile()
         generation = store.observe(owner, "unity", "test", path="Assets/Owner.mat")
-        store.publish(owner, "unity", generation, [Edge(target, "dependency")])
+        store.publish(
+            owner,
+            "unity",
+            generation,
+            [Edge(target, "dependency"), Edge("asset:" + "3" * 32, "dependency")],
+        )
+        await service.execute(ctx, "query", {"node": owner})
         monkeypatch.setattr(service, "_validate_external", record)
         for node, direction, count in (
-            (owner, "outgoing", 1),
+            (owner, "outgoing", 2),
             (target, "incoming", 1),
             (target, "outgoing", 0),
         ):
@@ -634,6 +651,10 @@ async def test_cached_asset_pages_validate_only_relevant_providers(
             assert 0 < graph_connections <= connection_budget
             assert len(page["data"]["edges"]) == count
             assert page["data"]["graph_status"]["current"]
+        first = (await service.execute(ctx, "query", {"node": owner, "limit": 1}))["data"]
+        continuation = {"node": owner, "limit": 1, "cursor": first["next_cursor"]}
+        second = (await service.execute(ctx, "query", continuation))["data"]
+        assert first["edges"][0]["id"] != second["edges"][0]["id"] and second["next_cursor"] is None
         assert not validations
 
         await service.execute(
@@ -650,6 +671,8 @@ async def test_cached_asset_pages_validate_only_relevant_providers(
         mixed = await service.execute(ctx, "query", {"node": owner})
         assert {edge["provider"] for edge in mixed["data"]["edges"]} == {"manual", "unity"}
         assert len(validations) == 2 and all("manual" in page for page in validations)
+        with pytest.raises(RevisionConflict, match="between pages"):
+            await service.execute(ctx, "query", continuation)
     finally:
         await service.aclose()
 
@@ -704,6 +727,79 @@ async def test_cached_unity_page_rejects_policy_change_before_delivery(
         with pytest.raises(RevisionConflict):
             await service.execute(ctx, "query", {"node": owner})
         assert changed
+    finally:
+        await service.aclose()
+        await other.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("combined", "rotate_on", "replacement"),
+    [
+        (False, 1, {"snapshot": "peer-token"}),
+        (False, 2, {"snapshot": "peer-token"}),
+        (True, 2, {"snapshot": "peer-token"}),
+        (True, 2, {"ignore_revision": False}),
+    ],
+)
+async def test_cached_query_fences_ignore_token_rotation_without_a_graph_revision(
+    setup, monkeypatch, combined, rotate_on, replacement
+):
+    import hashlib
+
+    service, sender, ctx = setup
+    other = ReferenceGraphService(service.root, send=sender)
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    active = False
+    proofs = reads = 0
+
+    async def send(instance, params):
+        nonlocal proofs
+        result = await sender(instance, params)
+        if params["action"] == "status":
+            result["ignore_watchers"] = False
+            if combined:
+                result["ignore_current_validation"] = 1
+                if params.get("validate_ignore_current"):
+                    result.update(
+                        ignore_current_verified=True,
+                        ignore_snapshot_digest=hashlib.sha256(b"ignore").hexdigest(),
+                    )
+        if active and (params.get("validate_ignore_current") or params.get("validate")):
+            proofs += 1
+            if proofs == rotate_on:
+                assert writer.acquire("rotate")
+                try:
+                    new_status = {**writer.ignore_status(), **replacement}
+                    assert not writer.set_ignore_rules("rotate", [], new_status)
+                finally:
+                    writer.release("rotate")
+        return result
+
+    service.send = send
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        peer, _ = await other.resolve(Context(other), "status")
+        writer = peer.workspace
+        assert await entry.engine.reconcile()
+        options = {"node": "asset:fixture"}
+        await service.execute(ctx, "query", options)
+        revision = writer.store.revision()
+        original_status = writer.ignore_status()
+        query = entry.workspace.store.query
+
+        def count_read(*args, **kwargs):
+            nonlocal reads
+            reads += 1
+            return query(*args, **kwargs)
+
+        monkeypatch.setattr(entry.workspace.store, "query", count_read)
+        active = True
+        with pytest.raises(RevisionConflict, match="Ignore snapshot changed"):
+            await service.execute(ctx, "query", options)
+        assert proofs == rotate_on and reads == rotate_on - 1
+        assert _json(writer.ignore_status()) == _json({**original_status, **replacement})
+        assert writer.store.revision() == revision
     finally:
         await service.aclose()
         await other.aclose()
