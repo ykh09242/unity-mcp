@@ -108,6 +108,10 @@ These actions require the target to be a playing scene instance. Older peers
 reject them. Direct native calls to the original setters still require both
 grants, including when their payload contains a runtime flag.
 
+Reflection probe baking writes an EXR under `Assets/`. The VFX Graph seed and
+playback speed setters can modify scene components in Edit Mode. These operations
+require both `edit` and `run` on public, native and batch routes.
+
 Public batches use the same guarded action for preview and execution. A preview
 issued for the original action has a different command hash and must be
 prepared again before applying.

@@ -1,4 +1,4 @@
-"""Real credential leases fence package and Animator admission before socket I/O."""
+"""Real credential leases fence persistent Editor operations before socket I/O."""
 
 import pytest
 
@@ -13,27 +13,33 @@ from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
 @pytest.mark.asyncio
 @pytest.mark.parametrize("restricted_side", ["request", "plugin"])
 @pytest.mark.parametrize(
-    "command,params",
+    "command,params,limited_grant",
     [
-        ("manage_packages", {"action": "add_package"}),
-        ("manage_packages", {"action": "add_registry"}),
-        ("manage_packages", {"action": "resolve_packages"}),
-        ("manage_animation", {"action": "animator_set_parameter"}),
+        ("manage_packages", {"action": "add_package"}, "edit"),
+        ("manage_packages", {"action": "add_registry"}, "edit"),
+        ("manage_packages", {"action": "resolve_packages"}, "edit"),
+        ("manage_animation", {"action": "animator_set_parameter"}, "edit"),
         (
             "batch_execute",
             {"commands": [{"tool": "manage_packages", "params": {"action": "embed_package"}}]},
+            "edit",
         ),
+        ("manage_light_baking", {"action": "bake_reflection_probe"}, "run"),
+        ("manage_vfx", {"action": "vfx_set_seed"}, "run"),
+        ("manage_vfx", {"action": "vfx_set_playback_speed"}, "run"),
     ],
 )
-async def test_edit_only_lease_cannot_dispatch_compile_or_persistent_runtime_operations(
-    command_hub, monkeypatch, restricted_side, command, params
+async def test_incomplete_lease_cannot_dispatch_compile_or_persistent_runtime_operations(
+    command_hub, monkeypatch, restricted_side, command, params, limited_grant
 ):
-    # Given real requester/plugin leases, one edit-only and one with combined grants.
+    # Given real requester/plugin leases, only one has both required grants.
     monkeypatch.setattr(config, "http_remote_hosted", True)
     await command_hub.registry.unregister("session")
     await command_hub.registry.register("session", "Fixture", "hash", "6000", user_id="alice")
     claims = {
-        side: {"unity_mcp_permissions": ["edit"] if side == restricted_side else ["edit", "run"]}
+        side: {
+            "unity_mcp_permissions": [limited_grant] if side == restricted_side else ["edit", "run"]
+        }
         for side in ("request", "plugin")
     }
     async with permission_service(monkeypatch, claims) as fixture:

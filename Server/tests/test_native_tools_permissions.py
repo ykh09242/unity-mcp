@@ -121,6 +121,9 @@ CASES = [
         ("manage_sprite", "set_geometry", EDIT),
         ("manage_probuilder", "get_topology", READ),
         ("manage_vfx", "vfx_get_exposed_properties", READ),
+        ("manage_vfx", "vfx_set_seed vfx_set_playback_speed", COMPILE),
+        ("manage_graphics", "bake_reflection_probe", COMPILE),
+        ("manage_light_baking", "bake_reflection_probe", COMPILE),
         ("manage_build", "report_history report compare_reports", READ),
         ("manage_animation", "clip_get_curves clip_get_curve controller_get_graph", READ),
         (

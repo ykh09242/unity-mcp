@@ -662,6 +662,13 @@ def required_permissions(
         return CUSTOM_GRANTS
     if name == "manage_camera" and action in {"screenshot", "screenshot_multiview"}:
         return CUSTOM_GRANTS
+    if (name, action) in {
+        ("manage_graphics", "bake_reflection_probe"),
+        ("manage_vfx", "vfx_set_playback_speed"),
+        ("manage_vfx", "vfx_set_seed"),
+    }:
+        # The bake writes an asset; the VFX setters can persist component changes in Edit Mode.
+        return CUSTOM_GRANTS
     if name == "manage_ui" and action == "render_ui":
         return CUSTOM_GRANTS
     for permission, names in actions.items():
