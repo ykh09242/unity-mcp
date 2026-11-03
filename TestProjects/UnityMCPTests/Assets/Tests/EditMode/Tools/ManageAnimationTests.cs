@@ -522,6 +522,34 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [TestCase("animator_set_enabled_runtime")]
+        [TestCase("animator_set_parameter_runtime")]
+        public void AnimatorRuntimeActions_RefuseEditModeEvenWhenFlagIsFalse(string action)
+        {
+            var go = new GameObject("AnimTest_ForcedRuntime");
+            var animator = go.AddComponent<Animator>();
+            try
+            {
+                var parameters = new JObject
+                {
+                    ["action"] = action,
+                    ["target"] = "AnimTest_ForcedRuntime",
+                    ["enabled"] = false,
+                    ["parameterName"] = "Speed",
+                    ["value"] = 2,
+                    ["runtime_only"] = false,
+                };
+                var result = ToJObject(ManageAnimation.HandleCommand(parameters));
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.That(result.Value<string>("message"), Does.Contain("Play mode"));
+                Assert.IsTrue(animator.enabled);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
         [Test]
         public void AnimatorSetEnabled_DisablesAnimator()
         {

@@ -28,6 +28,11 @@ namespace MCPForUnity.Editor.Tools.Animation
             return token.ReadScalar<T>();
         }
 
+        private static bool IsRuntimeTarget(Animator animator)
+        {
+            return !EditorUtility.IsPersistent(animator) && !EditorUtility.IsPersistent(animator.gameObject) && Application.IsPlaying(animator.gameObject);
+        }
+
         public static object Play(JObject @params)
         {
             var go = ObjectResolver.ResolveGameObject(@params["target"], @params["searchMethod"]?.ToString());
@@ -77,7 +82,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             return new { success = true, message = $"Crossfading to '{stateName}' over {duration}s on {AnimatorResolver.Describe(go, animator)}" };
         }
 
-        public static object SetParameter(JObject @params)
+        public static object SetParameter(JObject @params, bool requireRuntime = false)
         {
             var go = ObjectResolver.ResolveGameObject(@params["target"], @params["searchMethod"]?.ToString());
             if (go == null)
@@ -95,7 +100,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             JToken runtimeOnlyToken = @params["runtimeOnly"];
             if (runtimeOnlyToken != null && runtimeOnlyToken.Type != JTokenType.Boolean)
                 return new { success = false, message = "'runtime_only' must be a Boolean." };
-            if (runtimeOnlyToken?.Value<bool>() == true && !isPlaying)
+            if ((requireRuntime || runtimeOnlyToken?.Value<bool>() == true) && !IsRuntimeTarget(animator))
                 return new { success = false, message = "runtime_only requires Play mode; controller defaults were not changed." };
             AnimatorController controller = null;
             AnimatorControllerParameter[] allParams = null;
@@ -269,7 +274,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             return new { success = true, message = $"Set animator speed to {speed} on {AnimatorResolver.Describe(go, animator)}" };
         }
 
-        public static object SetEnabled(JObject @params)
+        public static object SetEnabled(JObject @params, bool requireRuntime = false)
         {
             var go = ObjectResolver.ResolveGameObject(@params["target"], @params["searchMethod"]?.ToString());
             if (go == null)
@@ -282,7 +287,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             JToken runtimeOnlyToken = @params["runtimeOnly"];
             if (runtimeOnlyToken != null && runtimeOnlyToken.Type != JTokenType.Boolean)
                 return new { success = false, message = "'runtime_only' must be a Boolean." };
-            if (runtimeOnlyToken?.Value<bool>() == true && !Application.isPlaying)
+            if ((requireRuntime || runtimeOnlyToken?.Value<bool>() == true) && !IsRuntimeTarget(animator))
                 return new { success = false, message = "runtime_only requires Play mode; Animator enabled state was not changed." };
 
             bool enabled = ReadOptionalScalar(@params, "enabled", true);

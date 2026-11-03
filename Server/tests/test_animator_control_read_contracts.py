@@ -57,7 +57,7 @@ def test_animator_control_read_actual_cli_transport(tmp_path):
             (["crossfade","Fixture","Idle"],{"action":"animator_crossfade","target":"Fixture","properties":{"stateName":"Idle","duration":0.25,"layer":-1}}),
             (["crossfade","Root/Fixture","Idle","--duration","0","--layer","0","--search-method","by_path"],{"action":"animator_crossfade","target":"Root/Fixture","searchMethod":"by_path","properties":{"stateName":"Idle","duration":0,"layer":0}}),
             (["set-parameter","Fixture","Speed","0"],{"action":"animator_set_parameter","target":"Fixture","properties":{"parameterName":"Speed","value":0}}),
-            (["set-parameter","Fixture","Speed","0","--runtime-only"],{"action":"animator_set_parameter","target":"Fixture","runtime_only":True,"properties":{"parameterName":"Speed","value":0}}),
+            (["set-parameter","Fixture","Speed","0","--runtime-only"],{"action":"animator_set_parameter_runtime","target":"Fixture","runtime_only":True,"properties":{"parameterName":"Speed","value":0}}),
             (["set-parameter","Fixture","Enabled","false","--type","bool"],{"action":"animator_set_parameter","target":"Fixture","properties":{"parameterName":"Enabled","value":False,"parameterType":"bool"}}),
             (["set-parameter","--type","int","--","Fixture","Count","-1"],{"action":"animator_set_parameter","target":"Fixture","properties":{"parameterName":"Count","value":-1,"parameterType":"int"}}),
             (["set-parameter","Fixture","Jump","","--type","trigger"],{"action":"animator_set_parameter","target":"Fixture","properties":{"parameterName":"Jump","value":"","parameterType":"trigger"}}),
@@ -203,6 +203,8 @@ def test_animator_control_read_registered_sdk(tmp_path):
                     print("FULL_SCHEMA",mode,json.dumps(tools["manage_animation"].inputSchema,sort_keys=True))
                     for payload in cases:
                         wire = {"action":payload["action"].lower()}
+                        if payload.get("runtime_only") is True:
+                            wire["action"] = "animator_set_parameter_runtime"
                         for key,value in payload.items():
                             if key == "action" or value is None:
                                 continue

@@ -58,8 +58,21 @@ async def test_edit_only_lease_cannot_dispatch_compile_or_persistent_runtime_ope
             {"action": "add_package", "package": "com.fixture.tool"},
             ["edit", "run"],
         ),
-        ("manage_animation", {"action": "animator_set_parameter", "runtime_only": True}, ["run"]),
-        ("manage_animation", {"action": "animator_set_enabled", "runtime_only": True}, ["run"]),
+        ("manage_animation", {"action": "animator_set_parameter_runtime"}, ["run"]),
+        (
+            "manage_animation",
+            {
+                "action": "animator_set_enabled_runtime",
+                "runtimeOnly": False,
+                "properties": {"runtimeOnly": False, "action": "animator_set_enabled"},
+            },
+            ["run"],
+        ),
+        (
+            "manage_animation",
+            {"action": "animator_set_enabled", "runtime_only": True},
+            ["edit", "run"],
+        ),
         ("manage_packages", {"action": "status"}, ["read"]),
     ],
 )
@@ -82,3 +95,47 @@ async def test_explicit_complete_authority_reaches_socket(
         # Then useful authorized operations still dispatch exactly once.
         assert result["success"] is True
         assert len(command_hub.sent) == 1 and PluginHub._pending == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outer,child",
+    [
+        ("manage_animation", {"action": "animator_set_enabled", "runtimeOnly": True}),
+        ("batch_execute", {"action": "animator_set_parameter", "runtime_only": True}),
+        ("batch_validate", {"action": "animator_set_enabled", "runtimeOnly": True}),
+        (
+            "batch_apply_preview",
+            {"action": "animator_set_parameter", "properties": {"runtime_only": True}},
+        ),
+        (
+            "manage_animation",
+            {"action": "animator_set_enabled_runtime", "Action": "animator_set_enabled"},
+        ),
+        (
+            "manage_animation",
+            {"action": "animator_set_parameter_runtime", "action_": "animator_set_parameter"},
+        ),
+    ],
+)
+async def test_run_only_native_fence_refuses_legacy_or_shadowed_animator_writes(
+    command_hub, monkeypatch, outer, child
+):
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    await command_hub.registry.unregister("session")
+    await command_hub.registry.register("session", "Fixture", "hash", "6000", user_id="alice")
+    claims = {side: {"unity_mcp_permissions": ["run"]} for side in ("request", "plugin")}
+    async with permission_service(monkeypatch, claims) as fixture:
+        requester = (await fixture.service.validate("request")).lease
+        plugin = (await fixture.service.validate("plugin")).lease
+        command_hub.websocket.state.user_id = "alice"
+        setattr(command_hub.websocket.state, AUTHENTICATED_LEASE_STATE, plugin)
+        params = (
+            child
+            if outer == "manage_animation"
+            else {"commands": [{"tool": "manage_animation", "params": child}]}
+        )
+        with bind_credential_lease(requester):
+            result = await PluginHub.send_command("session", outer, params)
+        assert result["error"] == "permission_denied"
+        assert command_hub.sent == [] and PluginHub._pending == {}

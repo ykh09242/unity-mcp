@@ -9,6 +9,11 @@ from enum import StrEnum
 from typing import Final, TypeAlias
 from urllib.parse import urlsplit
 
+from services.animator_actions import (
+    RUNTIME_ANIMATOR_ACTIONS,
+    animator_runtime_opt_in,
+    guarded_animator_parameters,
+)
 from services.registry.capability_catalog import CAPABILITIES
 
 JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
@@ -448,6 +453,8 @@ def required_permissions(
                 raise OperationPermissionError()
             try:
                 native_arguments = native_batch_parameters(arguments)
+                if not native and name == "batch_execute" and tool == "manage_animation":
+                    native_arguments = guarded_animator_parameters(native_arguments)
             except ValueError as error:
                 raise OperationPermissionError() from error
             required.update(required_permissions(tool, native_arguments, native=True))
@@ -556,23 +563,19 @@ def required_permissions(
             action in {"build", "build_from_plan"} and backend not in (None, "")
         ):
             return CUSTOM_GRANTS
-    if name == "manage_animation" and action in {"animator_set_parameter", "animator_set_enabled"}:
-        # Only this explicit top-level flag reduces authority. Native execution
-        # refuses Edit mode for it rather than trusting a client's mode claim.
-        runtime_only = params.get(
-            "runtime_only", params.get("runtimeOnly", False) if native else False
-        )
-        if type(runtime_only) is not bool:
-            raise OperationPermissionError()
-        if runtime_only or native and ("runtime_only" in params or "runtimeOnly" in params):
-            if any(
-                key.replace("_", "").lower() == "runtimeonly" and value is not runtime_only
-                for key, value in params.items()
-            ):
-                raise OperationPermissionError()
-        if runtime_only:
+    if name == "manage_animation":
+        # Public opt-ins are translated to distinct guarded wire actions. An
+        # older plugin can ignore the flag on the original native setter.
+        try:
+            runtime_only = animator_runtime_opt_in(params)
+        except ValueError as error:
+            raise OperationPermissionError() from error
+        if action in RUNTIME_ANIMATOR_ACTIONS.values():
             return frozenset({Permission.RUN})
-        return CUSTOM_GRANTS
+        if action in RUNTIME_ANIMATOR_ACTIONS:
+            if not native and runtime_only and "runtime_only" in params:
+                return frozenset({Permission.RUN})
+            return CUSTOM_GRANTS
     if name == "manage_reference_graph" and action in _ACTIONS[name][Permission.EDIT]:
         return frozenset({Permission.READ, Permission.EDIT})
     if (

@@ -6,6 +6,7 @@ from pydantic import JsonValue
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 
+from services.animator_actions import guarded_animator_parameters
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import normalize_properties
@@ -141,7 +142,8 @@ def _round_trip_error(action: str, properties: dict[str, JsonValue] | None) -> s
         "clip_* (create clips, add keyframe curves, assign to GameObjects). "
         "Action-specific parameters go in `properties` (keys match ManageAnimation.cs). "
         "animator_set_parameter and animator_set_enabled require edit+run by default. "
-        "Top-level runtime_only=true requires run and refuses changes in Edit mode. "
+        "Top-level runtime_only=true requires run and a playing scene instance. "
+        "Older peers reject the dedicated runtime action. "
         "Round trips: clip_get_curves lists binding_id/kind/path/property/type; clip_get_curve returns "
         "paged full float keys (tangents, weights, tangent modes) or exact asset object-reference keys "
         "{guid,file_id}. clip_replace_curve replaces one existing binding with 1-1024 ordered keys; "
@@ -181,7 +183,7 @@ async def manage_animation(
     ] = None,
     runtime_only: Annotated[
         bool | None,
-        "For animator_set_parameter or animator_set_enabled, refuse Edit mode instead of persisting changes.",
+        "For animator_set_parameter or animator_set_enabled, require a playing scene instance.",
     ] = None,
 ) -> dict[str, Any]:
     """Unified animation management tool."""
@@ -241,7 +243,7 @@ async def manage_animation(
         async_send_command_with_retry,
         unity_instance,
         "manage_animation",
-        params_dict,
+        guarded_animator_parameters(params_dict),
     )
 
     return result if isinstance(result, dict) else {"success": False, "message": str(result)}

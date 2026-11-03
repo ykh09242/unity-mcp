@@ -30,11 +30,14 @@ def test_animator_runtime_only_requires_explicit_top_level_boolean(action):
             )
             == COMPILE
         )
-        assert required_permissions("manage_animation", {**base, key: True}, native=native) == RUN
+        expected = COMPILE if native else RUN
+        assert (
+            required_permissions("manage_animation", {**base, key: True}, native=native) == expected
+        )
         with pytest.raises(OperationPermissionError):
             authorize_operation(OperationGrants(RUN, True), "manage_animation", base, native=native)
         authorize_operation(
-            OperationGrants(RUN, True), "manage_animation", {**base, key: True}, native=native
+            OperationGrants(expected, True), "manage_animation", {**base, key: True}, native=native
         )
         with pytest.raises(OperationPermissionError):
             required_permissions("manage_animation", {**base, key: "true"}, native=native)
@@ -63,7 +66,7 @@ def test_animator_runtime_only_requires_explicit_top_level_boolean(action):
                 required_permissions(
                     "manage_animation", {**base, key: True, "properties": {key: False}}, native=True
                 )
-                == RUN
+                == COMPILE
             )
     for flag, expected in ((False, COMPILE), (True, RUN)):
         batch = {
@@ -72,6 +75,7 @@ def test_animator_runtime_only_requires_explicit_top_level_boolean(action):
             ]
         }
         assert required_permissions("batch_execute", batch) == expected
+        assert required_permissions("batch_execute", batch, native=True) == COMPILE
 
 
 CASES = [

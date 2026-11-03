@@ -60,15 +60,14 @@ def test_animator_automatic_defaults_require_edit_and_run(extra):
     assert {p.value for p in required} == {"edit", "run"}
 
 
-def test_explicit_runtime_only_animator_retains_run_only_authority():
-    # Given an explicit native-enforced runtime-only operation.
-    params = {"action": "animator_set_parameter", "runtime_only": True}
-    # When public and native operations are classified.
-    required = [
-        required_permissions("manage_animation", params, native=native) for native in (False, True)
-    ]
-    # Then Play-mode controls remain usable with run alone.
-    assert all({p.value for p in grants} == {"run"} for grants in required)
+@pytest.mark.parametrize("action", ["animator_set_parameter", "animator_set_enabled"])
+def test_only_the_guarded_wire_action_can_dispatch_with_run_alone(action):
+    params = {"action": action, "runtime_only": True}
+    assert required_permissions("manage_animation", params) == {"run"}
+    assert required_permissions("manage_animation", params, native=True) == {"edit", "run"}
+    assert required_permissions(
+        "manage_animation", {"action": action + "_runtime"}, native=True
+    ) == {"run"}
 
 
 @pytest.mark.parametrize("value", [None, "true", 1, {}, []])

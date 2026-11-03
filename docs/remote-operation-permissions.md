@@ -83,20 +83,22 @@ credential-free SSH/scp Git references and Git `?path=` selectors remain support
 Use Git/UPM's external authentication. Responses redact all URL userinfo, queries
 and fragments, including legacy jobs, registry records and native errors.
 
-`animator_set_parameter` retains automatic Play/Edit behavior and requires `edit`
-and `run`, because Edit mode persists controller defaults. Set the top-level
-`runtime_only` Boolean to `true` for a `run`-only operation: the native handler
-checks actual Play mode and refuses Edit mode before changes. Nested properties
-and caller mode claims cannot lower this policy. Defaults can only be written to
-writable, physically contained AnimatorController assets under `Assets/`;
-package controllers and transient controllers are rejected.
-The CLI exposes this as `animation animator set-parameter ... --runtime-only`.
+`animator_set_parameter` and `animator_set_enabled` require `edit` and `run`
+because they can persist controller defaults or scene component changes in Edit
+mode. Persistent controller defaults require writable, physically contained
+AnimatorController assets under `Assets/`.
 
-`animator_set_enabled` also requires `edit` and `run` by default because it can
-change a scene component in Edit mode. Set the top-level `runtime_only` Boolean
-to `true` for `run`-only authority; the native handler checks actual Play mode
-before changing the component. The CLI flag is `animation animator set-enabled
-... --runtime-only`.
+Set the public top-level `runtime_only` Boolean to `true` to use either setter
+with `run` alone. The CLI exposes `--runtime-only` on both `animation animator
+set-parameter` and `set-enabled`. The server and CLI select the dedicated
+`animator_set_parameter_runtime` or `animator_set_enabled_runtime` wire action.
+These actions require the target to be a playing scene instance. Older peers
+reject them. Direct native calls to the original setters still require both
+grants, including when their payload contains a runtime flag.
+
+Public batches use the same guarded action for preview and execution. A preview
+issued for the original action has a different command hash and must be
+prepared again before applying.
 
 Public refresh with `wait_for_ready` enabled (the default) additionally requires
 `read` for its promised ready observation. Dispatch-only refresh can use

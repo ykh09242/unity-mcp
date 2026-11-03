@@ -3,6 +3,9 @@ using NUnit.Framework;
 using UnityEngine;
 #if UNITY_EDITOR
 using UnityEditor;
+using UnityEditor.Animations;
+using UnityEditor.SceneManagement;
+using UnityEngine.SceneManagement;
 #endif
 
 namespace MCPForUnityTests.PlayMode
@@ -11,6 +14,102 @@ namespace MCPForUnityTests.PlayMode
     public class PlayModeExecutionEvidenceTests
     {
 #if UNITY_EDITOR
+        private static bool RunAnimationCommand(string json)
+        {
+            var jsonType = Type.GetType("Newtonsoft.Json.Linq.JObject, Newtonsoft.Json", true);
+            var parse = jsonType.GetMethod("Parse", new[] { typeof(string) });
+            var tool = Type.GetType("MCPForUnity.Editor.Tools.Animation.ManageAnimation, MCPForUnity.Editor", true);
+            var result = tool.GetMethod("HandleCommand").Invoke(null, new[] { parse.Invoke(null, new object[] { json }) });
+            bool success = (bool)result.GetType().GetProperty("success").GetValue(result);
+            if (!success)
+                Assert.That((string)result.GetType().GetProperty("message").GetValue(result), Does.Contain("Play mode"));
+            return success;
+        }
+
+        private static string AnimationCommand(string action, string target, string arguments)
+        {
+            return "{\"action\":\"" + action + "\",\"target\":" + target + "," + arguments + "}";
+        }
+
+        [Test]
+        public void RuntimeAnimatorActionsRejectAssetsAndPreviewObjectsWhileAllowingPlayingInstances()
+        {
+            Assert.That(Application.isPlaying, Is.True);
+            string folderName = "AnimatorRuntimeGuard_" + Guid.NewGuid().ToString("N");
+            string folder = "Assets/" + folderName;
+            Assert.That(AssetDatabase.CreateFolder("Assets", folderName), Is.Not.Empty);
+            GameObject source = null;
+            GameObject live = null;
+            GameObject preview = null;
+            var previewScene = default(Scene);
+            try
+            {
+                var controller = AnimatorController.CreateAnimatorControllerAtPath(folder + "/Controller.controller");
+                controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
+                controller.layers[0].stateMachine.AddState("Idle");
+                source = new GameObject("RuntimeGuardSource");
+                source.AddComponent<Animator>().runtimeAnimatorController = controller;
+                string prefabPath = folder + "/Source.prefab";
+                var prefab = PrefabUtility.SaveAsPrefabAsset(source, prefabPath);
+                Assert.That(prefab, Is.Not.Null);
+                var prefabAnimator = prefab.GetComponent<Animator>();
+                Assert.That(EditorUtility.IsPersistent(prefabAnimator), Is.True);
+                live = UnityEngine.Object.Instantiate(prefab);
+                var liveAnimator = live.GetComponent<Animator>();
+                liveAnimator.Rebind();
+                liveAnimator.Update(0f);
+                previewScene = EditorSceneManager.NewPreviewScene();
+                preview = new GameObject("RuntimeGuardPreview");
+                SceneManager.MoveGameObjectToScene(preview, previewScene);
+                preview.AddComponent<Animator>().runtimeAnimatorController = controller;
+                Assert.That(Application.IsPlaying(preview), Is.False);
+
+                string assetTarget = "{\"find\":\"" + prefabPath + "\"}";
+                string previewTarget = preview.GetInstanceID().ToString();
+                string liveTarget = live.GetInstanceID().ToString();
+                foreach (string target in new[] { assetTarget, previewTarget })
+                {
+                    Assert.That(
+                        RunAnimationCommand(AnimationCommand("animator_set_enabled_runtime", target, "\"enabled\":false,\"runtime_only\":false")),
+                        Is.False
+                    );
+                    Assert.That(
+                        RunAnimationCommand(
+                            AnimationCommand("animator_set_parameter_runtime", target, "\"parameterName\":\"Speed\",\"value\":4,\"runtime_only\":false")
+                        ),
+                        Is.False
+                    );
+                    Assert.That(RunAnimationCommand(AnimationCommand("animator_set_enabled", target, "\"enabled\":false,\"runtime_only\":true")), Is.False);
+                    Assert.That(
+                        RunAnimationCommand(
+                            AnimationCommand("animator_set_parameter", target, "\"parameterName\":\"Speed\",\"value\":4,\"runtime_only\":true")
+                        ),
+                        Is.False
+                    );
+                }
+                Assert.That(prefabAnimator.enabled, Is.True);
+                Assert.That(preview.GetComponent<Animator>().enabled, Is.True);
+                Assert.That(controller.parameters[0].defaultFloat, Is.EqualTo(0f));
+                Assert.That(
+                    RunAnimationCommand(AnimationCommand("animator_set_parameter_runtime", liveTarget, "\"parameterName\":\"Speed\",\"value\":4")),
+                    Is.True
+                );
+                Assert.That(liveAnimator.GetFloat("Speed"), Is.EqualTo(4f));
+                Assert.That(RunAnimationCommand(AnimationCommand("animator_set_enabled_runtime", liveTarget, "\"enabled\":false")), Is.True);
+                Assert.That(liveAnimator.enabled, Is.False);
+            }
+            finally
+            {
+                if (live != null)
+                    UnityEngine.Object.DestroyImmediate(live);
+                if (source != null)
+                    UnityEngine.Object.DestroyImmediate(source);
+                if (previewScene.IsValid())
+                    EditorSceneManager.ClosePreviewScene(previewScene);
+                AssetDatabase.DeleteAsset(folder);
+            }
+        }
+
         [Serializable]
         private class Readiness
         {

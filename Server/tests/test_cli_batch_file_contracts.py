@@ -48,8 +48,8 @@ def batch_transport(monkeypatch, tmp_path):
         requests.append(json.loads(request.content))
         return httpx.Response(200, json=response)
 
-    def client():
-        instance = client_type(transport=httpx.MockTransport(respond))
+    def client(**options):
+        instance = client_type(transport=httpx.MockTransport(respond), **options)
         clients.append(instance)
         return instance
 
@@ -57,6 +57,55 @@ def batch_transport(monkeypatch, tmp_path):
     monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
     yield cli, requests, response
     assert all(instance.is_closed for instance in clients)
+
+
+@pytest.mark.parametrize("surface", ["run", "inline", "raw_batch", "raw_animator"])
+@pytest.mark.parametrize("flag", [True, "true"])
+def test_explicit_runtime_setter_at_real_cli_transport(batch_transport, tmp_path, surface, flag):
+    cli, requests, _ = batch_transport
+    params = {
+        "action": "animator_set_enabled",
+        "runtimeOnly": flag,
+        "properties": {"runtimeOnly": False},
+    }
+    custom = {"tool": "Custom", "params": {"Field_": None, "Field": False}}
+    commands = [custom, {"tool": "manage_animation", "params": params}]
+    args = []
+    if surface == "run":
+        path = tmp_path / "batch.json"
+        path.write_text(json.dumps(commands), encoding="utf-8")
+        args = ["batch", "run", str(path)]
+    elif surface == "inline":
+        (tmp_path / "Assets").mkdir()
+        (tmp_path / "ProjectSettings").mkdir()
+        (tmp_path / "ProjectSettings/ProjectVersion.txt").write_text("m_EditorVersion: 6000.0")
+        args = [
+            "--instance",
+            "Fixture@aaaaaaaaaaaaaaaa",
+            "--expect-project",
+            str(tmp_path),
+            "batch",
+            "inline",
+            json.dumps(commands),
+        ]
+    elif surface == "raw_batch":
+        args = ["raw", "batch_execute", json.dumps({"commands": commands})]
+    else:
+        args = ["raw", "manage_animation", json.dumps(params)]
+
+    result = CliRunner().invoke(cli, args)
+    if flag is not True:
+        assert result.exit_code != 0 and requests == []
+        return
+    assert result.exit_code == 0, result.output
+    assert len(requests) == 1
+    payload = requests[0]["params"]
+    if surface != "raw_animator":
+        assert payload["commands"][0] == custom
+        payload = payload["commands"][1]["params"]
+    if surface == "inline":
+        assert requests[0]["expected_project"] == {"root": str(tmp_path.resolve())}
+    assert payload == {**params, "action": "animator_set_enabled_runtime"}
 
 
 @pytest.mark.parametrize("name", ["Caf\u00e9", "\uc601\uc6c5", "\U0001f680"])

@@ -13,6 +13,7 @@ from core.config import config
 from models.response_limits import ResponseOwner, response_limit_error, response_owner
 from services.credential_lease import CredentialLeaseError, require_credential_lease
 from services.command_progress import claim_command_progress
+from services.animator_actions import guarded_animator_batch_member
 from services.operation_permissions import (
     authorize_remote_operation,
     native_batch_parameters,
@@ -351,10 +352,7 @@ async def batch_execute(
         # the wire after verifying that native key conversion has a unique result.
         native_batch_parameters(params)
         normalized_commands.append(
-            {
-                "tool": tool_name,
-                "params": params,
-            }
+            guarded_animator_batch_member({"tool": tool_name, "params": params})
         )
 
     # The entire normalized batch is admitted before context/settings/preflight

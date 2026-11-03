@@ -213,10 +213,14 @@ namespace MCPForUnity.Editor.Tools.Animation
                     return AnimatorControl.Crossfade(@params);
                 case "set_parameter":
                     return AnimatorControl.SetParameter(@params);
+                case "set_parameter_runtime":
+                    return AnimatorControl.SetParameter(@params, requireRuntime: true);
                 case "set_speed":
                     return AnimatorControl.SetSpeed(@params);
                 case "set_enabled":
                     return AnimatorControl.SetEnabled(@params);
+                case "set_enabled_runtime":
+                    return AnimatorControl.SetEnabled(@params, requireRuntime: true);
                 default:
                     return new
                     {

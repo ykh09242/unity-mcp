@@ -30,10 +30,19 @@ def test_set_enabled_cli_runtime_only_is_top_level(runner, mock_config, mock_suc
     assert params["properties"]["enabled"] is False
 
 
-def test_set_enabled_public_tool_forwards_runtime_only():
+@pytest.mark.parametrize("action", ["animator_set_enabled", "animator_set_parameter"])
+def test_public_runtime_only_fails_closed_on_an_older_peer(action):
     from services.tools.manage_animation import manage_animation
 
     ctx = MagicMock()
+    writes = []
+
+    async def older_peer(_send, _instance, _command, params):
+        if params["action"] == action:
+            writes.append(params["target"])
+            return {"success": True}
+        return {"success": False, "error": "unknown_action"}
+
     with patch(
         "services.tools.manage_animation.get_unity_instance_from_context",
         new_callable=AsyncMock,
@@ -42,19 +51,20 @@ def test_set_enabled_public_tool_forwards_runtime_only():
         with patch(
             "services.tools.manage_animation.send_with_unity_instance",
             new_callable=AsyncMock,
-            return_value={"success": True},
+            side_effect=older_peer,
         ) as send:
             result = asyncio.run(
                 manage_animation(
                     ctx,
-                    action="animator_set_enabled",
+                    action=action,
                     target="Player",
-                    properties={"enabled": False},
+                    properties={"enabled": False, "runtimeOnly": False, "action": action},
                     runtime_only=True,
                 )
             )
-    assert result["success"] is True
-    assert send.call_args.args[3]["runtime_only"] is True
+    assert result == {"success": False, "error": "unknown_action"}
+    assert send.await_count == 1 and writes == []
+    assert send.call_args.args[3]["action"] == action + "_runtime"
 
 
 # =============================================================================

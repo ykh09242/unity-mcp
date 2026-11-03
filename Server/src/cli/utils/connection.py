@@ -12,6 +12,7 @@ import httpx
 from cli.utils.config import get_config, CLIConfig
 from core.local_auth import LOCAL_AUTH_HEADER, read_local_auth_token
 from models.unity_response import normalize_unity_response
+from services.animator_actions import guarded_animator_batch_member, guarded_animator_parameters
 
 
 class UnityConnectionError(Exception):
@@ -128,6 +129,26 @@ async def send_command(
     guarded = cfg.expected_project_root is not None
     url = _server_url(cfg, "/api/context-command" if guarded else "/api/command")
 
+    # All local CLI surfaces, including raw and project-guarded dispatch, send
+    # native commands directly. Explicit runtime setters need a fail-closed wire action.
+    native_command = command_type.lower()
+    try:
+        if native_command == "manage_animation":
+            params = guarded_animator_parameters(params)
+        elif native_command in {
+            "batch_execute",
+            "batch_validate",
+            "batch_apply_preview",
+        } and isinstance(params.get("commands"), list):
+            params = {
+                **params,
+                "commands": [
+                    guarded_animator_batch_member(member) if isinstance(member, dict) else member
+                    for member in params["commands"]
+                ],
+            }
+    except ValueError as error:
+        raise click.UsageError(str(error)) from error
     payload = {
         "type": command_type,
         "params": params,

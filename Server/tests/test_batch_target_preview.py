@@ -1,4 +1,7 @@
+import base64
+import hashlib
 import importlib
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -44,6 +47,78 @@ def receipt(commands, *, complete=True):
             else None,
         },
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", ["runtime_only", "runtimeOnly"])
+async def test_runtime_setter_preview_and_apply_use_identical_guarded_children(
+    batch, monkeypatch, flag
+):
+    action = "animator_set_enabled"
+    params = {"action": action, flag: True, "properties": {"runtimeOnly": False, "action": action}}
+    commands = [{"tool": "manage_animation", "params": params}]
+    guarded = [{"tool": "manage_animation", "params": {**params, "action": action + "_runtime"}}]
+
+    def commands_hash(children):
+        raw = json.dumps(children, sort_keys=True, separators=(",", ":")).encode()
+        return base64.b64encode(hashlib.sha256(raw).digest()).decode()
+
+    def peer(_send, _instance, command, payload):
+        current_hash = commands_hash(payload["commands"])
+        if command == "batch_validate":
+            reply = receipt(payload["commands"])
+            reply["data"]["preview"]["commandsHash"] = current_hash
+            return reply
+        if command == "batch_apply_preview":
+            if payload["preview"]["commandsHash"] != current_hash:
+                return {"success": False, "error": "stale_preview"}
+            return {"success": True}
+        if payload["commands"][0]["params"]["action"] == action:
+            return {"success": True}
+        return {"success": False, "error": "unknown_action"}
+
+    send = AsyncMock(side_effect=peer)
+    monkeypatch.setattr(batch, "send_with_unity_instance", send)
+
+    reply = await batch.batch_execute(
+        object(), commands, validate_only=True, preview_scope="targets"
+    )
+    guard = reply["data"]["preview"]
+    assert (await batch.batch_execute(object(), commands, preview=guard))["success"] is True
+    legacy_guard = {**guard, "commandsHash": commands_hash(commands)}
+    assert (await batch.batch_execute(object(), commands, preview=legacy_guard))[
+        "error"
+    ] == "stale_preview"
+    assert (await batch.batch_execute(object(), commands))["error"] == "unknown_action"
+    assert [c.args[2] for c in send.await_args_list] == [
+        "batch_validate",
+        "batch_apply_preview",
+        "batch_apply_preview",
+        "batch_execute",
+    ]
+    assert all(c.args[3]["commands"] == guarded for c in send.await_args_list)
+    assert send.await_args_list[2].args[3]["preview"] == legacy_guard
+    assert commands[0]["params"]["action"] == action
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "child",
+    [
+        {"properties": {"action": "animator_set_enabled"}, "runtime_only": True},
+        {"aCtion": "animator_set_parameter", "runtimeOnly": True},
+        {"action": "animator_set_enabled", "runtimeonly": True},
+    ],
+)
+async def test_batch_refuses_ambiguous_runtime_request_before_any_peer_io(
+    batch, monkeypatch, child
+):
+    send = AsyncMock()
+    monkeypatch.setattr(batch, "send_with_unity_instance", send)
+    with pytest.raises(ValueError):
+        await batch.batch_execute(object(), [{"tool": "manage_animation", "params": child}])
+    batch._get_max_commands_from_editor_state.assert_not_awaited()
+    send.assert_not_awaited()
 
 
 @pytest.mark.asyncio

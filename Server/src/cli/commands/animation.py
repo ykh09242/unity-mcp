@@ -20,6 +20,7 @@ _TOP_LEVEL_KEYS = {
     "controllerPath",
     "properties",
     "runtime_only",
+    "runtimeOnly",
 }
 
 
@@ -27,7 +28,9 @@ def _normalize_params(params: dict[str, Any]) -> dict[str, Any]:
     params = dict(params)
     properties: dict[str, Any] = {}
     for key in list(params.keys()):
-        if key in _TOP_LEVEL_KEYS:
+        # Keep operation controls at the wire boundary, where ambiguous spellings
+        # are rejected before older peers can flatten or ignore them.
+        if key in _TOP_LEVEL_KEYS or key.replace("_", "").lower() in {"action", "runtimeonly"}:
             continue
         properties[key] = params.pop(key)
 
