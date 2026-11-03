@@ -116,15 +116,26 @@ def resume_peer(mode="completed", reloads=1, *, origin=False, business_result=No
                     assert mode == "cold" and attempt == 1
                     return
                 commands.append(command)
-                if mode == "cancel":
-                    if command["resume"]["action"] == "cancel":
+                if mode in {"cancel", "cancel_after_completion"}:
+                    control = command["resume"]["action"] == "cancel"
+                    if control:
                         canceled.set()
                     else:
                         started.set()
                         assert canceled.wait(watchdog_timeout(5))
-                    send_frame(
-                        peer, result(command, "canceled", {"success": False, "error": "canceled"})
+                    state = "completed" if mode == "cancel_after_completion" else "canceled"
+                    value = (
+                        {"status": "error", "error": "Original handler failed"}
+                        if state == "completed"
+                        else {
+                            "status": "error",
+                            "code": "command_resume_canceled",
+                            "error": "Command continuation state: canceled",
+                        }
                     )
+                    send_frame(peer, result(command, state, value))
+                    if control:
+                        assert peer.recv(1) == b""  # The control socket is owned by cleanup.
                 elif mode in {"queued_then_offline", "applied_then_offline"}:
                     send_frame(
                         peer,
@@ -372,10 +383,12 @@ async def test_tcp_reconnect_retains_invocation_and_never_creates_a_new_command(
 
 
 @pytest.mark.asyncio
-async def test_cancel_uses_separate_authenticated_socket_and_stops_queued_worker(monkeypatch):
+@pytest.mark.parametrize("mode", ["cancel", "cancel_after_completion"])
+async def test_cancel_uses_separate_authenticated_socket_and_stops_queued_worker(monkeypatch, mode):
     # Given a native queue holding the original authenticated connection's response.
-    with resume_peer("cancel") as (port, commands, started, canceled):
+    with resume_peer(mode) as (port, commands, started, canceled):
         connection = configure(monkeypatch, port)
+        gate = connection._async_admission(asyncio.get_running_loop())
         params = {"action": "save"}
         pending = asyncio.create_task(
             uc.async_send_command_with_retry(
@@ -394,6 +407,9 @@ async def test_cancel_uses_separate_authenticated_socket_and_stops_queued_worker
             assert len(commands) == 2
             assert commands[1]["resume"] == {**commands[0]["resume"], "action": "cancel"}
             assert commands[1]["params"] == commands[0]["params"]
+            await asyncio.wait_for(gate.acquire(), watchdog_timeout(5))
+            gate.release()
+            assert not gate.in_use()
         finally:
             connection.disconnect()
 

@@ -8,7 +8,7 @@ from core.config import config
 from core.server_build import RUNNING_SERVER
 import contextlib
 from contextvars import Context, ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import errno
 import json
 import logging
@@ -1077,6 +1077,10 @@ class UnityConnection:
                     reply = decode_native_reply(resp, arbitration)
                     if _resume is not None:
                         _resume.validate_reply(reply)
+                        if _resume.action == "cancel":
+                            # A bound control acknowledgement may contain the native
+                            # cancellation error or the original handler's terminal result.
+                            return reply.payload
                         reply = _resume.normalize_reply(command_type, reply)
                     response_received = True
                     if reply.not_started:
@@ -2438,7 +2442,11 @@ async def _async_send_command_response(
     except asyncio.CancelledError:
         resume_owner.cancel()
         if connection is not None and resume_owner.invocation is not None:
-            await _cancel_stdio_resume(connection, resume_owner, command_type, params)
+            try:
+                await _cancel_stdio_resume(connection, resume_owner, command_type, params)
+            except Exception as error:
+                # Delivery is best effort under the original native deadline.
+                logger.debug("Could not deliver command cancellation (%s)", type(error).__name__)
         raise
     except TimeoutError:
         return _stdio_deadline_response(command_type, resume_owner.invocation)
@@ -2497,6 +2505,9 @@ async def _cancel_stdio_resume(
     resume = owner.invocation
     if resume is None:
         return
+    # The business reader can still receive a reply. Keep the control reader's
+    # proof state separate while retaining the exact invocation and deadline.
+    control_resume = replace(resume, action="cancel")
     params = owner.snapshot(params)
 
     def cancel():
@@ -2514,12 +2525,8 @@ async def _cancel_stdio_resume(
                 params,
                 max_attempts=0,
                 deadline=time.monotonic() + 1.0,
-                _resume=resume,
+                _resume=control_resume,
             )
-        except (OSError, RuntimeError, ValueError):
-            # The canceled sender never resumes. Dormant native work also has
-            # its original deadline when a reload prevents tombstone delivery.
-            return
         finally:
             control.disconnect()
             execution_owner.reset(receipt_token)
