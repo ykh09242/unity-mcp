@@ -164,6 +164,8 @@ namespace MCPForUnity.Editor.Tools
                     if (path != null && !Admitted(path))
                         throw new ArgumentException("Asset resolution requires an admitted project path.");
                     return Describe(path == null ? ValidateGuid(request) : AssetDatabase.AssetPathToGUID(path));
+                case "assets":
+                    return DescribePaths(request);
                 case "dependencies":
                     return Dependencies(request, count);
                 case "source":
@@ -196,6 +198,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 ["ignore_current_validation"] = 1,
                 ["asset_guard_version"] = 1,
+                ["asset_batch_version"] = 1,
                 ["instance_id"] = ReferenceGraphJournal.InstanceId,
                 ["project_id"] = ProjectIdentityUtility.GetProjectHash(),
                 ["epoch"] = ReferenceGraphJournal.Epoch,
@@ -409,6 +412,21 @@ namespace MCPForUnity.Editor.Tools
                 ["assets"] = rows,
                 ["next_offset"] = end < inventory.Length ? (JToken)end : JValue.CreateNull(),
             };
+        }
+
+        private static JObject DescribePaths(JObject request)
+        {
+            if (
+                !(request["paths"] is JArray paths)
+                || paths.Count < 1
+                || paths.Count > 32
+                || paths.Any(path => path.Type != JTokenType.String || !Admitted((string)path))
+            )
+                throw new ArgumentException("Asset descriptions require 1 to 32 admitted project paths.");
+            var assets = new JArray();
+            foreach (string path in paths.Values<string>())
+                assets.Add(new JObject { ["path"] = path, ["asset"] = Describe(AssetDatabase.AssetPathToGUID(path)) });
+            return new JObject { ["assets"] = assets };
         }
 
         private static JObject Describe(string guid)

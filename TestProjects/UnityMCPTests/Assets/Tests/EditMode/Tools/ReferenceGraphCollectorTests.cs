@@ -11,6 +11,33 @@ using UnityEngine;
 
 namespace MCPForUnityTests.EditMode.Tools
 {
+    [TestFixture]
+    public sealed class ReferenceGraphAssetBatchTests
+    {
+        private static JObject Describe(JArray paths) =>
+            (JObject)
+                typeof(ReferenceGraphCollector)
+                    .GetMethod("DescribePaths", BindingFlags.Static | BindingFlags.NonPublic)
+                    .Invoke(null, new object[] { new JObject { ["paths"] = paths } });
+
+        [Test]
+        public void DescriptionsPreserveInputOrderAndMissingPaths()
+        {
+            var paths = new JArray("Assets/NotFoundBatchA.png", "Assets/NotFoundBatchB.png", "Assets/NotFoundBatchA.png");
+            JArray rows = (JArray)Describe(paths)["assets"];
+            CollectionAssert.AreEqual(paths.Values<string>(), rows.Select(row => row.Value<string>("path")));
+            Assert.IsTrue(rows.All(row => row["asset"].Value<bool>("present") == false));
+        }
+
+        [Test]
+        public void DescriptionsRejectInvalidOrOversizedRequests()
+        {
+            Assert.Throws<TargetInvocationException>(() => Describe(new JArray()));
+            Assert.Throws<TargetInvocationException>(() => Describe(new JArray(Enumerable.Repeat("Assets/A.png", 33))));
+            Assert.Throws<TargetInvocationException>(() => Describe(new JArray("Assets/../Outside.png")));
+        }
+    }
+
     [TestFixture, Parallelizable(ParallelScope.None)]
     public sealed class ReferenceGraphIgnoreRulesTests
     {

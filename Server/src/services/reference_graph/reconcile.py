@@ -621,7 +621,14 @@ class Reconciler:
             admitted = await drained_thread(self.workspace.admission)
             moved_roots = set()
             pending_assets = []
-            blocked = False
+            # Fence pending exclusions before fetching descriptions for the entire page.
+            if any(
+                change.get("kind") != "addressables_catalog" and not admitted(change["path"])
+                for change in changes
+            ):
+                await drained_thread(self.workspace.block_admission)
+            described = await self._describe_changes(changes)
+            descriptions = iter(described) if described is not None else None
 
             async def flush_assets():
                 if pending_assets:
@@ -639,14 +646,15 @@ class Reconciler:
                     catalog |= change["revision"] > self.progress.get("catalog_through", -1)
                     continue
                 path = change["path"]
-                if not admitted(path) and not blocked:
-                    await drained_thread(self.workspace.block_admission)
-                    blocked = True
                 if change["deleted"]:
                     await flush_assets()
                     moved_roots.update(await self._remove_changed_path(path))
                 else:
-                    asset = await self.collect("asset", path=path)
+                    asset = (
+                        next(descriptions)
+                        if descriptions is not None
+                        else await self.collect("asset", path=path)
+                    )
                     if asset.get("present"):
                         self._budget.admit_items(1)
                         pending_assets.append(asset)
@@ -666,6 +674,37 @@ class Reconciler:
                 continue
             if not more:
                 return
+
+    async def _describe_changes(self, changes: list[dict]) -> list[dict] | None:
+        version = self.progress.get("editor", {}).get("asset_batch_version")
+        if type(version) is not int or version != 1:
+            return None
+        paths = [
+            change["path"]
+            for change in changes
+            if change.get("kind") != "addressables_catalog" and not change["deleted"]
+        ]
+        descriptions = []
+        for start in range(0, len(paths), 32):
+            batch = paths[start : start + 32]
+            page = await self.collect("assets", paths=batch)
+            result = rows(page, "assets", len(batch))
+            if len(result) != len(batch):
+                raise RevisionConflict("Collector asset batch length changed")
+            for path, row in zip(batch, result):
+                if (
+                    not isinstance(row, dict)
+                    or row.get("path") != path
+                    or not isinstance(row.get("asset"), dict)
+                ):
+                    raise RevisionConflict("Collector asset batch does not match requested paths")
+                asset = row["asset"]
+                if not isinstance(asset.get("present"), bool) or (
+                    asset["present"] and asset.get("path") != path
+                ):
+                    raise RevisionConflict("Collector asset batch contains an invalid description")
+                descriptions.append(asset)
+        return descriptions
 
     async def _remove_changed_path(self, path: str) -> set[str]:
         after = ("", "")
