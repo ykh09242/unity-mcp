@@ -50,11 +50,18 @@ namespace MCPForUnity.Runtime.PlayScenarios
         void ReleaseInput();
     }
 
+    public sealed class PlayScenarioInputReleaseException : Exception
+    {
+        internal PlayScenarioInputReleaseException(Exception inner)
+            : base("Input release outcome is unknown: " + inner.Message, inner) { }
+    }
+
     /// <summary>A host owns its virtual devices; a step is dispatched once and waits for real input updates.</summary>
     public sealed class PlayScenarioInputSession
     {
         private MCPForUnity.Editor.Tools.Input.IScenarioInputSimulationBackend backend;
         private long startedUpdate;
+        private Exception releaseFailure;
 
         public void Maintain()
         {
@@ -64,6 +71,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         public PlayScenarioObservation Evaluate(PlayScenarioStep step, bool firstPoll)
         {
+            if (releaseFailure != null)
+                throw new InvalidOperationException("Previous input release has an unknown outcome.", releaseFailure);
             if (firstPoll)
             {
                 var request = MCPForUnity.Editor.Tools.Input.InputSimulationRequest.ParseScenario(step.Input);
@@ -83,14 +92,16 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 {
                     if (ReferenceEquals(backend, dispatchBackend))
                         Release();
-                    else
-                        dispatchBackend.ReleaseAll();
+                    else if (releaseFailure == null)
+                        ReleaseOwned(dispatchBackend);
                     throw;
                 }
                 if (!ReferenceEquals(backend, dispatchBackend))
                 {
+                    if (releaseFailure != null)
+                        throw new InvalidOperationException("Previous input release has an unknown outcome.", releaseFailure);
                     // Device-added callbacks may cancel while an adapter is still assigning its new device.
-                    dispatchBackend.ReleaseAll();
+                    ReleaseOwned(dispatchBackend);
                     return new PlayScenarioObservation(false, "Input dispatch was interrupted and its devices were released.");
                 }
                 startedUpdate = dispatchBackend.UpdateCount;
@@ -127,9 +138,24 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         public void Release()
         {
+            if (releaseFailure != null)
+                throw new InvalidOperationException("Previous input release has an unknown outcome: " + releaseFailure.Message, releaseFailure);
             var owned = backend;
             backend = null;
-            owned?.ReleaseAll();
+            ReleaseOwned(owned);
+        }
+
+        private void ReleaseOwned(MCPForUnity.Editor.Tools.Input.IScenarioInputSimulationBackend owned)
+        {
+            try
+            {
+                owned?.ReleaseAll();
+            }
+            catch (Exception error)
+            {
+                releaseFailure = error;
+                throw new PlayScenarioInputReleaseException(error);
+            }
         }
     }
 

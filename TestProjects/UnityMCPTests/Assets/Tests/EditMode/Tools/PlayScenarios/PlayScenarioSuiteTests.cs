@@ -224,6 +224,82 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That(harness.Runner.State.Report.Scenarios[0].Report, Is.Not.Null);
         }
 
+        [Test]
+        public void ConfirmedUnattemptedCancellationRetriesAfterRestoreAndRecordsAcceptance()
+        {
+            var harness = new Harness(Suite("continue"));
+            harness.Runner.Tick(1001, true);
+            harness.Runner.RequestStop("cancelled", "requested stop", 1002);
+            harness.CancelAction = () => throw new PlayScenarioCancellationNotAttemptedException("child unavailable");
+            harness.Runner.Tick(1003, true);
+            Assert.That(harness.Runner.State.CancelAttemptState, Is.EqualTo("not_attempted"));
+            PlayScenarioSuiteState restored = JsonConvert.DeserializeObject<PlayScenarioSuiteState>(JsonConvert.SerializeObject(harness.Runner.State));
+            int attempts = 0;
+            var runner = new PlayScenarioSuiteRunner(
+                restored,
+                (definition, repeat, timeout, id, revision) => throw new AssertionException("Unexpected admission"),
+                id => new JObject { ["status"] = "running" },
+                id =>
+                {
+                    attempts++;
+                    return new JObject { ["status"] = "running", ["pending_status"] = "cancelled" };
+                },
+                () => { },
+                () => true
+            );
+            runner.Tick(1004, true);
+            runner.Tick(1005, true);
+            Assert.That(attempts, Is.EqualTo(1));
+            Assert.That(restored.CancelAttempts, Is.EqualTo(2));
+            Assert.That(restored.CancelAttemptState, Is.EqualTo("accepted"));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void UnknownOrInterruptedCancellationIsNotReplayedAfterRestore(bool interrupted)
+        {
+            var harness = new Harness(Suite("continue"));
+            harness.Runner.Tick(1001, true);
+            harness.Runner.RequestStop("cancelled", "requested stop", 1002);
+            harness.CancelAction = () => throw new InvalidOperationException("unknown effect");
+            harness.Runner.Tick(1003, true);
+            if (interrupted)
+                harness.Runner.State.CancelAttemptState = "attempted";
+            PlayScenarioSuiteState restored = JsonConvert.DeserializeObject<PlayScenarioSuiteState>(JsonConvert.SerializeObject(harness.Runner.State));
+            int attempts = 0;
+            var runner = new PlayScenarioSuiteRunner(
+                restored,
+                (definition, repeat, timeout, id, revision) => null,
+                id => harness.Snapshot,
+                id =>
+                {
+                    attempts++;
+                    return null;
+                },
+                () => { },
+                () => true
+            );
+            runner.Tick(1004, true);
+            runner.Tick(1005, true);
+            Assert.That(attempts, Is.Zero);
+            Assert.That(restored.CancelAttemptState, Is.EqualTo(interrupted ? "interrupted" : "unknown"));
+            Assert.That(restored.Report.Status, Is.EqualTo("running"));
+        }
+
+        [Test]
+        public void ConfirmedUnattemptedCancellationRetriesAreBounded()
+        {
+            var harness = new Harness(Suite("continue"));
+            harness.Runner.Tick(1001, true);
+            harness.Runner.RequestStop("cancelled", "requested stop", 1002);
+            harness.CancelAction = () => throw new PlayScenarioCancellationNotAttemptedException("unavailable");
+            for (int i = 0; i < 5; i++)
+                harness.Runner.Tick(1003 + i, true);
+            Assert.That(harness.Cancels, Is.EqualTo(3));
+            Assert.That(harness.Runner.State.CancelAttemptState, Is.EqualTo("not_attempted"));
+            Assert.That(harness.Runner.Running, Is.True);
+        }
+
         [TestCase("cancelled", 1)]
         [TestCase("cancelled", 50)]
         [TestCase("timed_out", 1)]
@@ -626,6 +702,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             internal int Starts;
             internal int Cancels;
             internal bool Busy;
+            internal Func<JObject> CancelAction;
             internal long? SynchronousCancelFinishedUnixMs;
             internal int Checkpoints;
 
@@ -654,6 +731,8 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                     id =>
                     {
                         Cancels++;
+                        if (CancelAction != null)
+                            return CancelAction();
                         if (SynchronousCancelFinishedUnixMs.HasValue)
                         {
                             Complete("cancelled", "child cancelled", SynchronousCancelFinishedUnixMs.Value);

@@ -34,8 +34,21 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         [JsonProperty("cancel_sent")]
         public bool CancelSent;
 
+        [JsonProperty("cancel_attempts")]
+        public int CancelAttempts;
+
+        [JsonProperty("cancel_attempt_state")]
+        public string CancelAttemptState;
+
         [JsonProperty("finalization_deadline_unix_ms")]
         public long? FinalizationDeadlineUnixMs;
+    }
+
+    // Only use when the child service can prove cancellation was never dispatched.
+    internal sealed class PlayScenarioCancellationNotAttemptedException : Exception
+    {
+        internal PlayScenarioCancellationNotAttemptedException(string message)
+            : base(message) { }
     }
 
     /// <summary>Sequential value-only coordinator; child execution remains owned by the ordinary runner.</summary>
@@ -147,17 +160,38 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             PlayScenarioSuiteChild child = Current;
             if (child?.Status == "running")
             {
-                if (State.RequestedStatus != null && !State.CancelSent)
+                if (State.CancelSent && State.CancelAttemptState == "attempted")
+                {
+                    // A reload interrupted an attempt between its fence and its acknowledgement.
+                    State.CancelAttemptState = "interrupted";
+                    AppendCancellationError("Child cancellation acknowledgement was interrupted; its effect is unknown.");
+                    checkpoint();
+                }
+                if (State.RequestedStatus != null && !State.CancelSent && State.CancelAttempts < 3)
                 {
                     State.CancelSent = true;
+                    State.CancelAttempts++;
+                    State.CancelAttemptState = "attempted";
                     checkpoint();
                     try
                     {
-                        cancel(child.JobId);
+                        JObject result = cancel(child.JobId);
+                        State.CancelAttemptState =
+                            (string)result?["status"] == "cancelled" || (string)result?["pending_status"] == "cancelled" ? "accepted" : "other_outcome";
+                        checkpoint();
+                    }
+                    catch (PlayScenarioCancellationNotAttemptedException exception)
+                    {
+                        State.CancelSent = false;
+                        State.CancelAttemptState = "not_attempted";
+                        AppendCancellationError("Child cancellation was not attempted: " + exception.Message);
+                        checkpoint();
                     }
                     catch (Exception exception)
                     {
-                        State.Report.Error = State.Report.Error ?? Bounded("Child cancellation failed: " + exception.Message);
+                        State.CancelAttemptState = "unknown";
+                        AppendCancellationError("Child cancellation effect is unknown: " + exception.Message);
+                        checkpoint();
                     }
                 }
                 JObject snapshot;
@@ -223,6 +257,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 }
                 State.Cursor++;
                 State.CancelSent = false;
+                State.CancelAttempts = 0;
+                State.CancelAttemptState = null;
                 checkpoint();
                 if (State.RequestedStatus != null || State.Cursor == State.Report.Scenarios.Count)
                     Finish(now);
@@ -276,6 +312,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             State.Report.FinishedUnixMs = finished;
             checkpoint();
         }
+
+        private void AppendCancellationError(string error) =>
+            State.Report.Error = Bounded(State.Report.Error == null ? error : State.Report.Error + "\n" + error);
 
         private static string Bounded(string value) => value?.Length > 4096 ? value.Substring(0, 4096) : value;
     }

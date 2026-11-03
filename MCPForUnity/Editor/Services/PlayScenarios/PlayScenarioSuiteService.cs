@@ -165,10 +165,18 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 state,
                 (definition, repeats, timeout, id, revision) => Data(PlayScenarioService.Start(definition, repeats, timeout, id, revision)),
                 id => Data(PlayScenarioService.CoordinationStatus(id)),
-                id => Data(PlayScenarioService.Cancel(id)),
+                CancelChild,
                 Persist,
                 () => PlayScenarioService.IsBusy
             );
+
+        private static JObject CancelChild(string id)
+        {
+            object response = PlayScenarioService.Cancel(id);
+            if (response is ErrorResponse error && error.Error == "play_scenario_job_not_found")
+                throw new PlayScenarioCancellationNotAttemptedException(error.Error);
+            return Data(response);
+        }
 
         private static void ReplaceRunner(PlayScenarioSuiteRunner runner)
         {
@@ -300,6 +308,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     "requested_status",
                     "first_failure_status",
                     "cancel_sent",
+                    "cancel_attempts",
+                    "cancel_attempt_state",
                     "finalization_deadline_unix_ms"
                 );
                 PlayScenarioSuiteStore.ValidateReport(value["report"] as JObject);
@@ -310,6 +320,21 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 PlayScenarioDefinition.Integer(value, "cursor", 0, definitions.Count, -1);
                 if (
                     value["cancel_sent"]?.Type != JTokenType.Boolean
+                    || (
+                        value["cancel_attempts"] != null
+                        && (value["cancel_attempts"].Type != JTokenType.Integer || (long)value["cancel_attempts"] < 0 || (long)value["cancel_attempts"] > 3)
+                    )
+                    || (
+                        value["cancel_attempt_state"] != null
+                        && value["cancel_attempt_state"].Type != JTokenType.Null
+                        && (
+                            value["cancel_attempt_state"].Type != JTokenType.String
+                            || !new[] { "attempted", "accepted", "other_outcome", "not_attempted", "unknown", "interrupted" }.Contains(
+                                (string)value["cancel_attempt_state"],
+                                StringComparer.Ordinal
+                            )
+                        )
+                    )
                     || value["deadline_unix_ms"]?.Type != JTokenType.Integer
                     || !long.TryParse(value["deadline_unix_ms"].ToString(), out _)
                 )

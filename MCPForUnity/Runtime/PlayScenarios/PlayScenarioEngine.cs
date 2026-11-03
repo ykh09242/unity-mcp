@@ -255,6 +255,14 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             }
             catch (Exception exception)
             {
+                if (
+                    exception is MCPForUnity.Runtime.PlayScenarios.PlayScenarioInputReleaseException
+                    && (!Running || State.Cursor != cursor || State.Phase != phase)
+                )
+                {
+                    RecordInputReleaseFailure(exception);
+                    return;
+                }
                 // Query work is counted even when the evaluation throws.
                 if (ObserveQueryBudget(now))
                     return;
@@ -404,7 +412,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             State.PendingStatus = status;
             State.PendingError = Bounded(error, 4096);
             Timeline(now, "outcome_requested", status + ": " + State.PendingError);
-            (_host as MCPForUnity.Runtime.PlayScenarios.IPlayScenarioInputHost)?.ReleaseInput();
+            ReleaseInputForOutcome();
             if (!Running)
                 return;
             _stepObserver.Abort("Step ended with " + status + ": " + error, now);
@@ -495,7 +503,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             result.FinishedUnixMs = now;
             Timeline(now, "cleanup_failed", result.Detail, result);
             // Preserve the failed step before release callbacks can finalize the run.
-            (_host as MCPForUnity.Runtime.PlayScenarios.IPlayScenarioInputHost)?.ReleaseInput();
+            ReleaseInputForOutcome();
             if (!Running)
                 return;
             _stepObserver.Abort("Cleanup ended: " + error, now);
@@ -516,6 +524,34 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             State.CleanupError = Bounded(State.CleanupError == null ? error : State.CleanupError + "\n" + error, 4096);
         }
 
+        private void ReleaseInputForOutcome()
+        {
+            try
+            {
+                (_host as MCPForUnity.Runtime.PlayScenarios.IPlayScenarioInputHost)?.ReleaseInput();
+            }
+            catch (Exception error)
+            {
+                RecordInputReleaseFailure(error);
+            }
+        }
+
+        private void RecordInputReleaseFailure(Exception error)
+        {
+            string message = Bounded("Input release failed: " + error.GetType().Name + ": " + error.Message, 4096);
+            var failure = Failure("action_exception", message);
+            State.RunnerResourcesReleased = false;
+            AddCleanupFailure(failure);
+            AppendCleanupError(message);
+            Revision++;
+            if (State.PendingStatus == null && Running)
+            {
+                State.PendingStatus = "failed";
+                State.PendingError = message;
+                State.Failure = State.Failure ?? Attribute(failure);
+            }
+        }
+
         private void CompleteIteration(int iteration, long now)
         {
             // The cursor can already point at the next repetition while resource/metric
@@ -523,7 +559,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             _completingIteration = iteration;
             try
             {
-                (_host as MCPForUnity.Runtime.PlayScenarios.IPlayScenarioInputHost)?.ReleaseInput();
+                ReleaseInputForOutcome();
                 State.CleanupDeadlineUnixMs = null;
                 VerifyResources(now);
                 if (State.PendingStatus != null)
@@ -937,7 +973,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 {
                     _host.Release();
                 }
-                State.RunnerResourcesReleased = true;
+                if (State.RunnerResourcesReleased != false)
+                    State.RunnerResourcesReleased = true;
             }
             catch (Exception error)
             {

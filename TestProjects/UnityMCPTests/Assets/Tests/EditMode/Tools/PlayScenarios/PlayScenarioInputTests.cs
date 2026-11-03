@@ -284,6 +284,78 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That(backend.Releases, Is.EqualTo(1));
         }
 
+        [Test]
+        public void CancelWithThrowingInputReleaseNeverExecutesLaterMainSteps()
+        {
+            var definition = Definition();
+            definition.Steps.Add(
+                new PlayScenarioStep
+                {
+                    Name = "Later",
+                    Action = "wait_object",
+                    Target = "Player",
+                }
+            );
+            definition.CleanupSteps.Add(
+                new PlayScenarioStep
+                {
+                    Name = "Cleanup",
+                    Action = "wait_object",
+                    Target = "Player",
+                }
+            );
+            var host = new Host();
+            var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(definition, new string('a', 32), 1, 30, 1000), host);
+            engine.EnteredPlayMode();
+            engine.Tick(1000, true);
+            engine.Tick(1250, true);
+            backend.DuringRelease = () => throw new InvalidOperationException("release uncertain");
+            Assert.DoesNotThrow(() => engine.Cancel(1300));
+            for (long now = 1500; now <= 2500 && engine.Running; now += 250)
+                engine.Tick(now, true);
+            Assert.That(engine.State.Status, Is.EqualTo("cancelled"));
+            Assert.That(engine.State.Steps[2].Status, Is.EqualTo("skipped"));
+            Assert.That(engine.State.CleanupError, Does.Contain("release uncertain"));
+            Assert.That(engine.State.RunnerResourcesReleased, Is.False);
+            Assert.That(backend.Releases, Is.EqualTo(1), "An uncertain release must not be replayed.");
+            var restored = new PlayScenarioEngine(engine.State, new Host());
+            restored.Release();
+            Assert.That(restored.State.RunnerResourcesReleased, Is.False, "A fresh host cannot prove the old host released its devices.");
+        }
+
+        [Test]
+        public void ReentrantCancellationDoesNotReplayAnUncertainRelease()
+        {
+            var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(Definition(), new string('a', 32), 1, 30, 1000), new Host());
+            engine.EnteredPlayMode();
+            engine.Tick(1000, true);
+            backend.DuringRelease = () => throw new InvalidOperationException("release uncertain");
+            backend.DuringApply = () => engine.Cancel(1250);
+            engine.Tick(1250, true);
+            Assert.That(engine.State.Status, Is.EqualTo("cancelled"));
+            Assert.That(engine.State.RunnerResourcesReleased, Is.False);
+            Assert.That(backend.Releases, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void FailedLateReleaseAfterReentrantCancellationInvalidatesReleaseEvidence()
+        {
+            var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(Definition(), new string('a', 32), 1, 30, 1000), new Host());
+            engine.EnteredPlayMode();
+            engine.Tick(1000, true);
+            backend.DuringRelease = () =>
+            {
+                if (backend.Releases == 2)
+                    throw new InvalidOperationException("late release uncertain");
+            };
+            backend.DuringApply = () => engine.Cancel(1250);
+            engine.Tick(1250, true);
+            Assert.That(engine.State.Status, Is.EqualTo("cancelled"));
+            Assert.That(engine.State.RunnerResourcesReleased, Is.False);
+            Assert.That(engine.State.CleanupError, Does.Contain("late release uncertain"));
+            Assert.That(backend.Releases, Is.EqualTo(2));
+        }
+
         [TestCase("cancel")]
         [TestCase("interrupt")]
         public void CleanupTimeoutDuringInputReleaseKeepsItsOriginalOutcome(string callback)
