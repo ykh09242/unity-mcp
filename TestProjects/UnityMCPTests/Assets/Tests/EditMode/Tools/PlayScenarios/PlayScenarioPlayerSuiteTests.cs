@@ -14,7 +14,6 @@ namespace MCPForUnityTests
     public sealed class PlayScenarioPlayerSuiteTests
     {
         [Test]
-        [NonParallelizable]
         public void PlayerSuiteCommand_RequiresLiveBuildConsentBeforeRouting()
         {
             FieldInfo field = typeof(MCPServiceLocator).GetField("_toolConsentService", BindingFlags.Static | BindingFlags.NonPublic);
