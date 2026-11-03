@@ -1,5 +1,6 @@
 """Exercise remote authentication across the actual MCP HTTP protocol boundary."""
 
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -39,6 +40,15 @@ def remote_app(monkeypatch, prepared_tool_factory):
     @server.resource("test://identity")
     async def identity(ctx: Context) -> str:
         return await ctx.get_state("user_id")
+
+    @server.resource("test://routing")
+    async def routing(ctx: Context) -> str:
+        return json.dumps(
+            {
+                "instance": await ctx.get_state("unity_instance"),
+                "session": await ctx.get_state("unity_session_id"),
+            }
+        )
 
     return server.http_app(json_response=True), validator
 
@@ -211,6 +221,86 @@ def test_session_termination_requires_the_initiating_user(remote_app):
         assert client.post("/mcp", headers=rotated, json=ping).status_code == 404
 
 
+@pytest.mark.parametrize("method", ["GET", "POST", "DELETE"])
+def test_stateful_session_rejects_a_different_authenticated_user(remote_app, method):
+    app, _ = remote_app
+    ping = {"jsonrpc": "2.0", "id": 2, "method": "ping"}
+    with TestClient(app) as client:
+        headers = _open_session(client)
+        denied = client.request(
+            method, "/mcp", headers={**headers, "X-API-Key": "bob-key"}, json=ping
+        )
+        assert denied.status_code == 404
+        assert client.post("/mcp", headers=headers, json=ping).json()["result"] == {}
+        rotated = {**headers, "X-API-Key": "alice-rotated"}
+        assert client.post("/mcp", headers=rotated, json=ping).json()["result"] == {}
+
+
+def test_stateful_owner_preserves_selection_and_explicit_routing(remote_app, monkeypatch):
+    from transport.models import SessionDetails, SessionList
+    from transport.plugin_hub import PluginHub
+
+    records = {
+        "alice": {"a1": ("First", "1111"), "a2": ("Second", "2222")},
+        "bob": {"b1": ("Other", "2222")},
+    }
+
+    async def sessions(user_id=None):
+        return SessionList(
+            sessions={
+                sid: SessionDetails(
+                    project=name, hash=project_hash, unity_version="6000", connected_at="now"
+                )
+                for sid, (name, project_hash) in records.get(user_id, {}).items()
+            }
+        )
+
+    async def resolve(instance, *, user_id, **kwargs):
+        for sid, (name, project_hash) in records[user_id].items():
+            if instance == f"{name}@{project_hash}":
+                return sid
+        raise ValueError("Unknown instance")
+
+    monkeypatch.setattr(PluginHub, "get_sessions", sessions)
+    monkeypatch.setattr(PluginHub, "_resolve_session_id", resolve)
+    app, _ = remote_app
+    with TestClient(app) as client:
+        headers = _open_session(client)
+
+        def call(method, params, *, key="alice-key"):
+            return client.post(
+                "/mcp",
+                headers={**headers, "X-API-Key": key},
+                json={"jsonrpc": "2.0", "id": 2, "method": method, "params": params},
+            )
+
+        def select(instance, key="alice-key"):
+            return call(
+                "tools/call",
+                {"name": "set_active_instance", "arguments": {"instance": instance}},
+                key=key,
+            )
+
+        def read_route(meta=None, key="alice-key"):
+            params = {"uri": "test://routing"}
+            if meta:
+                params["_meta"] = {"unity_instance": meta}
+            return call("resources/read", params, key=key)
+
+        assert select("First@1111").json()["result"]["structuredContent"]["success"]
+        debug = {"name": "debug_request_context", "arguments": {}}
+        assert call("tools/call", debug, key="bob-key").status_code == 404
+        assert select("Other@2222", key="bob-key").status_code == 404
+        assert read_route(key="bob-key").status_code == 404
+        default = json.loads(
+            read_route(key="alice-rotated").json()["result"]["contents"][0]["text"]
+        )
+        assert default == {"instance": "First@1111", "session": "a1"}
+        explicit = json.loads(read_route("Second@2222").json()["result"]["contents"][0]["text"])
+        assert explicit == {"instance": "Second@2222", "session": "a2"}
+        assert json.loads(read_route().json()["result"]["contents"][0]["text"]) == default
+
+
 @pytest.mark.parametrize(("stateless", "version"), [(True, "2025-03-26"), (False, "2026-07-28")])
 def test_sessionless_delete_keeps_transport_method_rejection(remote_app, stateless, version):
     app, _ = remote_app
@@ -222,6 +312,45 @@ def test_sessionless_delete_keeps_transport_method_rejection(remote_app, statele
     }
     with TestClient(app) as client:
         assert client.delete("/mcp", headers=headers).status_code == 405
+
+
+def test_sessionless_post_uses_current_identity_even_with_session_header(remote_app):
+    app, _ = remote_app
+    app = app.state.fastmcp_server.http_app(stateless_http=True, json_response=True)
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            headers={
+                "X-API-Key": "bob-key",
+                "Mcp-Session-Id": "unrelated",
+                "Mcp-Protocol-Version": "2025-03-26",
+                "Accept": "application/json, text/event-stream",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "resources/read",
+                "params": {"uri": "test://identity"},
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["result"]["contents"][0]["text"] == "bob"
+
+
+def test_invalid_protocol_version_keeps_sdk_error(remote_app):
+    app, _ = remote_app
+    with TestClient(app) as client:
+        headers = _open_session(client)
+        headers.update({"X-API-Key": "bob-key", "MCP-Protocol-Version": "2099-01-01"})
+        response = client.post(
+            "/mcp", headers=headers, json={"jsonrpc": "2.0", "id": 2, "method": "ping"}
+        )
+        headers.pop("Mcp-Session-Id")
+        without_session = client.post(
+            "/mcp", headers=headers, json={"jsonrpc": "2.0", "id": 2, "method": "ping"}
+        )
+        assert response.status_code == without_session.status_code
+        assert response.json() == without_session.json()
 
 
 def test_authenticated_session_catalogs_and_resource_identity(remote_app, monkeypatch):
@@ -256,8 +385,8 @@ def test_authenticated_session_catalogs_and_resource_identity(remote_app, monkey
             assert not response.json()["result"].get("isError"), response.text
 
         # A session ID never substitutes for the key; identity comes from EACH request.
-        for request_id, user in enumerate(("alice", "bob", "alice"), start=6):
-            headers["X-API-Key"] = f"{user}-key"
+        for request_id, key in enumerate(("alice-key", "alice-rotated"), start=6):
+            headers["X-API-Key"] = key
             response = client.post(
                 "/mcp",
                 headers=headers,
@@ -269,7 +398,7 @@ def test_authenticated_session_catalogs_and_resource_identity(remote_app, monkey
                 },
             )
             assert response.status_code == 200, response.text
-            assert response.json()["result"]["contents"][0]["text"] == user
+            assert response.json()["result"]["contents"][0]["text"] == "alice"
         del headers["X-API-Key"]
         assert client.post("/mcp", headers=headers, content="not-json").status_code == 401
         validator.side_effect = lambda key, **kwargs: ValidationResult(valid=False)

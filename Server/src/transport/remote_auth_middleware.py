@@ -41,7 +41,7 @@ def _source_ip(value: str) -> IPv4Address | IPv6Address:
 
 
 class RemoteSessionTerminationGuard:
-    """Tie DELETE authority to the lifetime of the SDK's actual stateful transport."""
+    """Bind stateful session requests to the opener for the transport's lifetime."""
 
     def __init__(self, endpoint: StreamableHTTPASGIApp) -> None:
         self.endpoint = endpoint
@@ -76,7 +76,7 @@ class RemoteSessionTerminationGuard:
         # MCP SDK 2.3 owns this registry and removes transports on termination,
         # idle expiry, failed opening and shutdown. Weak keys do not prolong them.
         transports = manager._server_instances
-        if scope["method"] == "DELETE" and sessions:
+        if scope["method"] in ("GET", "POST", "DELETE") and sessions:
             transport = transports.get(sessions[0]) if len(sessions) == 1 else None
             if transport is None or not user or self._owners.get(transport) != user:
                 await JSONResponse(

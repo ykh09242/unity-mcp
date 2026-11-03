@@ -20,10 +20,11 @@ The hosted FastMCP runners disable Uvicorn proxy-header rewriting so this check 
 
 1. A client sends an HTTPS request with `X-API-Key` to the proxy.
 2. The proxy forwards it to the private backend; `RemoteControlAuthMiddleware` validates the key and attaches identity to request state.
-3. FastMCP dispatches through `UnityInstanceMiddleware`. Its tool-call, tool-list, resource-read, resource-list, and resource-template-list hooks call `_inject_unity_instance`.
-4. `_resolve_user_id_from_request()` uses FastMCP's `get_http_request()` to read the validated identity from request state. Missing identity in remote mode fails closed.
-5. The middleware supplies `user_id` and the selected Unity instance to the operation. Active-instance selection is stored through FastMCP's session-scoped state, keyed by its session ID, not a peer-provided client name.
-6. `PluginHub` resolves and dispatches only within the authenticated user's sessions. No remote operation may access the host-local legacy connection pool.
+3. Stateful session `GET`, `POST`, and `DELETE` requests must authenticate as the user who initialized that session; a different user receives HTTP `404`. Keys can rotate when they resolve to the same user. The binding lasts only as long as the SDK transport. Sessionless requests do not retain an owner.
+4. FastMCP dispatches through `UnityInstanceMiddleware`. Its tool-call, tool-list, resource-read, resource-list, and resource-template-list hooks call `_inject_unity_instance`.
+5. `_resolve_user_id_from_request()` uses FastMCP's `get_http_request()` to read the validated identity from request state. Missing identity in remote mode fails closed.
+6. The middleware supplies `user_id` and the selected Unity instance to the operation. Active-instance selection is stored through FastMCP's session-scoped state, keyed by its session ID, not a peer-provided client name.
+7. `PluginHub` resolves and dispatches only within the authenticated user's sessions. No remote operation may access the host-local legacy connection pool.
 
 Users must explicitly select an instance with `set_active_instance`, or supply `unity_instance` on a tool call. Remote mode disables sole-instance auto-selection. Instance selection and session IDs do not grant access to another user's Unity session: registry lookup always includes the current validated user.
 
