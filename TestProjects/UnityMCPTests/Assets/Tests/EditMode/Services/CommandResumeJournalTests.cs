@@ -1,6 +1,9 @@
 using System;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.Transport;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 
@@ -133,6 +136,100 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual("completed", replay.State);
             Assert.AreEqual(42, (int)replay.Payload["result"]);
             Assert.IsNull(replay.Ticket);
+        }
+
+        private static JObject NestedResult(int arrays, bool raw)
+        {
+            JToken value = 42;
+            if (raw)
+                value = new JRaw(new string('[', arrays) + "42" + new string(']', arrays));
+            else
+                for (int i = 0; i < arrays; i++)
+                    value = new JArray(value);
+            return new JObject { ["status"] = "success", ["result"] = value };
+        }
+
+        [TestCase(60, false, true)]
+        [TestCase(61, false, true)]
+        [TestCase(62, false, false)]
+        [TestCase(61, true, true)]
+        [TestCase(62, true, false)]
+        public void DeepCompletionAffectsOnlyItsOwnRetention(int arrays, bool raw, bool retained)
+        {
+            var admitted = journal.Admit(Request(), "test", new JObject());
+            Assert.IsTrue(journal.TryStart(admitted.Ticket));
+            Assert.AreEqual("completed", journal.Complete(admitted.Ticket, NestedResult(arrays, raw)).State);
+
+            string id = "22222222222222222222222222222222";
+            var next = journal.Admit(Request(id: id), "test", new JObject());
+            Assert.IsTrue(journal.TryStart(next.Ticket));
+            Assert.AreEqual("completed", journal.Complete(next.Ticket, new JValue(7)).State);
+
+            journal = Open();
+            var replay = journal.Admit(Request("resume"), "test", new JObject());
+            Assert.IsNull(replay.Ticket);
+            Assert.AreEqual(retained ? "completed" : "unavailable", replay.State);
+            if (retained)
+                Assert.IsTrue(JToken.DeepEquals(NestedResult(arrays, false), replay.Payload));
+            else
+                Assert.AreEqual("completed_result_not_retained", (string)replay.Payload["code"]);
+            Assert.AreEqual(7, (int)journal.Admit(Request("resume", id), "test", new JObject()).Payload);
+            Assert.IsTrue(journal.TryStart(journal.Admit(Request(id: "33333333333333333333333333333333"), "test", new JObject()).Ticket));
+        }
+
+        [Test]
+        public void ExistingVersionOneSnapshotAtDepth65RestoresWithIntegrityCheck()
+        {
+            var admitted = journal.Admit(Request(), "test", new JObject());
+            Assert.IsTrue(journal.TryStart(admitted.Ticket));
+            journal.Complete(admitted.Ticket, new JValue(7));
+
+            var snapshot = JObject.Parse(stored);
+            var rows = (JArray)snapshot["entries"];
+            rows[0]["result"] = NestedResult(61, false);
+            using var hash = SHA256.Create();
+            var digest = hash.ComputeHash(Encoding.UTF8.GetBytes(journal.SessionId + "\n" + rows.ToString(Formatting.None)));
+            snapshot["digest"] = BitConverter.ToString(digest).Replace("-", "").ToLowerInvariant();
+            stored = snapshot.ToString(Formatting.None);
+
+            journal = Open();
+            Assert.IsTrue(JToken.DeepEquals(rows[0]["result"], journal.Admit(Request("resume"), "test", new JObject()).Payload));
+            stored = stored.Replace("\"phase\":\"completed\"", "\"phase\":\"queued\"");
+            journal = Open();
+            Assert.AreEqual("unavailable", journal.Admit(Request("resume"), "test", new JObject()).State);
+        }
+
+        [TestCase(0, true)]
+        [TestCase(1, false)]
+        public void RetentionLimitCountsSerializedUtf8Bytes(int extraBytes, bool retained)
+        {
+            const string prefix = "한🚀";
+            string text = prefix + new string('a', CommandResumeJournal.MaxResultBytes - Encoding.UTF8.GetByteCount(prefix) - 2 + extraBytes);
+            var result = new JValue(text);
+            Assert.AreEqual(CommandResumeJournal.MaxResultBytes + extraBytes, Encoding.UTF8.GetByteCount(result.ToString(Formatting.None)));
+            var admission = journal.Admit(Request(), "test", new JObject());
+            Assert.IsTrue(journal.TryStart(admission.Ticket));
+            Assert.AreEqual("completed", journal.Complete(admission.Ticket, result).State);
+            journal = Open();
+            var receipt = journal.Admit(Request("resume"), "test", new JObject());
+            Assert.AreEqual(retained ? "completed" : "unavailable", receipt.State);
+            Assert.IsNull(receipt.Ticket);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void InvalidOrOversizeNormalizedRawResultIsNotRetained(bool malformed)
+        {
+            string json = malformed ? "[1,2" : "[" + string.Join(",", System.Linq.Enumerable.Repeat("1e9", 1000)) + "]";
+            Assert.Less(Encoding.UTF8.GetByteCount(json), CommandResumeJournal.MaxResultBytes);
+            var admission = journal.Admit(Request(), "test", new JObject());
+            Assert.IsTrue(journal.TryStart(admission.Ticket));
+            Assert.AreEqual("completed", journal.Complete(admission.Ticket, new JRaw(json)).State);
+            journal = Open();
+            var receipt = journal.Admit(Request("resume"), "test", new JObject());
+            Assert.IsNull(receipt.Ticket);
+            Assert.AreEqual("completed_result_not_retained", (string)receipt.Payload["code"]);
+            Assert.IsTrue(journal.TryStart(journal.Admit(Request(id: "22222222222222222222222222222222"), "test", new JObject()).Ticket));
         }
 
         [Test]

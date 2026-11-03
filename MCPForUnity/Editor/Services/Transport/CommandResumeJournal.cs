@@ -19,6 +19,12 @@ namespace MCPForUnity.Editor.Services.Transport
         internal const int MaxEntries = 128;
         internal const int MaxSnapshotBytes = 2 * 1024 * 1024;
         internal const int MaxResultBytes = 8192;
+
+        // V1 normalized the entries array at depth 64. Its containing snapshot adds one
+        // object, and the entries array and entry object consume two levels above a result.
+        private const int MaxEntriesDepth = 64;
+        private const int MaxSnapshotDepth = MaxEntriesDepth + 1;
+        private const int MaxResultDepth = MaxEntriesDepth - 2;
         private readonly object gate = new();
         private readonly Action<string> write;
         private readonly Func<long> clock;
@@ -101,7 +107,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 }
                 if (Encoding.UTF8.GetByteCount(text) > MaxSnapshotBytes)
                     throw new JsonException("Journal limit");
-                using var input = new JsonTextReader(new StringReader(text)) { DateParseHandling = DateParseHandling.None, MaxDepth = 64 };
+                using var input = new JsonTextReader(new StringReader(text)) { DateParseHandling = DateParseHandling.None, MaxDepth = MaxSnapshotDepth };
                 var snapshot = JObject.Load(input);
                 if (input.Read())
                     throw new JsonException("Trailing journal content");
@@ -149,14 +155,6 @@ namespace MCPForUnity.Editor.Services.Transport
                     ["session"] = SessionId,
                     ["entries"] = JArray.FromObject(entries.Values),
                 };
-                // JRaw may retain whitespace or number spelling. Normalize the persisted
-                // representation before hashing so reading valid JSON cannot change its digest.
-                using var normalized = new JsonTextReader(new StringReader(snapshot["entries"].ToString(Formatting.None)))
-                {
-                    DateParseHandling = DateParseHandling.None,
-                    MaxDepth = 64,
-                };
-                snapshot["entries"] = JArray.Load(normalized);
                 snapshot["digest"] = Digest(SessionId + "\n" + snapshot["entries"].ToString(Formatting.None));
                 string text = snapshot.ToString(Formatting.None);
                 if (Encoding.UTF8.GetByteCount(text) > MaxSnapshotBytes)
@@ -311,6 +309,28 @@ namespace MCPForUnity.Editor.Services.Transport
             }
         }
 
+        private static JToken RetainedResult(JToken result)
+        {
+            if (result == null)
+                return null;
+            try
+            {
+                string text = BoundedResponseJson.Serialize(result, MaxResultBytes);
+                // Expand JRaw and normalize number spellings before storing or hashing.
+                using var input = new JsonTextReader(new StringReader(text)) { DateParseHandling = DateParseHandling.None, MaxDepth = MaxResultDepth };
+                JToken retained = JToken.ReadFrom(input);
+                if (input.Read())
+                    return null;
+                // The compact form can grow (for example, raw 1e9 becomes 1000000000.0).
+                BoundedResponseJson.Serialize(retained, MaxResultBytes);
+                return retained;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
         internal Admission Complete(Ticket ticket, JToken result, bool notStarted = false, string refusalReason = null)
         {
             lock (gate)
@@ -321,7 +341,8 @@ namespace MCPForUnity.Editor.Services.Transport
                 {
                     entry.not_started = notStarted;
                     entry.refusal_reason = notStarted ? refusalReason : null;
-                    if (result == null || Encoding.UTF8.GetByteCount(result.ToString(Formatting.None)) > MaxResultBytes)
+                    entry.result = RetainedResult(result);
+                    if (entry.result == null)
                     {
                         entry.phase = "unavailable";
                         entry.completed_uncached = true;
@@ -330,14 +351,11 @@ namespace MCPForUnity.Editor.Services.Transport
                             ["status"] = "error",
                             ["code"] = "completed_result_not_retained",
                             ["error"] =
-                                "Command execution completed, but its result exceeded the continuation cache limit and was not retained. Do not replay the command.",
+                                "Command execution completed, but its result could not be retained in the continuation cache. Do not replay the command.",
                         };
                     }
                     else
-                    {
                         entry.phase = "completed";
-                        entry.result = result.DeepClone();
-                    }
                     if (!Persist())
                         return Reply(ticket.Request, "unavailable");
                 }

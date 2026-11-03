@@ -65,6 +65,15 @@ namespace MCPForUnity.Editor.Services.Transport
             return output.Finish();
         }
 
+        internal static string Serialize(JToken token, int maxBytes)
+        {
+            using var output = new LimitedTextWriter(maxBytes);
+            using var writer = new DepthLimitedTextWriter(output) { AutoCompleteOnClose = false };
+            token.WriteTo(writer);
+            writer.Flush();
+            return output.Finish();
+        }
+
         // Keep the async JSON compatibility contract, but admit the original producer while
         // writing. Physical UTF-8 admission also bounds every decoded scalar's storage.
         internal static string SerializeAdmitted(object payload)
@@ -735,9 +744,12 @@ namespace MCPForUnity.Editor.Services.Transport
         private class LimitedTextWriter : TextWriter
         {
             protected readonly StringBuilder text = new();
+            private readonly int maxBytes;
             private long bytes;
             private bool highSurrogate;
             public override Encoding Encoding => Encoding.UTF8;
+
+            internal LimitedTextWriter(int maxBytes = LargeResultWriter.MaxResultBytes) => this.maxBytes = maxBytes;
 
             private void Count(char value)
             {
@@ -764,7 +776,7 @@ namespace MCPForUnity.Editor.Services.Transport
             private void Add(int count)
             {
                 bytes += count;
-                if (bytes > LargeResultWriter.MaxResultBytes)
+                if (bytes > maxBytes)
                     throw new ResponseLimitException();
             }
 
@@ -804,7 +816,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
             internal string Finish()
             {
-                if (bytes > LargeResultWriter.MaxResultBytes)
+                if (bytes > maxBytes)
                     throw new ResponseLimitException();
                 if (highSurrogate)
                 {
