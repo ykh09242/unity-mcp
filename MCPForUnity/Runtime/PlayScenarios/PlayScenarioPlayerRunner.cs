@@ -21,6 +21,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private PlayScenarioLogBuffer logs;
         private Application.LogCallback logCallback;
         private string directory;
+        private bool outputDirectoryApproved;
         private PlayScenarioPlayerCancellation cancellation;
         private bool subscribed;
         private bool finished;
@@ -74,6 +75,13 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 )
                     throw new IOException("Player run directory contains stale output or cancellation evidence.");
                 request = PlayScenarioPlayerRequest.Parse(PlayScenarioPlayerFiles.Read(requestPath, 4096));
+                outputDirectoryApproved = PlayScenarioPlayerFiles.CanWriteRunDirectory(
+                    Path.GetDirectoryName(Application.dataPath),
+                    directory,
+                    request.SchemaVersion
+                );
+                if (!outputDirectoryApproved)
+                    throw new ArgumentException("Version-2 Player requests and reports must be outside the immutable build root.");
                 environment = new PlayScenarioEnvironmentCapture().CaptureOnce();
                 TextAsset asset = Resources.Load<TextAsset>(PlayScenarioPlayerBundle.ResourceName);
                 if (asset == null)
@@ -94,8 +102,6 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 run.Reproduction.SourceRevision = request.SourceRevision;
                 run.Reproduction.Environment = environment;
                 request.ValidateBundle(bundle);
-                if (request.SchemaVersion == 2 && PlayScenarioPlayerFiles.IsWithin(Path.GetDirectoryName(Application.dataPath), directory))
-                    throw new ArgumentException("Version-2 Player requests and reports must be outside the immutable build root.");
                 int processId;
                 using (Process process = Process.GetCurrentProcess())
                     processId = process.Id;
@@ -250,6 +256,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private void StartupFailure(Exception error)
         {
             string message = PlayScenarioEngine.Bounded(error.GetType().Name + ": " + error.Message, 4096);
+            if (!outputDirectoryApproved)
+                Debug.LogError(message);
             if (run == null && request != null)
             {
                 run = new PlayScenarioRun
@@ -374,6 +382,12 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 return;
             finished = true;
             Close();
+            if (!outputDirectoryApproved)
+            {
+                soak?.Dispose();
+                Application.Quit(exitCode);
+                return;
+            }
             if (exitCode == 0)
                 exitCode = PlayScenarioPlayerLogDrain.ExitCode(run);
             try

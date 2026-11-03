@@ -71,6 +71,21 @@ namespace MCPForUnityTests
             };
 
         [Test]
+        public void VersionTwoOutputMustBeOutsideBuildBeforeFailureEvidenceCanBeWritten()
+        {
+            string build = Path.Combine(directory, "build");
+            string child = Path.Combine(build, "run");
+            string external = Path.Combine(directory, "build-other");
+            Directory.CreateDirectory(child);
+            Directory.CreateDirectory(external);
+
+            Assert.IsFalse(PlayScenarioPlayerFiles.CanWriteRunDirectory(build, build, 2));
+            Assert.IsFalse(PlayScenarioPlayerFiles.CanWriteRunDirectory(build, child, 2));
+            Assert.IsTrue(PlayScenarioPlayerFiles.CanWriteRunDirectory(build, external, 2));
+            Assert.IsTrue(PlayScenarioPlayerFiles.CanWriteRunDirectory(build, child, 1));
+        }
+
+        [Test]
         public void VersionTwoBindsBuildIdentitySeparatelyFromRunLabel()
         {
             JObject manifest = Manifest();

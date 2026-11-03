@@ -41,6 +41,8 @@ namespace MCPForUnity.Runtime.PlayScenarios
             return string.Equals(root, path, comparison) || path.StartsWith(prefix, comparison);
         }
 
+        public static bool CanWriteRunDirectory(string buildRoot, string directory, int schemaVersion) => schemaVersion == 1 || !IsWithin(buildRoot, directory);
+
         private static string DirectoryPath(string path)
         {
             string full = CheckedAbsolute(path);
