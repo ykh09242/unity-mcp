@@ -121,8 +121,8 @@ Save a compatible scenario and leave Play Mode. In the Play Scenarios window, op
 Select an explicit empty output directory outside Assets. Compilation, import, existing builds,
 unsaved drafts and active jobs must finish first. Save loaded untitled scenes before an interactive
 build. An unmodified batch startup may be replaced by the owned empty bootstrap without saving its
-contents; dirty or mixed untitled scene states are rejected before output writes. The project needs Windows x64 standalone
-support and its Standalone scripting backend set to Mono. The builder does not change that setting.
+contents. Dirty or mixed untitled scene states are rejected before output writes. The default build
+requires Windows x64 standalone support and temporarily selects the Mono backend.
 
 For batch builds, use a closed dedicated test project and these arguments to the installed Editor:
 
@@ -136,7 +136,13 @@ For batch builds, use a closed dedicated test project and these arguments to the
 
 The explicit build freezes the normalized definition, included scene paths and SHA-256 in
 `scenario-bundle.json` beside `MCPScenarioPlayer.exe`. It embeds the same bundle and a dedicated empty
-bootstrap scene. A temporary owned asset directory is removed afterward. The
+bootstrap scene. Before changing the backend or creating temporary assets, the builder records its
+project, backend selection and unique folder identity under `Library/MCPForUnity/ScenarioPlayerBuild`.
+It records file and Unity metadata hashes as each temporary asset is prepared. Completion and the
+next project open restore the previous backend only while the builder's selection is still current.
+Recovery deletes verified temporary assets and preserves changed or unverified contents. If the
+Editor reports an ownership conflict, inspect the named folder and journal before another build.
+A domain reload within the same interrupted build session requires reopening the project. The
 `MCP_FOR_UNITY_PLAY_SCENARIOS` define applies to this build only; ordinary builds never activate the
 scenario bootstrap. This uses Unity's
 [per-build scripting defines](https://docs.unity3d.com/2021.3/Documentation/ScriptReference/BuildPlayerOptions-extraScriptingDefines.html).

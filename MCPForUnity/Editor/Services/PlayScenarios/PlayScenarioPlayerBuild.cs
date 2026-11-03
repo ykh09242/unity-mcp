@@ -42,12 +42,55 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
             internal BuildReport Invoke(BuildPlayerOptions options)
             {
-                ValidateNativeAdmission(id);
+                Validate();
                 BuildRunner.MarkNativeInvocation(id);
                 return BuildPipeline.BuildPlayer(options);
             }
 
+            internal void Validate() => ValidateNativeAdmission(id);
+
             public void Dispose() => BuildRunner.ReleaseNative(id);
+        }
+
+        private static PlayScenarioBuildJournal OpenJournal(string project) =>
+#pragma warning disable CS0618
+            new(
+                project,
+                () => PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone),
+                value => PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, value)
+            );
+#pragma warning restore CS0618
+
+        [InitializeOnLoadMethod]
+        private static void ScheduleRecovery()
+        {
+            double nextCheck = 0;
+            EditorApplication.update += Check;
+            void Check()
+            {
+                if (EditorApplication.timeSinceStartup < nextCheck)
+                    return;
+                nextCheck = EditorApplication.timeSinceStartup + 1;
+                string project = Path.GetDirectoryName(Application.dataPath);
+                try
+                {
+                    // A domain reload retains the old session marker. A project reopen does
+                    // not. Wait for startup imports and other owned jobs before changing assets.
+                    if (PlayScenarioBuildJournal.Pending(project) && string.IsNullOrEmpty(SessionState.GetString(PlayScenarioBuildJournal.ActiveKey, "")))
+                    {
+                        if (EditorApplication.isPlayingOrWillChangePlaymode || NativeOperationBarriers.TryGetBuildContinuationBlocker(null, null, out _))
+                            return;
+                        using var reservation = new Reservation();
+                        using var journal = OpenJournal(project);
+                        journal.Recover();
+                    }
+                }
+                catch (Exception error)
+                {
+                    Debug.LogWarning("Scenario Player build recovery requires inspection: " + error.Message);
+                }
+                EditorApplication.update -= Check;
+            }
         }
 
         public static PlayScenarioPlayerBuildResult Build(
@@ -85,6 +128,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 || PlayScenarioPlayerFiles.IsWithin(Application.dataPath, output)
             )
                 throw new ArgumentException("Player output must be an explicit empty directory outside Assets and the project root.");
+            string journalDirectory = Path.Combine(project, PlayScenarioBuildJournal.DirectoryName);
+            if (PlayScenarioPlayerFiles.IsWithin(output, journalDirectory) || PlayScenarioPlayerFiles.IsWithin(journalDirectory, output))
+                throw new ArgumentException("Player output cannot overlap the scenario build recovery journal.");
             if (Directory.Exists(output) && Directory.EnumerateFileSystemEntries(output).Any())
                 throw new IOException("Player output directory must be empty.");
             BuildTarget buildTarget = Target(target);
@@ -101,41 +147,49 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             PlayScenarioPlayerBundle parsed = PlayScenarioPlayerBundle.Parse(manifestJson);
             if (!scenes.SequenceEqual(parsed.ScenePaths, StringComparer.Ordinal))
                 throw new ArgumentException("Build scene inventory must match the frozen bundle.");
-            string temporaryAssets = "Assets/__MCPScenarioBuild_" + Guid.NewGuid().ToString("N");
-            string temporaryAbsolute = PlayScenarioPlayerFiles.CheckedAbsolute(Path.Combine(project, temporaryAssets));
-            bool ownsTemporaryAssets = false;
             Scene bootstrap = default;
             Scene previousActive = SceneManager.GetActiveScene();
-#pragma warning disable CS0618
-            ScriptingImplementation previousBackend = PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone);
             ScriptingImplementation selectedBackend = backend == "il2cpp" ? ScriptingImplementation.IL2CPP : ScriptingImplementation.Mono2x;
-#pragma warning restore CS0618
             using var reservation = new Reservation();
-            Directory.CreateDirectory(output);
+            using var journal = OpenJournal(project);
+            if (PlayScenarioBuildJournal.Pending(project))
+            {
+                journal.Recover();
+                reservation.Validate();
+            }
+            journal.Begin(selectedBackend);
+            string temporaryAssets = journal.AssetFolder;
             try
             {
-#pragma warning disable CS0618
-                if (previousBackend != selectedBackend)
-                    PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, selectedBackend);
-#pragma warning restore CS0618
+                Directory.CreateDirectory(output);
+                journal.ApplyBackend();
+                journal.RequireAbsent("");
                 string folderGuid = AssetDatabase.CreateFolder("Assets", Path.GetFileName(temporaryAssets));
-                if (string.IsNullOrEmpty(folderGuid))
+                if (string.IsNullOrEmpty(folderGuid) || AssetDatabase.GUIDToAssetPath(folderGuid) != temporaryAssets)
                     throw new IOException("Could not create the temporary Player asset folder.");
-                temporaryAssets = AssetDatabase.GUIDToAssetPath(folderGuid);
-                temporaryAbsolute = PlayScenarioPlayerFiles.CheckedAbsolute(Path.Combine(project, temporaryAssets));
-                ownsTemporaryAssets = true;
-                if (string.IsNullOrEmpty(AssetDatabase.CreateFolder(temporaryAssets, "Resources")))
+                journal.Capture("");
+                journal.RequireAbsent("Resources");
+                string resourceFolderGuid = AssetDatabase.CreateFolder(temporaryAssets, "Resources");
+                if (string.IsNullOrEmpty(resourceFolderGuid) || AssetDatabase.GUIDToAssetPath(resourceFolderGuid) != temporaryAssets + "/Resources")
                     throw new IOException("Could not create the temporary Player resource folder.");
+                journal.Capture("Resources");
                 string linker = temporaryAssets + "/link.xml";
-                string resource = temporaryAssets + "/Resources/" + PlayScenarioPlayerBundle.ResourceName + ".json";
-                PlayScenarioPlayerFiles.WriteNew(Path.Combine(project, linker), CreateLinkerDescriptor(), 65536);
-                PlayScenarioPlayerFiles.WriteNew(Path.Combine(project, resource), manifestJson, PlayScenarioPlayerBundle.Limit);
+                string resource = temporaryAssets + "/" + PlayScenarioBuildJournal.Resource;
+                string descriptor = CreateLinkerDescriptor();
+                journal.RequireAbsent("link.xml");
+                PlayScenarioPlayerFiles.WriteNew(Path.Combine(project, linker), descriptor, 65536);
                 AssetDatabase.ImportAsset(linker, ImportAssetOptions.ForceSynchronousImport);
+                journal.Capture("link.xml", descriptor);
+                journal.RequireAbsent(PlayScenarioBuildJournal.Resource);
+                PlayScenarioPlayerFiles.WriteNew(Path.Combine(project, resource), manifestJson, PlayScenarioPlayerBundle.Limit);
                 AssetDatabase.ImportAsset(resource, ImportAssetOptions.ForceSynchronousImport);
+                journal.Capture(PlayScenarioBuildJournal.Resource, manifestJson);
                 bootstrap = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, hasUntitledScene ? NewSceneMode.Single : NewSceneMode.Additive);
                 string bootstrapPath = temporaryAssets + "/Bootstrap.unity";
+                journal.RequireAbsent("Bootstrap.unity");
                 if (!EditorSceneManager.SaveScene(bootstrap, bootstrapPath))
                     throw new IOException("Could not save the dedicated Player bootstrap scene.");
+                journal.Capture("Bootstrap.unity");
                 EditorSceneManager.CloseScene(bootstrap, true);
                 bootstrap = default;
                 if (previousActive.IsValid() && previousActive.isLoaded)
@@ -176,18 +230,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 }
                 finally
                 {
-                    try
-                    {
-#pragma warning disable CS0618
-                        if (PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone) == selectedBackend && previousBackend != selectedBackend)
-                            PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, previousBackend);
-#pragma warning restore CS0618
-                    }
-                    finally
-                    {
-                        if (ownsTemporaryAssets && !AssetDatabase.DeleteAsset(temporaryAssets) && Directory.Exists(temporaryAbsolute))
-                            throw new IOException("Could not remove the owned temporary Player assets: " + temporaryAssets);
-                    }
+                    journal.Finish();
                 }
             }
         }
