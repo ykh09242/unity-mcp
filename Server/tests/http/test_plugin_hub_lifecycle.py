@@ -1,6 +1,6 @@
 """Regression coverage for plugin sender identity and command lifetimes."""
 
-from tests.timing import watchdog_timeout
+from tests.timing import await_completion, await_signal, watchdog_timeout
 
 import asyncio  # noqa: ANYIO_OK -- the hub owns asyncio futures and tasks.
 from collections.abc import Iterator
@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 import anyio
 import pytest
+import pytest_asyncio
 from starlette.applications import Starlette
 from starlette.routing import WebSocketRoute
 from starlette.testclient import TestClient
@@ -18,7 +19,7 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 from core.config import config
 from transport.charge_ledger import ChargeLedger
 from transport.models import RegisterMessage
-from transport.plugin_hub import PluginDisconnectedError, PluginHub
+from transport.plugin_hub import CommandNotDispatchedError, PluginDisconnectedError, PluginHub
 from transport.plugin_registry import PluginRegistry
 
 
@@ -36,6 +37,29 @@ def isolated_hub(monkeypatch: pytest.MonkeyPatch) -> PluginRegistry:
     for name in ("_retained_results", "_raw_results"):
         monkeypatch.setattr(PluginHub, name, ChargeLedger())
     return PluginRegistry()
+
+
+@pytest_asyncio.fixture
+async def command_socket(isolated_hub: PluginRegistry):
+    PluginHub.configure(isolated_hub)
+    await isolated_hub.register("session", "Fixture", "owned-hash", "6000.3")
+    socket = SimpleNamespace(
+        state=SimpleNamespace(
+            plugin_registered=True,
+            plugin_session_id="session",
+            plugin_generation="owned-generation",
+            user_id=None,
+        ),
+        client_state=WebSocketState.CONNECTED,
+        application_state=WebSocketState.CONNECTED,
+        send_json=AsyncMock(),
+        close=AsyncMock(),
+    )
+    PluginHub._connections["session"] = socket
+    try:
+        yield socket
+    finally:
+        await PluginHub.shutdown()
 
 
 @pytest.fixture
@@ -117,9 +141,8 @@ def test_owner_result_completes_its_pending_command(wire_client: TestClient) -> 
 
 
 @pytest.mark.asyncio
-async def test_cancelled_send_releases_pending_future(isolated_hub: PluginRegistry) -> None:
+async def test_cancelled_send_releases_pending_future(command_socket) -> None:
     # Given a command blocked while sending and its allocated reply future.
-    PluginHub.configure(isolated_hub)
     entered = asyncio.Event()
     captured = []
 
@@ -128,15 +151,17 @@ async def test_cancelled_send_releases_pending_future(isolated_hub: PluginRegist
         entered.set()
         await asyncio.Event().wait()
 
-    ws = AsyncMock()
-    ws.send_json.side_effect = blocked_send
-    PluginHub._connections["session"] = ws
+    command_socket.send_json.side_effect = blocked_send
     command = asyncio.create_task(PluginHub.send_command("session", "manage_scene", {}))
-    await entered.wait()
-    # When the calling task cancels the command.
-    command.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await command
+    try:
+        await await_signal(entered, "blocked command write", producers=(command,))
+        # When the calling task cancels the command.
+        command.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await await_completion(command, "cancelled command cleanup")
+    finally:
+        command.cancel()
+        await await_completion(asyncio.gather(command, return_exceptions=True), "command teardown")
     # Then cancellation propagates and the pending future/map are released.
     assert captured[0].cancelled()
     assert PluginHub._pending == {}
@@ -144,11 +169,10 @@ async def test_cancelled_send_releases_pending_future(isolated_hub: PluginRegist
 
 @pytest.mark.asyncio
 async def test_command_timeout_includes_blocked_send(
-    isolated_hub: PluginRegistry, monkeypatch: pytest.MonkeyPatch
+    command_socket, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Given a socket whose send cannot finish, expire the real command scope
     # after send starts so admission scheduling cannot consume a tiny deadline.
-    PluginHub.configure(isolated_hub)
     entered = asyncio.Event()
     deadlines = []
     timeout_at = asyncio.timeout_at
@@ -165,14 +189,7 @@ async def test_command_timeout_includes_blocked_send(
         deadlines[0].reschedule(asyncio.get_running_loop().time())
         await asyncio.Event().wait()
 
-    await isolated_hub.register("session", "Fixture", "owned-hash", "6000.3")
-    ws = SimpleNamespace(
-        state=SimpleNamespace(plugin_generation="owned-generation", user_id=None),
-        client_state=WebSocketState.CONNECTED,
-        application_state=WebSocketState.CONNECTED,
-        send_json=blocked_send,
-    )
-    PluginHub._connections["session"] = ws
+    command_socket.send_json.side_effect = blocked_send
     monkeypatch.setattr(asyncio, "timeout_at", capture_deadline)
     monkeypatch.setattr(PluginHub, "FAST_FAIL_TIMEOUT", LIFECYCLE_WATCHDOG_SECONDS)
     command = asyncio.create_task(PluginHub.send_command("session", "ping", {}))
@@ -195,18 +212,15 @@ async def test_command_timeout_includes_blocked_send(
 
 
 @pytest.mark.asyncio
-async def test_failed_send_does_not_leave_unconsumed_future(isolated_hub: PluginRegistry) -> None:
+async def test_failed_send_does_not_leave_unconsumed_future(command_socket) -> None:
     # Given a socket write that fails before a result is awaited.
-    PluginHub.configure(isolated_hub)
-    ws = AsyncMock()
     captured = []
 
     async def failed_send(payload) -> None:
         captured.append(PluginHub._pending[payload["id"]]["future"])
         raise OSError("socket write failed")
 
-    ws.send_json.side_effect = failed_send
-    PluginHub._connections["session"] = ws
+    command_socket.send_json.side_effect = failed_send
     observed = []
     loop = asyncio.get_running_loop()
     previous_handler = loop.get_exception_handler()
@@ -229,8 +243,7 @@ async def test_failed_send_does_not_leave_unconsumed_future(isolated_hub: Plugin
 
 
 @pytest.mark.asyncio
-async def test_disconnect_interrupts_blocked_command_write(isolated_hub: PluginRegistry) -> None:
-    PluginHub.configure(isolated_hub)
+async def test_disconnect_interrupts_blocked_command_write(command_socket) -> None:
     entered = asyncio.Event()
     stopped = asyncio.Event()
 
@@ -241,14 +254,12 @@ async def test_disconnect_interrupts_blocked_command_write(isolated_hub: PluginR
         finally:
             stopped.set()
 
-    ws = AsyncMock()
-    ws.send_json.side_effect = blocked_send
-    PluginHub._connections["session"] = ws
+    command_socket.send_json.side_effect = blocked_send
     hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
     command = asyncio.create_task(PluginHub.send_command("session", "manage_scene", {}))
     try:
-        await entered.wait()
-        await hub.on_disconnect(ws, 1001)
+        await await_signal(entered, "write before disconnect", producers=(command,))
+        await hub.on_disconnect(command_socket, 1001)
         done, _ = await asyncio.wait({command}, timeout=LIFECYCLE_WATCHDOG_SECONDS)
         assert command in done, "Disconnect must interrupt a blocked write immediately"
         assert command.result()["hint"] == "inspect_state_before_retry"
@@ -256,17 +267,14 @@ async def test_disconnect_interrupts_blocked_command_write(isolated_hub: PluginR
         assert PluginHub._pending == {}
     finally:
         command.cancel()
-        await asyncio.gather(command, return_exceptions=True)
+        await await_completion(asyncio.gather(command, return_exceptions=True), "command teardown")
 
 
 @pytest.mark.asyncio
 async def test_disconnect_before_pending_registration_does_not_send(
-    isolated_hub: PluginRegistry,
+    command_socket,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    PluginHub.configure(isolated_hub)
-    ws = AsyncMock()
-    PluginHub._connections["session"] = ws
     hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
     lookup = PluginHub._get_connection
 
@@ -280,13 +288,23 @@ async def test_disconnect_before_pending_registration_does_not_send(
     try:
         done, _ = await asyncio.wait({command}, timeout=LIFECYCLE_WATCHDOG_SECONDS)
         assert command in done, "A disconnected socket must not gain new pending commands"
-        with pytest.raises(RuntimeError, match="not connected"):
+        with pytest.raises(CommandNotDispatchedError, match="not connected"):
             command.result()
-        ws.send_json.assert_not_awaited()
+        assert "session" not in PluginHub._connections
+        command_socket.send_json.assert_not_awaited()
         assert PluginHub._pending == {}
     finally:
         command.cancel()
         await asyncio.gather(command, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_socket_without_a_registered_owner_cannot_dispatch(command_socket, isolated_hub):
+    await isolated_hub.unregister("session")
+    with pytest.raises(CommandNotDispatchedError, match="not connected"):
+        await PluginHub.send_command("session", "manage_scene", {})
+    command_socket.send_json.assert_not_awaited()
+    assert PluginHub._pending == {}
 
 
 @pytest.mark.asyncio
