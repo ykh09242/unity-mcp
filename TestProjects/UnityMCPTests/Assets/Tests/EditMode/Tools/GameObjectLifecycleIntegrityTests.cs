@@ -187,7 +187,8 @@ namespace MCPForUnityTests.Editor.Tools
             var inactive = Owned("ComponentInactive");
             inactive.AddComponent<BoxCollider>();
             inactive.SetActive(false);
-            secondaryScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            secondaryScene = SceneManager.CreateScene(prefix + "Secondary");
+            Assert.IsTrue(secondaryScene.IsValid() && secondaryScene.isLoaded);
             var other = new GameObject(prefix + "OtherScene");
             SceneManager.MoveGameObjectToScene(other, secondaryScene);
             other.AddComponent<BoxCollider>();
@@ -220,7 +221,7 @@ namespace MCPForUnityTests.Editor.Tools
             child.SetActive(false);
             string path = assetRoot + "/Stage.prefab";
             Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(root, path));
-            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/StageScene.unity"));
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"));
             var stage = PrefabStageUtility.OpenPrefab(path);
             Assert.IsNotNull(stage);
             try
@@ -244,8 +245,14 @@ namespace MCPForUnityTests.Editor.Tools
             }
             finally
             {
-                stage.ClearDirtiness();
-                StageUtility.GoToMainStage();
+                try
+                {
+                    stage.ClearDirtiness();
+                }
+                finally
+                {
+                    StageUtility.GoToMainStage();
+                }
             }
         }
 
