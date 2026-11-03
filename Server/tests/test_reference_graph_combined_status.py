@@ -7,6 +7,63 @@ from tests.test_reference_graph_service import setup
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("combined", [False, True])
+async def test_ignore_proof_reads_one_snapshot_and_releases_it_before_native_io(
+    setup, monkeypatch, combined
+):
+    import sqlite3
+    from contextlib import contextmanager
+
+    service, sender, ctx = setup
+    try:
+        entry, status = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
+        store = entry.workspace.store
+        snapshot = store.read_snapshot
+        connect = sqlite3.connect
+        collect = entry.engine._collector
+        open_snapshot = False
+        connections = 0
+
+        @contextmanager
+        def tracked_snapshot():
+            nonlocal open_snapshot
+            with snapshot():
+                open_snapshot = True
+                try:
+                    yield
+                finally:
+                    open_snapshot = False
+
+        def counted_connect(*args, **kwargs):
+            nonlocal connections
+            if args[0] == store.path:
+                connections += 1
+            return connect(*args, **kwargs)
+
+        async def native(*args, **kwargs):
+            assert not open_snapshot
+            return await collect(*args, **kwargs)
+
+        monkeypatch.setattr(store, "read_snapshot", tracked_snapshot)
+        monkeypatch.setattr(sqlite3, "connect", counted_connect)
+        monkeypatch.setattr(entry.engine, "_collector", native)
+        status.update(
+            ignore_current_validation=1,
+            ignore_current_verified=True,
+            ignore_snapshot_digest=hashlib.sha256(b"ignore").hexdigest(),
+        )
+        sender.calls.clear()
+        assert await entry.engine.validate_ignore(status if combined else None)
+        assert [args["action"] for args, *_ in sender.calls] == (
+            [] if combined else ["ignore_rules"]
+        )
+        assert connections == 1
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("change", [None, "rotated", "changed"])
 async def test_combined_query_proves_exact_snapshot_at_both_boundaries(setup, monkeypatch, change):
     service, sender, ctx = setup

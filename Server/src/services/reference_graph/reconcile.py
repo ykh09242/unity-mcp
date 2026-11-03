@@ -163,9 +163,15 @@ class Reconciler:
 
     async def validate_ignore(self, status: dict | None = None) -> bool:
         """Validate a warm native snapshot without rereading assets or external documents."""
-        if not (await drained_thread(self.workspace.policy))["respect_gitignore"]:
+
+        def validation_inputs():
+            with self.store.read_snapshot():
+                enabled = self.workspace.policy()["respect_gitignore"]
+                return enabled, self.workspace.ignore_status() if enabled else {}
+
+        enabled, known = await drained_thread(validation_inputs)
+        if not enabled:
             return True
-        known = await drained_thread(self.workspace.ignore_status)
         if not known.get("snapshot"):
             return False
         try:
