@@ -1162,41 +1162,80 @@ class ReferenceGraphService:
                     )
                 ignore_verified = True
 
+        def read_page(*, partial_static=False, withhold_edges=False):
+            return store.query(
+                options["node"],
+                **{
+                    key: value
+                    for key, value in options.items()
+                    if key not in {"node", "consistency"}
+                },
+                **({"partial_static": True} if partial_static else {}),
+                **({"withhold_edges": True} if withhold_edges else {}),
+            )
+
+        def read_result_state(page_fence=None):
+            status = store.status()
+            progress = workspace.progress(bounded=True)
+            providers = workspace.provider_status(bounded=True)
+            current = workspace.ignore_current(editor, bounded=True)
+            counts = workspace.counts()
+            version_pending = workspace.state("analysis_version", bounded=True) != ANALYSIS_VERSION
+            analysis_pending = version_pending or workspace.state(
+                "analysis_dirty", False, bounded=True
+            )
+            return (
+                status,
+                progress,
+                providers,
+                current,
+                counts,
+                version_pending,
+                analysis_pending,
+                page_fence,
+            )
+
+        cached_query = action == "query" and consistency == "cached"
+
         def opening_snapshot():
             with store.read_snapshot():
                 fence = workspace.delivery_fence()
+                if fallback_policy_version is not None and fallback_policy_version != fence[3]:
+                    return None
+                if admission_pending and fence[2]:
+                    raise RevisionConflict("Graph admission changed; retry the query")
                 exclusions = not admission_pending and workspace.has_exclusions(bounded=True)
                 progress = workspace.progress(bounded=True) if exclusions else None
-                return fence, exclusions, progress
+                catalog_pending = exclusions and not _catalog_matches_editor(progress, editor)
+                page = state = None
+                if cached_query and not admission_pending:
+                    page = read_page(withhold_edges=catalog_pending)
+                    if _is_unity_asset_page(page):
+                        state = read_result_state(fence)
+                return fence, exclusions, progress, catalog_pending, page, state
 
+        admission_fence = catalog_progress = prepared_page = page_state = None
+        exclusions_apply = catalog_pending = False
         if protected:
-            admission_fence, exclusions_apply, catalog_progress = await drained_thread(
-                opening_snapshot
-            )
-        else:
-            admission_fence, exclusions_apply, catalog_progress = None, False, None
-        if (
-            protected
-            and fallback_policy_version is not None
-            and fallback_policy_version != admission_fence[3]
-        ):
-            async with self.lock:
-                self.start(entry, wake=True)
-            raise RevisionConflict("Collection policy changed during admission; retry the request")
-        if admission_pending and admission_fence[2]:
-            raise RevisionConflict("Graph admission changed; retry the query")
-        catalog_pending = False
-        if protected and not admission_pending:
-            if exclusions_apply:
-                if not _catalog_matches_editor(catalog_progress, editor):
-                    if action == "query" and consistency == "cached":
-                        catalog_pending = True
-                    else:
-                        async with self.lock:
-                            self.start(entry, wake=True)
-                        raise RevisionConflict(
-                            "Reference inventory is catching up; retry collection"
-                        )
+            opening = await drained_thread(opening_snapshot)
+            if opening is None:
+                async with self.lock:
+                    self.start(entry, wake=True)
+                raise RevisionConflict(
+                    "Collection policy changed during admission; retry the request"
+                )
+            (
+                admission_fence,
+                exclusions_apply,
+                catalog_progress,
+                catalog_pending,
+                prepared_page,
+                page_state,
+            ) = opening
+            if catalog_pending and not cached_query:
+                async with self.lock:
+                    self.start(entry, wake=True)
+                raise RevisionConflict("Reference inventory is catching up; retry collection")
         partial_static = admission_pending and _partial_proof_current(
             entry, editor, admission_fence
         )
@@ -1254,23 +1293,15 @@ class ReferenceGraphService:
             if action == "mutation_diff":
                 external_changed = await drained_thread(self._validate_exploration, workspace, data)
         elif action == "query":
-            data = await drained_thread(
-                store.query,
-                options["node"],
-                **{
-                    key: value
-                    for key, value in options.items()
-                    if key not in {"node", "consistency"}
-                },
-                **({"partial_static": True} if partial_static else {}),
-                **(
-                    {"withhold_edges": True}
-                    if catalog_pending or admission_pending and not partial_static
-                    else {}
-                ),
-            )
-            # The store reads the page's revision and its edges in one transaction.
-            local_query_page = consistency == "cached" and _is_unity_asset_page(data)
+            if prepared_page is not None:
+                data, local_query_page = prepared_page, page_state is not None
+            else:
+                data = await drained_thread(
+                    read_page,
+                    partial_static=partial_static,
+                    withhold_edges=catalog_pending or admission_pending and not partial_static,
+                )
+                local_query_page = cached_query and _is_unity_asset_page(data)
             if not local_query_page:
                 external_changed = await drained_thread(self._validate_external, workspace, data)
         elif action == "diagnostics":
@@ -1400,27 +1431,7 @@ class ReferenceGraphService:
 
         def result_snapshot():
             with store.read_snapshot():
-                status = store.status()
-                progress = workspace.progress(bounded=True)
-                providers = workspace.provider_status(bounded=True)
-                admission_current = workspace.ignore_current(editor, bounded=True)
-                counts = workspace.counts()
-                version_pending = (
-                    workspace.state("analysis_version", bounded=True) != ANALYSIS_VERSION
-                )
-                analysis_pending = version_pending or workspace.state(
-                    "analysis_dirty", False, bounded=True
-                )
-                return (
-                    status,
-                    progress,
-                    providers,
-                    admission_current,
-                    counts,
-                    version_pending,
-                    analysis_pending,
-                    workspace.delivery_fence() if local_query_page else None,
-                )
+                return read_result_state(workspace.delivery_fence() if local_query_page else None)
 
         (
             status,
@@ -1431,7 +1442,7 @@ class ReferenceGraphService:
             analysis_version_pending,
             analysis_pending,
             page_fence,
-        ) = await drained_thread(result_snapshot)
+        ) = page_state if page_state is not None else await drained_thread(result_snapshot)
         ignore_changed = not admission_current
         matches_editor = admission_current and _native_matches_progress(progress, editor)
         native_current = (
