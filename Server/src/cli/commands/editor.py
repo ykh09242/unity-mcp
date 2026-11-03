@@ -979,4 +979,7 @@ def export_test(job_id: str, export_format: str, output):
         path = write_export(output, fetch)
     except (AnalysisError, OSError, UnicodeError) as error:
         raise click.ClickException("Test export could not be completed safely") from error
-    click.echo(str(path))
+    if config.format == "json":
+        click.echo(format_output({"success": True, "data": {"path": str(path)}}, config.format))
+    else:
+        click.echo(str(path))

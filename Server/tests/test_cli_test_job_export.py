@@ -8,12 +8,13 @@ from click.testing import CliRunner
 import pytest
 
 from cli.utils.config import CLIConfig
+from cli.main import cli
 
 
 @pytest.mark.parametrize("format", ["json", "junit"])
-def test_cli_export_streams_public_command_chunks(tmp_path, monkeypatch, format):
+@pytest.mark.parametrize("stdout_format", ["json", "text"])
+def test_cli_export_streams_public_command_chunks(tmp_path, monkeypatch, format, stdout_format):
     editor = importlib.import_module("cli.commands.editor")
-    monkeypatch.setattr(editor, "get_config", lambda: CLIConfig(format="json"))
     text = (
         json.dumps({"message": '한국어<&>\nquoted"'}, ensure_ascii=False)
         if format == "json"
@@ -41,11 +42,27 @@ def test_cli_export_streams_public_command_chunks(tmp_path, monkeypatch, format)
     monkeypatch.setattr(editor, "run_command", send)
     output = tmp_path / ("test results." + format)
     result = CliRunner().invoke(
-        editor.editor, ["export-test", "job", "--format", format, "--output", str(output)]
+        cli,
+        [
+            "--no-project-context",
+            "--format",
+            stdout_format,
+            "editor",
+            "export-test",
+            "job",
+            "--format",
+            format,
+            "--output",
+            str(output),
+        ],
     )
     assert result.exit_code == 0, result.output
     assert output.read_bytes() == content
     assert len(calls) == 2
+    if stdout_format == "json":
+        assert json.loads(result.stdout) == {"success": True, "data": {"path": str(output)}}
+    else:
+        assert result.stdout == str(output) + "\n"
 
 
 def test_cli_export_bad_digest_leaves_no_final_or_temporary_file(tmp_path, monkeypatch):
