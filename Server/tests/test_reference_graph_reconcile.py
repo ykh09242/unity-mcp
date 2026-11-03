@@ -20,6 +20,116 @@ from services.reference_graph.workspace import GraphWorkspace
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reopen", [False, True])
+async def test_catalog_key_changes_only_reanalyze_matching_lookups(setup, reopen):
+    store, workspace, editor, engine = setup
+    exact = editor.add(
+        1, "Assets/Exact.cs", 'class E { void M() { UnityEngine.Resources.Load("Dir/Leaf"); } }'
+    )
+    subtree = editor.add(
+        2, "Assets/Tree.cs", 'class T { void M() { UnityEngine.Resources.LoadAll("dir"); } }'
+    )
+    other = editor.add(
+        3, "Assets/Other.cs", 'class U { void M() { UnityEngine.Resources.Load("Other"); } }'
+    )
+    assert await engine.reconcile()
+
+    def generations():
+        with store._connect() as db:
+            return dict(
+                db.execute("SELECT owner,generation FROM observations WHERE provider='code'")
+            )
+
+    initial = generations()
+    if reopen:
+        store = GraphStore(store.path, store.scope)
+        workspace = GraphWorkspace(store)
+        engine = Reconciler(workspace, editor, allowed)
+    editor.add(4, "Assets/Icon.png")
+    assert await engine.reconcile()
+    assert generations() == initial
+
+    path = "Assets/Resources/Dir/Leaf.prefab"
+    target = editor.add(5, path, keys=[{"scheme": "resources", "value": "DIR/leaf"}])
+    assert workspace.acquire("journal")
+    workspace.record_page("journal", [editor.assets[target[6:]]], workspace.progress(), "journal")
+    workspace.release("journal")
+    states = workspace.document_manifest()
+    assert [states[owner]["state"] for owner in (exact, subtree, other)] == [
+        "pending",
+        "pending",
+        "ready",
+    ]
+    assert await engine.reconcile()
+    assert generations()[other] == initial[other]
+    assert all(
+        {edge["target"] for edge in store.query(owner)["edges"]} == {target}
+        for owner in (exact, subtree)
+    )
+
+    editor.add(5, path, keys=[{"scheme": "resources", "value": "Other"}])
+    assert await engine.reconcile()
+    assert all(store.query(owner)["edges"] == [] for owner in (exact, subtree))
+    assert {edge["target"] for edge in store.query(other)["edges"]} == {target}
+    before_removal = generations()
+    del editor.assets[target[6:]]
+    editor.event(path, deleted=True)
+    assert await engine.reconcile()
+    assert store.query(other)["edges"] == []
+    assert all(generations()[owner] == before_removal[owner] for owner in (exact, subtree))
+
+
+@pytest.mark.asyncio
+async def test_excluded_catalog_key_replaces_missing_issue_until_removed(setup):
+    _, workspace, editor, engine = setup
+    workspace.set_policy({"exclude": ["Assets/Private/**"]}, expected_version=0)
+    owner = editor.add(
+        1, "Assets/Loader.cs", 'class C { void M() { UnityEngine.Resources.Load("Secret"); } }'
+    )
+    assert await engine.reconcile()
+    assert workspace.diagnostics(owner)["issues"][0]["reason"] == "key_not_found"
+
+    path = "Assets/Private/Secret.prefab"
+    hidden = editor.add(2, path, keys=[{"scheme": "resources", "value": "secret"}])
+    assert await engine.reconcile()
+    assert workspace.diagnostics(owner)["issues"] == []
+    del editor.assets[hidden[6:]]
+    editor.event(path, deleted=True)
+    assert await engine.reconcile()
+    assert workspace.diagnostics(owner)["issues"][0]["reason"] == "key_not_found"
+
+
+@pytest.mark.asyncio
+async def test_addressables_lookup_follows_label_subobject_and_provider_changes(setup):
+    store, workspace, editor, engine = setup
+    owner = editor.add(
+        1,
+        "Assets/Loader.cs",
+        'using UnityEngine.AddressableAssets; class C { void M() { Addressables.LoadAssetAsync<object>("Atlas[Hero]"); } }',
+    )
+    assert await engine.reconcile()
+    assert workspace.diagnostics(owner)["issues"][0]["reason"] == "key_not_found"
+
+    target = editor.add(2, "Assets/Target.asset")
+    editor.assets[target[6:]]["addressables"] = "unavailable"
+    assert not await engine.reconcile()
+    assert workspace.diagnostics(owner)["issues"][0]["reason"] == "provider_unavailable"
+
+    editor.add(2, "Assets/Target.asset", keys=[{"scheme": "addressables_label", "value": "Atlas"}])
+    assert await engine.reconcile()
+    assert [(edge["target"], edge["subobject"]) for edge in store.query(owner)["edges"]] == [
+        (target, "Hero")
+    ]
+    exact = editor.add(
+        3, "Assets/Exact.asset", keys=[{"scheme": "addressables", "value": "Atlas[Hero]"}]
+    )
+    assert await engine.reconcile()
+    assert [(edge["target"], edge["subobject"]) for edge in store.query(owner)["edges"]] == [
+        (exact, "")
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("cache_state", ["warm", "cleared", "reopened"])
 async def test_partial_declaration_rebinding_refreshes_ready_callers(setup, cache_state):
     store, workspace, editor, engine = setup

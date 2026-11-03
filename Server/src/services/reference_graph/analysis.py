@@ -28,7 +28,7 @@ from yaml.tokens import (
 )
 
 from services.reference_graph.compilation import source_for_build
-from services.reference_graph.store import Edge
+from services.reference_graph.store import Edge, _hash
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
@@ -810,6 +810,30 @@ def _argument_type(tokens: list[Token], parameters: dict[str, str]) -> str:
     return ""
 
 
+@dataclass(slots=True)
+class CatalogLookups:
+    """Bound a publication's reverse index even when wrapper expansion is streamed."""
+
+    ANY = "catalog:*"
+    ADDRESSABLES_STATUS = "catalog:addressables-status"
+    CSHARP_MEMBERSHIP = "catalog:csharp-membership"
+    MAX_PREFIX_DEPTH = 32
+
+    dependencies: set[str] = field(default_factory=set)
+
+    def add(self, dependency: str) -> None:
+        if self.ANY in self.dependencies:
+            return
+        self.dependencies.add(dependency)
+        if len(self.dependencies) > 256 or dependency == self.ANY:
+            self.dependencies = {self.ANY}
+
+    @staticmethod
+    def key(scheme: str, value: str) -> str:
+        # The private index need not retain a second copy of the key text.
+        return "catalog:key:" + _hash((scheme, value))
+
+
 class Catalog:
     @staticmethod
     def canonical_key(scheme: str, value: str) -> str:
@@ -819,6 +843,52 @@ class Catalog:
             return "".join(folded if len(folded := char.upper()) == 1 else char for char in value)
         return value
 
+    @classmethod
+    def asset_keys(cls, asset: dict) -> set[tuple[str, str]]:
+        return {
+            ("guid", asset["guid"].lower()),
+            ("path", asset["path"]),
+            *(
+                (key["scheme"], cls.canonical_key(key["scheme"], key["value"]))
+                for key in asset.get("keys", ())
+            ),
+        }
+
+    @staticmethod
+    def unavailable(asset: dict) -> bool:
+        return not asset.get("_excluded") and (
+            bool(asset.get("addressables_error"))
+            or asset.get("addressables") in {"unavailable", "unsupported", "failed"}
+        )
+
+    @classmethod
+    def changed_lookups(cls, before: dict | None, after: dict | None) -> Iterator[str]:
+        def script_path(asset: dict | None) -> str | None:
+            if asset and not asset.get("_excluded") and asset.get("source_format") == "csharp":
+                return asset["path"]
+            return None
+
+        # Until source collection, an added/removed script can change name
+        # binding even for callers with no previously resolved symbol edge.
+        if script_path(before) != script_path(after):
+            yield CatalogLookups.CSHARP_MEMBERSHIP
+        old = cls.asset_keys(before) if before else set()
+        new = cls.asset_keys(after) if after else set()
+        # A key can cross admission without changing spelling.
+        same_admission = bool((before or {}).get("_excluded")) == bool(
+            (after or {}).get("_excluded")
+        )
+        for scheme, key in old ^ new if same_admission else old | new:
+            yield CatalogLookups.key(scheme, key)
+            if scheme == "resources":
+                yield CatalogLookups.key("resources-prefix", "")
+                for index, match in enumerate(re.finditer("/", key)):
+                    if index == CatalogLookups.MAX_PREFIX_DEPTH:
+                        break
+                    yield CatalogLookups.key("resources-prefix", key[: match.end()])
+        if cls.unavailable(before or {}) != cls.unavailable(after or {}):
+            yield CatalogLookups.ADDRESSABLES_STATUS
+
     def __init__(self, assets: Iterable[dict]):
         self.keys: dict[tuple[str, str], set[str]] = defaultdict(set)
         self.guids: set[str] = set()
@@ -826,31 +896,30 @@ class Catalog:
         self.addressables_unavailable = False
         for asset in assets:
             if asset.get("_excluded"):
-                self.blocked.update(
-                    (key["scheme"], self.canonical_key(key["scheme"], key["value"]))
-                    for key in asset.get("keys", ())
-                )
-                self.blocked.add(("guid", asset["guid"].lower()))
-                self.blocked.add(("path", asset["path"]))
+                self.blocked.update(self.asset_keys(asset))
                 continue
-            self.addressables_unavailable |= bool(asset.get("addressables_error")) or asset.get(
-                "addressables"
-            ) in {"unavailable", "unsupported", "failed"}
+            self.addressables_unavailable |= self.unavailable(asset)
             guid = asset["guid"].lower()
             target = "asset:" + guid
             self.guids.add(guid)
-            self.keys["guid", guid].add(target)
-            self.keys["path", asset["path"]].add(target)
-            for key in asset.get("keys", ()):
-                self.keys[key["scheme"], self.canonical_key(key["scheme"], key["value"])].add(
-                    target
-                )
+            for key in self.asset_keys(asset):
+                self.keys[key].add(target)
 
-    def resolve(self, scheme: str, key: str, mode: str = "single") -> tuple[set[str], str | None]:
+    def resolve(
+        self, scheme: str, key: str, mode: str = "single", *, lookups: CatalogLookups | None = None
+    ) -> tuple[set[str], str | None]:
         key = self.canonical_key(scheme, key)
+        if lookups is not None:
+            lookups.add(lookups.key(scheme, key))
         targets = set(self.keys.get((scheme, key), ()))
         if scheme == "resources" and mode == "all":
             prefix = key.rstrip("/") + "/" if key else ""
+            if lookups is not None:
+                lookups.add(
+                    lookups.key("resources-prefix", prefix)
+                    if prefix.count("/") <= lookups.MAX_PREFIX_DEPTH
+                    else lookups.ANY
+                )
             targets.update(
                 target
                 for (kind, value), ids in self.keys.items()
@@ -858,27 +927,32 @@ class Catalog:
                 for target in ids
             )
         if scheme == "addressables":
+            if lookups is not None:
+                lookups.add(lookups.key("addressables_label", key))
             targets.update(self.keys.get(("addressables_label", key), ()))
         if not targets:
             if (scheme, key) in self.blocked or (
                 scheme == "addressables" and ("addressables_label", key) in self.blocked
             ):
                 return set(), "excluded"
-            if scheme in {"addressables", "addressables_label"} and self.addressables_unavailable:
-                return set(), "provider_unavailable"
+            if scheme in {"addressables", "addressables_label"}:
+                if lookups is not None:
+                    lookups.add(lookups.ADDRESSABLES_STATUS)
+                if self.addressables_unavailable:
+                    return set(), "provider_unavailable"
             return set(), "key_not_found"
         if len(targets) > 1 and mode == "single":
             return set(), "ambiguous_key"
         return targets, None
 
     def resolve_detail(
-        self, scheme: str, key: str, mode: str = "single"
+        self, scheme: str, key: str, mode: str = "single", *, lookups: CatalogLookups | None = None
     ) -> tuple[set[str], str | None, str]:
-        targets, reason = self.resolve(scheme, key, mode)
+        targets, reason = self.resolve(scheme, key, mode, lookups=lookups)
         if scheme == "addressables" and reason in {"key_not_found", "provider_unavailable"}:
             match = re.fullmatch(r"([^\[\]]+)\[([^\[\]]+)\]", key)
             if match:
-                targets, reason = self.resolve(scheme, match[1], mode)
+                targets, reason = self.resolve(scheme, match[1], mode, lookups=lookups)
                 return targets, reason, match[2]
         return targets, reason, ""
 
@@ -898,6 +972,7 @@ class Analysis:
     unresolved: list[dict] = field(default_factory=list)
     dependencies: set[str] = field(default_factory=set)
     coverage: str = "partial_static"
+    catalog_lookups: CatalogLookups | None = None
 
 
 def validate_rule(rule: dict) -> None:
@@ -1491,14 +1566,18 @@ class AnalysisIndex:
                 )
             )
 
-    def events(self, owner: str) -> Iterator[Edge | dict]:
+    def events(self, owner: str, lookups: CatalogLookups | None = None) -> Iterator[Edge | dict]:
         """Stream concrete evidence without retaining a wrapper's entire fanout."""
         self.check()
+        if lookups is not None:
+            lookups.add(lookups.CSHARP_MEMBERSHIP)
         yield from self.facts[owner].diagnostics
         for call_index in range(len(self.facts[owner].calls)):
-            yield from self._call_events(owner, call_index)
+            yield from self._call_events(owner, call_index, lookups)
 
-    def _call_events(self, owner: str, call_index: int) -> Iterator[Edge | dict]:
+    def _call_events(
+        self, owner: str, call_index: int, lookups: CatalogLookups | None
+    ) -> Iterator[Edge | dict]:
         call = self.facts[owner].calls[call_index]
         issues = set()
         for effect in self._effects(owner, call_index):
@@ -1507,11 +1586,13 @@ class AnalysisIndex:
                 continue
             expr = effect.expression
             if any(kind != "literal" for kind, _ in expr):
+                if lookups is not None:
+                    lookups.add(lookups.ANY)
                 issues.add("dynamic_key")
                 continue
             key = "".join(value for _, value in expr)
             targets, reason, subobject = self.catalog.resolve_detail(
-                effect.scheme, key, effect.mode
+                effect.scheme, key, effect.mode, lookups=lookups
             )
             if reason and reason != "excluded":
                 yield {"line": call.line, "call": call.name, "reason": reason, "key": key}
@@ -1547,11 +1628,11 @@ class AnalysisIndex:
     def analyze(self, owner: str) -> Analysis:
         # Convenience API for bounded component callers. The reconciler consumes
         # events into a disk-backed staging sink for potentially large owners.
-        result = Analysis()
+        result = Analysis(catalog_lookups=CatalogLookups({CatalogLookups.CSHARP_MEMBERSHIP}))
         result.unresolved.extend(self.facts[owner].diagnostics)
         for call_index in range(len(self.facts[owner].calls)):
             edges, issues = set(), set()
-            for event in self._call_events(owner, call_index):
+            for event in self._call_events(owner, call_index, result.catalog_lookups):
                 if isinstance(event, Edge):
                     if event not in edges:
                         edges.add(event)

@@ -5,11 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
+from itertools import chain
 import json
 import stat
 import time
 
-from services.reference_graph.analysis import Analysis
+from services.reference_graph.analysis import Analysis, Catalog, CatalogLookups
 from services.reference_graph.external import _pattern
 from services.reference_graph.ignore import GitIgnoreRules
 from services.reference_graph.response_budget import PageBudget, bounded_rows
@@ -43,7 +44,7 @@ class GraphWorkspace:
                 "CREATE TABLE IF NOT EXISTS graph_workspace(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_workspace").fetchone()
-            if version is not None and version[0] not in (1, 2, 3, 4, 5, 6):
+            if version is not None and version[0] not in (1, 2, 3, 4, 5, 6, 7):
                 raise ValueError("Unsupported graph workspace version")
             if version is None:
                 for statement in (
@@ -95,6 +96,14 @@ class GraphWorkspace:
                     "CREATE TABLE IF NOT EXISTS graph_collected_versions(guid TEXT PRIMARY KEY,payload TEXT NOT NULL)"
                 )
                 connection.execute("UPDATE graph_workspace SET version=6")
+            if version is None or version[0] < 7:
+                # Older publications did not record failed or excluded lookups.
+                # Keep their evidence visible until the first catalog change.
+                connection.execute(
+                    "INSERT OR IGNORE INTO graph_dependencies SELECT owner,? FROM observations WHERE provider='code' AND state<>'deleted'",
+                    (CatalogLookups.ANY,),
+                )
+                connection.execute("UPDATE graph_workspace SET version=7")
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_asset_paths(guid TEXT PRIMARY KEY,path TEXT NOT NULL,seen TEXT NOT NULL)"
             )
@@ -485,7 +494,6 @@ class GraphWorkspace:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_runtime_schema'"
         ).fetchone():
             return
-        from services.reference_graph.analysis import Catalog
         from services.reference_graph.runtime import initialize_bindings, runtime_admitted
 
         initialize_bindings(connection)
@@ -739,13 +747,58 @@ class GraphWorkspace:
             )
             return generation
 
+    @staticmethod
+    def _prior_asset(connection, guid: str) -> dict | None:
+        row = connection.execute(
+            "SELECT a.payload,p.path FROM graph_asset_paths p LEFT JOIN graph_assets a USING(guid) WHERE p.guid=? AND (a.guid IS NOT NULL OR EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id='asset:'||p.guid))",
+            (guid,),
+        ).fetchone()
+        if row is None:
+            return None
+        if row[0] is not None:
+            return json.loads(row[0])
+        return {
+            "guid": guid,
+            "path": row[1],
+            "_excluded": True,
+            "keys": [
+                dict(key)
+                for key in connection.execute(
+                    "SELECT scheme,value FROM graph_blocked_keys WHERE guid=?", (guid,)
+                )
+            ],
+        }
+
+    def _catalog_changed(self, connection, lookups: Iterable[str]) -> None:
+        connection.execute(
+            "UPDATE graph_admission SET ready=0 WHERE id=1 AND EXISTS (SELECT 1 FROM sources WHERE provider LIKE 'runtime:%')"
+        )
+        self._set(
+            connection, "catalog_revision", self._state(connection, "catalog_revision", 0) + 1
+        )
+        if not connection.execute(
+            "SELECT 1 FROM graph_dependencies WHERE dependency GLOB 'catalog:*' LIMIT 1"
+        ).fetchone():
+            return
+        connection.execute("CREATE TEMP TABLE graph_catalog_changes(lookup TEXT PRIMARY KEY)")
+        connection.executemany(
+            "INSERT OR IGNORE INTO graph_catalog_changes VALUES (?)", ((key,) for key in lookups)
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO graph_catalog_changes VALUES (?)", (CatalogLookups.ANY,)
+        )
+        if connection.execute(
+            "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider='code' AND state<>'deleted' AND owner IN (SELECT d.owner FROM graph_catalog_changes c CROSS JOIN graph_dependencies d ON d.dependency=c.lookup)"
+        ).rowcount:
+            self._set(connection, "analysis_dirty", True)
+
     def record_page(
         self, worker: str, assets: Iterable[dict], progress: dict, seen: str, *, force: bool = True
     ) -> None:
         with self._write(worker) as connection:
             admitted = self._admission(connection)
-            changed = []
-            catalog_changed = False
+            dirty_owners = []
+            catalog_changes = []
             for asset in assets:
                 owner = "asset:" + asset["guid"]
                 displaced = connection.execute(
@@ -756,23 +809,29 @@ class GraphWorkspace:
                     displaced_owners = ["asset:" + item[0] for item in displaced]
                     self._invalidate(connection, displaced_owners)
                     for displaced_owner in displaced_owners:
+                        catalog_changes.append(
+                            Catalog.changed_lookups(
+                                self._prior_asset(connection, displaced_owner[6:]), None
+                            )
+                        )
                         self._delete(connection, displaced_owner)
                     for table in ("graph_assets", "graph_asset_paths", "graph_blocked_keys"):
                         connection.executemany("DELETE FROM " + table + " WHERE guid=?", displaced)
-                    catalog_changed = True
+                old = self._prior_asset(connection, asset["guid"])
                 connection.execute(
                     "INSERT OR REPLACE INTO graph_asset_paths VALUES (?,?,?)",
                     (asset["guid"], asset["path"], seen),
                 )
                 if not admitted(asset["path"]):
-                    catalog_changed = True
+                    catalog_changes.append(
+                        Catalog.changed_lookups(old, {**asset, "_excluded": True})
+                    )
                     connection.execute(
                         "INSERT OR REPLACE INTO graph_excluded_nodes VALUES (?,?)",
                         (owner, asset["path"]),
                     )
-                    if connection.execute(
-                        "SELECT 1 FROM graph_assets WHERE guid=?", (asset["guid"],)
-                    ).fetchone():
+                    if old is not None and not old.get("_excluded"):
+                        self._invalidate(connection, [owner])
                         self._delete(connection, owner)
                         connection.execute(
                             "DELETE FROM graph_assets WHERE guid=?", (asset["guid"],)
@@ -792,12 +851,14 @@ class GraphWorkspace:
                 connection.execute("DELETE FROM graph_excluded_nodes WHERE id=?", (owner,))
                 connection.execute("DELETE FROM graph_blocked_keys WHERE guid=?", (asset["guid"],))
                 guid, payload = asset["guid"], _json(asset)
-                old = connection.execute(
-                    "SELECT payload FROM graph_assets WHERE guid=?", (guid,)
-                ).fetchone()
-                dirty = force or old is None or json.loads(old[0])["path"] != asset["path"]
-                if old is None or old[0] != payload:
-                    catalog_changed = True
+                dirty = (
+                    force
+                    or old is None
+                    or old.get("_excluded", False)
+                    or old["path"] != asset["path"]
+                )
+                if old != asset:
+                    catalog_changes.append(Catalog.changed_lookups(old, asset))
                     self._addressables(connection, asset)
                 connection.execute(
                     "INSERT INTO graph_assets VALUES (?,?,?,?,?) ON CONFLICT(guid) DO UPDATE SET path=excluded.path,payload=excluded.payload,seen=excluded.seen,dirty=MAX(graph_assets.dirty,excluded.dirty)",
@@ -808,27 +869,16 @@ class GraphWorkspace:
                     ("asset:" + guid, asset["path"], asset.get("kind", "asset")),
                 )
                 if dirty:
-                    changed.append("asset:" + guid)
+                    dirty_owners.append("asset:" + guid)
                     connection.execute(
                         "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE owner=? AND provider='unity'",
                         ("asset:" + guid,),
                     )
-            if changed:
-                self._invalidate(connection, changed)
-            if catalog_changed:
-                connection.execute(
-                    "UPDATE graph_admission SET ready=0 WHERE id=1 AND EXISTS (SELECT 1 FROM sources WHERE provider LIKE 'runtime:%')"
-                )
-                self._set(connection, "analysis_dirty", True)
-                self._set(
-                    connection,
-                    "catalog_revision",
-                    self._state(connection, "catalog_revision", 0) + 1,
-                )
-                connection.execute(
-                    "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider='code' AND state='ready'"
-                )
-            if changed or catalog_changed:
+            if dirty_owners:
+                self._invalidate(connection, dirty_owners)
+            if catalog_changes:
+                self._catalog_changed(connection, chain.from_iterable(catalog_changes))
+            if dirty_owners or catalog_changes:
                 self.store._bump(connection)
             self._set(connection, "progress", progress)
 
@@ -843,11 +893,31 @@ class GraphWorkspace:
         )
         connection.execute("DELETE FROM edges WHERE owner=? AND provider<>'manual'", (owner,))
         connection.execute("UPDATE nodes SET present=0 WHERE id=?", (owner,))
+        connection.execute(
+            "INSERT OR IGNORE INTO graph_changed_inputs SELECT owner FROM graph_documents WHERE owner=? AND format='csharp'",
+            (owner,),
+        )
         connection.execute("DELETE FROM graph_documents WHERE owner=?", (owner,))
         connection.execute("DELETE FROM graph_analysis WHERE owner=?", (owner,))
         connection.execute("DELETE FROM graph_issues WHERE owner=?", (owner,))
         connection.execute("DELETE FROM graph_dependencies WHERE owner=?", (owner,))
-        connection.execute("INSERT OR IGNORE INTO graph_changed_inputs VALUES (?)", (owner,))
+
+    def _remove_assets(self, connection, owners: list[str]) -> None:
+        if not owners:
+            return
+        self._catalog_changed(
+            connection,
+            (
+                lookup
+                for owner in owners
+                for lookup in Catalog.changed_lookups(
+                    self._prior_asset(connection, owner[6:]), None
+                )
+            ),
+        )
+        self._invalidate(connection, owners)
+        for owner in owners:
+            self._delete(connection, owner)
 
     def finish_census(self, worker: str, seen: str, progress: dict) -> None:
         with self._write(worker) as connection:
@@ -858,27 +928,13 @@ class GraphWorkspace:
                     (seen, seen),
                 )
             ]
-            self._invalidate(connection, removed)
-            for owner in removed:
-                self._delete(connection, owner)
+            self._remove_assets(connection, removed)
             connection.execute("DELETE FROM graph_assets WHERE seen<>?", (seen,))
             connection.execute("DELETE FROM graph_asset_paths WHERE seen<>?", (seen,))
             connection.execute(
                 "DELETE FROM graph_blocked_keys WHERE guid NOT IN (SELECT guid FROM graph_asset_paths)"
             )
             if removed:
-                connection.execute(
-                    "UPDATE graph_admission SET ready=0 WHERE id=1 AND EXISTS (SELECT 1 FROM sources WHERE provider LIKE 'runtime:%')"
-                )
-                self._set(connection, "analysis_dirty", True)
-                self._set(
-                    connection,
-                    "catalog_revision",
-                    self._state(connection, "catalog_revision", 0) + 1,
-                )
-                connection.execute(
-                    "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider='code' AND state='ready'"
-                )
                 self.store._bump(connection)
             self._set(connection, "progress", progress)
 
@@ -889,9 +945,7 @@ class GraphWorkspace:
                 (path, path + "/", path + "0", path, path + "/", path + "0"),
             ).fetchall()
             owners = ["asset:" + row[0] for row in rows]
-            self._invalidate(connection, owners)
-            for owner in owners:
-                self._delete(connection, owner)
+            self._remove_assets(connection, owners)
             connection.executemany(
                 "DELETE FROM graph_assets WHERE guid=?", [(row[0],) for row in rows]
             )
@@ -902,18 +956,6 @@ class GraphWorkspace:
                 "DELETE FROM graph_blocked_keys WHERE guid=?", [(row[0],) for row in rows]
             )
             if rows:
-                connection.execute(
-                    "UPDATE graph_admission SET ready=0 WHERE id=1 AND EXISTS (SELECT 1 FROM sources WHERE provider LIKE 'runtime:%')"
-                )
-                self._set(connection, "analysis_dirty", True)
-                self._set(
-                    connection,
-                    "catalog_revision",
-                    self._state(connection, "catalog_revision", 0) + 1,
-                )
-                connection.execute(
-                    "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider='code' AND state='ready'"
-                )
                 self.store._bump(connection)
 
     def descendant_assets(self, path: str, after: tuple[str, str]) -> list[dict]:
@@ -1071,7 +1113,10 @@ class GraphWorkspace:
                     else None,
                 ),
             )
-            connection.execute("INSERT OR IGNORE INTO graph_changed_inputs VALUES (?)", (owner,))
+            if format_ == "csharp" or (old is not None and old[1] == "csharp"):
+                connection.execute(
+                    "INSERT OR IGNORE INTO graph_changed_inputs VALUES (?)", (owner,)
+                )
             self._set(connection, "analysis_dirty", True)
             self.store._bump(connection)
             return True
@@ -1109,12 +1154,10 @@ class GraphWorkspace:
 
     def drop_document(self, worker: str, owner: str) -> None:
         with self._write(worker) as connection:
-            if (
-                connection.execute(
-                    "SELECT 1 FROM graph_documents WHERE owner=?", (owner,)
-                ).fetchone()
-                is None
-            ):
+            previous = connection.execute(
+                "SELECT format FROM graph_documents WHERE owner=?", (owner,)
+            ).fetchone()
+            if previous is None:
                 return
             self._invalidate(connection, [owner])
             connection.execute("DELETE FROM graph_documents WHERE owner=?", (owner,))
@@ -1130,7 +1173,10 @@ class GraphWorkspace:
                 "UPDATE observations SET generation=generation+1,state='deleted',error=NULL WHERE owner=? AND provider='code'",
                 (owner,),
             )
-            connection.execute("INSERT OR IGNORE INTO graph_changed_inputs VALUES (?)", (owner,))
+            if previous[0] == "csharp":
+                connection.execute(
+                    "INSERT OR IGNORE INTO graph_changed_inputs VALUES (?)", (owner,)
+                )
             self._set(connection, "analysis_dirty", True)
             self.store._bump(connection)
 
@@ -1145,10 +1191,10 @@ class GraphWorkspace:
         connection.executemany(
             "INSERT OR IGNORE INTO graph_changed VALUES (?)", [(owner,) for owner in owners]
         )
-        connection.execute(
-            "WITH RECURSIVE affected(id) AS (SELECT id FROM graph_changed UNION SELECT d.owner FROM graph_dependencies d JOIN affected a ON d.dependency=a.id) UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider='code' AND state<>'deleted' AND owner IN (SELECT id FROM affected)"
-        )
-        GraphWorkspace._set(connection, "analysis_dirty", True)
+        if connection.execute(
+            "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider='code' AND state<>'deleted' AND owner IN (WITH RECURSIVE affected(id) AS (SELECT id FROM graph_changed UNION SELECT d.owner FROM graph_dependencies d JOIN affected a ON d.dependency=a.id) SELECT id FROM affected)"
+        ).rowcount:
+            GraphWorkspace._set(connection, "analysis_dirty", True)
 
     def invalidate_dependents(self, worker: str, owners: Iterable[str]) -> None:
         with self._write(worker) as connection:
@@ -1161,9 +1207,28 @@ class GraphWorkspace:
     ) -> bool:
         return self.publish_many(worker, [(owner, provider, generation, analysis)])[0]
 
-    def publish_many(self, worker: str, publications: Iterable[tuple]) -> list[bool]:
+    @classmethod
+    def _require_catalog(cls, connection, revision: int | None) -> None:
+        if revision is not None and revision != cls._state(connection, "catalog_revision", 0):
+            raise RevisionConflict("Catalog changed during analysis")
+
+    def publish_many(
+        self, worker: str, publications: Iterable[tuple], *, catalog_revision: int | None = None
+    ) -> list[bool]:
         with self._write(worker) as connection:
+            self._require_catalog(connection, catalog_revision)
             return [self._publish(connection, *publication) for publication in publications]
+
+    @staticmethod
+    def _code_dependencies(
+        connection, owner: str, dependencies: set[str], lookups: CatalogLookups | None
+    ) -> None:
+        connection.execute("DELETE FROM graph_dependencies WHERE owner=?", (owner,))
+        catalog = lookups.dependencies if lookups is not None else {CatalogLookups.ANY}
+        connection.executemany(
+            "INSERT OR IGNORE INTO graph_dependencies VALUES (?,?)",
+            ((owner, dependency) for dependency in chain(dependencies, catalog)),
+        )
 
     def publish_code_events(
         self,
@@ -1173,12 +1238,15 @@ class GraphWorkspace:
         events: Iterable[Edge | dict],
         dependencies: Callable[[], set[str]],
         *,
+        catalog_lookups: CatalogLookups | None = None,
+        catalog_revision: int | None = None,
         check: Callable[[], None] = lambda: None,
     ) -> None:
         """Stage bounded batches outside visible evidence, then promote atomically."""
 
         def require_current(connection):
             check()
+            self._require_catalog(connection, catalog_revision)
             if not self.store._current(connection, owner, "code", generation):
                 raise RevisionConflict("Code inputs changed during streamed analysis")
 
@@ -1233,11 +1301,7 @@ class GraphWorkspace:
                     "INSERT INTO graph_issues SELECT owner,'code',ordinal,payload FROM graph_staging WHERE worker=? AND owner=? AND generation=? AND kind='issue'",
                     (worker, owner, generation),
                 )
-                connection.execute("DELETE FROM graph_dependencies WHERE owner=?", (owner,))
-                connection.executemany(
-                    "INSERT OR IGNORE INTO graph_dependencies VALUES (?,?)",
-                    ((owner, dependency) for dependency in resolved_dependencies),
-                )
+                self._code_dependencies(connection, owner, resolved_dependencies, catalog_lookups)
                 connection.execute(
                     "INSERT OR REPLACE INTO graph_analysis VALUES (?,'code','partial_static',?)",
                     (owner, generation),
@@ -1287,16 +1351,17 @@ class GraphWorkspace:
             ((owner, provider, i, _json(issue)) for i, issue in enumerate(analysis.unresolved)),
         )
         if provider == "code":
-            connection.execute("DELETE FROM graph_dependencies WHERE owner=?", (owner,))
-            connection.executemany(
-                "INSERT OR IGNORE INTO graph_dependencies VALUES (?,?)",
-                ((owner, dependency) for dependency in analysis.dependencies),
+            self._code_dependencies(
+                connection, owner, analysis.dependencies, analysis.catalog_lookups
             )
         self.store._bump(connection)
         return True
 
-    def finish_analysis(self, worker: str, rules_revision: int) -> None:
+    def finish_analysis(
+        self, worker: str, rules_revision: int, catalog_revision: int | None = None
+    ) -> None:
         with self._write(worker) as connection:
+            self._require_catalog(connection, catalog_revision)
             if (
                 connection.execute("SELECT rules_revision FROM graph_meta").fetchone()[0]
                 != rules_revision
@@ -1546,8 +1611,6 @@ class GraphWorkspace:
 
     def key_admission(self):
         """Reuse a minimal key admission catalog across runtime pages."""
-        from services.reference_graph.analysis import Catalog
-
         cache = self._key_cache
         revision, assets = self.catalog_snapshot(cache[0] if cache else None)
         if assets is not None:

@@ -25,6 +25,7 @@ from services.reference_graph.analysis import (
     Analysis,
     AnalysisIndex,
     Catalog,
+    CatalogLookups,
     Facts,
     SerializedScanError,
     parse_csharp,
@@ -1073,13 +1074,27 @@ class Reconciler:
         ):
             return
         await self._phase("analyzing")
-        manifest = await drained_thread(self.workspace.document_manifest)
-        blocked = await drained_thread(self.workspace.blocked_analysis)
-        manifest = {owner: row for owner, row in manifest.items() if owner not in blocked}
-        changed = await drained_thread(self.workspace.changed_inputs)
-        index, affected = await drained_thread(
+
+        def inputs():
+            with self.store.read_snapshot():
+                blocked = self.workspace.blocked_analysis()
+                manifest = {
+                    owner: row
+                    for owner, row in self.workspace.document_manifest().items()
+                    if owner not in blocked
+                }
+                return (
+                    manifest,
+                    self.workspace.changed_inputs(),
+                    self.workspace.state("catalog_revision", 0),
+                )
+
+        manifest, changed, expected_revision = await drained_thread(inputs)
+        index, affected, catalog_revision = await drained_thread(
             self._refresh_analysis, manifest, rules, changed, _cancel_event=self.stopped
         )
+        if catalog_revision != expected_revision:
+            raise RevisionConflict("Catalog changed while selecting analysis inputs")
         selected = [
             owner
             for owner, row in manifest.items()
@@ -1095,9 +1110,12 @@ class Reconciler:
                 documents,
                 index,
                 rules["revision"],
+                catalog_revision,
                 _cancel_event=self.stopped,
             )
-        await drained_thread(self.workspace.finish_analysis, self.worker, rules["revision"])
+        await drained_thread(
+            self.workspace.finish_analysis, self.worker, rules["revision"], catalog_revision
+        )
         self._analysis_used = time.monotonic()
 
     def _refresh_analysis(self, manifest: dict, rules: dict, changed_inputs: set[str]) -> tuple:
@@ -1154,7 +1172,7 @@ class Reconciler:
                 affected.update(index.affected(changed_inputs))
             self._analysis_cache = (rules["revision"], revision, fingerprints, index)
             self._analysis_used = time.monotonic()
-            return index, affected
+            return index, affected, revision
         except BaseException:
             # An interrupted in-place update must never become a reusable index.
             self._analysis_cache = None
@@ -1169,7 +1187,11 @@ class Reconciler:
         )
 
     def _analyze_batch(
-        self, documents: list[dict], index: AnalysisIndex, rules_revision: int
+        self,
+        documents: list[dict],
+        index: AnalysisIndex,
+        rules_revision: int,
+        catalog_revision: int | None = None,
     ) -> None:
         observations = [
             Observation(
@@ -1195,8 +1217,9 @@ class Reconciler:
         publications = []
         for row, generation in zip(documents, generations):
             self._check_thread()
+            lookups = CatalogLookups()
             if row["format"] == "csharp":
-                events = index.events(row["owner"])
+                events = index.events(row["owner"], lookups)
                 preview = list(islice(events, 257))
                 if len(preview) > 256:
                     self.workspace.publish_code_events(
@@ -1205,6 +1228,8 @@ class Reconciler:
                         generation,
                         chain(preview, events),
                         lambda owner=row["owner"]: index.transitive_dependencies(owner),
+                        catalog_lookups=lookups,
+                        catalog_revision=catalog_revision,
                         check=self._check_thread,
                     )
                     continue
@@ -1212,16 +1237,30 @@ class Reconciler:
                     [event for event in preview if isinstance(event, Edge)],
                     [event for event in preview if isinstance(event, dict)],
                     dependencies=index.transitive_dependencies(row["owner"]),
+                    catalog_lookups=lookups,
                 )
             else:
                 result = Analysis(
                     [Edge(**edge) for edge in row["data"]["edges"]],
                     row["data"]["unresolved"],
                     coverage=row["data"]["coverage"],
+                    catalog_lookups=lookups,
                 )
+                # A serialized GUID is lexical, but an excluded target is
+                # suppressed at publication and can later become admitted.
+                for edge in result.edges:
+                    lookups.add(
+                        lookups.key("guid", edge.target[6:])
+                        if edge.target.startswith("asset:")
+                        else lookups.ANY
+                    )
             publications.append((row["owner"], "code", generation, result))
         self._check_thread()
-        if not all(self.workspace.publish_many(self.worker, publications)):
+        if not all(
+            self.workspace.publish_many(
+                self.worker, publications, catalog_revision=catalog_revision
+            )
+        ):
             raise RevisionConflict("Analysis inputs changed before publication")
 
     async def _external(self, *, force: bool) -> None:

@@ -239,7 +239,7 @@ def test_version_one_upgrade_preserves_evidence_and_progress(workspace):
     assert restored.progress()["after"] == 7
     assert restored.counts()["failed_assets"] == 0
     with restored.store._connect() as connection:
-        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 6
+        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 7
 
 
 def test_version_two_upgrade_retains_addressables_failures(workspace):
@@ -254,6 +254,33 @@ def test_version_two_upgrade_retains_addressables_failures(workspace):
     assert restored.diagnostics("asset:" + asset["guid"])["coverage"][0]["state"] == "failed"
     restored.remove_path("worker", asset["path"])
     assert restored.provider_status()["addressables"]["errors"] == 0
+
+
+def test_version_six_publication_without_catalog_keys_is_invalidated(workspace):
+    generation = workspace.observe("worker", Observation("owner", "code", "hash"))
+    workspace.publish("worker", "owner", "code", generation, Analysis([Edge("target", "load")]))
+    with workspace.store._connect(write=True) as connection:
+        connection.execute("DELETE FROM graph_dependencies")
+        connection.execute("UPDATE graph_workspace SET version=6")
+    restored = GraphWorkspace(workspace.store)
+    assert not restored.store.query("owner")["edges"][0]["stale"]
+    restored.record_page("worker", [row()], {}, "scan")
+    assert restored.store.query("owner")["edges"][0]["stale"]
+
+
+def test_catalog_change_during_stream_cannot_promote_old_evidence(workspace):
+    revision = workspace.state("catalog_revision", 0)
+    generation = workspace.observe("worker", Observation("owner", "code", "hash"))
+
+    def events():
+        yield Edge("stale", "load")
+        workspace.record_page("worker", [row()], {}, "scan")
+
+    with pytest.raises(RevisionConflict, match="Catalog changed"):
+        workspace.publish_code_events(
+            "worker", "owner", generation, events(), set, catalog_revision=revision
+        )
+    assert workspace.store.query("owner")["edges"] == []
 
 
 def test_version_four_migrates_compilation_signature_without_losing_facts(workspace):
