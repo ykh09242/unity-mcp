@@ -278,7 +278,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("gameobject_edit", AutoRegister = false, Group = "core",
-        DisplayName = "Edit GameObjects", Description = "Modify or delete an existing GameObject and its components.")]
+        DisplayName = "Edit GameObjects", Description = "Modify a GameObject or delete all selector matches, including inactive objects, in the active scene or current prefab stage. Use by_id with a current instance ID to delete one object.")]
     public static class GameobjectEdit
     {
         private static readonly string[] Actions = { "modify", "delete" };
