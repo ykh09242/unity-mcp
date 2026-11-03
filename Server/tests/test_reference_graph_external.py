@@ -83,7 +83,7 @@ def test_resources_folder_lookup_charges_only_selected_keys_and_targets():
         catalog = Catalog(selected + [asset(i + 6, f"Unrelated/{i}") for i in range(size)])
         budget = CollectionBudget(CollectionLimits(max_items=500))
         result = analyze_document(
-            "data.json", text, catalog, mapping, visit=lambda: budget.admit_items(1)
+            "data.json", text, catalog, mapping, visit=lambda budget=budget: budget.admit_items(1)
         )
         assert [edge.target for edge in result.edges] == [
             f"asset:{i:032x}" for _ in range(10) for i in (1, 2, 3)
