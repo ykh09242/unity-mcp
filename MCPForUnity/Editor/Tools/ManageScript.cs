@@ -207,7 +207,7 @@ namespace MCPForUnity.Editor.Tools
                     return CreateScript(fullPath, relativePath, name, contents, scriptType, namespaceName);
                 case "read":
                     McpLog.Warn("manage_script.read is deprecated; prefer resources/read. Serving read for backward compatibility.");
-                    return ReadScript(fullPath, relativePath);
+                    return ReadScript(fullPath, relativePath, @params);
                 case "update":
                     McpLog.Warn("manage_script.update is deprecated; prefer apply_text_edits. Serving update for backward compatibility.");
                     return UpdateScript(fullPath, relativePath, name, contents);
@@ -424,7 +424,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static object ReadScript(string fullPath, string relativePath)
+        private static object ReadScript(string fullPath, string relativePath, JObject parameters)
         {
             if (!File.Exists(fullPath))
             {
@@ -433,7 +433,21 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                foreach (string key in new[] { "start_line", "line_count" })
+                {
+                    var token = parameters[key];
+                    if (token != null && (token.Type != JTokenType.Integer || (long)token < 1 || (long)token > int.MaxValue))
+                        return new ErrorResponse("invalid_params", $"{key} must be a positive integer.");
+                }
                 string contents = ReadScriptContents(fullPath);
+                string sha256 = ComputeSha256(contents);
+                bool windowApplied = parameters["start_line"] != null || parameters["line_count"] != null;
+                if (windowApplied)
+                {
+                    int startLine = (int?)parameters["start_line"] ?? 1;
+                    int? lineCount = (int?)parameters["line_count"];
+                    contents = ScriptLineWindow(contents, startLine, lineCount);
+                }
 
                 // Return both normal and encoded contents for larger files
                 bool isLarge = contents.Length > 10000; // If content is large, include encoded version
@@ -442,6 +456,8 @@ namespace MCPForUnity.Editor.Tools
                 {
                     uri,
                     path = relativePath,
+                    sha256,
+                    lineWindowApplied = windowApplied,
                     contents = contents,
                     // For large files, also include base64-encoded version
                     encodedContents = isLarge ? EncodeBase64(contents) : null,
@@ -454,6 +470,34 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse($"Failed to read script '{relativePath}': {e.Message}");
             }
+        }
+
+        private static string ScriptLineWindow(string contents, int startLine, int? lineCount)
+        {
+            // Match Python splitlines(keepends=True), including CRLF and Unicode separators.
+            var breaks = Regex.Matches(contents, @"\r\n|[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029]");
+            int start = 0;
+            int line = 1;
+            foreach (Match match in breaks)
+            {
+                if (line == startLine)
+                    break;
+                start = match.Index + match.Length;
+                line++;
+            }
+            if (line < startLine || start == contents.Length)
+                return string.Empty;
+            if (!lineCount.HasValue)
+                return contents.Substring(start);
+            long endLine = (long)startLine + lineCount.Value;
+            foreach (Match match in breaks)
+            {
+                if (match.Index < start)
+                    continue;
+                if (++line == endLine)
+                    return contents.Substring(start, match.Index + match.Length - start);
+            }
+            return contents.Substring(start);
         }
 
         private static string ReadScriptContents(string fullPath)

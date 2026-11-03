@@ -41,6 +41,42 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void ReadWindowReturnsSnapshotShaAndStaleEditsAreRejected()
+        {
+            string source = "first\r\n한😀\n" + new string('x', 12000) + "\n";
+            File.WriteAllText(_path, source, new UTF8Encoding(true));
+            var read = JObject.FromObject(
+                ManageScript.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "read",
+                        ["name"] = "ContractEditProbe",
+                        ["path"] = _folder,
+                        ["start_line"] = 2,
+                        ["line_count"] = 1,
+                    }
+                )
+            );
+            Assert.IsTrue(read.Value<bool>("success"), read.ToString());
+            var data = read["data"];
+            Assert.AreEqual("한😀\n", data.Value<string>("contents"));
+            Assert.IsTrue(data.Value<bool>("lineWindowApplied"));
+            Assert.IsFalse(data.Value<bool>("contentsEncoded"));
+            Assert.IsTrue(data["encodedContents"].Type == JTokenType.Null);
+            string expected;
+            using (var sha = SHA256.Create())
+                expected = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(source))).Replace("-", "").ToLowerInvariant();
+            Assert.AreEqual(expected, data.Value<string>("sha256"));
+            File.WriteAllText(_path, source + "changed", new UTF8Encoding(false));
+            var request = BoundaryRequest("apply_text_edits");
+            request["precondition_sha256"] = expected;
+            var rejected = JObject.FromObject(ManageScript.HandleCommand(request));
+            Assert.IsFalse(rejected.Value<bool>("success"));
+            Assert.AreEqual("stale_file", rejected["data"].Value<string>("status"));
+            Assert.AreEqual(source + "changed", File.ReadAllText(_path));
+        }
+
+        [Test]
         public void RangeAcrossMethods_RemovesAllRequestedText()
         {
             var response = Apply("    public void A() { }\n", endLine: 6);

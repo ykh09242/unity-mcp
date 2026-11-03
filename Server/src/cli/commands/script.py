@@ -107,6 +107,10 @@ def read(path: str, start_line: Optional[int], line_count: Optional[int]):
         "path": directory,
     }
 
+    if start_line is not None:
+        params["start_line"] = start_line
+    if line_count is not None:
+        params["line_count"] = line_count
     result = run_command("manage_script", params, config)
     click.echo(format_script_read(result, config.format, start_line, line_count))
 
@@ -148,8 +152,11 @@ def delete(path: str, force: bool):
     required=True,
     help="Edits as JSON array of {startLine, startCol, endLine, endCol, newText}. Accepts @file or -/@- stdin.",
 )
+@click.option(
+    "--expected-sha", default=None, help="SHA-256 observed in a previous JSON script read."
+)
 @handle_unity_errors
-def edit(path: str, edits: str):
+def edit(path: str, edits: str, expected_sha: str | None):
     """Apply text edits to a script.
 
     \b
@@ -163,12 +170,14 @@ def edit(path: str, edits: str):
     edits_list = parse_json_list_or_exit(edits, "edits")
     name, directory = _split_script_path(path)
 
-    # Unity refuses an edit that does not name the version of the file it changes.
-    sha_result = run_command(
-        "manage_script", {"action": "get_sha", "name": name, "path": directory}, config
-    )
-    data = sha_result.get("data")
-    sha = data.get("sha256") if isinstance(data, dict) else None
+    # When omitted, retain the legacy just-in-time lookup for existing callers.
+    sha = expected_sha
+    if sha is None:
+        sha_result = run_command(
+            "manage_script", {"action": "get_sha", "name": name, "path": directory}, config
+        )
+        data = sha_result.get("data")
+        sha = data.get("sha256") if isinstance(data, dict) else None
     if (
         not isinstance(sha, str)
         or len(sha) != 64
@@ -177,7 +186,7 @@ def edit(path: str, edits: str):
         raise UnityCommandError(
             {
                 "success": False,
-                "error": "SHA lookup did not return a valid SHA-256; no edits were applied.",
+                "error": "Expected SHA-256 must be a 64-character hexadecimal digest; no edits were applied.",
             }
         )
 

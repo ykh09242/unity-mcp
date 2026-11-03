@@ -24,14 +24,14 @@ def script_contents(data: dict[str, Any]) -> str | None:
 def format_script_read(
     result: dict[str, Any], format_type: str, start_line: int | None, line_count: int | None
 ) -> str:
-    """Slice locally because manage_script does not support line-window parameters."""
+    """Render native windows, falling back to local slicing for older peers."""
     data = result.get("data")
     if not result.get("success") or not isinstance(data, dict):
         return format_output(result, format_type)
     contents = script_contents(data)
     if contents is None:
         return format_output(result, format_type)
-    if start_line is not None or line_count is not None:
+    if not data.get("lineWindowApplied") and (start_line is not None or line_count is not None):
         start = (start_line or 1) - 1
         end = start + line_count if line_count is not None else None
         contents = "".join(contents.splitlines(keepends=True)[start:end])

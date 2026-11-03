@@ -112,7 +112,13 @@ def test_read_respects_requested_line_window(command_sender):
     import json
 
     assert json.loads(result.output)["data"]["contents"] == "second\n"
-    assert command_sender.call_args.args[1] == {"action": "read", "name": "Foo", "path": "Assets"}
+    assert command_sender.call_args.args[1] == {
+        "action": "read",
+        "name": "Foo",
+        "path": "Assets",
+        "start_line": 2,
+        "line_count": 1,
+    }
 
 
 @pytest.mark.parametrize(
@@ -125,3 +131,82 @@ def test_read_rejects_nonpositive_line_bounds(command_sender, option, value):
     # Then: validation fails before Unity is contacted.
     assert result.exit_code == 2
     command_sender.assert_not_called()
+
+
+@pytest.mark.parametrize("encoded", [False, True])
+def test_read_native_window_is_not_sliced_twice(command_sender, encoded):
+    import base64
+
+    contents = "한😀\r\n"
+    data = {"lineWindowApplied": True, "sha256": "b" * 64, "contentsEncoded": encoded}
+    if encoded:
+        data["encodedContents"] = base64.b64encode(contents.encode()).decode()
+    else:
+        data["contents"] = contents
+    command_sender.return_value = {"success": True, "data": data}
+    result = CliRunner().invoke(
+        script_cli.script, ["read", "Assets/Foo.cs", "--start-line", "2", "--line-count", "1"]
+    )
+    assert result.exit_code == 0, result.output
+    response = json.loads(result.output)["data"]
+    assert response["contents"] == contents
+    assert response["sha256"] == "b" * 64
+    if encoded:
+        assert base64.b64decode(response["encodedContents"]).decode() == contents
+
+
+def test_edit_forwards_observed_sha_without_a_fresh_lookup(command_sender):
+    sha = "AB" * 32
+    command_sender.return_value = {"success": True, "data": {}}
+    result = CliRunner().invoke(
+        script_cli.script, ["edit", "Assets/Foo.cs", "--edits", "[]", "--expected-sha", sha]
+    )
+    assert result.exit_code == 0, result.output
+    assert command_sender.call_count == 1
+    assert command_sender.call_args.args[1]["precondition_sha256"] == sha
+
+
+def test_edit_rejects_invalid_expected_sha_before_contacting_unity(command_sender):
+    result = CliRunner().invoke(
+        script_cli.script, ["edit", "Assets/Foo.cs", "--edits", "[]", "--expected-sha", "bad"]
+    )
+    assert result.exit_code == 1
+    command_sender.assert_not_called()
+
+
+@pytest.mark.parametrize("format_type", ["json", "text"])
+def test_legacy_encoded_read_preserves_unicode_and_crlf(monkeypatch, command_sender, format_type):
+    import base64
+
+    monkeypatch.setattr(script_cli, "get_config", lambda: CLIConfig(format=format_type))
+    source = "one\r\n한😀\r\nlast"
+    command_sender.return_value = {
+        "success": True,
+        "data": {
+            "contentsEncoded": True,
+            "encodedContents": base64.b64encode(source.encode()).decode(),
+        },
+    }
+    result = CliRunner().invoke(
+        script_cli.script, ["read", "Assets/Foo.cs", "--start-line", "2", "--line-count", "1"]
+    )
+    assert result.exit_code == 0, result.output
+    if format_type == "json":
+        data = json.loads(result.output)["data"]
+        assert data["contents"] == "한😀\r\n"
+        assert base64.b64decode(data["encodedContents"]).decode() == data["contents"]
+    else:
+        assert result.output == "한😀\r\n\n"
+
+
+def test_edit_surfaces_stale_file_from_observed_sha(command_sender):
+    from cli.utils.connection import UnityCommandError
+
+    failure = {"success": False, "error": "stale_file", "data": {"status": "stale_file"}}
+    command_sender.side_effect = UnityCommandError(failure)
+    result = CliRunner().invoke(
+        script_cli.script, ["edit", "Assets/Foo.cs", "--edits", "[]", "--expected-sha", "a" * 64]
+    )
+    assert result.exit_code == 1
+    assert json.loads(result.output) == failure
+    assert command_sender.call_count == 1
