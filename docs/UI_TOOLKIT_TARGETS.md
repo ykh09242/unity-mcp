@@ -117,6 +117,8 @@ polling and cancellation are described separately in [UI_CAPTURE.md](UI_CAPTURE.
 including duplicate names. It does not require a live panel, force layout, or apply the
 active/enabled mutation-selector requirements. Use an instance ID to avoid ambiguous
 GameObject names. Target selectors are limited to 4096 characters.
+Traversal can invoke project-defined virtual text getters. Scoped requester and selected
+plugin credentials therefore both need `read`, `edit`, and `run` grants.
 
 ```json
 {

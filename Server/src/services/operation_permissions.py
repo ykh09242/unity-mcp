@@ -534,6 +534,9 @@ def required_permissions(
     if actions is None or not isinstance(action, str):
         raise OperationPermissionError()
     action = action.strip().lower()
+    if name == "manage_ui" and action == "get_visual_tree":
+        # Visual tree traversal can invoke project-defined virtual text getters.
+        return CUSTOM_GRANTS | {Permission.READ}
     if native and name == "manage_texture":
         if action in CHECKED_TEXTURE_ACTIONS:
             # Older Editors accept these names without enforcing image/asset types.

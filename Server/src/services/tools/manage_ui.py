@@ -47,7 +47,8 @@ def _canonical_ui_path(path: str) -> str:
     group="legacy",
     description=(
         "Manages Unity UI Toolkit elements (UXML, USS, UIDocument and Unity 6.5+ PanelRenderer "
-        "components). Read-only actions: ping, read, get_visual_tree, diagnose, list.  Modifying "
+        "components). Read actions: ping, read, diagnose, list. get_visual_tree can invoke "
+        "project-defined getters and requires read, edit and run authority. Modifying "
         "actions: create, update, delete, attach_ui_document, detach_ui_document, "
         "create_panel_settings, update_panel_settings, modify_visual_element.\ndiagnose observes "
         "bounded current-panel physical geometry/clipping/overflow/sibling-overlap candidates "
