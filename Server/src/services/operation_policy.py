@@ -59,8 +59,8 @@ COMMAND: Final = OperationLifetime.COMMAND
 TRACKED_JOB: Final = OperationLifetime.TRACKED_JOB
 TRIGGER_ONLY: Final = OperationLifetime.TRIGGER_ONLY
 
-# capture_ui_snapshot is deliberately excluded: UguiSnapshotCapture reads custom
-# text/color getters and Selectable.IsInteractable; trusted handler identity does
+# Both UI snapshot frameworks can invoke project overrides, including
+# TextElement.text and Selectable.IsInteractable. Trusted handler identity does
 # not prove bound-object callbacks safe. Menu inspection is conservative too:
 # Menu.GetEnabled may depend on user menu validation, so it is not a reviewed read.
 # These are effects reviews, not another tool/action inventory. Alias admission and

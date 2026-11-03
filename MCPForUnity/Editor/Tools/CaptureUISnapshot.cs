@@ -8,7 +8,7 @@ using UnityEngine.SceneManagement;
 
 namespace MCPForUnity.Editor.Tools
 {
-    /// <summary>Read-only capture with stable semantic identities and explicit evidence limits.</summary>
+    /// <summary>Captures semantic UI state. Project-defined component and element accessors can run during capture.</summary>
     [McpForUnityTool("capture_ui_snapshot", Group = "ui")]
     public static class CaptureUISnapshot
     {

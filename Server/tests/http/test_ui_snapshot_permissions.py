@@ -1,4 +1,4 @@
-"""Scoped snapshot authority covers callback-capable uGUI dispatch."""
+"""Scoped snapshot authority covers callback-capable UI dispatch."""
 
 import pytest
 from fastmcp import Client, Context, FastMCP
@@ -21,20 +21,12 @@ FULL = {Permission.READ, Permission.EDIT, Permission.RUN}
 
 @pytest.mark.parametrize("native", [False, True])
 @pytest.mark.parametrize("outer", [None, "batch_execute", "batch_validate", "batch_apply_preview"])
-@pytest.mark.parametrize("framework", ["ugui", None, "UGUI", "", 0, [], {}])
-def test_ugui_and_ambiguous_capture_require_callback_authority(native, outer, framework):
+@pytest.mark.parametrize("framework", ["ugui", "uitoolkit", None, "UGUI", "", 0, [], {}])
+def test_capture_requires_callback_authority(native, outer, framework):
     name, params = "capture_ui_snapshot", {"framework": framework, "target": 7}
     if outer:
         name, params = outer, {"commands": [{"tool": name, "params": params}]}
     assert required_permissions(name, params, native=native) == FULL
-
-
-@pytest.mark.parametrize("outer", [None, "batch_execute", "batch_validate", "batch_apply_preview"])
-def test_toolkit_capture_retains_read_only_authority(outer):
-    name, params = "capture_ui_snapshot", {"framework": "uitoolkit", "target": 7}
-    if outer:
-        name, params = outer, {"commands": [{"tool": name, "params": params}]}
-    assert required_permissions(name, params, native=True) == {Permission.READ}
 
 
 def test_missing_framework_cannot_claim_read_only_mode():
@@ -45,8 +37,9 @@ def test_missing_framework_cannot_claim_read_only_mode():
 @pytest.mark.parametrize("outer", [None, "batch_execute", "batch_validate", "batch_apply_preview"])
 @pytest.mark.parametrize("restricted", ["request", "plugin", None])
 @pytest.mark.parametrize("missing", ["read", "edit", "run"])
+@pytest.mark.parametrize("framework", ["ugui", "uitoolkit"])
 async def test_snapshot_checks_both_authorities_before_dispatch(
-    command_hub, monkeypatch, outer, restricted, missing
+    command_hub, monkeypatch, outer, restricted, missing, framework
 ):
     monkeypatch.setattr(config, "http_remote_hosted", True)
     await command_hub.registry.unregister("session")
@@ -64,7 +57,7 @@ async def test_snapshot_checks_both_authorities_before_dispatch(
         plugin = (await fixture.service.validate("plugin")).lease
         command_hub.websocket.state.user_id = "alice"
         setattr(command_hub.websocket.state, AUTHENTICATED_LEASE_STATE, plugin)
-        name, params = "capture_ui_snapshot", {"framework": "ugui", "target": 7}
+        name, params = "capture_ui_snapshot", {"framework": framework, "target": 7}
         if outer:
             name, params = outer, {"commands": [{"tool": name, "params": params}]}
         with bind_credential_lease(requester):
@@ -77,8 +70,9 @@ async def test_snapshot_checks_both_authorities_before_dispatch(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("restricted", ["request", "plugin", None])
+@pytest.mark.parametrize("framework", ["ugui", "uitoolkit"])
 async def test_public_tool_rejects_insufficient_authority_before_handler(
-    command_hub, monkeypatch, restricted
+    command_hub, monkeypatch, restricted, framework
 ):
     monkeypatch.setattr(config, "http_remote_hosted", True)
     await command_hub.registry.unregister("session")
@@ -109,11 +103,11 @@ async def test_public_tool_rejects_insufficient_authority_before_handler(
             return {"success": True}
 
         async with Client(server) as client:
-            arguments = {"framework": "ugui", "target": 7, "unity_instance": "Fixture@hash"}
+            arguments = {"framework": framework, "target": 7, "unity_instance": "Fixture@hash"}
             if restricted:
                 with pytest.raises((ToolError, MCPError)):
                     await client.call_tool("capture_ui_snapshot", arguments)
             else:
                 assert (await client.call_tool("capture_ui_snapshot", arguments)).data["success"]
-        assert calls == ([] if restricted else [("ugui", 7)])
+        assert calls == ([] if restricted else [(framework, 7)])
         assert command_hub.sent == []
