@@ -6,9 +6,10 @@ token, contact Unity, or attest a running server. Its scope is
 `local_cli_configuration`, with `running_server_config_observed: false`.
 
 The separate MCP resource `mcpforunity://doctor/config` describes the process
-serving that request, with scope `running_server_configuration`. Reading it does
-not query Unity. The existing connection doctor and its target/exit-code contract
-remain unchanged. Neither view loads `.env` files or exports the environment.
+serving that request, with scope `running_server_configuration`. Scoped remote
+credentials need the `read` grant. The server returns its redacted settings even
+when no Editor is connected. The existing connection doctor and its target/exit-code
+contract remain unchanged. Neither view loads `.env` files or exports the environment.
 
 Each known field includes `value`, `default`, `source`, `source_detail`,
 `overrides` (source names only), and stable `diagnostics` codes. Provenance is

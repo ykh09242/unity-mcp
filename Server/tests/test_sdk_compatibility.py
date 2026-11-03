@@ -136,6 +136,10 @@ async def test_runtime_doctor_is_available_without_selecting_or_contacting_unity
         ([], "mcpforunity://doctor/runtime", False),
         (["edit"], "mcpforunity://doctor/runtime", False),
         (["read"], "mcpforunity://doctor/runtime/unknown", False),
+        (["read"], "mcpforunity://doctor/config", True),
+        ([], "mcpforunity://doctor/config", False),
+        (["edit"], "mcpforunity://doctor/config", False),
+        (["read"], "mcpforunity://doctor/config/unknown", False),
     ],
 )
 def test_runtime_doctor_retains_exact_scoped_read_authority(grants, uri, allowed):

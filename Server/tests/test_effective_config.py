@@ -202,12 +202,18 @@ async def test_server_config_resource_is_scoped_and_needs_no_unity(monkeypatch):
     from fastmcp import Client, FastMCP
     from services.resources import _serialize_pydantic
     from services.resources.doctor import get_config_doctor
+    from transport.unity_instance_middleware import UnityInstanceMiddleware
     import services.capabilities as capabilities
 
     monkeypatch.setattr(
         capabilities, "_capture_project_capabilities", lambda *_: pytest.fail("Unity probe")
     )
     server = FastMCP("configuration-fixture")
+    middleware = UnityInstanceMiddleware()
+    monkeypatch.setattr(
+        middleware, "_inject_unity_instance", lambda *_: pytest.fail("Unexpected Editor selection")
+    )
+    server.add_middleware(middleware)
     server.resource("mcpforunity://doctor/config")(_serialize_pydantic(get_config_doctor))
     async with Client(server, cache=False) as client:
         blocks = await client.read_resource("mcpforunity://doctor/config")
