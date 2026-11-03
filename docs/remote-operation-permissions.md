@@ -82,6 +82,14 @@ prove from a caller's path, extension or asset type that the resolved object,
 folder subtree, importer or dependent generated source is inert. This conservative
 floor also applies to ordinary texture/content changes through that generic API;
 label changes and empty-folder creation retain `edit` alone.
+Remote public `manage_texture` generation, modification and deletion use
+dedicated `*_checked` native actions, including inside public batches. These
+require `edit`; an older Editor rejects them. Direct native calls or batches with
+the original mutation names require `edit` and `run`. Encoded output must use
+`.png`, `.jpg` or `.jpeg`. Existing image destinations must be imported textures,
+and deletion requires a texture main asset. Importer-only settings remain
+available for textures in other formats.
+
 Package inputs reject HTTP(S) userinfo, SSH passwords and arbitrary URL queries;
 credential-free SSH/scp Git references and Git `?path=` selectors remain supported.
 Use Git/UPM's external authentication. Responses redact all URL userinfo, queries

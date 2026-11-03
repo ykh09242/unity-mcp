@@ -5,13 +5,16 @@ Defines the manage_texture tool for procedural texture generation in Unity.
 import base64
 from copy import deepcopy
 import json
+from pathlib import PureWindowsPath
 from typing import Annotated, Any, Final, Literal
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from core.config import config
 from services.registry import mcp_for_unity_tool
+from services.texture_actions import IMAGE_GENERATORS, checked_texture_parameters
 from services.tools import get_unity_instance_from_context
 from services.tools.utils import (
     parse_json_payload,
@@ -682,6 +685,9 @@ async def manage_texture(
         return {"success": False, "message": fill_error}
 
     action_lower = action.lower()
+    if action_lower in IMAGE_GENERATORS or (action_lower == "modify" and set_pixels is not None):
+        if PureWindowsPath(path).suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+            return {"success": False, "message": "Texture output must use .png, .jpg or .jpeg."}
 
     if image_path is not None and action_lower not in ("create", "create_sprite"):
         return {
@@ -838,6 +844,8 @@ async def manage_texture(
 
     # Remove None values
     params_dict = {k: v for k, v in params_dict.items() if v is not None}
+    if config.http_remote_hosted:
+        params_dict = checked_texture_parameters(params_dict)
 
     unity_instance = await get_unity_instance_from_context(ctx)
     gate = await preflight(ctx, wait_for_no_compile=True, refresh_if_dirty=True)

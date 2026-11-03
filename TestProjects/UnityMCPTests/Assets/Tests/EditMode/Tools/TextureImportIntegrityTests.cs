@@ -73,6 +73,62 @@ namespace MCPForUnityTests.EditMode.Tools
             return JObject.FromObject(ManageTexture.HandleCommand(request));
         }
 
+        [Test]
+        public void TextureWritesCannotReplaceScriptsOrDeleteTheirFolder()
+        {
+            string script = _root + "/Victim.cs";
+            File.WriteAllText(Absolute(script), "// Owned texture admission fixture.");
+            AssetDatabase.ImportAsset(script, ImportAssetOptions.ForceSynchronousImport);
+            string guid = AssetDatabase.AssetPathToGUID(script, AssetPathToGUIDOptions.OnlyExistingAssets);
+            Assert.IsNotEmpty(guid);
+            byte[] source = File.ReadAllBytes(Absolute(script));
+            byte[] meta = File.ReadAllBytes(Absolute(script) + ".meta");
+            foreach (string action in new[] { "create", "create_sprite", "apply_pattern", "apply_gradient", "apply_noise", "delete" })
+            foreach (string suffix in new[] { "", "_checked" })
+            {
+                var response = Send(action + suffix, new JObject(), script);
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            }
+            Assert.IsFalse(Send("delete_checked", new JObject(), _root).Value<bool>("success"));
+            CollectionAssert.AreEqual(source, File.ReadAllBytes(Absolute(script)));
+            CollectionAssert.AreEqual(meta, File.ReadAllBytes(Absolute(script) + ".meta"));
+            Assert.AreEqual(script, AssetDatabase.GUIDToAssetPath(guid));
+            Assert.AreEqual(_root, AssetDatabase.GUIDToAssetPath(_guid));
+            Assert.IsTrue(File.Exists(Absolute(_path)));
+        }
+
+        [Test]
+        public void TextureGenerationRejectsAnExistingNonImageWithAStaleTextureImport()
+        {
+            byte[] invalid = { 1, 2, 3, 4 };
+            string guid = AssetDatabase.AssetPathToGUID(_path);
+            File.WriteAllBytes(Absolute(_path), invalid);
+            Assert.IsFalse(Send("create_checked", new JObject()).Value<bool>("success"));
+            CollectionAssert.AreEqual(invalid, File.ReadAllBytes(Absolute(_path)));
+            Assert.AreEqual(_path, AssetDatabase.GUIDToAssetPath(guid));
+        }
+
+        [TestCase(".png", "create_sprite_checked")]
+        [TestCase(".jpg", "apply_noise_checked")]
+        [TestCase(".jpeg", "apply_gradient_checked")]
+        public void CheckedActionsCreateReplaceAndDeleteAnImage(string extension, string create)
+        {
+            string path = _root + "/Generated" + extension;
+            var options = new JObject { ["width"] = 2, ["height"] = 2 };
+            var response = Send(create, options, path);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            byte[] encoded = File.ReadAllBytes(Absolute(path));
+            Assert.AreEqual(extension == ".png" ? 0x89 : 0xff, encoded[0]);
+            string guid = AssetDatabase.AssetPathToGUID(path, AssetPathToGUIDOptions.OnlyExistingAssets);
+            Assert.IsNotEmpty(guid);
+            response = Send("create_checked", options, path);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(path, AssetDatabase.GUIDToAssetPath(guid));
+            response = Send("delete_checked", new JObject(), path);
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(File.Exists(Absolute(path)));
+        }
+
         [TestCase("{fillColor:['bad',0,0]}")]
         [TestCase("{pattern:'checkerboard',palette:[[1,2,3],['bad',0,0]]}")]
         [TestCase("{pixels:[[1,2,3],['bad',0,0]]}")]

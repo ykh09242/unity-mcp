@@ -15,6 +15,7 @@ from services.animator_actions import (
     guarded_animator_parameters,
 )
 from services.registry.capability_catalog import CAPABILITIES
+from services.texture_actions import CHECKED_TEXTURE_ACTIONS, checked_texture_parameters
 
 JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 
@@ -455,6 +456,8 @@ def required_permissions(
                 native_arguments = native_batch_parameters(arguments)
                 if not native and name == "batch_execute" and tool == "manage_animation":
                     native_arguments = guarded_animator_parameters(native_arguments)
+                if not native and name == "batch_execute" and tool == "manage_texture":
+                    native_arguments = checked_texture_parameters(native_arguments)
             except ValueError as error:
                 raise OperationPermissionError() from error
             required.update(required_permissions(tool, native_arguments, native=True))
@@ -508,6 +511,12 @@ def required_permissions(
     if actions is None or not isinstance(action, str):
         raise OperationPermissionError()
     action = action.strip().lower()
+    if native and name == "manage_texture":
+        if action in CHECKED_TEXTURE_ACTIONS:
+            # Older Editors accept these names without enforcing image/asset types.
+            return CUSTOM_GRANTS
+        if action in CHECKED_TEXTURE_ACTIONS.values():
+            return frozenset({Permission.EDIT})
     if name == "manage_project_auditor" and action == "start":
         # The official analysis compiles Player assemblies and saves Auditor settings.
         return CUSTOM_GRANTS

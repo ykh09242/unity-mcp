@@ -8,29 +8,19 @@ namespace MCPForUnity.Editor.Helpers
 {
     public static class TextureOps
     {
+        internal static string OutputExtension(string assetPath)
+        {
+            string extension = Path.GetExtension(assetPath)?.ToLowerInvariant();
+            if (extension != ".png" && extension != ".jpg" && extension != ".jpeg")
+                throw new ArgumentException("Texture output must use .png, .jpg or .jpeg.");
+            return extension;
+        }
+
         public static byte[] EncodeTexture(Texture2D texture, string assetPath)
         {
             if (texture == null)
                 return null;
-
-            string extension = Path.GetExtension(assetPath);
-            if (string.IsNullOrEmpty(extension))
-            {
-                McpLog.Warn($"[TextureOps] No file extension for '{assetPath}', defaulting to PNG.");
-                return texture.EncodeToPNG();
-            }
-
-            switch (extension.ToLowerInvariant())
-            {
-                case ".png":
-                    return texture.EncodeToPNG();
-                case ".jpg":
-                case ".jpeg":
-                    return texture.EncodeToJPG();
-                default:
-                    McpLog.Warn($"[TextureOps] Unsupported extension '{extension}' for '{assetPath}', defaulting to PNG.");
-                    return texture.EncodeToPNG();
-            }
+            return OutputExtension(assetPath) == ".png" ? texture.EncodeToPNG() : texture.EncodeToJPG();
         }
 
         public static void FillTexture(Texture2D texture, Color32 color)

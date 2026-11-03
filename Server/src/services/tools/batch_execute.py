@@ -20,6 +20,7 @@ from services.operation_permissions import (
     remote_operation_allowed,
 )
 from services.registry import mcp_for_unity_tool
+from services.texture_actions import checked_texture_parameters
 from services.tools import get_unity_instance_from_context
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
 from services.tools.utils import coerce_bool, coerce_int
@@ -351,6 +352,8 @@ async def batch_execute(
         # The peer signs the original spelling for target previews. Keep it on
         # the wire after verifying that native key conversion has a unique result.
         native_batch_parameters(params)
+        if config.http_remote_hosted and tool_name == "manage_texture":
+            params = checked_texture_parameters(params)
         normalized_commands.append(
             guarded_animator_batch_member({"tool": tool_name, "params": params})
         )

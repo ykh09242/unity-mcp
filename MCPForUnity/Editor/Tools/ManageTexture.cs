@@ -247,6 +247,10 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse("Action parameter is required.");
             }
 
+            // Scoped servers use distinct action names that older Editors reject.
+            const string checkedSuffix = "_checked";
+            if (action.EndsWith(checkedSuffix, StringComparison.Ordinal))
+                action = action.Substring(0, action.Length - checkedSuffix.Length);
             if (!ValidActions.Contains(action))
             {
                 string validActionsList = string.Join(", ", ValidActions);
@@ -286,6 +290,38 @@ namespace MCPForUnity.Editor.Tools
         }
 
         // --- Action Implementations ---
+
+        private static bool IsTextureMainAsset(string path)
+        {
+            Type type = AssetDatabase.GetMainAssetTypeAtPath(path);
+            return !AssetDatabase.IsValidFolder(path) && type != null && typeof(Texture).IsAssignableFrom(type);
+        }
+
+        private static string PrepareImageOutput(string path)
+        {
+            TextureOps.OutputExtension(path);
+            string absolute = GetAbsolutePath(path);
+            if (!File.Exists(absolute))
+            {
+                if (Directory.Exists(absolute) || File.Exists(absolute + ".meta") || AssetDatabase.IsValidFolder(path))
+                    throw new IOException($"Texture destination is occupied: {path}");
+                return null;
+            }
+            if (!IsTextureMainAsset(path) || !(AssetImporter.GetAtPath(path) is TextureImporter))
+                throw new IOException($"Only an imported image texture can be replaced: {path}");
+            byte[] existing = ReadBoundedImage(absolute);
+            ReadImageDimensions(existing, out _, out _);
+            return AtomicAssetFile.Digest(existing);
+        }
+
+        private static void PublishImage(string path, byte[] data, string expectedDigest)
+        {
+            string absolute = GetAbsolutePath(path);
+            if (expectedDigest == null)
+                AtomicAssetFile.Create(absolute, data);
+            else
+                AtomicAssetFile.Replace(absolute, data, expectedDigest);
+        }
 
         private static object CreateTexture(JObject @params, bool asSprite)
         {
@@ -342,6 +378,7 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse("patternSize must be greater than 0.");
                 }
                 var applyContents = !hasImage ? PrepareTextureContents(@params, width, height, patternSize) : null;
+                string expectedDigest = PrepareImageOutput(fullPath);
                 using var folders = new AssetFolderScope();
 
                 if (hasImage)
@@ -384,7 +421,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                AtomicAssetFile.Write(GetAbsolutePath(fullPath), imageData);
+                PublishImage(fullPath, imageData, expectedDigest);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
 
@@ -514,6 +551,9 @@ namespace MCPForUnity.Editor.Tools
                     else
                         return new ErrorResponse("setPixels requires 'color' or 'pixels'.");
                     // Inspect the file before asking Unity to load a possibly uncached texture.
+                    TextureOps.OutputExtension(fullPath);
+                    if (!IsTextureMainAsset(fullPath) || !(AssetImporter.GetAtPath(fullPath) is TextureImporter))
+                        return new ErrorResponse($"Pixel changes require an imported image texture: {fullPath}");
                     string absolutePath = GetAbsolutePath(fullPath);
                     byte[] fileData = ReadBoundedImage(absolutePath);
                     ReadImageDimensions(fileData, out int imageWidth, out int imageHeight);
@@ -589,6 +629,8 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
+                if (!File.Exists(GetAbsolutePath(fullPath)) || !IsTextureMainAsset(fullPath))
+                    return new ErrorResponse($"Delete requires a texture main asset: {fullPath}");
                 bool success = AssetDatabase.DeleteAsset(fullPath);
                 if (success)
                     return new SuccessResponse($"Texture deleted: {fullPath}");
@@ -643,6 +685,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 var spriteSettingsToken = @params["spriteSettings"];
                 var applySettings = spriteSettingsToken != null ? PrepareSpriteSettings(spriteSettingsToken) : null;
+                string expectedDigest = PrepareImageOutput(fullPath);
                 using var folders = new AssetFolderScope();
                 folders.EnsureParentDirectory(fullPath);
                 texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
@@ -663,7 +706,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                AtomicAssetFile.Write(GetAbsolutePath(fullPath), imageData);
+                PublishImage(fullPath, imageData, expectedDigest);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
 
@@ -744,6 +787,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 var spriteSettingsToken = @params["spriteSettings"];
                 var applySettings = spriteSettingsToken != null ? PrepareSpriteSettings(spriteSettingsToken) : null;
+                string expectedDigest = PrepareImageOutput(fullPath);
                 using var folders = new AssetFolderScope();
                 folders.EnsureParentDirectory(fullPath);
                 texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
@@ -756,7 +800,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                AtomicAssetFile.Write(GetAbsolutePath(fullPath), imageData);
+                PublishImage(fullPath, imageData, expectedDigest);
 
                 AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
 
