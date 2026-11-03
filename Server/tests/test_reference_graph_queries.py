@@ -322,3 +322,16 @@ def test_failed_path_continuation_preserves_cursor_and_scratch(graph):
             table: [tuple(row) for row in db.execute(f"SELECT * FROM {table}")] for table in before
         }
     assert after == before
+
+
+def test_delete_snapshot_rejects_query_id_without_invalidating_cursor(graph):
+    store, queries = graph
+    publish(store, "root", ["a", "b"])
+    first = queries.impact("root", direction="outgoing", limit=1)
+    assert first["next_cursor"]
+    assert not queries.delete_snapshot(first["query_id"])
+    second = queries.impact("root", direction="outgoing", limit=1, cursor=first["next_cursor"])
+    assert second["edges"]
+    identity = snapshot(queries)
+    assert queries.delete_snapshot(identity)
+    assert not queries.delete_snapshot(identity)

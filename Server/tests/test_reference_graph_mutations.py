@@ -819,3 +819,31 @@ async def test_mutation_probe_rejects_escape_before_native_collection():
 
     with pytest.raises(ValueError, match="relative asset paths"):
         await collect_probe(Entry(), ["Packages/com.example/C:/Windows/win.ini"])
+
+
+def test_receipt_snapshots_cannot_be_deleted_or_released_as_queries(graph):
+    workspace, receipts = graph
+    identity = begin(receipts)
+    with workspace.store._connect() as connection:
+        before = connection.execute(
+            "SELECT before_snapshot FROM graph_mutations WHERE id=?", (identity,)
+        ).fetchone()[0]
+    assert not receipts.queries.delete_snapshot(before)
+    assert not receipts.queries.release(before)
+    receipts.finish(identity, "accepted", "tool_response")
+    receipts.complete(
+        identity, {"epoch": "epoch", "revision": 3}, workspace.store.status()["revision"]
+    )
+    result = receipts.diff(identity)
+    after = result["after"]["id"]
+    assert not receipts.queries.delete_snapshot(after)
+    assert not receipts.queries.release(after)
+    assert receipts.diff(identity) == result
+    assert receipts.release(identity)
+    with workspace.store._connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM graph_snapshots WHERE id IN (?,?)", (before, after)
+            ).fetchone()[0]
+            == 0
+        )

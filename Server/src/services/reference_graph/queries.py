@@ -627,8 +627,24 @@ class GraphQueries:
         connection.execute("DELETE FROM graph_query_queue WHERE job=?", (identity,))
         return connection.execute("DELETE FROM graph_queries WHERE id=?", (identity,)).rowcount > 0
 
+    @staticmethod
+    def _mutation_owned(connection, identity: str) -> bool:
+        if not connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_mutations'"
+        ).fetchone():
+            return False
+        return (
+            connection.execute(
+                "SELECT 1 FROM graph_mutations WHERE before_snapshot=? OR after_snapshot=? LIMIT 1",
+                (identity, identity),
+            ).fetchone()
+            is not None
+        )
+
     def release(self, identity: str) -> bool:
         with self.store._connect(write=True) as connection:
+            if self._mutation_owned(connection, identity):
+                return False
             row = connection.execute(
                 "SELECT state FROM graph_snapshots WHERE id=?", (identity,)
             ).fetchone()
@@ -651,5 +667,9 @@ class GraphQueries:
 
     def delete_snapshot(self, identity: str) -> bool:
         with self.store._connect(write=True) as connection:
+            if not connection.execute(
+                "SELECT 1 FROM graph_snapshots WHERE id=?", (identity,)
+            ).fetchone() or self._mutation_owned(connection, identity):
+                return False
             self._release(connection, identity)
             return snapshot_storage.discard(connection, identity)
