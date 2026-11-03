@@ -165,7 +165,8 @@ def test_gameobject_cli_lifecycle_transforms_and_single_json(tmp_path):
         raw = {'success': True, 'message': 'Done'}
         for args, notice in (
             (['create', 'Fixture'], 'Created GameObject'),
-            (['delete', 'Fixture', '--force'], 'Deleted GameObject'),
+            (['delete', 'Fixture', '--force'], 'Deleted all matching GameObjects'),
+            (['delete', '0', '--force', '--search-method', 'by_id'], 'Deleted GameObject with exact instance ID'),
             (['duplicate', 'Fixture'], 'Duplicated GameObject'),
             (['move', 'Fixture', '--reference', 'Reference', '--direction', 'right'], 'Moved'),
         ):
