@@ -445,6 +445,14 @@ def test_scope_selection_has_an_always_evaluated_blocking_gate() -> None:
     assert changes["steps"][1]["run"] == "python3 tools/ci_scope.py select"
     for name in ("python_tests", "unity_tests"):
         assert jobs[name]["needs"] == ["changes"]
+        assert jobs[name]["with"]["ref"] == "${{ github.sha }}"
+    for name in ("python-tests.yml", "unity-tests.yml", "unity-player-tests.yml"):
+        for job in workflow(name)["jobs"].values():
+            steps = job.get("steps", [])
+            for index, step in enumerate(steps):
+                if step.get("uses", "").startswith("actions/checkout@"):
+                    assert step["with"]["ref"].endswith("github.sha }}")
+                    assert '"$GITHUB_SHA"' in steps[index + 1]["run"]
     assert (
         jobs["python_tests"]["with"]["validation_profile"] == "${{ needs.changes.outputs.profile }}"
     )

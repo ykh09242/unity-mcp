@@ -57,7 +57,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Verify beta push commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/beta' && github.repository != 'CoplayDev/unity-mcp'
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
@@ -97,7 +101,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Verify beta push commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/beta' && github.repository != 'CoplayDev/unity-mcp'
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.13.5"
@@ -139,12 +147,16 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ inputs.ref || github.sha }}
           sparse-checkout: |
             MCPForUnity/package.json
             tools/check_server_startup.py
           sparse-checkout-cone-mode: false
 
+      - name: Verify beta push commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/beta' && github.repository != 'CoplayDev/unity-mcp'
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
@@ -198,8 +210,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ inputs.ref || github.sha }}
 
+      - name: Verify beta push commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/beta' && github.repository != 'CoplayDev/unity-mcp'
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:

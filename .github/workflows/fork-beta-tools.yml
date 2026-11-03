@@ -64,6 +64,7 @@ jobs:
       actions: read
     uses: ./.github/workflows/python-tests.yml
     with:
+      ref: ${{ github.sha }}
       validation_profile: ${{ needs.changes.outputs.profile }}
       defer_performance_report: true
 
@@ -72,6 +73,8 @@ jobs:
     needs: [changes]
     if: github.repository != 'CoplayDev/unity-mcp' && needs.changes.outputs.profile == 'full'
     uses: ./.github/workflows/unity-tests.yml
+    with:
+      ref: ${{ github.sha }}
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
