@@ -229,6 +229,26 @@ def test_component_version_updates_do_not_synchronize_unselected_packages(
         assert 'name = "click"\nversion = "8.3.1"' in lock
 
 
+@pytest.mark.parametrize("version", ["2.3", "01.2.3", "2.3.4-beta.01", "2.3.4+", "2.3.4\n", ""])
+def test_invalid_unity_version_leaves_all_files_untouched(version_checkout, monkeypatch, version):
+    before = {path: path.read_bytes() for path in version_checkout.rglob("*") if path.is_file()}
+    monkeypatch.setattr(
+        sys, "argv", ["update_versions.py", "--component", "all", "--version", version]
+    )
+    assert update_versions.main() != 0
+    assert all(path.read_bytes() == content for path, content in before.items())
+
+
+def test_prerelease_with_build_metadata_is_valid_for_unity(version_checkout, monkeypatch):
+    version = "2.3.5-beta.1+build.007"
+    monkeypatch.setattr(
+        sys, "argv", ["update_versions.py", "--component", "unity", "--version", version]
+    )
+    assert update_versions.main() == 0
+    for relative in ("MCPForUnity/package.json", "manifest.json"):
+        assert json.loads((version_checkout / relative).read_bytes())["version"] == version
+
+
 def test_server_version_requires_an_explicit_value(
     version_checkout: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

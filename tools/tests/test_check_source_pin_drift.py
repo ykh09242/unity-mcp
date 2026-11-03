@@ -25,7 +25,7 @@ def set_pin(repo, pin):
         json.dumps(
             {
                 "name": "com.ykh09242.unity-mcp",
-                "version": "1",
+                "version": "1.0.0",
                 "mcpServerSource": source,
                 "mcpSkillRevision": "a" * 40,
             }
@@ -34,7 +34,7 @@ def set_pin(repo, pin):
     put(
         repo,
         "manifest.json",
-        json.dumps({"version": "1", "server": {"mcp_config": {"args": ["--from", source]}}}),
+        json.dumps({"version": "1.0.0", "server": {"mcp_config": {"args": ["--from", source]}}}),
     )
     put(
         repo,
@@ -135,6 +135,16 @@ def test_moving_missing_and_zero_pin_fail_with_safe_action(history, pin):
 def test_inconsistent_metadata_is_not_reported_current(history, path):
     repo, _, _ = history
     put(repo, path, "{}")
+    commit(repo)
+    assert drift.exit_status(drift.inspect(repo)) == 2
+
+
+def test_matching_invalid_unity_versions_are_not_accepted(history):
+    repo, _, _ = history
+    for relative in ("MCPForUnity/package.json", "manifest.json"):
+        manifest = json.loads((repo / relative).read_bytes())
+        manifest["version"] = "2.3"
+        put(repo, relative, json.dumps(manifest))
     commit(repo)
     assert drift.exit_status(drift.inspect(repo)) == 2
 

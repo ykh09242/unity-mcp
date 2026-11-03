@@ -38,6 +38,13 @@ CHECK_HEADER: Final = (
 SKILLS: Final = (".claude/skills/unity-mcp-skill", "unity-mcp-skill")
 MAX_FILE: Final = 64 * 1024 * 1024
 LOG_LINE: Final = re.compile(r"(?:[^\n]*\t)?\ufeff?\d{4}-\d\d-\d\dT\S+Z (.*)")
+_NUMBER = r"(?:0|[1-9][0-9]*)"
+_PRERELEASE_ID = rf"(?:{_NUMBER}|[0-9]*[a-zA-Z-][a-zA-Z0-9-]*)"
+_SEMVER = re.compile(
+    rf"{_NUMBER}\.{_NUMBER}\.{_NUMBER}"
+    rf"(?:-{_PRERELEASE_ID}(?:\.{_PRERELEASE_ID})*)?"
+    r"(?:\+[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*)?"
+)
 
 
 class Kind(str, Enum):
@@ -103,6 +110,12 @@ def text(value: Json, label: str) -> str:
             return value
         case _:
             return fail(f"{label} must be a nonempty string")
+
+
+def unity_package_version(value: Json) -> str:
+    version = text(value, "Unity package version")
+    require(_SEMVER.fullmatch(version) is not None, "Unity package version must follow SemVer 2.0")
+    return version
 
 
 def integer(value: Json, label: str) -> int:
@@ -197,7 +210,7 @@ def components(repo: Path, package_commit: str) -> Components:
     )
     package = load_json(committed(repo, package_commit, "MCPForUnity/package.json"))
     require(package.get("name") == "com.ykh09242.unity-mcp", "Wrong Unity package identity")
-    unity_version = text(package.get("version"), "package version")
+    unity_version = unity_package_version(package.get("version"))
     server_url = text(package.get("mcpServerSource"), "mcpServerSource")
     source = re.fullmatch(
         re.escape(BASE) + r"/archive/([0-9a-f]{40})\.zip#subdirectory=Server", server_url

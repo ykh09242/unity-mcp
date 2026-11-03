@@ -308,7 +308,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     if args.server_commit or args.skill_commit or args.recover_pins:
-        if args.version or args.component != "unity":
+        if args.version is not None or args.component != "unity":
             parser.error("Source pins and version-number updates must be separate operations")
         if args.recover_pins and (args.server_commit or args.skill_commit or args.dry_run):
             parser.error("--recover-pins cannot be combined with pin selection or --dry-run")
@@ -337,12 +337,19 @@ def main() -> int:
 
     try:
         # Determine version
-        if args.version:
+        if args.version is not None:
             version = args.version
             print(f"Using specified version: {version}")
         else:
             version = load_package_version()
             print(f"Auto-detected version from package.json: {version}")
+
+        if args.component in ("unity", "all"):
+            if __package__:
+                from .check_release_evidence import unity_package_version
+            else:
+                from check_release_evidence import unity_package_version
+            unity_package_version(version)
 
         unity_updates = [
             ("MCPForUnity/package.json", update_package_json),

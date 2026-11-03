@@ -7,7 +7,16 @@ import re
 import subprocess
 import tomllib
 
-from check_release_evidence import BASE, EvidenceError, committed, digest, git, load_json, require
+from check_release_evidence import (
+    BASE,
+    EvidenceError,
+    committed,
+    digest,
+    git,
+    load_json,
+    require,
+    unity_package_version,
+)
 
 
 IGNORED_SERVER_FILES = frozenset(
@@ -38,7 +47,10 @@ def source_pin(repo: Path, revision: str) -> str:
     require(isinstance(args, list) and args.count("--from") == 1, "Expected one manifest source")
     position = args.index("--from") + 1
     require(position < len(args) and args[position] == source, "Manifest source differs")
-    require(manifest.get("version") == package.get("version"), "Package versions differ")
+    require(
+        manifest.get("version") == unity_package_version(package.get("version")),
+        "Package versions differ",
+    )
     inputs = load_json(committed(repo, revision, "release-source-inputs.json"))
     require(
         inputs
