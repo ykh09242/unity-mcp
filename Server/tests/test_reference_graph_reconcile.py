@@ -1213,6 +1213,25 @@ async def test_cancellation_during_lease_acquisition_does_not_orphan_worker(setu
 
 
 @pytest.mark.asyncio
+async def test_external_traversal_uses_attempt_item_budget(setup, tmp_path):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    _, workspace, _, engine = setup
+    root = tmp_path / "settings"
+    root.mkdir()
+    (root / "a.json").write_text("[" + ",".join(["0"] * 100) + "]")
+    workspace.set_source(
+        "external:settings", {"root": str(root), "include": ["*.json"]}, expected_version=0
+    )
+    engine.limits = CollectionLimits(max_items=20)
+    with pytest.raises(CollectionBudgetExceeded, match="max_items=20"):
+        await engine.reconcile()
+
+
+@pytest.mark.asyncio
 async def test_interrupted_forced_external_analysis_resumes_without_file_change(
     setup, tmp_path, monkeypatch
 ):
@@ -1228,7 +1247,7 @@ async def test_interrupted_forced_external_analysis_resumes_without_file_change(
     assert await engine.reconcile()
     original = module.analyze_document
 
-    def interrupted(*_):
+    def interrupted(*_, **__):
         raise ValueError("interrupted after admission")
 
     monkeypatch.setattr(module, "analyze_document", interrupted)

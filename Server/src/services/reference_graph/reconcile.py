@@ -1378,6 +1378,10 @@ class Reconciler:
         failures = 0
         pending = []
         provenance_updates = []
+
+        def visit_external_item() -> None:
+            self._budget.admit_items(1)
+
         for path in adapter.files(check=partial(self._check_source, source, require_source)):
             self._check_source(source, require_source)
             old = previous.pop(path, None)
@@ -1414,7 +1418,14 @@ class Reconciler:
                         seen=seen,
                     )
                     recorded = True
-                    result = analyze_document(path, document.text, catalog, adapter.mappings)
+                    result = analyze_document(
+                        path,
+                        document.text,
+                        catalog,
+                        adapter.mappings,
+                        check=self._check_thread,
+                        visit=visit_external_item,
+                    )
                     if _json(adapter.stamp(path)) != stamp:
                         raise RevisionConflict("External input changed during analysis")
                     self._check_source(source, require_source)

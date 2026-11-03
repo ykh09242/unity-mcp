@@ -301,6 +301,86 @@ def test_duplicate_json_keys_and_missing_mapped_fields_are_not_empty_success():
     assert result.unresolved[0]["reason"] == "mapping_not_found"
 
 
+def test_json_traversal_preserves_order_and_escaped_pointers():
+    from services.reference_graph.external import _values
+
+    assert list(_values("data.json", '{"a/b":[1,{"~x":"v"}],"z":2}')) == [
+        ("/a~1b/0", 1, 0, "/a~1b/0"),
+        ("/a~1b/1/~0x", "v", 0, "/a~1b/1/~0x"),
+        ("/z", 2, 0, "/z"),
+    ]
+
+
+def test_wide_json_traversal_has_bounded_auxiliary_memory():
+    env = os.environ.copy()
+    env.pop("PYTHONTRACEMALLOC", None)
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import tracemalloc\n"
+            "from services.reference_graph.analysis import Catalog\n"
+            "from services.reference_graph.external import analyze_document\n"
+            "text = '[' + ','.join(['0'] * 50000) + ']'\n"
+            "tracemalloc.start()\n"
+            "result = analyze_document('data.json', text, Catalog([]), [])\n"
+            "peak = tracemalloc.get_traced_memory()[1]\n"
+            "assert not result.edges and not result.unresolved\n"
+            "assert peak < 3000000, peak\n",
+        ],
+        cwd=Path(__file__).resolve().parents[1] / "src",
+        env=env,
+        check=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "name,text", [("data.json", "[null,false,{},[]]"), ("data.csv", "a,b\nx,y\n")]
+)
+def test_document_traversal_checks_cancellation_between_items(name, text):
+    calls = 0
+
+    def check():
+        nonlocal calls
+        calls += 1
+        if calls == 5:
+            raise RuntimeError("cancelled")
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        analyze_document(name, text, assets(), [], check=check)
+
+
+def test_document_checks_use_shared_deadline_without_charging_collection_items(monkeypatch):
+    from services.reference_graph import collection_protocol
+
+    budget = CollectionBudget(CollectionLimits(max_items=1, max_seconds=10))
+    budget.admit_items(1)
+    calls = 0
+
+    def check():
+        nonlocal calls
+        calls += 1
+        if calls == 4:
+            monkeypatch.setattr(collection_protocol.time, "monotonic", lambda: budget.started + 11)
+        budget.remaining()
+
+    with pytest.raises(CollectionBudgetExceeded, match="max_seconds=10"):
+        analyze_document("data.json", "[0,0,0,0]", assets(), [], check=check)
+    assert budget.items == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [("data.json", "[null,false,{},[]]"), ("data.csv", "a,b\nx,y\n")],
+)
+def test_document_items_share_collection_limit(name, text):
+    budget = CollectionBudget(CollectionLimits(max_items=3))
+    budget.admit_items(1)  # A directory entry already consumed part of this attempt.
+    with pytest.raises(CollectionBudgetExceeded, match="max_items=3"):
+        analyze_document(name, text, assets(), [], visit=lambda: budget.admit_items(1))
+    assert budget.items == 3
+
+
 def test_large_csv_field_and_disallowed_subdirectories_are_supported(tmp_path, monkeypatch):
     root = tmp_path / "source"
     (root / "allowed").mkdir(parents=True)

@@ -478,30 +478,66 @@ class ExternalSource:
         )
 
 
-def _unique_object(pairs: list[tuple[str, object]]) -> dict:
+def _unique_object(
+    pairs: list[tuple[str, object]], check: Callable[[], None] = lambda: None
+) -> dict:
     value = {}
     for key, item in pairs:
+        check()
         if key in value:
             raise ValueError("Duplicate JSON key")
         value[key] = item
     return value
 
 
-def _values(relative: str, text: str) -> Iterator[tuple[str, str | int, int, str]]:
+def _values(
+    relative: str,
+    text: str,
+    check: Callable[[], None] = lambda: None,
+    visit: Callable[[], None] = lambda: None,
+) -> Iterator[tuple[str, str | int, int, str]]:
+    check()
     if Path(relative).suffix.lower() == ".json":
-        document = json.loads(text, object_pairs_hook=_unique_object)
-        pending = [("", document)]
+
+        def number(value: str) -> int:
+            check()
+            return int(value)
+
+        def unique_object(pairs: list[tuple[str, object]]) -> dict:
+            check()
+            return _unique_object(pairs, check)
+
+        def float_number(value: str) -> float:
+            check()
+            return float(value)
+
+        document = json.loads(
+            text,
+            object_pairs_hook=unique_object,
+            parse_int=number,
+            parse_float=float_number,
+            parse_constant=float_number,
+        )
+        check()
+        pending = [("", iter(((None, document),)))]
         while pending:
-            path, value = pending.pop()
+            check()
+            parent, children = pending[-1]
+            try:
+                key, value = next(children)
+            except StopIteration:
+                pending.pop()
+                continue
+            visit()
+            path = (
+                parent
+                if key is None
+                else parent + "/" + str(key).replace("~", "~0").replace("/", "~1")
+            )
             if isinstance(value, dict):
-                pending.extend(
-                    (path + "/" + key.replace("~", "~0").replace("/", "~1"), child)
-                    for key, child in reversed(value.items())
-                )
+                pending.append((path, iter(value.items())))
             elif isinstance(value, list):
-                pending.extend(
-                    (path + "/" + str(i), child) for i, child in reversed(list(enumerate(value)))
-                )
+                pending.append((path, iter(enumerate(value))))
             elif isinstance(value, str) or type(value) is int:
                 yield path, value, 0, path
     elif Path(relative).suffix.lower() == ".csv":
@@ -512,12 +548,26 @@ def _values(relative: str, text: str) -> Iterator[tuple[str, str | int, int, str
             if len(text) > csv.field_size_limit():
                 csv.field_size_limit(len(text))
         reader = csv.DictReader(io.StringIO(text, newline=""), strict=True)
-        if reader.fieldnames is None or len(set(reader.fieldnames)) != len(reader.fieldnames):
+        check()
+        fieldnames = reader.fieldnames
+        check()
+        if fieldnames is None:
             raise ValueError("CSV requires distinct column names")
+        names = set()
+        for name in fieldnames:
+            check()
+            visit()
+            if name in names:
+                raise ValueError("CSV requires distinct column names")
+            names.add(name)
         for ordinal, row in enumerate(reader):
+            check()
+            visit()
             if None in row or any(value is None for value in row.values()):
                 raise ValueError("CSV row does not match its header")
             for field_name, value in row.items():
+                check()
+                visit()
                 pointer = (
                     "/rows/" + str(ordinal) + "/" + field_name.replace("~", "~0").replace("/", "~1")
                 )
@@ -533,11 +583,19 @@ def _field_matches(pattern: str, field_name: str) -> bool:
     )
 
 
-def analyze_document(relative: str, text: str, catalog: Catalog, mappings: list[dict]) -> Analysis:
+def analyze_document(
+    relative: str,
+    text: str,
+    catalog: Catalog,
+    mappings: list[dict],
+    *,
+    check: Callable[[], None] = lambda: None,
+    visit: Callable[[], None] = lambda: None,
+) -> Analysis:
     validate_mappings(mappings)
     result = Analysis(coverage="mapped_fields" if mappings else "exact_catalog_strings")
     seen = set()
-    for field_name, value, line, pointer in _values(relative, text):
+    for field_name, value, line, pointer in _values(relative, text, check, visit):
         matches = [
             (i, mapping)
             for i, mapping in enumerate(mappings)
