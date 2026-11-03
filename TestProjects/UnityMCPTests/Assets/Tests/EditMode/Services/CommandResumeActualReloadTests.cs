@@ -16,6 +16,52 @@ namespace MCPForUnityTests.Editor.Services
         private static readonly string DomainNonce = Guid.NewGuid().ToString("N");
         private static readonly JObject Parameters = new JObject { ["value"] = 17 };
 
+        private static JObject PrefabBatch(string selector, string value) =>
+            new JObject
+            {
+                ["commands"] = new JArray(
+                    new JObject
+                    {
+                        ["tool"] = "manage_prefabs",
+                        ["params"] = new JObject { ["action"] = "create_from_gameobject", [selector] = value },
+                    }
+                ),
+            };
+
+        [UnityTest, Explicit("Owned disposable batch Editor only; verifies prefab source aliases across a real domain reload.")]
+        public IEnumerator PrefabSourceAliasesCannotResumeAcrossRealReload()
+        {
+            Prepare("prefab_aliases");
+            try
+            {
+                ReloadWithProbe();
+                yield return new WaitForDomainReload();
+                AssertReloaded();
+                var journal = Open();
+                foreach (var item in PrefabCases())
+                {
+                    var request = Request(journal, "resume");
+                    request["invocation_id"] = item.Item1;
+                    var admission = journal.Admit(request, "batch_execute", PrefabBatch(item.Item2, item.Item3));
+                    Assert.AreEqual(item.Item3 == "Player", admission.Ticket != null, item.Item2);
+                    if (admission.Ticket != null)
+                        Assert.IsTrue(journal.TryStart(admission.Ticket));
+                }
+            }
+            finally
+            {
+                Cleanup();
+            }
+        }
+
+        private static (string, string, string)[] PrefabCases() =>
+            new[]
+            {
+                ("11111111111111111111111111111111", "target", "-12345"),
+                ("22222222222222222222222222222222", "name", "-12345"),
+                ("33333333333333333333333333333333", "name", "Player"),
+            };
+
         [UnityTest, Explicit("Owned disposable batch Editor only; requires exact UNITY_MCP_COMMAND_RELOAD_PROJECT and performs real domain reloads.")]
         public IEnumerator QueuedIntentSurvivesRepeatedReloadAndCompletedResultIsCached()
         {
@@ -96,6 +142,11 @@ namespace MCPForUnityTests.Editor.Services
                 request["origin_generation"] = origin;
                 var stale = JObject.Parse("{\"action\":\"delete\",\"target\":\"-12345\"}");
                 Assert.IsNull(journal.Admit(request, "gameobject_edit", stale).Ticket);
+                foreach (string selector in new[] { "target", "name" })
+                {
+                    request["invocation_id"] = Guid.NewGuid().ToString("N");
+                    Assert.IsNull(journal.Admit(request, "batch_execute", PrefabBatch(selector, "-12345")).Ticket, selector);
+                }
                 request["invocation_id"] = Guid.NewGuid().ToString("N");
                 var stable = JObject.Parse("{\"action\":\"create\",\"name\":\"123\",\"position\":[1,2,3]}");
                 var accepted = journal.Admit(request, "manage_gameobject", stable);
@@ -182,6 +233,18 @@ namespace MCPForUnityTests.Editor.Services
             {
                 var journal = Open();
                 string phase = SessionState.GetString(Prefix + "phase", "");
+                if (phase == "prefab_aliases")
+                {
+                    foreach (var item in PrefabCases())
+                    {
+                        var request = Request(journal, "new");
+                        request["invocation_id"] = item.Item1;
+                        if (journal.Admit(request, "batch_execute", PrefabBatch(item.Item2, item.Item3)).Ticket == null)
+                            throw new InvalidOperationException("The old domain did not queue the prefab batch.");
+                    }
+                    SessionState.SetBool(Prefix + "checkpoint_written", true);
+                    return;
+                }
                 if (phase == "public_origin")
                 {
                     SessionState.SetString(Prefix + "origin", NativeCommandArbitrator.Shared.Generation);

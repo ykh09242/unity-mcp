@@ -475,6 +475,7 @@ namespace MCPForUnity.Editor.Services.Transport
                     obj["target"] == null
                     && (
                         gameObject && action != "create"
+                        || commandName == "manage_prefabs" && action == "create_from_gameobject"
                         || (commandName == "manage_graphics" || commandName == "manage_render_environment") && action == "skybox_set_sun"
                     );
                 bool componentCommand = commandName == "manage_components" || commandName == "manage_components_selected";

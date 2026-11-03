@@ -522,6 +522,30 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void PrefabSourceAliasesFenceReloadAndPublicOrigin()
+        {
+            foreach (string selector in new[] { "target", "name" })
+            foreach (bool batch in new[] { false, true })
+            foreach (bool numeric in new[] { false, true })
+            {
+                Setup();
+                var child = new JObject { ["action"] = "create_from_gameobject", [selector] = numeric ? "-12345" : "Player" };
+                string command = batch ? "batch_execute" : "manage_prefabs";
+                var parameters = batch ? new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "manage_prefabs", ["params"] = child }) } : child;
+                Assert.IsNotNull(journal.Admit(Request(), command, parameters).Ticket);
+                journal = Open();
+                var resumed = journal.Admit(Request("resume"), command, parameters);
+                Assert.AreEqual(numeric ? "unavailable" : "queued", resumed.State, selector);
+                Assert.AreEqual(!numeric, resumed.Ticket != null, selector);
+
+                Setup();
+                var origin = Request();
+                origin["origin_generation"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+                Assert.AreEqual(!numeric, journal.Admit(origin, command, parameters).Ticket != null, selector);
+            }
+        }
+
+        [Test]
         public void ComponentAssignmentObjectReferencesAndEncodedContainersRequireFreshRequests()
         {
             var cases = new[]
