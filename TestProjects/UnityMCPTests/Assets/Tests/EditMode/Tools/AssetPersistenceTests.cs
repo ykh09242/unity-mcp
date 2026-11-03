@@ -31,13 +31,89 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
-        private static bool ApplyDirectAssignments(ThrowingAssignmentFixture fixture, JObject properties)
+        private sealed class CoupledAssignmentFixture : ScriptableObject
+        {
+            public int a = 1;
+            public int b = 2;
+            public int failed = 3;
+            public bool conflicting;
+            public int A
+            {
+                get => a;
+                set
+                {
+                    a = value;
+                    b = value;
+                }
+            }
+            public int B
+            {
+                get => b;
+                set
+                {
+                    b = value;
+                    if (conflicting)
+                        a = value;
+                }
+            }
+            public int Fail
+            {
+                get => failed;
+                set
+                {
+                    failed = value;
+                    if (value == 9)
+                        throw new InvalidOperationException("injected setter failure");
+                }
+            }
+        }
+
+        private static bool ApplyDirectAssignments(ScriptableObject fixture, JObject properties)
         {
             var method = typeof(ManageAsset).GetMethod(
                 "ApplyObjectPropertiesAtomically",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
             );
             return (bool)method.Invoke(null, new object[] { fixture, properties });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DirectAssignmentsVerifyCoupledSettersAfterRollback(bool conflicting)
+        {
+            var fixture = ScriptableObject.CreateInstance<CoupledAssignmentFixture>();
+            try
+            {
+                fixture.conflicting = conflicting;
+                var error = Assert.Throws<System.Reflection.TargetInvocationException>(() =>
+                    ApplyDirectAssignments(
+                        fixture,
+                        new JObject
+                        {
+                            ["A"] = 7,
+                            ["B"] = 8,
+                            ["Fail"] = 9,
+                        }
+                    )
+                );
+                Assert.AreEqual(2, fixture.b);
+                Assert.AreEqual(3, fixture.failed);
+                if (conflicting)
+                {
+                    Assert.AreEqual(2, fixture.a);
+                    StringAssert.Contains("Restoration incomplete", error.InnerException.Message);
+                    StringAssert.Contains("A", error.InnerException.Message);
+                }
+                else
+                {
+                    Assert.AreEqual(1, fixture.a);
+                    StringAssert.Contains("restored", error.InnerException.Message);
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(fixture);
+            }
         }
 
         [Test]

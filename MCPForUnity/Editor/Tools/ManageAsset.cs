@@ -1204,6 +1204,32 @@ namespace MCPForUnity.Editor.Tools
                             restorationErrors.Add($"{assignments[index].name}: {restore.GetBaseException().Message}");
                         }
                     }
+                    // Setters can change other requested members. Repair observed differences
+                    // once in request order, then verify all captured values without retrying.
+                    foreach (var assignment in assignments)
+                    {
+                        try
+                        {
+                            if (!object.Equals(assignment.get(), assignment.previous))
+                                assignment.set(assignment.previous);
+                        }
+                        catch (Exception restore)
+                        {
+                            restorationErrors.Add($"{assignment.name}: {restore.GetBaseException().Message}");
+                        }
+                    }
+                    foreach (var assignment in assignments)
+                    {
+                        try
+                        {
+                            if (!object.Equals(assignment.get(), assignment.previous))
+                                restorationErrors.Add($"{assignment.name}: value differs from its original value");
+                        }
+                        catch (Exception inspect)
+                        {
+                            restorationErrors.Add($"{assignment.name}: could not verify restoration: {inspect.GetBaseException().Message}");
+                        }
+                    }
                     string restoration =
                         restorationErrors.Count == 0
                             ? "All attempted assignments were restored."
