@@ -13,7 +13,11 @@ from core.config import config
 from models.response_limits import ResponseOwner, response_limit_error, response_owner
 from services.credential_lease import CredentialLeaseError, require_credential_lease
 from services.command_progress import claim_command_progress
-from services.operation_permissions import authorize_remote_operation, remote_operation_allowed
+from services.operation_permissions import (
+    authorize_remote_operation,
+    native_batch_parameters,
+    remote_operation_allowed,
+)
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
@@ -343,13 +347,9 @@ async def batch_execute(
         if not isinstance(params, dict):
             raise ValueError(f"Command '{tool_name}' must specify parameters as an object/dict")
 
-        if "unity_instance" in params:
-            raise ValueError(
-                f"Command '{tool_name}' at index {index} contains 'unity_instance'. "
-                "Per-command instance routing is not supported inside batch_execute. "
-                "Set unity_instance on the outer batch_execute call to route the entire batch."
-            )
-
+        # The peer signs the original spelling for target previews. Keep it on
+        # the wire after verifying that native key conversion has a unique result.
+        native_batch_parameters(params)
         normalized_commands.append(
             {
                 "tool": tool_name,

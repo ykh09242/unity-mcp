@@ -1,4 +1,5 @@
 import importlib
+from copy import deepcopy
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -66,12 +67,23 @@ async def test_batch_preserves_false_zero_and_native_command_parameter_keys(
     batch_module, monkeypatch
 ):
     sends, _ = install_editor(monkeypatch, batch_module, {"A@hash-a": 3})
-    commands = [{"tool": "manage_gameobject", "params": {"setActive": False, "layer": 0}}]
+    commands = [
+        {
+            "tool": "manage_gameobject",
+            "params": {
+                "set_active": False,
+                "searchMethod": None,
+                "layer": 0,
+                "properties": {"field_name_": None, "fieldName": 1},
+            },
+        }
+    ]
+    expected_commands = deepcopy(commands)
     await batch_module.batch_execute(
         Context("A@hash-a"), commands, parallel=False, fail_fast=False, max_parallelism=0
     )
     assert sends[-1][2] == {
-        "commands": commands,
+        "commands": expected_commands,
         "parallel": False,
         "failFast": False,
         "maxParallelism": 0,
@@ -156,6 +168,15 @@ async def test_batch_limit_lookup_avoids_enriched_resource_and_reuses_cached_sta
         [None],
         [{"tool": "read_console", "params": []}],
         [{"tool": "read_console", "params": {"unity_instance": "B"}}],
+        [{"tool": "read_console", "params": {"unityInstance": "B"}}],
+        [{"tool": "read_console", "params": {"action_": "clear"}}],
+        [{"tool": "execute_code", "params": {"action": "get_history", "action_": "execute"}}],
+        [{"tool": "execute_code", "params": {"action_": "execute", "action": "get_history"}}],
+        [{"tool": "manage_ui", "params": {"action": "patch_source", "preview_": False}}],
+        [{"tool": "read_console", "params": {"page_size": 1, "pageSize": 2}}],
+        [{"tool": "read_console", "params": {"pageSize": 2, "page_size": 1}}],
+        [{"tool": "read_console", "params": {"page__size": 1}}],
+        [{"tool": "manage_animation", "params": {"runtime_only": True, "runtime_Only": False}}],
     ],
 )
 async def test_invalid_batch_commands_are_rejected_before_any_unity_request(

@@ -300,6 +300,37 @@ async def test_final_native_fence_intersects_requester_and_plugin(
         ("blender_bridge", {"action": "check_updates"}),
         ("blender_bridge", {"action": "compare_screenshot", "game_object": "fixture"}),
         ("manage_scene", {"action": "validate", "autoRepair": "true"}),
+        ("batch_execute", {"commands": [{"tool": "read_console", "params": {"action_": "clear"}}]}),
+        (
+            "batch_validate",
+            {
+                "commands": [
+                    {"tool": "manage_ui", "params": {"action": "patch_source", "preview_": False}}
+                ]
+            },
+        ),
+        (
+            "batch_apply_preview",
+            {
+                "commands": [
+                    {
+                        "tool": "execute_code",
+                        "params": {"action": "get_history", "action_": "execute"},
+                    }
+                ]
+            },
+        ),
+        (
+            "batch_execute",
+            {
+                "commands": [
+                    {
+                        "tool": "manage_ugui",
+                        "params": {"action": "diagnose_raycast", "allowCustomFilters": True},
+                    }
+                ]
+            },
+        ),
     ],
 )
 async def test_read_credentials_cannot_start_hidden_execution_or_asset_writes(
@@ -324,8 +355,19 @@ async def test_read_credentials_cannot_start_hidden_execution_or_asset_writes(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command,params,wire_params",
+    [
+        ("read_console", {"action": "get"}, {"action": "clear"}),
+        (
+            "batch_execute",
+            {"commands": [{"tool": "read_console", "params": {}}]},
+            {"commands": [{"tool": "read_console", "params": {"action_": "clear"}}]},
+        ),
+    ],
+)
 async def test_final_serialized_policy_refusal_sends_neither_execute_nor_cancel(
-    command_hub, monkeypatch
+    command_hub, monkeypatch, command, params, wire_params
 ):
     hub = importlib.import_module("transport.plugin_hub")
     monkeypatch.setattr(config, "http_remote_hosted", True)
@@ -336,7 +378,7 @@ async def test_final_serialized_policy_refusal_sends_neither_execute_nor_cancel(
 
     def changed_payload(message, *args, **kwargs):
         payload = original_dump(message, *args, **kwargs)
-        payload["params"]["action"] = "clear"
+        payload["params"] = wire_params
         serialized.append(payload)
         return payload
 
@@ -351,8 +393,8 @@ async def test_final_serialized_policy_refusal_sends_neither_execute_nor_cancel(
         # When the final fence checks the actual serialized action, then pending
         # bookkeeping is released without an execute, cancel, or unknown-outcome claim.
         with bind_credential_lease(requester):
-            result = await PluginHub.send_command("session", "read_console", {"action": "get"})
-        assert len(serialized) == 1 and serialized[0]["params"]["action"] == "clear"
+            result = await PluginHub.send_command("session", command, params)
+        assert len(serialized) == 1 and serialized[0]["params"] == wire_params
         assert result["error"] == "permission_denied"
         assert command_hub.sent == [] and PluginHub._pending == {}
 

@@ -393,6 +393,31 @@ _RESOURCE_PATTERNS: Final = (
 )
 
 
+_BATCH_PARAM_NAME: Final = re.compile(r"[a-z][a-zA-Z0-9]*|[a-z][a-z0-9]*(?:_[a-z][a-z0-9]*)+")
+
+
+def native_batch_parameters(params: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    """Model BatchExecute.NormalizeParameterKeys only for unambiguous top-level names."""
+    normalized: dict[str, JsonValue] = {}
+    seen: set[str] = set()
+    for key, value in params.items():
+        if not isinstance(key, str) or not _BATCH_PARAM_NAME.fullmatch(key):
+            raise ValueError("Batch parameter names must be snake_case or camelCase")
+        first, *rest = key.split("_")
+        native_key = first + "".join(part.capitalize() for part in rest)
+        folded = native_key.lower()
+        if folded in seen:
+            raise ValueError("Batch parameters contain conflicting names")
+        if folded == "unityinstance":
+            raise ValueError(
+                "Per-command instance routing is not supported inside batch_execute. "
+                "Set unity_instance on the outer call."
+            )
+        seen.add(folded)
+        normalized[native_key] = value
+    return normalized
+
+
 def required_permissions(
     name: str, params: Mapping[str, JsonValue], *, custom: bool = False, native: bool = False
 ) -> frozenset[Permission]:
@@ -419,9 +444,13 @@ def required_permissions(
                 or tool not in _NATIVE_COMMANDS
             ):
                 raise OperationPermissionError()
-            if not isinstance(arguments, dict) or "unity_instance" in arguments:
+            if not isinstance(arguments, dict):
                 raise OperationPermissionError()
-            required.update(required_permissions(tool, arguments, native=True))
+            try:
+                native_arguments = native_batch_parameters(arguments)
+            except ValueError as error:
+                raise OperationPermissionError() from error
+            required.update(required_permissions(tool, native_arguments, native=True))
         return frozenset(required)
     if name == "refresh_unity":
         if not native and params.get("wait_for_ready", True) is not False:
@@ -577,7 +606,9 @@ def required_permissions(
     if name == "manage_ugui" and action == "diagnose_raycast":
         # The default native query refuses applicable custom callbacks. Opting
         # in can run arbitrary user code, including writes and event dispatch.
-        allow_custom_filters = params.get("allow_custom_filters", False)
+        allow_custom_filters = params.get(
+            "allow_custom_filters", params.get("allowCustomFilters", False)
+        )
         if type(allow_custom_filters) is not bool:
             raise OperationPermissionError()
         if allow_custom_filters:
