@@ -496,6 +496,32 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [TestCase("runtime_only")]
+        [TestCase("runtimeOnly")]
+        public void AnimatorSetEnabled_RuntimeOnlyRefusesEditModeWithoutChangingState(string flag)
+        {
+            var go = new GameObject("AnimTest_RuntimeEnabled");
+            var animator = go.AddComponent<Animator>();
+            try
+            {
+                var parameters = new JObject
+                {
+                    ["action"] = "animator_set_enabled",
+                    ["target"] = "AnimTest_RuntimeEnabled",
+                    ["enabled"] = false,
+                    [flag] = true,
+                };
+                var result = ToJObject(ManageAnimation.HandleCommand(parameters));
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.That(result.Value<string>("message"), Does.Contain("Play mode"));
+                Assert.IsTrue(animator.enabled);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
         [Test]
         public void AnimatorSetEnabled_DisablesAnimator()
         {

@@ -279,6 +279,12 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (animator == null)
                 return AnimatorResolver.NotResolvedError(go, animatorCandidates);
 
+            JToken runtimeOnlyToken = @params["runtimeOnly"];
+            if (runtimeOnlyToken != null && runtimeOnlyToken.Type != JTokenType.Boolean)
+                return new { success = false, message = "'runtime_only' must be a Boolean." };
+            if (runtimeOnlyToken?.Value<bool>() == true && !Application.isPlaying)
+                return new { success = false, message = "runtime_only requires Play mode; Animator enabled state was not changed." };
+
             bool enabled = ReadOptionalScalar(@params, "enabled", true);
 
             Undo.RecordObject(animator, "Set Animator Enabled");

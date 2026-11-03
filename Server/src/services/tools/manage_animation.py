@@ -140,8 +140,8 @@ def _round_trip_error(action: str, properties: dict[str, JsonValue] | None) -> s
         "controller_* (create AnimatorControllers, add states/transitions/parameters), "
         "clip_* (create clips, add keyframe curves, assign to GameObjects). "
         "Action-specific parameters go in `properties` (keys match ManageAnimation.cs). "
-        "animator_set_parameter defaults to automatic Play/Edit behavior and requires edit+run; "
-        "top-level runtime_only=true requires run and refuses Edit mode without writing defaults. "
+        "animator_set_parameter and animator_set_enabled require edit+run by default. "
+        "Top-level runtime_only=true requires run and refuses changes in Edit mode. "
         "Round trips: clip_get_curves lists binding_id/kind/path/property/type; clip_get_curve returns "
         "paged full float keys (tangents, weights, tangent modes) or exact asset object-reference keys "
         "{guid,file_id}. clip_replace_curve replaces one existing binding with 1-1024 ordered keys; "
@@ -181,7 +181,7 @@ async def manage_animation(
     ] = None,
     runtime_only: Annotated[
         bool | None,
-        "For animator_set_parameter, refuse Edit mode instead of changing controller defaults.",
+        "For animator_set_parameter or animator_set_enabled, refuse Edit mode instead of persisting changes.",
     ] = None,
 ) -> dict[str, Any]:
     """Unified animation management tool."""

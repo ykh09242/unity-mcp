@@ -16,6 +16,47 @@ from services.tools.manage_animation import (
 )
 
 
+@pytest.mark.parametrize("flag", [False, True])
+def test_set_enabled_cli_runtime_only_is_top_level(runner, mock_config, mock_success, flag):
+    args = ["animator", "set-enabled", "Player", "false"]
+    if flag:
+        args.append("--runtime-only")
+    with patch("cli.commands.animation.get_config", return_value=mock_config):
+        with patch("cli.commands.animation.run_command", return_value=mock_success) as mock_run:
+            result = runner.invoke(animation, args)
+    assert result.exit_code == 0, result.output
+    params = _get_params(mock_run)
+    assert params.get("runtime_only") is (True if flag else None)
+    assert params["properties"]["enabled"] is False
+
+
+def test_set_enabled_public_tool_forwards_runtime_only():
+    from services.tools.manage_animation import manage_animation
+
+    ctx = MagicMock()
+    with patch(
+        "services.tools.manage_animation.get_unity_instance_from_context",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
+        with patch(
+            "services.tools.manage_animation.send_with_unity_instance",
+            new_callable=AsyncMock,
+            return_value={"success": True},
+        ) as send:
+            result = asyncio.run(
+                manage_animation(
+                    ctx,
+                    action="animator_set_enabled",
+                    target="Player",
+                    properties={"enabled": False},
+                    runtime_only=True,
+                )
+            )
+    assert result["success"] is True
+    assert send.call_args.args[3]["runtime_only"] is True
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================

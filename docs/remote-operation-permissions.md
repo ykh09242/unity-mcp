@@ -92,6 +92,12 @@ writable, physically contained AnimatorController assets under `Assets/`;
 package controllers and transient controllers are rejected.
 The CLI exposes this as `animation animator set-parameter ... --runtime-only`.
 
+`animator_set_enabled` also requires `edit` and `run` by default because it can
+change a scene component in Edit mode. Set the top-level `runtime_only` Boolean
+to `true` for `run`-only authority; the native handler checks actual Play mode
+before changing the component. The CLI flag is `animation animator set-enabled
+... --runtime-only`.
+
 Public refresh with `wait_for_ready` enabled (the default) additionally requires
 `read` for its promised ready observation. Dispatch-only refresh can use
 `edit` and `run` without `read`. Scene validation with a repair flag additionally

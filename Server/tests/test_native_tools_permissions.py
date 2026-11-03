@@ -15,6 +15,65 @@ EDIT = frozenset({Permission.EDIT})
 RUN = frozenset({Permission.RUN})
 COMPILE = frozenset({Permission.EDIT, Permission.RUN})
 
+
+@pytest.mark.parametrize("action", ["animator_set_parameter", "animator_set_enabled"])
+def test_animator_runtime_only_requires_explicit_top_level_boolean(action):
+    for native, key in ((False, "runtime_only"), (True, "runtimeOnly"), (True, "runtime_only")):
+        base = {"action": action}
+        assert required_permissions("manage_animation", base, native=native) == COMPILE
+        assert (
+            required_permissions("manage_animation", {**base, key: False}, native=native) == COMPILE
+        )
+        assert (
+            required_permissions(
+                "manage_animation", {**base, "properties": {key: True}}, native=native
+            )
+            == COMPILE
+        )
+        assert required_permissions("manage_animation", {**base, key: True}, native=native) == RUN
+        with pytest.raises(OperationPermissionError):
+            authorize_operation(OperationGrants(RUN, True), "manage_animation", base, native=native)
+        authorize_operation(
+            OperationGrants(RUN, True), "manage_animation", {**base, key: True}, native=native
+        )
+        with pytest.raises(OperationPermissionError):
+            required_permissions("manage_animation", {**base, key: "true"}, native=native)
+        with pytest.raises(OperationPermissionError):
+            required_permissions(
+                "manage_animation",
+                {
+                    **base,
+                    key: True,
+                    "runtimeOnly" if key == "runtime_only" else "runtime_only": False,
+                },
+                native=native,
+            )
+        if native:
+            with pytest.raises(OperationPermissionError):
+                required_permissions(
+                    "manage_animation",
+                    {
+                        **base,
+                        key: False,
+                        "runtimeOnly" if key == "runtime_only" else "runtime_only": True,
+                    },
+                    native=True,
+                )
+            assert (
+                required_permissions(
+                    "manage_animation", {**base, key: True, "properties": {key: False}}, native=True
+                )
+                == RUN
+            )
+    for flag, expected in ((False, COMPILE), (True, RUN)):
+        batch = {
+            "commands": [
+                {"tool": "manage_animation", "params": {"action": action, "runtime_only": flag}}
+            ]
+        }
+        assert required_permissions("batch_execute", batch) == expected
+
+
 CASES = [
     (tool, action, expected)
     for tool, actions, expected in (

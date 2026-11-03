@@ -259,8 +259,11 @@ def animator_set_speed(target: str, speed: float, search_method: Optional[str]):
 @click.argument("target")
 @click.argument("enabled", type=bool)
 @click.option("--search-method", type=SEARCH_METHOD_CHOICE_BASIC, default=None)
+@click.option("--runtime-only", is_flag=True, help="Require Play mode (run-only authority).")
 @handle_unity_errors
-def animator_set_enabled(target: str, enabled: bool, search_method: Optional[str]):
+def animator_set_enabled(
+    target: str, enabled: bool, search_method: Optional[str], runtime_only: bool
+):
     """Enable or disable an Animator component.
 
     \b
@@ -274,6 +277,8 @@ def animator_set_enabled(target: str, enabled: bool, search_method: Optional[str
         "target": target,
         "enabled": enabled,
     }
+    if runtime_only:
+        params["runtime_only"] = True
     if search_method:
         params["searchMethod"] = search_method
 

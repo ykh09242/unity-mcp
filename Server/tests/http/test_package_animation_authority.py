@@ -59,6 +59,7 @@ async def test_edit_only_lease_cannot_dispatch_compile_or_persistent_runtime_ope
             ["edit", "run"],
         ),
         ("manage_animation", {"action": "animator_set_parameter", "runtime_only": True}, ["run"]),
+        ("manage_animation", {"action": "animator_set_enabled", "runtime_only": True}, ["run"]),
         ("manage_packages", {"action": "status"}, ["read"]),
     ],
 )

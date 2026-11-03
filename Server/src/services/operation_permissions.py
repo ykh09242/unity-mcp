@@ -527,18 +527,21 @@ def required_permissions(
             action in {"build", "build_from_plan"} and backend not in (None, "")
         ):
             return CUSTOM_GRANTS
-    if name == "manage_animation" and action == "animator_set_parameter":
+    if name == "manage_animation" and action in {"animator_set_parameter", "animator_set_enabled"}:
         # Only this explicit top-level flag reduces authority. Native execution
         # refuses Edit mode for it rather than trusting a client's mode claim.
-        runtime_only = params.get("runtime_only", False)
+        runtime_only = params.get(
+            "runtime_only", params.get("runtimeOnly", False) if native else False
+        )
         if type(runtime_only) is not bool:
             raise OperationPermissionError()
-        if runtime_only:
+        if runtime_only or native and ("runtime_only" in params or "runtimeOnly" in params):
             if any(
-                key.replace("_", "").lower() == "runtimeonly" and value is not True
+                key.replace("_", "").lower() == "runtimeonly" and value is not runtime_only
                 for key, value in params.items()
             ):
                 raise OperationPermissionError()
+        if runtime_only:
             return frozenset({Permission.RUN})
         return CUSTOM_GRANTS
     if name == "manage_reference_graph" and action in _ACTIONS[name][Permission.EDIT]:
