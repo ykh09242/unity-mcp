@@ -147,9 +147,20 @@ def test_platform_shell_preserves_apostrophes_metacharacters_and_spaced_argument
         )
         invocation = [shell, "-NoProfile", "-NonInteractive", "-Command", script]
     else:
-        script = f'unity-mcp() {{ {shlex.quote(sys.executable)} {shlex.quote(str(capture))} "$@"; }}\n{hint}'
-        invocation = ["/bin/sh", "-c", script]
-    parsed = subprocess.run(invocation, capture_output=True, text=True, check=True, timeout=20)
+        executable = tmp_path / "unity-mcp"
+        executable.write_text(
+            "#!/bin/sh\nexec "
+            + shlex.quote(sys.executable)
+            + " "
+            + shlex.quote(str(capture))
+            + ' "$@"\n'
+        )
+        executable.chmod(0o755)
+        invocation = ["/bin/sh", "-c", hint]
+    environment = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ.get("PATH", "")}
+    parsed = subprocess.run(
+        invocation, env=environment, capture_output=True, text=True, check=True, timeout=20
+    )
     polled = CliRunner().invoke(cli, json.loads(parsed.stdout))
     assert polled.exit_code == 0, polled.output
     assert wire[0] == (

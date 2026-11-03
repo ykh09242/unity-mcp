@@ -27,6 +27,7 @@ def _run(program, tmp_path):
 CLI_PROGRAM = r"""
 import copy
 import json
+import shlex
 import httpx
 from click.testing import CliRunner
 from cli.main import cli
@@ -120,8 +121,18 @@ for args, identity in ((['run'], 'build-owned'), (['batch', '--targets', 'window
               'explicit CLI polling identity')
         print('CLI_WIRE', json.dumps({'args': command, 'requests': [requests[-1]], 'response': reply}))
 reply = {'success': True, '_mcp_status': 'pending', 'data': {'job_id': 'batch-owned'}}
-result = invoke(['--format', 'text', 'build', 'batch', '--targets', 'windows64'])
-check(result.exit_code == 0 and 'unity-mcp build status batch-owned' in result.output, 'text poll hint')
+result = invoke(['--format', 'text', '--host', 'localhost', '--port', '18080', '--timeout', '41',
+                 '--instance', 'Project@fixture', 'build', 'batch', '--targets', 'windows64'])
+hint = result.output.split('Poll with: ', 1)[-1].splitlines()[0]
+hint_args = shlex.split(hint)
+check(result.exit_code == 0 and hint_args == [
+    'unity-mcp', '--no-project-context', '--host', 'localhost', '--port', '18080',
+    '--timeout', '41', '--format', 'text', '--instance', 'Project@fixture',
+    'build', 'status', 'batch-owned'], 'text poll hint retains effective connection')
+polled = runner.invoke(cli, hint_args[1:])
+check(polled.exit_code == 0 and requests[-1] == {
+    'type': 'manage_build', 'params': {'action': 'status', 'job_id': 'batch-owned'},
+    'unity_instance': 'Project@fixture'}, 'text poll hint dispatches observation')
 for args in (['run', '--backend', 'bad'], ['run', '--expected-plan', 'bad'], ['cancel']):
     before = len(requests)
     result = invoke(['--format', 'json', 'build', *args])

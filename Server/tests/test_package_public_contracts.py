@@ -27,6 +27,7 @@ def _run(program, tmp_path):
 CLI_PROGRAM = r'''
 import copy
 import json
+import shlex
 import httpx
 from click.testing import CliRunner
 from cli.main import cli
@@ -104,9 +105,19 @@ for command, initial_action in (('add', 'add_package'), ('remove', 'remove_packa
     check(result.exit_code == 0 and json.loads(result.output) == reply, 'pending JSON envelope')
     check(requests[-1]['params']['action'] == initial_action, 'initial package action')
     print('CLI_WIRE', json.dumps({'args': args, 'requests': [requests[-1]], 'response': reply}))
-    result = runner.invoke(cli, ['--format', 'text', 'packages', *args])
-    check(result.exit_code == 0 and 'unity-mcp packages status package-owned' in result.output,
-          'text job hint ' + command)
+    result = runner.invoke(cli, ['--no-project-context', '--format', 'text', '--host', 'localhost',
+                                '--port', '18080', '--timeout', '41', '--instance', 'Project@fixture',
+                                'packages', *args])
+    hint = result.output.split('Poll with: ', 1)[-1].splitlines()[0]
+    hint_args = shlex.split(hint)
+    check(result.exit_code == 0 and hint_args == [
+        'unity-mcp', '--no-project-context', '--host', 'localhost', '--port', '18080',
+        '--timeout', '41', '--format', 'text', '--instance', 'Project@fixture',
+        'packages', 'status', 'package-owned'], 'text job hint retains connection ' + command)
+    polled = runner.invoke(cli, hint_args[1:])
+    check(polled.exit_code == 0 and requests[-1] == {
+        'type': 'manage_packages', 'params': {'action': 'status', 'job_id': 'package-owned'},
+        'unity_instance': 'Project@fixture'}, 'text job hint dispatches observation ' + command)
 
 for phase in ('running', 'succeeded', 'failed'):
     reply = {'success': True, 'data': {'job_id': 'package-owned', 'status': phase, 'error': None}}
