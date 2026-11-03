@@ -7,6 +7,7 @@ from uuid import uuid4
 from core.config import config
 from core.server_build import RUNNING_SERVER
 import contextlib
+import codecs
 from contextvars import Context, ContextVar
 from dataclasses import dataclass, field, replace
 import errno
@@ -667,7 +668,9 @@ class UnityConnection:
                 logger.error(f"Error during framed receive: {exc}")
                 raise
 
-        chunks = []
+        data = bytearray()
+        decoder = codecs.getincrementaldecoder("utf-8")()
+        decoded_data = ""
         # Respect the socket's currently configured timeout
         try:
             while True:
@@ -675,49 +678,26 @@ class UnityConnection:
                 chunk = sock.recv(buffer_size)
                 self._check_deadline(deadline)
                 if not chunk:
-                    if not chunks:
+                    if not data:
                         raise Exception("Connection closed before receiving data")
-                    break
-                chunks.append(chunk)
-
-                # Process the data received so far
-                data = b"".join(chunks)
-                decoded_data = data.decode("utf-8")
+                    raise _UnityProtocolError(
+                        "Connection closed with truncated unframed JSON response"
+                    )
+                data.extend(chunk)
+                if len(data) > FRAMED_MAX:
+                    raise _UnityProtocolError("Unframed response exceeds maximum size")
+                decoded_data += decoder.decode(chunk)
 
                 # Check if we've received a complete response
                 try:
-                    # Special case for ping-pong
-                    if decoded_data.strip().startswith(
-                        '{"status":"success","result":{"message":"pong"'
-                    ):
-                        logger.debug("Received ping response")
-                        return data
-
-                    # Handle escaped quotes in the content
-                    if '"content":' in decoded_data:
-                        # Find the content field and its value
-                        content_start = decoded_data.find('"content":') + 9
-                        content_end = decoded_data.rfind('"', content_start)
-                        if content_end > content_start:
-                            # Replace escaped quotes in content with regular quotes
-                            content = decoded_data[content_start:content_end]
-                            content = content.replace('\\"', '"')
-                            decoded_data = (
-                                decoded_data[:content_start] + content + decoded_data[content_end:]
-                            )
-
-                    # Validate JSON format
+                    # Validate the original JSON without changing string escapes.
                     json.loads(decoded_data)
 
                     # If we get here, we have valid JSON
                     logger.info(f"Received complete response ({len(data)} bytes)")
-                    return data
+                    return bytes(data)
                 except json.JSONDecodeError:
                     # We haven't received a complete valid JSON response yet
-                    continue
-                except Exception as e:
-                    logger.warning(f"Error processing response chunk: {str(e)}")
-                    # Continue reading more chunks as this might not be the complete response
                     continue
         except socket.timeout:
             logger.warning("Socket timeout during receive")
