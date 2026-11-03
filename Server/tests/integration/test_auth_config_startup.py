@@ -1,6 +1,7 @@
 """Tests for auth configuration validation and startup routes."""
 
 import json
+import socket
 import sys
 from unittest.mock import MagicMock
 
@@ -23,6 +24,37 @@ def _restore_config(monkeypatch):
 
 
 class TestStartupConfigValidation:
+    def test_local_startup_failure_releases_listener_and_token(self, monkeypatch, tmp_path):
+        import main as entry
+
+        with socket.socket() as candidate:
+            candidate.bind(("127.0.0.1", 0))
+            port = candidate.getsockname()[1]
+        token_path = tmp_path / "token"
+        monkeypatch.setenv("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", str(token_path))
+        monkeypatch.setenv("UNITY_MCP_HTTP_REMOTE_HOSTED", "false")
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["main", "--transport", "http", "--http-host", "127.0.0.1", "--http-port", str(port)],
+        )
+        server = MagicMock()
+
+        def fail_after_publication(**kwargs):
+            assert token_path.exists()
+            assert kwargs["sockets"][0].getsockname()[1] == port
+            raise RuntimeError("startup failure")
+
+        server.run.side_effect = fail_after_publication
+        monkeypatch.setattr(entry, "create_mcp_server", lambda *args, **kwargs: server)
+        monkeypatch.setattr(config, "local_auth_token", None)
+        with pytest.raises(RuntimeError, match="startup failure"):
+            entry.main()
+        assert not token_path.exists()
+        assert config.local_auth_token is None
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", port))
+
     @pytest.mark.parametrize("proxy_env", [None, "false", "0", "invalid"])
     def test_remote_http_requires_explicit_tls_proxy(self, monkeypatch, proxy_env):
         import main as entry

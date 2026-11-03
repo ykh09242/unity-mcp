@@ -51,7 +51,7 @@ from core.custom_instructions import (
     append_custom_instructions,
     load_custom_instructions,
 )
-from core.local_auth import local_auth_token, local_auth_token_path
+from core.local_auth import local_auth_token, local_auth_token_path, local_http_sockets
 from transport.local_auth_middleware import LocalControlAuthMiddleware
 from transport.local_server_lifecycle import request_local_shutdown
 from transport.remote_auth_middleware import (
@@ -1630,7 +1630,7 @@ Examples:
         if config.http_remote_hosted:
             mcp.run(transport=transport, host=host, port=port)
         else:
-            with local_auth_token(port) as token:
+            with local_http_sockets(host, port) as sockets, local_auth_token(port) as token:
                 config.local_auth_token = token
                 configuration_trace.record(
                     "local_auth_token",
@@ -1642,7 +1642,7 @@ Examples:
                     local_auth_token_path(port),
                 )
                 try:
-                    mcp.run(transport=transport, host=host, port=port)
+                    mcp.run(transport=transport, host=host, port=port, sockets=sockets)
                 finally:
                     config.local_auth_token = None
                     configuration_trace.record(

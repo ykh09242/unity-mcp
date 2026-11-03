@@ -1,6 +1,7 @@
 """Credential lifecycle and native client discovery without real user files."""
 
 import os
+import socket
 from pathlib import Path
 
 import httpx
@@ -14,6 +15,7 @@ from core.local_auth import (
     LOCAL_AUTH_TOKEN_ENV,
     local_auth_token,
     local_auth_token_path,
+    local_http_sockets,
     read_local_auth_token,
 )
 
@@ -43,6 +45,41 @@ def test_shutdown_does_not_remove_newer_launch_file(token_path):
     with local_auth_token(8080):
         token_path.write_text("newer-test-launch")
     assert token_path.read_text() == "newer-test-launch"
+
+
+def test_listener_is_owned_until_context_exit():
+    with local_http_sockets("127.0.0.1", 0) as listeners:
+        port = listeners[0].getsockname()[1]
+        with pytest.raises(OSError):
+            with local_http_sockets("127.0.0.1", port):
+                pass
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", port))
+
+
+def test_localhost_listeners_share_an_ephemeral_port():
+    with local_http_sockets("localhost", 0) as listeners:
+        assert len({listener.getsockname()[1] for listener in listeners}) == 1
+        assert all(listener.getsockname()[1] != 0 for listener in listeners)
+
+
+def test_partial_bind_failure_releases_previously_bound_socket(monkeypatch):
+    with socket.socket() as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        occupied.listen()
+        with socket.socket() as candidate:
+            candidate.bind(("127.0.0.1", 0))
+            free_port = candidate.getsockname()[1]
+        addresses = [
+            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", free_port)),
+            (socket.AF_INET, socket.SOCK_STREAM, 0, "", occupied.getsockname()),
+        ]
+        monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: addresses)
+        with pytest.raises(OSError):
+            with local_http_sockets("localhost", free_port):
+                pass
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", free_port))
 
 
 def test_cli_does_not_automatically_disclose_local_token_to_remote_host(tmp_path, monkeypatch):
