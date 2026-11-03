@@ -8,6 +8,7 @@ composition through wrappers without rereading their source at every call site.
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import OrderedDict, defaultdict, deque
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
@@ -904,6 +905,7 @@ class Catalog:
             self.guids.add(guid)
             for key in self.asset_keys(asset):
                 self.keys[key].add(target)
+        self.resource_keys = sorted(value for scheme, value in self.keys if scheme == "resources")
 
     def resolve(
         self,
@@ -936,11 +938,17 @@ class Catalog:
                     if prefix.count("/") <= lookups.MAX_PREFIX_DEPTH
                     else lookups.ANY
                 )
-            for (kind, value), ids in self.keys.items():
+            if visit is not None:
+                visit()
+            start = bisect_left(self.resource_keys, prefix)
+            for index in range(start, len(self.resource_keys)):
+                value = self.resource_keys[index]
+                if not value.startswith(prefix):
+                    break
                 if visit is not None:
                     visit()
-                if kind == scheme and value != key and value.startswith(prefix):
-                    add_targets(ids)
+                if value != key:
+                    add_targets(self.keys[(scheme, value)])
         if scheme == "addressables":
             if lookups is not None:
                 lookups.add(lookups.key("addressables_label", key))

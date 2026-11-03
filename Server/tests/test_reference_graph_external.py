@@ -60,6 +60,44 @@ def test_default_exact_matches_are_candidates_not_proven_schema_contracts():
     assert result.coverage == "exact_catalog_strings"
 
 
+def test_resources_folder_lookup_charges_only_selected_keys_and_targets():
+    def asset(i, *keys, excluded=False):
+        return {
+            "guid": f"{i:032x}",
+            "path": f"Assets/{i}.asset",
+            "keys": [{"scheme": "resources", "value": key} for key in keys],
+            "_excluded": excluded,
+        }
+
+    selected = [
+        asset(3, "UI"),
+        asset(2, "UI/part", "ui/PART/child"),
+        asset(1, "uI/part"),
+        asset(4, "UIplus"),
+        asset(5, "UI/hidden", excluded=True),
+    ]
+    mapping = [{"field": "/*/folder", "scheme": "resources", "mode": "all"}]
+    text = json.dumps([{"folder": "ui"}] * 10)
+    costs = []
+    for size in (0, 10_000):
+        catalog = Catalog(selected + [asset(i + 6, f"Unrelated/{i}") for i in range(size)])
+        budget = CollectionBudget(CollectionLimits(max_items=500))
+        result = analyze_document(
+            "data.json", text, catalog, mapping, visit=lambda: budget.admit_items(1)
+        )
+        assert [edge.target for edge in result.edges] == [
+            f"asset:{i:032x}" for _ in range(10) for i in (1, 2, 3)
+        ]
+        costs.append(budget.items)
+    assert costs[0] == costs[1]
+    catalog = Catalog(selected)
+    assert catalog.resolve("resources", "UI/", "all")[0] == {f"asset:{i:032x}" for i in (1, 2)}
+    assert catalog.resolve("resources", "", "all")[0] == {f"asset:{i:032x}" for i in (1, 2, 3, 4)}
+    budget = CollectionBudget(CollectionLimits(max_items=3))
+    with pytest.raises(CollectionBudgetExceeded, match="max_items=3"):
+        catalog.resolve("resources", "UI", "all", visit=lambda: budget.admit_items(1))
+
+
 @pytest.mark.parametrize("extension", ["json", "csv"])
 def test_external_source_budget_rejects_document_before_reading(tmp_path, monkeypatch, extension):
     path = tmp_path / ("large." + extension)
