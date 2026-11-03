@@ -215,15 +215,28 @@ namespace MCPForUnity.Editor.Tools
             };
         }
 
-        private static Scene? FindLoadedScene(string sceneName, string scenePath)
+        private static Scene? FindLoadedScene(SceneCommand cmd, out ErrorResponse ambiguity)
         {
+            ambiguity = null;
+            string sceneName = cmd.sceneName ?? cmd.name;
+            var matches = new List<Scene>();
             for (int i = 0; i < SceneManager.sceneCount; i++)
             {
                 var scene = SceneManager.GetSceneAt(i);
-                if (!string.IsNullOrEmpty(scenePath) && scene.path == scenePath)
-                    return scene;
-                if (string.IsNullOrEmpty(scenePath) && !string.IsNullOrEmpty(sceneName) && scene.name == sceneName)
-                    return scene;
+                if (!string.IsNullOrEmpty(cmd.scenePath))
+                {
+                    if (scene.path == cmd.scenePath)
+                        return scene;
+                }
+                else if (!string.IsNullOrEmpty(sceneName) && scene.name == sceneName)
+                    matches.Add(scene);
+            }
+            if (matches.Count == 1)
+                return matches[0];
+            if (matches.Count > 1)
+            {
+                var paths = matches.Select(scene => string.IsNullOrEmpty(scene.path) ? "<unsaved scene>" : scene.path);
+                ambiguity = new ErrorResponse($"Scene name '{sceneName}' is ambiguous. Provide an exact scenePath. Matches: {string.Join(", ", paths)}");
             }
             return null;
         }
@@ -2112,9 +2125,9 @@ namespace MCPForUnity.Editor.Tools
 
         private static object CloseScene(SceneCommand cmd)
         {
-            var scene = FindLoadedScene(cmd.sceneName ?? cmd.name, cmd.scenePath);
+            var scene = FindLoadedScene(cmd, out var ambiguity);
             if (!scene.HasValue)
-                return new ErrorResponse("Scene not found among loaded scenes. Provide 'sceneName' or 'scenePath'.");
+                return ambiguity ?? new ErrorResponse("Scene not found among loaded scenes. Provide 'sceneName' or 'scenePath'.");
 
             if (scene.Value.isLoaded && CountLoadedScenes() <= 1)
                 return new ErrorResponse("Cannot close the last loaded scene.");
@@ -2123,6 +2136,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Scene '{scene.Value.name}' has unsaved changes. Save first or data will be lost.");
 
             string capturedName = scene.Value.name;
+            string capturedPath = scene.Value.path;
             bool remove = cmd.removeScene ?? false;
             bool closed = EditorSceneManager.CloseScene(scene.Value, remove);
             string verb = remove ? "Removed" : "Unloaded";
@@ -2133,6 +2147,7 @@ namespace MCPForUnity.Editor.Tools
                 new
                 {
                     sceneName = capturedName,
+                    scenePath = capturedPath,
                     removed = remove,
                     loadedSceneCount = CountLoadedScenes(),
                 }
@@ -2141,9 +2156,9 @@ namespace MCPForUnity.Editor.Tools
 
         private static object SetActiveScene(SceneCommand cmd)
         {
-            var scene = FindLoadedScene(cmd.sceneName ?? cmd.name, cmd.scenePath);
+            var scene = FindLoadedScene(cmd, out var ambiguity);
             if (!scene.HasValue)
-                return new ErrorResponse("Scene not found among loaded scenes. Provide 'sceneName' or 'scenePath'.");
+                return ambiguity ?? new ErrorResponse("Scene not found among loaded scenes. Provide 'sceneName' or 'scenePath'.");
             if (!scene.Value.isLoaded)
                 return new ErrorResponse($"Scene '{scene.Value.name}' is not loaded. Open it first.");
 
@@ -2151,7 +2166,7 @@ namespace MCPForUnity.Editor.Tools
             bool success = SceneManager.SetActiveScene(scene.Value);
             if (!success)
                 return new ErrorResponse($"Failed to set '{capturedName}' as the active scene.");
-            return new SuccessResponse($"Set '{capturedName}' as the active scene.");
+            return new SuccessResponse($"Set '{capturedName}' as the active scene.", new { sceneName = capturedName, scenePath = scene.Value.path });
         }
 
         private static object GetLoadedScenes()
@@ -2192,9 +2207,9 @@ namespace MCPForUnity.Editor.Tools
             if (go.transform.parent != null)
                 return new ErrorResponse($"'{go.name}' is not a root GameObject. Only root objects can be moved between scenes.");
 
-            var targetScene = FindLoadedScene(cmd.sceneName ?? cmd.name, cmd.scenePath);
+            var targetScene = FindLoadedScene(cmd, out var ambiguity);
             if (!targetScene.HasValue)
-                return new ErrorResponse("Target scene not found. Provide 'sceneName' or 'scenePath'.");
+                return ambiguity ?? new ErrorResponse("Target scene not found. Provide 'sceneName' or 'scenePath'.");
             if (!targetScene.Value.isLoaded)
                 return new ErrorResponse($"Target scene '{targetScene.Value.name}' is not loaded.");
 
@@ -2202,7 +2217,10 @@ namespace MCPForUnity.Editor.Tools
                 SceneManager.MoveGameObjectToScene(go, targetScene.Value);
             else
                 Undo.MoveGameObjectToScene(go, targetScene.Value, $"Move '{go.name}' to scene '{targetScene.Value.name}'");
-            return new SuccessResponse($"Moved '{go.name}' to scene '{targetScene.Value.name}'.");
+            return new SuccessResponse(
+                $"Moved '{go.name}' to scene '{targetScene.Value.name}'.",
+                new { sceneName = targetScene.Value.name, scenePath = targetScene.Value.path }
+            );
         }
 
         // ModifyBuildSettings removed — use manage_build(action="scenes") instead.

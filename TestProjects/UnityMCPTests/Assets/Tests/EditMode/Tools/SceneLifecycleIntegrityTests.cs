@@ -516,17 +516,29 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(first.isLoaded && second.isLoaded);
         }
 
-        [TestCase("omitted")]
-        [TestCase("null")]
-        [TestCase("empty")]
-        public void NameOnlyAndEmptyPath_KeepFirstMatchingScene(string pathKind)
+        [TestCase("set_active_scene", "omitted")]
+        [TestCase("close_scene", "null")]
+        [TestCase("move_to_scene", "empty")]
+        public void AmbiguousName_RejectsWithoutMutation(string action, string pathKind)
         {
-            Assert.IsTrue(SceneManager.SetActiveScene(second));
-            JObject request = new JObject { ["action"] = "set_active_scene", ["sceneName"] = sceneName };
+            var go = new GameObject("Owned_" + Guid.NewGuid().ToString("N"));
+            Scene[] before = LoadedScenes();
+            JObject request = new JObject
+            {
+                ["action"] = action,
+                ["sceneName"] = sceneName,
+                ["target"] = go.GetInstanceIDCompat(),
+            };
             if (pathKind != "omitted")
                 request["scenePath"] = pathKind == "null" ? JValue.CreateNull() : new JValue("");
-            Success(Call(request));
+            JObject response = Call(request);
+            Assert.IsFalse(response.Value<bool>("success"));
+            StringAssert.Contains(firstPath, response.Value<string>("error"));
+            StringAssert.Contains(secondPath, response.Value<string>("error"));
+            CollectionAssert.AreEqual(before, LoadedScenes());
             Assert.AreEqual(first, SceneManager.GetActiveScene());
+            Assert.AreEqual(first, go.scene);
+            Assert.IsTrue(first.isLoaded && second.isLoaded);
         }
 
         [TestCase("missing_name")]
