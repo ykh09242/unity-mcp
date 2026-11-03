@@ -84,6 +84,7 @@ for created_id in (321, -321):
         ('manage_components', {'action': 'set_property', 'target': created_id, 'search_method': 'by_id',
                                'componentType': 'Light', 'property': 'intensity', 'value': 0.0}),
     ]
+    steps = ['create_gameobject', 'add_light_component', 'set_type', 'set_color', 'set_intensity']
     for wrapped in (False, True):
         for fail_at in (None, 1, 2, 3, 4, 5):
             step = 0
@@ -103,6 +104,12 @@ for created_id in (321, -321):
                 document = None
             expected = {'success': False, 'error': 'Native light step rejected',
                         'data': {'count': 0, 'enabled': False, 'reference': None}} if fail_at else created
+            if fail_at and fail_at > 1:
+                progress = document.pop('lightingCreation', {}) if isinstance(document, dict) else {}
+                check(progress.get('partialExecution') is True and progress.get('createdObject') == created['data']
+                      and progress.get('completedSteps') == steps[:fail_at - 1]
+                      and progress.get('failedStep') == steps[fail_at - 1] and progress.get('failedStepOutcome') == 'failed',
+                      'light progress preserves the created target and confirmed steps ' + label)
             check(document == expected, 'light one JSON document ' + label)
             print('CLI_WIRE', json.dumps({'group': 'lighting', 'args': args, 'fail_at': fail_at, 'requests': sent}))
 fail_at = None
