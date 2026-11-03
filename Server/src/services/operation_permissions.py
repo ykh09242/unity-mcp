@@ -587,6 +587,9 @@ def required_permissions(
     if name == "manage_play_scenario" and action == "player_suite_build":
         # Explicit Player suite builds persist output and execute Unity build work.
         return CUSTOM_GRANTS
+    if name == "manage_scenario_recording" and action == "stop":
+        # Finalizing the running recording saves a new scenario definition.
+        return CUSTOM_GRANTS
     if name == "manage_ui" and action == "patch_source":
         # The SDK and native handler both require a JSON boolean. Only an
         # omitted flag defaults to preview; explicit null is malformed.

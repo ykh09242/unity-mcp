@@ -67,6 +67,10 @@ Blender update checking require `run` because their native handlers start
 background refresh or subprocess work. Asset-generation status remains a read
 of the existing job record.
 
+Stopping a scenario recording (`manage_scenario_recording.stop`) requires
+`edit` and `run` on both the requester and the selected plugin because it saves
+the recorded scenario as a draft. Cancelling discards the recording with `run` alone.
+
 All `manage_packages` mutations (add, remove, embed, resolve and registry changes)
 require `edit` and `run`: Unity may import, re-resolve or compile package code.
 Queries/status remain reads. Explicit Editor consent remains necessary separately.

@@ -401,29 +401,61 @@ async def test_final_serialized_policy_refusal_sends_neither_execute_nor_cancel(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "grants,allowed", [(["edit"], False), (["run"], False), (["edit", "run"], True)]
+    "name,params",
+    [
+        ("generate_image", {"action": "generate", "prompt": "fixture"}),
+        ("manage_scenario_recording", {"action": "stop", "recording_id": "1" * 32}),
+        (
+            "batch_execute",
+            {"commands": [{"tool": "manage_scenario_recording", "params": {"action": "stop"}}]},
+        ),
+    ],
 )
-async def test_importing_execution_requires_both_grants_before_native_work(
-    command_hub, monkeypatch, grants, allowed
+@pytest.mark.parametrize(
+    "request_grants,plugin_grants,allowed",
+    [
+        (["edit"], ["edit", "run"], False),
+        (["run"], ["edit", "run"], False),
+        (["edit", "run"], ["edit"], False),
+        (["edit", "run"], ["run"], False),
+        (["edit", "run"], ["edit", "run"], True),
+    ],
+)
+async def test_persisting_execution_requires_both_grants_before_native_work(
+    command_hub, monkeypatch, name, params, request_grants, plugin_grants, allowed
 ):
     monkeypatch.setattr(config, "http_remote_hosted", True)
     await command_hub.registry.unregister("session")
     await command_hub.registry.register("session", "Fixture", "hash", "6000", user_id="alice")
-    claims = {name: {"unity_mcp_permissions": grants} for name in ("request", "plugin")}
+    claims = {
+        "request": {"unity_mcp_permissions": request_grants},
+        "plugin": {"unity_mcp_permissions": plugin_grants},
+    }
     async with permission_service(monkeypatch, claims) as fixture:
         requester = (await fixture.service.validate("request")).lease
         plugin = (await fixture.service.validate("plugin")).lease
         command_hub.websocket.state.user_id = "alice"
         setattr(command_hub.websocket.state, AUTHENTICATED_LEASE_STATE, plugin)
-        # Given native generation that submits work and imports an asset.
-        # When either independent grant is missing, then even native submission is
-        # refused; the combined-grant control witnesses the actual send boundary.
         with bind_credential_lease(requester):
-            result = await PluginHub.send_command(
-                "session", "generate_image", {"action": "generate", "prompt": "fixture"}
-            )
+            result = await PluginHub.send_command("session", name, params)
         assert result["success"] is allowed
         assert len(command_hub.sent) == int(allowed) and PluginHub._pending == {}
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_recording_cancel_discards_with_run_but_stop_saves_a_draft(native):
+    run = parse_permissions({"unity_mcp_permissions": ["run"]}, strict=False)
+    both = parse_permissions({"unity_mcp_permissions": ["edit", "run"]}, strict=False)
+    name = "manage_scenario_recording"
+    authorize_operation(run, name, {"action": "cancel"}, native=native)
+    stop = {"action": "stop"}
+    batches = ("batch_execute", "batch_validate", "batch_apply_preview")
+    for tool, params in [(name, stop)] + [
+        (outer, {"commands": [{"tool": name, "params": stop}]}) for outer in batches
+    ]:
+        with pytest.raises(OperationPermissionError):
+            authorize_operation(run, tool, params, native=native)
+        authorize_operation(both, tool, params, native=native)
 
 
 @pytest.mark.asyncio
