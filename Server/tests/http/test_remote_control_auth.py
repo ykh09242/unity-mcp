@@ -24,8 +24,8 @@ def remote_app(monkeypatch, prepared_tool_factory):
     monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "1")
     validator = AsyncMock(
         side_effect=lambda key, **kwargs: ValidationResult(
-            valid=key in ("alice-key", "bob-key"),
-            user_id={"alice-key": "alice", "bob-key": "bob"}.get(key),
+            valid=key in ("alice-key", "alice-rotated", "bob-key"),
+            user_id={"alice-key": "alice", "alice-rotated": "alice", "bob-key": "bob"}.get(key),
         )
     )
     service = ApiKeyService("https://fixture.invalid/validate", cache_ttl=0)
@@ -161,40 +161,76 @@ def test_plugin_upgrade_requires_authentication(remote_app, headers):
     assert denied.value.code == 1008
 
 
+def _open_session(client):
+    headers = {"X-API-Key": "alice-key", "Accept": "application/json, text/event-stream"}
+    response = client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "auth-regression", "version": "1"},
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert "result" in response.json(), response.text
+    headers["Mcp-Session-Id"] = response.headers["mcp-session-id"]
+    headers["MCP-Protocol-Version"] = "2025-03-26"
+    response = client.post(
+        "/mcp",
+        headers=headers,
+        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+    )
+    assert response.status_code == 202
+    return headers
+
+
+def test_session_termination_requires_the_initiating_user(remote_app):
+    app, validator = remote_app
+    ping = {"jsonrpc": "2.0", "id": 2, "method": "ping"}
+    with TestClient(app) as client:
+        headers = _open_session(client)
+        denied = client.delete("/mcp", headers={**headers, "X-API-Key": "bob-key"})
+        unknown = client.delete("/mcp", headers={**headers, "Mcp-Session-Id": "unknown"})
+        assert denied.status_code == unknown.status_code == 404
+        assert denied.json() == unknown.json()
+        duplicate_headers = [*headers.items(), ("Mcp-Session-Id", "unknown")]
+        assert client.delete("/mcp", headers=duplicate_headers).status_code == 404
+        assert client.post("/mcp", headers=headers, json=ping).json()["result"] == {}
+        validator.side_effect = lambda key, **kwargs: ValidationResult(
+            valid=key == "alice-rotated", user_id="alice" if key == "alice-rotated" else None
+        )
+        assert client.delete("/mcp", headers=headers).status_code == 401
+        rotated = {**headers, "X-API-Key": "alice-rotated"}
+        assert client.delete("/mcp", headers=rotated).status_code == 200
+        assert client.post("/mcp", headers=rotated, json=ping).status_code == 404
+
+
+@pytest.mark.parametrize(("stateless", "version"), [(True, "2025-03-26"), (False, "2026-07-28")])
+def test_sessionless_delete_keeps_transport_method_rejection(remote_app, stateless, version):
+    app, _ = remote_app
+    app = app.state.fastmcp_server.http_app(stateless_http=stateless)
+    headers = {
+        "X-API-Key": "alice-key",
+        "Mcp-Protocol-Version": version,
+        "Mcp-Session-Id": "unknown",
+    }
+    with TestClient(app) as client:
+        assert client.delete("/mcp", headers=headers).status_code == 405
+
+
 def test_authenticated_session_catalogs_and_resource_identity(remote_app, monkeypatch):
     app, validator = remote_app
     service = ApiKeyService.get_instance()
     close = AsyncMock(wraps=service.aclose)
     monkeypatch.setattr(service, "aclose", close)
-    headers = {"X-API-Key": "alice-key", "Accept": "application/json, text/event-stream"}
     with TestClient(app) as client:
-        response = client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-03-26",
-                    "capabilities": {},
-                    "clientInfo": {"name": "auth-regression", "version": "1"},
-                },
-            },
-        )
-        assert response.status_code == 200, response.text
-        assert "result" in response.json(), response.text
-        headers["Mcp-Session-Id"] = response.headers["mcp-session-id"]
-        headers["MCP-Protocol-Version"] = "2025-03-26"
-        response = client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized",
-            },
-        )
-        assert response.status_code == 202
+        headers = _open_session(client)
 
         for request_id, (method, params) in enumerate(
             [

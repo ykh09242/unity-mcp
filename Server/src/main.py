@@ -54,7 +54,10 @@ from core.custom_instructions import (
 from core.local_auth import local_auth_token, local_auth_token_path
 from transport.local_auth_middleware import LocalControlAuthMiddleware
 from transport.local_server_lifecycle import request_local_shutdown
-from transport.remote_auth_middleware import RemoteControlAuthMiddleware
+from transport.remote_auth_middleware import (
+    RemoteControlAuthMiddleware,
+    RemoteSessionTerminationGuard,
+)
 from transport.catalog_subscriptions import (
     CatalogSubscriptionLifetimeMiddleware,
     install_catalog_subscriptions,
@@ -662,6 +665,8 @@ class UnityMCP(FastMCP):
         if not config.http_remote_hosted:
             app.add_middleware(LocalControlAuthMiddleware, token=config.local_auth_token)
         else:
+            if app.state.transport_type == "streamable-http":
+                RemoteSessionTerminationGuard.install(app)
             app.add_middleware(RemoteControlAuthMiddleware)
         return app
 

@@ -195,6 +195,8 @@ The ASGI server may report a pre-acceptance rejection as HTTP `403` during the W
 
 ### Session Isolation
 
+Only the user who initialized a stateful MCP HTTP session can terminate it with `DELETE`. A rotated API key can terminate the session if the validator returns the same `user_id`. A different user receives HTTP `404` and the session stays open. Each MCP request uses the identity of the key presented on that request.
+
 Each user can only see and interact with their authorized Unity instances. Hosted requests must explicitly select the Editor with `unity_instance` for tools or `_meta.unity_instance` for resources. `set_active_instance` is available only on stateful legacy connections; modern sessionless callers cannot persist selection. Plugin and client keys must resolve to the same user identity. See [Multi-Instance Routing](./multi-instance.md).
 
 ### Auto-Select Disabled

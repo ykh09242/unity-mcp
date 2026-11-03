@@ -3,11 +3,17 @@
 import asyncio
 from contextlib import AsyncExitStack
 from ipaddress import IPv4Address, IPv6Address, ip_address
+from weakref import WeakKeyDictionary
 
 import anyio
+from fastmcp.server.auth.middleware import RequireAuthMiddleware
+from fastmcp.server.http import StreamableHTTPASGIApp
+from mcp.server.streamable_http import MCP_SESSION_ID_HEADER, StreamableHTTPServerTransport
+from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.routing import Route
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from core.constants import API_KEY_HEADER
 from core.config import config
@@ -32,6 +38,69 @@ def _source_ip(value: str) -> IPv4Address | IPv6Address:
     if isinstance(address, IPv6Address) and address.ipv4_mapped is not None:
         return address.ipv4_mapped
     return address
+
+
+class RemoteSessionTerminationGuard:
+    """Tie DELETE authority to the lifetime of the SDK's actual stateful transport."""
+
+    def __init__(self, endpoint: StreamableHTTPASGIApp) -> None:
+        self.endpoint = endpoint
+        self._owners: WeakKeyDictionary[StreamableHTTPServerTransport, str] = WeakKeyDictionary()
+
+    @classmethod
+    def install(cls, app) -> None:
+        # Wrap the actual MCP route, including when mounted or configured at a custom
+        # path. Keep a configured FastMCP bearer-auth wrapper outside this guard.
+        for route in app.routes:
+            if isinstance(route, Route) and route.path == app.state.path:
+                wrapper = route.app if isinstance(route.app, RequireAuthMiddleware) else route
+                if isinstance(wrapper.app, StreamableHTTPASGIApp):
+                    wrapper.app = cls(wrapper.app)
+                    return
+        raise RuntimeError("Unsupported FastMCP streamable HTTP endpoint for hosted sessions")
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        manager = self.endpoint.session_manager
+        headers = Headers(scope=scope)
+        version = headers.get("mcp-protocol-version")
+        if (
+            manager is None
+            or manager.stateless
+            or (version is not None and version not in HANDSHAKE_PROTOCOL_VERSIONS)
+        ):
+            await self.endpoint(scope, receive, send)
+            return
+
+        user = scope.get("state", {}).get(AUTHENTICATED_USER_STATE)
+        sessions = headers.getlist(MCP_SESSION_ID_HEADER)
+        # MCP SDK 2.3 owns this registry and removes transports on termination,
+        # idle expiry, failed opening and shutdown. Weak keys do not prolong them.
+        transports = manager._server_instances
+        if scope["method"] == "DELETE" and sessions:
+            transport = transports.get(sessions[0]) if len(sessions) == 1 else None
+            if transport is None or not user or self._owners.get(transport) != user:
+                await JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": None,
+                        "error": {"code": -32600, "message": "Session not found"},
+                    },
+                    status_code=404,
+                )(scope, receive, send)
+                return
+        if scope["method"] != "POST" or sessions or not user:
+            await self.endpoint(scope, receive, send)
+            return
+
+        async def bind_opening_response(message: Message) -> None:
+            if message["type"] == "http.response.start" and 200 <= message["status"] < 300:
+                session_id = Headers(raw=message["headers"]).get(MCP_SESSION_ID_HEADER)
+                if session_id is not None and (transport := transports.get(session_id)) is not None:
+                    # Record the opener before exposing the new ID to the client.
+                    self._owners.setdefault(transport, user)
+            await send(message)
+
+        await self.endpoint(scope, receive, bind_opening_response)
 
 
 class RemoteControlAuthMiddleware:
