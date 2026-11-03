@@ -1142,16 +1142,16 @@ Environment Variables:
 
 Examples:
   # Use specific Unity project as default
-  python -m src.server --default-instance "MyProject"
+  mcp-for-unity --default-instance "MyProject"
 
   # Start with HTTP transport
-  python -m src.server --transport http --http-url http://127.0.0.1:8080
+  mcp-for-unity --transport http --http-url http://127.0.0.1:8080
 
   # Start with stdio transport (default)
-  python -m src.server --transport stdio
+  mcp-for-unity --transport stdio
 
   # Use environment variable for transport
-  UNITY_MCP_TRANSPORT=http UNITY_MCP_HTTP_URL=http://localhost:9000 python -m src.server
+  UNITY_MCP_TRANSPORT=http UNITY_MCP_HTTP_URL=http://localhost:9000 mcp-for-unity
         """,
     )
     parser.add_argument(
@@ -1165,7 +1165,7 @@ Examples:
         "--transport",
         type=str,
         choices=["stdio", "http"],
-        default="stdio",
+        default=None,
         help="Transport protocol to use: stdio or http (default: stdio). "
         "Overrides UNITY_MCP_TRANSPORT environment variable.",
     )
@@ -1311,7 +1311,14 @@ Examples:
     configuration_trace.declare("http_port", 8080)
 
     # Set transport mode
-    config.transport_mode = args.transport or os.environ.get("UNITY_MCP_TRANSPORT", "stdio")
+    transport_mode = (
+        args.transport
+        if args.transport is not None
+        else os.environ.get("UNITY_MCP_TRANSPORT", "stdio")
+    )
+    if transport_mode not in {"stdio", "http"}:
+        parser.error("transport must be stdio or http")
+    config.transport_mode = transport_mode
     configuration_trace.record(
         "transport_mode",
         config.transport_mode,

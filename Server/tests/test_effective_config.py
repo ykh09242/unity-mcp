@@ -118,10 +118,13 @@ def start_server(monkeypatch, arguments):
     code = """
 import json
 import main as entry
+from contextlib import nullcontext
 from unittest.mock import MagicMock
 from core.config import effective_server_configuration
 server = MagicMock()
 entry.create_mcp_server = MagicMock(return_value=server)
+entry.local_http_sockets = lambda *args: nullcontext([])
+entry.local_auth_token = lambda *args: nullcontext("test-token")
 entry.main()
 print(json.dumps({"report": effective_server_configuration().model_dump(mode="json"), "run": server.run.call_args.kwargs}))
 """
@@ -312,14 +315,50 @@ def test_cli_source_overrides_loaded_project_context(monkeypatch, tmp_path):
     assert "project_context" in entry["overrides"]
 
 
-def test_server_transport_default_really_masks_environment(monkeypatch):
-    monkeypatch.setenv("UNITY_MCP_TRANSPORT", "http")
-    report, server = start_server(monkeypatch, [])
+@pytest.mark.parametrize(
+    "arguments,environment,expected,source",
+    [
+        ([], None, "stdio", "default"),
+        ([], "http", "http", "environment"),
+        (["--transport", "stdio"], "http", "stdio", "cli"),
+        (["--transport", "http"], "stdio", "http", "cli"),
+        (["--transport", "stdio"], "invalid", "stdio", "cli"),
+    ],
+)
+def test_server_transport_precedence_and_provenance(
+    monkeypatch, arguments, environment, expected, source
+):
+    if environment is not None:
+        monkeypatch.setenv("UNITY_MCP_TRANSPORT", environment)
+    report, server = start_server(monkeypatch, arguments)
     entry = report["fields"]["transport_mode"]
-    assert entry["value"] == "stdio"
-    assert entry["source"] == "default"
-    assert "UNITY_MCP_TRANSPORT" in entry["overrides"]
-    assert server == {"transport": "stdio"}
+    assert entry["value"] == expected
+    assert entry["source"] == source
+    if source == "cli" and environment is not None:
+        assert "UNITY_MCP_TRANSPORT" in entry["overrides"]
+    assert server["transport"] == expected
+
+
+@pytest.mark.parametrize("environment", ["invalid-transport-sentinel", ""])
+def test_server_rejects_invalid_selected_transport_before_startup(monkeypatch, environment):
+    import os
+    from pathlib import Path
+    import subprocess
+
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("UNITY_MCP_TRANSPORT", environment)
+    result = subprocess.run(
+        [sys.executable, "-B", "-m", "main"],
+        cwd=root,
+        env={**os.environ, "PYTHONPATH": str(root / "src")},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 2
+    assert "transport must be stdio or http" in result.stderr
+    assert "invalid-transport-sentinel" not in result.stderr
 
 
 def test_server_argparse_abbreviation_records_cli_origin(monkeypatch):

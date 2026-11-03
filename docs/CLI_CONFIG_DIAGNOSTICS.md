@@ -29,8 +29,9 @@ input-free error. An invalid value hidden by a higher-priority flag is not parse
 Server precedence is field-specific and this diagnostic preserves it. For
 example, nonempty `UNITY_MCP_API_KEY_CACHE_TTL` wins over its CLI option, while
 `--http-port` wins over the environment and URL port. `UNITY_MCP_HTTP_URL` wins
-over `--http-url`. The current argparse `--transport` default is nonempty, so it
-also wins over `UNITY_MCP_TRANSPORT` when no transport flag is supplied. Timeout
+over `--http-url`. Transport selection uses `--transport`, then
+`UNITY_MCP_TRANSPORT`, then `stdio`. The selected value must be `stdio` or `http`;
+an invalid environment value is ignored when an explicit valid flag wins. Timeout
 factories ignore empty, invalid, nonpositive and nonfinite values; handshake
 values above 300 seconds are clamped. Invalid server startup overrides that the
 runtime ignores carry a diagnostic without reproducing the raw input.
