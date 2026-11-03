@@ -1064,13 +1064,25 @@ class ReferenceGraphService:
         )
         if policy_choice_required and action not in {"status", "policy"}:
             await drained_thread(workspace.require_restart_policy)
+
+        def admission_snapshot():
+            if editor.get("ignore_watchers") is not False:
+                return False, workspace.ignore_current(editor, bounded=True), None
+            with store.read_snapshot():
+                policy = workspace.policy(bounded=True)
+                return (
+                    policy["respect_gitignore"],
+                    workspace.ignore_current(editor, bounded=True),
+                    policy.get("version", 0),
+                )
+
         policy_changed = False
-        ignore_changed = False
+        fallback, admission_current, fallback_policy_version = False, False, None
         if not replacing_policy:
-            ignore_changed = not await drained_thread(
-                workspace.ignore_current, editor, bounded=True
+            fallback, admission_current, fallback_policy_version = await drained_thread(
+                admission_snapshot
             )
-            if ignore_changed:
+            if not admission_current:
                 await drained_thread(workspace.block_admission)
         external_changed = False
         local_query_page = False
@@ -1121,27 +1133,11 @@ class ReferenceGraphService:
             and action not in {"runtime_release", "runtime_sessions", "runtime_status"}
         )
 
-        def fallback_admission():
-            with store.read_snapshot():
-                policy = workspace.policy(bounded=True)
-                return (
-                    policy["respect_gitignore"],
-                    workspace.ignore_current(editor, bounded=True),
-                    policy.get("version", 0),
-                )
-
-        fallback = False
-        admission_current = False
-        fallback_policy_version = None
-        if not replacing_policy:
-            if editor.get("ignore_watchers") is False:
-                fallback, admission_current, fallback_policy_version = await drained_thread(
-                    fallback_admission
-                )
-            else:
-                admission_current = await drained_thread(
-                    workspace.ignore_current, editor, bounded=True
-                )
+        # A blocked admission or checked reconciliation can change the initial read.
+        if not replacing_policy and (not admission_current or consistency == "checked"):
+            fallback, admission_current, fallback_policy_version = await drained_thread(
+                admission_snapshot
+            )
         ignore_verified = consistency == "checked"
         if protected and fallback and admission_current and not ignore_verified:
             ignore_verified = await entry.engine.validate_ignore(editor)
@@ -1423,6 +1419,7 @@ class ReferenceGraphService:
                     counts,
                     version_pending,
                     analysis_pending,
+                    workspace.delivery_fence() if local_query_page else None,
                 )
 
         (
@@ -1433,6 +1430,7 @@ class ReferenceGraphService:
             counts,
             analysis_version_pending,
             analysis_pending,
+            page_fence,
         ) = await drained_thread(result_snapshot)
         ignore_changed = not admission_current
         matches_editor = admission_current and _native_matches_progress(progress, editor)
@@ -1558,7 +1556,11 @@ class ReferenceGraphService:
                 "Runtime collection policy changed before delivery; restart the page"
             )
         if protected:
-            produced_fence = await drained_thread(workspace.delivery_fence)
+            produced_fence = (
+                page_fence
+                if page_fence is not None
+                else await drained_thread(workspace.delivery_fence)
+            )
             if admission_fence[1:] != produced_fence[1:] or (
                 "revision" in data and data["revision"] != produced_fence[0]
             ):

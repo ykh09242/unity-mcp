@@ -591,9 +591,23 @@ async def test_cached_query_batches_sqlite_read_snapshots(setup, monkeypatch, wa
 
 
 @pytest.mark.asyncio
-async def test_cached_asset_pages_validate_only_relevant_providers(setup, monkeypatch):
-    service, _, ctx = setup
+@pytest.mark.parametrize(("watchers", "connection_budget"), [(True, 5), (False, 7)])
+async def test_cached_asset_pages_validate_only_relevant_providers(
+    setup, monkeypatch, watchers, connection_budget
+):
+    import sqlite3
+    from unittest.mock import patch
+
+    service, sender, ctx = setup
     monkeypatch.setattr(service, "start", lambda *_, **__: None)
+
+    async def send(instance, params):
+        result = await sender(instance, params)
+        if params["action"] == "status":
+            result["ignore_watchers"] = watchers
+        return result
+
+    service.send = send
     owner, target = "asset:" + "1" * 32, "asset:" + "2" * 32
     entry, _ = await service.resolve(ctx, "status")
     store = entry.workspace.store
@@ -614,7 +628,10 @@ async def test_cached_asset_pages_validate_only_relevant_providers(setup, monkey
             (target, "incoming", 1),
             (target, "outgoing", 0),
         ):
-            page = await service.execute(ctx, "query", {"node": node, "direction": direction})
+            with patch.object(sqlite3, "connect", wraps=sqlite3.connect) as connect:
+                page = await service.execute(ctx, "query", {"node": node, "direction": direction})
+            graph_connections = sum(call.args[0] == store.path for call in connect.call_args_list)
+            assert 0 < graph_connections <= connection_budget
             assert len(page["data"]["edges"]) == count
             assert page["data"]["graph_status"]["current"]
         assert not validations
@@ -638,7 +655,10 @@ async def test_cached_asset_pages_validate_only_relevant_providers(setup, monkey
 
 
 @pytest.mark.asyncio
-async def test_cached_unity_page_rejects_policy_change_after_edge_read(setup, monkeypatch):
+@pytest.mark.parametrize("change_after", ["edges", "status"])
+async def test_cached_unity_page_rejects_policy_change_before_delivery(
+    setup, monkeypatch, change_after
+):
     service, _, ctx = setup
     monkeypatch.setattr(service, "start", lambda *_, **__: None)
     owner, target = "asset:" + "1" * 32, "asset:" + "2" * 32
@@ -650,15 +670,28 @@ async def test_cached_unity_page_rejects_policy_change_after_edge_read(setup, mo
         store.publish(owner, "unity", generation, [Edge(target, "dependency")])
         query = store.query
 
-        def change_after_read(*args, **kwargs):
-            page = query(*args, **kwargs)
-            assert page["edges"][0]["target"] == target
-            entry.workspace.set_policy({"exclude": ["Assets/Owner.mat"]}, expected_version=0)
-            return page
+        changed = False
 
-        monkeypatch.setattr(store, "query", change_after_read)
+        def change_policy(*_args, **_kwargs):
+            nonlocal changed
+            entry.workspace.set_policy({"exclude": ["Assets/Owner.mat"]}, expected_version=0)
+            changed = True
+
+        if change_after == "edges":
+
+            def change_after_read(*args, **kwargs):
+                page = query(*args, **kwargs)
+                assert page["edges"][0]["target"] == target
+                change_policy()
+                return page
+
+            monkeypatch.setattr(store, "query", change_after_read)
+        else:
+            # Scheduling occurs after the response status snapshot and before final delivery.
+            monkeypatch.setattr(service, "start", change_policy)
         with pytest.raises(RevisionConflict):
             await service.execute(ctx, "query", {"node": owner})
+        assert changed
     finally:
         await service.aclose()
 
@@ -722,7 +755,7 @@ async def test_unwatched_policy_change_before_opening_fences_cached_query(setup,
     async def race(function, *args, **kwargs):
         nonlocal transitioned
         result = await original(function, *args, **kwargs)
-        if getattr(function, "__name__", "") == "fallback_admission" and not transitioned:
+        if getattr(function, "__name__", "") == "admission_snapshot" and not transitioned:
             transitioned = True
             workspace = other_entry.workspace
             workspace.set_policy({"respect_gitignore": True}, expected_version=1)
