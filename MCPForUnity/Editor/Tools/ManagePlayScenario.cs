@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -25,11 +26,16 @@ namespace MCPForUnity.Editor.Tools
                 string action = Text(parameters, "action");
                 if (action.StartsWith("suite_", StringComparison.Ordinal))
                     return PlayScenarioSuiteService.Handle(parameters);
+                if (action == "player_suite_build")
+                {
+                    var consent = MCPServiceLocator.ToolConsent.GetStatus("manage_build");
+                    if (!consent.Enabled || consent.ErrorCode != null)
+                        return new ErrorResponse("build_consent_required", "Enable manage_build in the Unity Editor before building a Player suite.");
+                    return PlayScenarioPlayerSuiteBuild.HandleCommand(parameters);
+                }
                 var store = new PlayScenarioStore(Path.GetDirectoryName(Application.dataPath));
                 switch (action)
                 {
-                    case "player_suite_build":
-                        return PlayScenarioPlayerSuiteBuild.HandleCommand(parameters);
                     case "save":
                         Allow(parameters, "action", "scenario");
                         if (!(parameters["scenario"] is JObject definition))

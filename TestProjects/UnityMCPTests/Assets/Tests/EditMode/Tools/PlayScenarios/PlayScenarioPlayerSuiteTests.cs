@@ -1,6 +1,9 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.PlayScenarios;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -10,6 +13,63 @@ namespace MCPForUnityTests
 {
     public sealed class PlayScenarioPlayerSuiteTests
     {
+        [Test]
+        [NonParallelizable]
+        public void PlayerSuiteCommand_RequiresLiveBuildConsentBeforeRouting()
+        {
+            FieldInfo field = typeof(MCPServiceLocator).GetField("_toolConsentService", BindingFlags.Static | BindingFlags.NonPublic);
+            object previous = field.GetValue(null);
+            var consent = new BuildConsent();
+            string output = Path.Combine(Path.GetTempPath(), "scenario-consent-" + Guid.NewGuid().ToString("N"));
+            var request = new JObject { ["action"] = "player_suite_build", ["output_directory"] = output };
+            try
+            {
+                MCPServiceLocator.Register<IToolConsentService>(consent);
+                foreach (
+                    var status in new[]
+                    {
+                        new ToolConsentStatus(ToolConsentScope.None, false, true, false, "explicit_grant_required"),
+                        new ToolConsentStatus(ToolConsentScope.Project, false, false, false, null),
+                        new ToolConsentStatus(ToolConsentScope.EditorSession, true, false, false, "storage_unconfirmed"),
+                    }
+                )
+                {
+                    consent.Status = status;
+                    var denied = JObject.FromObject(ManagePlayScenario.HandleCommand(request));
+                    Assert.That((string)denied["code"], Is.EqualTo("build_consent_required"));
+                    Assert.That(Directory.Exists(output), Is.False);
+                }
+                Assert.That(consent.CheckedName, Is.EqualTo("manage_build"));
+
+                consent.Status = new ToolConsentStatus(ToolConsentScope.Project, true, false, false, null);
+                var allowed = JObject.FromObject(ManagePlayScenario.HandleCommand(request));
+                Assert.That((string)allowed["error"], Does.Contain("name must be a bounded nonempty string"));
+                Assert.That(Directory.Exists(output), Is.False);
+            }
+            finally
+            {
+                field.SetValue(null, previous);
+            }
+        }
+
+        private sealed class BuildConsent : IToolConsentService
+        {
+            internal ToolConsentStatus Status;
+            internal string CheckedName;
+
+            public ToolConsentStatus GetStatus(string name)
+            {
+                CheckedName = name;
+                return Status;
+            }
+
+            public ToolConsentChangeResult Grant(string name, ToolConsentScope scope) => throw new InvalidOperationException();
+
+            public ToolConsentChangeResult Revoke(string name) => throw new InvalidOperationException();
+
+            public ToolConsentChangeResult SetEnabled(string name, bool enabled) => throw new InvalidOperationException();
+        }
+
         private static JObject Definition(string name, string scene) =>
             new JObject
             {
