@@ -154,6 +154,57 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Assert.That(harness.Runner.State.Report.Scenarios[1].Status, Is.EqualTo(secondStatus));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void TerminalUnreleasedChildStopsSuiteAfterDeadlineAndRetainsEvidence(bool busy)
+        {
+            var harness = new Harness(Suite("continue"));
+            harness.Busy = busy;
+            harness.Runner.Tick(1001, true);
+            harness.Complete("failed", "child failed");
+            harness.Snapshot["runner_resources_released"] = false;
+            harness.Snapshot["report_error"] = "Host release failed";
+            harness.Runner.Tick(1002, true);
+            long deadline = harness.Runner.State.FinalizationDeadlineUnixMs.Value;
+            harness.Runner.Tick(deadline - 1, true);
+            Assert.That(harness.Runner.Running, Is.True);
+            harness.Runner.Tick(deadline, true);
+            Assert.That(harness.Runner.State.Report.Status, Is.EqualTo("failed"));
+            Assert.That(harness.Runner.State.Report.Scenarios[0].Report.Value<bool>("runner_resources_released"), Is.False);
+            Assert.That((string)harness.Runner.State.Report.Scenarios[0].Report["report_error"], Is.EqualTo("Host release failed"));
+            Assert.That(harness.Runner.State.Report.Scenarios[1].Status, Is.EqualTo("skipped"));
+            Assert.That(harness.Starts, Is.EqualTo(1));
+            suites.SaveReport(harness.Runner.State.Report);
+            Assert.That(suites.GetReport(harness.Runner.State.Report.SuiteId).Scenarios[0].Report.Value<bool>("runner_resources_released"), Is.False);
+        }
+
+        [Test]
+        public void TerminalReleaseDelayCanRecoverWithoutStoppingQueue()
+        {
+            var harness = new Harness(Suite("continue"));
+            harness.Runner.Tick(1001, true);
+            harness.Complete("succeeded", null);
+            harness.Snapshot["runner_resources_released"] = false;
+            harness.Runner.Tick(1002, true);
+            Assert.That(harness.Runner.Running, Is.True);
+            harness.Snapshot["runner_resources_released"] = true;
+            harness.Runner.Tick(1003, true);
+            harness.Runner.Tick(1004, true);
+            Assert.That(harness.Starts, Is.EqualTo(2));
+            Assert.That(harness.Runner.State.RequestedStatus, Is.Null);
+        }
+
+        [Test]
+        public void RunningChildRemainsProtectedBeyondFinalizationDeadline()
+        {
+            var harness = new Harness(Suite("continue"));
+            harness.Runner.Tick(1001, true);
+            harness.Runner.RequestStop("cancelled", "requested stop", 1002);
+            harness.Runner.Tick(harness.Runner.State.FinalizationDeadlineUnixMs.Value + 1, true);
+            Assert.That(harness.Runner.Running, Is.True);
+            Assert.That(harness.Starts, Is.EqualTo(1));
+        }
+
         [TestCase("cancelled")]
         [TestCase("timed_out")]
         public void CancellationAndTimeoutWaitThroughChildCleanupAndCancelOnlyOnce(string reason)
@@ -574,6 +625,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             internal JObject Snapshot = new JObject { ["status"] = "running" };
             internal int Starts;
             internal int Cancels;
+            internal bool Busy;
             internal long? SynchronousCancelFinishedUnixMs;
             internal int Checkpoints;
 
@@ -609,7 +661,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
                         return Snapshot;
                     },
                     () => Checkpoints++,
-                    () => false
+                    () => Busy
                 );
             }
 

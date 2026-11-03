@@ -132,9 +132,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 return;
             State.RequestedStatus = State.FirstFailureStatus != null && State.Report.Suite.FailurePolicy == "continue" ? "failed" : outcome;
             State.Report.Error = State.Report.Error ?? Bounded(error);
-            State.FinalizationDeadlineUnixMs = checked(
-                now + (State.Cursor < State.Definitions.Count ? State.Definitions[State.Cursor].CleanupTimeoutSeconds : 0) * 1000L + 60000
-            );
+            State.FinalizationDeadlineUnixMs =
+                State.FinalizationDeadlineUnixMs
+                ?? checked(now + (State.Cursor < State.Definitions.Count ? State.Definitions[State.Cursor].CleanupTimeoutSeconds : 0) * 1000L + 60000);
             checkpoint();
         }
 
@@ -177,10 +177,27 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     return;
                 }
                 string status = (string)snapshot["status"];
-                if (status == "running" || snapshot.Value<bool?>("runner_resources_released") == false)
+                if (status == "running")
                     return;
                 if (!new[] { "succeeded", "failed", "timed_out", "cancelled" }.Contains(status, StringComparer.Ordinal))
                     throw new InvalidOperationException("Child returned an invalid terminal status.");
+                if (snapshot.Value<bool?>("runner_resources_released") == false)
+                {
+                    if (!State.FinalizationDeadlineUnixMs.HasValue)
+                    {
+                        State.FinalizationDeadlineUnixMs = checked(now + State.Definitions[State.Cursor].CleanupTimeoutSeconds * 1000L + 60000);
+                        checkpoint();
+                    }
+                    if (now < State.FinalizationDeadlineUnixMs.Value)
+                        return;
+                    State.Report.ReportError = Bounded("Child runner resources were not released before the finalization deadline.");
+                    RequestStop("failed", State.Report.ReportError, now);
+                }
+                else if (State.RequestedStatus == null && State.FinalizationDeadlineUnixMs.HasValue)
+                {
+                    State.FinalizationDeadlineUnixMs = null;
+                    checkpoint();
+                }
                 child.Status = status;
                 child.Report = (JObject)snapshot.DeepClone();
                 if (!string.IsNullOrEmpty((string)snapshot["report_error"]) || string.IsNullOrEmpty((string)snapshot["report_path"]))

@@ -197,7 +197,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (child["report"] is JObject report)
                 {
                     PlayScenarioStore.ValidateReport(report);
-                    if ((string)report["status"] == "running" || report.Value<bool?>("runner_resources_released") == false)
+                    if (
+                        (string)report["status"] == "running"
+                        || (
+                            report.Value<bool?>("runner_resources_released") == false
+                            && ((string)value["status"] != "failed" || string.IsNullOrEmpty((string)value["report_error"]))
+                        )
+                    )
                         throw new ArgumentException("Embedded child reports must be finalized.");
                     if (
                         (string)report["job_id"] != id

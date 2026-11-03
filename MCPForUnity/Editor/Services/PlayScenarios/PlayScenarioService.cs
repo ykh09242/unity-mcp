@@ -79,7 +79,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 rows.Add(OperationActivity.ScenarioRow(_engine.State, _finalized));
         }
 
-        internal static bool IsBusy => (_engine != null && (!_finalized || _engine.Running)) || _failureCapture?.Pending == true;
+        internal static bool IsBusy =>
+            (_engine != null && (!_finalized || _engine.Running || _engine.State.RunnerResourcesReleased == false)) || _failureCapture?.Pending == true;
 
         public static object Start(string name, int repeatCount, int timeoutSeconds, string jobId, string sourceRevision = null, string dataset = null)
         {
