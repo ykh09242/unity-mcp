@@ -1242,6 +1242,7 @@ namespace MCPForUnity.Editor.Windows.PlayScenarios
             try
             {
                 // Revalidate persisted data before opening the folder picker or invoking the builder.
+                PlayScenarioPlayerBuild.ValidateNativeAdmission();
                 PlayScenarioDefinition.Parse(Json(Store.Get(savedName)));
                 string folder =
                     ChoosePlayerBuildFolder != null ? ChoosePlayerBuildFolder() : EditorUtility.OpenFolderPanel("Choose an empty Player build folder", "", "");

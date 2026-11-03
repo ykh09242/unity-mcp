@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Linq;
+using MCPForUnity.Editor.Services.Transport;
+using MCPForUnity.Editor.Tools.Build;
 using MCPForUnity.Runtime.PlayScenarios;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -22,6 +24,32 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
     /// <summary>Explicit standalone scenario builds; restores the selected scripting backend after building.</summary>
     public static class PlayScenarioPlayerBuild
     {
+        internal static void ValidateNativeAdmission(string owner = null)
+        {
+            if (NativeOperationBarriers.TryGetBuildContinuationBlocker(owner, null, out NativeAdmissionBlocker blocker))
+                throw new InvalidOperationException("Scenario Player build blocked: " + blocker.Reason + ". " + blocker.Recovery?.Message);
+        }
+
+        private sealed class Reservation : IDisposable
+        {
+            private readonly string id = "scenario-player-" + Guid.NewGuid().ToString("N");
+
+            internal Reservation()
+            {
+                ValidateNativeAdmission();
+                BuildRunner.ReserveNative(id);
+            }
+
+            internal BuildReport Invoke(BuildPlayerOptions options)
+            {
+                ValidateNativeAdmission(id);
+                BuildRunner.MarkNativeInvocation(id);
+                return BuildPipeline.BuildPlayer(options);
+            }
+
+            public void Dispose() => BuildRunner.ReleaseNative(id);
+        }
+
         public static PlayScenarioPlayerBuildResult Build(
             string savedName,
             string outputDirectory,
@@ -60,8 +88,8 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             if (Directory.Exists(output) && Directory.EnumerateFileSystemEntries(output).Any())
                 throw new IOException("Player output directory must be empty.");
             BuildTarget buildTarget = Target(target);
-            PreflightBackend(target, backend, buildTarget);
             bool hasUntitledScene = EnsureEditorReady();
+            PreflightBackend(target, backend, buildTarget);
             foreach (string path in scenes)
                 if (AssetDatabase.LoadAssetAtPath<SceneAsset>(path) == null)
                     throw new ArgumentException("Scenario scene asset is unavailable: " + path);
@@ -82,6 +110,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             ScriptingImplementation previousBackend = PlayerSettings.GetScriptingBackend(BuildTargetGroup.Standalone);
             ScriptingImplementation selectedBackend = backend == "il2cpp" ? ScriptingImplementation.IL2CPP : ScriptingImplementation.Mono2x;
 #pragma warning restore CS0618
+            using var reservation = new Reservation();
             Directory.CreateDirectory(output);
             try
             {
@@ -112,7 +141,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 if (previousActive.IsValid() && previousActive.isLoaded)
                     SceneManager.SetActiveScene(previousActive);
                 string executable = Path.Combine(output, PlayScenarioPlayerPlatform.Executable(target));
-                BuildReport report = BuildPipeline.BuildPlayer(
+                BuildReport report = reservation.Invoke(
                     new BuildPlayerOptions
                     {
                         scenes = new[] { bootstrapPath }.Concat(scenes).ToArray(),
@@ -209,6 +238,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private static bool EnsureEditorReady()
         {
+            ValidateNativeAdmission();
             if (
                 PlayScenarioService.IsBusy
                 || EditorApplication.isPlayingOrWillChangePlaymode

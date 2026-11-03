@@ -29,6 +29,12 @@ namespace MCPForUnity.Editor.Tools.Build
             NativeOwners.Add(id);
         }
 
+        internal static void MarkNativeInvocation(string id)
+        {
+            SessionState.SetBool(NativeOwnerKey, true);
+            InvokedOwners.Add(id);
+        }
+
         internal static void ReleaseNative(string id)
         {
             NativeOwners.Remove(id);
@@ -347,8 +353,7 @@ namespace MCPForUnity.Editor.Tools.Build
                 SaveBeforeBuild();
                 // Persist immediately before the indivisible native invocation, after any
                 // preparation that can fail without ever entering BuildPlayer.
-                SessionState.SetBool(NativeOwnerKey, true);
-                InvokedOwners.Add(job.JobId);
+                MarkNativeInvocation(job.JobId);
                 BuildReport report = buildFunc();
                 capturedReport = report;
                 job.CompletedAt = DateTime.UtcNow;

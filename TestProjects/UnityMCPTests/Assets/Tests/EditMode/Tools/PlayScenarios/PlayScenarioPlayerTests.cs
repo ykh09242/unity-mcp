@@ -2,9 +2,11 @@ using System;
 using System.IO;
 using System.Reflection;
 using MCPForUnity.Editor.Services.PlayScenarios;
+using MCPForUnity.Editor.Tools.Build;
 using MCPForUnity.Runtime.PlayScenarios;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -13,6 +15,39 @@ namespace MCPForUnityTests
 {
     public sealed class PlayScenarioPlayerTests
     {
+        [TestCase(true)]
+        [TestCase(false)]
+        public void RetainedNativeOwnerBlocksSavedAndFrozenBuildsBeforeMutation(bool buildOwner)
+        {
+            const string buildKey = "MCPForUnity.Build.NativeOwnerV1";
+            const string testKey = "MCPForUnity.TestRunner.RetiredRunJobId";
+            bool previousBuild = SessionState.GetBool(buildKey, false);
+            string previousTest = SessionState.GetString(testKey, "");
+            string output = Path.Combine(Path.GetTempPath(), "mcp-fenced-player-" + Guid.NewGuid().ToString("N"));
+            if (BuildRunner.HasNativeOwner || previousBuild || !string.IsNullOrEmpty(previousTest))
+                Assert.Ignore("This test requires an unowned build and recovery state.");
+            try
+            {
+                if (buildOwner)
+                    SessionState.SetBool(buildKey, true);
+                else
+                    SessionState.SetString(testKey, Guid.NewGuid().ToString("N"));
+                var saved = Assert.Throws<InvalidOperationException>(() => PlayScenarioPlayerBuild.Build("does-not-exist", output));
+                var frozen = Assert.Throws<InvalidOperationException>(() => PlayScenarioPlayerBuild.BuildFrozen(null, Array.Empty<string>(), output));
+                StringAssert.Contains("recovery_required", saved.Message);
+                StringAssert.Contains("recovery_required", frozen.Message);
+                Assert.IsFalse(Directory.Exists(output));
+                Assert.IsFalse(BuildRunner.HasNativeOwner);
+                Assert.AreEqual(buildOwner, BuildRunner.NativeRecoveryRequired);
+                Assert.AreEqual(!buildOwner, !string.IsNullOrEmpty(SessionState.GetString(testKey, "")));
+            }
+            finally
+            {
+                SessionState.SetBool(buildKey, previousBuild);
+                SessionState.SetString(testKey, previousTest);
+            }
+        }
+
         [Test]
         public void LargeLoadedSceneKeepsLateTargetsAndCompleteMetrics()
         {
