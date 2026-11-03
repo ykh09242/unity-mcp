@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from collections.abc import Callable, Awaitable
 
 from core.config import config
-from services.registry.operation_scheduler import OperationScope
+from services.registry.operation_scheduler import OperationScope, OperationScopeChanged
 from transport.native_arbitration import CAPABILITY, valid_generation
 from transport.command_resume import ORIGIN_CAPABILITY
 from services.operation_permissions import JsonValue
@@ -15,9 +15,9 @@ class OperationTarget:
     scope: OperationScope
     is_current: Callable[[], bool] = field(repr=False, compare=False)
     negotiated: bool = False
-    authorize_public: Callable[[str, dict[str, JsonValue]], Awaitable[None]] | None = field(
-        default=None, repr=False, compare=False
-    )
+    authorize_public: (
+        Callable[[str, dict[str, JsonValue]], Awaitable[Callable[[], None]]] | None
+    ) = field(default=None, repr=False, compare=False)
     transport_generation: str | None = None
     public_available: Callable[[tuple[str, ...], object | None], Awaitable[bool]] | None = field(
         default=None, repr=False, compare=False
@@ -157,7 +157,7 @@ async def capture_http_target(session_id: str, *, hub=None) -> OperationTarget |
             and getattr(socket.state, "user_id", None) == session.user_id
         )
 
-    async def authorize(name: str, params: dict[str, JsonValue]) -> None:
+    async def authorize(name: str, params: dict[str, JsonValue]) -> Callable[[], None]:
         from services.credential_lease import require_credential_lease, CredentialLeaseError
         from services.operation_permissions import authorize_operation
 
@@ -167,6 +167,16 @@ async def capture_http_target(session_id: str, *, hub=None) -> OperationTarget |
             raise CredentialLeaseError()
         await authority.check()
         authorize_operation(authority.permissions, name, params)
+
+        def check_now() -> None:
+            if not current():
+                raise OperationScopeChanged()
+            if hub._socket_lease(socket) is not authority:
+                raise CredentialLeaseError()
+            requester.check_now()
+            authority.check_now()
+
+        return check_now
 
     async def available(names: tuple[str, ...], _server: object | None) -> bool:
         fresh = await registry.get_session(session_id)

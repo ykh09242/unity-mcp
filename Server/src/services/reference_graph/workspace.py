@@ -652,7 +652,7 @@ class GraphWorkspace:
             "exclude": patterns,
             "respect_gitignore": policy.get("respect_gitignore", True),
         }
-        with ExitStack() as guard, self.store._connect(write=True) as connection:
+        with ExitStack() as guard, self.store._connect(write=True, public_edit=True) as connection:
             # Replacement must remain possible for legacy oversized policies without
             # loading their payload. The writer transaction still owns the CAS.
             current, authored = connection.execute(
@@ -710,7 +710,7 @@ class GraphWorkspace:
     def set_source(
         self, provider: str, config: dict, *, expected_version: int, enabled: bool = True
     ) -> int:
-        with self.store._connect(write=True) as connection:
+        with self.store._connect(write=True, public_edit=True) as connection:
             version = self.store._set_source(
                 connection, provider, config, expected_version, enabled
             )

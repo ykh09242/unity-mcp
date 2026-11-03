@@ -1,20 +1,29 @@
 """Operational actions preserve scope, authored state and unfinished work."""
 
 from tests.lifecycle import FixtureProgress
+from tests.timing import await_signal, watchdog_timeout
 from types import SimpleNamespace
+import asyncio
 import json
+import threading
 import time
 
 import pytest
+import pytest_asyncio
 
 from core.config import config
-from services.reference_graph.service import ReferenceGraphService
+from services.reference_graph.service import ReferenceGraphService, native_send
 from services.reference_graph.store import Edge, RevisionConflict
 from services.reference_graph.http import handle
-from services.credential_lease import CredentialLease
-from services.operation_permissions import OperationGrants, Permission
+from services.credential_lease import CredentialLease, CredentialLeaseError, bind_credential_lease
+from services.operation_permissions import OperationGrants, OperationPermissionError, Permission
+from services.registry.operation_invocation import wrap_tool
+from services.tools.manage_reference_graph import manage_reference_graph
+from tests.http.test_remote_permissions import permission_service
+from tests.test_http_command_outcome import command_hub  # pylint: disable=unused-import
 from transport.local_auth_middleware import LocalControlAuthMiddleware
-from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
+from transport.models import CommandResultMessage
+from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE, RemoteControlAuthMiddleware
 from starlette.applications import Starlette
 from starlette.routing import Route
 import httpx
@@ -418,8 +427,15 @@ async def test_http_local_auth_and_editor_fence(setup, monkeypatch):
         await service.aclose()
 
 
+async def select_plugin(command_hub, lease):
+    await command_hub.registry.unregister("session")
+    await command_hub.registry.register("session", "Fixture", "one", "6000", user_id=lease.user_id)
+    command_hub.websocket.state.user_id = lease.user_id
+    setattr(command_hub.websocket.state, AUTHENTICATED_LEASE_STATE, lease)
+
+
 @pytest.mark.asyncio
-async def test_remote_http_principal_permissions_and_expiry(setup, monkeypatch):
+async def test_remote_http_principal_permissions_and_expiry(setup, command_hub, monkeypatch):
     service, _ = setup
     monkeypatch.setattr(config, "http_remote_hosted", True)
 
@@ -454,6 +470,7 @@ async def test_remote_http_principal_permissions_and_expiry(setup, monkeypatch):
 
     request = Request()
     setattr(request.state, AUTHENTICATED_LEASE_STATE, lease)
+    await select_plugin(command_hub, lease)
     try:
         first = await handle(request, service)
         assert first.status_code == 200
@@ -471,11 +488,9 @@ async def test_remote_http_principal_permissions_and_expiry(setup, monkeypatch):
         assert (await handle(request, service)).status_code == 403
         payload["action"] = "overview"
         payload["options"] = {}
-        setattr(
-            request.state,
-            AUTHENTICATED_LEASE_STATE,
-            CredentialLease(authority, object(), "bob", LEGACY_GRANTS),
-        )
+        bob = CredentialLease(authority, object(), "bob", LEGACY_GRANTS)
+        setattr(request.state, AUTHENTICATED_LEASE_STATE, bob)
+        await select_plugin(command_hub, bob)
         second = await handle(request, service)
         assert second.status_code == 200
         assert json.loads(second.body)["data"]["scope"] != first_scope
@@ -483,6 +498,235 @@ async def test_remote_http_principal_permissions_and_expiry(setup, monkeypatch):
         assert (await handle(request, service)).status_code == 403
     finally:
         await service.aclose()
+
+
+@pytest_asyncio.fixture
+async def hosted_graph(setup, command_hub, monkeypatch):
+    service, ctx = setup
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    editor_reply = service.send
+    service.send = native_send
+
+    async def reply(message):
+        command_hub.sent.append(message)
+        if message["type"] == "execute":
+            data = await editor_reply("one", message["params"])
+            await command_hub.endpoint._handle_command_result(
+                command_hub.websocket,
+                CommandResultMessage(id=message["id"], result={"success": True, "data": data}),
+            )
+
+    command_hub.websocket.send_json = reply
+
+    async def route(request):
+        return await handle(request, service)
+
+    url = "/api/reference-graph"
+    app = RemoteControlAuthMiddleware(Starlette(routes=[Route(url, route, methods=["POST"])]))
+    claims = {
+        key: {"unity_mcp_permissions": grants}
+        for key, grants in (
+            ("read", ["read"]),
+            ("write", ["read", "edit"]),
+            ("plugin", ["read", "edit"]),
+        )
+    }
+    try:
+        async with (
+            permission_service(monkeypatch, claims) as auth,
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://hosted"
+            ) as client,
+        ):
+            leases = {key: (await auth.service.validate(key)).lease for key in claims}
+            await select_plugin(command_hub, leases["plugin"])
+
+            async def post(action, options, key="write", editor_id="one"):
+                body = dict(
+                    action=action,
+                    options=options,
+                    instance="one",
+                    editor_id=editor_id,
+                    project_id="project",
+                )
+                return await client.post(url, json=body, headers={"X-API-Key": key})
+
+            tool = wrap_tool(
+                manage_reference_graph, "manage_reference_graph", "manage_reference_graph"
+            )
+
+            async def invoke(action, options, key="write"):
+                with bind_credential_lease(leases[key]):
+                    return await tool(ctx, action, options)
+
+            yield SimpleNamespace(
+                post=post, invoke=invoke, leases=leases, hub=command_hub, service=service
+            )
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restricted", ["requester", "plugin", None])
+async def test_hosted_rule_import_requires_both_grants_on_rest_and_mcp(hosted_graph, restricted):
+    graph = hosted_graph
+    options = {
+        "kind": "rule",
+        "id": "existing",
+        "config": {"enabled": False},
+        "expected_version": 0,
+    }
+    assert (await graph.post("import_config", options, editor_id="wrong")).status_code == 409
+    assert not graph.service.entries
+    assert (await graph.post("import_config", options)).status_code == 200
+    store = next(iter(graph.service.entries.values())).workspace.store
+    original = store.rules_state()
+    if restricted == "plugin":
+        setattr(graph.hub.websocket.state, AUTHENTICATED_LEASE_STATE, graph.leases["read"])
+    key = "read" if restricted == "requester" else "write"
+    assert (await graph.post("export_config", {"kind": "rule"}, key)).status_code == 200
+    for option in ({**options, "id": "new"}, {**options, "expected_version": 1}):
+        graph.hub.sent.clear()
+        response = await graph.post("import_config", option, key=key)
+        if restricted:
+            assert response.status_code == 403
+            assert response.json()["error"] == "authorization_unavailable"
+            with pytest.raises(OperationPermissionError):
+                await graph.invoke("import_config", option, key)
+            assert not graph.hub.sent
+            assert store.rules_state() == original
+        else:
+            assert response.status_code == 200
+            assert response.json()["data"]["version"] == option["expected_version"] + 1
+            assert [cmd["params"]["action"] for cmd in graph.hub.sent] == ["status"]
+            updated = {**option, "expected_version": response.json()["data"]["version"]}
+            assert (await graph.invoke("import_config", updated))["data"]["version"] == updated[
+                "expected_version"
+            ] + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action",
+    [
+        "import_config",
+        "set_rule",
+        "set_source",
+        "set_policy",
+        "rebuild",
+        "declare",
+        "remove_declaration",
+        "cleanup",
+    ],
+)
+async def test_hosted_mcp_edit_without_initial_target_refuses_later_read_only_socket(
+    hosted_graph, monkeypatch, action
+):
+    from services.registry import operation_invocation
+
+    graph = hosted_graph
+    await graph.hub.registry.unregister("session")
+    capture = operation_invocation.capture_target
+
+    async def reconnect_after_capture(*args, **kwargs):
+        initial = await capture(*args, **kwargs)
+        assert initial is None
+        await select_plugin(graph.hub, graph.leases["read"])
+        return initial
+
+    monkeypatch.setattr(operation_invocation, "capture_target", reconnect_after_capture)
+    options = {"kind": "rule", "id": "new", "config": {"enabled": False}, "expected_version": 0}
+    with pytest.raises(CredentialLeaseError):
+        await graph.invoke(action, options if action == "import_config" else {})
+    assert not graph.hub.sent
+    assert not graph.service.entries and not graph.service.root.exists()
+
+
+@pytest.mark.asyncio
+async def test_hosted_reconnect_before_status_cannot_select_the_replacement(
+    hosted_graph, monkeypatch
+):
+    graph = hosted_graph
+    send = graph.service.send
+
+    async def reconnect(instance, params):
+        graph.hub.websocket.state.plugin_generation = "replacement"
+        return await send(instance, params)
+
+    monkeypatch.setattr(graph.service, "send", reconnect)
+    response = await graph.post("overview", {})
+    assert response.status_code == 409
+    assert not graph.hub.sent
+    assert not graph.service.entries
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["rest", "mcp_import", "mcp_direct"])
+@pytest.mark.parametrize(
+    "change,kind,expected_status",
+    [
+        ("generation", "rule", 409),
+        ("plugin_lease", "rule", 403),
+        ("generation", "policy", 409),
+        ("plugin_lease", "source", 403),
+    ],
+)
+async def test_hosted_import_rolls_back_when_plugin_changes_before_commit(
+    hosted_graph, monkeypatch, change, kind, expected_status, route
+):
+    from services.reference_graph.operations import export_config
+
+    graph = hosted_graph
+    settings = {
+        "rule": {"id": "existing", "config": {"enabled": False}},
+        "policy": {"config": {"exclude": ["old/**"]}},
+        "source": {"id": "existing", "config": {}, "enabled": False, "reauthorize": True},
+    }[kind]
+    options = {"kind": kind, **settings, "expected_version": 0}
+    assert (await graph.post("import_config", options)).status_code == 200
+    workspace = next(iter(graph.service.entries.values())).workspace
+    store = workspace.store
+    original = export_config(workspace, kind=kind)
+    if kind == "policy":
+        options["config"] = {"exclude": ["new/**"]}
+    bump = store._bump
+    entered, resume = asyncio.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def delayed_bump(db):
+        bump(db)
+        loop.call_soon_threadsafe(entered.set)
+        assert resume.wait(watchdog_timeout())
+
+    monkeypatch.setattr(store, "_bump", delayed_bump)
+
+    async def update():
+        arguments = {**options, "expected_version": 1}
+        if route == "rest":
+            assert (await graph.post("import_config", arguments)).status_code == expected_status
+            return
+        action = "import_config"
+        if route == "mcp_direct":
+            action = "set_" + kind
+            arguments.pop("kind")
+            arguments.pop("reauthorize", None)
+        if change == "plugin_lease":
+            with pytest.raises(CredentialLeaseError):
+                await graph.invoke(action, arguments)
+        else:
+            assert (await graph.invoke(action, arguments))["error"] == "operation_target_changed"
+
+    post = asyncio.create_task(update())
+    try:
+        await await_signal(entered, "authored update before commit", producers=[post])
+        if change == "generation":
+            graph.hub.websocket.state.plugin_generation = "replacement"
+        else:
+            setattr(graph.hub.websocket.state, AUTHENTICATED_LEASE_STATE, graph.leases["read"])
+    finally:
+        resume.set()
+        await post
+    assert export_config(workspace, kind=kind) == original
 
 
 @pytest.mark.asyncio
@@ -699,8 +943,8 @@ async def test_cleanup_rolls_back_partial_reclamation(setup, monkeypatch):
         connect = store._connect
 
         @contextmanager
-        def interrupted(*, write=False):
-            with connect(write=write) as db:
+        def interrupted(*, write=False, **kwargs):
+            with connect(write=write, **kwargs) as db:
                 yield db
                 if write:
                     raise RuntimeError("rollback cleanup")

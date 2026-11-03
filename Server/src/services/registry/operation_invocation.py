@@ -1,7 +1,7 @@
 """Whole public invocation admission before refresh-capable preflight."""
 
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import replace
 from functools import wraps
@@ -21,7 +21,12 @@ from core.config import config
 from models.response_limits import response_size
 from models.models import MCPResponse
 from services.execution_receipt_context import owned_to_thread
-from services.operation_permissions import JsonValue, authorize_remote_operation
+from services.operation_permissions import (
+    JsonValue,
+    Permission,
+    authorize_remote_operation,
+    required_permissions,
+)
 from services.operation_policy import OperationMode, resolve_operation_policy
 from services.registry.operation_context import active_operation, current_operation, scheduler
 from services.registry.operation_scheduler import (
@@ -341,6 +346,12 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
             }
         )
         await authorize_remote_operation(name, params, ctx=ctx)
+        hosted_graph_write = (
+            config.http_remote_hosted
+            and name == "manage_reference_graph"
+            and Permission.EDIT in required_permissions(name, params)
+        )
+        check_public_authority = None
 
         async def validate_enabled() -> None:
             server = getattr(ctx, "fastmcp", None)
@@ -357,9 +368,19 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                 in {"untrusted_handler", "arbitrary_execution"}
             ):
                 return refusal_result(_refusal("operation_reload_requires_fresh_request"))
-            if inspect.iscoroutinefunction(function):
-                return await function(*args, **kwargs)
-            return await owned_to_thread(function, *args, **kwargs)
+            guard = nullcontext()
+            if hosted_graph_write:
+                from services.credential_lease import CredentialLeaseError
+                from services.reference_graph.store import guard_graph_edit
+
+                # A later native status read cannot supply the missing public grant.
+                if check_public_authority is None:
+                    raise CredentialLeaseError()
+                guard = guard_graph_edit(check_public_authority)
+            with guard:
+                if inspect.iscoroutinefunction(function):
+                    return await function(*args, **kwargs)
+                return await owned_to_thread(function, *args, **kwargs)
 
         await validate_enabled()
         if unity_target is None or ctx is None:
@@ -397,11 +418,13 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
         observation_rebound = False
 
         async def validate_target():
+            nonlocal check_public_authority
             if not target.is_current():
                 raise OperationScopeChanged()
             await authorize_remote_operation(name, params, ctx=ctx)
-            if target.authorize_public is not None:
-                await target.authorize_public(name, params)
+            check_public_authority = (
+                await target.authorize_public(name, params) if target.authorize_public else None
+            )
             if target.capacity_error is not None:
                 refusal = target.capacity_error()
                 if refusal is not None:

@@ -1,14 +1,26 @@
 """Authenticated Editor facade; the server still resolves principal and graph identity."""
 
+from contextlib import asynccontextmanager
+import time
+
 from starlette.responses import JSONResponse
 
 from core.config import config
 from models.response_limits import MAX_RESPONSE_BYTES, response_size
 from services.credential_lease import CredentialLeaseError, bind_credential_lease
-from services.operation_permissions import OperationPermissionError
-from services.reference_graph.store import RevisionConflict
+from services.operation_permissions import OperationPermissionError, authorize_operation
+from services.operation_policy import resolve_operation_policy
+from services.reference_graph.store import RevisionConflict, guard_graph_edit
 from services.reference_graph.response_budget import GraphResponseTooLarge
+from services.registry.operation_invocation import (
+    admission_for,
+    operation_payload_charge,
+    operation_session,
+)
+from services.registry.operation_scheduler import OperationScopeChanged
+from services.registry.operation_target import capture_target
 from transport.local_auth_middleware import AUTHENTICATED_LOCAL_STATE
+from transport.plugin_hub import PluginHub
 from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
 
 
@@ -19,6 +31,42 @@ class EditorContext:
 
     async def get_state(self, key):
         return self.instance if key == "unity_instance" else None
+
+
+@asynccontextmanager
+async def _authorized_operation(instance, lease, action, options):
+    if lease is None:
+        yield
+        return
+    name = "manage_reference_graph"
+    params = {"action": action, "options": options}
+    await lease.check()
+    authorize_operation(lease.permissions, name, params)
+    expires_at = time.monotonic() + PluginHub._command_timeouts(name, params)[1]
+    target = await capture_target(instance, user_id=lease.user_id)
+    if target is None or target.authorize_public is None:
+        raise RuntimeError("Selected Editor is unavailable")
+    check_now = await target.authorize_public(name, params)
+    check_now()
+    retained = operation_payload_charge(params)
+    if retained is None:
+        raise ValueError("Graph request exceeds the operation payload limit")
+    mode = resolve_operation_policy(name, params, trusted_builtin=True).mode
+    # Nested status reads must run on the same socket generation as the public grant.
+    async with operation_session(
+        admission_for(target, mode, retained_bytes=retained, expires_at=expires_at)
+    ):
+        await target.authorize_public(name, params)
+        try:
+            with guard_graph_edit(check_now):
+                yield
+            await target.authorize_public(name, params)
+            check_now()
+        except RuntimeError:
+            # Native dispatch can report a changed target as a transport refusal.
+            # Keep the facade's scope/authorization error when its own fence was lost.
+            check_now()
+            raise
 
 
 async def handle(request, service):
@@ -59,12 +107,10 @@ async def handle(request, service):
         }:
             raise ValueError("Unsupported operations action")
         ctx = EditorContext(body["instance"], (body["editor_id"], body["project_id"]))
+        action, options = body["action"], body.get("options", {})
         with bind_credential_lease(lease):
-            if lease is not None:
-                await lease.check()
-            result = await service.execute(ctx, body["action"], body.get("options", {}))
-            if lease is not None:
-                await lease.check()
+            async with _authorized_operation(ctx.instance, lease, action, options):
+                result = await service.execute(ctx, action, options)
         if response_size(result, max_bytes=MAX_RESPONSE_BYTES) is None:
             raise GraphResponseTooLarge()
         response = JSONResponse(result)
@@ -79,7 +125,7 @@ async def handle(request, service):
         return JSONResponse(
             {"success": False, "error": "reference_graph_response_too_large"}, status_code=413
         )
-    except RevisionConflict:
+    except (RevisionConflict, OperationScopeChanged):
         return JSONResponse(
             {
                 "success": False,

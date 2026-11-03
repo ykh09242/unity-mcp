@@ -9,6 +9,7 @@ from pydantic import Field
 from services.credential_lease import CredentialLeaseError
 from services.operation_permissions import OperationPermissionError
 from services.reference_graph.store import RevisionConflict
+from services.registry.operation_scheduler import OperationScopeChanged
 from services.registry import mcp_for_unity_tool
 
 
@@ -132,7 +133,7 @@ async def manage_reference_graph(
         return {"success": False, "error": "reference_graph_unavailable"}
     try:
         return await service.execute(ctx, action, options if options is not None else {})
-    except (CredentialLeaseError, OperationPermissionError):
+    except (CredentialLeaseError, OperationPermissionError, OperationScopeChanged):
         raise
     except RevisionConflict as error:
         return {"success": False, "error": "reference_graph_changed", "message": str(error)}

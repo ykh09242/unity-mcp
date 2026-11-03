@@ -8,8 +8,9 @@ serializes writers across processes. Rebuild preserves authored declarations.
 from __future__ import annotations
 
 import base64
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
@@ -22,6 +23,21 @@ import threading
 from copy import deepcopy
 
 from services.reference_graph.response_budget import PageBudget, bounded_rows
+
+
+_graph_edit_fence: ContextVar[Callable[[], None] | None] = ContextVar(
+    "reference_graph_edit_fence", default=None
+)
+
+
+@contextmanager
+def guard_graph_edit(check_now: Callable[[], None]):
+    check_now()
+    token = _graph_edit_fence.set(check_now)
+    try:
+        yield
+    finally:
+        _graph_edit_fence.reset(token)
 
 
 class RevisionConflict(ValueError):
@@ -189,7 +205,11 @@ class GraphStore:
 
     @contextmanager
     def _connect(
-        self, *, write: bool = False, _identity: list[tuple[int, int]] | None = None
+        self,
+        *,
+        write: bool = False,
+        public_edit: bool = False,
+        _identity: list[tuple[int, int]] | None = None,
     ) -> Iterator[sqlite3.Connection]:
         snapshot = getattr(self._read_local, "snapshot", None)
         if snapshot is not None:
@@ -240,6 +260,9 @@ class GraphStore:
                                 != schema
                             )
                         )
+                    # A hosted edit can lose its socket or grants while waiting for this writer.
+                    if public_edit and (check := _graph_edit_fence.get()) is not None:
+                        check()
                     connection.commit()
                     if meter is not None and budget is not None:
                         # Commit can flush cached pages after the final guard.
@@ -784,7 +807,7 @@ class GraphStore:
         if not identity or not owner:
             raise ValueError("Declaration identity and owner are required")
         edge = replace(edge, confidence="declared")
-        with self._connect(write=True) as connection:
+        with self._connect(write=True, public_edit=True) as connection:
             old = connection.execute(
                 "SELECT version FROM declarations WHERE id=?", (identity,)
             ).fetchone()
@@ -803,7 +826,7 @@ class GraphStore:
             return version
 
     def remove_declaration(self, identity: str, *, expected_version: int) -> int:
-        with self._connect(write=True) as connection:
+        with self._connect(write=True, public_edit=True) as connection:
             old = connection.execute(
                 "SELECT version,deleted FROM declarations WHERE id=?", (identity,)
             ).fetchone()
@@ -840,7 +863,7 @@ class GraphStore:
             return declarations
 
     def put_rule(self, identity: str, payload: dict, *, expected_version: int) -> int:
-        with self._connect(write=True) as connection:
+        with self._connect(write=True, public_edit=True) as connection:
             old = connection.execute("SELECT version FROM rules WHERE id=?", (identity,)).fetchone()
             if (old[0] if old else 0) != expected_version:
                 raise RevisionConflict("Analysis rule changed")

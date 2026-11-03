@@ -190,7 +190,7 @@ def cleanup(workspace, *, before, limit=100):
     # Initialize/migrate before taking the cleanup writer transaction. All selection
     # and deletion below share its revision and exclude concurrent continuations.
     workspace.queries()
-    with workspace.store._connect(write=True) as db:
+    with workspace.store._connect(write=True, public_edit=True) as db:
         revision = db.execute("SELECT revision FROM graph_meta").fetchone()[0]
         eligible = "used<? AND (finished=1 OR abandoned=1 OR revision<>?)"
         rows = list(
