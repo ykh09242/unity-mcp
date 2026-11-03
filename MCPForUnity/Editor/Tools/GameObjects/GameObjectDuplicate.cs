@@ -45,7 +45,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             {
                 newParent = ManageGameObjectCommon.FindObjectInternal(parentToken, "by_id_or_name_or_path");
                 if (newParent == null)
-                    McpLog.Warn($"[ManageGameObject.Duplicate] Parent '{parentToken}' not found. Object will remain at root level.");
+                    return new ErrorResponse($"Parent GameObject '{parentToken}' not found.");
             }
 
             Transform duplicateParent = parentToken == null ? sourceGo.transform.parent : newParent?.transform;

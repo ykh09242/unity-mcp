@@ -1529,14 +1529,13 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
-        [TestCase("missing")]
         [TestCase("null")]
         [TestCase("empty")]
         public void DuplicateExplicitParentFallback_RemainsAtRoot(string kind)
         {
             var source = Owned("Source");
             var request = Duplicate(source);
-            request["parent"] = kind == "null" ? JValue.CreateNull() : new JValue(kind == "empty" ? "" : prefix + "Missing");
+            request["parent"] = kind == "null" ? JValue.CreateNull() : new JValue("");
             var response = Call(request);
             Succeeded(response);
             Assert.IsNull(ResponseObject(response, true).transform.parent);
@@ -1550,8 +1549,25 @@ namespace MCPForUnityTests.Editor.Tools
             request["new_name"] = prefix + "Copy";
             request["parent"] = request["new_name"].DeepClone();
             var response = Call(request);
-            Succeeded(response);
-            Assert.IsNull(ResponseObject(response, true).transform.parent);
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(new[] { source }, Objects());
+        }
+
+        [Test]
+        public void DuplicateMissingParent_LeavesHierarchyAndSelectionUnchanged()
+        {
+            var parent = Owned("Parent");
+            var source = Owned("Source");
+            source.transform.SetParent(parent.transform);
+            Selection.activeGameObject = source;
+            var before = Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray();
+            var request = Duplicate(source);
+            request["parent"] = prefix + "Missing";
+            var response = Call(request);
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(before, Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray());
+            Assert.AreSame(parent.transform, source.transform.parent);
+            Assert.AreSame(source, Selection.activeGameObject);
         }
 
         [Test]
@@ -1592,12 +1608,10 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("existing", false)]
         [TestCase("null", false)]
         [TestCase("empty", false)]
-        [TestCase("missing", false)]
         [TestCase("omitted", true)]
         [TestCase("existing", true)]
         [TestCase("null", true)]
         [TestCase("empty", true)]
-        [TestCase("missing", true)]
         public void DuplicateChild_PreservesWorldTransformForEveryParentMode(string parentMode, bool prefabSource)
         {
             var originalParent = Owned("OriginalParent");
@@ -1617,8 +1631,7 @@ namespace MCPForUnityTests.Editor.Tools
                 request["parent"] =
                     parentMode == "null" ? JValue.CreateNull()
                     : parentMode == "empty" ? new JValue("")
-                    : parentMode == "existing" ? new JValue(otherParent.GetInstanceIDCompat())
-                    : new JValue(prefix + "Missing");
+                    : new JValue(otherParent.GetInstanceIDCompat());
             var response = Call(request);
             Succeeded(response);
             var clone = ResponseObject(response, true);
