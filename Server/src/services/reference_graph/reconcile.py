@@ -45,7 +45,7 @@ from services.reference_graph.collection_protocol import (
     rows,
     text,
 )
-from services.reference_graph.external import ExternalSource, analyze_document
+from services.reference_graph.external import ExternalSource, document_coverage, document_events
 from services.reference_graph.ignore import rule_directory
 from services.reference_graph.store import Edge, Observation, RevisionConflict, _hash, _json
 from services.reference_graph.workspace import GraphWorkspace
@@ -1309,7 +1309,7 @@ class Reconciler:
                 events = index.events(row["owner"], lookups)
                 preview = list(islice(events, 257))
                 if len(preview) > 256:
-                    self.workspace.publish_code_events(
+                    self.workspace.publish_events(
                         self.worker,
                         row["owner"],
                         generation,
@@ -1505,7 +1505,7 @@ class Reconciler:
                         seen=seen,
                     )
                     recorded = True
-                    result = analyze_document(
+                    events = document_events(
                         path,
                         document.text,
                         catalog,
@@ -1513,11 +1513,23 @@ class Reconciler:
                         check=self._check_thread,
                         visit=visit_external_item,
                     )
-                    if _json(adapter.stamp(path)) != stamp:
-                        raise RevisionConflict("External input changed during analysis")
-                    self._check_source(source, require_source)
-                    if not self.workspace.publish(self.worker, owner, provider, generation, result):
-                        raise RevisionConflict("External source grant changed during analysis")
+
+                    def verify_document():
+                        if _json(adapter.stamp(path)) != stamp:
+                            raise RevisionConflict("External input changed during analysis")
+                        self._check_source(source, require_source)
+
+                    self.workspace.publish_events(
+                        self.worker,
+                        owner,
+                        generation,
+                        events,
+                        provider=provider,
+                        coverage=document_coverage(adapter.mappings),
+                        catalog_revision=catalog_revision,
+                        check=self._check_thread,
+                        before_publish=verify_document,
+                    )
             except RevisionConflict:
                 raise
             except (OSError, ValueError, csv.Error, RecursionError) as error:

@@ -1279,14 +1279,17 @@ class GraphWorkspace:
             ((owner, dependency) for dependency in chain(dependencies, catalog)),
         )
 
-    def publish_code_events(
+    def publish_events(
         self,
         worker: str,
         owner: str,
         generation: int,
         events: Iterable[Edge | dict],
-        dependencies: Callable[[], set[str]],
+        dependencies: Callable[[], set[str]] = set,
         *,
+        provider: str = "code",
+        coverage: str = "partial_static",
+        before_publish: Callable[[], None] = lambda: None,
         catalog_lookups: CatalogLookups | None = None,
         catalog_revision: int | None = None,
         check: Callable[[], None] = lambda: None,
@@ -1296,8 +1299,8 @@ class GraphWorkspace:
         def require_current(connection):
             check()
             self._require_catalog(connection, catalog_revision)
-            if not self.store._current(connection, owner, "code", generation):
-                raise RevisionConflict("Code inputs changed during streamed analysis")
+            if not self.store._current(connection, owner, provider, generation):
+                raise RevisionConflict("Graph inputs changed during streamed analysis")
 
         def stage(rows):
             with self._write(worker) as connection:
@@ -1318,7 +1321,10 @@ class GraphWorkspace:
                 check()
                 is_edge = isinstance(event, Edge)
                 payload = _json(asdict(event) if is_edge else event)
-                identity = _hash((owner, "code", payload)) if is_edge else _hash(payload)
+                if is_edge:
+                    identity = _hash((owner, provider, payload))
+                else:
+                    identity = _hash(payload) if provider == "code" else str(ordinal)
                 batch.append(
                     (
                         worker,
@@ -1336,30 +1342,36 @@ class GraphWorkspace:
             if batch:
                 stage(batch)
             resolved_dependencies = dependencies()
+            before_publish()
             with self._write(worker) as connection:
                 require_current(connection)
-                connection.execute("DELETE FROM edges WHERE owner=? AND provider='code'", (owner,))
                 connection.execute(
-                    "INSERT INTO edges SELECT identity,owner,'code',json_extract(payload,'$.target'),json_extract(payload,'$.kind'),payload FROM graph_staging s WHERE worker=? AND owner=? AND generation=? AND kind='edge' AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=s.owner OR x.id=json_extract(s.payload,'$.target'))",
-                    (worker, owner, generation),
+                    "DELETE FROM edges WHERE owner=? AND provider=?", (owner, provider)
                 )
                 connection.execute(
-                    "DELETE FROM graph_issues WHERE owner=? AND provider='code'", (owner,)
+                    "INSERT INTO edges SELECT identity,owner,?,json_extract(payload,'$.target'),json_extract(payload,'$.kind'),payload FROM graph_staging s WHERE worker=? AND owner=? AND generation=? AND kind='edge' AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=s.owner OR x.id=json_extract(s.payload,'$.target'))",
+                    (provider, worker, owner, generation),
                 )
                 connection.execute(
-                    "INSERT INTO graph_issues SELECT owner,'code',ordinal,payload FROM graph_staging WHERE worker=? AND owner=? AND generation=? AND kind='issue'",
-                    (worker, owner, generation),
-                )
-                self._code_dependencies(connection, owner, resolved_dependencies, catalog_lookups)
-                connection.execute(
-                    "INSERT OR REPLACE INTO graph_analysis VALUES (?,'code','partial_static',?)",
-                    (owner, generation),
+                    "DELETE FROM graph_issues WHERE owner=? AND provider=?", (owner, provider)
                 )
                 connection.execute(
-                    "UPDATE observations SET state='ready',error=NULL WHERE owner=? AND provider='code'",
-                    (owner,),
+                    "INSERT INTO graph_issues SELECT owner,?,ordinal,payload FROM graph_staging WHERE worker=? AND owner=? AND generation=? AND kind='issue'",
+                    (provider, worker, owner, generation),
                 )
-                self.store._publish_context(connection, owner, "code", generation)
+                if provider == "code":
+                    self._code_dependencies(
+                        connection, owner, resolved_dependencies, catalog_lookups
+                    )
+                connection.execute(
+                    "INSERT OR REPLACE INTO graph_analysis VALUES (?,?,?,?)",
+                    (owner, provider, coverage, generation),
+                )
+                connection.execute(
+                    "UPDATE observations SET state='ready',error=NULL WHERE owner=? AND provider=?",
+                    (owner, provider),
+                )
+                self.store._publish_context(connection, owner, provider, generation)
                 connection.execute(
                     "DELETE FROM graph_staging WHERE worker=? AND owner=?", (worker, owner)
                 )

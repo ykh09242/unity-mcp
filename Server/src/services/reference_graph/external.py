@@ -583,7 +583,7 @@ def _field_matches(pattern: str, field_name: str) -> bool:
     )
 
 
-def analyze_document(
+def document_events(
     relative: str,
     text: str,
     catalog: Catalog,
@@ -591,22 +591,25 @@ def analyze_document(
     *,
     check: Callable[[], None] = lambda: None,
     visit: Callable[[], None] = lambda: None,
-) -> Analysis:
+) -> Iterator[Edge | dict]:
+    """Charge catalog expansion before retaining targets, and stream per-occurrence evidence."""
     validate_mappings(mappings)
-    result = Analysis(coverage="mapped_fields" if mappings else "exact_catalog_strings")
     seen = set()
+
+    def visit_match():
+        check()
+        visit()
+
     for field_name, value, line, pointer in _values(relative, text, check, visit):
-        matches = [
-            (i, mapping)
-            for i, mapping in enumerate(mappings)
-            if _field_matches(mapping["field"], field_name)
-        ]
         if not mappings and isinstance(value, str):
             targets = set()
             for scheme in ("resources", "addressables", "addressables_label", "path", "guid"):
-                targets.update(catalog.keys.get((scheme, catalog.canonical_key(scheme, value)), ()))
-            result.edges.extend(
-                Edge(
+                for target in catalog.keys.get((scheme, catalog.canonical_key(scheme, value)), ()):
+                    visit_match()
+                    targets.add(target)
+            for target in sorted(targets):
+                check()
+                yield Edge(
                     target,
                     "external_key_candidate",
                     value,
@@ -615,31 +618,29 @@ def analyze_document(
                     field_name,
                     source_pointer=pointer,
                 )
-                for target in sorted(targets)
-            )
-        for i, mapping in matches:
+        for i, mapping in enumerate(mappings):
+            visit_match()
+            if not _field_matches(mapping["field"], field_name):
+                continue
             seen.add(i)
             mapped = mapping.get("values", {}).get(str(value)) if "values" in mapping else value
             if not isinstance(mapped, str):
-                result.unresolved.append(
-                    {
-                        "field": field_name,
-                        "line": line,
-                        "reason": "unmapped_value" if "values" in mapping else "non_string_value",
-                        "source_pointer": pointer,
-                    }
-                )
+                yield {
+                    "field": field_name,
+                    "line": line,
+                    "reason": "unmapped_value" if "values" in mapping else "non_string_value",
+                    "source_pointer": pointer,
+                }
                 continue
             key = mapping.get("prefix", "") + mapped + mapping.get("suffix", "")
             targets, reason, subobject = catalog.resolve_detail(
-                mapping["scheme"], key, mapping.get("mode", "single")
+                mapping["scheme"], key, mapping.get("mode", "single"), visit=visit_match
             )
             if reason and reason != "excluded":
-                result.unresolved.append(
-                    {"field": field_name, "line": line, "reason": reason, "key_redacted": True}
-                )
-            result.edges.extend(
-                Edge(
+                yield {"field": field_name, "line": line, "reason": reason, "key_redacted": True}
+            for target in sorted(targets):
+                check()
+                yield Edge(
                     target,
                     "external_mapped_key",
                     key,
@@ -649,11 +650,29 @@ def analyze_document(
                     source_pointer=pointer,
                     subobject=subobject,
                 )
-                for target in sorted(targets)
-            )
-    result.unresolved.extend(
-        {"field": mapping["field"], "reason": "mapping_not_found"}
-        for i, mapping in enumerate(mappings)
-        if i not in seen
-    )
+    for i, mapping in enumerate(mappings):
+        if i not in seen:
+            visit_match()
+            yield {"field": mapping["field"], "reason": "mapping_not_found"}
+
+
+def document_coverage(mappings: list[dict]) -> str:
+    return "mapped_fields" if mappings else "exact_catalog_strings"
+
+
+def analyze_document(
+    relative: str,
+    text: str,
+    catalog: Catalog,
+    mappings: list[dict],
+    *,
+    check: Callable[[], None] = lambda: None,
+    visit: Callable[[], None] = lambda: None,
+) -> Analysis:
+    result = Analysis(coverage=document_coverage(mappings))
+    for event in document_events(relative, text, catalog, mappings, check=check, visit=visit):
+        if isinstance(event, Edge):
+            result.edges.append(event)
+        else:
+            result.unresolved.append(event)
     return result

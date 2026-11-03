@@ -906,12 +906,28 @@ class Catalog:
                 self.keys[key].add(target)
 
     def resolve(
-        self, scheme: str, key: str, mode: str = "single", *, lookups: CatalogLookups | None = None
+        self,
+        scheme: str,
+        key: str,
+        mode: str = "single",
+        *,
+        lookups: CatalogLookups | None = None,
+        visit: Callable[[], None] | None = None,
     ) -> tuple[set[str], str | None]:
         key = self.canonical_key(scheme, key)
         if lookups is not None:
             lookups.add(lookups.key(scheme, key))
-        targets = set(self.keys.get((scheme, key), ()))
+        targets = set()
+
+        def add_targets(ids):
+            if visit is None:
+                targets.update(ids)
+            else:
+                for target in ids:
+                    visit()
+                    targets.add(target)
+
+        add_targets(self.keys.get((scheme, key), ()))
         if scheme == "resources" and mode == "all":
             prefix = key.rstrip("/") + "/" if key else ""
             if lookups is not None:
@@ -920,16 +936,15 @@ class Catalog:
                     if prefix.count("/") <= lookups.MAX_PREFIX_DEPTH
                     else lookups.ANY
                 )
-            targets.update(
-                target
-                for (kind, value), ids in self.keys.items()
-                if kind == scheme and (value.startswith(prefix) or value == key)
-                for target in ids
-            )
+            for (kind, value), ids in self.keys.items():
+                if visit is not None:
+                    visit()
+                if kind == scheme and value != key and value.startswith(prefix):
+                    add_targets(ids)
         if scheme == "addressables":
             if lookups is not None:
                 lookups.add(lookups.key("addressables_label", key))
-            targets.update(self.keys.get(("addressables_label", key), ()))
+            add_targets(self.keys.get(("addressables_label", key), ()))
         if not targets:
             if (scheme, key) in self.blocked or (
                 scheme == "addressables" and ("addressables_label", key) in self.blocked
@@ -946,13 +961,19 @@ class Catalog:
         return targets, None
 
     def resolve_detail(
-        self, scheme: str, key: str, mode: str = "single", *, lookups: CatalogLookups | None = None
+        self,
+        scheme: str,
+        key: str,
+        mode: str = "single",
+        *,
+        lookups: CatalogLookups | None = None,
+        visit: Callable[[], None] | None = None,
     ) -> tuple[set[str], str | None, str]:
-        targets, reason = self.resolve(scheme, key, mode, lookups=lookups)
+        targets, reason = self.resolve(scheme, key, mode, lookups=lookups, visit=visit)
         if scheme == "addressables" and reason in {"key_not_found", "provider_unavailable"}:
             match = re.fullmatch(r"([^\[\]]+)\[([^\[\]]+)\]", key)
             if match:
-                targets, reason = self.resolve(scheme, match[1], mode, lookups=lookups)
+                targets, reason = self.resolve(scheme, match[1], mode, lookups=lookups, visit=visit)
                 return targets, reason, match[2]
         return targets, reason, ""
 

@@ -188,7 +188,7 @@ def test_streamed_analysis_is_atomic_batched_and_cleans_cancelled_staging(worksp
             yield Edge(f"target{index}", "load")
         yield {"reason": "dynamic_key"}
 
-    workspace.publish_code_events("worker", "owner", generation, events(), lambda: {"dependency"})
+    workspace.publish_events("worker", "owner", generation, events(), lambda: {"dependency"})
     with workspace.store._connect() as connection:
         assert (
             connection.execute("SELECT count(*) FROM edges WHERE owner='owner'").fetchone()[0]
@@ -203,7 +203,7 @@ def test_streamed_analysis_is_atomic_batched_and_cleans_cancelled_staging(worksp
         raise InterruptedError("cancelled")
 
     with pytest.raises(InterruptedError):
-        workspace.publish_code_events("worker", "owner", generation, interrupted(), set)
+        workspace.publish_events("worker", "owner", generation, interrupted(), set)
     with workspace.store._connect() as connection:
         assert connection.execute("SELECT count(*) FROM graph_staging").fetchone()[0] == 0
         assert (
@@ -220,7 +220,7 @@ def test_streamed_analysis_cannot_commit_after_generation_or_worker_changes(work
         workspace.observe("worker", Observation("owner", "code", "changed"))
 
     with pytest.raises(RevisionConflict):
-        workspace.publish_code_events("worker", "owner", generation, stale(), set)
+        workspace.publish_events("worker", "owner", generation, stale(), set)
     assert workspace.store.query("owner")["edges"] == []
 
 
@@ -277,7 +277,7 @@ def test_catalog_change_during_stream_cannot_promote_old_evidence(workspace):
         workspace.record_page("worker", [row()], {}, "scan")
 
     with pytest.raises(RevisionConflict, match="Catalog changed"):
-        workspace.publish_code_events(
+        workspace.publish_events(
             "worker", "owner", generation, events(), set, catalog_revision=revision
         )
     assert workspace.store.query("owner")["edges"] == []

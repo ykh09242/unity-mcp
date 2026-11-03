@@ -992,6 +992,64 @@ async def test_replaced_script_cannot_republish_retired_facts_or_wrapper_definit
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mapped", [False, True])
+async def test_external_fanout_budget_preserves_publication_until_complete(setup, tmp_path, mapped):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudget,
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    store, workspace, editor, engine = setup
+    provider = "external:labels"
+    root = tmp_path / "external"
+    root.mkdir()
+    document = root / "labels.json"
+    document.write_text('["label"]')
+    for number in range(200):
+        editor.add(
+            number,
+            f"Assets/{number}.asset",
+            keys=[{"scheme": "addressables_label", "value": "label"}],
+        )
+    mappings = [{"field": "/*", "scheme": "addressables", "mode": "all"}] if mapped else []
+    workspace.set_source(
+        provider,
+        {"root": str(root), "include": ["*.json"], "mappings": mappings},
+        expected_version=0,
+    )
+    assert workspace.acquire(engine.worker)
+    try:
+        workspace.record_page(engine.worker, list(editor.assets.values()), {}, "fixture")
+        await engine._external(force=False)
+        owner = provider + ":" + _hash(document.name)
+        before = store.query(owner, limit=1000)["edges"]
+        assert len(before) == 200
+        document.write_text(json.dumps(["label"] * 200))
+        for limit in (201, 650):
+            engine._budget = CollectionBudget(CollectionLimits(max_items=limit))
+            with pytest.raises(CollectionBudgetExceeded, match=f"max_items={limit}"):
+                await engine._external(force=False)
+            after = store.query(owner, limit=1000)["edges"]
+            assert [edge["id"] for edge in before] == [edge["id"] for edge in after]
+            assert all(edge["stale"] for edge in after)
+            assert workspace.provider_status()[provider]["state"] == "failed"
+            with store._connect() as db:
+                assert db.execute("SELECT count(*) FROM graph_staging").fetchone()[0] == 0
+
+        engine._budget = CollectionBudget(CollectionLimits(max_items=41000))
+        await engine._external(force=False)
+        with store._connect() as db:
+            assert db.execute(
+                "SELECT count(*),count(DISTINCT target),count(DISTINCT json_extract(payload,'$.source_pointer')) FROM edges WHERE provider=?",
+                (provider,),
+            ).fetchone()[:] == (40000, 200, 200)
+        assert workspace.provider_status()[provider]["state"] == "verified_at_scan"
+    finally:
+        workspace.release(engine.worker)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("overflow", ["document", "aggregate", "ignore"])
 async def test_external_budget_failure_keeps_stale_evidence_and_recovers(setup, tmp_path, overflow):
     from services.reference_graph.collection_protocol import (
@@ -1610,15 +1668,15 @@ async def test_interrupted_forced_external_analysis_resumes_without_file_change(
         "external:settings", {"root": str(root), "include": ["*.json"]}, expected_version=0
     )
     assert await engine.reconcile()
-    original = module.analyze_document
+    original = module.document_events
 
     def interrupted(*_, **__):
         raise ValueError("interrupted after admission")
 
-    monkeypatch.setattr(module, "analyze_document", interrupted)
+    monkeypatch.setattr(module, "document_events", interrupted)
     assert not await engine.reconcile(force_external=True)
     assert not store.status()["queue_idle"]
-    monkeypatch.setattr(module, "analyze_document", original)
+    monkeypatch.setattr(module, "document_events", original)
     assert await engine.reconcile()
     assert store.status()["queue_idle"]
 
