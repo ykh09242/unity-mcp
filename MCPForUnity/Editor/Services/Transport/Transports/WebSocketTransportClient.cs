@@ -236,23 +236,24 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 lifecycleCts = new CancellationTokenSource();
                 lifecycleToken = lifecycleCts.Token;
                 _lifecycleCts = lifecycleCts;
+                _isReconnectingFlag = 0;
                 _endpointUri = endpointUri;
                 _sessionId = null;
             }
 
-            if (!await EstablishConnectionAsync(lifecycleToken))
+            var registeredConnection = await EstablishConnectionAsync(lifecycleToken);
+            if (!registeredConnection.HasValue)
             {
                 await StopOwnedAsync(lifecycleCts);
                 return false;
             }
 
-            // State is connected but session ID might be pending until 'registered' message
             lock (_ownershipLock)
             {
                 if (startVersion != _startVersion || !ReferenceEquals(_lifecycleCts, lifecycleCts) || lifecycleCts.IsCancellationRequested)
                     return false;
-                _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
-                _isConnected = true;
+                // A close after the register send already handed recovery to a worker.
+                TryPublishConnected(registeredConnection.Value);
             }
             return true;
         }
@@ -589,7 +590,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             _disposed = true;
         }
 
-        private async Task<bool> EstablishConnectionAsync(CancellationToken token)
+        private async Task<CancellationToken?> EstablishConnectionAsync(CancellationToken token)
         {
             ConnectionLoops loops;
             Task forcedSettlement;
@@ -598,15 +599,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 lifecycleCts = _lifecycleCts;
                 if (lifecycleCts == null || token.IsCancellationRequested || ReferenceEquals(_stoppingLifecycle, lifecycleCts))
-                    return false;
+                    return null;
                 try
                 {
                     if (lifecycleCts.Token != token)
-                        return false;
+                        return null;
                 }
                 catch (ObjectDisposedException)
                 {
-                    return false;
+                    return null;
                 }
                 loops = CaptureConnectionLoops();
                 forcedSettlement = _forcedCommandSettlement;
@@ -614,7 +615,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             // A manual restart may have no current loops after ForceStop, but its old handlers still own mutations.
             var settlement = Task.WhenAll(StopCapturedConnectionLoopsAsync(loops), forcedSettlement);
             if (!await ObserveControlAsync(settlement, lifecycleCts, token).ConfigureAwait(false))
-                return false;
+                return null;
             token.ThrowIfCancellationRequested();
             var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(token);
             var admission = new CommandAdmission();
@@ -650,7 +651,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 admission.Dispose();
                 connectionCts.Dispose();
-                return false;
+                return null;
             }
 
             Uri originalEndpoint = _endpointUri;
@@ -688,7 +689,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 if (!ownsLifecycle)
                 {
                     socket.Dispose();
-                    return false;
+                    return null;
                 }
                 previousSocket?.Dispose();
 
@@ -725,14 +726,14 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 lock (_ownershipLock)
                     if (ReferenceEquals(_connectionCts, connectionCts))
                         _state = TransportState.Disconnected(TransportDisplayName, errorMsg);
-                return false;
+                return null;
             }
 
             if (!string.Equals(connectedEndpoint.Host, originalEndpoint.Host, StringComparison.OrdinalIgnoreCase))
             {
                 McpLog.Warn($"[WebSocket] Connected via fallback host '{connectedEndpoint.Host}' after '{originalEndpoint.Host}' failed.");
                 if (!TryPublishConnectedEndpoint(connectionToken, connectedEndpoint))
-                    return false;
+                    return null;
             }
 
             StartBackgroundLoops(connectionToken);
@@ -748,10 +749,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 lock (_ownershipLock)
                     if (ReferenceEquals(_connectionCts, connectionCts))
                         _state = TransportState.Disconnected(TransportDisplayName, regMsg);
-                return false;
+                return null;
             }
 
-            return true;
+            return connectionToken;
         }
 
         // These tokens are observed by admission only: never register callbacks or pass
@@ -820,6 +821,19 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 return false;
             }
+        }
+
+        // Caller holds _ownershipLock. Registration can finish after this generation closed.
+        private bool TryPublishConnected(CancellationToken token, bool releaseReconnectWorker = false)
+        {
+            if (!IsCurrentConnectionToken(token))
+                return false;
+            _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
+            _isConnected = true;
+            // A close observed after publication must be able to claim its own worker.
+            if (releaseReconnectWorker)
+                _isReconnectingFlag = 0;
+            return true;
         }
 
         private bool TryPublishConnectedEndpoint(CancellationToken token, Uri endpoint)
@@ -1891,25 +1905,23 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             CancellationToken lifecycleToken;
             lock (_ownershipLock)
             {
-                var connectionCts = _connectionCts;
                 lifecycleCts = _lifecycleCts;
-                if (connectionToken.IsCancellationRequested || connectionCts == null || lifecycleCts == null || lifecycleCts.IsCancellationRequested)
+                if (lifecycleCts == null || lifecycleCts.IsCancellationRequested || !IsCurrentConnectionToken(connectionToken))
                     return Task.CompletedTask;
                 try
                 {
-                    if (connectionCts.Token != connectionToken)
-                        return Task.CompletedTask;
                     lifecycleToken = lifecycleCts.Token;
                 }
                 catch (ObjectDisposedException)
                 {
                     return Task.CompletedTask;
                 }
-                if (Interlocked.CompareExchange(ref _isReconnectingFlag, 1, 0) != 0)
-                    return Task.CompletedTask;
                 _commandAdmission?.Retire();
                 _isConnected = false;
                 _state = TransportState.Disconnected(TransportDisplayName, reason ?? "Connection closed");
+                if (_isReconnectingFlag != 0)
+                    return Task.CompletedTask;
+                _isReconnectingFlag = 1;
             }
             // Capture stack trace for debugging disconnection triggers
             var stackTrace = new System.Diagnostics.StackTrace(true);
@@ -1933,6 +1945,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private async Task AttemptReconnectAsync(CancellationToken token, CancellationTokenSource lifecycleCts)
         {
+            bool reconnected = false;
             try
             {
                 if (token.IsCancellationRequested)
@@ -1950,78 +1963,44 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     // Reconnect can resume only after the actual old execution has finished.
                     await ConnectionCommandWork.WaitAsync(drain, token).ConfigureAwait(false);
 
-                foreach (TimeSpan delay in ReconnectSchedule)
-                {
-                    if (token.IsCancellationRequested)
-                    {
-                        return;
-                    }
-
-                    if (delay > TimeSpan.Zero)
-                    {
-                        try
-                        {
-                            await Task.Delay(delay, token).ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            return;
-                        }
-                    }
-
-                    if (await EstablishConnectionAsync(token).ConfigureAwait(false))
-                    {
-                        lock (_ownershipLock)
-                        {
-                            if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || token.IsCancellationRequested)
-                                return;
-                            _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
-                            _isConnected = true;
-                        }
-                        McpLog.Info("[WebSocket] Reconnected to MCP server", false);
-                        return;
-                    }
-                }
-
-                // Schedule exhausted — keep retrying every 30 s indefinitely so a transient
-                // server outage longer than ~49 s doesn't leave the plugin permanently dead.
-                McpLog.Warn($"[WebSocket] Initial reconnect schedule exhausted. Retrying every {ReconnectTailInterval.TotalSeconds}s until cancelled.");
-                lock (_ownershipLock)
-                {
-                    if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || token.IsCancellationRequested)
-                        return;
-                    _state = _state.WithError($"Server unreachable – retrying every {ReconnectTailInterval.TotalSeconds} s");
-                }
+                int attempt = 0;
                 while (!token.IsCancellationRequested)
                 {
-                    try
+                    TimeSpan delay = attempt < ReconnectSchedule.Length ? ReconnectSchedule[attempt] : ReconnectTailInterval;
+                    if (delay > TimeSpan.Zero)
+                        await Task.Delay(delay, token).ConfigureAwait(false);
+
+                    var registeredConnection = await EstablishConnectionAsync(token).ConfigureAwait(false);
+                    lock (_ownershipLock)
                     {
-                        await Task.Delay(ReconnectTailInterval, token).ConfigureAwait(false);
+                        if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || token.IsCancellationRequested)
+                            return;
+                        reconnected = registeredConnection.HasValue && TryPublishConnected(registeredConnection.Value, releaseReconnectWorker: true);
                     }
-                    catch (OperationCanceledException)
+                    if (reconnected)
                     {
+                        McpLog.Info("[WebSocket] Reconnected to MCP server", false);
                         return;
                     }
 
-                    if (await EstablishConnectionAsync(token).ConfigureAwait(false))
+                    if (attempt < ReconnectSchedule.Length && ++attempt == ReconnectSchedule.Length)
                     {
+                        McpLog.Warn($"[WebSocket] Initial reconnect schedule exhausted. Retrying every {ReconnectTailInterval.TotalSeconds}s until cancelled.");
                         lock (_ownershipLock)
                         {
                             if (!ReferenceEquals(_lifecycleCts, lifecycleCts) || token.IsCancellationRequested)
                                 return;
-                            _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
-                            _isConnected = true;
+                            _state = _state.WithError($"Server unreachable – retrying every {ReconnectTailInterval.TotalSeconds} s");
                         }
-                        McpLog.Info("[WebSocket] Reconnected to MCP server", false);
-                        return;
                     }
                 }
             }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
             finally
             {
                 lock (_ownershipLock)
-                    if (ReferenceEquals(_lifecycleCts, lifecycleCts))
-                        Interlocked.Exchange(ref _isReconnectingFlag, 0);
+                    if (!reconnected && ReferenceEquals(_lifecycleCts, lifecycleCts))
+                        _isReconnectingFlag = 0;
             }
         }
 

@@ -501,6 +501,60 @@ namespace MCPForUnityTests.Editor.Services
 
         [TestCase(false)]
         [TestCase(true)]
+        public async Task ReplacementClosureAtReconnectPublication_RetiresGenerationAndPreservesRetry(bool closeBeforePublication)
+        {
+            using var client = new WebSocketTransportClient();
+            using var lifecycle = new CancellationTokenSource();
+            using var connection = CancellationTokenSource.CreateLinkedTokenSource(lifecycle.Token);
+            using var admission = QueuedAdmissionFixture.NewAdmission();
+            var receive = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var registeredConnection = connection.Token;
+            SetField(client, "_lifecycleCts", lifecycle);
+            SetField(client, "_connectionCts", connection);
+            SetField(client, "_commandAdmission", admission);
+            SetField(client, "_receiveTask", receive.Task);
+            SetField(client, "_endpointUri", new Uri("ws://127.0.0.1/"));
+            SetField(client, "_isReconnectingFlag", 1);
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var closure = typeof(WebSocketTransportClient).GetMethod("HandleSocketClosureAsync", flags);
+            var publish = typeof(WebSocketTransportClient).GetMethod("TryPublishConnected", flags);
+            Task Close() => (Task)closure.Invoke(client, new object[] { "replacement closed", registeredConnection });
+            bool PublishRegisterSend()
+            {
+                lock (GetField(client, "_ownershipLock"))
+                    return (bool)publish.Invoke(client, new object[] { registeredConnection, true });
+            }
+            try
+            {
+                if (closeBeforePublication)
+                {
+                    await Close();
+                    Assert.IsFalse(PublishRegisterSend(), "A successful register send cannot publish a closed connection.");
+                    Assert.IsFalse(registeredConnection.IsCancellationRequested, "The existing worker must own the next retry.");
+                }
+                else
+                {
+                    Assert.IsTrue(PublishRegisterSend());
+                    Assert.AreEqual(0, GetField(client, "_isReconnectingFlag"), "Publishing must release the previous worker in the same handoff.");
+                    await Close();
+                    await AwaitControlCondition(() => registeredConnection.IsCancellationRequested);
+                }
+                Assert.IsTrue(QueuedAdmissionFixture.Token(admission).IsCancellationRequested);
+                Assert.IsFalse(client.IsConnected);
+                Assert.IsFalse(client.State.IsConnected);
+                Assert.AreEqual("replacement closed", client.State.Error);
+                Assert.AreEqual(1, GetField(client, "_isReconnectingFlag"));
+            }
+            finally
+            {
+                lifecycle.Cancel();
+                receive.TrySetResult(true);
+                await client.StopAsync();
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public void HandleSocketClosureAsync_OldConnectionError_PreservesReplacementSession(bool cancelOldConnection)
         {
             using var client = new WebSocketTransportClient();
