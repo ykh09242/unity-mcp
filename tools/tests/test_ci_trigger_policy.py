@@ -14,6 +14,11 @@ VALIDATIONS = [
     ("compile-check.yml", "MCPForUnity/Editor/Tools/ManageBuild.cs"),
     ("workflow-lint.yml", ".github/workflows/python-tests.yml"),
 ]
+# Shared corpus read by Server/tests/test_play_scenario_shared_contract.py.
+SHARED_REPORT_FIXTURE = (
+    "TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/PlayScenarios/"
+    "Fixtures/shared-report-contract.json"
+)
 
 
 def workflow(name):
@@ -150,3 +155,23 @@ def test_package_integrity_changes_select_python_pr_gate(target, change, path):
 def test_docker_context_changes_select_distribution_contracts(name, event, branch, activity, path):
     assert selected(name, event, branch, path, activity)
     assert not selected(name, event, branch, "unrelated/example.txt", activity)
+
+
+@pytest.mark.parametrize("target", ["main", "beta"])
+@pytest.mark.parametrize("activity", ["opened", "synchronize", "reopened"])
+def test_shared_report_fixture_only_pr_selects_python_contracts(target: str, activity: str) -> None:
+    assert (ROOT / SHARED_REPORT_FIXTURE).is_file()
+    assert selected("python-tests.yml", "pull_request", target, SHARED_REPORT_FIXTURE, activity)
+    # Other Unity assets and fixture metadata do not become Python contract inputs.
+    for path in (
+        SHARED_REPORT_FIXTURE + ".meta",
+        SHARED_REPORT_FIXTURE.replace("shared-report-contract.json", "unity-only.json"),
+        "TestProjects/UnityMCPTests/Assets/Example.prefab",
+    ):
+        assert not selected("python-tests.yml", "pull_request", target, path, activity)
+
+
+def test_shared_report_fixture_retains_beta_python_contract_validation() -> None:
+    assert selected("fork-beta-tools.yml", "push", "beta", SHARED_REPORT_FIXTURE)
+    jobs = workflow("fork-beta-tools.yml")["jobs"]
+    assert jobs["python_tests"]["uses"] == "./.github/workflows/python-tests.yml"

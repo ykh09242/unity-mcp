@@ -9,6 +9,8 @@ on:
       - docker-compose.remote.yml
       - Server/**
       - MCPForUnity/**
+      # Shared corpus consumed by Server/tests/test_play_scenario_shared_contract.py.
+      - TestProjects/UnityMCPTests/Assets/Tests/EditMode/Tools/PlayScenarios/Fixtures/shared-report-contract.json
       - tools/**
       - mcp_source.py
       - .github/scripts/**
