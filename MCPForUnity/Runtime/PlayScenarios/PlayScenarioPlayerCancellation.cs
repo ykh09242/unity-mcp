@@ -24,11 +24,15 @@ namespace MCPForUnity.Runtime.PlayScenarios
         {
             string directory = Path.GetDirectoryName(path);
             foreach (string marker in Directory.EnumerateFiles(directory, "cancel.*"))
-            {
-                string checkedMarker = PlayScenarioPlayerFiles.CheckedAbsolute(marker);
-                if (checkedMarker != path && checkedMarker != fallbackPath && checkedMarker != path + ".tmp")
-                    throw new IOException("Player run directory contains foreign cancellation evidence.");
-            }
+                RejectForeignMarkerName(Path.GetFileName(marker));
+        }
+
+        internal void RejectForeignMarkerName(string name)
+        {
+            // The publisher can unlink the staging file immediately after enumeration.
+            // Only compare names here; Poll independently validates actual marker paths.
+            if (name != "cancel" && name != "cancel.tmp" && name != "cancel." + jobId)
+                throw new IOException("Player run directory contains foreign cancellation evidence.");
         }
 
         internal bool Poll(long elapsedMilliseconds, bool force = false)

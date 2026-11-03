@@ -146,6 +146,12 @@ namespace MCPForUnityTests
                 fallbackProbe.RejectForeignMarkers();
                 Assert.IsTrue(fallbackProbe.Poll(0));
                 File.Delete(fallback);
+                string temporary = Path.Combine(directory, "cancel.tmp");
+                File.WriteAllText(temporary, job + "\n");
+                string[] enumerated = Directory.GetFiles(directory, "cancel.*");
+                File.Delete(temporary);
+                Assert.That(enumerated, Does.Contain(temporary));
+                Assert.DoesNotThrow(() => fallbackProbe.RejectForeignMarkerName(Path.GetFileName(enumerated[0])));
                 File.WriteAllText(marker, job + "\n");
                 var primaryProbe = new PlayScenarioPlayerCancellation(directory, job);
                 primaryProbe.RejectForeignMarkers();
