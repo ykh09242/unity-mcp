@@ -74,6 +74,7 @@ from transport.command_timeout import (
     configured_wait_timeout,
     MAX_COMMAND_TIMEOUT,
 )
+from transport.command_payload import CommandPreparationBusy, prepare_command
 
 # Compatibility facade: all callers share the same ContextVar and evidence types.
 from transport.command_budget import (
@@ -838,7 +839,7 @@ class PluginHub(WebSocketEndpoint):
         return user_count, session_count, total_bytes, user_bytes, session_bytes
 
     @classmethod
-    def _pending_capacity_error(cls, session_id, user_id):
+    def _pending_capacity_error(cls, session_id, user_id, payload_bytes=1):
         users, sessions, total_bytes, user_bytes, session_bytes = cls._pending_usage(
             session_id, user_id
         )
@@ -846,9 +847,9 @@ class PluginHub(WebSocketEndpoint):
             len(cls._pending) >= cls.MAX_PENDING_COMMANDS
             or users >= cls.MAX_PENDING_PER_USER
             or sessions >= cls.MAX_PENDING_PER_SESSION
-            or total_bytes >= cls.MAX_PENDING_PAYLOAD_BYTES
-            or user_bytes >= cls.MAX_PENDING_PAYLOAD_BYTES_PER_USER
-            or session_bytes >= cls.MAX_PENDING_PAYLOAD_BYTES_PER_SESSION
+            or total_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES
+            or user_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_USER
+            or session_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_SESSION
         ):
             return cls._command_capacity_response()
         return None
@@ -1694,16 +1695,14 @@ class PluginHub(WebSocketEndpoint):
             budget.expires_at = min(budget.expires_at, owner.request.expires_at)
         target = await capture_http_target(session_id, hub=cls)
         if target is None:
-            return await cls._send_command_response_admitted(
-                session_id,
-                command_type,
-                params,
-                _budget=budget,
-                _expected_read=_expected_read,
-                _expected_generation=_expected_generation,
-                _catalog_guard=_catalog_guard,
-                _progress=_progress,
-            )
+            if config.http_remote_hosted:
+                await require_credential_lease()
+            context = local_project_context.get()
+            if context is not None:
+                return context.refuse("project_context_changed", params)
+            if _expected_read is not None:
+                return cls._unavailable_retry_response("read_invalidated")
+            raise CommandNotDispatchedError(f"Plugin session {session_id} not connected")
         if _expected_generation is None:
             _expected_generation = target.transport_generation
         requester = None
@@ -1716,6 +1715,40 @@ class PluginHub(WebSocketEndpoint):
                 raise CredentialLeaseError()
             for credential in (requester, authority):
                 await credential.check()
+        user = (
+            target.scope.principal.removeprefix("remote:")
+            if target.scope.principal.startswith("remote:")
+            else None
+        )
+        if cls._lock is not None:
+            async with cls._authorized_socket_lock(socket, cls._lock, requester):
+                capacity = cls._pending_capacity_error(session_id, user)
+                if capacity is not None:
+                    return capacity
+        if budget.remaining() <= 0:
+            raise TimeoutError
+        try:
+            prepared = await prepare_command(
+                command_type,
+                params,
+                cls._command_payload_size,
+                max_bytes=cls.MAX_COMMAND_PAYLOAD_BYTES,
+                max_nodes=min(cls.MAX_COMMAND_PAYLOAD_NODES, cls.MAX_COMMAND_RETAINED_BYTES // 128),
+                max_depth=cls.MAX_COMMAND_PAYLOAD_DEPTH,
+            )
+        except CommandPreparationBusy:
+            return cls._command_capacity_response()
+        if prepared is None:
+            return MCPResponse(
+                success=False,
+                error="Unity command payload exceeds supported size or structure",
+                data={"reason": "command_payload_limit", "dispatch": "not_dispatched"},
+            ).model_dump()
+        params = prepared.params
+        if requester is not None:
+            if cls._socket_lease(socket) is not authority:
+                raise CredentialLeaseError()
+            for credential in (requester, authority):
                 authorize_operation(
                     credential.permissions,
                     command_type,
@@ -1723,26 +1756,14 @@ class PluginHub(WebSocketEndpoint):
                     custom=_catalog_guard is not None,
                     native=True,
                 )
-        if cls._lock is not None:
-            async with cls._authorized_socket_lock(socket, cls._lock, requester):
-                user = (
-                    target.scope.principal.removeprefix("remote:")
-                    if target.scope.principal.startswith("remote:")
-                    else None
-                )
-                capacity = cls._pending_capacity_error(session_id, user)
-                if capacity is not None:
-                    return capacity
         policy = resolve_operation_policy(
             command_type, params, native=True, trusted_builtin=_catalog_guard is None
         )
-        charge = cls._command_payload_size(command_type, params)
-        if charge is None:
-            return MCPResponse(
-                success=False,
-                error="Unity command payload exceeds supported size or structure",
-                data={"reason": "command_payload_limit", "dispatch": "not_dispatched"},
-            ).model_dump()
+        # The event-loop-owned ledger may have filled while the worker ran.
+        # Refuse before queueing; actual reservation rechecks under the Hub lock.
+        capacity = cls._pending_capacity_error(session_id, user, prepared.retained_bytes)
+        if capacity is not None:
+            return capacity
         async with operation_session(
             admission_for(
                 target,
@@ -1750,13 +1771,14 @@ class PluginHub(WebSocketEndpoint):
                 expires_at=budget.expires_at,
                 observational_continuation=_catalog_guard is None
                 and is_observational_continuation(command_type, params),
-                retained_bytes=charge,
+                retained_bytes=prepared.retained_bytes,
             )
         ):
             return await cls._send_command_response_admitted(
                 session_id,
                 command_type,
                 params,
+                _payload_bytes=prepared.retained_bytes,
                 _budget=budget,
                 _expected_read=_expected_read,
                 _expected_generation=_expected_generation,
@@ -1771,6 +1793,7 @@ class PluginHub(WebSocketEndpoint):
         command_type: str,
         params: dict[str, Any],
         *,
+        _payload_bytes: int,
         _budget: _CommandBudget | None = None,
         _expected_read: _ConnectionReadIdentity | None = None,
         _expected_generation: str | None = None,
@@ -1812,10 +1835,6 @@ class PluginHub(WebSocketEndpoint):
             if resume is not None and registry is not None
             else None
         )
-        if resume is not None:
-            # Snapshot the admitted JSON once; every wire continuation carries
-            # exactly the same values, even if caller-owned dictionaries change.
-            params = json.loads(json.dumps(params))
         if queued_origin.get() is not None and (
             resume is None or not cls._supports(socket, ORIGIN_CAPABILITY)
         ):
@@ -1829,6 +1848,7 @@ class PluginHub(WebSocketEndpoint):
                             command_type,
                             params,
                             budget,
+                            _payload_bytes=_payload_bytes,
                             _expected_read=_expected_read,
                             **(
                                 {"_expected_generation": _expected_generation}
@@ -1849,7 +1869,6 @@ class PluginHub(WebSocketEndpoint):
                             or may_retry_wire_attempt(command_type, refusal.reply)
                         ):
                             return refusal.reply.payload
-                        params = refusal.params
                         _expected_generation = refusal.transport_generation
                         budget.phase = "native_admission"
                         await asyncio.sleep(min(0.1, budget.remaining()))
@@ -2012,6 +2031,7 @@ class PluginHub(WebSocketEndpoint):
         params: dict[str, Any],
         budget: _CommandBudget,
         *,
+        _payload_bytes: int,
         _expected_read: _ConnectionReadIdentity | None = None,
         _expected_generation: str | None = None,
         _catalog_guard=None,
@@ -2047,7 +2067,23 @@ class PluginHub(WebSocketEndpoint):
                 return context.refuse("project_context_unavailable", params)
             raise CommandNotDispatchedError("PluginHub not configured")
 
+        plugin = cls._socket_lease(websocket)
+        for authority in (requester, plugin):
+            if authority is not None:
+                authorize_operation(
+                    authority.permissions,
+                    command_type,
+                    params,
+                    custom=_catalog_guard is not None,
+                    native=True,
+                )
         async with cls._authorized_socket_lock(websocket, lock, requester):
+            if budget.remaining() <= 0:
+                raise TimeoutError
+            if cls._socket_lease(websocket) is not plugin or (
+                requester is not None and (plugin is None or plugin.user_id != requester.user_id)
+            ):
+                raise CredentialLeaseError()
             if context is not None and (
                 context.selection is None
                 or cls._connections.get(session_id) is not websocket
@@ -2084,39 +2120,11 @@ class PluginHub(WebSocketEndpoint):
                 websocket, user_id, _expected_read
             ):
                 return cls._unavailable_retry_response("read_invalidated")
-            for authority in (requester, cls._socket_lease(websocket)):
-                if authority is not None:
-                    authorize_operation(
-                        authority.permissions,
-                        command_type,
-                        params,
-                        custom=_catalog_guard is not None,
-                        native=True,
-                    )
             # _pending is the single source of accounting: every existing pop on
             # result/cancel/timeout/disconnect/eviction/shutdown returns capacity.
-            user_count, session_count, total_bytes, user_bytes, session_bytes = cls._pending_usage(
-                session_id, user_id
-            )
-            if (
-                len(cls._pending) >= cls.MAX_PENDING_COMMANDS
-                or user_count >= cls.MAX_PENDING_PER_USER
-                or session_count >= cls.MAX_PENDING_PER_SESSION
-            ):
-                return cls._command_capacity_response()
-            payload_bytes = cls._command_payload_size(command_type, params)
-            if payload_bytes is None:
-                return MCPResponse(
-                    success=False,
-                    error="Unity command payload exceeds supported size or structure",
-                    data={"reason": "command_payload_limit"},
-                ).model_dump()
-            if (
-                total_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES
-                or user_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_USER
-                or session_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_SESSION
-            ):
-                return cls._command_capacity_response()
+            capacity = cls._pending_capacity_error(session_id, user_id, _payload_bytes)
+            if capacity is not None:
+                return capacity
             # Unknown/custom/batch commands may mutate. Advance before socket
             # I/O so later readers cannot join an earlier observation.
             if not cls._is_non_mutating(command_type, params):
@@ -2151,7 +2159,7 @@ class PluginHub(WebSocketEndpoint):
                 "future": future,
                 "session_id": session_id,
                 "user_id": user_id,
-                "payload_bytes": payload_bytes,
+                "payload_bytes": _payload_bytes,
                 "response_owner": response_owner.get(),
                 "result_ledger": result_ledger,
                 "receipt_owner": execution_owner.get(),
@@ -2195,7 +2203,6 @@ class PluginHub(WebSocketEndpoint):
             )
             if progress is not None:
                 entry = cls._pending[command_id]
-                plugin = cls._socket_lease(websocket)
                 floor = (
                     required_permissions(command_type, payload["params"], native=True)
                     if any(
@@ -2279,7 +2286,6 @@ class PluginHub(WebSocketEndpoint):
             try:
 
                 async def authorized_send():
-                    plugin = cls._socket_lease(websocket)
                     for lease in (requester, plugin):
                         if lease is not None:
                             await lease.check()
@@ -2367,16 +2373,20 @@ class PluginHub(WebSocketEndpoint):
 
                             future.set_result(custom_catalog_changed().model_dump())
                             return False
-                        for lease in (requester, cls._socket_lease(websocket)):
-                            if lease is not None:
-                                lease.check_now()
-                                authorize_operation(
-                                    lease.permissions,
-                                    payload["name"],
-                                    payload["params"],
-                                    custom=_catalog_guard is not None,
-                                    native=True,
-                                )
+                        if cls._socket_lease(websocket) is not plugin:
+                            raise CredentialLeaseError()
+                    # Classification can inspect a batch. The exact socket and immutable
+                    # grants are fenced above; no await separates this check from return.
+                    for lease in (requester, plugin):
+                        if lease is not None:
+                            lease.check_now()
+                            authorize_operation(
+                                lease.permissions,
+                                payload["name"],
+                                payload["params"],
+                                custom=_catalog_guard is not None,
+                                native=True,
+                            )
                     return True
 
                 def dispatch_write() -> None:

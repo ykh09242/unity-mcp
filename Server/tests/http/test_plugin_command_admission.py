@@ -1,11 +1,12 @@
 """Command capacity is enforced before a Unity payload or task is retained."""
 
-from tests.timing import watchdog_timeout
+from tests.timing import await_completion, await_signal, watchdog_timeout
 
 import asyncio  # noqa: ANYIO_OK -- exercise the hub's asyncio transport contract.
 import json
 import sys
 import time
+import threading
 from collections.abc import AsyncIterator
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ import httpx
 from core.config import config
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
+from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
 from tests.remote_credentials import remote_credentials
 
 
@@ -137,6 +139,229 @@ async def reject_without_send(
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest_asyncio.fixture
+async def held_payload(monkeypatch):
+    """Hold a large command after copying, before the production estimator returns."""
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    entered, release = asyncio.Event(), threading.Event()
+    measure = PluginHub._command_payload_size
+    charges = []
+
+    def held(command, params):
+        if "values" in params:
+            assert threading.get_ident() != loop_thread
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(watchdog_timeout())
+        charge = measure(command, params)
+        if "values" in params:
+            charges.append(charge)
+        return charge
+
+    monkeypatch.setattr(PluginHub, "_command_payload_size", staticmethod(held))
+    for ceiling in (
+        "MAX_PENDING_PAYLOAD_BYTES",
+        "MAX_PENDING_PAYLOAD_BYTES_PER_USER",
+        "MAX_PENDING_PAYLOAD_BYTES_PER_SESSION",
+    ):
+        monkeypatch.setattr(PluginHub, ceiling, PluginHub.MAX_COMMAND_RETAINED_BYTES)
+    monkeypatch.setattr(PluginHub, "MAX_COMMAND_PAYLOAD_BYTES", 4_000_000)
+    yield SimpleNamespace(entered=entered, release=release, charges=charges)
+    release.set()
+
+
+@pytest.mark.asyncio
+async def test_sizing_snapshot_allows_another_tenant_to_dispatch(admission_hub, held_payload):
+    socket = await register_socket(admission_hub, "a", "alice")
+    await register_socket(admission_hub, "b", "bob")
+    params = {"values": [1] * 900_000, "nested": [{"action": "original"}]}
+    sent = asyncio.Event()
+
+    async def observe_send(payload):
+        if payload["type"] == "execute":
+            sent.set()
+
+    socket.send_json.side_effect = observe_send
+    request = asyncio.create_task(_send_command("a", "run_tests", params))
+    try:
+        await await_signal(held_payload.entered, "large command sizing", producers=(request,))
+        other = await start_command("b", user="bob")
+        try:
+            assert socket.send_json.await_count == 0
+            params["values"].append("x" * 4_000_001)
+            params["nested"][0]["action"] = "changed"
+            held_payload.release.set()
+            await await_signal(sent, "original payload dispatch", producers=(request,))
+            actual = socket.send_json.call_args.args[0]["params"]
+            assert actual == {"values": [1] * 900_000, "nested": [{"action": "original"}]}
+            pending = next(
+                entry for entry in PluginHub._pending.values() if entry["session_id"] == "a"
+            )
+            assert held_payload.charges == [pending["payload_bytes"]]
+        finally:
+            other.cancel()
+            await asyncio.gather(other, return_exceptions=True)
+    finally:
+        held_payload.release.set()
+        request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["generation", "byte_capacity", "socket_owner"])
+async def test_sizing_rechecks_admission_after_worker(
+    admission_hub, held_payload, monkeypatch, change
+):
+    socket = await register_socket(admission_hub, "a", "alice")
+    request = asyncio.create_task(_send_command("a", "run_tests", {"values": [1] * 500}))
+    try:
+        await await_signal(held_payload.entered, "large command sizing", producers=(request,))
+        if change == "generation":
+            socket.state.plugin_generation = "replacement"
+        elif change == "socket_owner":
+            replacement = await admission_hub._test_credentials.lease("plugin:bob")
+            setattr(socket.state, AUTHENTICATED_LEASE_STATE, replacement)
+        else:
+            monkeypatch.setattr(PluginHub, "MAX_PENDING_PAYLOAD_BYTES_PER_SESSION", 1)
+        held_payload.release.set()
+        result = await asyncio.wait_for(request, watchdog_timeout())
+        assert (
+            result["data"]["reason"]
+            == {
+                "generation": "operation_target_changed",
+                "byte_capacity": "command_capacity",
+                "socket_owner": "auth_required",
+            }[change]
+        )
+        assert socket.send_json.await_count == 0 and not PluginHub._pending
+    finally:
+        held_payload.release.set()
+        request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("end", ["timeout", "cancel"])
+async def test_abandoned_sizing_keeps_worker_capacity_until_exit(
+    admission_hub, held_payload, monkeypatch, end
+):
+    from transport import command_payload
+
+    monkeypatch.setattr(command_payload, "_workers", threading.BoundedSemaphore(1))
+    workers = []
+    submit = command_payload.submit_owned_executor
+
+    def track_worker(*args):
+        future = submit(*args)
+        workers.append(future)
+        return future
+
+    monkeypatch.setattr(command_payload, "submit_owned_executor", track_worker)
+    socket = await register_socket(admission_hub, "a", "alice")
+    params = {"values": [1] * 500}
+    deadlines = []
+
+    def deadline(when):
+        scope = asyncio.timeout_at(when)
+        deadlines.append(scope)
+        return scope
+
+    local_asyncio = SimpleNamespace(**vars(asyncio))
+    local_asyncio.timeout_at = deadline
+    monkeypatch.setattr(hub_module, "asyncio", local_asyncio)
+    request = asyncio.create_task(_send_command("a", "run_tests", params))
+    try:
+        await await_signal(held_payload.entered, "large command sizing", producers=(request,))
+        if end == "timeout":
+            deadlines[0].reschedule(asyncio.get_running_loop().time())
+            result = await asyncio.wait_for(request, watchdog_timeout())
+            assert result["data"]["reason"] == "command_deadline_exceeded"
+        else:
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+        result = await reject_without_send("a", socket, params)
+        assert result["data"]["reason"] == "command_capacity"
+        assert socket.send_json.await_count == 0 and not PluginHub._pending
+        held_payload.release.set()
+        await await_completion(workers[0], "abandoned worker cleanup")
+
+        async def reply(payload):
+            PluginHub._pending[payload["id"]]["future"].set_result({"success": True})
+
+        socket.send_json.side_effect = reply
+        recovered = await asyncio.wait_for(
+            _send_command("a", "run_tests", params), watchdog_timeout()
+        )
+        assert recovered["success"] and socket.send_json.await_count == 1 and len(workers) == 2
+    finally:
+        held_payload.release.set()
+        request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_completed_snapshots_keep_their_slots_until_consumed(admission_hub, monkeypatch):
+    from transport import command_payload
+
+    socket = await register_socket(admission_hub, "a", "alice")
+    monkeypatch.setattr(command_payload, "_workers", threading.BoundedSemaphore(2))
+    submit = command_payload.submit_owned_executor
+    finished = [asyncio.Event() for _ in range(3)]
+    release = asyncio.Event()
+    submissions = []
+
+    def hold_delivery(loop, executor, run):
+        worker = submit(loop, executor, run)
+        index = len(submissions)
+
+        async def deliver():
+            value = await worker
+            if index < len(finished):
+                finished[index].set()
+            await release.wait()
+            return value
+
+        pending = asyncio.create_task(deliver())
+        submissions.append(pending)
+        return pending
+
+    async def reply(payload):
+        PluginHub._pending[payload["id"]]["future"].set_result({"success": True})
+
+    socket.send_json.side_effect = reply
+    monkeypatch.setattr(command_payload, "submit_owned_executor", hold_delivery)
+    params = {"values": [1] * 300}
+    monkeypatch.setattr(PluginHub, "MAX_PENDING_PER_SESSION", 2)
+    for ceiling in (
+        "MAX_PENDING_PAYLOAD_BYTES",
+        "MAX_PENDING_PAYLOAD_BYTES_PER_USER",
+        "MAX_PENDING_PAYLOAD_BYTES_PER_SESSION",
+    ):
+        monkeypatch.setattr(PluginHub, ceiling, 250_000)
+    requests = [asyncio.create_task(_send_command("a", "run_tests", params)) for _ in range(2)]
+    try:
+        for event in finished[:2]:
+            await await_signal(
+                event, "worker completion before result delivery", producers=requests
+            )
+        refused = await reject_without_send("a", socket, params)
+        assert refused["data"]["reason"] == "command_capacity" and len(submissions) == 2
+        requests[0].cancel()
+        await asyncio.gather(requests[0], return_exceptions=True)
+        requests.append(asyncio.create_task(_send_command("a", "run_tests", params)))
+        await await_signal(finished[2], "replacement after abandonment", producers=requests[1:])
+        release.set()
+        for request in requests[1:]:
+            assert (await await_completion(request, "snapshot dispatch"))["success"]
+        assert socket.send_json.await_count == 2
+    finally:
+        release.set()
+        for request in requests:
+            request.cancel()
+        await asyncio.gather(*requests, *submissions, return_exceptions=True)
 
 
 @pytest.mark.asyncio
