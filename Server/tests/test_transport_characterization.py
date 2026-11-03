@@ -27,6 +27,7 @@ from transport.unity_instance_middleware import (
 )
 from transport.plugin_registry import PluginRegistry, PluginSession
 from transport.plugin_hub import (
+    CommandNotDispatchedError,
     PluginHub,
     NoUnitySessionError,
     InstanceSelectionRequiredError,
@@ -1511,14 +1512,15 @@ class TestPluginHubConfiguration:
 
         assert PluginHub.is_configured() is True
 
-    def test_plugin_hub_not_configured_sends_command_fails(self):
-        """
-        Current behavior: Calling send_command when not configured
-        raises RuntimeError.
-        """
-        PluginHub._lock = None
-
-        with pytest.raises(RuntimeError, match="not configured"):
+    @pytest.mark.parametrize("missing", ["_registry", "_lock"])
+    def test_plugin_hub_not_configured_sends_command_fails(
+        self, plugin_registry, monkeypatch, missing
+    ):
+        monkeypatch.setattr(PluginHub, "_registry", plugin_registry)
+        monkeypatch.setattr(PluginHub, "_lock", asyncio.Lock())
+        monkeypatch.setattr(PluginHub, missing, None)
+        assert not PluginHub.is_configured()
+        with pytest.raises(CommandNotDispatchedError, match="^PluginHub not configured$"):
             asyncio.run(PluginHub.send_command("sess-id", "ping", {}))
 
     @pytest.mark.asyncio

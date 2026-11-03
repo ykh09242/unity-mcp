@@ -3,10 +3,12 @@
 Pass-through tool: NO API keys, NO file bytes. Unity transport fully mocked.
 """
 
-from tests.timing import await_signal
+from tests.timing import await_completion, await_signal
+from tests.test_http_command_outcome import command_hub  # pylint: disable=unused-import
 
 import asyncio
 import pytest
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock, AsyncMock
 from click.testing import CliRunner
 
@@ -16,6 +18,8 @@ from services.registry import get_registered_tools
 
 from services.tools import blender_bridge as mod
 from services.tools.blender_bridge import blender_bridge
+from transport import plugin_hub as hub_module
+from transport.models import CommandResultMessage
 from transport.plugin_hub import PluginHub
 
 
@@ -278,49 +282,58 @@ class TestBlenderCli:
 
 
 class TestBlenderTimeouts:
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("requested, expected", [(None, 210), (60, 90), (300, 330)])
-    def test_mcp_import_budget_reaches_unity_and_server(self, requested, expected):
-        async def exercise():
-            websocket = MagicMock()
-            messages = []
-            waits = []
-            real_wait_for = asyncio.wait_for
+    async def test_mcp_import_budget_reaches_unity_and_server(
+        self, command_hub, monkeypatch, requested, expected
+    ):
+        loop = asyncio.get_running_loop()
+        messages, waits = [], []
+        waiting = asyncio.Event()
+        original_send = command_hub.websocket.send_json
 
-            async def send_json(message):
+        async def hold_reply(message):
+            if message.get("name") == COMMAND:
                 messages.append(message)
-                PluginHub._pending[message["id"]]["future"].set_result({"success": True})
+            else:
+                await original_send(message)
 
-            async def wait_for(future, timeout):
-                waits.append(timeout)
-                return await real_wait_for(future, timeout)
+        async def observe_wait(future, timeout):
+            if messages and PluginHub._pending.get(messages[0]["id"], {}).get("future") is future:
+                waits.append((loop.time(), timeout))
+                waiting.set()
+            return await asyncio.wait_for(future, timeout)
 
-            async def route(_send, _instance, command, params):
-                return await PluginHub.send_command("test-session", command, params)
-
-            websocket.send_json = AsyncMock(side_effect=send_json)
-            with (
-                patch.object(PluginHub, "_get_connection", AsyncMock(return_value=websocket)),
-                patch.object(PluginHub, "_lock", asyncio.Lock()),
-                patch.object(PluginHub, "_registry", None),
-                patch.object(PluginHub, "_connections", {"test-session": websocket}),
-                patch.object(PluginHub, "_pending", {}),
-                patch.object(
-                    mod, "get_unity_instance_from_context", AsyncMock(return_value="unity-1")
-                ),
-                patch.object(mod, "send_with_unity_instance", route),
-                patch("transport.plugin_hub.asyncio.wait_for", side_effect=wait_for),
-            ):
-                result = await blender_bridge(
-                    MagicMock(), action="import_model", timeout_seconds=requested
-                )
-            assert result["success"]
-            assert messages[0]["timeout"] == expected
-            assert len(waits) <= 1
-            if waits:
-                assert expected + 4 < waits[0] <= expected + 5
+        local_asyncio = SimpleNamespace(**vars(asyncio))
+        local_asyncio.wait_for = observe_wait
+        monkeypatch.setattr(hub_module, "asyncio", local_asyncio)
+        monkeypatch.setattr(command_hub.websocket, "send_json", hold_reply)
+        monkeypatch.setattr(
+            mod, "get_unity_instance_from_context", AsyncMock(return_value="Fixture@hash")
+        )
+        started = loop.time()
+        request = asyncio.create_task(
+            blender_bridge(MagicMock(), action="import_model", timeout_seconds=requested)
+        )
+        try:
+            await await_signal(waiting, "Blender server reply wait", producers=(request,))
+            assert len(messages) == len(waits) == 1
+            message = messages[0]
+            assert message["timeout"] == expected
+            wait_started, timeout = waits[0]
+            assert timeout <= expected + 5
+            assert wait_started + timeout >= started + expected + 5
+            await command_hub.endpoint._handle_command_result(
+                command_hub.websocket,
+                CommandResultMessage(id=message["id"], result={"success": True}),
+            )
+            assert (await await_completion(request, "Blender import reply"))["success"]
             assert not PluginHub._pending
-
-        asyncio.run(exercise())
+        finally:
+            request.cancel()
+            await await_completion(
+                asyncio.gather(request, return_exceptions=True), "import teardown"
+            )
 
     @pytest.mark.parametrize(
         "args, config_timeout, expected",
@@ -374,67 +387,68 @@ class TestBlenderTimeouts:
 
         assert blender_command_timeout(params) == expected
 
-    def test_blender_budget_is_isolated_from_other_commands_and_sessions(self):
-        async def exercise():
-            messages = []
-            sockets = {session: MagicMock() for session in ("blender-session", "other-session")}
+    @pytest.mark.asyncio
+    async def test_blender_budget_is_isolated_from_other_commands_and_sessions(self, command_hub):
+        await command_hub.registry.register("other", "Other", "other-hash", "6000.3")
+        other = SimpleNamespace(
+            state=SimpleNamespace(
+                plugin_registered=True,
+                plugin_session_id="other",
+                plugin_generation="other-generation",
+                user_id=None,
+            ),
+            client_state=command_hub.websocket.client_state,
+            application_state=command_hub.websocket.application_state,
+            send_json=AsyncMock(),
+            close=AsyncMock(),
+        )
+        PluginHub._connections["other"] = other
 
-            async def send_json(message):
-                messages.append(message)
-                PluginHub._pending[message["id"]]["future"].set_result({"success": True})
+        async def reply(message):
+            await command_hub.endpoint._handle_command_result(
+                other, CommandResultMessage(id=message["id"], result={"success": True})
+            )
 
-            for sock in sockets.values():
-                sock.send_json = AsyncMock(side_effect=send_json)
-            with (
-                patch.object(
-                    PluginHub,
-                    "_get_connection",
-                    AsyncMock(side_effect=lambda session: sockets[session]),
-                ),
-                patch.object(PluginHub, "_connections", sockets),
-                patch.object(PluginHub, "_registry", None),
-                patch.object(PluginHub, "_lock", asyncio.Lock()),
-                patch.object(PluginHub, "_pending", {}),
-            ):
-                await PluginHub.send_command("blender-session", COMMAND, {"timeoutSeconds": 900})
-                await PluginHub.send_command("other-session", "manage_gameobject", {})
-                assert not PluginHub._pending
-            assert [message["timeout"] for message in messages] == [930, PluginHub.COMMAND_TIMEOUT]
-            assert sockets["blender-session"].send_json.call_count == 1
-            assert sockets["other-session"].send_json.call_count == 1
+        other.send_json.side_effect = reply
+        assert (await PluginHub.send_command("session", COMMAND, {"timeoutSeconds": 900}))[
+            "success"
+        ]
+        assert (await PluginHub.send_command("other", "manage_gameobject", {}))["success"]
+        (blender_message,) = command_hub.sent
+        assert blender_message["timeout"] == 930
+        other.send_json.assert_awaited_once()
+        assert other.send_json.call_args.args[0]["timeout"] == PluginHub.COMMAND_TIMEOUT
+        assert not PluginHub._pending
 
-        asyncio.run(exercise())
+    @pytest.mark.asyncio
+    async def test_cancelled_blender_command_releases_pending_capacity_and_send_task(
+        self, command_hub
+    ):
+        started, cancelled = asyncio.Event(), asyncio.Event()
 
-    def test_cancelled_blender_command_releases_pending_capacity_and_send_task(self):
-        async def exercise():
-            started = asyncio.Event()
-            cancelled = asyncio.Event()
-            sock = MagicMock()
-
-            async def blocked_send(_message):
+        async def blocked_send(message):
+            command_hub.sent.append(message)
+            if message["type"] == "execute":
                 started.set()
                 try:
                     await asyncio.Event().wait()
                 finally:
                     cancelled.set()
 
-            sock.send_json = AsyncMock(side_effect=blocked_send)
-            with (
-                patch.object(PluginHub, "_get_connection", AsyncMock(return_value=sock)),
-                patch.object(PluginHub, "_connections", {"test-session": sock}),
-                patch.object(PluginHub, "_registry", None),
-                patch.object(PluginHub, "_lock", asyncio.Lock()),
-                patch.object(PluginHub, "_pending", {}),
-            ):
-                task = asyncio.create_task(PluginHub.send_command("test-session", COMMAND, {}))
-                await await_signal(started, "started")
-                task.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await task
-                assert not PluginHub._pending
-                assert cancelled.is_set()
-
-        asyncio.run(exercise())
+        command_hub.websocket.send_json = blocked_send
+        task = asyncio.create_task(PluginHub.send_command("session", COMMAND, {}))
+        try:
+            await await_signal(started, "Blender execute write", producers=(task,))
+            (execute,) = command_hub.sent
+            assert execute["id"] in PluginHub._pending
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await await_completion(task, "Blender command cancellation")
+            assert not PluginHub._pending and cancelled.is_set()
+            assert command_hub.sent == [execute, {"type": "cancel", "id": execute["id"]}]
+        finally:
+            task.cancel()
+            await await_completion(asyncio.gather(task, return_exceptions=True), "Blender teardown")
 
 
 class TestBlenderLegacyTimeouts:

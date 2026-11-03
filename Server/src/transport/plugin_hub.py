@@ -1702,6 +1702,8 @@ class PluginHub(WebSocketEndpoint):
                 return context.refuse("project_context_changed", params)
             if _expected_read is not None:
                 return cls._unavailable_retry_response("read_invalidated")
+            if not cls.is_configured():
+                raise CommandNotDispatchedError("PluginHub not configured")
             raise CommandNotDispatchedError(f"Plugin session {session_id} not connected")
         if _expected_generation is None:
             _expected_generation = target.transport_generation
