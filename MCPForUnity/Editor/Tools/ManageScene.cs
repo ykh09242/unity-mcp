@@ -22,6 +22,7 @@ namespace MCPForUnity.Editor.Tools
     {
         // Framing a shared viewport is a mutation; queued captures must not overwrite one another's view target.
         private static readonly SemaphoreSlim SceneCaptureGate = new(1, 1);
+        private static Func<Scene, string, bool> SaveCreatedScene = (scene, path) => EditorSceneManager.SaveScene(scene, path);
 
         // One native action catalogue is shared by preview and actual dispatch.
         private enum ActionKind
@@ -521,31 +522,97 @@ namespace MCPForUnity.Editor.Tools
             {
                 using var folders = new AssetFolderScope();
                 folders.EnsureParentDirectory(relativePath);
-                // Create a new empty scene
-                Scene newScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-                // Save it to the specified path
-                AssetPathUtility.GetFullAssetPath(relativePath);
-                bool saved = EditorSceneManager.SaveScene(newScene, relativePath);
-
-                if (saved)
-                {
-                    var response = new SuccessResponse(
-                        $"Scene '{Path.GetFileName(relativePath)}' created successfully at '{relativePath}'.",
-                        new { path = relativePath }
-                    );
-                    folders.Complete();
-                    return response;
-                }
-                else
-                {
-                    // If SaveScene fails, it might leave an untitled scene open.
-                    // Optionally try to close it, but be cautious.
-                    return new ErrorResponse($"Failed to save new scene to '{relativePath}'.");
-                }
+                var result = CreateAndReplaceScene(NewSceneSetup.EmptyScene, relativePath, null);
+                if (result is ErrorResponse)
+                    return result;
+                folders.Complete();
+                return new SuccessResponse($"Scene '{Path.GetFileName(relativePath)}' created successfully at '{relativePath}'.", new { path = relativePath });
             }
             catch (Exception e)
             {
                 return new ErrorResponse($"Error creating scene '{relativePath}': {e.Message}");
+            }
+        }
+
+        private static object CreateAndReplaceScene(NewSceneSetup setup, string relativePath, string template)
+        {
+            Scene previousActive = SceneManager.GetActiveScene();
+            var previousScenes = Enumerable.Range(0, SceneManager.sceneCount).Select(SceneManager.GetSceneAt).ToArray();
+            Scene scene = default;
+            bool saved = false;
+            try
+            {
+                scene = EditorSceneManager.NewScene(setup, NewSceneMode.Additive);
+                if (!SceneManager.SetActiveScene(scene))
+                    throw new InvalidOperationException("Could not activate the new scene.");
+                if (template == "3d_basic")
+                {
+                    var plane = GameObject.CreatePrimitive(PrimitiveType.Plane);
+                    plane.name = "Ground";
+                    plane.transform.position = Vector3.zero;
+                }
+                else if (template == "2d_basic")
+                {
+                    var camera = scene.GetRootGameObjects().Select(root => root.GetComponentInChildren<Camera>()).FirstOrDefault(item => item != null);
+                    if (camera != null)
+                        camera.orthographic = true;
+                }
+
+                if (!string.IsNullOrEmpty(relativePath))
+                {
+                    AssetPathUtility.GetFullAssetPath(relativePath);
+                    if (!SaveCreatedScene(scene, relativePath))
+                        throw new InvalidOperationException($"Failed to save new scene to '{relativePath}'.");
+                }
+                saved = true;
+                foreach (var previous in previousScenes)
+                    if (previous.IsValid() && !EditorSceneManager.CloseScene(previous, true))
+                        throw new InvalidOperationException($"Saved the new scene, but could not close previous scene '{previous.name}'.");
+                return new SuccessResponse(
+                    $"Created scene from template '{template}'.",
+                    new
+                    {
+                        sceneName = scene.name,
+                        scenePath = scene.path,
+                        template,
+                        rootObjectCount = scene.rootCount,
+                    }
+                );
+            }
+            catch (Exception ex)
+            {
+                string recovery = "";
+                if (!saved)
+                {
+                    try
+                    {
+                        if (previousActive.IsValid() && previousActive.isLoaded && !SceneManager.SetActiveScene(previousActive))
+                            recovery += " Could not restore the previous active scene.";
+                    }
+                    catch (Exception restore)
+                    {
+                        recovery += $" Could not restore the previous active scene: {restore.Message}.";
+                    }
+                    try
+                    {
+                        if (scene.IsValid() && !EditorSceneManager.CloseScene(scene, true))
+                            recovery += " Could not close the failed new scene.";
+                    }
+                    catch (Exception close)
+                    {
+                        recovery += $" Could not close the failed new scene: {close.Message}.";
+                    }
+                    try
+                    {
+                        if (!string.IsNullOrEmpty(relativePath) && File.Exists(AssetPathUtility.GetFullAssetPath(relativePath)))
+                            recovery += $" A partial output may remain at '{relativePath}'.";
+                    }
+                    catch (Exception inspect)
+                    {
+                        recovery += $" Could not inspect the output path: {inspect.Message}.";
+                    }
+                }
+                return new ErrorResponse($"Error creating scene: {ex.Message}{recovery}");
             }
         }
 
@@ -2165,38 +2232,9 @@ namespace MCPForUnity.Editor.Tools
             using var folders = new AssetFolderScope();
             if (!string.IsNullOrEmpty(fullPath) && !string.IsNullOrEmpty(relativePath))
                 folders.EnsureParentDirectory(relativePath);
-            var scene = EditorSceneManager.NewScene(setup, NewSceneMode.Single);
-
-            if (template == "3d_basic")
-            {
-                var plane = GameObject.CreatePrimitive(PrimitiveType.Plane);
-                plane.name = "Ground";
-                plane.transform.position = Vector3.zero;
-            }
-            else if (template == "2d_basic")
-            {
-                var cam = Camera.main;
-                if (cam != null)
-                    cam.orthographic = true;
-            }
-
-            if (!string.IsNullOrEmpty(fullPath) && !string.IsNullOrEmpty(relativePath))
-            {
-                AssetPathUtility.GetFullAssetPath(relativePath);
-                if (!EditorSceneManager.SaveScene(scene, relativePath))
-                    return new ErrorResponse($"Scene created in memory but failed to save to '{relativePath}'.");
-            }
-
-            var response = new SuccessResponse(
-                $"Created scene from template '{template}'.",
-                new
-                {
-                    sceneName = scene.name,
-                    scenePath = scene.path,
-                    template,
-                    rootObjectCount = scene.rootCount,
-                }
-            );
+            var response = CreateAndReplaceScene(setup, relativePath, template);
+            if (response is ErrorResponse)
+                return response;
             folders.Complete();
             return response;
         }

@@ -146,6 +146,78 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static int SceneIndex(Scene scene) => Array.IndexOf(LoadedScenes(), scene);
 
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void CreateSaveFailurePreservesOpenScenesAndActiveScene(bool template, bool throws)
+        {
+            Scene[] before = LoadedScenes();
+            Scene active = SceneManager.GetActiveScene();
+            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+            var saveField = typeof(ManageScene).GetField("SaveCreatedScene", flags);
+            var originalSave = saveField.GetValue(null);
+            string path = assetRoot + "/Failed.unity";
+            try
+            {
+                saveField.SetValue(
+                    null,
+                    new Func<Scene, string, bool>(
+                        (scene, destination) =>
+                        {
+                            if (throws)
+                                throw new InvalidOperationException("injected save failure");
+                            return false;
+                        }
+                    )
+                );
+                var method = typeof(ManageScene).GetMethod(template ? "CreateSceneFromTemplate" : "CreateScene", flags);
+                object[] arguments = template ? new object[] { SystemPath(path), path, "3d_basic" } : new object[] { SystemPath(path), path };
+                JObject response = JObject.FromObject(method.Invoke(null, arguments));
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                CollectionAssert.AreEqual(before, LoadedScenes());
+                Assert.AreEqual(active, SceneManager.GetActiveScene());
+                Assert.IsFalse(File.Exists(SystemPath(path)));
+            }
+            finally
+            {
+                saveField.SetValue(null, originalSave);
+            }
+        }
+
+        [Test]
+        public void CreateSaveFailureReportsPartialOutput()
+        {
+            Scene[] before = LoadedScenes();
+            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+            var saveField = typeof(ManageScene).GetField("SaveCreatedScene", flags);
+            var originalSave = saveField.GetValue(null);
+            string path = assetRoot + "/Partial.unity";
+            try
+            {
+                saveField.SetValue(
+                    null,
+                    new Func<Scene, string, bool>(
+                        (scene, destination) =>
+                        {
+                            File.WriteAllText(SystemPath(destination), "partial");
+                            return false;
+                        }
+                    )
+                );
+                var method = typeof(ManageScene).GetMethod("CreateScene", flags);
+                var response = JObject.FromObject(method.Invoke(null, new object[] { SystemPath(path), path }));
+                Assert.IsFalse(response.Value<bool>("success"));
+                StringAssert.Contains("partial output", response.ToString());
+                Assert.IsTrue(File.Exists(SystemPath(path)));
+                CollectionAssert.AreEqual(before, LoadedScenes());
+            }
+            finally
+            {
+                saveField.SetValue(null, originalSave);
+            }
+        }
+
         private JObject Select(string action) =>
             new JObject
             {
