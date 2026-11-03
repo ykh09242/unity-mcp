@@ -4,6 +4,8 @@ from models.models import ToolDefinitionModel
 
 PluginCapability = Annotated[str, Field(max_length=64)]
 TOOL_SETTINGS_CAPABILITY = "tool_settings_ack_v1"
+HEARTBEAT_CAPABILITY = "heartbeat_challenge_v1"
+HeartbeatChallenge = Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{32}$", max_length=32)]
 ToolSettingsEpoch = Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{32}$", max_length=32)]
 ToolSettingsRevision = Annotated[StrictInt, Field(ge=1, le=9007199254740991)]
 
@@ -72,6 +74,9 @@ class PingMessage(BaseModel):
     """Server-initiated ping to detect dead connections."""
 
     type: str = "ping"
+    challenge: HeartbeatChallenge | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class CancelCommandMessage(BaseModel):
@@ -114,6 +119,9 @@ class RegisterToolsMessage(BaseModel):
 class PongMessage(BaseModel):
     type: str = "pong"
     session_id: str | None = None
+    challenge: HeartbeatChallenge | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class CommandResultMessage(BaseModel):

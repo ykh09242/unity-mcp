@@ -537,6 +537,9 @@ namespace MCPForUnityTests.Editor.Services
             using var admission = QueuedAdmissionFixture.NewAdmission();
             var receive = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var registeredConnection = connection.Token;
+            var ack = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            ack.SetResult(true);
+            SetField(client, "_registrationAck", ack);
             SetField(client, "_lifecycleCts", lifecycle);
             SetField(client, "_connectionCts", connection);
             SetField(client, "_commandAdmission", admission);
@@ -1161,6 +1164,62 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.AreEqual(0, calls);
                 resume["action"] = "status";
                 Assert.AreEqual("unknown", CommandResumeState.Journal.Admit(resume, name, new JObject()).State);
+            }
+            finally
+            {
+                await StopOwnedProgressClient(client);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task HealthRequiresCurrentRegistrationAndInboundEvidence(bool negotiated)
+        {
+            RequireOwnedProgressEditor();
+            using var peer = new ProgressWirePeer(acknowledge: false);
+            using var client = peer.CreateClient();
+            try
+            {
+                Task<bool> start = client.StartAsync();
+                var register = await peer.Message(message => message.Value<string>("type") == "register");
+                CollectionAssert.Contains(register["capabilities"].Values<string>().ToArray(), WebSocketTransportClient.HeartbeatCapability);
+                Assert.IsFalse(start.IsCompleted);
+                Assert.IsFalse(client.IsConnected);
+                Assert.IsFalse(client.State.IsConnected);
+                Assert.IsFalse(await client.VerifyAsync());
+                peer.Send(
+                    new JObject
+                    {
+                        ["type"] = "registered",
+                        ["session_id"] = "owned-heartbeat",
+                        ["capabilities"] = negotiated ? new JArray(WebSocketTransportClient.HeartbeatCapability) : new JArray(),
+                    }
+                );
+                Assert.IsTrue(await start);
+
+                Task<bool> verification = client.VerifyAsync();
+                Assert.IsFalse(verification.IsCompleted);
+                if (!negotiated)
+                {
+                    await peer.Barrier();
+                    Assert.IsTrue(await verification, "The legacy server's ping and this generation's reply verify the connection.");
+                    return;
+                }
+                var ping = await peer.Message(message => message.Value<string>("type") == "ping");
+                string challenge = (string)ping["challenge"];
+                Assert.IsTrue(CommandResumeJournal.IsIdentity(challenge));
+                peer.Send(new JObject { ["type"] = "pong", ["challenge"] = new string('z', 32) });
+                var serverChallenge = Guid.NewGuid().ToString("N");
+                peer.Send(new JObject { ["type"] = "ping", ["challenge"] = serverChallenge });
+                var pong = await peer.Message(message => message.Value<string>("type") == "pong" && (string)message["challenge"] == serverChallenge);
+                Assert.AreEqual("owned-heartbeat", (string)pong["session_id"]);
+                Assert.IsFalse(verification.IsCompleted, "The other direction's valid challenge cannot answer our probe.");
+                peer.Send(new JObject { ["type"] = "pong", ["challenge"] = challenge });
+                Assert.IsTrue(await verification);
+                Task<bool> dropped = client.VerifyAsync();
+                await peer.Message(message => message.Value<string>("type") == "ping" && (string)message["challenge"] != challenge);
+                peer.Send(new JObject { ["type"] = "pong", ["challenge"] = challenge });
+                Assert.IsFalse(await dropped, "An outbound-only probe and a stale pong cannot establish health.");
             }
             finally
             {
@@ -2106,7 +2165,11 @@ namespace MCPForUnityTests.Editor.Services
             private readonly Type _type = typeof(TransportEditorIntegrationTests).GetNestedType("OwnedWebSocketPeer", BindingFlags.NonPublic);
             private readonly object _peer;
 
-            internal ProgressWirePeer() => _peer = Activator.CreateInstance(_type, new object[] { Token, false, false });
+            internal ProgressWirePeer(bool acknowledge = true)
+            {
+                _peer = Activator.CreateInstance(_type, new object[] { Token, false, false });
+                _type.GetField("AcknowledgeRegistration").SetValue(_peer, acknowledge);
+            }
 
             private object Call(string name, params object[] arguments) =>
                 _type.GetMethod(name, BindingFlags.Public | BindingFlags.Instance).Invoke(_peer, arguments);

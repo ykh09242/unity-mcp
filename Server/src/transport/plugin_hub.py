@@ -142,6 +142,7 @@ from transport.models import (
     ToolSettingsCorrelation,
     ToolSettingsResult,
     TOOL_SETTINGS_CAPABILITY,
+    HEARTBEAT_CAPABILITY,
     PongMessage,
     CommandResultMessage,
     CommandProgressMessage,
@@ -361,6 +362,7 @@ class PluginHub(WebSocketEndpoint):
             COMPRESSION_CAPABILITY,
             CANCELLATION_CAPABILITY,
             TOOL_SETTINGS_CAPABILITY,
+            HEARTBEAT_CAPABILITY,
             PROGRESS_CAPABILITY,
             phase_diagnostics.CAPABILITY,
             ARBITRATION_CAPABILITY,
@@ -1110,6 +1112,8 @@ class PluginHub(WebSocketEndpoint):
                 await self._handle_register_tools_frame(websocket, data)
             elif message_type == "pong":
                 await self._handle_pong(websocket, PongMessage(**data))
+            elif message_type == "ping":
+                await self._handle_heartbeat_ping(websocket, PingMessage(**data))
             elif message_type == "command_progress":
                 await self._handle_command_progress(websocket, data)
             elif message_type == "command_result":
@@ -2856,6 +2860,7 @@ class PluginHub(WebSocketEndpoint):
                 if not cls._editor_states.register_session(session_id, user_id):
                     accepted = accepted - {"editor_state_v1"}
             websocket.state.plugin_features = frozenset(accepted)
+            websocket.state.plugin_heartbeat_challenge = None
             cls._publish_editor_state(websocket, 0)
             # Initialize last pong time and start ping loop for this session
             cls._last_pong[session_id] = time.monotonic()
@@ -3608,8 +3613,29 @@ class PluginHub(WebSocketEndpoint):
             async with cls._authorized_socket_lock(websocket, lock):
                 if cls._connections.get(session_id) is not websocket:
                     return
+                if cls._supports(websocket, HEARTBEAT_CAPABILITY):
+                    challenge = websocket.state.plugin_heartbeat_challenge
+                    if challenge is None or payload.challenge != challenge:
+                        return
+                    websocket.state.plugin_heartbeat_challenge = None
                 cls._last_pong[session_id] = time.monotonic()
                 await registry.touch(session_id)
+
+    async def _handle_heartbeat_ping(self, websocket: WebSocket, payload: PingMessage) -> None:
+        cls = type(self)
+        lock = cls._lock
+        if lock is None or payload.challenge is None:
+            return
+        async with cls._authorized_socket_lock(websocket, lock):
+            session_id = getattr(websocket.state, "plugin_session_id", None)
+            if cls._connections.get(session_id) is not websocket or not cls._supports(
+                websocket, HEARTBEAT_CAPABILITY
+            ):
+                return
+        await asyncio.wait_for(
+            websocket.send_json({"type": "pong", "challenge": payload.challenge}),
+            timeout=cls.PING_TIMEOUT,
+        )
 
     @classmethod
     async def _ping_loop(cls, session_id: str, websocket: WebSocket) -> None:
@@ -3630,13 +3656,20 @@ class PluginHub(WebSocketEndpoint):
                     break
                 async with lock:
                     cls._expire_large_results()
-                    if session_id not in cls._connections:
+                    if cls._connections.get(session_id) is not websocket:
                         logger.debug(
                             f"[Ping] Session {session_id} no longer in connections, stopping ping loop"
                         )
                         break
                     # Read last pong time under lock for consistency
                     last_pong = cls._last_pong.get(session_id, 0)
+                    registry = cls._registry
+                    challenge = None
+                    if cls._supports(websocket, HEARTBEAT_CAPABILITY):
+                        challenge = websocket.state.plugin_heartbeat_challenge
+                        if challenge is None:
+                            challenge = uuid.uuid4().hex
+                            websocket.state.plugin_heartbeat_challenge = challenge
 
                 # Check staleness: has it been too long since we got a pong?
                 elapsed = time.monotonic() - last_pong
@@ -3645,12 +3678,14 @@ class PluginHub(WebSocketEndpoint):
                         f"[Ping] Session {session_id} stale: no pong for {elapsed:.1f}s "
                         f"(timeout={cls.PING_TIMEOUT}s). Closing connection."
                     )
-                    await cls._evict_connection(session_id, "heartbeat_timeout")
+                    await cls._evict_connection(
+                        session_id, "heartbeat_timeout", _expected=(registry, websocket)
+                    )
                     break
 
                 # Send a ping to the client
                 try:
-                    ping_msg = PingMessage()
+                    ping_msg = PingMessage(challenge=challenge)
                     await asyncio.wait_for(
                         websocket.send_json(ping_msg.model_dump()),
                         timeout=cls.PING_TIMEOUT,
@@ -3662,7 +3697,9 @@ class PluginHub(WebSocketEndpoint):
                         f"[Ping] Failed to send ping to session {session_id}: {send_ex}. "
                         "Connection likely dead."
                     )
-                    await cls._evict_connection(session_id, "heartbeat_send_failed")
+                    await cls._evict_connection(
+                        session_id, "heartbeat_send_failed", _expected=(registry, websocket)
+                    )
                     break
 
         except asyncio.CancelledError:

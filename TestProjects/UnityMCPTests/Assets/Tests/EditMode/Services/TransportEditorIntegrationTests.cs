@@ -839,6 +839,7 @@ namespace MCPForUnityTests.Editor.Services
             private volatile Exception _error;
             public Uri Uri { get; }
             public int RegisteredCount;
+            public volatile bool AcknowledgeRegistration = true;
             public int LargestBinaryFrame;
             public bool AllAuthHeadersMatch = true;
 
@@ -929,7 +930,7 @@ namespace MCPForUnityTests.Editor.Services
                             var size = ReadExact(stream, 2);
                             length = size[0] * 256 + size[1];
                         }
-                        if (length == 127)
+                        else if (length == 127)
                         {
                             var size = ReadExact(stream, 8);
                             length = checked((int)IPAddress.NetworkToHostOrder(BitConverter.ToInt64(size, 0)));
@@ -999,6 +1000,8 @@ namespace MCPForUnityTests.Editor.Services
                             if (message.Value<string>("type") == "register")
                             {
                                 int generation = Interlocked.Increment(ref RegisteredCount);
+                                if (!AcknowledgeRegistration)
+                                    continue;
                                 var capabilities = new JArray("large_result_v1", "command_cancel_v1");
                                 if (_gzip)
                                     capabilities.Add("large_result_gzip_v1");

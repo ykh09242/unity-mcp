@@ -118,6 +118,8 @@ internal sealed class LocalWebSocketPeer : IDisposable
                     var message = JObject.Parse(Encoding.UTF8.GetString(payload));
                     Order.Enqueue(message.Value<string>("type"));
                     Received.Enqueue(message);
+                    if (message.Value<string>("type") == "register")
+                        Send(new JObject { ["type"] = "registered", ["session_id"] = "local-fixture" });
                     if (message.Value<string>("type") == "result_start")
                         OnStart?.Invoke(message);
                 }

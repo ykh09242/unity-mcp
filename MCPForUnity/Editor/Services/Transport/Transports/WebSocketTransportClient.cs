@@ -27,6 +27,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
     public class WebSocketTransportClient : IMcpTransportClient, IToolSettingsStatusSource, IDisposable
     {
         private const string TransportDisplayName = "websocket";
+        internal const string HeartbeatCapability = "heartbeat_challenge_v1";
         private static readonly TimeSpan[] ReconnectSchedule =
         {
             TimeSpan.Zero,
@@ -92,6 +93,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private bool _resumeOriginNegotiated;
         private bool _commandProgressOffered;
         private bool _commandProgressNegotiated;
+        private TaskCompletionSource<bool> _registrationAck;
+        private bool _heartbeatNegotiated;
+        private TaskCompletionSource<bool> _probe;
+        private string _probeChallenge;
+        private bool RegistrationConfirmed => _registrationAck?.Task.Status == TaskStatus.RanToCompletion && _registrationAck.Task.Result;
 
         // An explicitly owned connection keeps batch integration tests and embedded
         // callers independent of the user's saved endpoint, identity and session.
@@ -253,9 +259,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 if (startVersion != _startVersion || !ReferenceEquals(_lifecycleCts, lifecycleCts) || lifecycleCts.IsCancellationRequested)
                     return false;
                 // A close after the register send already handed recovery to a worker.
-                TryPublishConnected(registeredConnection.Value);
+                return TryPublishConnected(registeredConnection.Value);
             }
-            return true;
         }
 
         public Task StopAsync() => StopOwnedAsync(null, invalidateStart: true);
@@ -533,37 +538,67 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
         }
 
-        public async Task<bool> VerifyAsync()
+        public Task<bool> VerifyAsync()
         {
-            if (_socket == null || _socket.State != WebSocketState.Open)
+            lock (_ownershipLock)
             {
-                return false;
+                try
+                {
+                    return _connectionCts == null ? Task.FromResult(false) : VerifyConnectionAsync(_connectionCts.Token);
+                }
+                catch (ObjectDisposedException)
+                {
+                    return Task.FromResult(false);
+                }
             }
+        }
 
-            if (_lifecycleCts == null)
+        private Task<bool> VerifyConnectionAsync(CancellationToken ownerToken)
+        {
+            lock (_ownershipLock)
             {
-                return false;
+                if (!IsCurrentConnectionToken(ownerToken) || !RegistrationConfirmed || _socket?.State != WebSocketState.Open)
+                    return Task.FromResult(false);
+                if (_probe != null && !_probe.Task.IsCompleted)
+                    return _probe.Task;
+                var probe = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                string challenge = _heartbeatNegotiated ? Guid.NewGuid().ToString("N") : null;
+                _probe = probe;
+                _probeChallenge = challenge;
+                _ = ObserveProbeAsync(probe, challenge, ownerToken);
+                return probe.Task;
             }
+        }
 
+        private async Task ObserveProbeAsync(TaskCompletionSource<bool> probe, string challenge, CancellationToken ownerToken)
+        {
             try
             {
-                CancellationToken ownerToken;
-                lock (_ownershipLock)
-                {
-                    if (_connectionCts == null)
-                        return false;
-                    ownerToken = _connectionCts.Token;
-                }
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ownerToken);
-                timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
-                var payload = new JObject { ["type"] = "pong", ["session_id"] = _sessionId };
-                await SendStateAsync(payload, ownerToken, timeoutCts.Token).ConfigureAwait(false);
-                return true;
+                // Older servers send their own periodic ping (normally every ten seconds).
+                timeoutCts.CancelAfter(
+                    challenge == null ? TimeSpan.FromSeconds(Math.Max(20, Math.Min(60, _keepAliveInterval.TotalSeconds + 5))) : TimeSpan.FromSeconds(5)
+                );
+                if (challenge != null)
+                    await SendStateAsync(new JObject { ["type"] = "ping", ["challenge"] = challenge }, ownerToken, timeoutCts.Token).ConfigureAwait(false);
+                await ConnectionCommandWork.WaitAsync(probe.Task, timeoutCts.Token).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
                 McpLog.Warn($"[WebSocket] Verify ping failed: {ex.Message}");
-                return false;
+            }
+            finally
+            {
+                lock (_ownershipLock)
+                {
+                    probe.TrySetResult(false);
+                    if (ReferenceEquals(_probe, probe))
+                    {
+                        _probe = null;
+                        _probeChallenge = null;
+                    }
+                }
             }
         }
 
@@ -619,6 +654,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             token.ThrowIfCancellationRequested();
             var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(token);
             var admission = new CommandAdmission();
+            var registrationAck = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             CancellationToken connectionToken = connectionCts.Token;
             bool ownsLifecycle;
             lock (_ownershipLock)
@@ -630,7 +666,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _connectionCts = connectionCts;
                     _commandAdmission = admission;
                     // A registered reply can arrive before the Start/reconnect continuation.
-                    _sessionId = "pending";
+                    _sessionId = null;
+                    _registrationAck = registrationAck;
+                    _heartbeatNegotiated = false;
+                    _probe = null;
+                    _probeChallenge = null;
                     _commandWork = new ConnectionCommandWork(connectionToken);
                     _largeResultNegotiated = false;
                     _commandCancellationNegotiated = false;
@@ -740,7 +780,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
             try
             {
-                await SendRegisterAsync(connectionToken).ConfigureAwait(false);
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(connectionToken);
+                deadline.CancelAfter(ControlObservationTimeout);
+                await SendRegisterAsync(connectionToken, deadline.Token).ConfigureAwait(false);
+                await ConnectionCommandWork.WaitAsync(registrationAck.Task, deadline.Token).ConfigureAwait(false);
+                if (!registrationAck.Task.Result)
+                    return null;
             }
             catch (Exception ex)
             {
@@ -748,7 +793,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 McpLog.Error($"[WebSocket] {regMsg}");
                 lock (_ownershipLock)
                     if (ReferenceEquals(_connectionCts, connectionCts))
+                    {
+                        registrationAck.TrySetResult(false);
+                        admission.Retire();
                         _state = TransportState.Disconnected(TransportDisplayName, regMsg);
+                    }
                 return null;
             }
 
@@ -826,7 +875,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         // Caller holds _ownershipLock. Registration can finish after this generation closed.
         private bool TryPublishConnected(CancellationToken token, bool releaseReconnectWorker = false)
         {
-            if (!IsCurrentConnectionToken(token))
+            if (!IsCurrentConnectionToken(token) || !RegistrationConfirmed)
                 return false;
             _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
             _isConnected = true;
@@ -1039,7 +1088,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     }
                     break;
                 case "ping":
-                    await SendPongAsync(token).ConfigureAwait(false);
+                    await AnswerPingAsync(payload, token).ConfigureAwait(false);
+                    break;
+                case "pong":
+                    lock (_ownershipLock)
+                        if (
+                            IsCurrentConnectionToken(token)
+                            && _heartbeatNegotiated
+                            && _probeChallenge != null
+                            && payload["challenge"]?.Type == JTokenType.String
+                            && (string)payload["challenge"] == _probeChallenge
+                        )
+                            _probe?.TrySetResult(true);
                     break;
                 default:
                     // No-op for unrecognised types (keep-alives, telemetry, etc.)
@@ -1121,6 +1181,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     if (!IsCurrentConnectionToken(token))
                         return Task.CompletedTask;
                     _sessionId = newSessionId;
+                    _heartbeatNegotiated = HasCapability(payload, HeartbeatCapability);
                     _toolSettingsNegotiated = HasCapability(payload, ToolSettingsState.Capability);
                     _toolSettingsRegistration?.Dispose();
                     // A linked work token propagates cancellation; the connection token remains the ownership identity.
@@ -1145,6 +1206,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _statePublisher?.Dispose();
                     _statePublisher = null;
                     _state = TransportState.Connected(TransportDisplayName, sessionId: newSessionId, details: _endpointUri.ToString());
+                    _registrationAck?.TrySetResult(true);
                 }
                 // Validate again when the deferred main-thread write actually executes.
                 if (_ownedConnection == null)
@@ -1804,7 +1866,14 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     {
                         break;
                     }
-                    await SendPongAsync(token).ConfigureAwait(false);
+                    lock (_ownershipLock)
+                        if (!IsCurrentConnectionToken(token) || !RegistrationConfirmed)
+                            continue;
+                    if (!await VerifyConnectionAsync(token).ConfigureAwait(false))
+                    {
+                        await HandleSocketClosureAsync("Heartbeat verification timed out", token).ConfigureAwait(false);
+                        break;
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -1819,7 +1888,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
         }
 
-        private async Task SendRegisterAsync(CancellationToken token)
+        private async Task SendRegisterAsync(CancellationToken token, CancellationToken sendToken)
         {
             var registerPayload = new JObject
             {
@@ -1841,21 +1910,36 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     CommandPhaseTiming.Capability,
                     NativeCommandArbitrator.Capability,
                     CommandResumeJournal.Capability,
-                    CommandResumeJournal.OriginCapability
+                    CommandResumeJournal.OriginCapability,
+                    HeartbeatCapability
                 ),
             };
 
-            await SendJsonAsync(registerPayload, token).ConfigureAwait(false);
+            await SendStateAsync(registerPayload, token, sendToken).ConfigureAwait(false);
         }
 
-        private Task SendPongAsync(CancellationToken token)
+        private async Task AnswerPingAsync(JObject ping, CancellationToken token)
         {
-            var payload = new JObject
+            TaskCompletionSource<bool> legacyProbe;
+            JObject pong;
+            lock (_ownershipLock)
             {
-                ["type"] = "pong",
-                ["session_id"] = _sessionId, // Include session ID for server-side tracking
-            };
-            return SendJsonAsync(payload, token);
+                if (!IsCurrentConnectionToken(token))
+                    return;
+                pong = new JObject { ["type"] = "pong", ["session_id"] = _sessionId };
+                legacyProbe = _heartbeatNegotiated ? null : _probe;
+                if (_heartbeatNegotiated)
+                {
+                    string challenge = ping["challenge"]?.Type == JTokenType.String ? (string)ping["challenge"] : null;
+                    if (!CommandResumeJournal.IsIdentity(challenge))
+                        return;
+                    pong["challenge"] = challenge;
+                }
+            }
+            await SendJsonAsync(pong, token).ConfigureAwait(false);
+            lock (_ownershipLock)
+                if (IsCurrentConnectionToken(token))
+                    legacyProbe?.TrySetResult(true);
         }
 
         private async Task SendJsonAsync(JObject payload, CancellationToken token)
@@ -1936,6 +2020,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     return Task.CompletedTask;
                 }
                 _commandAdmission?.Retire();
+                _registrationAck?.TrySetResult(false);
+                _probe?.TrySetResult(false);
                 _isConnected = false;
                 _state = TransportState.Disconnected(TransportDisplayName, reason ?? "Connection closed");
                 if (_isReconnectingFlag != 0)
