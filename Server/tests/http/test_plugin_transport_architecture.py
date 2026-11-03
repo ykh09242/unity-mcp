@@ -210,6 +210,7 @@ def test_capabilities_are_negotiated_as_supported_intersection(client):
             "command_progress_v1",
             "large_result_gzip_v1",
             "tool_settings_ack_v1",
+            "heartbeat_challenge_v1",
             "phase_timing_v1",
             "native_arbitration_v1",
             "command_resume_v1",
