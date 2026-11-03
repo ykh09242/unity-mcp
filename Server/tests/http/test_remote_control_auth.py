@@ -2,7 +2,10 @@
 
 import json
 from unittest.mock import AsyncMock
+from urllib.parse import urlsplit
 
+import anyio
+import httpx
 import pytest
 from fastmcp import Context
 from starlette.testclient import TestClient
@@ -160,6 +163,134 @@ def test_embedded_remote_app_requires_explicit_tls_proxy(monkeypatch):
     monkeypatch.setattr(config, "http_behind_tls_proxy", False)
     with pytest.raises(ValueError, match="HTTPS/WSS proxy"):
         UnityMCP("unconfigured-remote").http_app()
+
+
+@pytest.mark.parametrize("root_path", ["", "/m"])
+def test_legacy_sse_message_owner_controls_cancellation(remote_app, root_path):
+    app, _ = remote_app
+    server = app.state.fastmcp_server
+
+    async def scenario():
+        endpoint_ready = anyio.Event()
+        initialized = anyio.Event()
+        started = anyio.Event()
+        cancelled = anyio.Event()
+        disconnect = anyio.Event()
+        endpoint = []
+
+        @server.resource("test://wait-for-cancellation")
+        async def wait_for_cancellation() -> str:
+            started.set()
+            try:
+                await anyio.sleep_forever()
+            finally:
+                cancelled.set()
+            return "finished"
+
+        sse_app = server.http_app(transport="sse", path="/custom-sse")
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "scheme": "http",
+            "method": "GET",
+            "path": "/custom-sse",
+            "raw_path": b"/custom-sse",
+            "query_string": b"",
+            "headers": [(b"x-api-key", b"alice-key")],
+            "root_path": root_path,
+            "server": ("testserver", 80),
+            "client": ("fixture", 1),
+            "state": {},
+        }
+
+        async def receive():
+            await disconnect.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            body = message.get("body", b"")
+            if b"event: endpoint" in body:
+                endpoint.append(
+                    next(
+                        line[6:] for line in body.decode().splitlines() if line.startswith("data: ")
+                    )
+                )
+                endpoint_ready.set()
+            if b"event: message" in body and b'"id":1' in body:
+                initialized.set()
+
+        async with sse_app.router.lifespan_context(sse_app):
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(sse_app, scope, receive, send)
+                with anyio.fail_after(15):
+                    await endpoint_ready.wait()
+                    assert urlsplit(endpoint[0]).query
+                    async with httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=sse_app, root_path=root_path),
+                        base_url="http://testserver",
+                    ) as client:
+
+                        async def post(key, payload):
+                            return await client.post(
+                                endpoint[0].removeprefix(root_path),
+                                headers={"X-API-Key": key},
+                                json=payload,
+                            )
+
+                        init = {
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "initialize",
+                            "params": {
+                                "protocolVersion": "2025-03-26",
+                                "capabilities": {},
+                                "clientInfo": {"name": "fixture", "version": "1"},
+                            },
+                        }
+                        assert (await post("alice-key", init)).status_code == 202
+                        await initialized.wait()
+                        assert (
+                            await post(
+                                "alice-key",
+                                {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                            )
+                        ).status_code == 202
+                        call = {
+                            "jsonrpc": "2.0",
+                            "id": 3,
+                            "method": "resources/read",
+                            "params": {"uri": "test://wait-for-cancellation"},
+                        }
+                        assert (await post("alice-key", call)).status_code == 202
+                        await started.wait()
+                        cancel = {
+                            "jsonrpc": "2.0",
+                            "method": "notifications/cancelled",
+                            "params": {"requestId": 3, "reason": "fixture"},
+                        }
+                        assert (await post("bob-key", cancel)).status_code == 404
+                        target = urlsplit(endpoint[0].removeprefix(root_path))
+                        redirect = await client.post(
+                            target.path.rstrip("/") + "?" + target.query,
+                            headers={"X-API-Key": "bob-key"},
+                            json=cancel,
+                        )
+                        assert redirect.status_code == 307
+                        assert not cancelled.is_set()
+                        assert (await post("alice-rotated", cancel)).status_code == 202
+                        await cancelled.wait()
+                    disconnect.set()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=sse_app, root_path=root_path),
+                base_url="http://testserver",
+            ) as client:
+                closed = await client.post(
+                    endpoint[0].removeprefix(root_path), headers={"X-API-Key": "alice-key"}, json={}
+                )
+                assert closed.status_code == 404
+
+    anyio.run(scenario)
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-API-Key": "invalid-key"}])

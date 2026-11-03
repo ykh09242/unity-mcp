@@ -56,6 +56,7 @@ from transport.local_auth_middleware import LocalControlAuthMiddleware
 from transport.local_server_lifecycle import request_local_shutdown
 from transport.remote_auth_middleware import (
     RemoteControlAuthMiddleware,
+    RemoteLegacySseGuard,
     RemoteSessionTerminationGuard,
 )
 from transport.catalog_subscriptions import (
@@ -667,6 +668,12 @@ class UnityMCP(FastMCP):
         else:
             if app.state.transport_type == "streamable-http":
                 RemoteSessionTerminationGuard.install(app)
+            elif app.state.transport_type == "sse":
+                app.add_middleware(
+                    RemoteLegacySseGuard,
+                    stream_path=app.state.path,
+                    message_path=fastmcp.settings.message_path,
+                )
             app.add_middleware(RemoteControlAuthMiddleware)
         return app
 

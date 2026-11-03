@@ -3,6 +3,8 @@
 import asyncio
 from contextlib import AsyncExitStack
 from ipaddress import IPv4Address, IPv6Address, ip_address
+from urllib.parse import parse_qs, urlsplit
+from uuid import UUID
 from weakref import WeakKeyDictionary
 
 import anyio
@@ -10,8 +12,9 @@ from fastmcp.server.auth.middleware import RequireAuthMiddleware
 from fastmcp.server.http import StreamableHTTPASGIApp
 from mcp.server.streamable_http import MCP_SESSION_ID_HEADER, StreamableHTTPServerTransport
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
+from starlette._utils import get_route_path
 from starlette.datastructures import Headers
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -28,6 +31,84 @@ from transport.socket_write_guard import (
 AUTHENTICATED_USER_STATE = "unity_mcp_authenticated_user_id"
 AUTHENTICATED_LEASE_STATE = "unity_mcp_authenticated_credential_lease"
 VERIFIED_CLIENT_IP_HEADER = "X-Unity-MCP-Client-IP"
+
+
+class RemoteLegacySseGuard:
+    """Bind the SDK's advertised SSE session to the API-key stream owner."""
+
+    def __init__(self, app: ASGIApp, *, stream_path: str, message_path: str) -> None:
+        self.app = app
+        self.stream_path = stream_path
+        self.message_prefix = message_path.rstrip("/") + "/"
+        self.owners: dict[UUID, str] = {}
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = get_route_path(scope)
+        user = scope.get("state", {}).get(AUTHENTICATED_USER_STATE)
+        if scope["method"] == "POST" and path.startswith(self.message_prefix):
+            values = parse_qs(scope.get("query_string", b"").decode("latin-1")).get(
+                "session_id", []
+            )
+            try:
+                session = UUID(values[0]) if len(values) == 1 else None
+            except ValueError:
+                session = None
+            if session is None or not user or self.owners.get(session) != user:
+                await Response("Could not find session", status_code=404)(scope, receive, send)
+                return
+        if scope["method"] != "GET" or path != self.stream_path:
+            await self.app(scope, receive, send)
+            return
+
+        session = None
+        streaming = False
+        pending: list[Message] = []
+        data = b""
+
+        async def bind_before_send(message: Message) -> None:
+            nonlocal session, data, streaming
+            if message["type"] == "http.response.start":
+                streaming = (
+                    Headers(raw=message.get("headers", []))
+                    .get("content-type", "")
+                    .startswith("text/event-stream")
+                )
+            if message["type"] != "http.response.body" or not streaming or session is not None:
+                await send(message)
+                return
+            pending.append(message)
+            data += message.get("body", b"")
+            if len(data) > 65536:
+                raise RuntimeError("Legacy SSE endpoint announcement exceeds limit")
+            normalized = data.replace(b"\r\n", b"\n")
+            if b"\n\n" not in normalized:
+                if not message.get("more_body", False):
+                    raise RuntimeError("Legacy SSE endpoint announcement missing")
+                return
+            frame = normalized.split(b"\n\n", 1)[0].split(b"\n")
+            event = next((line[7:] for line in frame if line.startswith(b"event: ")), b"")
+            endpoint = next((line[6:] for line in frame if line.startswith(b"data: ")), b"")
+            values = parse_qs(urlsplit(endpoint.decode("ascii")).query).get("session_id", [])
+            try:
+                candidate = UUID(values[0]) if event == b"endpoint" and len(values) == 1 else None
+            except ValueError:
+                candidate = None
+            if candidate is None or not user or candidate in self.owners:
+                raise RuntimeError("Invalid legacy SSE endpoint announcement")
+            session = candidate
+            self.owners[session] = user
+            for buffered in pending:
+                await send(buffered)
+            pending.clear()
+
+        try:
+            await self.app(scope, receive, bind_before_send)
+        finally:
+            if session is not None:
+                self.owners.pop(session, None)
 
 
 def _source_ip(value: str) -> IPv4Address | IPv6Address:
