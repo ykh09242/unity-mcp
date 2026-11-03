@@ -123,6 +123,44 @@ namespace MCPForUnityTests
             };
 
         [Test]
+        public void EarlyCancellationIsOwnedAndFinishesWithoutScenarioEffects()
+        {
+            string directory = Path.Combine(Path.GetTempPath(), "mcp-early-cancel-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            string marker = Path.Combine(directory, "cancel");
+            string job = new string('a', 32);
+            try
+            {
+                File.WriteAllText(marker, new string('b', 32) + "\n");
+                Assert.Throws<IOException>(() => new PlayScenarioPlayerCancellation(directory, job).Poll(0));
+                File.WriteAllText(marker, "cancel\n");
+                Assert.Throws<IOException>(() => new PlayScenarioPlayerCancellation(directory, job).Poll(0));
+                File.WriteAllText(marker, job + "\n");
+                Assert.IsTrue(new PlayScenarioPlayerCancellation(directory, job).Poll(0));
+                var run = PlayScenarioEngine.Create(Definition(), job, 2, 60, 10);
+                PlayScenarioPlayerCancellation.FinishBeforeStart(run, 20);
+                Assert.AreEqual("cancelled", run.Status);
+                Assert.AreEqual("finished", run.Phase);
+                Assert.IsTrue(run.RunnerResourcesReleased.Value);
+                foreach (PlayScenarioStepResult step in run.Steps)
+                {
+                    Assert.AreEqual("skipped", step.Status);
+                    Assert.IsNull(step.StartedUnixMs);
+                }
+                foreach (PlayScenarioIterationResult iteration in run.IterationResults)
+                {
+                    Assert.AreEqual("skipped", iteration.Status);
+                    Assert.IsNull(iteration.StartedUnixMs);
+                }
+            }
+            finally
+            {
+                File.Delete(marker);
+                Directory.Delete(directory);
+            }
+        }
+
+        [Test]
         public void FrozenBundleRejectsChangedDefinitionHashAndSceneInventory()
         {
             JObject value = PlayScenarioPlayerBundle.Create(Definition(), "6000.0.69f1", "1.0.0");

@@ -158,7 +158,10 @@ owned directory with `request.json`, launches one child process, waits at paced 
 its actual `run.json` plus `junit.xml`. Repetitions run in the same Player process with the scenario's
 setup/reset/cleanup contract. A new invocation launches a new process.
 
-Cancellation writes one `cancel` marker and allows bounded cleanup. If the process stops responding,
+Cancellation atomically publishes one `cancel` marker containing the request's job ID followed by a
+newline. The Player rejects a marker for another request. A marker present before scenario execution
+produces a cancelled report with all steps skipped; once execution starts, cancellation allows bounded
+cleanup. If the process stops responding,
 only the owned child may be terminated; the result must remain unresolved failure unless final report
 and exit evidence establish what finished. A stale, missing, oversized or mismatched report is never
 accepted as success. Exit zero requires matching job/definition/revision, `execution_environment: "player"`, completed finalization, successful status, released runner resources and actual process

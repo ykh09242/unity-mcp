@@ -324,6 +324,17 @@ def _write_diagnostics(directory: Path, diagnostics: dict[str, JsonValue]) -> No
     (directory / "diagnostics.json").write_bytes(encoded + b"\n")
 
 
+def _publish_cancellation(directory: Path, job_id: str) -> None:
+    """Publish a complete request-owned marker without replacing existing evidence."""
+    temporary = directory / "cancel.tmp"
+    with temporary.open("x", encoding="utf-8", newline="\n") as stream:
+        stream.write(f"{job_id}\n")
+    try:
+        os.link(temporary, directory / "cancel")
+    finally:
+        temporary.unlink()
+
+
 def run_player(options: PlayerRunOptions) -> PlayerOutcome:
     """Run foreground, request cancellation once, and require fresh native finalization evidence."""
     check_deadline(options.deadline_monotonic)
@@ -485,7 +496,7 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                     log_capture.error is not None and not cancellation_sent
                 )
                 if expired and not cancellation_sent:
-                    (directory / "cancel").write_text("cancel\n", encoding="utf-8")
+                    _publish_cancellation(directory, str(command.job_id))
                     cancellation_sent = True
                     deadline_reached = not interrupted
                     # The soak deadline already includes cleanup; cancellation cannot extend it.
@@ -501,7 +512,7 @@ def run_player(options: PlayerRunOptions) -> PlayerOutcome:
                     forced_termination = process.poll() is None
                     _stop_owned(process)
                     break
-                (directory / "cancel").write_text("cancel\n", encoding="utf-8")
+                _publish_cancellation(directory, str(command.job_id))
                 cancellation_sent = True
                 deadline = min(time.monotonic() + options.cleanup_wait_seconds, soak_deadline)
         return_code = process.wait(timeout=5)

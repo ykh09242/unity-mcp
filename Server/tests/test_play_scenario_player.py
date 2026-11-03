@@ -54,6 +54,7 @@ def child(monkeypatch, tmp_path):
         "request=json.loads(request_path.read_text())\n"
         "manifest=json.loads(pathlib.Path(sys.argv[2]).read_text())\n"
         "mode=sys.argv[3]\n"
+        "if mode == 'early-cancel': time.sleep(.25)\n"
         "if request['schema_version'] == 2:\n"
         " import os\n"
         " progress={'schema_version':1,'job_id':request['job_id'],'definition_hash':request['definition_hash'],'build_id':request['build_id'],'payload_hash':request['payload_hash'],'build_source_revision':request['build_source_revision'],'process_id':os.getpid(),'sequence':1,'main_loop_sequence':1,'heartbeat_unix_ms':int(time.time()*1000),'elapsed_ms':1,'phase':'running','iteration':1,'stage':'steps','step_index':0,'status':'running'}\n"
@@ -65,9 +66,10 @@ def child(monkeypatch, tmp_path):
         "if mode == 'crash': sys.exit(7)\n"
         "if mode == 'missing': sys.exit(0)\n"
         "if mode == 'hang': time.sleep(30)\n"
-        "if mode == 'cancel':\n"
+        "if mode in ('cancel', 'early-cancel'):\n"
         " while not (request_path.parent/'cancel').exists(): time.sleep(.02)\n"
-        "status='cancelled' if mode == 'cancel' else ('failed' if mode == 'failed' else 'succeeded')\n"
+        " assert (request_path.parent/'cancel').read_text() == request['job_id']+'\\n'\n"
+        "status='cancelled' if mode in ('cancel', 'early-cancel') else ('failed' if mode == 'failed' else 'succeeded')\n"
         "code=0 if status == 'succeeded' else 1\n"
         "report={**request,'scenario':manifest['definition'],'status':status,'execution_environment':'player',\n"
         " 'finalization_state':'completed','runner_resources_released':True,'exit_code':code,'started_unix_ms':1,'finished_unix_ms':2,\n"
@@ -186,7 +188,7 @@ def test_timeout_cancels_once_and_waits_for_actual_native_finalization(bundle, c
     child[0][0] = "cancel"
     outcome = run_player(PlayerRunOptions(build, output, timeout_seconds=1, cleanup_wait_seconds=1))
     assert outcome.exit_code == 1 and outcome.report["status"] == "cancelled"
-    assert (outcome.directory / "cancel").read_text() == "cancel\n"
+    assert (outcome.directory / "cancel").read_text() == outcome.report["job_id"] + "\n"
     assert child[1][0].poll() == 1
 
 
@@ -200,7 +202,7 @@ def test_unresponsive_owned_player_is_killed_after_bounded_cleanup(bundle, child
 
 def test_ctrl_c_requires_actual_cleanup_report_before_return(bundle, child, monkeypatch):
     build, output, _manifest = bundle
-    child[0][0] = "cancel"
+    child[0][0] = "early-cancel"
     real_sleep = player.time.sleep
     interrupted = []
 
@@ -213,7 +215,17 @@ def test_ctrl_c_requires_actual_cleanup_report_before_return(bundle, child, monk
     monkeypatch.setattr(player.time, "sleep", interrupt_once)
     outcome = run_player(PlayerRunOptions(build, output, cleanup_wait_seconds=1))
     assert outcome.exit_code == 130 and outcome.report["status"] == "cancelled"
+    assert (outcome.directory / "cancel").read_text() == outcome.report["job_id"] + "\n"
     assert child[1][0].poll() == 1
+
+
+def test_cancellation_publication_never_replaces_foreign_evidence(tmp_path):
+    marker = tmp_path / "cancel"
+    marker.write_text("foreign\n", encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        player._publish_cancellation(tmp_path, "a" * 32)
+    assert marker.read_text(encoding="utf-8") == "foreign\n"
+    assert not (tmp_path / "cancel.tmp").exists()
 
 
 @pytest.mark.parametrize("change", ["hash", "executable", "scenes", "capabilities", "unknown"])

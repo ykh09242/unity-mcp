@@ -65,16 +65,16 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 }
                 requestPath = PlayScenarioPlayerFiles.CheckedAbsolute(requestPath);
                 directory = Path.GetDirectoryName(requestPath);
-                cancellation = new PlayScenarioPlayerCancellation(directory);
                 if (
                     File.Exists(Path.Combine(directory, "run.json"))
                     || File.Exists(Path.Combine(directory, "run.json.tmp"))
-                    || File.Exists(Path.Combine(directory, "cancel"))
                     || File.Exists(Path.Combine(directory, "progress.json"))
                     || File.Exists(Path.Combine(directory, "progress.json.tmp"))
                 )
                     throw new IOException("Player run directory contains stale output or cancellation evidence.");
                 request = PlayScenarioPlayerRequest.Parse(PlayScenarioPlayerFiles.Read(requestPath, 4096));
+                cancellation = new PlayScenarioPlayerCancellation(directory, request.JobId);
+                cancellation.Poll(0);
                 outputDirectoryApproved = PlayScenarioPlayerFiles.CanWriteRunDirectory(
                     Path.GetDirectoryName(Application.dataPath),
                     directory,
@@ -126,7 +126,14 @@ namespace MCPForUnity.Runtime.PlayScenarios
                 }
                 if (request.Soak != null)
                     soak = new PlayScenarioPlayerSoakJournal(directory, request, bundle, processId, run.StartedUnixMs, persistence);
-                StartEngine();
+                if (cancellation.Poll(elapsed.ElapsedMilliseconds, true))
+                {
+                    PlayScenarioPlayerCancellation.FinishBeforeStart(run, Now);
+                    soakStopStatus = "cancelled";
+                    soakStopError = run.Error;
+                    Complete(1);
+                    return;
+                }
             }
             catch (Exception error)
             {
@@ -187,12 +194,24 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         private void Update()
         {
-            if (finished || engine == null)
+            if (finished || run == null)
                 return;
             try
             {
+                if (engine == null)
+                {
+                    if (cancellation.Poll(elapsed.ElapsedMilliseconds, true))
+                    {
+                        PlayScenarioPlayerCancellation.FinishBeforeStart(run, Now);
+                        soakStopStatus = "cancelled";
+                        soakStopError = run.Error;
+                        Complete(1);
+                        return;
+                    }
+                    StartEngine();
+                }
                 Drain();
-                if (cancellation.Poll(elapsed.ElapsedMilliseconds))
+                if (cancellation.Poll(elapsed.ElapsedMilliseconds, mainLoopSequence == 0))
                 {
                     soakStopStatus = "cancelled";
                     soakStopError = "Cancelled by caller.";
@@ -229,6 +248,11 @@ namespace MCPForUnity.Runtime.PlayScenarios
             }
             catch (Exception error)
             {
+                if (engine == null)
+                {
+                    StartupFailure(error);
+                    return;
+                }
                 engine.Interrupt("Player runner failed: " + error.GetType().Name + ": " + error.Message, Now);
                 soakStopStatus = soakStopStatus ?? "failed";
                 soakStopError = soakStopError ?? PlayScenarioEngine.Bounded(error.GetType().Name + ": " + error.Message, 2048);

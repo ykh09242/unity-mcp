@@ -20,9 +20,9 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             string cancel = Path.Combine(directory, "cancel");
             try
             {
-                var probe = new PlayScenarioPlayerCancellation(directory);
+                var probe = new PlayScenarioPlayerCancellation(directory, new string('a', 32));
                 Assert.IsFalse(probe.Poll(0));
-                File.WriteAllText(cancel, "");
+                File.WriteAllText(cancel, new string('a', 32) + "\n");
                 Assert.IsFalse(probe.Poll(99), "No filesystem revalidation is due before the next 100 ms poll.");
                 Assert.IsTrue(probe.Poll(100));
                 File.Delete(cancel);
