@@ -452,13 +452,12 @@ def test_soak_cli_stops_one_real_stalled_child_with_single_cancellation(
     stopped = []
     original_observer = player.ProgressObserver
     original_stop = player._stop_owned
-    original_write = Path.write_text
+    original_publish = player._publish_cancellation
     cancellations = []
 
-    def write_control(path, text, *args, **kwargs):
-        if path.name == "cancel":
-            cancellations.append(path)
-        return original_write(path, text, *args, **kwargs)
+    def publish_control(directory, job_id):
+        cancellations.append((directory, job_id))
+        return original_publish(directory, job_id)
 
     class TimedObserver(original_observer):
         def observe(self, path):
@@ -473,7 +472,7 @@ def test_soak_cli_stops_one_real_stalled_child_with_single_cancellation(
 
     monkeypatch.setattr(player, "ProgressObserver", TimedObserver)
     monkeypatch.setattr(player, "_stop_owned", stop_owned)
-    monkeypatch.setattr(Path, "write_text", write_control)
+    monkeypatch.setattr(player, "_publish_cancellation", publish_control)
     result = CliRunner().invoke(
         cli,
         [
@@ -751,7 +750,8 @@ def test_user_cancellation_preserves_exit_130_and_confirmed_native_finalization(
     # Then: interruption remains exit 130 and complete cancellation evidence is retained.
     assert outcome.exit_code == 130 and outcome.summary.status == "cancelled"
     assert outcome.summary.evidence_state == "complete"
-    assert (outcome.directory / "cancel").read_text() == "cancel\n"
+    request = json.loads((outcome.directory / "request.json").read_bytes())
+    assert (outcome.directory / "cancel").read_bytes() == (request["job_id"] + "\n").encode()
     assert soak_child[1][0].poll() == 1
 
 

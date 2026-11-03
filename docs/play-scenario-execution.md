@@ -158,8 +158,9 @@ owned directory with `request.json`, launches one child process, waits at paced 
 its actual `run.json` plus `junit.xml`. Repetitions run in the same Player process with the scenario's
 setup/reset/cleanup contract. A new invocation launches a new process.
 
-Cancellation atomically publishes one `cancel` marker containing the request's job ID followed by a
-newline. The Player rejects a marker for another request. A marker present before scenario execution
+Cancellation atomically publishes a `cancel` marker containing the request's job ID followed by a
+newline. Where hard links are unavailable, it exclusively creates an empty `cancel.<job_id>` marker
+instead. The Player rejects a marker for another request. A marker present before scenario execution
 produces a cancelled report with all steps skipped; once execution starts, cancellation allows bounded
 cleanup. If the process stops responding,
 only the owned child may be terminated; the result must remain unresolved failure unless final report
@@ -167,6 +168,13 @@ and exit evidence establish what finished. A stale, missing, oversized or mismat
 accepted as success. Exit zero requires matching job/definition/revision, `execution_environment: "player"`, completed finalization, successful status, released runner resources and actual process
 exit zero. Scenario failure exits nonzero; invalid startup or persistence also cannot pass. Keep the
 whole per-run output directory and build provenance when diagnosing CI failures.
+
+Use an updated launcher with a Player rebuilt from the updated package for guaranteed cancellation
+before startup. Older frozen Players treat any startup marker as stale, so an updated launcher cannot
+fix early cancellation in those builds; after startup they accept the updated `cancel` marker, but not
+the request-named fallback. Older launchers
+write an unowned `cancel\n` marker, which updated Players reject both before and after startup. Rebuild
+the Player and update the launcher together; do not reuse old cancellation evidence.
 
 The Player host supports exact included scenes, hierarchy paths/stable IDs, object count and
 activity, exact component presence, explicit read-only state providers, reset steps, query counts/timeline, and optional direct/raycast

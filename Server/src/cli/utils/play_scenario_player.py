@@ -3,6 +3,7 @@
 from models.play_scenario_limits import DEFINITION_BYTES, REPORT_BYTES
 
 from dataclasses import dataclass, field
+import errno
 from hashlib import sha256
 import json
 import math
@@ -330,7 +331,24 @@ def _publish_cancellation(directory: Path, job_id: str) -> None:
     with temporary.open("x", encoding="utf-8", newline="\n") as stream:
         stream.write(f"{job_id}\n")
     try:
-        os.link(temporary, directory / "cancel")
+        try:
+            os.link(temporary, directory / "cancel")
+        except OSError as error:
+            if isinstance(error, FileExistsError) or (directory / "cancel").exists():
+                raise
+            if error.errno not in {
+                errno.EPERM,
+                errno.EACCES,
+                errno.EINVAL,
+                errno.ENOSYS,
+                errno.EOPNOTSUPP,
+                errno.EXDEV,
+            } and getattr(error, "winerror", None) not in {1, 50}:
+                raise
+            # Exclusive creation publishes identity in the filename, so an empty file
+            # is already complete when it becomes visible to the Player.
+            with (directory / f"cancel.{job_id}").open("xb"):
+                pass
     finally:
         temporary.unlink()
 

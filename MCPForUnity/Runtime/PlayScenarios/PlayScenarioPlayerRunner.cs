@@ -74,6 +74,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
                     throw new IOException("Player run directory contains stale output or cancellation evidence.");
                 request = PlayScenarioPlayerRequest.Parse(PlayScenarioPlayerFiles.Read(requestPath, 4096));
                 cancellation = new PlayScenarioPlayerCancellation(directory, request.JobId);
+                cancellation.RejectForeignMarkers();
                 cancellation.Poll(0);
                 outputDirectoryApproved = PlayScenarioPlayerFiles.CanWriteRunDirectory(
                     Path.GetDirectoryName(Application.dataPath),

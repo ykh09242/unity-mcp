@@ -511,7 +511,10 @@ def test_session_cancellation_stops_admission_and_waits_for_owned_exit(
     assert summary["children_started"] == summary["children_finalized"] == 1
     assert len(child[1]) == 1 and child[1][0].poll() == 1
     failure = dict(summary["first_failure"] or {})
-    assert (directory / failure["artifact_directory"] / "cancel").read_text() == "cancel\n"
+    child_directory = directory / failure["artifact_directory"]
+    request = json.loads((child_directory / "request.json").read_bytes())
+    assert failure["job_id"] == request["job_id"]
+    assert (child_directory / "cancel").read_bytes() == (request["job_id"] + "\n").encode()
 
 
 def test_session_deadline_cancels_owned_child_and_marks_arm_incomplete(verified_bundle, child):

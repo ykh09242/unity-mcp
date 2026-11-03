@@ -8,6 +8,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
     internal sealed class PlayScenarioPlayerCancellation
     {
         private readonly string path;
+        private readonly string fallbackPath;
         private readonly string jobId;
         private long nextPoll;
         private bool cancelled;
@@ -15,7 +16,19 @@ namespace MCPForUnity.Runtime.PlayScenarios
         internal PlayScenarioPlayerCancellation(string directory, string jobId)
         {
             path = PlayScenarioPlayerFiles.CheckedAbsolute(Path.Combine(directory, "cancel"));
+            fallbackPath = PlayScenarioPlayerFiles.CheckedAbsolute(Path.Combine(directory, "cancel." + jobId));
             this.jobId = jobId;
+        }
+
+        internal void RejectForeignMarkers()
+        {
+            string directory = Path.GetDirectoryName(path);
+            foreach (string marker in Directory.EnumerateFiles(directory, "cancel.*"))
+            {
+                string checkedMarker = PlayScenarioPlayerFiles.CheckedAbsolute(marker);
+                if (checkedMarker != path && checkedMarker != fallbackPath && checkedMarker != path + ".tmp")
+                    throw new IOException("Player run directory contains foreign cancellation evidence.");
+            }
         }
 
         internal bool Poll(long elapsedMilliseconds, bool force = false)
@@ -30,6 +43,12 @@ namespace MCPForUnity.Runtime.PlayScenarios
             {
                 if (PlayScenarioPlayerFiles.Read(path, 64) != jobId + "\n")
                     throw new IOException("Player cancellation does not belong to this request.");
+                cancelled = true;
+            }
+            if (File.Exists(PlayScenarioPlayerFiles.CheckedAbsolute(fallbackPath)))
+            {
+                if (new FileInfo(fallbackPath).Length != 0)
+                    throw new IOException("Player cancellation marker is invalid.");
                 cancelled = true;
             }
             return cancelled;

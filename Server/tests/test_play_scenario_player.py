@@ -1,6 +1,7 @@
 """Owned standalone process, bundle integrity and truthful finalization regressions."""
 
 from hashlib import sha256
+import errno
 import json
 from pathlib import Path
 import subprocess
@@ -67,8 +68,8 @@ def child(monkeypatch, tmp_path):
         "if mode == 'missing': sys.exit(0)\n"
         "if mode == 'hang': time.sleep(30)\n"
         "if mode in ('cancel', 'early-cancel'):\n"
-        " while not (request_path.parent/'cancel').exists(): time.sleep(.02)\n"
-        " assert (request_path.parent/'cancel').read_text() == request['job_id']+'\\n'\n"
+        " while not (request_path.parent/'cancel').exists() and not (request_path.parent/('cancel.'+request['job_id'])).exists(): time.sleep(.02)\n"
+        " if (request_path.parent/'cancel').exists(): assert (request_path.parent/'cancel').read_text() == request['job_id']+'\\n'\n"
         "status='cancelled' if mode in ('cancel', 'early-cancel') else ('failed' if mode == 'failed' else 'succeeded')\n"
         "code=0 if status == 'succeeded' else 1\n"
         "report={**request,'scenario':manifest['definition'],'status':status,'execution_environment':'player',\n"
@@ -200,7 +201,10 @@ def test_unresponsive_owned_player_is_killed_after_bounded_cleanup(bundle, child
     assert child[1][0].poll() is not None
 
 
-def test_ctrl_c_requires_actual_cleanup_report_before_return(bundle, child, monkeypatch):
+@pytest.mark.parametrize("hard_links", [True, False])
+def test_ctrl_c_requires_actual_cleanup_report_before_return(
+    bundle, child, monkeypatch, hard_links
+):
     build, output, _manifest = bundle
     child[0][0] = "early-cancel"
     real_sleep = player.time.sleep
@@ -213,9 +217,18 @@ def test_ctrl_c_requires_actual_cleanup_report_before_return(bundle, child, monk
         real_sleep(seconds)
 
     monkeypatch.setattr(player.time, "sleep", interrupt_once)
+    if not hard_links:
+
+        def unsupported(*_args):
+            raise OSError(errno.EOPNOTSUPP, "hard links unavailable")
+
+        monkeypatch.setattr(player.os, "link", unsupported)
     outcome = run_player(PlayerRunOptions(build, output, cleanup_wait_seconds=1))
     assert outcome.exit_code == 130 and outcome.report["status"] == "cancelled"
-    assert (outcome.directory / "cancel").read_text() == outcome.report["job_id"] + "\n"
+    marker = outcome.directory / ("cancel" if hard_links else "cancel." + outcome.report["job_id"])
+    assert marker.read_bytes() == (
+        (outcome.report["job_id"] + "\n").encode() if hard_links else b""
+    )
     assert child[1][0].poll() == 1
 
 
@@ -225,6 +238,23 @@ def test_cancellation_publication_never_replaces_foreign_evidence(tmp_path):
     with pytest.raises(FileExistsError):
         player._publish_cancellation(tmp_path, "a" * 32)
     assert marker.read_text(encoding="utf-8") == "foreign\n"
+    assert not (tmp_path / "cancel.tmp").exists()
+
+
+@pytest.mark.parametrize(
+    "error_code,winerror", [(errno.EOPNOTSUPP, None), (errno.EINVAL, 1), (errno.EINVAL, 50)]
+)
+def test_cancellation_uses_request_named_marker_when_hard_links_are_unsupported(
+    tmp_path, monkeypatch, error_code, winerror
+):
+    def unsupported(*_args):
+        error = OSError(error_code, "hard links unavailable")
+        error.winerror = winerror
+        raise error
+
+    monkeypatch.setattr(player.os, "link", unsupported)
+    player._publish_cancellation(tmp_path, "a" * 32)
+    assert (tmp_path / ("cancel." + "a" * 32)).read_bytes() == b""
     assert not (tmp_path / "cancel.tmp").exists()
 
 
