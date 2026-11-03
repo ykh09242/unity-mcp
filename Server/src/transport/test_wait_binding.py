@@ -173,7 +173,9 @@ def install_test_job_tasks(
             return None
         loop = asyncio.get_running_loop()
         wait_timeout = params.arguments.get("wait_timeout", 30)
-        inner = loop.time() + wait_timeout
+        inner = test_job_wait_deadline.get() if params.name == "get_test_job" else None
+        if inner is None:
+            inner = loop.time() + wait_timeout
         instance = await context.get_state("unity_instance")
         session_id = await context.get_state("unity_session_id")
         user_id = await context.get_state("user_id") if remote_hosted else None

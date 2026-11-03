@@ -15,6 +15,7 @@ import anyio
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.exceptions import ToolError, ValidationError
 from fastmcp.tools.base import ToolResult
+from pydantic import TypeAdapter
 
 from core.config import config
 from services.execution_receipt_context import owned_to_thread
@@ -78,6 +79,66 @@ def set_unity_instance_middleware(middleware: "UnityInstanceMiddleware") -> None
     """
     global _unity_instance_middleware
     _unity_instance_middleware = middleware
+
+
+def resolve_discovered_instance(value: str, instances: list, transport: str) -> str:
+    """Resolve against the caller-visible catalog, retaining stdio port shorthand."""
+    complete_hash = full_hash(value)
+    digits = value.lstrip("0") or "0"
+    port = (
+        int(digits)
+        if not complete_hash and value.isascii() and value.isdigit() and len(digits) <= 5
+        else None
+    )
+    if port is not None and transport != "http":
+        for inst in instances:
+            if getattr(inst, "port", None) == port:
+                return inst.id
+    ids = {getattr(inst, "id", None): inst for inst in instances if getattr(inst, "id", None)}
+
+    # Exact Name@hash match
+    if "@" in value:
+        if value in ids:
+            return value
+        available = ", ".join(ids) or "none"
+        raise ValueError(
+            f"Instance '{value}' not found. Available: {available}. "
+            "Read mcpforunity://instances for current sessions."
+        )
+
+    # Hash prefix match
+    lookup = value.lower()
+    matches = [
+        inst
+        for inst in instances
+        if getattr(inst, "hash", "") and getattr(inst, "hash", "").lower().startswith(lookup)
+    ]
+    if complete_hash:
+        matches = [inst for inst in matches if inst.hash.lower() == lookup] or matches
+    if len(matches) == 1:
+        return matches[0].id
+    if len(matches) > 1:
+        ambiguous = ", ".join(getattr(m, "id", "?") for m in matches)
+        raise ValueError(
+            f"Hash prefix '{value}' is ambiguous ({ambiguous}). "
+            "Provide the full Name@hash from mcpforunity://instances."
+        )
+    if port is not None:
+        if transport == "http":
+            raise ValueError(
+                f"Port-based targeting ('{value}') is not supported in HTTP transport mode. "
+                "Use Name@hash or a hash prefix. Read mcpforunity://instances for available instances."
+            )
+        available = (
+            ", ".join(f"{inst.id} (port {getattr(inst, 'port', '?')})" for inst in instances)
+            or "none"
+        )
+        raise ValueError(f"No Unity instance found on port {value}. Available: {available}.")
+    available = ", ".join(ids) or "none"
+    raise ValueError(
+        f"No running Unity instance matches '{value}'. Available: {available}. "
+        "Read mcpforunity://instances for current sessions."
+    )
 
 
 class UnityInstanceMiddleware(Middleware):
@@ -236,26 +297,6 @@ class UnityInstanceMiddleware(Middleware):
                 # A missing exact ID already triggered full fallback discovery.
                 instances = await owned_to_thread(pool.discover_all_instances)
 
-        # Port number (stdio only) — resolve to Name@hash via status file lookup
-        if value.isdigit():
-            if transport == "http":
-                raise ValueError(
-                    f"Port-based targeting ('{value}') is not supported in HTTP transport mode. "
-                    "Use Name@hash or a hash prefix. Read mcpforunity://instances for available instances."
-                )
-            port_int = int(value)
-            instances = await self._discover_instances(ctx)
-            for inst in instances:
-                if getattr(inst, "port", None) == port_int:
-                    return inst.id
-            available = (
-                ", ".join(
-                    f"{getattr(i, 'id', '?')} (port {getattr(i, 'port', '?')})" for i in instances
-                )
-                or "none"
-            )
-            raise ValueError(f"No Unity instance found on port {value}. Available: {available}.")
-
         if instances is None:
             instances = await self._discover_instances(ctx)
         target_hash = full_hash(value)
@@ -277,38 +318,7 @@ class UnityInstanceMiddleware(Middleware):
                 pass  # Preserve the current inventory's selection error below.
             # Recheck the full Name@hash and tenant-visible catalog after waiting.
             instances = await self._discover_instances(ctx)
-        ids = {getattr(inst, "id", None): inst for inst in instances if getattr(inst, "id", None)}
-
-        # Exact Name@hash match
-        if "@" in value:
-            if value in ids:
-                return value
-            available = ", ".join(ids) or "none"
-            raise ValueError(
-                f"Instance '{value}' not found. Available: {available}. "
-                "Read mcpforunity://instances for current sessions."
-            )
-
-        # Hash prefix match
-        lookup = value.lower()
-        matches = [
-            inst
-            for inst in instances
-            if getattr(inst, "hash", "") and getattr(inst, "hash", "").lower().startswith(lookup)
-        ]
-        if len(matches) == 1:
-            return matches[0].id
-        if len(matches) > 1:
-            ambiguous = ", ".join(getattr(m, "id", "?") for m in matches)
-            raise ValueError(
-                f"Hash prefix '{value}' is ambiguous ({ambiguous}). "
-                "Provide the full Name@hash from mcpforunity://instances."
-            )
-        available = ", ".join(ids) or "none"
-        raise ValueError(
-            f"No running Unity instance matches '{value}'. Available: {available}. "
-            "Read mcpforunity://instances for current sessions."
-        )
+        return resolve_discovered_instance(value, instances, transport)
 
     async def _maybe_autoselect_instance(self, ctx) -> str | None:
         """
@@ -672,6 +682,18 @@ class UnityInstanceMiddleware(Middleware):
         started_at = asyncio.get_running_loop().time()
         budget = _CommandBudget(started_at + timeout_s)
         scope = asyncio.timeout_at(budget.expires_at)
+        wait_token = None
+        selection_deadline = None
+        selector = public_params.get("unity_instance")
+        if name == "get_test_job" and isinstance(selector, str) and full_hash(selector.strip()):
+            from services.tools.test_job_wait import test_job_wait_deadline
+
+            # Use the same validated integer semantics as the SDK. The registry
+            # gap, polling loop and optional retained Task share this deadline.
+            wait = TypeAdapter(int | None).validate_python(public_params.get("wait_timeout"))
+            if wait is not None and wait > 0:
+                selection_deadline = started_at + min(wait, timeout_s)
+                wait_token = test_job_wait_deadline.set(selection_deadline)
         token = http_request_budget.set(_HttpRequestBudget(started_at, budget, scope))
         try:
             async with scope:
@@ -683,6 +705,7 @@ class UnityInstanceMiddleware(Middleware):
                     public_params=public_params,
                     public_custom=public_custom,
                     receipt=receipt,
+                    selection_deadline=selection_deadline,
                 )
         except TimeoutError:
             if not scope.expired():
@@ -690,6 +713,8 @@ class UnityInstanceMiddleware(Middleware):
             return ToolResult(structured_content=budget.timeout_response(command), is_error=True)
         finally:
             http_request_budget.reset(token)
+            if wait_token is not None:
+                test_job_wait_deadline.reset(wait_token)
 
     async def _call_selected_tool(
         self,
@@ -701,15 +726,29 @@ class UnityInstanceMiddleware(Middleware):
         public_params,
         public_custom,
         receipt: PreparedExecution | None = None,
+        selection_deadline: float | None = None,
     ):
         ctx = context.fastmcp_context
-        # Compile polling already permits transport reconnects. Other handlers
-        # may deliberately disable them, so do not add a wait before their policy.
-        await self._inject_unity_instance(
+        selection = self._inject_unity_instance(
             context,
             authenticated_user_id=user_id,
-            allow_reconnect=public_name == "get_compile_job",
+            allow_reconnect=public_name == "get_compile_job" or selection_deadline is not None,
         )
+        if selection_deadline is None:
+            await selection
+        else:
+            scope = asyncio.timeout_at(selection_deadline)
+            try:
+                async with scope:
+                    await selection
+            except TimeoutError:
+                if not scope.expired():
+                    raise
+                from services.tools.test_job_wait import unobserved_test_job
+
+                result = unobserved_test_job(public_params["job_id"])
+                return ToolResult(structured_content=result.model_dump())
+
         if config.http_remote_hosted:
             session_id = await ctx.get_state("unity_session_id")
             identity = (

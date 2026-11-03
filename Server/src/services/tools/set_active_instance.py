@@ -1,4 +1,3 @@
-import asyncio
 from typing import Annotated, Any
 from types import SimpleNamespace
 
@@ -7,7 +6,10 @@ from mcp.types import ToolAnnotations
 
 from services.registry import mcp_for_unity_tool
 from transport.legacy.unity_connection import get_unity_connection_pool
-from transport.unity_instance_middleware import get_unity_instance_middleware
+from transport.unity_instance_middleware import (
+    get_unity_instance_middleware,
+    resolve_discovered_instance,
+)
 from transport.plugin_hub import PluginHub
 from services.execution_receipt_context import owned_to_thread
 from core.config import config
@@ -48,39 +50,6 @@ async def set_active_instance(
         }
     transport = (config.transport_mode or "stdio").lower()
 
-    # Port number shorthand (stdio only) — resolve to Name@hash via pool discovery
-    if value.isdigit():
-        if transport == "http":
-            return {
-                "success": False,
-                "error": f"Port-based targeting ('{value}') is not supported in HTTP transport mode. "
-                "Use Name@hash or a hash prefix. Read mcpforunity://instances for available instances.",
-            }
-        port_int = int(value)
-        pool = get_unity_connection_pool()
-        instances = await owned_to_thread(pool.discover_all_instances, force_refresh=True)
-        match = next((inst for inst in instances if getattr(inst, "port", None) == port_int), None)
-        if match is None:
-            available = (
-                ", ".join(f"{inst.id} (port {getattr(inst, 'port', '?')})" for inst in instances)
-                or "none"
-            )
-            return {
-                "success": False,
-                "error": f"No Unity instance found on port {value}. Available: {available}.",
-            }
-        resolved_id = match.id
-        middleware = get_unity_instance_middleware()
-        await middleware.set_active_instance(ctx, resolved_id)
-        return {
-            "success": True,
-            "message": f"Active instance set to {resolved_id}",
-            "data": {
-                "instance": resolved_id,
-                "session_id": getattr(ctx, "session_id", None),
-            },
-        }
-
     # Discover running instances based on transport
     if transport == "http":
         # In remote-hosted mode, filter sessions by user_id
@@ -88,7 +57,7 @@ async def set_active_instance(
         sessions_data = await PluginHub.get_sessions(user_id=user_id)
         sessions = sessions_data.sessions
         instances = []
-        for session_id, session in sessions.items():
+        for session in sessions.values():
             project = session.project or "Unknown"
             hash_value = session.hash
             if not hash_value:
@@ -99,69 +68,31 @@ async def set_active_instance(
                     id=inst_id,
                     hash=hash_value,
                     name=project,
-                    session_id=session_id,
                 )
             )
     else:
         pool = get_unity_connection_pool()
         instances = await owned_to_thread(pool.discover_all_instances, force_refresh=True)
 
-    if not instances:
+    if not instances and not value.isdigit():
         return {
             "success": False,
             "error": "No Unity instances are currently connected. Start Unity and press 'Start Session'.",
         }
-    ids = {inst.id: inst for inst in instances if getattr(inst, "id", None)}
-
-    resolved = None
-    if "@" in value:
-        resolved = ids.get(value)
-        if resolved is None:
-            return {
-                "success": False,
-                "error": f"Instance '{value}' not found. "
-                "Use mcpforunity://instances to copy an exact Name@hash.",
-            }
-    else:
-        lookup = value.lower()
-        matches = []
-        for inst in instances:
-            if not getattr(inst, "id", None):
-                continue
-            inst_hash = getattr(inst, "hash", "")
-            if inst_hash and inst_hash.lower().startswith(lookup):
-                matches.append(inst)
-        if not matches:
-            return {
-                "success": False,
-                "error": f"Instance hash '{value}' does not match any running Unity editors. "
-                "Use mcpforunity://instances to confirm the available hashes.",
-            }
-        if len(matches) > 1:
-            matching_ids = (
-                ", ".join(inst.id for inst in matches if getattr(inst, "id", None))
-                or "multiple instances"
-            )
-            return {
-                "success": False,
-                "error": f"Instance hash '{value}' is ambiguous ({matching_ids}). "
-                "Provide the full Name@hash from mcpforunity://instances.",
-            }
-        resolved = matches[0]
-
-    if resolved is None:
-        # Should be unreachable due to logic above, but satisfies static analysis
-        return {"success": False, "error": "Internal error: Instance resolution failed."}
+    try:
+        resolved = resolve_discovered_instance(value, instances, transport)
+    except ValueError as error:
+        return {"success": False, "error": str(error)}
 
     # Store selection in middleware (session-scoped via FastMCP context state).
     middleware = get_unity_instance_middleware()
-    await middleware.set_active_instance(ctx, resolved.id)
+    await middleware.set_active_instance(ctx, resolved)
 
     return {
         "success": True,
-        "message": f"Active instance set to {resolved.id}",
+        "message": f"Active instance set to {resolved}",
         "data": {
-            "instance": resolved.id,
+            "instance": resolved,
             "session_id": getattr(ctx, "session_id", None),
         },
     }

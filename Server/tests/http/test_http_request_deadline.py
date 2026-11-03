@@ -46,7 +46,14 @@ def request_server():
     server.tool(blender_bridge)
     server.tool(manage_play_scenario)
     server.tool(manage_build)
+    from services.tools.run_tests import get_test_job
+    from fastmcp.tools import Tool
+    from services.registry.response_schema import direct_object_output_schema
+
     server.tool(get_compile_job)
+    job_tool = Tool.from_function(get_test_job)
+    job_tool.output_schema = direct_object_output_schema(job_tool.output_schema)
+    server.add_tool(job_tool)
 
     @server.tool
     async def request_probe(ctx: Context) -> dict:
@@ -64,6 +71,138 @@ async def answer(hub, websocket, message):
     await hub.endpoint._handle_command_result(
         websocket, CommandResultMessage(id=message["id"], result={"success": True})
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reconnect", [True, False])
+async def test_explicit_test_job_poll_spends_original_wait_on_registry_gap(
+    command_hub, monkeypatch, reconnect
+):
+    from services.tools.test_job_wait import test_job_wait_deadline
+
+    job = {"job_id": "existing-job", "status": "succeeded"}
+    target = "1234567890123456"
+    waiting = asyncio.Event()
+    wait_for_change = command_hub.registry.wait_for_change
+
+    async def observe_wait(changed, timeout):
+        waiting.set()
+        return await wait_for_change(changed, timeout)
+
+    async def reply(message):
+        command_hub.sent.append((message["name"], message["params"]))
+        assert command_hub.websocket.state.plugin_session_id == "reconnected"
+        assert test_job_wait_deadline.get() == http_request_budget.get().started_at + 1
+        await command_hub.endpoint._handle_command_result(
+            command_hub.websocket,
+            CommandResultMessage(id=message["id"], result={"success": True, "data": job}),
+        )
+
+    monkeypatch.setenv("UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", "30")
+    monkeypatch.setattr(command_hub.registry, "wait_for_change", observe_wait)
+    command_hub.websocket.send_json = reply
+    async with Client(request_server(), mode="legacy") as client:
+        task = asyncio.create_task(
+            client.call_tool(
+                "get_test_job",
+                {"unity_instance": target, "job_id": job["job_id"], "wait_timeout": 1},
+            )
+        )
+        try:
+            await await_signal(waiting, "explicit test job reconnect", producers=(task,))
+            assert not command_hub.sent
+            if reconnect:
+                await command_hub.registry.register("reconnected", "Main", target, "6000")
+                command_hub.websocket.state.plugin_session_id = "reconnected"
+                PluginHub._connections["reconnected"] = command_hub.websocket
+            result = await await_completion(task, "bounded test job selection", timeout=5)
+            data = result.structured_content["data"]
+            assert data["job_id"] == job["job_id"]
+            if reconnect:
+                assert data["status"] == "succeeded"
+                assert command_hub.sent == [("get_test_job", {"job_id": job["job_id"]})]
+            else:
+                assert data["next_action"] == "poll_same_job"
+                assert not command_hub.sent
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selector,wait,error",
+    [("1234567890123456", 0, "No running Unity instance"), ("1234", 10, "ambiguous")],
+)
+async def test_test_job_selection_refuses_without_wait(
+    command_hub, monkeypatch, selector, wait, error
+):
+    from mcp.shared.exceptions import MCPError
+    from unittest.mock import AsyncMock
+
+    await command_hub.registry.register("one", "One", "1234aaaaaaaaaaaa", "6000")
+    await command_hub.registry.register("two", "Two", "1234bbbbbbbbbbbb", "6000")
+    wait_for_change = AsyncMock(side_effect=AssertionError("unexpected reconnect wait"))
+    monkeypatch.setattr(command_hub.registry, "wait_for_change", wait_for_change)
+    monkeypatch.setenv("UNITY_MCP_SESSION_RESOLVE_MAX_WAIT_S", "30")
+    async with Client(request_server(), mode="legacy") as client:
+        with pytest.raises(MCPError, match=error):
+            await client.call_tool(
+                "get_test_job",
+                {"unity_instance": selector, "job_id": "same-job", "wait_timeout": wait},
+            )
+    wait_for_change.assert_not_awaited()
+    assert not command_hub.sent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["inline", "stateful"])
+@pytest.mark.parametrize(
+    "selector,expected",
+    [
+        ("1234567890123456", "Main@1234567890123456"),
+        ("12345", "Main@1234567890123456"),
+        ("1234", None),
+    ],
+)
+async def test_numeric_http_selectors_use_visible_catalog(
+    command_hub, monkeypatch, surface, selector, expected
+):
+    from core.config import config
+    from services.tools.set_active_instance import set_active_instance
+    from tests.integration.test_helpers import DummyContext
+
+    monkeypatch.setattr(config, "http_remote_hosted", True)
+    await command_hub.registry.register("main", "Main", "1234567890123456", "6000", user_id="owner")
+    await command_hub.registry.register(
+        "owned", "Other", "1234eeeeeeeeeeee", "6000", user_id="owner"
+    )
+    await command_hub.registry.register(
+        "foreign", "Hidden", "12345aaaaaaaaaaa", "6000", user_id="foreign"
+    )
+    ctx = DummyContext()
+    middleware = UnityInstanceMiddleware()
+    if surface == "inline":
+        context = SimpleNamespace(
+            fastmcp_context=ctx, message=SimpleNamespace(arguments={"unity_instance": selector})
+        )
+        if expected is None:
+            with pytest.raises(ValueError, match="ambiguous") as exc:
+                await middleware._inject_unity_instance(context, authenticated_user_id="owner")
+            assert "Hidden" not in str(exc.value)
+        else:
+            await middleware._inject_unity_instance(context, authenticated_user_id="owner")
+        assert await ctx.get_state("unity_instance") == expected
+    else:
+        await ctx.set_state("user_id", "owner")
+        result = await set_active_instance(ctx, selector)
+        if expected is None:
+            assert not result["success"] and "ambiguous" in result["error"]
+            assert "Hidden" not in result["error"]
+        else:
+            assert result["success"]
+        assert await middleware.get_active_instance(ctx) == expected
 
 
 @pytest.mark.asyncio

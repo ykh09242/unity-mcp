@@ -11,7 +11,7 @@ from models.response_limits import response_limit_error
 from services.tools.shared_tool_reads import SharedReadCapacityError
 from transport.legacy.unity_connection import get_authenticated_stdio_generation
 
-# Set only by the trusted Tasks binding/fallback, never by client metadata.
+# Set by trusted request routing or the Tasks binding, never by client metadata.
 test_job_wait_deadline: ContextVar[float | None] = ContextVar(
     "test_job_wait_deadline", default=None
 )
@@ -52,6 +52,28 @@ async def _poll_generation(ctx, unity_instance, user_id):
     return await ctx.get_state("unity_session_id")
 
 
+def unobserved_test_job(job_id, last_error=None):
+    """Return retry guidance for the existing job when no status was received."""
+    value = dict(last_error or {})
+    value.update(
+        success=False,
+        hint="retry",
+        error=value.get("error") or "wait_timeout expired before a test job status was received",
+        message="The job's current status is unknown; the observation wait expired. "
+        "Poll the same job ID after the Editor reconnects; do not restart the tests.",
+        data={
+            **(value.get("data") or {}),
+            "job_id": job_id,
+            "job_status": "unknown",
+            "status": "unavailable",
+            "last_known_status": False,
+            "next_action": "poll_same_job",
+            "retry_after_ms": 500,
+        },
+    )
+    return MCPResponse(**value)
+
+
 async def wait_for_test_job(
     ctx,
     unity_instance,
@@ -88,39 +110,22 @@ async def wait_for_test_job(
             return await _poll_generation(ctx, unity_instance, user_id)
 
     def expired():
-        observation = {
-            "status": "unavailable",
-            "last_known_status": response is not None,
-            "next_action": "poll_same_job",
-            "retry_after_ms": 500,
-        }
-        if response is not None:
-            if last_error is None:
-                return test_job_response(response)
-            value = test_job_response(response)
-            value.data.observation = observation
+        if response is None:
+            return unobserved_test_job(job_id, last_error)
+        value = test_job_response(response)
+        if last_error is not None:
+            value.data.observation = {
+                "status": "unavailable",
+                "last_known_status": True,
+                "next_action": "poll_same_job",
+                "retry_after_ms": 500,
+            }
             value.hint = "retry"
             value.message = (
                 "The wait expired during connection recovery. This is the last observed job "
                 "status, not a current snapshot. Poll the same job ID; do not restart the tests."
             )
-            return value
-        value = dict(last_error or {})
-        value.update(
-            success=False,
-            hint="retry",
-            error=value.get("error")
-            or "wait_timeout expired before a test job status was received",
-            message="The job's current status is unknown; the observation wait expired. "
-            "Poll the same job ID after the Editor reconnects; do not restart the tests.",
-            data={
-                **(value.get("data") or {}),
-                "job_id": job_id,
-                "job_status": "unknown",
-                **observation,
-            },
-        )
-        return MCPResponse(**value)
+        return value
 
     try:
         http_session = await generation()
