@@ -549,15 +549,12 @@ namespace MCPForUnity.Editor.Tools
                 {
                     try
                     {
-                        MaterialOps.ValidateReferences(properties, UnityJsonSerializer.Instance);
+                        modified = MaterialOps.ApplyModification(material, properties, UnityJsonSerializer.Instance);
                     }
                     catch (ArgumentException e)
                     {
                         return new ErrorResponse($"Failed to modify asset '{fullPath}': {e.Message}");
                     }
-                    // Apply properties directly to the material. If this modifies, it sets modified=true.
-                    // Use |= in case the asset was already marked modified by previous logic (though unlikely here)
-                    modified |= MaterialOps.ApplyProperties(material, properties, UnityJsonSerializer.Instance);
                 }
                 // Example: Modifying a ScriptableObject (Use manage_scriptable_object instead!)
                 else if (asset is ScriptableObject so)
@@ -615,7 +612,9 @@ namespace MCPForUnity.Editor.Tools
                 }
                 else
                 {
-                    // If no changes were made (e.g., component not found, property names incorrect, value unchanged), return a success message indicating nothing changed.
+                    if (asset is Material)
+                        return new SuccessResponse($"Material '{fullPath}' already has the requested values; no changes were made.", GetAssetData(fullPath));
+
                     return new SuccessResponse(
                         $"No applicable or modifiable properties found for asset '{fullPath}'. Check component names, property names, and values.",
                         GetAssetData(fullPath)

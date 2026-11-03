@@ -226,6 +226,199 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void MixedInvalidMaterialEditsLeaveSavedMaterialUnchanged()
+        {
+            string property = MaterialOps.GetMainColorPropertyName(_material);
+            Color original = _material.GetColor(property);
+            AssetDatabase.SaveAssetIfDirty(_material);
+            byte[] saved = File.ReadAllBytes(AbsolutePath(_root + "/Source.mat"));
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = _root + "/Source.mat",
+                        ["properties"] = new JObject
+                        {
+                            ["color"] = new JArray(0.13, 0.24, 0.35, 1),
+                            ["_UnknownProperty"] = 3,
+                            ["float"] = new JObject { ["name"] = property, ["value"] = "bad" },
+                        },
+                    }
+                )
+            );
+
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("_UnknownProperty", response.ToString());
+            Assert.AreEqual(original, _material.GetColor(property));
+            CollectionAssert.AreEqual(saved, File.ReadAllBytes(AbsolutePath(_root + "/Source.mat")));
+            AssetDatabase.ImportAsset(_root + "/Source.mat", ImportAssetOptions.ForceUpdate);
+            Assert.AreEqual(original, AssetDatabase.LoadAssetAtPath<Material>(_root + "/Source.mat").GetColor(property));
+        }
+
+        [Test]
+        public void MaterialNoOpIsReportedAndMalformedStructuredValueIsRejected()
+        {
+            string property = MaterialOps.GetMainColorPropertyName(_material);
+            Color original = _material.GetColor(property);
+            JObject Modify(JObject properties) =>
+                JObject.FromObject(
+                    ManageAsset.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify",
+                            ["path"] = _root + "/Source.mat",
+                            ["properties"] = properties,
+                        }
+                    )
+                );
+
+            var unchanged = Modify(new JObject { ["color"] = new JArray(original.r, original.g, original.b, original.a) });
+            Assert.IsTrue(unchanged.Value<bool>("success"), unchanged.ToString());
+            StringAssert.Contains("no changes", unchanged.ToString().ToLowerInvariant());
+            var invalid = Modify(
+                new JObject
+                {
+                    ["float"] = new JObject { ["name"] = property, ["value"] = "bad" },
+                }
+            );
+            Assert.IsFalse(invalid.Value<bool>("success"), invalid.ToString());
+            Assert.AreEqual(original, _material.GetColor(property));
+        }
+
+        [Test]
+        public void MaterialEditPreservesSubassetIdentityAndUnrelatedStateAfterReimport()
+        {
+            string path = _root + "/Source.mat";
+            var subasset = new Texture2D(1, 1) { name = "RetainedSubasset" };
+            AssetDatabase.AddObjectToAsset(subasset, _material);
+            _material.renderQueue = 2456;
+            _material.enableInstancing = true;
+            EditorUtility.SetDirty(_material);
+            AssetDatabase.SaveAssetIfDirty(_material);
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(subasset, out string guid, out long localId));
+            string property = MaterialOps.GetMainColorPropertyName(_material);
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = path,
+                        ["properties"] = new JObject { ["color"] = new JArray(0.2, 0.3, 0.4, 1) },
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            var reopened = AssetDatabase.LoadAssetAtPath<Material>(path);
+            Assert.AreEqual(2456, reopened.renderQueue);
+            Assert.IsTrue(reopened.enableInstancing);
+            Assert.AreEqual(new Color(0.2f, 0.3f, 0.4f, 1), reopened.GetColor(property));
+            var retained = AssetDatabase.LoadAllAssetsAtPath(path).OfType<Texture2D>().Single(texture => texture.name == "RetainedSubasset");
+            Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(retained, out string reopenedGuid, out long reopenedLocalId));
+            Assert.AreEqual(guid, reopenedGuid);
+            Assert.AreEqual(localId, reopenedLocalId);
+        }
+
+#if UNITY_6000_0_OR_NEWER
+        [Test]
+        public void MaterialVariantEditPreservesParentAfterReimport()
+        {
+            string path = _root + "/Variant.mat";
+            var variant = new Material(_material) { parent = _material };
+            AssetDatabase.CreateAsset(variant, path);
+            AssetDatabase.SaveAssetIfDirty(variant);
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = path,
+                        ["properties"] = new JObject { ["color"] = new JArray(0.2, 0.3, 0.4, 1) },
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            var reopened = AssetDatabase.LoadAssetAtPath<Material>(path);
+            Assert.AreEqual(_material, reopened.parent);
+            Assert.AreEqual(new Color(0.2f, 0.3f, 0.4f, 1), reopened.GetColor(MaterialOps.GetMainColorPropertyName(reopened)));
+        }
+#endif
+
+        [Test]
+        public void MaterialShaderSwitchValidatesPropertiesAgainstNewShader()
+        {
+            var targetShader = RenderPipelineUtility.ResolveShader("unlit");
+            Assert.IsNotNull(targetShader);
+            string path = _root + "/Source.mat";
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = _root + "/Source.mat",
+                        ["properties"] = new JObject { ["shader"] = "unlit", ["_BaseColor"] = new JArray(0.2, 0.3, 0.4, 1) },
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(targetShader, _material.shader);
+            Assert.AreEqual(new Color(0.2f, 0.3f, 0.4f, 1), _material.GetColor(MaterialOps.ResolvePropertyName(_material, "_BaseColor")));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            var reopened = AssetDatabase.LoadAssetAtPath<Material>(path);
+            Assert.AreEqual(targetShader, reopened.shader);
+            Assert.AreEqual(new Color(0.2f, 0.3f, 0.4f, 1), reopened.GetColor(MaterialOps.ResolvePropertyName(reopened, "_BaseColor")));
+        }
+
+        [TestCase("urp_lit")]
+        [TestCase("hdrp_lit")]
+        public void UnavailableShaderAliasDoesNotFallBackOrPublishOtherChanges(string alias)
+        {
+            if (RenderPipelineUtility.ResolveRequestedShader(alias) != null)
+                Assert.Ignore($"Shader alias '{alias}' is available in this project.");
+            Shader originalShader = _material.shader;
+            string property = MaterialOps.GetMainColorPropertyName(_material);
+            Color original = _material.GetColor(property);
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = _root + "/Source.mat",
+                        ["properties"] = new JObject { ["shader"] = alias, ["color"] = new JArray(0.2, 0.3, 0.4, 1) },
+                    }
+                )
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(originalShader, _material.shader);
+            Assert.AreEqual(original, _material.GetColor(property));
+        }
+
+        [Test]
+        public void InvalidMaterialShaderDoesNotApplyOtherChanges()
+        {
+            Shader originalShader = _material.shader;
+            string colorProperty = MaterialOps.GetMainColorPropertyName(_material);
+            Color original = _material.GetColor(colorProperty);
+            var response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = _root + "/Source.mat",
+                        ["properties"] = new JObject { ["shader"] = "__MissingShader__", ["color"] = new JArray(0.2, 0.3, 0.4, 1) },
+                    }
+                )
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(originalShader, _material.shader);
+            Assert.AreEqual(original, _material.GetColor(colorProperty));
+        }
+
+        [Test]
         public void MissingStructuredTextureReturnsCallerErrorAndPreservesAssignment()
         {
             string property = MaterialOps.ResolvePropertyName(_material, "_BaseMap");

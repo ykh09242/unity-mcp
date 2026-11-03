@@ -51,6 +51,141 @@ namespace MCPForUnity.Editor.Helpers
             }
         }
 
+        /// <summary>Stages all requested setters before publishing the complete material edit.</summary>
+        public static bool ApplyModification(Material material, JObject properties, JsonSerializer serializer)
+        {
+            ValidateReferences(properties, serializer);
+            var probe = CloneSerializedMaterial(material);
+            try
+            {
+                string before = EditorJsonUtility.ToJson(probe);
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var shaderEntry = properties.Properties().FirstOrDefault(p => string.Equals(p.Name, "shader", StringComparison.OrdinalIgnoreCase));
+                if (shaderEntry != null)
+                {
+                    string name = shaderEntry.Value.Type == JTokenType.String ? shaderEntry.Value.ToString() : null;
+                    var shader = RenderPipelineUtility.ResolveRequestedShader(name);
+                    if (shader == null)
+                        throw new ArgumentException($"Material shader '{name}' could not be resolved.");
+                    if (probe.shader != shader)
+                        probe.shader = shader;
+                }
+
+                int Order(JProperty entry) =>
+                    entry.Name.ToLowerInvariant() switch
+                    {
+                        "shader" => 0,
+                        "color" => 1,
+                        "float" => 2,
+                        "texture" => 3,
+                        _ => 4,
+                    };
+                foreach (var entry in properties.Properties().OrderBy(Order))
+                {
+                    if (!seen.Add(entry.Name))
+                        throw new ArgumentException($"Duplicate material property '{entry.Name}'.");
+                    string key = entry.Name.ToLowerInvariant();
+                    if (key == "shader")
+                        continue;
+                    string target = entry.Name;
+                    JToken value = entry.Value;
+                    if (key == "color")
+                    {
+                        if (value is JObject color)
+                        {
+                            target = color["name"]?.ToString() ?? GetMainColorPropertyName(probe);
+                            value = color["value"];
+                        }
+                        else
+                            target = GetMainColorPropertyName(probe);
+                        if (!(value is JArray colors) || (colors.Count != 3 && colors.Count != 4))
+                            throw new ArgumentException("Invalid material property 'color'.");
+                        Color parsed = ParseColor(colors, serializer);
+                        value = new JArray(parsed.r, parsed.g, parsed.b, parsed.a);
+                    }
+                    else if (key == "float")
+                    {
+                        if (!(value is JObject number) || (number["value"]?.Type != JTokenType.Float && number["value"]?.Type != JTokenType.Integer))
+                            throw new ArgumentException("Invalid material property 'float'.");
+                        target = number["name"]?.ToString();
+                        value = number["value"];
+                    }
+                    else if (key == "texture")
+                    {
+                        if (!(value is JObject texture))
+                            throw new ArgumentException("Invalid material property 'texture'.");
+                        string path = (texture["path"] ?? texture["Path"])?.ToString();
+                        target = ResolvePropertyName(probe, (texture["name"] ?? texture["Name"])?.ToString() ?? "_BaseMap");
+                        // An empty structured path has historically meant no change.
+                        if (path == "")
+                        {
+                            int index = probe.shader.FindPropertyIndex(target);
+                            if (index < 0 || probe.shader.GetPropertyType(index) != UnityEngine.Rendering.ShaderPropertyType.Texture)
+                                throw new ArgumentException("Invalid material property 'texture' or value.");
+                            continue;
+                        }
+                        value = path == null ? null : new JValue(path);
+                    }
+                    else
+                        target = ResolvePropertyName(probe, target);
+
+                    if (!TryPrepareShaderProperty(probe, target, value, serializer, out Action apply))
+                        throw new ArgumentException($"Invalid material property '{entry.Name}' or value.");
+                    apply();
+                }
+                if (before == EditorJsonUtility.ToJson(probe))
+                    return false;
+
+                var backup = CloneSerializedMaterial(material);
+                try
+                {
+                    EditorUtility.CopySerialized(probe, material);
+                }
+                catch (Exception publishError)
+                {
+                    try
+                    {
+                        EditorUtility.CopySerialized(backup, material);
+                    }
+                    catch (Exception rollbackError)
+                    {
+                        throw new AggregateException("Material publication and rollback both failed; inspect the material state.", publishError, rollbackError);
+                    }
+                    throw;
+                }
+                finally
+                {
+                    UnityEngine.Object.DestroyImmediate(backup);
+                }
+                return true;
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(probe);
+            }
+        }
+
+        private static Material CloneSerializedMaterial(Material source)
+        {
+            var copy = new Material(source);
+            try
+            {
+                EditorUtility.CopySerialized(source, copy);
+                if (EditorJsonUtility.ToJson(source) != EditorJsonUtility.ToJson(copy))
+                    throw new InvalidOperationException("Could not create an exact serialized material snapshot.");
+#if UNITY_6000_0_OR_NEWER
+                if (source.parent != copy.parent)
+                    throw new InvalidOperationException("Could not preserve the material variant parent in its snapshot.");
+#endif
+                return copy;
+            }
+            catch
+            {
+                UnityEngine.Object.DestroyImmediate(copy);
+                throw;
+            }
+        }
+
         /// <summary>
         /// Applies a set of properties (JObject) to a material, handling aliases and structured formats.
         /// </summary>

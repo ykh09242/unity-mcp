@@ -68,19 +68,9 @@ namespace MCPForUnity.Editor.Helpers
             if (!string.IsNullOrWhiteSpace(requestedNameOrAlias))
             {
                 var alias = requestedNameOrAlias.Trim();
-                var aliasMatch = ResolveAlias(alias, pipeline);
-                if (aliasMatch != null)
-                {
-                    WarnIfPipelineMismatch(aliasMatch.name, pipeline);
-                    return aliasMatch;
-                }
-
-                var direct = Shader.Find(alias);
-                if (direct != null)
-                {
-                    WarnIfPipelineMismatch(direct.name, pipeline);
-                    return direct;
-                }
+                var resolved = ResolveRequestedShader(alias);
+                if (resolved != null)
+                    return resolved;
 
                 McpLog.Warn($"Shader '{alias}' not found. Falling back to {pipeline} defaults.");
             }
@@ -93,6 +83,18 @@ namespace MCPForUnity.Editor.Helpers
             }
 
             return fallback;
+        }
+
+        internal static Shader ResolveRequestedShader(string requestedNameOrAlias)
+        {
+            if (string.IsNullOrWhiteSpace(requestedNameOrAlias))
+                return null;
+            string request = requestedNameOrAlias.Trim();
+            var pipeline = GetActivePipeline();
+            var shader = ResolveAlias(request, pipeline) ?? Shader.Find(request);
+            if (shader != null)
+                WarnIfPipelineMismatch(shader.name, pipeline);
+            return shader;
         }
 
         internal static Shader ResolveDefaultLitShader(PipelineKind pipeline)
