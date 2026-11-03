@@ -72,6 +72,11 @@ namespace MCPForUnityTests.Editor.Tools
                         UnityEngine.Object.DestroyImmediate(root);
                     }
                 }
+                if (secondaryScene.IsValid() && secondaryScene.isLoaded)
+                {
+                    Assert.IsTrue(EditorSceneManager.CloseScene(secondaryScene, true));
+                    secondaryScene = default;
+                }
                 if (ownsAssetRoot)
                 {
                     Assert.IsTrue(assetRoot.StartsWith("Assets/__McpGameObjectLifecycleIntegrity_", StringComparison.Ordinal));
@@ -181,18 +186,24 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void DeleteByComponent_OnlyActiveSceneAndUndoRestoresInactive()
         {
+            CreateAssetRoot();
+            string scenePath = assetRoot + "/" + ownedScene.name + ".unity";
+            string secondaryPath = assetRoot + "/Secondary.unity";
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, scenePath));
+            Assert.IsTrue(AssetDatabase.CopyAsset(scenePath, secondaryPath));
+            secondaryScene = EditorSceneManager.OpenScene(secondaryPath, OpenSceneMode.Additive);
+            Assert.IsTrue(secondaryScene.IsValid() && secondaryScene.isLoaded);
+            if (SceneManager.GetActiveScene() != ownedScene)
+                Assert.IsTrue(SceneManager.SetActiveScene(ownedScene));
             var active = Owned("ComponentActive");
             active.AddComponent<BoxCollider>();
             active.AddComponent<BoxCollider>();
             var inactive = Owned("ComponentInactive");
             inactive.AddComponent<BoxCollider>();
             inactive.SetActive(false);
-            secondaryScene = SceneManager.CreateScene(prefix + "Secondary");
-            Assert.IsTrue(secondaryScene.IsValid() && secondaryScene.isLoaded);
             var other = new GameObject(prefix + "OtherScene");
             SceneManager.MoveGameObjectToScene(other, secondaryScene);
             other.AddComponent<BoxCollider>();
-            SceneManager.SetActiveScene(ownedScene);
             var result = Call(
                 new JObject
                 {
