@@ -249,7 +249,21 @@ namespace MCPForUnityTests.Editor.Tools
             );
 
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
-            StringAssert.Contains("_UnknownProperty", response.ToString());
+            StringAssert.Contains("float", response.ToString());
+            Assert.AreEqual(original, _material.GetColor(property));
+            CollectionAssert.AreEqual(saved, File.ReadAllBytes(AbsolutePath(_root + "/Source.mat")));
+            var unknownResponse = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = _root + "/Source.mat",
+                        ["properties"] = new JObject { ["color"] = new JArray(0.13, 0.24, 0.35, 1), ["_UnknownProperty"] = 3 },
+                    }
+                )
+            );
+            Assert.IsFalse(unknownResponse.Value<bool>("success"), unknownResponse.ToString());
+            StringAssert.Contains("_UnknownProperty", unknownResponse.ToString());
             Assert.AreEqual(original, _material.GetColor(property));
             CollectionAssert.AreEqual(saved, File.ReadAllBytes(AbsolutePath(_root + "/Source.mat")));
             AssetDatabase.ImportAsset(_root + "/Source.mat", ImportAssetOptions.ForceUpdate);
@@ -292,11 +306,15 @@ namespace MCPForUnityTests.Editor.Tools
             string path = _root + "/Source.mat";
             var subasset = new Texture2D(1, 1) { name = "RetainedSubasset" };
             AssetDatabase.AddObjectToAsset(subasset, _material);
-            _material.renderQueue = 2456;
+            _material.renderQueue = 2350;
             _material.enableInstancing = true;
             EditorUtility.SetDirty(_material);
             AssetDatabase.SaveAssetIfDirty(_material);
             Assert.IsTrue(AssetDatabase.TryGetGUIDAndLocalFileIdentifier(subasset, out string guid, out long localId));
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            _material = AssetDatabase.LoadAssetAtPath<Material>(path);
+            Assert.AreEqual(2350, _material.renderQueue, "The saved preimage must retain the custom queue before the edit.");
+            Assert.IsTrue(_material.enableInstancing, "The saved preimage must retain instancing before the edit.");
             string property = MaterialOps.GetMainColorPropertyName(_material);
             var response = JObject.FromObject(
                 ManageAsset.HandleCommand(
@@ -311,7 +329,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
             var reopened = AssetDatabase.LoadAssetAtPath<Material>(path);
-            Assert.AreEqual(2456, reopened.renderQueue);
+            Assert.AreEqual(2350, reopened.renderQueue);
             Assert.IsTrue(reopened.enableInstancing);
             Assert.AreEqual(new Color(0.2f, 0.3f, 0.4f, 1), reopened.GetColor(property));
             var retained = AssetDatabase.LoadAllAssetsAtPath(path).OfType<Texture2D>().Single(texture => texture.name == "RetainedSubasset");
