@@ -206,11 +206,11 @@ def read_status_file(target_hash: str | None = None) -> dict | None:
         if target_hash:
             for status_path in status_files:
                 if status_path.stem.endswith(target_hash):
-                    with status_path.open("r") as f:
+                    with status_path.open("r", encoding="utf-8") as f:
                         return json.load(f)
             return None
         # Untargeted legacy connections use the most recent status.
-        with status_files[0].open("r") as f:
+        with status_files[0].open("r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         logger.debug("Unity status file disappeared before it could be read")

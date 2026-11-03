@@ -160,7 +160,7 @@ class PortDiscovery:
             )
             if not status_files:
                 return None
-            with status_files[0].open("r") as f:
+            with status_files[0].open("r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return None
@@ -272,7 +272,7 @@ class PortDiscovery:
             try:
                 path = Path(filename)
                 modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
-                with path.open("r") as stream:
+                with path.open("r", encoding="utf-8") as stream:
                     data = json.load(stream)
                 if isinstance(data, dict):
                     entries.append((path, data, modified))

@@ -58,6 +58,26 @@ def test_untargeted_read_still_selects_newest_editor(status_reader):
     assert read_status() == {"reloading": False}
 
 
+def test_utf8_heartbeat_preserves_project_identity_with_cp949_default(status_reader, monkeypatch):
+    read_status, directory = status_reader
+    project = "마법성"
+    status = {"project_path": f"/projects/{project}/Assets", "unity_port": 6401}
+    (directory / "unity-mcp-status-deadbeef.json").write_bytes(
+        json.dumps(status, ensure_ascii=False).encode("utf-8")
+    )
+    open_path = Path.open
+
+    def cp949_open(path, mode="r", buffering=-1, encoding=None, errors=None, newline=None):
+        return open_path(path, mode, buffering, encoding or "cp949", errors, newline)
+
+    monkeypatch.setattr(Path, "open", cp949_open)
+    monkeypatch.setattr(uc.PortDiscovery, "_try_probe_unity_mcp", lambda port: True)
+    [instance] = uc.PortDiscovery.discover_all_unity_instances()
+    assert instance.id == f"{project}@deadbeef"
+    assert uc.PortDiscovery._read_latest_status() == status
+    assert read_status("deadbeef") == read_status() == status
+
+
 @pytest.mark.parametrize("selector", ["missing", "../outside", "*", "?", "[deadbeef]"])
 def test_missing_or_unsafe_target_never_reads_another_editor(status_reader, selector):
     read_status, directory = status_reader
