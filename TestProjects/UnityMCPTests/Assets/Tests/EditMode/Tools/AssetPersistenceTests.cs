@@ -14,6 +14,83 @@ namespace MCPForUnityTests.Editor.Tools
 {
     public class AssetPersistenceTests
     {
+        private sealed class ThrowingAssignmentFixture : ScriptableObject
+        {
+            public int first = 1;
+            public int backing = 2;
+            public bool failRestore;
+            public int Second
+            {
+                get => backing;
+                set
+                {
+                    backing = value;
+                    if (value == 9 || (failRestore && value == 2))
+                        throw new InvalidOperationException("injected setter failure");
+                }
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DirectAssignmentsRollBackThrowingSetterAndReportRestoration(bool failRestore)
+        {
+            var fixture = ScriptableObject.CreateInstance<ThrowingAssignmentFixture>();
+            try
+            {
+                fixture.failRestore = failRestore;
+                var method = typeof(ManageAsset).GetMethod(
+                    "ApplyObjectPropertiesAtomically",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
+                );
+                var error = Assert.Throws<System.Reflection.TargetInvocationException>(() =>
+                    method.Invoke(
+                        null,
+                        new object[]
+                        {
+                            fixture,
+                            new JObject { ["first"] = 5, ["Second"] = 9 },
+                        }
+                    )
+                );
+                Assert.AreEqual(1, fixture.first);
+                Assert.AreEqual(2, fixture.backing);
+                StringAssert.Contains(failRestore ? "Restoration incomplete" : "restored", error.InnerException.Message);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(fixture);
+            }
+        }
+
+        [Test]
+        public void DirectAssignmentsValidateAllMembersBeforeMutation()
+        {
+            var fixture = ScriptableObject.CreateInstance<ThrowingAssignmentFixture>();
+            try
+            {
+                var method = typeof(ManageAsset).GetMethod(
+                    "ApplyObjectPropertiesAtomically",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
+                );
+                Assert.Throws<System.Reflection.TargetInvocationException>(() =>
+                    method.Invoke(
+                        null,
+                        new object[]
+                        {
+                            fixture,
+                            new JObject { ["first"] = 5, ["missing"] = 9 },
+                        }
+                    )
+                );
+                Assert.AreEqual(1, fixture.first);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(fixture);
+            }
+        }
+
         private string folder;
         private AnimationClip unrelated;
         private byte[] original;
@@ -152,7 +229,7 @@ namespace MCPForUnityTests.Editor.Tools
                     }
                 )
             );
-            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(clear, response.Value<bool>("success"), response.ToString());
             CollectionAssert.AreEqual(original, File.ReadAllBytes(unrelatedPath));
             Assert.IsTrue(EditorUtility.IsDirty(unrelated));
             if (clear)

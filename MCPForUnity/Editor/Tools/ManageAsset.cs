@@ -602,7 +602,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     // Deprecated: Prefer manage_scriptable_object for robust patching.
                     // Kept for simple property setting fallback on existing assets if manage_scriptable_object isn't used.
-                    modified |= ApplyObjectProperties(so, properties);
+                    modified |= ApplyObjectPropertiesAtomically(so, properties);
                 }
                 // Example: Modifying TextureImporter settings
                 else if (asset is Texture)
@@ -610,7 +610,7 @@ namespace MCPForUnity.Editor.Tools
                     AssetImporter importer = AssetImporter.GetAtPath(fullPath);
                     if (importer is TextureImporter textureImporter)
                     {
-                        bool importerModified = ApplyObjectProperties(textureImporter, properties);
+                        bool importerModified = ApplyObjectPropertiesAtomically(textureImporter, properties);
                         if (importerModified)
                         {
                             // Importer settings need saving and reimporting
@@ -637,7 +637,7 @@ namespace MCPForUnity.Editor.Tools
                     McpLog.Warn(
                         $"[ManageAsset.ModifyAsset] Asset type '{asset.GetType().Name}' at '{fullPath}' is not explicitly handled for component modification. Attempting generic property setting on the asset itself."
                     );
-                    modified |= ApplyObjectProperties(asset, properties);
+                    modified |= ApplyObjectPropertiesAtomically(asset, properties);
                 }
                 // --- End Existing Logic ---
 
@@ -1141,6 +1141,71 @@ namespace MCPForUnity.Editor.Tools
             };
         }
 #endif
+
+        // Validate and capture every member before making any direct asset assignment.
+        private static bool ApplyObjectPropertiesAtomically(UnityEngine.Object target, JObject properties)
+        {
+            var assignments = new List<(string name, Action<object> set, object previous, object next)>();
+            var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase;
+            Type type = target.GetType();
+            foreach (var entry in properties.Properties())
+            {
+                var property = type.GetProperty(entry.Name, flags);
+                var field = property == null ? type.GetField(entry.Name, flags) : null;
+                Type memberType;
+                object previous;
+                Action<object> set;
+                if (property != null && property.CanRead && property.CanWrite && property.GetIndexParameters().Length == 0)
+                {
+                    memberType = property.PropertyType;
+                    previous = property.GetValue(target);
+                    set = value => property.SetValue(target, value);
+                }
+                else if (field != null && !field.IsInitOnly && !field.IsLiteral)
+                {
+                    memberType = field.FieldType;
+                    previous = field.GetValue(target);
+                    set = value => field.SetValue(target, value);
+                }
+                else
+                    throw new ArgumentException($"Member '{entry.Name}' is not readable and writable on {type.Name}.");
+
+                if (!TryConvertMemberValue(entry.Value, memberType, out object next))
+                    throw new ArgumentException($"Could not convert value for member '{entry.Name}' on {type.Name}.");
+                if (!object.Equals(previous, next))
+                    assignments.Add((entry.Name, set, previous, next));
+            }
+
+            for (int i = 0; i < assignments.Count; i++)
+            {
+                try
+                {
+                    assignments[i].set(assignments[i].next);
+                }
+                catch (Exception ex)
+                {
+                    var restorationErrors = new List<string>();
+                    // A setter can mutate its backing state before throwing.
+                    for (int j = i; j >= 0; j--)
+                    {
+                        try
+                        {
+                            assignments[j].set(assignments[j].previous);
+                        }
+                        catch (Exception restore)
+                        {
+                            restorationErrors.Add($"{assignments[j].name}: {restore.GetBaseException().Message}");
+                        }
+                    }
+                    string restoration =
+                        restorationErrors.Count == 0
+                            ? "All attempted assignments were restored."
+                            : $"Restoration incomplete: {string.Join(", ", restorationErrors)}.";
+                    throw new InvalidOperationException($"Failed to assign '{assignments[i].name}': {ex.GetBaseException().Message}. {restoration}", ex);
+                }
+            }
+            return assignments.Count != 0;
+        }
 
         /// <summary>
         /// Generic helper to set properties on any UnityEngine.Object using reflection.
