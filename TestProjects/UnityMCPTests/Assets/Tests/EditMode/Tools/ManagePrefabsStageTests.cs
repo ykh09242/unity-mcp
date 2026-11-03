@@ -1,7 +1,9 @@
 using System;
 using System.IO;
 using System.Linq;
+using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Editor.Tools.Prefabs;
+using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -344,6 +346,45 @@ namespace MCPForUnityTests.Editor.Tools
             var openResult = ToJObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "open_prefab_stage", ["prefabPath"] = prefabPath }));
 
             Assert.IsTrue(openResult.Value<bool>("success"), $"Expected open to succeed but got: {openResult}");
+        }
+
+        [Test]
+        public void ModifyInactiveExactId_UsesPrefabStageAndRejectsSceneObject()
+        {
+            var outside = new GameObject("OutsidePrefabStage");
+            outside.SetActive(false);
+            int outsideId = outside.GetInstanceIDCompat();
+            string prefabPath = CreateTestPrefab("InactiveStageRoot");
+            AssertOpenPrefabStage(prefabPath);
+            var stage = PrefabStageUtility.GetCurrentPrefabStage();
+            var child = new GameObject("InactiveChild");
+            child.transform.SetParent(stage.prefabContentsRoot.transform, false);
+            child.SetActive(false);
+            var insideResponse = JObject.FromObject(
+                ManageGameObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = child.GetInstanceIDCompat(),
+                        ["newName"] = "RenamedChild",
+                    }
+                )
+            );
+            Assert.IsTrue(insideResponse.Value<bool>("success"), insideResponse.ToString());
+            Assert.AreEqual("RenamedChild", child.name);
+            Assert.IsFalse(child.activeSelf);
+            var outsideResponse = JObject.FromObject(
+                ManageGameObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = outsideId,
+                        ["newName"] = "Forbidden",
+                    }
+                )
+            );
+            Assert.IsFalse(outsideResponse.Value<bool>("success"), outsideResponse.ToString());
+            Assert.AreEqual("OutsidePrefabStage", outside.name);
         }
 
         private string CreateTestPrefab(string rootName)

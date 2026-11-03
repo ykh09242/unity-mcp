@@ -22,7 +22,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 findParams = new JObject { ["searchInactive"] = true };
             }
 
-            GameObject targetGo = ManageGameObjectCommon.FindObjectInternal(targetToken, searchMethod, findParams);
+            GameObject targetGo = ManageGameObjectCommon.FindMutationTarget(targetToken, searchMethod, findParams);
             if (targetGo == null)
             {
                 return new ErrorResponse($"Target GameObject ('{targetToken}') not found using method '{searchMethod ?? "default"}'.");

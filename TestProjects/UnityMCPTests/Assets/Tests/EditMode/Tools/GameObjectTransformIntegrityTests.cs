@@ -498,6 +498,90 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(target.activeSelf);
         }
 
+        [TestCase("modify")]
+        [TestCase("duplicate")]
+        [TestCase("move_relative")]
+        [TestCase("look_at")]
+        public void InactiveTarget_ExactIdSupportsEditsWithinActiveScene(string action)
+        {
+            target.SetActive(false);
+            var selected = Selection.objects;
+            var activeSelection = Selection.activeObject;
+            JObject response;
+            try
+            {
+                response = Send(
+                    action,
+                    new JObject
+                    {
+                        ["newName"] = "RenamedInactive",
+                        ["reference_object"] = reference.GetInstanceIDCompat(),
+                        ["offset"] = new JArray(1, 2, 3),
+                        ["look_at_target"] = new JArray(4, 5, 6),
+                    }
+                );
+            }
+            finally
+            {
+                Selection.objects = selected;
+                Selection.activeObject = activeSelection;
+            }
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsFalse(target.activeSelf);
+            if (action == "modify")
+                Assert.AreEqual("RenamedInactive", target.name);
+            else if (action == "duplicate")
+            {
+                Assert.AreEqual(target.GetInstanceIDCompat(), response["data"].Value<int>("originalId"));
+                Assert.AreNotEqual(target.GetInstanceIDCompat(), response["data"]["duplicatedObject"].Value<int>("instanceID"));
+            }
+            else if (action == "move_relative")
+                Assert.AreEqual(reference.transform.position + new Vector3(1, 2, 3), target.transform.position);
+            else if (action == "look_at")
+                Assert.Greater(Quaternion.Angle(Quaternion.identity, target.transform.rotation), 1f);
+        }
+
+        [TestCase("modify")]
+        [TestCase("duplicate")]
+        [TestCase("move_relative")]
+        [TestCase("look_at")]
+        public void InactiveTarget_ExactIdOutsideActiveSceneIsRejected(string action)
+        {
+            SceneManager.MoveGameObjectToScene(target, activeScene);
+            target.SetActive(false);
+            string name = target.name;
+            var response = Send(
+                action,
+                new JObject
+                {
+                    ["newName"] = "ShouldNotRename",
+                    ["reference_object"] = reference.GetInstanceIDCompat(),
+                    ["offset"] = new JArray(1, 2, 3),
+                    ["look_at_target"] = new JArray(4, 5, 6),
+                }
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(name, target.name);
+            Assert.IsFalse(target.activeSelf);
+        }
+
+        [Test]
+        public void InactiveTarget_NameLookupRetainsActiveOnlyDefault()
+        {
+            target.SetActive(false);
+            var response = JObject.FromObject(
+                ManageGameObject.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = target.name,
+                        ["newName"] = "ShouldNotRename",
+                    }
+                )
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+        }
+
         [TestCase("false")]
         [TestCase("0")]
         [TestCase("[1,2]")]

@@ -111,6 +111,17 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     throw new ArgumentException("Each 'componentProperties' entry must map a nonempty component type name to an object.");
         }
 
+        internal static GameObject FindMutationTarget(JToken targetToken, string searchMethod, JObject findParams = null)
+        {
+            bool exactId = (string.IsNullOrEmpty(searchMethod) || searchMethod == "by_id") && int.TryParse(targetToken?.ToString(), out _);
+            if (exactId)
+            {
+                findParams = findParams == null ? new JObject() : (JObject)findParams.DeepClone();
+                findParams["searchInactive"] = true;
+            }
+            return FindObjectInternal(targetToken, searchMethod, findParams);
+        }
+
         internal static GameObject FindObjectInternal(JToken targetToken, string searchMethod, JObject findParams = null)
         {
             bool findAll = findParams?["findAll"]?.ReadScalar<bool?>() ?? false;

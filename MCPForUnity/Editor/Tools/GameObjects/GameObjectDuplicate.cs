@@ -13,7 +13,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
     {
         internal static object Handle(JObject @params, JToken targetToken, string searchMethod)
         {
-            GameObject sourceGo = ManageGameObjectCommon.FindObjectInternal(targetToken, searchMethod);
+            GameObject sourceGo = ManageGameObjectCommon.FindMutationTarget(targetToken, searchMethod);
             if (sourceGo == null)
             {
                 return new ErrorResponse($"Target GameObject ('{targetToken}') not found using method '{searchMethod ?? "default"}'.");
