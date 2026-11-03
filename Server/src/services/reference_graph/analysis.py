@@ -33,7 +33,7 @@ from services.reference_graph.store import Edge, _hash
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
-ANALYSIS_VERSION = 8
+ANALYSIS_VERSION = 9
 # Limit both the semantic value and nonliteral representation before allocating
 # expanded storage. Source size alone cannot bound repeated constant expansion.
 MAX_EXPRESSION_CHARS = 65536
@@ -87,6 +87,7 @@ LOADERS = {
 _LOADER_METHODS = frozenset(name.rpartition(".")[2] for name in LOADERS)
 _IDENT = re.compile(r"@?[^\W\d]\w*", re.UNICODE)
 _STRING_PREFIX = re.compile(r'(?:\$+@?|@\$?)?("{3,}|"|\')')
+_DELIMITER_RUN = re.compile(r'\{+|\}+|"+|\$+')
 _GUID = re.compile(r"^[0-9a-fA-F]{32}$")
 _CONTROL = {
     "if",
@@ -165,12 +166,107 @@ def _string_value(value: str, check: Callable[[], None] = lambda: None) -> str |
         return None
 
 
+@dataclass(slots=True)
+class _StringFrame:
+    marker: str
+    verbatim: bool
+    dollars: int
+    depth: int | None = None  # None in literal text, zero at the top of a hole.
+    format_text: bool = False
+
+    @classmethod
+    def open(cls, prefix: re.Match) -> tuple[_StringFrame, int]:
+        verbatim = "@" in prefix[0]
+        marker = '"' if verbatim else prefix[1]
+        return cls(marker, verbatim, prefix[0].count("$")), prefix.start(1) + len(marker)
+
+
+def _read_string(
+    source: str, prefix: re.Match, line: int, check: Callable[[], None]
+) -> tuple[Token, int]:
+    outer, content = _StringFrame.open(prefix)
+    stack, offset, end, hole = [outer], content, -1, None
+    while stack and offset < len(source):
+        check()
+        frame, char = stack[-1], source[offset]
+        if frame.depth is None:
+            if char == frame.marker[0]:
+                if frame.verbatim and source.startswith('""', offset):
+                    offset += 2
+                    continue
+                if len(frame.marker) > 1:
+                    run = _DELIMITER_RUN.match(source, offset).end()
+                    if run - offset < len(frame.marker):
+                        offset = run
+                        continue
+                end = offset
+                offset += len(frame.marker)
+                stack.pop()
+                continue
+            if char == "{" and frame.dollars:
+                run = _DELIMITER_RUN.match(source, offset).end()
+                count = run - offset
+                opens_hole = count % 2 == 1 if len(frame.marker) == 1 else count >= frame.dollars
+                if opens_hole:
+                    if hole is None:
+                        hole = offset
+                    frame.depth = 0
+                offset = run
+                continue
+            if char == "\\" and len(frame.marker) == 1 and not frame.verbatim:
+                offset += 1
+        elif char == "}" and frame.depth == 0:
+            run = _DELIMITER_RUN.match(source, offset).end()
+            if run - offset >= frame.dollars:
+                offset += frame.dollars
+                frame.depth, frame.format_text = None, False
+            else:
+                offset = run
+            continue
+        elif not frame.format_text:
+            if source.startswith("//", offset) or source.startswith("/*", offset):
+                terminator = "\n" if source[offset + 1] == "/" else "*/"
+                stop = source.find(terminator, offset + 2)
+                offset = len(source) if stop < 0 else stop + len(terminator)
+                continue
+            nested = _STRING_PREFIX.match(source, offset) if char in "$@\"'" else None
+            if nested:
+                literal, offset = _StringFrame.open(nested)
+                stack.append(literal)
+                continue
+            if char == "$":
+                offset = _DELIMITER_RUN.match(source, offset).end()
+                continue
+            if char in "([{":
+                frame.depth += 1
+            elif char in ")]}" and frame.depth:
+                frame.depth -= 1
+            elif source.startswith("::", offset):
+                offset += 2
+                continue
+            elif char == ":" and frame.depth == 0:
+                frame.format_text = True
+        offset += 1
+    value = None
+    if not stack and not outer.dollars and outer.marker != "'":
+        raw = source[content:end]
+        if len(outer.marker) > 1:
+            # Multiline raw strings have indentation semantics.
+            value = raw if "\n" not in raw else None
+        else:
+            value = raw.replace('""', '"') if outer.verbatim else _string_value(raw, check)
+    kind = "string" if hole is None else "unscanned_interpolation"
+    if hole is not None:
+        line += source.count("\n", prefix.start(), hole)
+    return Token(source[prefix.start() : offset], line, kind, value), offset
+
+
 def _tokens(source: str, check: Callable[[], None] = lambda: None) -> list[Token]:
     result = []
     offset, line = 0, 1
     while offset < len(source):
         check()
-        start, start_line = offset, line
+        start = offset
         char = source[offset]
         if char.isspace():
             offset += 1
@@ -187,53 +283,14 @@ def _tokens(source: str, check: Callable[[], None] = lambda: None) -> list[Token
             continue
         prefix = _STRING_PREFIX.match(source, offset) if char in "$@\"'" else None
         if prefix:
-            marker = prefix[1]
-            head = prefix[0]
-            dynamic, verbatim = "$" in head, "@" in head
-            if verbatim:
-                offset += len(head) - len(marker) + 1
-                marker = '"'
-            else:
-                offset += len(head)
-            content = offset
-            if len(marker) >= 3:
-                end = source.find(marker, offset)
-                offset = len(source) if end < 0 else end + len(marker)
-                value = source[content:end] if end >= 0 else None
-                # Multiline raw strings have indentation semantics. Keep them
-                # unresolved rather than guessing runtime whitespace.
-                if value is not None and "\n" in value:
-                    value = None
-            else:
-                end = -1
-                while offset < len(source):
-                    check()
-                    if source[offset] == marker:
-                        if verbatim and source.startswith(marker * 2, offset):
-                            offset += 2
-                            continue
-                        end = offset
-                        offset += 1
-                        break
-                    if source[offset] == "\\" and not verbatim:
-                        offset += 2
-                    else:
-                        offset += 1
-                raw = source[content:end] if end >= 0 else ""
-                value = (
-                    (raw.replace('""', '"') if verbatim else _string_value(raw, check))
-                    if end >= 0
-                    else None
-                )
-            line += source[start:offset].count("\n")
-            result.append(
-                Token(
-                    source[start:offset],
-                    start_line,
-                    "string",
-                    None if dynamic or marker == "'" else value,
-                )
-            )
+            token, offset = _read_string(source, prefix, line, check)
+            result.append(token)
+            line += source.count("\n", start, offset)
+            continue
+        if char == "$":
+            # A run without a string delimiter is invalid. Consume it once.
+            offset = _DELIMITER_RUN.match(source, offset).end()
+            result.append(Token("$", line))
             continue
         match = _IDENT.match(source, offset)
         if match:
@@ -413,7 +470,8 @@ def parse_csharp(
     check: Callable[[], None] = lambda: None,
 ) -> Facts:
     check()
-    source, build, diagnostics = source_for_build(source, context, check=check)
+    source, build, build_issues = source_for_build(source, context, check=check)
+    diagnostics = list(build_issues)
     tokens = _tokens(source, check)
     pairs = _pairs(tokens, check)
     scopes = [""] * len(tokens)
@@ -425,6 +483,14 @@ def parse_csharp(
     active: list[tuple[int, str, str]] = []
     for i, token in enumerate(tokens):
         check()
+        if token.kind == "unscanned_interpolation":
+            diagnostics.append(
+                {
+                    "reason": "interpolation_expression_not_analyzed",
+                    "line": token.line,
+                    "hint": "Inspect this interpolated string for asset loader calls.",
+                }
+            )
         while active and active[-1][0] <= i:
             active.pop()
         while active_imports and active_imports[-1][0] <= i:
@@ -477,7 +543,9 @@ def parse_csharp(
                 else:
                     imports[import_scope]["usings"].append(value)
                 if i and tokens[i - 1].text == "global":
-                    diagnostics += ({"reason": "global_using_not_propagated", "line": token.line},)
+                    diagnostics.append(
+                        {"reason": "global_using_not_propagated", "line": token.line}
+                    )
     # Each namespace occurrence has its own import scope, including reopened
     # namespaces with the same qualified name. Imports are inherited lexically.
     for identity, parent in import_parents.items():
@@ -732,7 +800,7 @@ def parse_csharp(
         tuple(calls),
         imports,
         build=build,
-        diagnostics=diagnostics,
+        diagnostics=tuple(diagnostics),
     )
 
 
@@ -759,7 +827,7 @@ def _generic_type(
 def _argument_type(tokens: list[Token], parameters: dict[str, str]) -> str:
     if len(tokens) == 1:
         token = tokens[0]
-        if token.kind == "string":
+        if token.kind in {"string", "unscanned_interpolation"}:
             return "char" if token.text.startswith("'") else "string"
         if token.text in {"true", "false"}:
             return "bool"

@@ -344,6 +344,60 @@ Addressables.LoadAssetAsync<GameObject>(@"hud");
     assert all(edge.confidence == "possible" for edge in result.edges)
 
 
+@pytest.mark.parametrize(
+    "literal",
+    [
+        '$"{Resources.Load("UI/Menu")}"',
+        '$@"{{literal}} {Wrap($"{Resources.Load("UI/Menu")}")}"',
+        '@$"{Wrap(new[] { "}", "{" } /* } */, Resources.Load("UI/Menu"))}"',
+        '$"{(true ? global::UnityEngine.Resources.Load("UI/Menu") : null):yyyy\'s}"',
+        '$$"""literal {braces} {{{Resources.Load("UI/Menu")}}}"""',
+    ],
+)
+def test_interpolated_expressions_report_unavailable_coverage_and_keep_adjacent_calls(literal):
+    result = analyze(
+        "using UnityEngine; class C { void M() {\n"
+        + "var text = "
+        + literal
+        + ';\nResources.Load("UI/Menu"); } }'
+    )
+    assert [(edge.key, edge.line) for edge in result.edges] == [("UI/Menu", 3)]
+    (issue,) = result.unresolved
+    assert (issue["reason"], issue["line"]) == ("interpolation_expression_not_analyzed", 2)
+    assert "asset loader" in issue["hint"]
+
+
+@pytest.mark.parametrize(
+    "literal",
+    [
+        r'$"{{Resources.Load(\"UI/Menu\")}}"',
+        '$@"{{Resources.Load(""UI/Menu"")}}"',
+        '$$$"""{{Resources.Load("UI/Menu")}}"""',
+    ],
+)
+def test_escaped_interpolation_braces_do_not_report_execution(literal):
+    result = analyze("using UnityEngine; class C { void M() { var text = " + literal + "; } }")
+    assert not result.unresolved
+    assert not result.edges
+
+
+def test_deep_unterminated_interpolation_keeps_one_issue_and_checks_cancellation():
+    source = 'var text = $$"""\ntext\n{{' + '$"{' * 2_000 + "$" * 2_000
+    result = analyze(source)
+    (issue,) = result.unresolved
+    assert (issue["reason"], issue["line"]) == ("interpolation_expression_not_analyzed", 3)
+    checks = 0
+
+    def cancel():
+        nonlocal checks
+        checks += 1
+        if checks == 100:
+            raise InterruptedError
+
+    with pytest.raises(InterruptedError):
+        parse_csharp("script", "Assets/Use.cs", source, check=cancel)
+
+
 def test_nested_cross_file_wrappers_constants_and_changed_dependents():
     wrapper = parse_csharp(
         "wrapper",

@@ -217,8 +217,8 @@ class GraphWorkspace:
             previous = self._state(connection, "analysis_version")
             if previous == version:
                 return
-            if previous == 7 and version == 8:
-                # This migration changes C# lexical analysis only. Failed YAML
+            if previous in (7, 8) and previous < version <= 9:
+                # Versions 8 and 9 change C# lexical analysis only. Failed YAML
                 # scans were never published and remain in the retry queue.
                 connection.execute(
                     "UPDATE graph_assets SET dirty=1 WHERE json_extract(payload,'$.source_format')='csharp'"

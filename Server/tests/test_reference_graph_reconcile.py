@@ -2686,8 +2686,12 @@ async def test_yaml_stop_interrupts_work_and_releases_lease(setup, monkeypatch, 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("previous,dirty_yaml", [(7, False), (6, True)])
-async def test_analysis_version_upgrade_scopes_only_known_migration(setup, previous, dirty_yaml):
+@pytest.mark.parametrize(
+    "previous,version,dirty_yaml", [(7, 8, False), (7, 9, False), (8, 9, False), (6, 9, True)]
+)
+async def test_analysis_version_upgrade_scopes_only_known_migration(
+    setup, previous, version, dirty_yaml
+):
     store, workspace, editor, engine = setup
     script = editor.add(1, "Assets/Owner.cs", "class Owner {}")
     serialized = editor.add(2, "Assets/Owner.asset", "%YAML 1.1\n---\nAsset:\n  name: owner\n")
@@ -2705,7 +2709,7 @@ async def test_analysis_version_upgrade_scopes_only_known_migration(setup, previ
     assert workspace.acquire("migration-test")
     with store._connect(write=True) as connection:
         workspace._set(connection, "analysis_version", previous)
-    workspace.ensure_analysis_version("migration-test", 8)
+    workspace.ensure_analysis_version("migration-test", version)
     dirty = {row["guid"] for row in workspace.dirty_assets()}
     assert script[6:] in dirty
     assert (serialized[6:] in dirty) is dirty_yaml
