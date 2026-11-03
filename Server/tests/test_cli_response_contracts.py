@@ -74,7 +74,7 @@ def test_success_envelope_is_normalized_and_keeps_instance(command_response):
 
 
 @pytest.mark.parametrize("mode", ["run", "inline"])
-@pytest.mark.parametrize("count", [41, 100])
+@pytest.mark.parametrize("count", [100, 101, 1000])
 def test_batch_accepts_editor_supported_sizes(command_response, tmp_path, mode, count):
     _, requests = command_response
     commands = [{"tool": "manage_scene", "params": {"action": "get_active"}}] * count
@@ -83,6 +83,7 @@ def test_batch_accepts_editor_supported_sizes(command_response, tmp_path, mode, 
     argument = str(path) if mode == "run" else json.dumps(commands)
     result = CliRunner().invoke(cli, ["batch", mode, argument])
     assert result.exit_code == 0, result.output
+    assert len(requests) == 1
     assert requests[0]["params"]["commands"] == commands
 
 
@@ -176,14 +177,58 @@ def test_custom_tool_failure_retains_suggestions(command_response):
 @pytest.mark.parametrize("mode", ["run", "inline"])
 def test_batch_over_hard_ceiling_does_not_send(command_response, tmp_path, mode):
     _, requests = command_response
-    commands = [{"tool": "manage_scene", "params": {}}] * 101
+    commands = [{"tool": "manage_scene", "params": {}}] * 1001
     path = tmp_path / "commands.json"
     path.write_text(json.dumps(commands))
     argument = str(path) if mode == "run" else json.dumps(commands)
     result = CliRunner().invoke(cli, ["batch", mode, argument])
     assert result.exit_code == 1
-    assert "Maximum 100" in result.output
+    assert "Maximum 1000 commands per batch, got 1001" in result.output
     assert requests == []
+
+
+@pytest.mark.parametrize("mode", ["run", "inline"])
+@pytest.mark.parametrize("output_format", ["text", "json", "table"])
+def test_batch_preserves_selected_editors_lower_limit_refusal(
+    command_response, tmp_path, mode, output_format
+):
+    # Given a selected Editor whose configured limit rejects this admitted batch.
+    response, requests = command_response
+    failure = {
+        "success": False,
+        "error": (
+            "A maximum of 100 commands are allowed per batch "
+            "(configurable in MCP Tools window, hard max 1000)."
+        ),
+        "data": {"requestedCount": 101, "attemptedCount": 0, "notRunCount": 101},
+    }
+    response.clear()
+    response.update({"status": "success", "result": failure})
+    commands = [{"tool": "manage_scene", "params": {"action": "get_active"}}] * 101
+    path = tmp_path / "commands.json"
+    path.write_text(json.dumps(commands), encoding="utf-8")
+    argument = str(path) if mode == "run" else json.dumps(commands)
+
+    # When the dedicated CLI sends the batch through the real HTTP helper.
+    result = CliRunner().invoke(
+        cli,
+        ["--instance", "Selected@abc", "--format", output_format, "batch", mode, argument],
+    )
+
+    # Then the native refusal retains its diagnostics and failure exit status.
+    assert result.exit_code == 1, result.output
+    assert requests == [
+        {
+            "type": "batch_execute",
+            "unity_instance": "Selected@abc",
+            "params": {"commands": commands},
+        }
+    ]
+    if output_format == "json":
+        assert json.loads(result.stdout) == failure
+    else:
+        assert failure["error"] in result.output
+        assert "All " not in result.output
 
 
 def test_raw_custom_payload_without_status_is_not_failure(command_response):

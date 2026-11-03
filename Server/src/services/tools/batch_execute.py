@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal
 from fastmcp import Context
 from mcp.types import ToolAnnotations
 
+from core.batch_limits import ABSOLUTE_MAX_COMMANDS_PER_BATCH
 from core.config import config
 from models.response_limits import ResponseOwner, response_limit_error, response_owner
 from services.credential_lease import CredentialLeaseError, require_credential_lease
@@ -34,9 +35,6 @@ logger = logging.getLogger(__name__)
 
 # Fallback used when the Unity-side configured limit is not yet known.
 DEFAULT_MAX_COMMANDS_PER_BATCH = 100
-
-# Hard ceiling matching the C# AbsoluteMaxCommandsPerBatch.
-ABSOLUTE_MAX_COMMANDS_PER_BATCH = 1000
 
 # Settings are mutable and belong to a selected user's editor instance.
 _LIMIT_CACHE_TTL_SECONDS = 5.0

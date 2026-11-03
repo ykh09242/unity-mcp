@@ -101,7 +101,7 @@ Pass `parallel: true` to let the server run **read-only** commands concurrently.
 
 ### Limits
 
-Batch size is configurable in the Unity MCP Tools window (default 25, hard max 100). Past the limit, split into multiple batches — round-trip cost is still amortized.
+Batch size is configurable in the Unity MCP Tools window (default 100, hard max 1,000). The dedicated `batch run` and `batch inline` CLI commands admit up to 1,000 commands locally; the selected Editor enforces its configured limit and returns a failure when it is exceeded. Past that limit, split into multiple batches.
 ### Preview action names without executing children
 
 Set `validate_only: true` for a preview. It uses the separate native `batch_validate`

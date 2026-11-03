@@ -5,6 +5,7 @@ import json
 import click
 from typing import Optional, Any
 
+from core.batch_limits import ABSOLUTE_MAX_COMMANDS_PER_BATCH
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success, print_info
 from cli.utils.connection import run_command, handle_unity_errors
@@ -46,8 +47,10 @@ def batch_run(file: str, parallel: bool, fail_fast: bool):
     commands_json = admit_json_inputs(commands_json="@" + file)["commands_json"]
     commands = parse_json_list_or_exit(commands_json, "commands")
 
-    if len(commands) > 100:
-        print_error(f"Maximum 100 commands per batch, got {len(commands)}")
+    if len(commands) > ABSOLUTE_MAX_COMMANDS_PER_BATCH:
+        print_error(
+            f"Maximum {ABSOLUTE_MAX_COMMANDS_PER_BATCH} commands per batch, got {len(commands)}"
+        )
         sys.exit(1)
 
     params: dict[str, Any] = {"commands": commands}
@@ -99,8 +102,10 @@ def batch_inline(commands_json: str, parallel: bool, fail_fast: bool):
 
     commands = parse_json_list_or_exit(commands_json, "commands")
 
-    if len(commands) > 100:
-        print_error(f"Maximum 100 commands per batch, got {len(commands)}")
+    if len(commands) > ABSOLUTE_MAX_COMMANDS_PER_BATCH:
+        print_error(
+            f"Maximum {ABSOLUTE_MAX_COMMANDS_PER_BATCH} commands per batch, got {len(commands)}"
+        )
         sys.exit(1)
 
     params: dict[str, Any] = {"commands": commands}
