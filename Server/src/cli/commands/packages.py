@@ -3,6 +3,7 @@
 import click
 from typing import Optional, Any
 
+from cli.utils.followup import followup_command
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success, print_info
 from cli.utils.connection import run_command, handle_unity_errors
@@ -32,7 +33,8 @@ def add_package(package: str):
     if result.get("success") and config.format != "json":
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
-            print_info(f"Installation started. Poll with: unity-mcp packages status {job_id}")
+            command = followup_command(config, ["packages", "status", job_id])
+            print_info(f"Installation started. Poll with: {command}")
         else:
             print_success(f"Package added: {package}")
 
@@ -60,7 +62,8 @@ def remove_package(package: str, force: bool):
     if result.get("success") and config.format != "json":
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
-            print_info(f"Removal started. Poll with: unity-mcp packages status {job_id}")
+            command = followup_command(config, ["packages", "status", job_id])
+            print_info(f"Removal started. Poll with: {command}")
         else:
             print_success(f"Package removed: {package}")
 
@@ -147,7 +150,8 @@ def embed_package(package: str):
     if result.get("success") and config.format != "json":
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
-            print_info(f"Embedding started. Poll with: unity-mcp packages status {job_id}")
+            command = followup_command(config, ["packages", "status", job_id])
+            print_info(f"Embedding started. Poll with: {command}")
         else:
             print_success(f"Package embedded: {package}")
 
@@ -169,7 +173,8 @@ def resolve():
             print_success("Package resolution triggered; completion is unknown")
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
-            print_info(f"Observe with: unity-mcp packages status {job_id}")
+            command = followup_command(config, ["packages", "status", job_id])
+            print_info(f"Observe with: {command}")
         if result.get("success") or job_id:
             print_info(
                 "Unknown does not establish idleness or safe retry. Receipts last only this Editor session."

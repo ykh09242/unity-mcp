@@ -11,6 +11,7 @@ from typing import Optional, Any, assert_never
 from pydantic import ValidationError
 from models.editor_readiness import PlayReadinessJob
 
+from cli.utils.followup import followup_command
 from cli.utils.config import CLIConfig, get_config
 from cli.utils.output import format_output, print_error, print_success, print_info
 from cli.utils.connection import (
@@ -590,7 +591,8 @@ def run_tests(
                 click.echo(format_output(result, config.format))
             else:
                 click.echo(f"Test job started: {job_id}")
-                print_info("Poll with: unity-mcp editor poll-test " + job_id)
+                command = followup_command(config, ["editor", "poll-test", job_id])
+                print_info(f"Poll with: {command}")
             return
 
     if wait and wait > 0 and result.get("success"):
@@ -758,9 +760,8 @@ def poll_test(
             and isinstance(native_control, dict)
             and native_control.get("released") is False
         ):
-            print_info(
-                f"Native cleanup is pending. Observe it with: unity-mcp editor poll-test {job_id} --wait 0"
-            )
+            command = followup_command(config, ["editor", "poll-test", job_id, "--wait", "0"])
+            print_info(f"Native cleanup is pending. Observe it with: {command}")
 
     if exit_code:
         sys.exit(exit_code)

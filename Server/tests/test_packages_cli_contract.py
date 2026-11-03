@@ -1,6 +1,7 @@
 """Package operation output remains machine-readable and describes scheduling honestly."""
 
 import json
+import shlex
 from unittest.mock import patch
 
 import pytest
@@ -52,7 +53,8 @@ def test_package_text_retains_job_polling_guidance():
         ):
             result = CliRunner().invoke(packages, ["add", "com.example.fixture"])
     assert result.exit_code == 0, result.output
-    assert "unity-mcp packages status fixture-package" in result.output
+    hint = result.output.split("Poll with: ", 1)[1].splitlines()[0]
+    assert shlex.split(hint)[-3:] == ["packages", "status", "fixture-package"]
 
 
 @pytest.fixture(autouse=True)
@@ -76,7 +78,8 @@ def test_resolve_unknown_receipt_prints_job_and_limit_without_completion_claim()
         with patch("cli.commands.packages.run_command", return_value=response) as send:
             result = CliRunner().invoke(packages, ["resolve"])
     assert result.exit_code == 0, result.output
-    assert "unity-mcp packages status resolve-owned" in result.output
+    hint = result.output.split("Observe with: ", 1)[1].splitlines()[0]
+    assert shlex.split(hint)[-3:] == ["packages", "status", "resolve-owned"]
     assert "unknown" in result.output.lower()
     assert "safe to retry" not in result.output.lower()
     send.assert_called_once()
@@ -105,7 +108,8 @@ def test_failed_resolve_text_exposes_receipt_without_claiming_triggered():
         with patch("cli.commands.packages.run_command", return_value=response) as send:
             result = CliRunner().invoke(packages, ["resolve"])
     assert result.exit_code == 0, result.output
-    assert "unity-mcp packages status resolve-failed" in result.output
+    hint = result.output.split("Observe with: ", 1)[1].splitlines()[0]
+    assert shlex.split(hint)[-3:] == ["packages", "status", "resolve-failed"]
     assert "unknown" in result.output.lower()
     assert "Editor session" in result.output
     assert "resolution triggered" not in result.output.lower()

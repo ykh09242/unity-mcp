@@ -6,9 +6,9 @@ the provider call, and imports the result.
 """
 
 import click
-import shlex
 from typing import Optional, Any
 
+from cli.utils.followup import followup_command
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_info
 from cli.utils.connection import run_command, handle_unity_errors
@@ -26,22 +26,10 @@ def _emit(result, config, verb, kind):
     if config.format != "json" and result.get("success"):
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
-            command = [
-                "unity-mcp",
-                "--no-project-context",
-                "--host",
-                config.host,
-                "--port",
-                str(config.port),
-                "--timeout",
-                str(config.timeout),
-            ]
-            if config.unity_instance:
-                command.extend(["--instance", config.unity_instance])
-            if config.expected_project_root is not None:
-                command.extend(["--expect-project", config.expected_project_root])
-            command.extend(["asset-gen", "status", "--kind", kind, "--job-id", job_id])
-            print_info(f"{verb} started. Poll with: {shlex.join(command)}")
+            command = followup_command(
+                config, ["asset-gen", "status", "--kind", kind, "--job-id", job_id]
+            )
+            print_info(f"{verb} started. Poll with: {command}")
 
 
 @asset_gen.command("list-models")

@@ -1,6 +1,7 @@
 """Build CLI settings and machine-readable pending responses."""
 
 import json
+import shlex
 from unittest.mock import patch
 
 import pytest
@@ -44,7 +45,8 @@ def test_text_pending_build_retains_polling_guidance(args):
         ):
             result = CliRunner().invoke(build, args)
     assert result.exit_code == 0, result.output
-    assert "unity-mcp build status fixture-build" in result.output
+    hint = result.output.split("Poll with: ", 1)[1].splitlines()[0]
+    assert shlex.split(hint)[-3:] == ["build", "status", "fixture-build"]
 
 
 @pytest.mark.parametrize(

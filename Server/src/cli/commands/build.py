@@ -5,6 +5,7 @@ import re
 import click
 from typing import Optional
 
+from cli.utils.followup import followup_command
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_info
 from cli.utils.connection import run_command, handle_unity_errors
@@ -172,7 +173,8 @@ def run_build(
     if result.get("success") and config.format != "json":
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
-            print_info(f"Build started. Poll with: unity-mcp build status {job_id}")
+            command = followup_command(config, ["build", "status", job_id])
+            print_info(f"Build started. Poll with: {command}")
 
 
 @build.command("status")
@@ -318,7 +320,8 @@ def batch(targets, profile_paths, output_dir, development):
     if result.get("success") and config.format != "json":
         job_id = (result.get("data") or {}).get("job_id")
         if job_id:
-            print_info(f"Batch started. Poll with: unity-mcp build status {job_id}")
+            command = followup_command(config, ["build", "status", job_id])
+            print_info(f"Batch started. Poll with: {command}")
 
 
 @build.command("cancel")
