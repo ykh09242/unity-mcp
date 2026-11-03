@@ -239,7 +239,7 @@ def test_version_one_upgrade_preserves_evidence_and_progress(workspace):
     assert restored.progress()["after"] == 7
     assert restored.counts()["failed_assets"] == 0
     with restored.store._connect() as connection:
-        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 7
+        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 8
 
 
 def test_version_two_upgrade_retains_addressables_failures(workspace):
@@ -266,6 +266,30 @@ def test_version_six_publication_without_catalog_keys_is_invalidated(workspace):
     assert not restored.store.query("owner")["edges"][0]["stale"]
     restored.record_page("worker", [row()], {}, "scan")
     assert restored.store.query("owner")["edges"][0]["stale"]
+
+
+def test_version_seven_upgrade_requeues_previously_filtered_native_publications_once(workspace):
+    asset = row()
+    owner = "asset:" + asset["guid"]
+    workspace.record_page("worker", [asset], {}, "scan")
+    observation = Observation(owner, "unity", "same-dependency-hash")
+    generation = workspace.observe("worker", observation)
+    workspace.publish("worker", owner, "unity", generation, Analysis([]))
+    workspace.clean_asset("worker", asset["guid"])
+    with workspace.store._connect(write=True) as db:
+        db.execute("UPDATE graph_workspace SET version=7")
+
+    restored = GraphWorkspace(workspace.store)
+    assert restored.dirty_assets() == [asset]
+    assert not restored.store.publish(owner, "unity", generation, [])
+    with pytest.raises(RevisionConflict):
+        workspace.clean_asset("worker", asset["guid"])
+    assert restored.acquire("after-upgrade")
+    current = restored.observe("after-upgrade", observation)
+    assert current > generation
+    assert restored.publish("after-upgrade", owner, "unity", current, Analysis([]))
+    restored.clean_asset("after-upgrade", asset["guid"])
+    assert not GraphWorkspace(workspace.store).dirty_assets()
 
 
 def test_catalog_change_during_stream_cannot_promote_old_evidence(workspace):

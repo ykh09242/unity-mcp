@@ -44,7 +44,7 @@ class GraphWorkspace:
                 "CREATE TABLE IF NOT EXISTS graph_workspace(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_workspace").fetchone()
-            if version is not None and version[0] not in (1, 2, 3, 4, 5, 6, 7):
+            if version is not None and version[0] not in (1, 2, 3, 4, 5, 6, 7, 8):
                 raise ValueError("Unsupported graph workspace version")
             if version is None:
                 for statement in (
@@ -104,6 +104,13 @@ class GraphWorkspace:
                     (CatalogLookups.ANY,),
                 )
                 connection.execute("UPDATE graph_workspace SET version=7")
+            if version is None or version[0] < 8:
+                # Older idle graphs may have already admitted a target without
+                # restoring its incoming dependencies. Repair them once.
+                if version is not None and self._requeue_native_owners(connection):
+                    connection.execute("DELETE FROM graph_worker")
+                    self.store._bump(connection)
+                connection.execute("UPDATE graph_workspace SET version=8")
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_asset_paths(guid TEXT PRIMARY KEY,path TEXT NOT NULL,seen TEXT NOT NULL)"
             )
@@ -815,6 +822,19 @@ class GraphWorkspace:
         ).rowcount:
             self._set(connection, "analysis_dirty", True)
 
+    @staticmethod
+    def _requeue_native_owners(connection) -> bool:
+        # Suppressed edges have no stored owner-to-target mapping. Recollect
+        # admitted owners and fence publications from their prior generations.
+        changed = connection.execute(
+            "UPDATE observations SET generation=generation+1,state='pending',error=NULL "
+            "WHERE provider='unity' AND state<>'deleted' "
+            "AND owner IN (SELECT 'asset:'||guid FROM graph_assets)"
+        ).rowcount
+        if changed:
+            connection.execute("UPDATE graph_assets SET dirty=1 WHERE dirty=0")
+        return bool(changed)
+
     def record_page(
         self,
         worker: str,
@@ -829,6 +849,7 @@ class GraphWorkspace:
             admitted = self._admission(connection)
             dirty_owners = []
             catalog_changes = []
+            readmitted = False
             for asset in assets:
                 owner = "asset:" + asset["guid"]
                 displaced = connection.execute(
@@ -878,7 +899,12 @@ class GraphWorkspace:
                         ),
                     )
                     continue
-                connection.execute("DELETE FROM graph_excluded_nodes WHERE id=?", (owner,))
+                # A separate delete event may already have retired the old
+                # path. The private exclusion survives until this admission.
+                if connection.execute(
+                    "DELETE FROM graph_excluded_nodes WHERE id=?", (owner,)
+                ).rowcount:
+                    readmitted = True
                 connection.execute("DELETE FROM graph_blocked_keys WHERE guid=?", (asset["guid"],))
                 guid, payload = asset["guid"], _json(asset)
                 dirty = (
@@ -904,6 +930,8 @@ class GraphWorkspace:
                         "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE owner=? AND provider='unity'",
                         ("asset:" + guid,),
                     )
+            if readmitted:
+                self._requeue_native_owners(connection)
             if dirty_owners:
                 self._invalidate(connection, dirty_owners)
             if catalog_changes:

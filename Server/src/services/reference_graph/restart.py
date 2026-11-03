@@ -183,7 +183,7 @@ def _attach_donor(db: sqlite3.Connection, path: Path) -> bool:
         if db.execute("PRAGMA prior.user_version").fetchone()[0] != GraphStore.SCHEMA_VERSION:
             return False
         version = db.execute("SELECT version FROM prior.graph_workspace").fetchone()
-        if not version or version[0] not in (6, 7):
+        if not version or version[0] not in (6, 7, 8):
             return False
         # Pin a read snapshot and verify the donor projection *before* any
         # receiver writes. Failures on the receiver still propagate and roll back.

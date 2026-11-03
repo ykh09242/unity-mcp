@@ -6,10 +6,12 @@ import pytest
 
 from services.reference_graph.analysis import Analysis
 from services.reference_graph.queries import GraphQueries
+from services.reference_graph.reconcile import Reconciler
 from services.reference_graph.runtime import RuntimeObservations
 from services.reference_graph.service import ReferenceGraphService
-from services.reference_graph.store import Edge, RevisionConflict
-from tests.test_reference_graph_reconcile import setup
+from services.reference_graph.store import Edge, GraphStore, RevisionConflict
+from services.reference_graph.workspace import GraphWorkspace
+from tests.test_reference_graph_reconcile import allowed, setup
 
 
 @pytest.mark.asyncio
@@ -218,10 +220,6 @@ async def test_historical_key_only_runtime_and_handle_follow_current_policy_and_
     edge_id = store.query(owner)["edges"][0]["id"]
     assert runtime.handles(capture)["handles"][0]["balance"] == 1
     if upgrade:
-        from services.reference_graph.workspace import GraphWorkspace
-        from services.reference_graph.reconcile import Reconciler
-        from tests.test_reference_graph_reconcile import allowed
-
         with store._connect(write=True) as db:
             db.execute("DROP TABLE graph_runtime_bindings")
             db.execute("UPDATE graph_runtime_schema SET version=1")
@@ -566,6 +564,44 @@ async def test_runtime_binding_pages_and_refresh_are_batched(setup, monkeypatch,
         assert sum("SELECT e.owner,e.provider,e.payload" in query for query in queries) == 1
     finally:
         workspace.release("refresh")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("split_move", [False, True])
+async def test_target_readmission_restores_native_edges_without_owner_import(setup, split_move):
+    store, workspace, editor, _ = setup
+    hidden_path = "Assets/Private/Target.asset"
+    editor.ignore_files[".gitignore"] = b"Assets/Private/\n"
+    owner = editor.add(1, "Assets/Owner.asset")
+    target = editor.add(2, hidden_path)
+
+    async def collect(action, **params):
+        page = await editor(action, **params)
+        if action == "dependencies" and params["guid"] == owner[6:]:
+            page["targets"] = [target[6:]]
+        return page
+
+    engine = Reconciler(workspace, collect, allowed)
+    assert await engine.reconcile()
+    assert store.query(owner)["edges"] == []
+    assert store.query(target, direction="incoming")["excluded"]
+    assert not any(
+        action in {"source", "dependencies"} and params["guid"] == target[6:]
+        for action, params in editor.calls
+    )
+    if split_move:
+        del editor.assets[target[6:]]
+        editor.event(hidden_path, deleted=True)
+        assert await engine.reconcile()
+        store = GraphStore(store.path, store.scope)
+        workspace = GraphWorkspace(store)
+        engine = Reconciler(workspace, collect, allowed)
+
+    editor.add(2, "Assets/Public/Target.asset")
+    assert await engine.reconcile()
+    outgoing = store.query(owner)["edges"]
+    assert [(edge["target"], edge["stale"]) for edge in outgoing] == [(target, False)]
+    assert store.query(target, direction="incoming")["edges"] == outgoing
 
 
 @pytest.mark.asyncio
