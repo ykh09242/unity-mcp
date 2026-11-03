@@ -255,6 +255,52 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(asset, PrefabUtility.GetCorrespondingObjectFromSource(instance));
         }
 
+        [TestCase("move_relative")]
+        [TestCase("look_at")]
+        public void TransformAction_PersistsPrefabChildOverrideAfterSceneReopen(string action)
+        {
+            var source = new GameObject("OverrideSource");
+            new GameObject("Child").transform.SetParent(source.transform);
+            GameObject asset;
+            try
+            {
+                asset = PrefabUtility.SaveAsPrefabAsset(source, assetRoot + "/Override.prefab");
+            }
+            finally
+            {
+                Object.DestroyImmediate(source);
+            }
+            var instance = (GameObject)PrefabUtility.InstantiatePrefab(asset, ownedScene);
+            var child = instance.transform.Find("Child");
+            var reference = new GameObject("OverrideReference");
+            reference.transform.position = new Vector3(4, 5, 6);
+            var request = new JObject
+            {
+                ["action"] = action,
+                ["target"] = child.gameObject.GetInstanceIDCompat(),
+                ["searchMethod"] = "by_id",
+                ["reference_object"] = reference.GetInstanceIDCompat(),
+                ["offset"] = new JArray(1, 2, 3),
+                ["look_at_target"] = new JArray(4, 5, 6),
+            };
+            Call(request);
+            Vector3 expectedPosition = child.localPosition;
+            Quaternion expectedRotation = child.localRotation;
+            if (action == "move_relative")
+                Assert.AreNotEqual(Vector3.zero, expectedPosition);
+            else
+                Assert.Greater(Quaternion.Angle(Quaternion.identity, expectedRotation), 1f);
+
+            string path = assetRoot + "/OverrideScene.unity";
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, path));
+            Assert.IsTrue(EditorSceneManager.CloseScene(ownedScene, true));
+            ownedScene = EditorSceneManager.OpenScene(path, OpenSceneMode.Additive);
+            var reopened = ownedScene.GetRootGameObjects().Single(go => go.name == "OverrideSource").transform.Find("Child");
+            Assert.IsTrue(PrefabUtility.IsPartOfPrefabInstance(reopened));
+            Assert.Less(Vector3.Distance(expectedPosition, reopened.localPosition), 0.001f);
+            Assert.Less(Quaternion.Angle(expectedRotation, reopened.localRotation), 0.01f);
+        }
+
         private GameObject CreatePrefab(bool active)
         {
             var source = new GameObject("PrefabCreateSource");

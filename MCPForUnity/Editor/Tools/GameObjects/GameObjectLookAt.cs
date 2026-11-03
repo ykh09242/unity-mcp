@@ -59,6 +59,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             Undo.RecordObject(targetGo.transform, $"LookAt {targetGo.name}");
             targetGo.transform.LookAt(lookAtPos.Value, upVector);
+            if (PrefabUtility.IsPartOfPrefabInstance(targetGo.transform))
+                PrefabUtility.RecordPrefabInstancePropertyModifications(targetGo.transform);
 
             var euler = targetGo.transform.rotation.eulerAngles;
             return new SuccessResponse(

@@ -70,6 +70,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             Undo.RecordObject(targetGo.transform, $"Move {targetGo.name} relative to {referenceGo.name}");
             targetGo.transform.position = newPosition;
+            if (PrefabUtility.IsPartOfPrefabInstance(targetGo.transform))
+                PrefabUtility.RecordPrefabInstancePropertyModifications(targetGo.transform);
 
             EditorUtility.SetDirty(targetGo);
             EditorSceneManager.MarkSceneDirty(targetGo.scene);
