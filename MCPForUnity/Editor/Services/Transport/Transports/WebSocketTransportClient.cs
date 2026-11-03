@@ -1319,8 +1319,32 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
         }
 
+        internal static double CommandDeadlineRemainingMilliseconds(int timeoutSeconds, double elapsedMilliseconds, long? resumeDeadline, long now)
+        {
+            double nativeMilliseconds = (double)Math.Max(1, Math.Min(int.MaxValue / 1000, timeoutSeconds)) * 1000 - elapsedMilliseconds;
+            // Convert before subtraction to avoid overflowing when a wire deadline is extreme.
+            double remaining = resumeDeadline.HasValue ? Math.Min(nativeMilliseconds, (double)resumeDeadline.Value - now) : nativeMilliseconds;
+            return Math.Max(0, Math.Min(int.MaxValue, remaining));
+        }
+
+        internal static void ScheduleCommandDeadline(
+            CancellationTokenSource deadline,
+            int timeoutSeconds,
+            double elapsedMilliseconds,
+            long? resumeDeadline,
+            long now
+        )
+        {
+            double remaining = CommandDeadlineRemainingMilliseconds(timeoutSeconds, elapsedMilliseconds, resumeDeadline, now);
+            if (remaining <= 0)
+                deadline.Cancel();
+            else
+                deadline.CancelAfter(TimeSpan.FromMilliseconds(remaining));
+        }
+
         private async Task HandleExecuteAsync(JObject payload, CancellationToken token)
         {
+            var timeoutClock = System.Diagnostics.Stopwatch.StartNew();
             if (payload["resume"] != null && !(payload["resume"] is JObject))
                 throw new InvalidOperationException("Invalid command continuation envelope");
             string commandId = payload.Value<string>("id");
@@ -1358,7 +1382,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             if (work == null)
                 return;
             var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-            deadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, Math.Min(int.MaxValue / 1000, timeoutSeconds))));
             var command = new Command
             {
                 type = commandName,
@@ -1386,9 +1409,14 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     return;
                 }
                 command.ResumeTicket = admitted.Ticket;
-                long remaining = command.resume.Value<long>("deadline_unix_ms") - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                deadline.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(1, Math.Min(int.MaxValue, remaining))));
             }
+            ScheduleCommandDeadline(
+                deadline,
+                timeoutSeconds,
+                timeoutClock.Elapsed.TotalMilliseconds,
+                command.resume?.Value<long>("deadline_unix_ms"),
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            );
             var request = new QueuedCommand
             {
                 Id = commandId,

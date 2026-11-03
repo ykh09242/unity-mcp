@@ -424,6 +424,34 @@ namespace MCPForUnityTests.Editor.Services
         private static readonly MethodInfo BuildConnectionCandidateUrisMethod = ResolveCandidateBuilderMethod();
 
         [Test]
+        public void CommandDeadline_UsesEarliestLimitAndAccountsForAdmissionTime()
+        {
+            const long now = 100000;
+            Assert.AreEqual(33000, WebSocketTransportClient.CommandDeadlineRemainingMilliseconds(35, 2000, now + 40000, now));
+            Assert.AreEqual(5000, WebSocketTransportClient.CommandDeadlineRemainingMilliseconds(35, 2000, now + 5000, now));
+            Assert.AreEqual(33000, WebSocketTransportClient.CommandDeadlineRemainingMilliseconds(35, 2000, null, now));
+            Assert.AreEqual(0, WebSocketTransportClient.CommandDeadlineRemainingMilliseconds(35, 35001, now + 40000, now));
+            Assert.AreEqual(0, WebSocketTransportClient.CommandDeadlineRemainingMilliseconds(35, 0, now - 1, now));
+            Assert.AreEqual(2147483000, WebSocketTransportClient.CommandDeadlineRemainingMilliseconds(int.MaxValue, 0, long.MaxValue, now));
+            Assert.AreEqual(0, WebSocketTransportClient.CommandDeadlineRemainingMilliseconds(35, 0, long.MinValue, now));
+        }
+
+        [Test]
+        public void CommandDeadline_CancelsExpiredAndPreservesCallerCancellation()
+        {
+            using var caller = new CancellationTokenSource();
+            using var expired = CancellationTokenSource.CreateLinkedTokenSource(caller.Token);
+            WebSocketTransportClient.ScheduleCommandDeadline(expired, 35, 35000, null, 100000);
+            Assert.IsTrue(expired.IsCancellationRequested);
+
+            using var active = CancellationTokenSource.CreateLinkedTokenSource(caller.Token);
+            WebSocketTransportClient.ScheduleCommandDeadline(active, 35, 0, 140000, 100000);
+            Assert.IsFalse(active.IsCancellationRequested);
+            caller.Cancel();
+            Assert.IsTrue(active.IsCancellationRequested);
+        }
+
+        [Test]
         public void SendFrameAsync_ObsoleteConnection_DoesNotUseReplacementSocket()
         {
             using var client = new WebSocketTransportClient();
