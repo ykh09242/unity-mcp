@@ -295,7 +295,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, path));
             Assert.IsTrue(EditorSceneManager.CloseScene(ownedScene, true));
             ownedScene = EditorSceneManager.OpenScene(path, OpenSceneMode.Additive);
-            var reopened = ownedScene.GetRootGameObjects().Single(go => go.name == "OverrideSource").transform.Find("Child");
+            var reopened = ownedScene.GetRootGameObjects().Single(go => PrefabUtility.GetCorrespondingObjectFromSource(go) == asset).transform.Find("Child");
             Assert.IsTrue(PrefabUtility.IsPartOfPrefabInstance(reopened));
             Assert.Less(Vector3.Distance(expectedPosition, reopened.localPosition), 0.001f);
             Assert.Less(Quaternion.Angle(expectedRotation, reopened.localRotation), 0.01f);
