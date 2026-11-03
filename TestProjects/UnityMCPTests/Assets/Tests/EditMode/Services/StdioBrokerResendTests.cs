@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Editor.Services.Transport.Transports;
 using MCPForUnity.Editor.Tools;
@@ -38,6 +39,90 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(1, StdioBridgeHost.RemainingUntilMs(endpoint, 9999));
             Assert.AreEqual(0, StdioBridgeHost.RemainingUntilMs(endpoint, 10000));
             Assert.AreEqual(receivedAt + 5000, StdioBridgeHost.ResumeDeadlineAtMs(receivedAt, 5000, 2000, 1002000, 1010000));
+        }
+
+        [TestCase(false, false, false)]
+        [TestCase(true, false, false)]
+        [TestCase(false, true, false)]
+        [TestCase(true, true, false)]
+        [TestCase(false, false, true)]
+        public async Task ResumeQueue_DispatchesOnlyBeforeDeadlineAfterDelayedAdmission(bool progress, bool expired, bool legacy)
+        {
+            const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+            string name = "__stdio_resume_deadline_" + Guid.NewGuid().ToString("N");
+            var host = typeof(StdioBridgeHost);
+            var uptime = (System.Diagnostics.Stopwatch)host.GetField("_uptime", flags).GetValue(null);
+            using var handlers = new ProgressHandlerScope();
+            int calls = 0;
+            string stored = null;
+            long wallClock = 1000;
+            bool advanceOnWrite = false;
+            var journal = new CommandResumeJournal(
+                () => stored,
+                value =>
+                {
+                    stored = value;
+                    if (advanceOnWrite)
+                    {
+                        wallClock += expired ? 10001 : 6000;
+                        advanceOnWrite = false;
+                    }
+                },
+                () => wallClock
+            );
+            var request = new JObject
+            {
+                ["version"] = 1,
+                ["invocation_id"] = Guid.NewGuid().ToString("N"),
+                ["editor_session_id"] = journal.SessionId,
+                ["deadline_unix_ms"] = 11000,
+                ["action"] = "new",
+            };
+            handlers.Set(
+                name,
+                new HandlerInfo(
+                    name,
+                    _ =>
+                    {
+                        calls++;
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            long beforeAdmission = uptime.ElapsedMilliseconds - (expired ? 10001 : 6000);
+            long deadline = StdioBridgeHost.ResumeDeadlineAtMs(beforeAdmission, 300000, beforeAdmission, wallClock, 11000);
+            // Zero denotes an unbounded legacy queue item, even when uptime just started.
+            if (expired && deadline == 0)
+                deadline = -1;
+            CommandResumeJournal.Admission admission = null;
+            if (!legacy)
+            {
+                advanceOnWrite = true;
+                admission = journal.Admit(request, name, new JObject());
+                Assert.IsNotNull(admission.Ticket);
+            }
+            var result = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var command = new Command
+            {
+                type = name,
+                @params = new JObject(),
+                resume = legacy ? null : request,
+                ResumeTicket = admission?.Ticket,
+            };
+            var queued = new QueuedCommand
+            {
+                CommandJson = "{\"type\":\"" + name + "\"}",
+                ResumeCommand = command,
+                Tcs = result,
+                TimeoutMs = 300000,
+                DeadlineAtMs = legacy ? 0 : deadline,
+                Progress = progress ? new CommandProgressBuffer() : null,
+            };
+            host.GetMethod("ExecuteQueuedCommand", flags).Invoke(null, new object[] { Guid.NewGuid().ToString("N"), queued });
+            await NativeProgressProbe.AwaitOwned(result.Task);
+            Assert.AreEqual(expired ? 0 : 1, calls);
+            Assert.That(await result.Task, Does.Contain(expired ? "timed out" : "done"));
         }
 
         [TestCase("{\"type\":\"blender_bridge\",\"params\":{\"timeout_seconds\":900}}", 300000, 930000)]
