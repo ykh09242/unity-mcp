@@ -103,6 +103,101 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(3f, component.amount);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ImplicitHierarchyPath_SelectsChild(bool strict)
+        {
+            var root = Create("component-path-root");
+            var child = Create("component-path-child");
+            child.transform.SetParent(root.transform);
+            var component = child.AddComponent<ManageComponentsContractProbe>();
+            var request = Request("set_property", root.name + "/" + child.name);
+            request["strict_selection"] = strict;
+            request["property"] = "amount";
+            request["value"] = 3;
+            var result = Send(request);
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(3f, component.amount);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SlashNameCollision_RequiresExplicitMethod(bool strict)
+        {
+            var root = Create("component-collision-root");
+            var child = Create("component-collision-child");
+            child.transform.SetParent(root.transform);
+            string path = root.name + "/" + child.name;
+            var literal = Create(path);
+            var childComponent = child.AddComponent<ManageComponentsContractProbe>();
+            var literalComponent = literal.AddComponent<ManageComponentsContractProbe>();
+            var request = Request("set_property", path);
+            request["strict_selection"] = strict;
+            request["property"] = "amount";
+            request["value"] = 3;
+            var result = Send(request);
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(1f, childComponent.amount);
+            Assert.AreEqual(1f, literalComponent.amount);
+
+            request["search_method"] = "by_path";
+            result = Send(request);
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(3f, childComponent.amount);
+            Assert.AreEqual(1f, literalComponent.amount);
+
+            request["search_method"] = "by_name";
+            request["value"] = 4;
+            result = Send(request);
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(3f, childComponent.amount);
+            Assert.AreEqual(4f, literalComponent.amount);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ImplicitSlashNameWithoutHierarchy_StillResolves(bool strict)
+        {
+            var literal = Create("component-only/literal-name");
+            var component = literal.AddComponent<ManageComponentsContractProbe>();
+            var request = Request("set_property", literal.name);
+            request["strict_selection"] = strict;
+            request["property"] = "amount";
+            request["value"] = 5;
+            var result = Send(request);
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(5f, component.amount);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ImplicitRelativePath_WithMultipleHierarchiesIsRejected(bool strict)
+        {
+            var root = Create("component-duplicate-root");
+            var first = Create("component-duplicate-child");
+            first.transform.SetParent(root.transform);
+            var container = Create("component-duplicate-container");
+            var nestedRoot = Create(root.name);
+            nestedRoot.transform.SetParent(container.transform);
+            var second = Create(first.name);
+            second.transform.SetParent(nestedRoot.transform);
+            var firstComponent = first.AddComponent<ManageComponentsContractProbe>();
+            var secondComponent = second.AddComponent<ManageComponentsContractProbe>();
+            var request = Request("set_property", root.name + "/" + first.name);
+            request["strict_selection"] = strict;
+            request["property"] = "amount";
+            request["value"] = 8;
+            var result = Send(request);
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(1f, firstComponent.amount);
+            Assert.AreEqual(1f, secondComponent.amount);
+            request["target"] = "/" + root.name + "/" + first.name;
+            result = Send(request);
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(8f, firstComponent.amount);
+            Assert.AreEqual(1f, secondComponent.amount);
+        }
+
         [Test]
         public void MissingSingleValue_IsRejectedWithoutAssigningOtherProperties()
         {

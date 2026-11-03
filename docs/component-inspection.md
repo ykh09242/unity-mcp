@@ -1,5 +1,12 @@
 # Component inspection
 
+For `manage_components`, an omitted `search_method` resolves a slash-containing
+target as a hierarchy path or a literal name when only one interpretation matches.
+If both match, specify `by_path` or `by_name`, or use an instance ID. Path segments
+identify separate GameObjects; a leading `/` anchors the path at a root, while an
+unanchored path can match a hierarchy suffix. An implicitly selected path must be
+unique. Strict selection also requires explicitly selected paths to be unique.
+
 Component reads return fields and safe Unity properties by default. Reading a custom
 component no longer evaluates its C# properties automatically. Values remain under
 `properties`; custom getter names that were skipped appear in `skippedProperties`.

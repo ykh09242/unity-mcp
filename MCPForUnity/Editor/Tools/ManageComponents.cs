@@ -205,21 +205,26 @@ namespace MCPForUnity.Editor.Tools
             string text = target.ToString().Trim();
             string digits = text.StartsWith("+", StringComparison.Ordinal) || text.StartsWith("-", StringComparison.Ordinal) ? text.Substring(1) : text;
             bool numericText = digits.Length > 0 && digits.All(character => character >= '0' && character <= '9');
+            bool implicitMethod = !ComponentSelection.HasValue(methodToken);
             string method =
-                ComponentSelection.HasValue(methodToken) ? methodToken.ToString().ToLowerInvariant()
+                !implicitMethod ? methodToken.ToString().ToLowerInvariant()
                 : numericText ? "by_id"
+                : text.Contains("/") ? "by_path"
                 : "by_name";
             if (method != "by_id" && method != "by_name" && method != "by_path")
                 throw new ComponentSelection.Failure("invalid_selection", "search_method must be by_id, by_name or by_path.");
             if (method == "by_id" && !numeric)
                 throw new ComponentSelection.Failure("invalid_target", "by_id requires an Int32 instance ID.");
-            var matches = GameObjectLookup.SearchGameObjects(method, target.ToString(), true, 2);
+            var matches =
+                method == "by_path"
+                    ? FindHierarchyPaths(target.ToString(), 2, implicitMethod)
+                    : GameObjectLookup.SearchGameObjects(method, target.ToString(), true, 2);
             if (matches.Count == 0)
                 throw new ComponentSelection.Failure("target_not_found", "No GameObject matches the selected target.");
             if (matches.Count != 1)
                 throw new ComponentSelection.Failure(
                     "ambiguous_target",
-                    "Target is ambiguous within the active scene/current prefab stage; use an instance ID or unique path.",
+                    "Target is ambiguous within the active scene/current prefab stage; use an instance ID or explicitly select by_name or by_path.",
                     new JObject
                     {
                         ["matchCountLowerBound"] = 2,
@@ -628,6 +633,8 @@ namespace MCPForUnity.Editor.Tools
             if (targetToken == null)
                 return null;
 
+            if (string.Equals(searchMethod, "by_path", StringComparison.OrdinalIgnoreCase))
+                return FindHierarchyPaths(targetToken.ToString(), 1).Select(GameObjectLookup.FindById).FirstOrDefault();
             if (!string.IsNullOrEmpty(searchMethod))
                 return GameObjectLookup.FindByTarget(targetToken, searchMethod, true);
 
@@ -648,8 +655,41 @@ namespace MCPForUnity.Editor.Tools
                     return byId;
             }
 
-            // Use GameObjectLookup for search
-            return GameObjectLookup.FindByTarget(targetToken, searchMethod ?? "by_name", true);
+            if (targetStr.Contains("/"))
+            {
+                var matches = FindHierarchyPaths(targetStr, 2, includeLiteralName: true);
+                if (matches.Count > 1)
+                    throw new ArgumentException("Target is ambiguous; specify by_name or by_path, or use an instance ID.");
+                return matches.Count == 1 ? GameObjectLookup.FindById(matches[0]) : null;
+            }
+
+            return GameObjectLookup.FindByTarget(targetToken, "by_name", true);
+        }
+
+        // Path segments must correspond to separate transforms: flattening names would
+        // make a literal name containing '/' indistinguishable from a hierarchy.
+        private static List<int> FindHierarchyPaths(string path, int limit, bool includeLiteralName = false)
+        {
+            bool rooted = path.StartsWith("/", StringComparison.Ordinal);
+            string[] segments = (rooted ? path.Substring(1) : path).Split('/');
+            var matches = new List<int>();
+            foreach (GameObject candidate in GameObjectLookup.GetAllSceneObjects(true))
+            {
+                Transform current = candidate.transform;
+                int index = segments.Length - 1;
+                while (index >= 0 && current != null && current.name == segments[index])
+                {
+                    current = current.parent;
+                    index--;
+                }
+                if ((index < 0 && (!rooted || current == null)) || (includeLiteralName && candidate.name == path))
+                {
+                    matches.Add(candidate.GetInstanceIDCompat());
+                    if (matches.Count >= limit)
+                        break;
+                }
+            }
+            return matches;
         }
 
         private static List<string> SetPropertiesOnComponent(Component component, JObject properties, JArray results)
