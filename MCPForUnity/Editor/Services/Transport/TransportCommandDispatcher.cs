@@ -295,7 +295,21 @@ namespace MCPForUnity.Editor.Services.Transport
             return operation;
         }
 
-        internal static Task<T> RunOnMainThreadAsync<T>(Func<T> func, CancellationToken cancellationToken)
+        internal static Task<CommandResumeJournal.Admission> AdmitResumeAsync(
+            Command command,
+            CancellationToken cancellationToken,
+            CommandResumeJournal journal = null
+        ) =>
+            RunOnMainThreadCore(
+                () => (journal ?? CommandResumeState.Journal).Admit(command.resume, command.type, command.@params),
+                cancellationToken,
+                abandoned => abandoned.Ticket?.Owner.Release(abandoned.Ticket)
+            );
+
+        internal static Task<T> RunOnMainThreadAsync<T>(Func<T> func, CancellationToken cancellationToken) =>
+            RunOnMainThreadCore(func, cancellationToken, null);
+
+        private static Task<T> RunOnMainThreadCore<T>(Func<T> func, CancellationToken cancellationToken, Action<T> releaseAbandoned)
         {
             if (func is null)
             {
@@ -344,7 +358,8 @@ namespace MCPForUnity.Editor.Services.Transport
                     }
 
                     var result = callback();
-                    tcs.TrySetResult(result);
+                    if (!tcs.TrySetResult(result))
+                        releaseAbandoned?.Invoke(result);
                 }
                 catch (Exception ex)
                 {

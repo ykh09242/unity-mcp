@@ -1189,31 +1189,42 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                             senderDeadlineMs
                         );
-                    var admission = await TransportCommandDispatcher
-                        .RunOnMainThreadAsync(
-                            () => CommandResumeState.Journal.Admit(resumeCommand.resume, resumeCommand.type, resumeCommand.@params),
-                            CancellationToken.None
-                        )
-                        .ConfigureAwait(false);
-                    if (admission.Ticket == null)
-                    {
-                        string reply = admission.Response(resumeCommand.arbitration).ToJson();
-                        await writer.WriteResultAsync(System.Text.Encoding.UTF8.GetBytes(reply), connectionLifetime.Token).ConfigureAwait(false);
-                        return;
-                    }
-                    resumeCommand.ResumeTicket = admission.Ticket;
                 }
                 else
                     resumeCommand = null;
+                int remainingMs = deadlineAtMs >= 0 ? RemainingUntilMs(deadlineAtMs, _uptime.ElapsedMilliseconds) : timeoutMs;
+                if (remainingMs == 0)
+                    throw new IOException("Stdio command deadline expired");
+                commandLifetime = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
+                commandLifetime.CancelAfter(remainingMs);
+                if (resumeCommand != null)
+                {
+                    var admitting = TransportCommandDispatcher.AdmitResumeAsync(resumeCommand, commandLifetime.Token);
+                    using var stop = CancellationTokenSource.CreateLinkedTokenSource(commandLifetime.Token);
+                    var disconnect = WatchPendingDisconnectAsync(client, admitting, connectionLifetime, stop.Token);
+                    CommandResumeJournal.Admission admission;
+                    try
+                    {
+                        admission = await admitting.ConfigureAwait(false);
+                        resumeCommand.ResumeTicket = admission.Ticket;
+                    }
+                    finally
+                    {
+                        stop.Cancel();
+                        await disconnect.ConfigureAwait(false);
+                    }
+                    commandLifetime.Token.ThrowIfCancellationRequested();
+                    if (admission.Ticket == null)
+                    {
+                        string reply = admission.Response(resumeCommand.arbitration).ToJson();
+                        await writer.WriteResultAsync(System.Text.Encoding.UTF8.GetBytes(reply), commandLifetime.Token).ConfigureAwait(false);
+                        return;
+                    }
+                }
                 string commandId = Guid.NewGuid().ToString();
                 var result = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
                 TaskCompletionSource<string> pending = result;
                 timing = CommandPhaseTiming.Create(McpLogRecord.IsEnabled, CommandPhaseTiming.Transport.Stdio);
-                int remainingMs = deadlineAtMs >= 0 ? RemainingUntilMs(deadlineAtMs, _uptime.ElapsedMilliseconds) : timeoutMs;
-                if (remainingMs == 0)
-                    throw new IOException("Stdio progress command deadline expired");
-                commandLifetime = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
-                commandLifetime.CancelAfter(remainingMs);
                 lock (clientsLock)
                 {
                     if (!isRunning || !ReferenceEquals(authentication, launch) || !activeClients.Contains(client) || connectionLifetime.IsCancellationRequested)

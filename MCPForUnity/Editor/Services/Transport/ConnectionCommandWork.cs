@@ -13,6 +13,7 @@ namespace MCPForUnity.Editor.Services.Transport
         private readonly Dictionary<string, Task> _tasks = new Dictionary<string, Task>(StringComparer.Ordinal);
         private readonly Dictionary<string, Func<Task>> _cancellations = new Dictionary<string, Func<Task>>(StringComparer.Ordinal);
         private readonly Dictionary<string, Task> _cancellationTasks = new Dictionary<string, Task>(StringComparer.Ordinal);
+        private readonly HashSet<Task> _controls = new HashSet<Task>();
         private readonly CancellationToken _token;
         private readonly int _capacity;
         private Task _tail = Task.CompletedTask;
@@ -130,12 +131,41 @@ namespace MCPForUnity.Editor.Services.Transport
             }
         }
 
+        // Journal cancellation must still be accepted when all command slots are occupied.
+        public bool TryStartControl(Func<Task> operation)
+        {
+            var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (_gate)
+            {
+                if (_token.IsCancellationRequested || _controls.Count >= _capacity)
+                    return false;
+                _controls.Add(completion.Task);
+            }
+            _ = RunControlAsync();
+            return true;
+
+            async Task RunControlAsync()
+            {
+                try
+                {
+                    await operation().ConfigureAwait(false);
+                }
+                finally
+                {
+                    lock (_gate)
+                        _controls.Remove(completion.Task);
+                    completion.TrySetResult(true);
+                }
+            }
+        }
+
         public Task DrainAsync()
         {
             lock (_gate)
             {
-                var tasks = new Task[_tasks.Count];
+                var tasks = new Task[_tasks.Count + _controls.Count];
                 _tasks.Values.CopyTo(tasks, 0);
+                _controls.CopyTo(tasks, _tasks.Count);
                 return Task.WhenAll(tasks);
             }
         }

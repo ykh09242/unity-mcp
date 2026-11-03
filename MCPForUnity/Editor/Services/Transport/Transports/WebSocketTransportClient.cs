@@ -1020,29 +1020,23 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     break;
                 case "cancel":
                     ConnectionCommandWork work;
+                    bool journalCancel;
                     lock (_ownershipLock)
                     {
                         if (!IsCurrentConnectionToken(token) || !_commandCancellationNegotiated)
                             break;
                         work = _commandWork;
+                        journalCancel =
+                            _resumeNegotiated
+                            && payload["resume"] is JObject envelope
+                            && (envelope.Property("origin_generation") == null || _resumeOriginNegotiated);
                     }
-                    if (
-                        _resumeNegotiated
-                        && payload["resume"] is JObject cancelResume
-                        && (cancelResume.Property("origin_generation") == null || _resumeOriginNegotiated)
-                    )
-                        await TransportCommandDispatcher
-                            .RunOnMainThreadAsync(
-                                () =>
-                                    CommandResumeState.Journal.Admit(
-                                        cancelResume,
-                                        payload.Value<string>("name"),
-                                        payload["params"] as JObject ?? new JObject()
-                                    ),
-                                CancellationToken.None
-                            )
-                            .ConfigureAwait(false);
                     work?.TryCancel(payload.Value<string>("id"));
+                    if (work != null && journalCancel && payload["resume"] is JObject cancelResume && (string)cancelResume["action"] == "cancel")
+                    {
+                        if (!work.TryStartControl(() => RecordCancelAsync(payload, cancelResume, token)))
+                            throw new IOException("Command cancellation queue is full or closed");
+                    }
                     break;
                 case "ping":
                     await SendPongAsync(token).ConfigureAwait(false);
@@ -1050,6 +1044,32 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 default:
                     // No-op for unrecognised types (keep-alives, telemetry, etc.)
                     break;
+            }
+        }
+
+        private async Task RecordCancelAsync(JObject payload, JObject resume, CancellationToken token)
+        {
+            try
+            {
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+                ScheduleCommandDeadline(
+                    deadline,
+                    (int)DefaultCommandTimeout.TotalSeconds,
+                    0,
+                    resume.Value<long?>("deadline_unix_ms"),
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                );
+                await TransportCommandDispatcher
+                    .RunOnMainThreadAsync(
+                        () => CommandResumeState.Journal.Admit(resume, payload.Value<string>("name"), payload["params"] as JObject ?? new JObject()),
+                        deadline.Token
+                    )
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                await HandleSocketClosureAsync(ex.Message, token).ConfigureAwait(false);
             }
         }
 
@@ -1399,16 +1419,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         .ConfigureAwait(false);
                     return;
                 }
-                var admitted = await TransportCommandDispatcher
-                    .RunOnMainThreadAsync(() => CommandResumeState.Journal.Admit(command.resume, command.type, command.@params), CancellationToken.None)
-                    .ConfigureAwait(false);
-                if (admitted.Ticket == null)
-                {
-                    deadline.Dispose();
-                    await SendCommandResultAsync(commandId, admitted.Response(command.arbitration).Payload, token).ConfigureAwait(false);
-                    return;
-                }
-                command.ResumeTicket = admitted.Ticket;
             }
             ScheduleCommandDeadline(
                 deadline,
@@ -1429,13 +1439,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 SessionId = sessionId,
                 Progress = progressNegotiated && RequestsCommandProgress(payload, commandId) ? new CommandProgressBuffer() : null,
             };
-            command.ResumeTicket?.Owner.BindCancellation(
-                command.ResumeTicket,
-                () =>
-                {
-                    work.TryCancel(commandId);
-                }
-            );
             // Only negotiated peers can relax the legacy FIFO predecessor. Native admission
             // still rechecks the actual handler identity and all current owner barriers.
             bool bypass = AllowsArbitrationBypass(arbitrationNegotiated, command);
@@ -1448,7 +1451,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             );
             if (rejection != null)
             {
-                command.ResumeTicket?.Owner.Release(command.ResumeTicket);
                 request.Progress?.Dispose();
                 request.Dispose();
                 request.Timing?.ExecutionDone();
@@ -1526,26 +1528,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 object response;
                 try
                 {
-                    await ConnectionCommandWork.WaitAsync(previous, request.Deadline.Token).ConfigureAwait(false);
-                    request.Deadline.Token.ThrowIfCancellationRequested();
-                    if (request.CancelRequested)
-                        throw new OperationCanceledException();
-                    if (request.Progress != null)
-                    {
-                        progressStop = CancellationTokenSource.CreateLinkedTokenSource(request.Deadline.Token);
-                        progressTask = PumpCommandProgressAsync(request, token, progressStop.Token);
-                    }
-                    operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(
-                        request.Command,
-                        request.Deadline.Token,
-                        null,
-                        request.Timing,
-                        request.Progress,
-                        request.Admission?.Token ?? CancellationToken.None,
-                        request.RequestCancellation
-                    );
-                    request.Response = operation.Response;
-                    response = (await operation.Response.ConfigureAwait(false)).Payload;
+                    response = await RunCommandAsync().ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -1573,6 +1556,40 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 await SendTimedCommandResultAsync(request.Id, response, token, request.Timing).ConfigureAwait(false);
                 request.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Sent);
+
+                async Task<object> RunCommandAsync()
+                {
+                    var command = request.Command;
+                    if (command.resume != null)
+                    {
+                        var admitted = await TransportCommandDispatcher.AdmitResumeAsync(command, request.Deadline.Token).ConfigureAwait(false);
+                        command.ResumeTicket = admitted.Ticket;
+                        request.Deadline.Token.ThrowIfCancellationRequested();
+                        if (admitted.Ticket == null)
+                            return admitted.Response(command.arbitration).Payload;
+                        admitted.Ticket.Owner.BindCancellation(admitted.Ticket, () => request.Owner.TryCancel(request.Id));
+                    }
+                    await ConnectionCommandWork.WaitAsync(previous, request.Deadline.Token).ConfigureAwait(false);
+                    request.Deadline.Token.ThrowIfCancellationRequested();
+                    if (request.CancelRequested)
+                        throw new OperationCanceledException();
+                    if (request.Progress != null)
+                    {
+                        progressStop = CancellationTokenSource.CreateLinkedTokenSource(request.Deadline.Token);
+                        progressTask = PumpCommandProgressAsync(request, token, progressStop.Token);
+                    }
+                    operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(
+                        request.Command,
+                        request.Deadline.Token,
+                        null,
+                        request.Timing,
+                        request.Progress,
+                        request.Admission?.Token ?? CancellationToken.None,
+                        request.RequestCancellation
+                    );
+                    request.Response = operation.Response;
+                    return (await operation.Response.ConfigureAwait(false)).Payload;
+                }
             }
             catch (OperationCanceledException)
             {

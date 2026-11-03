@@ -135,6 +135,47 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [UnityTest]
+        public IEnumerator DisconnectReleasesPendingResumeAdmissionBeforeEditorPump()
+        {
+            Start();
+            var connect = host.Track(
+                Task.Run(() => StdioBridgeReconnectTests.ConnectProgressPeer(host.Port, host.Token, new JArray(CommandResumeJournal.Capability), out _))
+            );
+            yield return Await(connect);
+            var peer = connect.Result;
+            peers.Add(peer);
+            var command = Command(host.Name, false);
+            var resume = new JObject
+            {
+                ["version"] = 1,
+                ["invocation_id"] = Guid.NewGuid().ToString("N"),
+                ["editor_session_id"] = CommandResumeState.SessionId,
+                ["deadline_unix_ms"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 60000,
+                ["action"] = "new",
+            };
+            command["resume"] = resume;
+            const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+            var callbacks = (ICollection)typeof(TransportCommandDispatcher).GetField("MainThreadCallbacks", flags).GetValue(null);
+            var pendingLock = typeof(TransportCommandDispatcher).GetField("PendingLock", flags).GetValue(null);
+            int CallbackCount()
+            {
+                lock (pendingLock)
+                    return callbacks.Count;
+            }
+            int before = CallbackCount();
+            Assert.IsTrue(Send(peer, command.ToString(Formatting.None)).Wait(TimeSpan.FromSeconds(5)));
+            Assert.IsTrue(SpinWait.SpinUntil(() => CallbackCount() > before, TimeSpan.FromSeconds(5)), "Wait for main-thread journal admission.");
+            peer.Dispose();
+            Assert.IsTrue(
+                SpinWait.SpinUntil(() => StdioBridgeHost.AuthenticatedClientCount == 0 && StdioBridgeHost.ReservedInputBytes == 0, TimeSpan.FromSeconds(5))
+            );
+            yield return null;
+            Assert.AreEqual(0, calls);
+            resume["action"] = "status";
+            Assert.AreEqual("unknown", CommandResumeState.Journal.Admit(resume, host.Name, new JObject()).State);
+        }
+
+        [UnityTest]
         public IEnumerator HealthyPeersKeepIndependentControlWriteAndDisconnectOwnership()
         {
             Start();

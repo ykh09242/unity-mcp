@@ -1110,6 +1110,63 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task HeldEditorAllowsControlAndExpiresOrCancelsResumeAdmission(bool cancel)
+        {
+            RequireOwnedProgressEditor();
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateClient();
+            using var handlers = new ProgressHandlerScope();
+            const string name = "__held_resume_admission";
+            int calls = 0;
+            handlers.Set(name, new MCPForUnity.Editor.Tools.HandlerInfo(name, _ => ++calls, null));
+            string id = Guid.NewGuid().ToString("D");
+            var resume = new JObject
+            {
+                ["version"] = 1,
+                ["invocation_id"] = Guid.NewGuid().ToString("N"),
+                ["editor_session_id"] = CommandResumeState.SessionId,
+                ["deadline_unix_ms"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 60000,
+                ["action"] = "new",
+            };
+            try
+            {
+                Assert.IsTrue(await client.StartAsync());
+                await peer.Negotiate(false, resume: true);
+                // Hold the real Editor main thread until both control and command response arrive.
+                Task wire = Task.Run(async () =>
+                {
+                    peer.Send(
+                        new JObject
+                        {
+                            ["type"] = "execute",
+                            ["id"] = id,
+                            ["name"] = name,
+                            ["timeout"] = cancel ? 30 : 1,
+                            ["resume"] = resume,
+                        }
+                    );
+                    if (cancel)
+                        peer.Send(new JObject { ["type"] = "cancel", ["id"] = id });
+                    await peer.Barrier();
+                    var reply = await peer.Result(id);
+                    StringAssert.Contains(cancel ? "canceled" : "timed out", (string)reply.SelectToken("result.error"));
+                });
+                Assert.IsTrue(wire.Wait(TimeSpan.FromSeconds(5)), "Receive and deadline must progress without an Editor frame.");
+                string barrier = Guid.NewGuid().ToString("D");
+                peer.Execute(barrier, "ping", new JObject(), false);
+                await peer.Result(barrier);
+                Assert.AreEqual(0, calls);
+                resume["action"] = "status";
+                Assert.AreEqual("unknown", CommandResumeState.Journal.Admit(resume, name, new JObject()).State);
+            }
+            finally
+            {
+                await StopOwnedProgressClient(client);
+            }
+        }
+
         private sealed class QueuedAdmissionFixture : IDisposable
         {
             internal const string Id = "owned-queued-admission";
@@ -2108,7 +2165,7 @@ namespace MCPForUnityTests.Editor.Services
 
             internal Task<JObject> Result(string id) => (Task<JObject>)Call("Result", id);
 
-            internal async Task<JObject> Negotiate(bool supported, bool phaseTiming = false)
+            internal async Task<JObject> Negotiate(bool supported, bool phaseTiming = false, bool resume = false)
             {
                 await (Task)Call("WaitRegistered", 1);
                 JObject registration = await Message(message => message.Value<string>("type") == "register");
@@ -2117,6 +2174,8 @@ namespace MCPForUnityTests.Editor.Services
                     capabilities.Add("command_progress_v1");
                 if (phaseTiming)
                     capabilities.Add("phase_timing_v1");
+                if (resume)
+                    capabilities.Add(CommandResumeJournal.Capability);
                 Send(new JObject { ["type"] = "welcome", ["capabilities"] = capabilities.DeepClone() });
                 Send(
                     new JObject

@@ -74,6 +74,39 @@ namespace MCPForUnityTests.Editor.Services
             };
 
         [Test]
+        public void CancellationDuringJournalAdmissionReleasesTheUnclaimedTicket()
+        {
+            using var cancel = new CancellationTokenSource();
+            bool armed = false;
+            journal = new CommandResumeJournal(
+                () => null,
+                _ =>
+                {
+                    if (armed)
+                        cancel.Cancel();
+                },
+                () => 1000
+            );
+            var request = Request();
+            armed = true;
+            var admission = TransportCommandDispatcher.AdmitResumeAsync(
+                new Command
+                {
+                    type = Name,
+                    resume = request,
+                    @params = new JObject(),
+                },
+                cancel.Token,
+                journal
+            );
+            Assert.IsTrue(admission.IsCanceled);
+            request["action"] = "resume";
+            var retry = journal.Admit(request, Name, new JObject());
+            Assert.IsNotNull(retry.Ticket, "The abandoned admission cannot retain the active slot.");
+            journal.Release(retry.Ticket);
+        }
+
+        [Test]
         public void PublicOriginRefusesActualCustomAndArbitraryHandlerDependencies()
         {
             var method = typeof(CommandResumeState).GetMethod("CanContinue", BindingFlags.NonPublic | BindingFlags.Static);
