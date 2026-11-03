@@ -30,4 +30,4 @@ def confirm_destructive_action(
             message = f"{action} {item_type} {extra_context} '{item_name}'?"
         else:
             message = f"{action} {item_type} '{item_name}'?"
-        click.confirm(message, abort=True)
+        click.confirm(message, abort=True, err=True)
