@@ -112,7 +112,7 @@ class UiSnapshotRequest(BaseModel):
         "remain mutation handles only for the canonical auto root without identity_map."
     ),
     annotations=ToolAnnotations(
-        title="Capture UI Snapshot", readOnlyHint=False, destructiveHint=False
+        title="Capture UI Snapshot", readOnlyHint=False, destructiveHint=True
     ),
 )
 async def capture_ui_snapshot(

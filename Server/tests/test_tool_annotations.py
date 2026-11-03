@@ -37,7 +37,6 @@ READ_ONLY = {
     "asset_bundles",
     "asset_reference_diagnostics",
     "query_physics",
-    "capture_ui_snapshot",  # Reads UI state; preflight does not refresh project assets.
     "debug_request_context",
     # Completed-result cache only; no job retirement or project/Editor settings mutation.
     "export_test_job",
