@@ -15,6 +15,16 @@ from cli_example_validation import ExampleValidationError, extract_examples, val
 from cli_reference import prepare_cli_reference, render_reference, walk_commands
 
 
+def test_cli_guide_matches_the_timeout_option_default(monkeypatch):
+    monkeypatch.syspath_prepend(str(TOOLS.parent / "Server/src"))
+    from cli.main import cli
+
+    timeout = next(option for option in cli.params if option.name == "timeout")
+    guide = (TOOLS.parent / "website/docs/guides/cli.md").read_text(encoding="utf-8")
+    row = next(line for line in guide.splitlines() if line.startswith("| `--timeout` |"))
+    assert f"default {timeout.default}." in row
+
+
 @pytest.mark.parametrize(
     "kind_name,valid,invalid",
     [("HTTP_PORT_TYPE", "8080", "0"), ("OUTPUT_FORMAT_TYPE", "json", "yaml")],

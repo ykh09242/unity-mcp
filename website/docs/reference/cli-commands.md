@@ -101,6 +101,7 @@ Enable or disable an Animator component. Examples: unity-mcp animation animator 
 | target | text | required | nargs=1 | — | — |  |
 | enabled | boolean | required | nargs=1 | — | — |  |
 | --search-method | choice: by_id, by_name, by_path | optional | nargs=1 | — | — |  |
+| --runtime-only | boolean | optional | nargs=1, flag | — | — | Require Play mode (run-only authority). |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp animation animator set-parameter`
@@ -3954,6 +3955,7 @@ Apply text edits to a script. Examples: unity-mcp script edit "Assets/Scripts/Pl
 | --- | --- | --- | --- | --- | --- | --- |
 | path | text | required | nargs=1 | — | — |  |
 | --edits / -e | text | required | nargs=1 | — | — | Edits as JSON array of &#123;startLine, startCol, endLine, endCol, newText&#125;. Accepts @file or -/@- stdin. |
+| --expected-sha | text | optional | nargs=1 | — | — | SHA-256 observed in a previous JSON script read. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp script read`

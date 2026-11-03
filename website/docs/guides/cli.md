@@ -35,7 +35,7 @@ Replace the example ID with a discovered one. Global options go **before** subco
 |---|---|---|
 | `--host` | `UNITY_MCP_HOST` | HTTP host; default `127.0.0.1`. |
 | `--port` | `UNITY_MCP_HTTP_PORT` | Port, 1-65535; default 8080. |
-| `--timeout` | `UNITY_MCP_TIMEOUT` | Positive seconds; default 30. |
+| `--timeout` | `UNITY_MCP_TIMEOUT` | Positive seconds, default 300. |
 | `--format` | `UNITY_MCP_FORMAT` | `text`, `json`, or `table`. |
 | `--instance` | `UNITY_MCP_INSTANCE` | Target Editor ID. |
 | `--verbose` | - | Write command requests and raw responses to stderr; use only with data safe to log. |
@@ -52,6 +52,10 @@ unity-mcp editor tests --help
 ```
 
 Use help and the [CLI reference](../reference/cli.md) for flags, rather than assuming MCP tool parameters have identical CLI names. MCP tools, CLI commands, and Unity handlers are distinct layers. Additional task examples live in [CLI Examples](./cli-examples.md).
+
+## Read and edit the same script version
+
+Use `unity-mcp --format json script read Assets/Scripts/Player.cs --start-line 10 --line-count 5` to read a line range. The matching Editor returns the SHA-256 of the full source in `data.sha256`. Pass that value to `script edit` with `--expected-sha`. If another writer changes the script, the edit returns `stale_file` and the caller can read the new version before revising the edits.
 
 ## Automate without losing errors
 
