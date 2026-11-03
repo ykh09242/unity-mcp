@@ -31,6 +31,33 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        private static bool ApplyDirectAssignments(ThrowingAssignmentFixture fixture, JObject properties)
+        {
+            var method = typeof(ManageAsset).GetMethod(
+                "ApplyObjectPropertiesAtomically",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
+            );
+            return (bool)method.Invoke(null, new object[] { fixture, properties });
+        }
+
+        [Test]
+        public void DirectAssignmentsHonorOrderAndCurrentValues()
+        {
+            var fixture = ScriptableObject.CreateInstance<ThrowingAssignmentFixture>();
+            try
+            {
+                Assert.IsTrue(ApplyDirectAssignments(fixture, new JObject { ["Second"] = 5, ["backing"] = 2 }));
+                Assert.AreEqual(2, fixture.backing);
+                Assert.IsTrue(ApplyDirectAssignments(fixture, new JObject { ["first"] = 5, ["First"] = 1 }));
+                Assert.AreEqual(1, fixture.first);
+                Assert.IsFalse(ApplyDirectAssignments(fixture, new JObject { ["first"] = 1, ["backing"] = 2 }));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(fixture);
+            }
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void DirectAssignmentsRollBackThrowingSetterAndReportRestoration(bool failRestore)
@@ -39,19 +66,8 @@ namespace MCPForUnityTests.Editor.Tools
             try
             {
                 fixture.failRestore = failRestore;
-                var method = typeof(ManageAsset).GetMethod(
-                    "ApplyObjectPropertiesAtomically",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
-                );
                 var error = Assert.Throws<System.Reflection.TargetInvocationException>(() =>
-                    method.Invoke(
-                        null,
-                        new object[]
-                        {
-                            fixture,
-                            new JObject { ["first"] = 5, ["Second"] = 9 },
-                        }
-                    )
+                    ApplyDirectAssignments(fixture, new JObject { ["first"] = 5, ["Second"] = 9 })
                 );
                 Assert.AreEqual(1, fixture.first);
                 Assert.AreEqual(2, fixture.backing);
@@ -69,19 +85,8 @@ namespace MCPForUnityTests.Editor.Tools
             var fixture = ScriptableObject.CreateInstance<ThrowingAssignmentFixture>();
             try
             {
-                var method = typeof(ManageAsset).GetMethod(
-                    "ApplyObjectPropertiesAtomically",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
-                );
                 Assert.Throws<System.Reflection.TargetInvocationException>(() =>
-                    method.Invoke(
-                        null,
-                        new object[]
-                        {
-                            fixture,
-                            new JObject { ["first"] = 5, ["missing"] = 9 },
-                        }
-                    )
+                    ApplyDirectAssignments(fixture, new JObject { ["first"] = 5, ["missing"] = 9 })
                 );
                 Assert.AreEqual(1, fixture.first);
             }

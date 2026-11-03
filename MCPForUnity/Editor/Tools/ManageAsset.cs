@@ -1145,7 +1145,7 @@ namespace MCPForUnity.Editor.Tools
         // Validate and capture every member before making any direct asset assignment.
         private static bool ApplyObjectPropertiesAtomically(UnityEngine.Object target, JObject properties)
         {
-            var assignments = new List<(string name, Action<object> set, object previous, object next)>();
+            var assignments = new List<(string name, Func<object> get, Action<object> set, object previous, object next)>();
             var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase;
             Type type = target.GetType();
             foreach (var entry in properties.Properties())
@@ -1154,47 +1154,54 @@ namespace MCPForUnity.Editor.Tools
                 var field = property == null ? type.GetField(entry.Name, flags) : null;
                 Type memberType;
                 object previous;
+                Func<object> get;
                 Action<object> set;
                 if (property != null && property.CanRead && property.CanWrite && property.GetIndexParameters().Length == 0)
                 {
                     memberType = property.PropertyType;
-                    previous = property.GetValue(target);
+                    get = () => property.GetValue(target);
                     set = value => property.SetValue(target, value);
                 }
                 else if (field != null && !field.IsInitOnly && !field.IsLiteral)
                 {
                     memberType = field.FieldType;
-                    previous = field.GetValue(target);
+                    get = () => field.GetValue(target);
                     set = value => field.SetValue(target, value);
                 }
                 else
                     throw new ArgumentException($"Member '{entry.Name}' is not readable and writable on {type.Name}.");
 
+                previous = get();
                 if (!TryConvertMemberValue(entry.Value, memberType, out object next))
                     throw new ArgumentException($"Could not convert value for member '{entry.Name}' on {type.Name}.");
-                if (!object.Equals(previous, next))
-                    assignments.Add((entry.Name, set, previous, next));
+                assignments.Add((entry.Name, get, set, previous, next));
             }
 
+            var attempted = new List<int>();
             for (int i = 0; i < assignments.Count; i++)
             {
                 try
                 {
+                    // Earlier setters may have changed this member, including through an alias.
+                    if (object.Equals(assignments[i].get(), assignments[i].next))
+                        continue;
+                    attempted.Add(i);
                     assignments[i].set(assignments[i].next);
                 }
                 catch (Exception ex)
                 {
                     var restorationErrors = new List<string>();
                     // A setter can mutate its backing state before throwing.
-                    for (int j = i; j >= 0; j--)
+                    for (int j = attempted.Count - 1; j >= 0; j--)
                     {
+                        int index = attempted[j];
                         try
                         {
-                            assignments[j].set(assignments[j].previous);
+                            assignments[index].set(assignments[index].previous);
                         }
                         catch (Exception restore)
                         {
-                            restorationErrors.Add($"{assignments[j].name}: {restore.GetBaseException().Message}");
+                            restorationErrors.Add($"{assignments[index].name}: {restore.GetBaseException().Message}");
                         }
                     }
                     string restoration =
@@ -1204,7 +1211,7 @@ namespace MCPForUnity.Editor.Tools
                     throw new InvalidOperationException($"Failed to assign '{assignments[i].name}': {ex.GetBaseException().Message}. {restoration}", ex);
                 }
             }
-            return assignments.Count != 0;
+            return attempted.Count != 0;
         }
 
         /// <summary>
