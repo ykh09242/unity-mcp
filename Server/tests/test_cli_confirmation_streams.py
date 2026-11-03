@@ -103,3 +103,67 @@ cli.main(args=["--no-project-context", "--format", "json", *sys.argv[2:]])
         assert result.returncode != 0
         assert result.stdout == ""
         assert not dispatches.exists()
+
+
+@pytest.mark.parametrize(
+    "target,method,bulk",
+    [
+        ("Enemy", None, True),
+        ("Enemy", "by_name", True),
+        ("Root/Enemy", "by_path", True),
+        ("Enemy", "by_tag", True),
+        ("Enemies", "by_layer", True),
+        ("-81840", "by_id", False),
+        ("-81840", None, False),
+        ("8_1840", None, True),
+        ("１２", None, True),
+        ("2147483648", None, True),
+    ],
+)
+@pytest.mark.parametrize("answer", ["y\n", "n\n"])
+def test_gameobject_delete_confirms_matching_scope_before_single_dispatch(
+    monkeypatch, target, method, bulk, answer
+):
+    import importlib
+
+    gameobject = importlib.import_module("cli.commands.gameobject")
+    calls = []
+
+    def send(command, params, config):
+        calls.append((command, params))
+        return {"success": True, "data": []}
+
+    monkeypatch.setattr(gameobject, "run_command", send)
+    options = ["--search-method", method] if method else []
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--no-project-context",
+            "--format",
+            "text",
+            "gameobject",
+            "delete",
+            *options,
+            "--",
+            target,
+        ],
+        input=answer,
+    )
+    if bulk:
+        assert "all matching GameObjects" in result.stderr
+        assert "inactive" in result.stderr
+        assert "current editing scope" in result.stderr
+    else:
+        assert "exact instance ID" in result.stderr
+        assert "all matching" not in result.stderr
+    if answer == "y\n":
+        assert result.exit_code == 0, result.output
+        assert len(calls) == 1
+        assert calls[0] == (
+            "manage_gameobject",
+            {"action": "delete", "target": target, **({"searchMethod": method} if method else {})},
+        )
+        assert ("Deleted all matching GameObjects" in result.stdout) is bulk
+    else:
+        assert result.exit_code != 0
+        assert calls == []

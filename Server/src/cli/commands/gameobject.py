@@ -2,6 +2,7 @@
 
 import sys
 import json
+import re
 import click
 from typing import Optional, Tuple, Any
 
@@ -344,7 +345,10 @@ def placement(
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt.")
 @handle_unity_errors
 def delete(target: str, search_method: Optional[str], force: bool):
-    """Delete a GameObject.
+    """Delete all matching GameObjects, including inactive matches.
+
+    Names, paths, tags and layers select all matches in the current editing scope.
+    Use --search-method by_id to delete only the exact instance ID.
 
     \b
     Examples:
@@ -354,7 +358,25 @@ def delete(target: str, search_method: Optional[str], force: bool):
     """
     config = get_config()
 
-    confirm_destructive_action("Delete", "GameObject", target, force)
+    exact_id = search_method == "by_id"
+    if search_method is None:
+        try:
+            instance_id = int(target)
+        except ValueError:
+            exact_id = False
+        else:
+            exact_id = (
+                re.fullmatch(r"[+-]?[0-9]+", target.strip()) is not None
+                and -(2**31) <= instance_id < 2**31
+            )
+    scope = (
+        "GameObject with exact instance ID"
+        if exact_id
+        else (
+            "all matching GameObjects (including inactive matches in the current editing scope) for"
+        )
+    )
+    confirm_destructive_action("Delete", scope, target, force)
 
     params = {
         "action": "delete",
@@ -367,7 +389,12 @@ def delete(target: str, search_method: Optional[str], force: bool):
     result = run_command("manage_gameobject", params, config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
-        print_success(f"Deleted GameObject '{target}'")
+        if exact_id:
+            print_success(f"Deleted GameObject with exact instance ID '{target}'")
+        else:
+            print_success(
+                f"Deleted all matching GameObjects for '{target}' (including inactive matches)"
+            )
 
 
 @gameobject.command("duplicate")

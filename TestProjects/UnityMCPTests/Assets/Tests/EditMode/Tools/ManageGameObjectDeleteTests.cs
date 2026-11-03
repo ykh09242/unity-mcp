@@ -66,6 +66,7 @@ namespace MCPForUnityTests.Editor.Tools
         public void Delete_ByInstanceID_DeletesObject()
         {
             var target = CreateTestObject("DeleteTargetByID");
+            var sameName = CreateTestObject("DeleteTargetByID");
             int instanceID = target.GetInstanceIDCompat();
 
             var p = new JObject
@@ -80,9 +81,9 @@ namespace MCPForUnityTests.Editor.Tools
 
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
 
-            // Verify object is deleted
-            var found = GameObject.Find("DeleteTargetByID");
-            Assert.IsNull(found, "Object should be deleted");
+            Assert.IsTrue(target == null, "Exact target should be destroyed");
+            Assert.IsTrue(sameName != null, "Same-name object must survive exact-ID deletion");
+            Assert.AreEqual(1, ((JArray)resultObj["data"]).Count);
 
             testObjects.Remove(target);
         }
@@ -331,8 +332,10 @@ namespace MCPForUnityTests.Editor.Tools
             };
 
             var result = ManageGameObject.HandleCommand(p);
-            // Capture current behavior for inactive objects
-            Assert.IsNotNull(result, "Should return a result");
+            var resultObj = result as JObject ?? JObject.FromObject(result);
+            Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
+            Assert.IsTrue(target == null, "Inactive target should be destroyed");
+            Assert.AreEqual(1, ((JArray)resultObj["data"]).Count);
 
             testObjects.Remove(target);
         }
@@ -340,10 +343,9 @@ namespace MCPForUnityTests.Editor.Tools
         [Test]
         public void Delete_MultipleObjectsSameName_DeletesCorrectly()
         {
-            // Expected behavior: delete action with by_name finds the FIRST matching object
-            // and deletes only that one. This is consistent with Unity's GameObject.Find behavior.
             var target1 = CreateTestObject("DuplicateName");
             var target2 = CreateTestObject("DuplicateName");
+            target2.SetActive(false);
 
             var p = new JObject
             {
@@ -357,27 +359,9 @@ namespace MCPForUnityTests.Editor.Tools
 
             Assert.IsTrue(resultObj.Value<bool>("success"), resultObj.ToString());
 
-            // Verify deletion occurred - at least one should be deleted
-            bool target1Deleted = target1 == null;
-            bool target2Deleted = target2 == null;
-            Assert.IsTrue(target1Deleted || target2Deleted, "At least one object should be deleted");
-
-            // Count remaining objects with the name to verify behavior
-            int remainingCount = 0;
-            if (!target1Deleted)
-                remainingCount++;
-            if (!target2Deleted)
-                remainingCount++;
-
-            // Document the actual behavior: first match is deleted, second survives
-            // If both are deleted, that's also acceptable (bulk delete mode)
-            Assert.IsTrue(remainingCount <= 1, $"Expected at most 1 remaining, got {remainingCount}");
-
-            // Clean up only survivors from tracking
-            if (!target1Deleted)
-                testObjects.Remove(target1);
-            if (!target2Deleted)
-                testObjects.Remove(target2);
+            Assert.IsTrue(target1 == null, "Active duplicate should be destroyed");
+            Assert.IsTrue(target2 == null, "Inactive duplicate should be destroyed");
+            Assert.AreEqual(2, ((JArray)resultObj["data"]).Count, "Receipt should include both targets");
         }
 
         #endregion

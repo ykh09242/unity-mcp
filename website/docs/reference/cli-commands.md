@@ -1660,7 +1660,7 @@ Create a new GameObject. Examples: unity-mcp gameobject create "MyCube" --primit
 
 ## `unity-mcp gameobject delete`
 
-Delete a GameObject. Examples: unity-mcp gameobject delete "OldObject" unity-mcp gameobject delete --search-method by_id -- -81840 unity-mcp gameobject delete "TempObjects" --search-method by_tag --force
+Delete all matching GameObjects, including inactive matches. Names, paths, tags and layers select all matches in the current editing scope. Use --search-method by_id to delete only the exact instance ID. Examples: unity-mcp gameobject delete "OldObject" unity-mcp gameobject delete --search-method by_id -- -81840 unity-mcp gameobject delete "TempObjects" --search-method by_tag --force
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
