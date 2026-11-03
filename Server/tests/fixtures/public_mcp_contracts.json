@@ -2216,7 +2216,7 @@
         "capture_ui_snapshot": {
           "annotations": {
             "destructiveHint": false,
-            "readOnlyHint": true
+            "readOnlyHint": false
           },
           "inputSchema": {
             "additionalProperties": false,
@@ -27577,7 +27577,7 @@
         "capture_ui_snapshot": {
           "annotations": {
             "destructiveHint": false,
-            "readOnlyHint": true
+            "readOnlyHint": false
           },
           "inputSchema": {
             "additionalProperties": false,
