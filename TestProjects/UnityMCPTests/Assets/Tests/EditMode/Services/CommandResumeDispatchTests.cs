@@ -171,6 +171,33 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void OversizedWrappedResultKeepsOnlyTransportOwnedProofsOnBothTransports()
+        {
+            var binding = Binding();
+            var receipt = journal.Admit(Request("status"), Name, new JObject()).Receipt;
+            receipt["state"] = "completed";
+            JToken nested = new JObject { ["native_arbitration"] = "handler-controlled" };
+            for (int i = 0; i < BoundedResponseJson.MaxDepth - 2; i++)
+                nested = new JArray(nested);
+            var business = new JObject { ["result"] = nested };
+            var response = TransportCommandResponse.FromObject(business).WithAdmission(binding).WithResume(receipt);
+            Assert.AreSame(business, response.BusinessPayload, "The business payload fits on its own.");
+            Check(JObject.Parse(response.ToJson()));
+            Check((JObject)JObject.Parse(TransportCommandResponse.ToWebSocketJson("id", response))["result"]);
+            var unbound = TransportCommandResponse.FromObject(new JObject { ["native_arbitration"] = "handler-controlled", ["payload"] = nested });
+            var raw = JObject.Parse(TransportCommandResponse.ToWebSocketJson("id", unbound));
+            Assert.IsNull(raw.SelectToken("result.native_arbitration"));
+
+            void Check(JObject envelope)
+            {
+                Assert.IsTrue(JToken.DeepEquals(receipt, envelope["command_resume"]));
+                Assert.AreEqual(binding["request_nonce"], envelope.SelectToken("payload.native_arbitration.request_nonce"));
+                Assert.AreEqual("started", (string)envelope.SelectToken("payload.native_arbitration.disposition"));
+                StringAssert.Contains("transport", (string)envelope.SelectToken("payload.payload.error"));
+            }
+        }
+
+        [Test]
         public void LargeOriginalResultIsDeliveredAfterTerminalFenceAndCannotBeReplayed()
         {
             string large = new string('x', CommandResumeJournal.MaxResultBytes + 1);

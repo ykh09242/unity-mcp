@@ -1151,7 +1151,8 @@ namespace MCPForUnityTests.Editor.Services
                         peer.Send(new JObject { ["type"] = "cancel", ["id"] = id });
                     await peer.Barrier();
                     var reply = await peer.Result(id);
-                    StringAssert.Contains(cancel ? "canceled" : "timed out", (string)reply.SelectToken("result.error"));
+                    Assert.AreEqual("unknown", (string)reply.SelectToken("result.command_resume.state"));
+                    StringAssert.Contains(cancel ? "canceled" : "timed out", (string)reply.SelectToken("result.payload.error"));
                 });
                 Assert.IsTrue(wire.Wait(TimeSpan.FromSeconds(5)), "Receive and deadline must progress without an Editor frame.");
                 string barrier = Guid.NewGuid().ToString("D");

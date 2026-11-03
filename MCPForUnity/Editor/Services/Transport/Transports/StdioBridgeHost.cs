@@ -42,6 +42,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         public StdioAuthenticatedSession Session;
         public long DeadlineAtMs;
         public Command ResumeCommand;
+        public Command ResponseBinding;
 
         /// <summary>
         /// Connection that queued this command. Payload equality alone does not prove retry intent.
@@ -1172,6 +1173,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     out string requestNonce
                 );
                 bool optedIn = prelude == ProgressPrelude.Accepted;
+                var responseBinding = new Command
+                {
+                    type = resumeCommand?.type,
+                    arbitration = session.Capabilities.Contains(NativeCommandArbitrator.Capability) ? resumeCommand?.arbitration : null,
+                    resume = resumeCommand?.resume,
+                };
+                var timeoutMessage = $"Command processing timed out after {timeoutMs} ms";
                 long deadlineAtMs = optedIn ? admittedAt + timeoutMs : -1;
                 if (resumeCommand?.resume != null)
                 {
@@ -1194,7 +1202,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     resumeCommand = null;
                 int remainingMs = deadlineAtMs >= 0 ? RemainingUntilMs(deadlineAtMs, _uptime.ElapsedMilliseconds) : timeoutMs;
                 if (remainingMs == 0)
-                    throw new IOException("Stdio command deadline expired");
+                {
+                    await WriteInterruptedAsync(false).ConfigureAwait(false);
+                    return;
+                }
                 commandLifetime = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
                 commandLifetime.CancelAfter(remainingMs);
                 if (resumeCommand != null)
@@ -1207,13 +1218,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     {
                         admission = await admitting.ConfigureAwait(false);
                         resumeCommand.ResumeTicket = admission.Ticket;
+                        commandLifetime.Token.ThrowIfCancellationRequested();
+                    }
+                    catch (OperationCanceledException) when (!connectionLifetime.IsCancellationRequested)
+                    {
+                        await WriteInterruptedAsync(false).ConfigureAwait(false);
+                        return;
                     }
                     finally
                     {
                         stop.Cancel();
                         await disconnect.ConfigureAwait(false);
                     }
-                    commandLifetime.Token.ThrowIfCancellationRequested();
                     if (admission.Ticket == null)
                     {
                         string reply = admission.Response(resumeCommand.arbitration).ToJson();
@@ -1274,6 +1290,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                 Session = session,
                                 DeadlineAtMs = deadlineAtMs >= 0 ? deadlineAtMs : 0,
                                 ResumeCommand = resumeCommand,
+                                ResponseBinding = responseBinding,
                             };
                             commandQueue[commandId] = owned;
                         }
@@ -1302,19 +1319,23 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     responseWait.Cancel();
                     if (completed == pending.Task)
                     {
-                        response = pending.Task.Result;
+                        response = await pending.Task.ConfigureAwait(false);
                         Interlocked.Exchange(ref _consecutiveTimeouts, 0);
                     }
                     else
                     {
                         int timeouts = Interlocked.Increment(ref _consecutiveTimeouts);
                         McpLog.Warn($"Command TCS timed out ({timeouts} consecutive)");
-                        response = SerializeTimedResponse(new { status = "error", error = $"Command processing timed out after {timeoutMs} ms" }, timing);
+                        response = null;
                     }
+                }
+                catch (OperationCanceledException) when (!connectionLifetime.IsCancellationRequested)
+                {
+                    response = null;
                 }
                 catch (Exception ex)
                 {
-                    response = SerializeTimedResponse(new { status = "error", error = ex.Message }, timing);
+                    response = TransportCommandResponse.Interrupted(responseBinding, ex.Message, owned != null || observed != null).ToJson();
                 }
                 finally
                 {
@@ -1326,6 +1347,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 owned?.Progress?.Close();
                 stopProgress.Cancel();
                 await progressPump.ConfigureAwait(false);
+                if (response == null || deadlineAtMs >= 0 && commandLifetime.IsCancellationRequested)
+                {
+                    await WriteInterruptedAsync(owned != null || observed != null).ConfigureAwait(false);
+                    return;
+                }
                 timing?.Start(CommandPhaseTiming.Phase.Serialization);
                 byte[] responseBytes;
                 try
@@ -1345,6 +1371,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 await writer.WriteResultAsync(responseBytes, writeDeadline).ConfigureAwait(false);
                 timing?.Stop(CommandPhaseTiming.Phase.Send);
                 timing?.DeliveryDone(CommandPhaseTiming.Delivery.Sent);
+
+                async Task WriteInterruptedAsync(bool mayHaveStarted)
+                {
+                    connectionLifetime.Token.ThrowIfCancellationRequested();
+                    // The command deadline has expired. Only this small diagnostic gets
+                    // a fresh bounded write, on the same still-connected stream.
+                    using var write = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
+                    write.CancelAfter(FrameIOTimeoutMs);
+                    string json = TransportCommandResponse.Interrupted(responseBinding, timeoutMessage, mayHaveStarted).ToJson();
+                    await writer.WriteResultAsync(System.Text.Encoding.UTF8.GetBytes(json), write.Token).ConfigureAwait(false);
+                    timing?.DeliveryDone(CommandPhaseTiming.Delivery.Sent);
+                }
             }
             finally
             {
@@ -1923,8 +1961,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 catch (OperationCanceledException)
                 {
                     queuedCommand.Progress?.Close();
-                    var timeoutResponse = new { status = "error", error = $"Command processing timed out after {commandTimeoutMs} ms" };
-                    completionSource.TrySetResult(SerializeTimedResponse(timeoutResponse, queuedCommand.Timing));
+                    completionSource.TrySetResult(
+                        TransportCommandResponse
+                            .Interrupted(queuedCommand.ResponseBinding, $"Command processing timed out after {commandTimeoutMs} ms", operation != null)
+                            .ToJson()
+                    );
                 }
                 catch (Exception ex)
                 {

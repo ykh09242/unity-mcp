@@ -176,6 +176,39 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [UnityTest]
+        public IEnumerator NativeTimeoutPreservesBoundUncertainReplyWhileStartedHandlerStillOwnsExecution()
+        {
+            Start();
+            var offered = new JArray(CommandResumeJournal.Capability, NativeCommandArbitrator.Capability);
+            var connect = host.Track(Task.Run(() => StdioBridgeReconnectTests.ConnectProgressPeer(host.Port, host.Token, offered, out _)));
+            yield return Await(connect);
+            var peer = connect.Result;
+            peers.Add(peer);
+            var command = Command(host.Name, true);
+            var invocation = Guid.NewGuid().ToString("N");
+            command["resume"] = new JObject
+            {
+                ["version"] = 1,
+                ["invocation_id"] = invocation,
+                ["editor_session_id"] = CommandResumeState.SessionId,
+                ["deadline_unix_ms"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 1500,
+                ["action"] = "new",
+            };
+            yield return Await(Send(peer, command.ToString(Formatting.None)));
+            yield return Await(entered.Task);
+            var read = Read(peer);
+            yield return Await(read);
+            var result = read.Result;
+            Assert.IsFalse(release.Task.IsCompleted);
+            Assert.AreEqual(invocation, (string)result.SelectToken("command_resume.invocation_id"));
+            Assert.AreEqual("unknown", (string)result.SelectToken("command_resume.state"));
+            Assert.AreEqual(command.SelectToken("arbitration.request_nonce"), result.SelectToken("payload.native_arbitration.request_nonce"));
+            Assert.AreEqual(false, (bool)result.SelectToken("payload.native_arbitration.retryable"));
+            StringAssert.Contains("timed out", (string)result.SelectToken("payload.payload.error"));
+            Assert.AreEqual(1, calls);
+        }
+
+        [UnityTest]
         public IEnumerator HealthyPeersKeepIndependentControlWriteAndDisconnectOwnership()
         {
             Start();

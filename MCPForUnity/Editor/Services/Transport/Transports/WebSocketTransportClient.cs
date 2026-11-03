@@ -1459,7 +1459,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     var response = TransportCommandResponse.FromObject(new { status = "error", error = rejection });
                     if (rejection == "Command queue is full")
                         response.WithAdmission(command.arbitration, true, new NativeAdmissionBlocker("operation_busy", true));
-                    await SendTimedCommandResultAsync(commandId, response.Payload, token, request.Timing).ConfigureAwait(false);
+                    await SendTimedCommandResultAsync(commandId, response, token, request.Timing).ConfigureAwait(false);
                     request.Timing?.DeliveryDone(CommandPhaseTiming.Delivery.Sent);
                 }
                 catch (OperationCanceledException)
@@ -1533,17 +1533,17 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 catch (OperationCanceledException)
                 {
                     token.ThrowIfCancellationRequested();
-                    response = new
-                    {
-                        status = "error",
-                        error = request.CancelRequested
+                    response = TransportCommandResponse.Interrupted(
+                        request.Command,
+                        request.CancelRequested
                             ? $"Command '{request.Command.type}' canceled"
                             : $"Command '{request.Command.type}' timed out after {request.TimeoutSeconds} seconds",
-                    };
+                        operation != null
+                    );
                 }
                 catch (Exception ex)
                 {
-                    response = new { status = "error", error = ex.Message };
+                    response = TransportCommandResponse.Interrupted(request.Command, ex.Message, operation != null);
                 }
                 finally
                 {
@@ -1566,7 +1566,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         command.ResumeTicket = admitted.Ticket;
                         request.Deadline.Token.ThrowIfCancellationRequested();
                         if (admitted.Ticket == null)
-                            return admitted.Response(command.arbitration).Payload;
+                            return admitted.Response(command.arbitration);
                         admitted.Ticket.Owner.BindCancellation(admitted.Ticket, () => request.Owner.TryCancel(request.Id));
                     }
                     await ConnectionCommandWork.WaitAsync(previous, request.Deadline.Token).ConfigureAwait(false);
@@ -1588,7 +1588,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         request.RequestCancellation
                     );
                     request.Response = operation.Response;
-                    return (await operation.Response.ConfigureAwait(false)).Payload;
+                    return await operation.Response.ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException)
@@ -1764,33 +1764,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             token.ThrowIfCancellationRequested();
             timing?.Start(CommandPhaseTiming.Phase.Serialization);
-            LargeResultWriter.PreparedJson responseJson;
-            try
-            {
-                responseJson = new LargeResultWriter.PreparedJson(
-                    BoundedResponseJson.Serialize(
-                        new
-                        {
-                            type = "command_result",
-                            id,
-                            result,
-                        }
-                    )
-                );
-            }
-            catch (ResponseLimitException)
-            {
-                responseJson = new LargeResultWriter.PreparedJson(
-                    BoundedResponseJson.Serialize(
-                        new
-                        {
-                            type = "command_result",
-                            id,
-                            result = new { status = "error", error = "Command result exceeds the transport size limit" },
-                        }
-                    )
-                );
-            }
+            var responseJson = new LargeResultWriter.PreparedJson(TransportCommandResponse.ToWebSocketJson(id, result));
             bool negotiated;
             bool compressionNegotiated;
             lock (_ownershipLock)

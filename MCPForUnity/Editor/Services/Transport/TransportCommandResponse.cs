@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -14,13 +15,12 @@ namespace MCPForUnity.Editor.Services.Transport
         private JObject admission;
         private JObject resume;
         internal JToken BusinessPayload => payload as JToken;
-        public object Payload
+        public object Payload => Wrap(payload);
+
+        private object Wrap(object business)
         {
-            get
-            {
-                object inner = admission == null ? payload : new { native_arbitration = admission, payload };
-                return resume == null ? inner : new { command_resume = resume, payload = inner };
-            }
+            object inner = admission == null ? business : new { native_arbitration = admission, payload = business };
+            return resume == null ? inner : new { command_resume = resume, payload = inner };
         }
 
         internal TransportCommandResponse WithResume(JObject receipt)
@@ -76,16 +76,89 @@ namespace MCPForUnity.Editor.Services.Transport
             && request["instance_generation"]?.Type == JTokenType.String
             && request.Value<string>("instance_generation") == NativeCommandArbitrator.Shared.Generation;
 
-        public string ToJson()
+        public string ToJson() => Serialize(null);
+
+        internal static string ToWebSocketJson(string id, object result) =>
+            (result as TransportCommandResponse ?? new TransportCommandResponse(result)).Serialize(id);
+
+        private string Serialize(string id)
         {
+            object Wire(object business)
+            {
+                var result = Wrap(business);
+                return id == null
+                    ? result
+                    : new
+                    {
+                        type = "command_result",
+                        id,
+                        result,
+                    };
+            }
             try
             {
-                return BoundedResponseJson.Serialize(Payload);
+                return BoundedResponseJson.Serialize(Wire(payload));
             }
             catch (ResponseLimitException)
             {
-                return BoundedResponseJson.Serialize(LimitPayload());
+                // Only replace the business result. These proofs were established by the
+                // transport, and cannot be reconstructed from a handler's JSON.
+                return BoundedResponseJson.Serialize(
+                    Wire(id == null ? LimitPayload() : new { status = "error", error = "Command result exceeds the transport size limit" })
+                );
             }
+        }
+
+        internal static TransportCommandResponse Interrupted(Command command, string detail, bool mayHaveStarted)
+        {
+            var bound = IsBoundRequest(command?.arbitration);
+            var request = command?.resume;
+            string invocation = request?["invocation_id"]?.Type == JTokenType.String ? (string)request["invocation_id"] : null;
+            bool resumeBound =
+                CommandResumeJournal.IsIdentity(invocation)
+                && request?["version"]?.Type == JTokenType.Integer
+                && request["version"].ToString(Formatting.None) == "1"
+                && request["editor_session_id"]?.Type == JTokenType.String
+                && (string)request["editor_session_id"] == CommandResumeState.SessionId;
+            // An earlier attempt of a resumable invocation may have run even if this
+            // transport did not dispatch. Never certify its completion or permit replay.
+            bool unknown = mayHaveStarted || resumeBound;
+            if (detail?.Length > 512)
+                detail = detail.Substring(0, 512);
+            if (unknown && (bound || resumeBound))
+                detail += ". The command outcome is unknown. Inspect the target state before retrying.";
+            var error = new JObject { ["status"] = "error", ["error"] = detail };
+            if (unknown && bound && !resumeBound)
+            {
+                // An ordinary business failure passes through both legacy result adapters.
+                error = new JObject
+                {
+                    ["status"] = "success",
+                    ["result"] = new JObject
+                    {
+                        ["success"] = false,
+                        ["error"] = detail,
+                        ["hint"] = "inspect_state_before_retry",
+                        ["data"] = new JObject { ["reason"] = "outcome_unknown" },
+                    },
+                };
+            }
+            var response = new TransportCommandResponse(error).WithAdmission(
+                command?.arbitration,
+                !unknown,
+                new NativeAdmissionBlocker("command_interrupted", false)
+            );
+            if (resumeBound)
+                response.WithResume(
+                    new JObject
+                    {
+                        ["version"] = 1,
+                        ["invocation_id"] = invocation,
+                        ["editor_session_id"] = CommandResumeState.SessionId,
+                        ["state"] = "unknown",
+                    }
+                );
+            return response;
         }
 
         private static object LimitPayload() => new { status = "error", error = "Command result exceeds the transport size or complexity limit" };
