@@ -116,6 +116,10 @@ class CommandResumeInvocation:
 
     def dispatch(self) -> None:
         self.dispatched = True
+        if self.state == "queued" and self.action in {"new", "resume"}:
+            # This write can start the handler. The previous attempt's queued
+            # proof no longer describes the outcome until the peer answers.
+            self.state = None
 
     def cancel(self) -> None:
         self.cancelled.set()

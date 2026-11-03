@@ -2030,10 +2030,29 @@ def send_command_with_retry(
                     resume_owner.instance_id or instance_id, resume_owner
                 )
                 expected_generation = None
+    except TimeoutError:
+        if resume_owner.invocation is None:
+            raise
+        return _stdio_deadline_response(command_type, resume_owner.invocation)
     finally:
         if _progress is not None:
             with contextlib.suppress(Exception):
                 _progress.close()
+
+
+def _stdio_deadline_response(command: str, resume: CommandResumeInvocation | None) -> MCPResponse:
+    if resume is not None and resume.dispatched and resume.state != "queued":
+        return MCPResponse(
+            success=False,
+            error="Unity command deadline expired while observing its original invocation",
+            hint="inspect_state_before_retry",
+            data={"reason": "outcome_unknown", "command": command},
+        )
+    return MCPResponse(
+        success=False,
+        error="Unity command deadline expired before dispatch",
+        data={"reason": "command_deadline_exceeded", "dispatch": "not_dispatched"},
+    )
 
 
 def _command_deadline(command_type: str, params: dict[str, Any]) -> float | None:
@@ -2477,19 +2496,7 @@ async def _async_send_command_response(
             await _cancel_stdio_resume(connection, resume_owner, command_type, params)
         raise
     except TimeoutError:
-        resume = resume_owner.invocation
-        if resume is not None and resume.dispatched and resume.state != "queued":
-            return MCPResponse(
-                success=False,
-                error="Unity command deadline expired while observing its original invocation",
-                hint="inspect_state_before_retry",
-                data={"reason": "outcome_unknown", "command": command_type},
-            )
-        return MCPResponse(
-            success=False,
-            error="Unity command deadline expired before dispatch",
-            data={"reason": "command_deadline_exceeded", "dispatch": "not_dispatched"},
-        )
+        return _stdio_deadline_response(command_type, resume_owner.invocation)
     except Exception as error:
         return MCPResponse(success=False, error=str(error))
 
@@ -2771,6 +2778,8 @@ async def _async_send_command_attempt(
     except (NativeNotStarted, CommandResumeInterrupted):
         raise
     except Exception as e:
+        if isinstance(e, TimeoutError) and _resume_owner is not None and _resume_owner.invocation:
+            raise
         return MCPResponse(success=False, error=str(e))
     finally:
         if _progress is not None:

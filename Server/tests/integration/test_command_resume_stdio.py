@@ -41,6 +41,7 @@ def send_frame(peer, value):
 
 
 def result(command, state, value):
+    waiting = state in {"queued", "executing"}
     return {
         "command_resume": {
             "version": 1,
@@ -51,8 +52,9 @@ def result(command, state, value):
         "payload": {
             "native_arbitration": {
                 **command["arbitration"],
-                "disposition": "started",
-                "retryable": False,
+                "disposition": "not_started" if waiting else "started",
+                "retryable": waiting,
+                **({"reason": "operation_busy"} if waiting else {}),
             },
             "payload": value
             if value.get("status") == "error"
@@ -123,6 +125,16 @@ def resume_peer(mode="completed", reloads=1, *, origin=False):
                     send_frame(
                         peer, result(command, "canceled", {"success": False, "error": "canceled"})
                     )
+                elif mode in {"queued_then_offline", "applied_then_offline"}:
+                    send_frame(
+                        peer,
+                        result(
+                            command, "queued", {"status": "error", "code": "command_resume_queued"}
+                        ),
+                    )
+                    if mode == "applied_then_offline":
+                        commands.append(read_frame(peer))
+                        started.set()  # The mutation is applied but its reply is lost.
                 elif attempt >= reloads:
                     value = {"success": True, "data": {"applied": 1, "receipt": "original"}}
                     if mode == "unknown":
@@ -190,6 +202,41 @@ def configure(monkeypatch, port, reconnect_failures=0):
     monkeypatch.setattr(uc, "get_unity_connection", select)
     monkeypatch.setattr(uc, "read_status_file", lambda *_: None)
     return connection
+
+
+@pytest.mark.parametrize("asynchronous", [True, False])
+@pytest.mark.parametrize("applied", [True, False])
+@pytest.mark.asyncio
+async def test_deadline_after_queued_proof_uses_latest_wire_attempt(
+    monkeypatch, asynchronous, applied
+):
+    mode = "applied_then_offline" if applied else "queued_then_offline"
+    with resume_peer(mode, reloads=0) as (port, commands, mutation, _):
+        connection = configure(monkeypatch, port, reconnect_failures=1000)
+        monkeypatch.setattr(config, "command_total_timeout", 1.0)
+        try:
+            args = ("manage_scene", {"action": "save"})
+            if asynchronous:
+                response = await uc.async_send_command_with_retry(
+                    *args, instance_id=connection.instance_id
+                )
+            else:
+                response = uc.send_command_with_retry(*args, instance_id=connection.instance_id)
+            assert mutation.is_set() is applied
+            if applied:
+                assert len(commands) == 2
+                assert commands[1]["resume"] == {**commands[0]["resume"], "action": "resume"}
+                assert commands[1]["params"] == commands[0]["params"]
+                assert response.data["reason"] == "outcome_unknown"
+                assert response.hint == "inspect_state_before_retry"
+            else:
+                assert len(commands) == 1
+                assert response.data == {
+                    "reason": "command_deadline_exceeded",
+                    "dispatch": "not_dispatched",
+                }
+        finally:
+            connection.disconnect()
 
 
 @pytest.mark.asyncio
