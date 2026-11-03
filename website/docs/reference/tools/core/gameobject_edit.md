@@ -1,7 +1,7 @@
 ---
 title: gameobject_edit
 sidebar_label: gameobject_edit
-description: "Modify or delete an existing GameObject and its components."
+description: "Modify a GameObject or delete all selector matches, including inactive objects, in the active scene or current prefab stage."
 ---
 
 # `gameobject_edit`
@@ -14,7 +14,7 @@ description: "Modify or delete an existing GameObject and its components."
 
 ## Description
 
-Modify or delete an existing GameObject and its components.
+Modify a GameObject or delete all selector matches, including inactive objects, in the active scene or current prefab stage. Use by_id with a current instance ID to delete one object.
 
 ## Parameters
 
@@ -22,7 +22,7 @@ Modify or delete an existing GameObject and its components.
 |------|------|----------|-------------|
 | `action` | `Literal['modify', 'delete']` | yes | Feature action to perform. |
 | `target` | `str \| None` | — | GameObject identifier by name, path, or instance ID for modify/delete/duplicate actions |
-| `search_method` | `Literal['by_id', 'by_name', 'by_path', 'by_tag', 'by_layer', 'by_component'] \| None` | — | How to resolve 'target'. If omitted, Unity infers: instance ID -> by_id, path (contains '/') -> by_path, otherwise by_name. |
+| `search_method` | `Literal['by_id', 'by_name', 'by_path', 'by_tag', 'by_layer', 'by_component'] \| None` | — | How to resolve 'target'. If omitted, Unity infers: instance ID -> by_id, path (contains '/') -> by_path, otherwise by_name. Delete removes all matches, including inactive objects; use by_id with a current instance ID to delete one object. |
 | `name` | `str \| None` | — | GameObject name for 'create' (initial name) and 'modify' (rename) actions. |
 | `tag` | `str \| None` | — | Tag name - used for both 'create' (initial tag) and 'modify' (change tag) |
 | `parent` | `str \| None` | — | Parent GameObject reference - used for both 'create' (initial parent) and 'modify' (change parent) |
@@ -49,6 +49,18 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+Delete one specific object by its instance ID (obtain it from a current search):
+
+```json
+{"action":"delete","target":"12345","search_method":"by_id"}
+```
+
+Name, path, tag, layer, and component selectors can match multiple objects. Delete removes all matches in the active scene or current prefab stage, including inactive objects. For example, this intentionally deletes every object named `Crate` in that scope:
+
+```json
+{"action":"delete","target":"Crate","search_method":"by_name"}
+```
+
+The legacy `manage_gameobject` delete action has the same bulk selection behavior. Use `by_id` when only one object should be deleted. Instance IDs are session-local; search again after an Editor restart.
 <!-- examples:end -->
 

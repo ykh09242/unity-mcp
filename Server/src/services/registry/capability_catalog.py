@@ -475,7 +475,11 @@ CAPABILITY_DESCRIPTIONS = {
     "manage_cinemachine": "Configure Cinemachine brains, tracking, extensions and camera blends.",
     "capture_camera": "Capture Game or Scene views, including surround and orbit batches.",
     "gameobject_create": "Create a GameObject with transform, components and optional prefab output.",
-    "gameobject_edit": "Modify or delete an existing GameObject and its components.",
+    "gameobject_edit": (
+        "Modify a GameObject or delete all selector matches, including inactive objects, "
+        "in the active scene or current prefab stage. Use by_id with a current instance ID "
+        "to delete one object."
+    ),
     "gameobject_duplicate": "Duplicate a GameObject with optional name, parent and position changes.",
     "gameobject_positioning": (
         "Move or orient a GameObject selected by target (or name). move_relative requires "

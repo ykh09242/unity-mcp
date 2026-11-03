@@ -180,7 +180,8 @@ async def manage_gameobject(
     search_method: Annotated[
         Literal["by_id", "by_name", "by_path", "by_tag", "by_layer", "by_component"],
         "How to resolve 'target'. If omitted, Unity infers: instance ID -> by_id, "
-        "path (contains '/') -> by_path, otherwise by_name.",
+        "path (contains '/') -> by_path, otherwise by_name. Delete removes all matches, "
+        "including inactive objects; use by_id with a current instance ID to delete one object.",
     ]
     | None = None,
     name: Annotated[

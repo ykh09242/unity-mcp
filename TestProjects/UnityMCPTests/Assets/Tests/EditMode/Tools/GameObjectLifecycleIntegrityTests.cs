@@ -178,6 +178,99 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(1, restored.Count(go => !go.activeSelf));
         }
 
+        [Test]
+        public void DeleteByComponent_OnlyActiveSceneAndUndoRestoresInactive()
+        {
+            var active = Owned("ComponentActive");
+            active.AddComponent<BoxCollider>();
+            active.AddComponent<BoxCollider>();
+            var inactive = Owned("ComponentInactive");
+            inactive.AddComponent<BoxCollider>();
+            inactive.SetActive(false);
+            secondaryScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            var other = new GameObject(prefix + "OtherScene");
+            SceneManager.MoveGameObjectToScene(other, secondaryScene);
+            other.AddComponent<BoxCollider>();
+            SceneManager.SetActiveScene(ownedScene);
+            var result = Call(
+                new JObject
+                {
+                    ["action"] = "delete",
+                    ["target"] = "BoxCollider",
+                    ["searchMethod"] = "by_component",
+                }
+            );
+            Succeeded(result);
+            Assert.AreEqual(2, ((JArray)result["data"]).Count);
+            Assert.IsTrue(active == null && inactive == null);
+            Assert.IsTrue(other != null);
+            Undo.PerformUndo();
+            Assert.AreEqual(2, Objects().Count(go => go.name == prefix + "ComponentActive" || go.name == prefix + "ComponentInactive"));
+            Assert.IsFalse(Objects().Single(go => go.name == prefix + "ComponentInactive").activeSelf);
+        }
+
+        [Test]
+        public void DeleteByComponent_UsesPrefabStageScope()
+        {
+            CreateAssetRoot();
+            var root = Owned("StageRoot");
+            var child = Owned("StageChild");
+            child.transform.SetParent(root.transform);
+            child.AddComponent<BoxCollider>();
+            child.SetActive(false);
+            string path = assetRoot + "/Stage.prefab";
+            Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(root, path));
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/StageScene.unity"));
+            var stage = PrefabStageUtility.OpenPrefab(path);
+            Assert.IsNotNull(stage);
+            try
+            {
+                var stageChild = stage.prefabContentsRoot.transform.GetChild(0).gameObject;
+                Succeeded(
+                    Call(
+                        new JObject
+                        {
+                            ["action"] = "delete",
+                            ["target"] = "BoxCollider",
+                            ["searchMethod"] = "by_component",
+                        }
+                    )
+                );
+                Assert.IsTrue(stageChild == null);
+                Assert.IsTrue(child != null);
+                Undo.PerformUndo();
+                Assert.AreEqual(1, stage.prefabContentsRoot.transform.childCount);
+                Assert.IsFalse(stage.prefabContentsRoot.transform.GetChild(0).gameObject.activeSelf);
+            }
+            finally
+            {
+                stage.ClearDirtiness();
+                StageUtility.GoToMainStage();
+            }
+        }
+
+        [Test]
+        public void DeleteById_SelectsOnlyOneOfDuplicateNames()
+        {
+            var active = Owned("SameName");
+            var inactive = Owned("SameName");
+            inactive.SetActive(false);
+            Succeeded(
+                Call(
+                    new JObject
+                    {
+                        ["action"] = "delete",
+                        ["target"] = active.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                    }
+                )
+            );
+            Assert.IsTrue(active == null);
+            Assert.IsTrue(inactive != null);
+            Undo.PerformUndo();
+            Assert.AreEqual(2, Objects().Count(go => go.name == prefix + "SameName"));
+        }
+
         private JObject Create(string name = null) => new JObject { ["action"] = "create", ["name"] = name ?? prefix + "Created" };
 
         private JObject Duplicate(GameObject source) =>

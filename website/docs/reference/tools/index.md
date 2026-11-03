@@ -55,7 +55,7 @@ Essential scene, script, asset, editor & view recording tools (always on by defa
 - **[`find_gameobjects`](./core/find_gameobjects.md)** — Search GameObjects by name, tag, layer, component, path or ID; returns IDs only. scene_scope=legacy (default) preserves method-dependent scene selection and numeric offsets. active uses SceneManager's reported active scene; all_loaded co…
 - **[`find_in_file`](./core/find_in_file.md)** — Searches a C# script with a regex pattern and returns line numbers and excerpts.
 - **[`gameobject_create`](./core/gameobject_create.md)** — Create a GameObject with transform, components and optional prefab output.
-- **[`gameobject_edit`](./core/gameobject_edit.md)** — Modify or delete an existing GameObject and its components.
+- **[`gameobject_edit`](./core/gameobject_edit.md)** — Modify a GameObject or delete all selector matches, including inactive objects, in the active scene or current prefab stage.
 - **[`get_compile_job`](./core/get_compile_job.md)** — Read compilation status, bounded diagnostics and the last successful compile by compile_id.
 - **[`get_sha`](./core/get_sha.md)** — Get SHA256 and basic metadata for a Unity C# script without returning file contents.
 - **[`manage_addressables`](./core/manage_addressables.md)** — Inspect existing optional Addressables settings (groups, explicit entries and raw profiles), run bounded preflight for duplicate addresses/missing references/profile issues, or analyze an existing native build-layout report for duplicate…

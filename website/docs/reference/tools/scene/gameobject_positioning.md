@@ -22,7 +22,7 @@ Move or orient a GameObject selected by target (or name). move_relative requires
 |------|------|----------|-------------|
 | `action` | `Literal['move_relative', 'look_at']` | yes | Feature action to perform. |
 | `target` | `str \| None` | — | GameObject identifier by name, path, or instance ID for modify/delete/duplicate actions |
-| `search_method` | `Literal['by_id', 'by_name', 'by_path', 'by_tag', 'by_layer', 'by_component'] \| None` | — | How to resolve 'target'. If omitted, Unity infers: instance ID -> by_id, path (contains '/') -> by_path, otherwise by_name. |
+| `search_method` | `Literal['by_id', 'by_name', 'by_path', 'by_tag', 'by_layer', 'by_component'] \| None` | — | How to resolve 'target'. If omitted, Unity infers: instance ID -> by_id, path (contains '/') -> by_path, otherwise by_name. Delete removes all matches, including inactive objects; use by_id with a current instance ID to delete one object. |
 | `name` | `str \| None` | — | GameObject name for 'create' (initial name) and 'modify' (rename) actions. |
 | `offset` | `list[float] \| str \| None` | — | Offset from original/reference position as [x, y, z] array (list or JSON string) |
 | `reference_object` | `str \| None` | — | Reference object for relative movement (required for move_relative) |

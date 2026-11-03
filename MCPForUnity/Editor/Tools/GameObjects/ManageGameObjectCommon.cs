@@ -231,16 +231,10 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     Type componentType = FindType(searchTerm);
                     if (componentType != null)
                     {
-                        IEnumerable<GameObject> searchPoolComp;
-                        if (rootSearchObject)
-                        {
-                            searchPoolComp = rootSearchObject.GetComponentsInChildren(componentType, searchInactive).Select(c => (c as Component).gameObject);
-                        }
-                        else
-                        {
-                            searchPoolComp = UnityFindObjectsCompat.FindAll(componentType, searchInactive).Cast<Component>().Select(c => c.gameObject);
-                        }
-                        AddMatches(results, searchPoolComp.Where(go => go != null), findAll);
+                        var searchPoolComp = rootSearchObject
+                            ? rootSearchObject.GetComponentsInChildren<Transform>(searchInactive).Select(t => t.gameObject)
+                            : GetAllSceneObjects(searchInactive);
+                        AddMatches(results, searchPoolComp.Where(go => go.GetComponent(componentType) != null), findAll);
                     }
                     else
                     {
