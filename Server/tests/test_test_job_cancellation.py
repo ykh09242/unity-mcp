@@ -17,7 +17,16 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_sdk_cancel_preserves_pending_native_state_without_ordinary_preflight(monkeypatch):
+@pytest.mark.parametrize(
+    "status,control",
+    [
+        ("running", {"request_state": "accepted", "termination": "cleanup_pending"}),
+        ("cancelled", None),
+    ],
+)
+async def test_sdk_cancel_preserves_native_state_without_ordinary_preflight(
+    monkeypatch, status, control
+):
     module = importlib.import_module("services.tools.cancel_test_job")
     monkeypatch.setattr(
         module, "get_unity_instance_from_context", AsyncMock(return_value="Game@owned")
@@ -26,8 +35,8 @@ async def test_sdk_cancel_preserves_pending_native_state_without_ordinary_prefli
         "success": True,
         "data": {
             "job_id": "a" * 32,
-            "status": "running",
-            "native_control": {"request_state": "accepted", "termination": "cleanup_pending"},
+            "status": status,
+            "native_control": control,
         },
     }
     send = AsyncMock(return_value=payload)
@@ -40,6 +49,19 @@ async def test_sdk_cancel_preserves_pending_native_state_without_ordinary_prefli
     assert value["data"] == payload["data"]
     assert send.call_args.args[1:4] == ("Game@owned", "cancel_test_job", {"job_id": "a" * 32})
     send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_running_cancel_reply_requires_native_control(monkeypatch):
+    module = importlib.import_module("services.tools.cancel_test_job")
+    monkeypatch.setattr(module, "get_unity_instance_from_context", AsyncMock(return_value="owned"))
+    reply = {
+        "success": True,
+        "data": {"job_id": "a" * 32, "status": "running", "native_control": None},
+    }
+    monkeypatch.setattr(module, "send_with_unity_instance", AsyncMock(return_value=reply))
+    result = await module.cancel_test_job(None, "a" * 32)
+    assert result.success is False
 
 
 @pytest.mark.asyncio

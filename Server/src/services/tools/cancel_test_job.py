@@ -1,10 +1,10 @@
 """Explicit native cancellation intent; a receipt is not completed termination."""
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from models import MCPResponse
 from services.registry import mcp_for_unity_tool
@@ -16,7 +16,13 @@ from transport.unity_transport import send_with_unity_instance
 class CancelTestJobData(BaseModel):
     job_id: str = Field(max_length=256)
     status: str = Field(max_length=64)
-    native_control: dict[str, Any]
+    native_control: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def require_native_control_after_start(self) -> Self:
+        if self.native_control is None and self.status != "cancelled":
+            raise ValueError("Only a cancelled job may return without native control")
+        return self
 
 
 class CancelTestJobResponse(MCPResponse):
@@ -25,7 +31,7 @@ class CancelTestJobResponse(MCPResponse):
 
 @mcp_for_unity_tool(
     group="testing",
-    description="Request cancellation of an owned native test job. Acceptance is intent; poll native_control for confirmed framework scheduler termination after task-cleanup attempts. User iterator finally, NUnit TearDown and UnityTearDown are not guaranteed. Unsupported versions reject without cancellation.",
+    description="Request cancellation of an owned native test job. A queued job cancelled before native execution can return status=cancelled with null native_control. For a started job, poll native_control for confirmed framework scheduler termination after task-cleanup attempts. User iterator finally, NUnit TearDown and UnityTearDown are not guaranteed. Cancelling a started job requires native control support.",
     annotations=ToolAnnotations(
         title="Cancel Test Job",
         readOnlyHint=False,

@@ -14,7 +14,7 @@ description: "Request cancellation of an owned native test job."
 
 ## Description
 
-Request cancellation of an owned native test job. Acceptance is intent; poll native_control for confirmed framework scheduler termination after task-cleanup attempts. User iterator finally, NUnit TearDown and UnityTearDown are not guaranteed. Unsupported versions reject without cancellation.
+Request cancellation of an owned native test job. A queued job cancelled before native execution can return status=cancelled with null native_control. For a started job, poll native_control for confirmed framework scheduler termination after task-cleanup attempts. User iterator finally, NUnit TearDown and UnityTearDown are not guaranteed. Cancelling a started job requires native control support.
 
 ## Parameters
 

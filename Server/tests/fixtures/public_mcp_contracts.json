@@ -1775,8 +1775,16 @@
                         "type": "string"
                       },
                       "native_control": {
-                        "additionalProperties": true,
-                        "type": "object"
+                        "anyOf": [
+                          {
+                            "additionalProperties": true,
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
                       },
                       "status": {
                         "maxLength": 64,
@@ -1785,8 +1793,7 @@
                     },
                     "required": [
                       "job_id",
-                      "status",
-                      "native_control"
+                      "status"
                     ],
                     "type": "object"
                   },
@@ -27129,8 +27136,16 @@
                         "type": "string"
                       },
                       "native_control": {
-                        "additionalProperties": true,
-                        "type": "object"
+                        "anyOf": [
+                          {
+                            "additionalProperties": true,
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null
                       },
                       "status": {
                         "maxLength": 64,
@@ -27139,8 +27154,7 @@
                     },
                     "required": [
                       "job_id",
-                      "status",
-                      "native_control"
+                      "status"
                     ],
                     "type": "object"
                   },
