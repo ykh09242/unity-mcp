@@ -232,6 +232,20 @@ def test_allowlist_exclusion_and_links(tmp_path):
         source.read("data/linked.json")
 
 
+@pytest.mark.parametrize("extra", ["data[1].json", "notes[1].txt"])
+def test_discovered_filenames_are_literals_not_patterns(tmp_path, extra):
+    (tmp_path / "a.json").write_text("{}")
+    (tmp_path / extra).write_text('{"value": 1}')
+    source = ExternalSource({"root": str(tmp_path), "include": ["*.json"]})
+
+    assert list(source.files()) == (["a.json", extra] if extra.endswith(".json") else ["a.json"])
+    if extra.endswith(".json"):
+        assert source.read(extra).text == '{"value": 1}'
+        assert source.stamp(extra)
+    with pytest.raises(ValueError, match="Patterns support"):
+        ExternalSource({"root": str(tmp_path), "include": ["data[1].json"]})
+
+
 def test_hardlinks_rejected_and_no_new_files_or_handles_retained(tmp_path):
     root = tmp_path / "external"
     root.mkdir()

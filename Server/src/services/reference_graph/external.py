@@ -36,8 +36,6 @@ def _relative(path: str, *, pattern: bool = False) -> tuple[str, ...]:
     parts = tuple(path.split("/"))
     if any(part in ("", ".", "..") or part.startswith(".") for part in parts):
         raise ValueError("Hidden or escaping paths are not admitted")
-    if not pattern and any(char in path for char in "*?[]"):
-        raise ValueError("File paths cannot contain patterns")
     if pattern and any(char in path for char in "[]"):
         raise ValueError("Patterns support *, ** and ?")
     return parts
