@@ -33,11 +33,12 @@ from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket
 
 from tools.tests.fixtures.transport_bench.peer import PeerState, TcpPeer, serve_websocket
-from tools.tests.fixtures.transport_bench.workload import INSTANCE
+from tools.tests.fixtures.transport_bench.workload import INSTANCE, PROJECT_HASH
 from tools.tests.fixtures.transport_bench.accounting import Accounting
 from tools.tests.fixtures.transport_bench.resource import ResourceContract, ResourceHold
 from main import UnityMCP
 from core.config import config
+from models.models import UnityInstanceInfo
 from transport.legacy.unity_connection import UnityConnection
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
@@ -229,6 +230,17 @@ async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
                         auth_token_provider=lambda _generation: os.environ["BENCH_AUTH"],
                         allow_legacy_auth=False,
                     )
+                    # Older benchmark baselines predate project-bound stdio connections.
+                    if hasattr(connection, "selected_target"):
+                        connection.selected_target = UnityInstanceInfo(
+                            id=INSTANCE,
+                            name="OwnedBench",
+                            path=str(Path(args.directory) / "OwnedBench" / "Assets"),
+                            hash=PROJECT_HASH,
+                            port=tcp.server_address[1],
+                            status="running",
+                            listener_generation=state.server_generation,
+                        )
                     connection.queue_path = Path(args.directory) / "queue.jsonl"
                     console.async_send_command_with_retry = send
                     jobs.async_send_command_with_retry = send
