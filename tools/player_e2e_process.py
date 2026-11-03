@@ -168,7 +168,9 @@ def execute(invocation: Invocation) -> dict:
                         and invocation.cancel_on_progress
                         and not cancelled
                     ):
-                        progress_path.with_name("cancel").write_text("cancel\n", encoding="utf-8")
+                        from cli.utils.play_scenario_player import _publish_cancellation
+
+                        _publish_cancellation(progress_path.parent, request["job_id"])
                         cancelled = True
                         deadline = min(deadline, time.monotonic() + 20)
                 except FileNotFoundError:
