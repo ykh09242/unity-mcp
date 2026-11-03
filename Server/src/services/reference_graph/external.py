@@ -43,21 +43,77 @@ def _relative(path: str, *, pattern: bool = False) -> tuple[str, ...]:
     return parts
 
 
-def _pattern(value: str) -> re.Pattern:
-    _relative(value, pattern=True)
-    output, offset = [], 0
-    while offset < len(value):
-        if value.startswith("**/", offset):
-            output.append("(?:.*/)?")
-            offset += 3
-        elif value.startswith("**", offset):
-            output.append(".*")
-            offset += 2
-        else:
-            char = value[offset]
-            output.append("[^/]*" if char == "*" else "[^/]" if char == "?" else re.escape(char))
-            offset += 1
-    return re.compile("".join(output) + r"\Z")
+class _Pattern:
+    """A small NFA for the source glob language, without regex backtracking."""
+
+    def __init__(self, value: str):
+        _relative(value, pattern=True)
+        self.tokens = []
+        offset = 0
+        while offset < len(value):
+            if value.startswith("**/", offset):
+                self.tokens.extend(("globdir", "globdir_body"))
+                offset += 3
+            elif value.startswith("**", offset):
+                self.tokens.append("globstar")
+                offset += 2
+            elif value[offset] == "*":
+                self.tokens.append("star")
+                offset += 1
+            elif value[offset] == "?":
+                self.tokens.append("question")
+                offset += 1
+            else:
+                self.tokens.append(("literal", value[offset]))
+                offset += 1
+
+    def _closure(self, states: set[int]) -> set[int]:
+        pending = list(states)
+        while pending:
+            state = pending.pop()
+            if state == len(self.tokens):
+                continue
+            token = self.tokens[state]
+            target = state + 2 if token == "globdir" else state + 1
+            if token in ("globdir", "globstar", "star") and target not in states:
+                states.add(target)
+                pending.append(target)
+        return states
+
+    def _states(self, value: str) -> set[int]:
+        states = self._closure({0})
+        for char in value:
+            next_states = set()
+            for state in states:
+                if state == len(self.tokens):
+                    continue
+                token = self.tokens[state]
+                if token == "globdir" and char != "\n":
+                    next_states.add(state + 1)
+                    if char == "/":
+                        next_states.add(state + 2)
+                elif token == "globdir_body" and char != "\n":
+                    next_states.add(state)
+                    if char == "/":
+                        next_states.add(state + 1)
+                elif (token == "globstar" and char != "\n") or (token == "star" and char != "/"):
+                    next_states.add(state)
+                elif token == "question" and char != "/" or token == ("literal", char):
+                    next_states.add(state + 1)
+            states = self._closure(next_states)
+            if not states:
+                break
+        return states
+
+    def fullmatch(self, value: str) -> bool:
+        return len(self.tokens) in self._states(value)
+
+    def could_descend(self, directory: str) -> bool:
+        return bool(self._states(directory + "/"))
+
+
+def _pattern(value: str) -> _Pattern:
+    return _Pattern(value)
 
 
 def validate_mappings(mappings: object) -> list[dict]:
@@ -109,7 +165,6 @@ class ExternalSource:
         self.root = check_owned_path(Path(root))
         self.budget = budget or CollectionBudget(CollectionLimits.from_environment())
         self.include = self._patterns(config.get("include"))
-        self.include_paths = tuple(config["include"])
         self.exclude = self._patterns(config.get("exclude", []), allow_empty=True)
         self.exclude.extend(_pattern(pattern) for pattern in (exclude or []))
         self.respect_gitignore = respect_gitignore
@@ -268,7 +323,7 @@ class ExternalSource:
         }
 
     @staticmethod
-    def _patterns(values: object, *, allow_empty: bool = False) -> list[re.Pattern]:
+    def _patterns(values: object, *, allow_empty: bool = False) -> list[_Pattern]:
         if (
             not isinstance(values, list)
             or (not values and not allow_empty)
@@ -349,21 +404,7 @@ class ExternalSource:
                     yield relative
 
     def _could_descend(self, relative: str) -> bool:
-        directory = relative.split("/")
-        for pattern in self.include_paths:
-            fixed = []
-            wildcard = False
-            for part in pattern.split("/"):
-                if "*" in part or "?" in part:
-                    wildcard = True
-                    break
-                fixed.append(part)
-            if not wildcard:
-                fixed = fixed[:-1]
-            common = min(len(fixed), len(directory))
-            if fixed[:common] == directory[:common] and (wildcard or len(directory) <= len(fixed)):
-                return True
-        return False
+        return any(pattern.could_descend(relative) for pattern in self.include)
 
     def read(self, relative: str) -> Document:
         if not self.admitted(relative):

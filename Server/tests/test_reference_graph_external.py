@@ -2,13 +2,15 @@
 
 import json
 import os
+import subprocess
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
 from services.reference_graph.analysis import Catalog
-from services.reference_graph.external import ExternalSource, analyze_document
+from services.reference_graph.external import ExternalSource, _pattern, analyze_document
 from services.reference_graph.collection_protocol import (
     CollectionBudget,
     CollectionBudgetExceeded,
@@ -315,3 +317,64 @@ def test_unterminated_csv_quote_is_an_error():
         analyze_document(
             "bad.csv", 'icon\n"GameData/icon', assets(), [{"field": "icon", "scheme": "resources"}]
         )
+
+
+@pytest.mark.parametrize(
+    ("pattern", "paths", "expected"),
+    [
+        ("*.json", ["a.json", "x/a.json", "A.JSON"], ["a.json"]),
+        ("*/data?.json", ["x/data1.json", "x/y/data1.json", "z/data.json"], ["x/data1.json"]),
+        ("**/*.json", ["a.json", "x/a.json", "x/y/a.json"], ["a.json", "x/a.json", "x/y/a.json"]),
+        (
+            "**/**/a.json",
+            ["a.json", "x/a.json", "x/y/a.json"],
+            ["a.json", "x/a.json", "x/y/a.json"],
+        ),
+        ("**/x/**/a.json", ["x/a.json", "z/x/y/a.json", "z/a.json"], ["x/a.json", "z/x/y/a.json"]),
+        ("a**b.json", ["ab.json", "a/x/b.json", "a\nb.json"], ["ab.json", "a/x/b.json"]),
+    ],
+)
+def test_source_pattern_language(pattern, paths, expected):
+    matcher = _pattern(pattern)
+    assert [path for path in paths if matcher.fullmatch(path)] == expected
+    for path in expected:
+        parts = path.split("/")
+        for depth in range(1, len(parts)):
+            assert matcher.could_descend("/".join(parts[:depth]))
+
+
+def test_source_pattern_adversarial_failure_is_bounded():
+    # A backtracking regression must fail this test without hanging the suite.
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from services.reference_graph.external import _pattern\n"
+            "assert not _pattern('*a' * 100 + 'b.json').fullmatch('a' * 200 + '.json')",
+        ],
+        cwd=Path(__file__).resolve().parents[1] / "src",
+        timeout=15,
+        check=True,
+    )
+
+
+def test_source_prunes_unmatched_directories_before_budget_is_spent(tmp_path, monkeypatch):
+    (tmp_path / "root.json").write_text("{}")
+    (tmp_path / "unrelated").mkdir()
+    for number in range(20):
+        (tmp_path / "unrelated" / f"{number}.json").write_text("{}")
+    source = ExternalSource({"root": str(tmp_path), "include": ["*.json"]}, respect_gitignore=False)
+    source.budget = CollectionBudget(CollectionLimits(max_items=2))
+    assert list(source.files()) == ["root.json"]
+
+    source = ExternalSource(
+        {"root": str(tmp_path), "include": ["match*/data?.json"]}, respect_gitignore=False
+    )
+    scandir = os.scandir
+
+    def checked_scandir(path):
+        assert Path(path) != tmp_path / "unrelated"
+        return scandir(path)
+
+    monkeypatch.setattr(os, "scandir", checked_scandir)
+    assert list(source.files()) == []
