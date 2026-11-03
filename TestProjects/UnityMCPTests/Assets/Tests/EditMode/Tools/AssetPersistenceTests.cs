@@ -230,9 +230,10 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
-        [TestCase(true)]
-        [TestCase(false)]
-        public void PrefabReferenceAssignmentPersistsAndPreservesUnrelatedDirtyAsset(bool clear)
+        [TestCase("clear")]
+        [TestCase("missing")]
+        [TestCase("set")]
+        public void PrefabReferenceAssignmentPersistsAndPreservesUnrelatedDirtyAsset(string mode)
         {
             string meshPath = folder + "/Referenced.asset";
             string prefabPath = folder + "/Reference.prefab";
@@ -241,7 +242,7 @@ namespace MCPForUnityTests.Editor.Tools
             var source = new GameObject("Reference", typeof(MeshFilter), typeof(Canvas));
             try
             {
-                source.GetComponent<MeshFilter>().sharedMesh = mesh;
+                source.GetComponent<MeshFilter>().sharedMesh = mode == "set" ? null : mesh;
                 source.GetComponent<Canvas>().sortingOrder = 7;
                 PrefabUtility.SaveAsPrefabAsset(source, prefabPath, out bool saved);
                 Assert.IsTrue(saved);
@@ -253,6 +254,11 @@ namespace MCPForUnityTests.Editor.Tools
             byte[] before = File.ReadAllBytes(prefabPath);
             unrelated.frameRate = 17;
             EditorUtility.SetDirty(unrelated);
+            if (mode == "missing")
+                LogAssert.Expect(
+                    LogType.Error,
+                    new System.Text.RegularExpressions.Regex(".*Action 'modify' failed.*", System.Text.RegularExpressions.RegexOptions.Singleline)
+                );
             JObject response = JObject.FromObject(
                 ManageAsset.HandleCommand(
                     new JObject
@@ -261,16 +267,19 @@ namespace MCPForUnityTests.Editor.Tools
                         ["path"] = prefabPath,
                         ["properties"] = new JObject
                         {
-                            ["MeshFilter"] = new JObject { ["sharedMesh"] = clear ? JValue.CreateNull() : new JValue(folder + "/Missing.asset") },
-                            ["Canvas"] = new JObject { ["sortingOrder"] = JValue.CreateNull() },
+                            ["MeshFilter"] = new JObject
+                            {
+                                ["sharedMesh"] = mode == "clear" ? JValue.CreateNull() : new JValue(mode == "set" ? meshPath : folder + "/Missing.asset"),
+                            },
+                            ["Canvas"] = new JObject { ["sortingOrder"] = 8 },
                         },
                     }
                 )
             );
-            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(mode != "missing", response.Value<bool>("success"), response.ToString());
             CollectionAssert.AreEqual(original, File.ReadAllBytes(unrelatedPath));
             Assert.IsTrue(EditorUtility.IsDirty(unrelated));
-            if (clear)
+            if (mode != "missing")
                 CollectionAssert.AreNotEqual(before, File.ReadAllBytes(prefabPath));
             else
                 CollectionAssert.AreEqual(before, File.ReadAllBytes(prefabPath), "A failed non-null conversion must not clear the existing reference.");
@@ -278,8 +287,8 @@ namespace MCPForUnityTests.Editor.Tools
             var reloaded = PrefabUtility.LoadPrefabContents(prefabPath);
             try
             {
-                Assert.That(reloaded.GetComponent<MeshFilter>().sharedMesh, Is.EqualTo(clear ? null : mesh));
-                Assert.That(reloaded.GetComponent<Canvas>().sortingOrder, Is.EqualTo(7), "Null cannot assign a non-nullable value property.");
+                Assert.That(reloaded.GetComponent<MeshFilter>().sharedMesh, Is.EqualTo(mode == "clear" ? null : mesh));
+                Assert.That(reloaded.GetComponent<Canvas>().sortingOrder, Is.EqualTo(mode == "missing" ? 7 : 8));
             }
             finally
             {
@@ -287,6 +296,71 @@ namespace MCPForUnityTests.Editor.Tools
             }
             CollectionAssert.AreEqual(original, File.ReadAllBytes(unrelatedPath));
             Assert.IsTrue(EditorUtility.IsDirty(unrelated));
+        }
+
+        [TestCase("missing_member")]
+        [TestCase("invalid_value")]
+        [TestCase("missing_component")]
+        [TestCase("throwing_setter")]
+        [TestCase("restore_failure")]
+        public void PrefabComponentRequestFailsAtomically(string failure)
+        {
+            string prefabPath = folder + "/Atomic.prefab";
+            var source = new GameObject("Atomic", typeof(Canvas), typeof(PrefabAssignmentFixture));
+            try
+            {
+                source.GetComponent<Canvas>().sortingOrder = 7;
+                source.GetComponent<PrefabAssignmentFixture>().failRestore = failure == "restore_failure";
+                PrefabUtility.SaveAsPrefabAsset(source, prefabPath, out bool saved);
+                Assert.IsTrue(saved);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+
+            byte[] before = File.ReadAllBytes(prefabPath);
+            var second =
+                failure == "missing_member" ? new JObject { ["Missing"] = 9 }
+                : failure == "invalid_value" ? new JObject { ["backing"] = "invalid" }
+                : new JObject { ["Value"] = 9 };
+            string component = failure == "missing_component" ? "MissingComponentForAtomicTest" : nameof(PrefabAssignmentFixture);
+            LogAssert.Expect(
+                LogType.Error,
+                new System.Text.RegularExpressions.Regex(".*Action 'modify' failed.*", System.Text.RegularExpressions.RegexOptions.Singleline)
+            );
+            JObject response = JObject.FromObject(
+                ManageAsset.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["path"] = prefabPath,
+                        ["properties"] = new JObject
+                        {
+                            ["Canvas"] = new JObject { ["sortingOrder"] = 8 },
+                            [component] = second,
+                        },
+                    }
+                )
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            if (failure == "throwing_setter" || failure == "restore_failure")
+                StringAssert.Contains(failure == "restore_failure" ? "Restoration incomplete" : "restored", (string)response["error"]);
+            var current = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+            Assert.AreEqual(7, current.GetComponent<Canvas>().sortingOrder);
+            Assert.AreEqual(2, current.GetComponent<PrefabAssignmentFixture>().backing);
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(prefabPath));
+            AssetDatabase.ImportAsset(prefabPath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+            var reloaded = PrefabUtility.LoadPrefabContents(prefabPath);
+            try
+            {
+                Assert.AreEqual(7, reloaded.GetComponent<Canvas>().sortingOrder);
+                Assert.AreEqual(2, reloaded.GetComponent<PrefabAssignmentFixture>().backing);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(reloaded);
+            }
         }
 
         [TestCase(true)]

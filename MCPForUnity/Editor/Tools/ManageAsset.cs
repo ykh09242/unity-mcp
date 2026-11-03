@@ -529,60 +529,22 @@ namespace MCPForUnity.Editor.Tools
                 AssetPathUtility.GetFullAssetPath(fullPath);
                 bool modified = false; // Flag to track if any changes were made
 
-                // --- NEW: Handle GameObject / Prefab Component Modification ---
                 if (asset is GameObject gameObject)
                 {
-                    // Iterate through the properties JSON: keys are component names, values are properties objects for that component
-                    foreach (var prop in properties.Properties())
+                    var assignments = new List<(string name, Func<object> get, Action<object> set, object previous, object next)>();
+                    foreach (var entry in properties.Properties())
                     {
-                        string componentName = prop.Name; // e.g., "Collectible"
-                        // Check if the value associated with the component name is actually an object containing properties
-                        if (prop.Value is JObject componentProperties && componentProperties.HasValues) // e.g., {"bobSpeed": 2.0}
-                        {
-                            // Resolve component type via ComponentResolver, then fetch by Type
-                            Component targetComponent = null;
-                            bool resolved = ComponentResolver.TryResolve(componentName, out var compType, out var compError);
-                            if (resolved)
-                            {
-                                targetComponent = gameObject.GetComponent(compType);
-                            }
-
-                            // Only warn about resolution failure if component also not found
-                            if (targetComponent == null && !resolved)
-                            {
-                                McpLog.Warn($"[ManageAsset.ModifyAsset] Failed to resolve component '{componentName}' on '{gameObject.name}': {compError}");
-                            }
-
-                            if (targetComponent != null)
-                            {
-                                // Apply the nested properties (e.g., bobSpeed) to the found component instance
-                                // Use |= to ensure 'modified' becomes true if any component is successfully modified
-                                modified |= ApplyObjectProperties(targetComponent, componentProperties);
-                            }
-                            else
-                            {
-                                // Log a warning if a specified component couldn't be found
-                                McpLog.Warn(
-                                    $"[ManageAsset.ModifyAsset] Component '{componentName}' not found on GameObject '{gameObject.name}' in asset '{fullPath}'. Skipping modification for this component."
-                                );
-                            }
-                        }
-                        else
-                        {
-                            // Log a warning if the structure isn't {"ComponentName": {"prop": value}}
-                            // We could potentially try to apply this property directly to the GameObject here if needed,
-                            // but the primary goal is component modification.
-                            McpLog.Warn(
-                                $"[ManageAsset.ModifyAsset] Property '{prop.Name}' for GameObject modification should have a JSON object value containing component properties. Value was: {prop.Value.Type}. Skipping."
-                            );
-                        }
+                        if (!(entry.Value is JObject componentProperties) || !componentProperties.HasValues)
+                            throw new ArgumentException($"Component '{entry.Name}' must contain a non-empty properties object.");
+                        if (!ComponentResolver.TryResolve(entry.Name, out var componentType, out var error))
+                            throw new ArgumentException($"Could not resolve component '{entry.Name}': {error}");
+                        var component = gameObject.GetComponent(componentType);
+                        if (component == null)
+                            throw new ArgumentException($"Component '{entry.Name}' not found on '{gameObject.name}'.");
+                        PrepareObjectProperties(component, componentProperties, assignments);
                     }
-                    // Note: 'modified' is now true if ANY component property was successfully changed.
+                    modified = ApplyPreparedAssignments(assignments);
                 }
-                // --- End NEW ---
-
-                // --- Existing logic for other asset types (now as else-if) ---
-                // Example: Modifying a Material
                 else if (asset is Material material)
                 {
                     try
@@ -1146,6 +1108,16 @@ namespace MCPForUnity.Editor.Tools
         private static bool ApplyObjectPropertiesAtomically(UnityEngine.Object target, JObject properties)
         {
             var assignments = new List<(string name, Func<object> get, Action<object> set, object previous, object next)>();
+            PrepareObjectProperties(target, properties, assignments);
+            return ApplyPreparedAssignments(assignments);
+        }
+
+        private static void PrepareObjectProperties(
+            UnityEngine.Object target,
+            JObject properties,
+            List<(string name, Func<object> get, Action<object> set, object previous, object next)> assignments
+        )
+        {
             var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase;
             Type type = target.GetType();
             foreach (var entry in properties.Properties())
@@ -1176,7 +1148,10 @@ namespace MCPForUnity.Editor.Tools
                     throw new ArgumentException($"Could not convert value for member '{entry.Name}' on {type.Name}.");
                 assignments.Add((entry.Name, get, set, previous, next));
             }
+        }
 
+        private static bool ApplyPreparedAssignments(List<(string name, Func<object> get, Action<object> set, object previous, object next)> assignments)
+        {
             var attempted = new List<int>();
             for (int i = 0; i < assignments.Count; i++)
             {
@@ -1238,74 +1213,6 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
             return attempted.Count != 0;
-        }
-
-        /// <summary>
-        /// Generic helper to set properties on any UnityEngine.Object using reflection.
-        /// </summary>
-        private static bool ApplyObjectProperties(UnityEngine.Object target, JObject properties)
-        {
-            if (target == null || properties == null)
-                return false;
-            bool modified = false;
-            Type type = target.GetType();
-
-            foreach (var prop in properties.Properties())
-            {
-                string propName = prop.Name;
-                JToken propValue = prop.Value;
-                if (SetPropertyOrField(target, propName, propValue, type))
-                {
-                    modified = true;
-                }
-            }
-            return modified;
-        }
-
-        /// <summary>
-        /// Helper to set a property or field via reflection, handling basic types and Unity objects.
-        /// </summary>
-        private static bool SetPropertyOrField(object target, string memberName, JToken value, Type type = null)
-        {
-            type = type ?? target.GetType();
-            System.Reflection.BindingFlags flags =
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase;
-
-            try
-            {
-                System.Reflection.PropertyInfo propInfo = type.GetProperty(memberName, flags);
-                if (propInfo != null && propInfo.CanWrite)
-                {
-                    if (
-                        TryConvertMemberValue(value, propInfo.PropertyType, out object convertedValue)
-                        && !object.Equals(propInfo.GetValue(target), convertedValue)
-                    )
-                    {
-                        propInfo.SetValue(target, convertedValue);
-                        return true;
-                    }
-                }
-                else
-                {
-                    System.Reflection.FieldInfo fieldInfo = type.GetField(memberName, flags);
-                    if (fieldInfo != null)
-                    {
-                        if (
-                            TryConvertMemberValue(value, fieldInfo.FieldType, out object convertedValue)
-                            && !object.Equals(fieldInfo.GetValue(target), convertedValue)
-                        )
-                        {
-                            fieldInfo.SetValue(target, convertedValue);
-                            return true;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                McpLog.Warn($"[SetPropertyOrField] Failed to set '{memberName}' on {type.Name}: {ex.Message}");
-            }
-            return false;
         }
 
         private static bool TryConvertMemberValue(JToken value, Type type, out object convertedValue)
