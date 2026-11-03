@@ -1650,7 +1650,9 @@ class SerializedScanError(ValueError):
     """Serialized source cannot be safely scanned."""
 
 
-def serialized_references(source: str, catalog: Catalog) -> Analysis:
+def serialized_references(
+    source: str, catalog: Catalog, *, check: Callable[[], None] = lambda: None
+) -> Analysis:
     result = Analysis(coverage="lexical_serialized_guid_fields_untyped")
     window = deque(maxlen=4)
     mappings = []
@@ -1700,6 +1702,7 @@ def serialized_references(source: str, catalog: Catalog) -> Analysis:
     # Scalar contents, comments and quoted text cannot masquerade as mapping keys.
     try:
         for token in yaml.scan(source, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader)):
+            check()
             if isinstance(token, (BlockMappingStartToken, FlowMappingStartToken)):
                 mappings.append({})
             elif isinstance(token, (BlockSequenceStartToken, FlowSequenceStartToken)):

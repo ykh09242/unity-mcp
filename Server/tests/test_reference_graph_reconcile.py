@@ -2452,6 +2452,62 @@ async def test_optional_scan_failure_preserves_direct_dependencies_and_is_not_re
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["tokens", "summary"])
+async def test_yaml_stop_interrupts_work_and_releases_lease(setup, monkeypatch, phase):
+    import services.reference_graph.analysis as analysis
+    import services.reference_graph.reconcile as reconcile
+
+    _, workspace, editor, engine = setup
+    source = "refs:\n" + ("  - {fileID: 1, guid: " + "a" * 32 + "}\n") * 100
+    owner = editor.add(1, "Assets/Owner.asset", source)
+    editor.assets[owner[6:]]["source_format"] = "unity_yaml"
+
+    async def collect(action, **params):
+        page = await editor(action, **params)
+        if action == "source":
+            page.update(
+                source_format="unity_yaml",
+                bytes_base64=base64.b64encode(source.encode()).decode(),
+                next_offset=None,
+            )
+        return page
+
+    engine._collector = collect
+    consumed = 0
+
+    def stop_after_three():
+        nonlocal consumed
+        consumed += 1
+        if consumed == 3:
+            engine.stopped.set()
+
+    if phase == "tokens":
+        scan = analysis.yaml.scan
+
+        def watched_scan(*args, **kwargs):
+            for token in scan(*args, **kwargs):
+                stop_after_three()
+                yield token
+
+        monkeypatch.setattr(analysis.yaml, "scan", watched_scan)
+    else:
+        convert = reconcile.asdict
+
+        def watched_summary(edge):
+            stop_after_three()
+            return convert(edge)
+
+        monkeypatch.setattr(reconcile, "asdict", watched_summary)
+
+    with pytest.raises(RuntimeError, match="reconciliation stopped"):
+        await engine.reconcile()
+    assert consumed == 3
+    assert not workspace.documents([owner])
+    assert workspace.acquire("successor")
+    workspace.release("successor")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("previous,dirty_yaml", [(7, False), (6, True)])
 async def test_analysis_version_upgrade_scopes_only_known_migration(setup, previous, dirty_yaml):
     store, workspace, editor, engine = setup

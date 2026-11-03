@@ -1133,11 +1133,16 @@ class Reconciler:
                 asdict(facts),
                 _hash([fingerprint, facts.build, (context or {}).get("defines")]),
             )
-        result = serialized_references(text, Catalog([]))
+        result = serialized_references(text, Catalog([]), check=check)
+        edges = []
+        for edge in result.edges:
+            check()
+            edges.append(asdict(edge))
+        check()
         return (
             "summary",
             {
-                "edges": [asdict(edge) for edge in result.edges],
+                "edges": edges,
                 "coverage": result.coverage,
                 "unresolved": result.unresolved,
             },
