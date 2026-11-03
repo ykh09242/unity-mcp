@@ -8,7 +8,12 @@ from typing import Optional, Tuple
 
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success
-from cli.utils.connection import run_command, handle_unity_errors, UnityCommandError
+from cli.utils.connection import (
+    run_command,
+    handle_unity_errors,
+    UnityCommandError,
+    UnityConnectionError,
+)
 
 
 def _validate_light_number(value: float, parameter: str) -> None:
@@ -55,6 +60,10 @@ def create(
 ):
     """Create a new light.
 
+    Configuration failures retain the created object and confirmed progress in
+    lightingCreation. Inspect that object before retrying to avoid duplicates.
+    A lost response leaves the failed step's outcome unknown.
+
     \b
     Examples:
         unity-mcp lighting create "MainLight" --type Directional
@@ -83,38 +92,78 @@ def create(
     )
 
     if not (create_result.get("success")):
-        click.echo(format_output(create_result, config.format))
-        return
+        raise UnityCommandError(create_result)
 
     created_data = create_result.get("data")
-    target = created_data.get("instanceID") if isinstance(created_data, dict) else None
-    if target is None:
-        raise UnityCommandError(
+    completed_steps = ["create_gameobject"]
+
+    def configuration_error(
+        error: UnityCommandError | UnityConnectionError, step: str
+    ) -> UnityCommandError:
+        response = (
+            error.response
+            if isinstance(error, UnityCommandError)
+            else {"success": False, "error": str(error)}
+        )
+        failure_data = response.get("data")
+        outcome_unknown = (
+            isinstance(error, UnityConnectionError)
+            or response.get("code") == "command_outcome_unknown"
+            or (isinstance(failure_data, dict) and failure_data.get("reason") == "outcome_unknown")
+        )
+        return UnityCommandError(
             {
-                "success": False,
-                "error": "Light creation response is missing data.instanceID; cannot configure the created object.",
+                **response,
+                "lightingCreation": {
+                    "partialExecution": True,
+                    "createdObject": created_data,
+                    "requestedName": name,
+                    "completedSteps": list(completed_steps),
+                    "failedStep": step,
+                    "failedStepOutcome": "unknown" if outcome_unknown else "failed",
+                    "hint": (
+                        "Inspect the existing object before retrying. Repeating lighting create "
+                        "can create a duplicate."
+                    ),
+                },
             }
         )
 
+    target = created_data.get("instanceID") if isinstance(created_data, dict) else None
+    if target is None:
+        raise configuration_error(
+            UnityCommandError(
+                {
+                    "success": False,
+                    "error": "Light creation response is missing data.instanceID; cannot configure the created object.",
+                }
+            ),
+            "resolve_created_identity",
+        )
+
+    def configure(step: str, params: dict[str, object]) -> None:
+        try:
+            result = run_command("manage_components", params, config)
+            if not result.get("success"):
+                raise UnityCommandError(result)
+        except (UnityCommandError, UnityConnectionError) as error:
+            raise configuration_error(error, step) from error
+        completed_steps.append(step)
+
     # Step 2: Add Light component using manage_components
-    add_result = run_command(
-        "manage_components",
+    configure(
+        "add_light_component",
         {
             "action": "add",
             "target": target,
             "search_method": "by_id",
             "componentType": "Light",
         },
-        config,
     )
 
-    if not add_result.get("success"):
-        click.echo(format_output(add_result, config.format))
-        return
-
     # Step 3: Set light type using manage_components set_property
-    type_result = run_command(
-        "manage_components",
+    configure(
+        "set_type",
         {
             "action": "set_property",
             "target": target,
@@ -123,17 +172,12 @@ def create(
             "property": "type",
             "value": light_type,
         },
-        config,
     )
 
-    if not type_result.get("success"):
-        click.echo(format_output(type_result, config.format))
-        return
-
     # Step 4: Set color if provided
-    if color:
-        color_result = run_command(
-            "manage_components",
+    if color is not None:
+        configure(
+            "set_color",
             {
                 "action": "set_property",
                 "target": target,
@@ -142,17 +186,12 @@ def create(
                 "property": "color",
                 "value": {"r": color[0], "g": color[1], "b": color[2], "a": 1},
             },
-            config,
         )
-
-        if not color_result.get("success"):
-            click.echo(format_output(color_result, config.format))
-            return
 
     # Step 5: Set intensity if provided
     if intensity is not None:
-        intensity_result = run_command(
-            "manage_components",
+        configure(
+            "set_intensity",
             {
                 "action": "set_property",
                 "target": target,
@@ -161,12 +200,7 @@ def create(
                 "property": "intensity",
                 "value": intensity,
             },
-            config,
         )
-
-        if not intensity_result.get("success"):
-            click.echo(format_output(intensity_result, config.format))
-            return
 
     # Output the result
     click.echo(format_output(create_result, config.format))

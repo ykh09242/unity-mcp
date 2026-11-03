@@ -152,8 +152,14 @@ def test_valid_options_preserve_stop_on_native_rejection_and_falsey_payload(disp
     )
     assert result.exit_code == 1 and result.stderr == ""
     assert len(state["attempts"]) == len(state["encoded"]) == stage
-    assert json.loads(result.stdout) == {
+    payload = json.loads(result.stdout)
+    assert {key: payload[key] for key in ("success", "error", "data")} == {
         "success": False,
         "error": "Controlled rejection",
         "data": {"zero": 0, "enabled": False, "reference": None},
     }
+    if stage == 1:
+        assert "lightingCreation" not in payload
+    else:
+        assert payload["lightingCreation"]["createdObject"]["instanceID"] == -123
+        assert payload["lightingCreation"]["partialExecution"] is True

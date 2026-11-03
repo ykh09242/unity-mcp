@@ -2191,7 +2191,7 @@ Lighting operations - create, modify lights and lighting settings.
 
 ## `unity-mcp lighting create`
 
-Create a new light. Examples: unity-mcp lighting create "MainLight" --type Directional unity-mcp lighting create "PointLight1" --position 0 5 0 --intensity 2 unity-mcp lighting create "RedLight" --type Spot --color 1 0 0
+Create a new light. Configuration failures retain the created object and confirmed progress in lightingCreation. Inspect that object before retrying to avoid duplicates. A lost response leaves the failed step's outcome unknown. Examples: unity-mcp lighting create "MainLight" --type Directional unity-mcp lighting create "PointLight1" --position 0 5 0 --intensity 2 unity-mcp lighting create "RedLight" --type Spot --color 1 0 0
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |

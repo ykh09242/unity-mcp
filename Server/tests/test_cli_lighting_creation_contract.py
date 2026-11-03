@@ -1,5 +1,6 @@
 """Exercise the real Click command with only its Unity transport replaced."""
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -7,6 +8,7 @@ from click.testing import CliRunner
 
 from cli.commands.lighting import lighting
 from cli.utils.config import CLIConfig
+from cli.utils.connection import UnityConnectionError
 
 
 @pytest.fixture(autouse=True)
@@ -56,6 +58,10 @@ def test_light_creation_without_returned_id_stops_before_component_writes(data):
     assert result.exit_code == 1
     assert send.call_count == 1
     assert "instanceID" in result.output
+    progress = json.loads(result.stdout)["lightingCreation"]
+    assert progress["createdObject"] == data
+    assert progress["completedSteps"] == ["create_gameobject"]
+    assert progress["failedStep"] == "resolve_created_identity"
 
 
 def test_failed_light_creation_stops_before_component_writes():
@@ -70,4 +76,122 @@ def test_failed_light_creation_stops_before_component_writes():
         result = CliRunner().invoke(lighting, ["create", "SharedName"])
 
     assert send.call_count == 1
+    assert result.exit_code == 1
     assert "creation failed" in result.output
+    assert "lightingCreation" not in json.loads(result.stdout)
+
+
+STEPS = ["create_gameobject", "add_light_component", "set_type", "set_color", "set_intensity"]
+
+
+@pytest.mark.parametrize("stage", [2, 3, 4, 5])
+@pytest.mark.parametrize("failure", ["native", "connection"])
+@pytest.mark.parametrize("output_format", ["json", "text", "table"])
+def test_light_configuration_failure_retains_identity_and_confirmed_progress(
+    monkeypatch, stage, failure, output_format
+):
+    # Given a created object, including falsey native fields and zero-valued options.
+    config = CLIConfig(format=output_format)
+    monkeypatch.setattr("cli.utils.config._config", config)
+    created = {"instanceID": -204, "name": "SharedName", "enabled": False}
+    native_error = {
+        "success": False,
+        "error": "Controlled rejection",
+        "code": 0,
+        "data": {"zero": 0, "enabled": False, "reference": None},
+        "hint": "Inspect the existing object",
+    }
+    calls = []
+
+    async def send(command, params, config=None, timeout=None):
+        calls.append((command, params))
+        if len(calls) == stage:
+            if failure == "connection":
+                raise UnityConnectionError("Connection timed out")
+            return native_error
+        return {"success": True, "data": created} if len(calls) == 1 else {"success": True}
+
+    # When the real command reaches a rejected or unconfirmed configuration step.
+    with patch("cli.utils.connection.send_command", side_effect=send):
+        result = CliRunner().invoke(
+            lighting, ["create", "SharedName", "--color", "0", "0", "0", "--intensity", "0"]
+        )
+
+    # Then it stops without replay/deletion and reports only confirmed completed steps.
+    assert result.exit_code == 1, result.output
+    assert len(calls) == stage
+    assert result.stderr == ""
+    if output_format == "json":
+        payload = json.loads(result.stdout)
+        if failure == "native":
+            assert {key: payload[key] for key in native_error} == native_error
+        else:
+            assert payload["error"] == "Connection timed out"
+        progress = payload["lightingCreation"]
+        assert progress["partialExecution"] is True
+        assert progress["createdObject"] == created
+        assert progress["completedSteps"] == STEPS[: stage - 1]
+        assert progress["failedStep"] == STEPS[stage - 1]
+        assert progress["failedStepOutcome"] == ("unknown" if failure == "connection" else "failed")
+        assert "retry" in progress["hint"].lower()
+    else:
+        for detail in ("-204", "partialExecution", STEPS[stage - 1], "create_gameobject"):
+            assert detail in result.stdout
+
+
+def test_intensity_failure_does_not_claim_omitted_color_step_completed():
+    # Given optional color is omitted, the fourth request configures zero intensity.
+    replies = [
+        {"success": True, "data": {"instanceID": 204}},
+        {"success": True},
+        {"success": True},
+        {"success": False, "error": "intensity rejected"},
+    ]
+    with patch("cli.utils.connection.send_command", new_callable=AsyncMock, side_effect=replies):
+        # When intensity fails, progress contains no skipped color step.
+        result = CliRunner().invoke(lighting, ["create", "Owned", "--intensity", "0"])
+    assert result.exit_code == 1
+    progress = json.loads(result.stdout)["lightingCreation"]
+    assert progress["completedSteps"] == STEPS[:3]
+    assert progress["failedStep"] == "set_intensity"
+
+
+def test_initial_connection_error_does_not_claim_an_object_was_created():
+    # Given no successful create response, its outcome and object identity are unknown.
+    with patch(
+        "cli.utils.connection.send_command",
+        new_callable=AsyncMock,
+        side_effect=UnityConnectionError("Connection timed out"),
+    ) as send:
+        # When the initial request fails, preserve the existing connection error path.
+        result = CliRunner().invoke(lighting, ["create", "Owned"])
+    assert result.exit_code == 1
+    assert send.call_count == 1
+    assert "Connection timed out" in result.stderr
+    assert "lightingCreation" not in result.output
+
+
+@pytest.mark.parametrize(
+    "indicator",
+    [
+        {"code": "command_outcome_unknown"},
+        {"data": {"reason": "outcome_unknown", "command_id": "receipt-204", "dispatched": True}},
+    ],
+)
+def test_native_unknown_outcome_retains_receipt_and_uncertainty(indicator):
+    # Given the transport reports an uncertain outcome as a structured failed response.
+    failure = {"success": False, "error": "Reply lost after dispatch", **indicator}
+    replies = [{"success": True, "data": {"instanceID": -204}}, failure]
+    with patch(
+        "cli.utils.connection.send_command", new_callable=AsyncMock, side_effect=replies
+    ) as send:
+        # When configuring an already created light, do not convert uncertainty to refusal.
+        result = CliRunner().invoke(lighting, ["create", "Owned"])
+    assert result.exit_code == 1
+    assert send.call_count == 2
+    payload = json.loads(result.stdout)
+    assert {key: payload[key] for key in failure} == failure
+    progress = payload["lightingCreation"]
+    assert progress["failedStepOutcome"] == "unknown"
+    assert progress["createdObject"]["instanceID"] == -204
+    assert progress["completedSteps"] == ["create_gameobject"]
