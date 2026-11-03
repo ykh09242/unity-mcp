@@ -31,7 +31,6 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 PlayScenarioPlayerCapabilities.Validate(concrete, MCPForUnity.Editor.Tools.Input.ManageInput.UguiBackend != null);
                 children.Add(new JObject { ["definition"] = JObject.FromObject(concrete) });
             }
-            string revision = request.Property("source_revision") == null ? null : Text(request, "source_revision", 128);
             string package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(PlayScenarioPlayerBuild).Assembly)?.version ?? "unknown";
             JObject manifest = PlayScenarioPlayerSuite.Create(
                 new JObject
@@ -40,7 +39,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                     ["children"] = children,
                     ["unity_version"] = Application.unityVersion,
                     ["package_version"] = package,
-                    ["build_source_revision"] = revision,
+                    ["build_source_revision"] = SourceRevision(request),
                     ["failure_policy"] = Text(request, "failure_policy", 8, suite.FailurePolicy),
                     ["isolation"] = isolation,
                 }
@@ -67,6 +66,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 }
             );
         }
+
+        internal static JValue SourceRevision(JObject request) =>
+            request.Property("source_revision") == null ? JValue.CreateNull() : new JValue(Text(request, "source_revision", 128));
 
         private static string Text(JObject request, string key, int limit, string fallback = null)
         {

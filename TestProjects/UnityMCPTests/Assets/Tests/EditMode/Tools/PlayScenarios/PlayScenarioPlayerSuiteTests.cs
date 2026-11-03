@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime.PlayScenarios;
 using Newtonsoft.Json;
@@ -13,6 +14,23 @@ namespace MCPForUnityTests
 {
     public sealed class PlayScenarioPlayerSuiteTests
     {
+        [Test]
+        public void PlayerSuiteBuild_ProducesManifestWithOptionalRevision()
+        {
+            JValue missing = PlayScenarioPlayerSuiteBuild.SourceRevision(new JObject());
+            Assert.That(missing.Type, Is.EqualTo(JTokenType.Null));
+            JObject input = Input();
+            input["build_source_revision"] = missing;
+            JObject omitted = JObject.Parse(Create(input).ToString(Formatting.None));
+            Assert.That(omitted["build_source_revision"].Type, Is.EqualTo(JTokenType.Null));
+            Assert.That(PlayScenarioPlayerBundle.Parse(omitted.ToString()).BuildSourceRevision, Is.Null);
+
+            input["build_source_revision"] = PlayScenarioPlayerSuiteBuild.SourceRevision(new JObject { ["source_revision"] = "abc123" });
+            Assert.That(PlayScenarioPlayerBundle.Parse(Create(input).ToString()).BuildSourceRevision, Is.EqualTo("abc123"));
+            Assert.Throws<ArgumentException>(() => PlayScenarioPlayerSuiteBuild.SourceRevision(new JObject { ["source_revision"] = JValue.CreateNull() }));
+            Assert.Throws<ArgumentException>(() => PlayScenarioPlayerSuiteBuild.SourceRevision(new JObject { ["source_revision"] = "bad revision\n" }));
+        }
+
         [Test]
         public void PlayerSuiteCommand_RequiresLiveBuildConsentBeforeRouting()
         {
