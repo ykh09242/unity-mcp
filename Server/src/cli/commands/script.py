@@ -112,7 +112,9 @@ def read(path: str, start_line: Optional[int], line_count: Optional[int]):
     if line_count is not None:
         params["line_count"] = line_count
     result = run_command("manage_script", params, config)
-    click.echo(format_script_read(result, config.format, start_line, line_count))
+    rendered = format_script_read(result, config.format, start_line, line_count)
+    # Binary output prevents Windows text streams from expanding source CRLF to CRCRLF.
+    click.echo(rendered if config.format == "json" else rendered.encode("utf-8"))
 
 
 @script.command("delete")

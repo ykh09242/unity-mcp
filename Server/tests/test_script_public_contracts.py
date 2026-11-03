@@ -71,7 +71,7 @@ cases = [
     (['read', r'Assets\Owned\Fixture.cs'],
      {'action': 'read', 'name': 'Fixture', 'path': 'Assets/Owned'}),
     (['read', 'Assets/Fixture.CS', '--start-line', '2', '--line-count', '1'],
-     {'action': 'read', 'name': 'Fixture', 'path': 'Assets'}),
+     {'action': 'read', 'name': 'Fixture', 'path': 'Assets', 'start_line': 2, 'line_count': 1}),
     (['read', 'Fixture'], {'action': 'read', 'name': 'Fixture', 'path': 'Assets'}),
     (['delete', 'Assets/Owned/Fixture.cs', '--force'],
      {'action': 'delete', 'name': 'Fixture', 'path': 'Assets/Owned'}),
@@ -121,9 +121,8 @@ for args, wire in cases:
     check(text_result.exit_code == 0, 'text success ' + repr(args))
     if args[0] == 'read':
         wanted = '😀second\n' if '--start-line' in args else raw['data']['contents']
-        # Result.output normalizes CRLF; raw bytes retain source text and the
-        # platform TextIOWrapper translation, including echo's final newline.
-        wanted_bytes = (wanted + '\n').replace('\n', os.linesep).encode(runner.charset)
+        # Source bytes are unchanged; Click adds a single LF after the payload.
+        wanted_bytes = wanted.encode('utf-8') + b'\n'
         check(text_result.stdout_bytes == wanted_bytes, 'raw text read ' + repr(args))
     elif args[0] != 'validate':
         check('✓' in text_result.output or 'Created' in text_result.output

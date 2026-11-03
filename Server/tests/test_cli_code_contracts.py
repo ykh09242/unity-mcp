@@ -52,12 +52,18 @@ def test_read_returns_requested_window_as_one_json_document(
     )
     # When: the actual CLI reads a requested window.
     result = CliRunner().invoke(cli, ["--format", "json", group, "read", r"Assets\Foo.cs", *bounds])
-    # Then: plain/encoded content agree and no unsupported line fields reach Unity.
+    # Then: plain/encoded content agree and script forwards requested bounds.
     assert result.exit_code == 0, result.output
     data = json.loads(result.stdout)["data"]
     assert data["contents"] == expected
     assert base64.b64decode(data["encodedContents"]).decode() == expected
-    assert requests[0]["params"] == {"action": "read", "name": "Foo", "path": "Assets"}
+    expected_params = {"action": "read", "name": "Foo", "path": "Assets"}
+    if group == "script":
+        if "-s" in bounds:
+            expected_params["start_line"] = int(bounds[bounds.index("-s") + 1])
+        if "-n" in bounds:
+            expected_params["line_count"] = int(bounds[bounds.index("-n") + 1])
+    assert requests[0]["params"] == expected_params
 
 
 @pytest.mark.parametrize("group", ["code", "script"])
