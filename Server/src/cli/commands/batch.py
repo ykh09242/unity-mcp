@@ -3,13 +3,12 @@
 import sys
 import json
 import click
-from cli.utils.parsers import admit_json_inputs
 from typing import Optional, Any
 
 from cli.utils.config import get_config
 from cli.utils.output import format_output, print_error, print_success, print_info
 from cli.utils.connection import run_command, handle_unity_errors
-from cli.utils.parsers import parse_json_list_or_exit
+from cli.utils.parsers import admit_json_inputs, parse_json_list_or_exit
 
 
 @click.group()
@@ -19,7 +18,7 @@ def batch():
 
 
 @batch.command("run")
-@click.argument("file", type=click.Path(exists=True))
+@click.argument("file", type=click.Path(exists=True, resolve_path=True))
 @click.option("--parallel", is_flag=True, help="Execute read-only commands in parallel.")
 @click.option("--fail-fast", is_flag=True, help="Stop on first failure.")
 @handle_unity_errors
@@ -44,22 +43,8 @@ def batch_run(file: str, parallel: bool, fail_fast: bool):
     """
     config = get_config()
 
-    try:
-        with open(file, "r", encoding="utf-8") as f:
-            commands = json.load(f)
-    except UnicodeDecodeError as e:
-        print_error(f"JSON file must be UTF-8 encoded: {e}")
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print_error(f"Invalid JSON in file: {e}")
-        sys.exit(1)
-    except IOError as e:
-        print_error(f"Error reading file: {e}")
-        sys.exit(1)
-
-    if not isinstance(commands, list):
-        print_error("JSON file must contain an array of commands")
-        sys.exit(1)
+    commands_json = admit_json_inputs(commands_json="@" + file)["commands_json"]
+    commands = parse_json_list_or_exit(commands_json, "commands")
 
     if len(commands) > 100:
         print_error(f"Maximum 100 commands per batch, got {len(commands)}")

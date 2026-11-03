@@ -162,6 +162,31 @@ def test_invalid_utf8_has_diagnostic_and_does_not_send(batch_transport, tmp_path
     assert requests == []
 
 
+@pytest.mark.parametrize("entry", ["run", "inline"])
+@pytest.mark.parametrize("case", ["bom_at_limit", "over_limit", "non_finite"])
+def test_batch_file_admission_is_consistent(batch_transport, tmp_path, entry, case):
+    from cli.utils.parsers import MAX_JSON_INPUT_BYTES
+
+    cli, requests, _ = batch_transport
+    commands = [{"tool": "manage_scene", "params": {"action": "get_active"}}]
+    payload = b"\xef\xbb\xbf" + json.dumps(commands).encode()
+    if case == "non_finite":
+        payload = b'[{"tool":"owned","params":{"value":1e999}}]'
+    else:
+        payload = payload.ljust(MAX_JSON_INPUT_BYTES + (case == "over_limit"), b" ")
+    path = tmp_path / "commands.json"
+    path.write_bytes(payload)
+    argument = str(path) if entry == "run" else "@" + str(path)
+    result = CliRunner().invoke(cli, ["--format", "json", "batch", entry, argument])
+    if case == "bom_at_limit":
+        assert result.exit_code == 0, result.output
+        assert requests == [{"type": "batch_execute", "params": {"commands": commands}}]
+    else:
+        assert result.exit_code == 1 and result.stdout == ""
+        assert ("4 MiB" if case == "over_limit" else "Invalid JSON") in result.stderr
+        assert requests == []
+
+
 @pytest.mark.parametrize("destination", ["directory", "missing_parent"])
 def test_template_write_failure_has_local_diagnostic(batch_transport, tmp_path, destination):
     cli, requests, _ = batch_transport
