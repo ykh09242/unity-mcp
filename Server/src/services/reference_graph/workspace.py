@@ -125,6 +125,9 @@ class GraphWorkspace:
             connection.execute(
                 "INSERT OR IGNORE INTO graph_external_paths SELECT provider,owner,path FROM graph_external"
             )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS graph_external_checkpoints(provider TEXT NOT NULL,owner TEXT NOT NULL,generation INTEGER NOT NULL,PRIMARY KEY(provider,owner))"
+            )
             if connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_runtime_schema'"
             ).fetchone():
@@ -431,6 +434,7 @@ class GraphWorkspace:
             "graph_dependencies",
             "graph_changed_inputs",
             "graph_external",
+            "graph_external_checkpoints",
             "graph_asset_failures",
             "graph_addressables",
             "graph_collected_versions",
@@ -714,7 +718,12 @@ class GraphWorkspace:
             connection.execute(
                 "UPDATE observations SET state='deleted' WHERE provider=?", (provider,)
             )
-            for table in ("graph_analysis", "graph_issues", "graph_external"):
+            for table in (
+                "graph_analysis",
+                "graph_issues",
+                "graph_external",
+                "graph_external_checkpoints",
+            ):
                 connection.execute("DELETE FROM " + table + " WHERE provider=?", (provider,))
             connection.execute("DELETE FROM graph_external_paths WHERE provider=?", (provider,))
             connection.execute(
@@ -1532,7 +1541,13 @@ class GraphWorkspace:
             return {
                 row["path"]: dict(row)
                 for row in connection.execute(
-                    "SELECT p.provider,p.owner,p.path,e.fingerprint,e.stamp,e.analysis_key,e.seen,o.state,c.published AS provenance FROM graph_external_paths p LEFT JOIN graph_external e USING(owner,provider) LEFT JOIN observations o USING(owner,provider) LEFT JOIN evidence_context c USING(owner,provider) WHERE p.provider=?"
+                    "SELECT p.provider,p.owner,p.path,e.fingerprint,e.stamp,e.analysis_key,e.seen,"
+                    "o.state,c.published AS provenance,v.generation AS checkpoint "
+                    "FROM graph_external_paths p LEFT JOIN graph_external e USING(owner,provider) "
+                    "LEFT JOIN observations o USING(owner,provider) "
+                    "LEFT JOIN evidence_context c USING(owner,provider) "
+                    "LEFT JOIN graph_external_checkpoints v ON v.owner=p.owner AND v.provider=p.provider "
+                    "AND v.generation=o.generation AND o.state='pending' WHERE p.provider=?"
                     if admission
                     else "SELECT e.*,o.state,c.published AS provenance FROM graph_external e LEFT JOIN observations o USING(owner,provider) LEFT JOIN evidence_context c USING(owner,provider) WHERE e.provider=?",
                     (provider,),
@@ -1729,6 +1744,16 @@ class GraphWorkspace:
                 {**values, "source_version": source["version"]},
             )
             if incomplete is not None:
+                # Preserve only complete publications, or a checkpoint which still
+                # owns this pending generation. An admitted-only or failed file
+                # must go through analysis again even if its stamp is unchanged.
+                connection.execute(
+                    "INSERT OR REPLACE INTO graph_external_checkpoints "
+                    "SELECT o.provider,o.owner,o.generation+1 FROM observations o "
+                    "LEFT JOIN graph_external_checkpoints v USING(provider,owner) "
+                    "WHERE o.provider=? AND (o.state='ready' OR (o.state='pending' AND o.generation=v.generation))",
+                    (source["provider"],),
+                )
                 connection.execute(
                     "UPDATE observations SET generation=generation+1,state='pending',error=? WHERE provider=? AND state<>'deleted'",
                     (incomplete, source["provider"]),
@@ -1750,8 +1775,18 @@ class GraphWorkspace:
             worker, [(provider, owner, path, fingerprint, stamp, analysis_key, seen)]
         )
 
-    def record_external_many(self, worker: str, rows: Iterable[tuple]) -> None:
+    def record_external_many(
+        self, worker: str, rows: Iterable[tuple], *, resume: list[tuple] | None = None
+    ) -> None:
         with self._write(worker) as connection:
+            if resume:
+                updated = connection.executemany(
+                    "UPDATE observations SET state='ready',error=NULL WHERE provider=? AND owner=? AND generation=? AND state='pending'",
+                    resume,
+                ).rowcount
+                if updated != len(resume):
+                    raise RevisionConflict("External checkpoint changed before verification")
+                self.store._bump(connection)
             self._record_external(connection, rows)
 
     def refresh_external_provenance(self, worker: str, source: dict, rows: Iterable[tuple]) -> None:
@@ -1791,6 +1826,9 @@ class GraphWorkspace:
 
     def finish_external(self, worker: str, provider: str, seen: str) -> None:
         with self._write(worker) as connection:
+            connection.execute(
+                "DELETE FROM graph_external_checkpoints WHERE provider=?", (provider,)
+            )
             removed = connection.execute(
                 "SELECT owner FROM graph_external WHERE provider=? AND seen<>?", (provider, seen)
             ).fetchall()

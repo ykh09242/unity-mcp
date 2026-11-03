@@ -1050,6 +1050,126 @@ async def test_external_fanout_budget_preserves_publication_until_complete(setup
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["none", "modify", "remove", "policy", "source", "catalog"])
+async def test_external_budget_resumes_verified_files_after_restart(
+    setup, tmp_path, monkeypatch, change
+):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+    from services.reference_graph.external import ExternalSource
+
+    store, workspace, editor, engine = setup
+    one = editor.add(1, "Assets/One.asset")
+    two = editor.add(2, "Assets/Two.asset")
+    provider = "external:fixture"
+    root = tmp_path / "fixture"
+    root.mkdir()
+
+    def write(directory, name, target):
+        (directory / name).write_bytes(json.dumps(target[6:]).encode().ljust(30_000))
+
+    for name in ("a.json", "b.json", "c.json"):
+        write(root, name, one)
+    config = {"root": str(root), "include": ["*.json"]}
+    workspace.set_source(provider, config, expected_version=0)
+    limits = CollectionLimits(max_bytes=65_000)
+    engine.limits = limits
+    reads = []
+    read = ExternalSource.read
+
+    def trace(self, path):
+        document = read(self, path)
+        reads.append(path)
+        return document
+
+    monkeypatch.setattr(ExternalSource, "read", trace)
+    with pytest.raises(CollectionBudgetExceeded, match="max_bytes=65000"):
+        await engine.reconcile(force_external=True)
+    assert reads == ["a.json", "b.json"]
+    assert workspace.provider_status()[provider]["state"] == "failed"
+    assert all(edge["stale"] for edge in store.query(one, direction="incoming")["edges"])
+
+    expected = ["c.json"]
+    if change == "modify":
+        write(root, "a.json", two)
+        # Guarantee a distinct stamp even on coarse-resolution filesystems.
+        with (root / "a.json").open("ab") as stream:
+            stream.write(b" ")
+        expected = ["a.json", "c.json"]
+    elif change == "remove":
+        (root / "a.json").unlink()
+    elif change == "policy":
+        workspace.set_policy({"exclude": ["b.json"]}, expected_version=0)
+        expected = ["a.json", "c.json"]
+    elif change == "source":
+        replacement = tmp_path / "replacement"
+        replacement.mkdir()
+        write(replacement, "a.json", two)
+        workspace.set_source(provider, {**config, "root": str(replacement)}, expected_version=1)
+        expected = ["a.json"]
+    elif change == "catalog":
+        editor.add(3, "Assets/Three.asset")
+        expected = ["a.json", "b.json", "c.json"]
+
+    reads.clear()
+    restored = GraphWorkspace(GraphStore(store.path, store.scope))
+    retry = Reconciler(restored, editor, allowed, limits=limits)
+    if change == "catalog":
+        with pytest.raises(CollectionBudgetExceeded):
+            await retry.reconcile(force_external=True)
+    assert await retry.reconcile(force_external=True)
+    assert reads == expected
+    assert restored.provider_status()[provider]["state"] == "verified_at_scan"
+    targets = {
+        edge["provenance"]["path"]: node
+        for node in (one, two)
+        for edge in store.query(node, direction="incoming")["edges"]
+        if not edge["stale"]
+    }
+    expected_targets = {"a.json": one, "b.json": one, "c.json": one}
+    if change == "modify":
+        expected_targets["a.json"] = two
+    elif change == "remove":
+        del expected_targets["a.json"]
+    elif change == "policy":
+        del expected_targets["b.json"]
+    elif change == "source":
+        expected_targets = {"a.json": two}
+    assert targets == expected_targets
+
+
+@pytest.mark.asyncio
+async def test_forced_pass_resumes_across_providers_with_one_document_per_attempt(setup, tmp_path):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    store, workspace, editor, engine = setup
+    target = editor.add(1, "Assets/One.asset")
+    for name in ("first", "second"):
+        root = tmp_path / name
+        root.mkdir()
+        (root / "config.json").write_bytes(json.dumps(target[6:]).encode().ljust(30_000))
+        workspace.set_source(
+            "external:" + name, {"root": str(root), "include": ["*.json"]}, expected_version=0
+        )
+    engine.limits = CollectionLimits(max_bytes=35_000)
+    with pytest.raises(CollectionBudgetExceeded, match="max_bytes=35000"):
+        await engine.reconcile(force_external=True)
+    restored = GraphWorkspace(GraphStore(store.path, store.scope))
+    assert await Reconciler(restored, editor, allowed, limits=engine.limits).reconcile(
+        force_external=True
+    )
+    assert {edge["provider"] for edge in store.query(target, direction="incoming")["edges"]} == {
+        "external:first",
+        "external:second",
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("overflow", ["document", "aggregate", "ignore"])
 async def test_external_budget_failure_keeps_stale_evidence_and_recovers(setup, tmp_path, overflow):
     from services.reference_graph.collection_protocol import (

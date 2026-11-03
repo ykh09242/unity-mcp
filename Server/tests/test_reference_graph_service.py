@@ -271,6 +271,36 @@ async def test_empty_external_result_requires_explicit_checked_snapshot(
 
 
 @pytest.mark.asyncio
+async def test_checked_external_query_completes_budgeted_pass_and_starts_fresh_next_time(
+    setup, tmp_path, monkeypatch
+):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    service, sender, ctx = setup
+    root = tmp_path / "settings"
+    entry, target = await external_fixture(service, sender, ctx, root, monkeypatch, files=3)
+    for path in root.iterdir():
+        path.write_bytes(path.read_bytes().ljust(30_000))
+    entry.engine.limits = CollectionLimits(max_bytes=65_000)
+    options = {"node": target, "direction": "incoming", "consistency": "checked"}
+    try:
+        with pytest.raises(CollectionBudgetExceeded, match="max_bytes=65000"):
+            await service.execute(ctx, "query", options)
+        (root / "0.json").write_bytes(b'{"prefab":"Two"}'.ljust(30_001))
+        result = (await service.execute(ctx, "query", options))["data"]
+        assert result["graph_status"]["current"]
+        assert result["graph_status"]["consistency"] == "checked_snapshot"
+        assert {edge["provenance"]["path"] for edge in result["edges"]} == {"1.json", "2.json"}
+        with pytest.raises(CollectionBudgetExceeded, match="max_bytes=65000"):
+            await service.execute(ctx, "query", options)
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_cached_head_change_wakes_incremental_scan_without_reloading_unchanged_sources(
     setup, tmp_path, monkeypatch
 ):

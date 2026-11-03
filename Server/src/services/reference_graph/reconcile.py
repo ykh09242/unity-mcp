@@ -432,6 +432,7 @@ class Reconciler:
                 )
             )
         )
+        self.progress.pop("external_pass", None)
         await self._phase(
             "idle" if caught_up else "changes_pending", editor=status, completed_at=time.time()
         )
@@ -1360,7 +1361,10 @@ class Reconciler:
         if not sources:
             self._catalog_cache = None
             return
-        await self._phase("external", external_errors={})
+        scan_pass = self.progress.get("external_pass")
+        if not scan_pass or (force and not scan_pass["force"]):
+            scan_pass = {"id": uuid.uuid4().hex, "force": force}
+        await self._phase("external", external_errors={}, external_pass=scan_pass)
         catalog_revision, assets = await drained_thread(
             self.workspace.catalog_snapshot,
             self._catalog_cache[0] if self._catalog_cache else None,
@@ -1388,7 +1392,7 @@ class Reconciler:
                     catalog,
                     rules,
                     catalog_revision,
-                    force,
+                    scan_pass,
                     _cancel_event=self.stopped,
                 )
                 scan.update(
@@ -1434,11 +1438,11 @@ class Reconciler:
                 await self._phase("external")
 
     def _external_source(
-        self, source: dict, catalog: Catalog, rules: int, catalog_revision: int, force: bool
+        self, source: dict, catalog: Catalog, rules: int, catalog_revision: int, scan_pass: dict
     ) -> tuple[int, dict]:
         with self.workspace.source_guard(source["provider"], source["version"]) as require_source:
             return self._scan_external_source(
-                source, catalog, rules, catalog_revision, force, require_source
+                source, catalog, rules, catalog_revision, scan_pass, require_source
             )
 
     def _scan_external_source(
@@ -1447,7 +1451,7 @@ class Reconciler:
         catalog: Catalog,
         rules: int,
         catalog_revision: int,
-        force: bool,
+        scan_pass: dict,
         require_source: Callable[[], None],
     ) -> tuple[int, dict]:
         self._check_source(source, require_source)
@@ -1459,15 +1463,27 @@ class Reconciler:
             budget=self._budget,
         )
         repository = adapter.repository_revision()
-        provider, seen = source["provider"], uuid.uuid4().hex
+        provider = source["provider"]
+        pass_prefix = scan_pass["id"] + ":"
+        # Each enumeration needs its own marker to retire files removed since
+        # the previous attempt, including files already verified in this pass.
+        seen = pass_prefix + uuid.uuid4().hex
         previous = self.workspace.external_inputs(provider, admission=True)
-        analysis_key = _hash((ANALYSIS_VERSION, source["version"], rules, catalog_revision))
+        analysis_key = _hash(
+            (ANALYSIS_VERSION, source["version"], policy["version"], rules, catalog_revision)
+        )
         failures = 0
         pending = []
+        resumed = []
         provenance_updates = []
 
         def visit_external_item() -> None:
             self._budget.admit_items(1)
+
+        def verify_document(path: str, stamp: str) -> None:
+            if _json(adapter.stamp(path)) != stamp:
+                raise RevisionConflict("External input changed during analysis")
+            self._check_source(source, require_source)
 
         for path in adapter.files(check=partial(self._check_source, source, require_source)):
             self._check_source(source, require_source)
@@ -1479,9 +1495,9 @@ class Reconciler:
             try:
                 stamp = _json(adapter.stamp(path))
                 if (
-                    force
-                    or old is None
-                    or old["state"] != "ready"
+                    old is None
+                    or (scan_pass["force"] and not (old["seen"] or "").startswith(pass_prefix))
+                    or (old["state"] != "ready" and old["checkpoint"] is None)
                     or old["stamp"] != stamp
                     or old["analysis_key"] != analysis_key
                 ):
@@ -1514,11 +1530,6 @@ class Reconciler:
                         visit=visit_external_item,
                     )
 
-                    def verify_document():
-                        if _json(adapter.stamp(path)) != stamp:
-                            raise RevisionConflict("External input changed during analysis")
-                        self._check_source(source, require_source)
-
                     self.workspace.publish_events(
                         self.worker,
                         owner,
@@ -1528,7 +1539,7 @@ class Reconciler:
                         coverage=document_coverage(adapter.mappings),
                         catalog_revision=catalog_revision,
                         check=self._check_thread,
-                        before_publish=verify_document,
+                        before_publish=partial(verify_document, path, stamp),
                     )
             except RevisionConflict:
                 raise
@@ -1555,13 +1566,16 @@ class Reconciler:
                 failures += 1
             if not recorded:
                 pending.append((provider, owner, path, fingerprint, stamp, analysis_key, seen))
+                if old["checkpoint"] is not None:
+                    resumed.append((provider, owner, old["checkpoint"]))
                 provenance = adapter.provenance(path, fingerprint, repository)
                 if old.get("provenance") != _json(provenance):
                     provenance_updates.append((owner, fingerprint, provenance))
             if len(pending) == 256:
                 self._check_source(source, require_source)
-                self.workspace.record_external_many(self.worker, pending)
+                self.workspace.record_external_many(self.worker, pending, resume=resumed)
                 pending.clear()
+                resumed.clear()
                 if provenance_updates:
                     self.workspace.refresh_external_provenance(
                         self.worker, source, provenance_updates
@@ -1571,7 +1585,7 @@ class Reconciler:
         if adapter.repository_revision() != repository:
             raise RevisionConflict("Repository identity changed during source scan")
         if pending:
-            self.workspace.record_external_many(self.worker, pending)
+            self.workspace.record_external_many(self.worker, pending, resume=resumed)
         if provenance_updates:
             self.workspace.refresh_external_provenance(self.worker, source, provenance_updates)
         hidden = [
