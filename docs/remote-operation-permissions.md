@@ -133,6 +133,15 @@ before probes or dispatch. These grants do not sandbox callbacks or promise
 rollback, interruptibility, an atomic snapshot or a hard callback deadline.
 The shared rule applies to public calls, native dispatch and every batch member.
 
+GameObject component reads require `read` by default. With
+`evaluate_getters=true`, the requester and target plugin each need `read`,
+`edit` and `run` because a project getter or serialization hook can execute
+code and change state. This applies to lists, individual components and selected
+components, including native batch members. A scoped resource URI accepts
+`evaluate_getters` once, with the exact value `true` or `false`. A scoped native
+command accepts either `evaluate_getters` or `evaluateGetters` as a JSON boolean
+or the corresponding lowercase string.
+
 Every normalized batch member is checked before settings, preflight or native
 dispatch. Scoped batches accept only classified canonical built-ins and retain
 the existing prohibition on nested batches and per-member instance routing.

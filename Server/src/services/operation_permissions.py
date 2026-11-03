@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, TypeAlias
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from services.animator_actions import (
     RUNTIME_ANIMATOR_ACTIONS,
@@ -357,8 +357,11 @@ _ACTIONS: Final = {
     },
 }
 
+_COMPONENT_READS: Final = _names(
+    "get_gameobject_components get_gameobject_component get_gameobject_component_selected"
+)
 _READ_COMMANDS: Final = _names(
-    "wait_for_operation ping get_editor_state get_test_job view_test_results get_compile_job get_tests get_tests_for_mode export_test_job find_gameobjects find_in_file get_sha manage_script_capabilities validate_script capture_ui_snapshot debug_request_context set_active_instance inspect_serialized_object inspect_serialized_object_v1 get_project_info get_selection get_active_tool get_windows get_menu_items get_tags get_layers get_prefab_stage get_gameobject get_gameobject_components get_gameobject_component get_gameobject_component_selected get_gameobject_by_handle_v2 get_rendering_stats get_cameras get_volumes get_renderer_features get_tool_states inspect_menu_item tail_console"
+    "wait_for_operation ping get_editor_state get_test_job view_test_results get_compile_job get_tests get_tests_for_mode export_test_job find_gameobjects find_in_file get_sha manage_script_capabilities validate_script capture_ui_snapshot debug_request_context set_active_instance inspect_serialized_object inspect_serialized_object_v1 get_project_info get_selection get_active_tool get_windows get_menu_items get_tags get_layers get_prefab_stage get_gameobject get_gameobject_by_handle_v2 get_rendering_stats get_cameras get_volumes get_renderer_features get_tool_states inspect_menu_item tail_console"
 )
 _TEST_COMMANDS: Final = _names("run_tests cancel_test_job")
 _EDIT_COMMANDS: Final = _names(
@@ -390,10 +393,12 @@ _DEFAULT_ACTIONS: Final = {"read_console": "get", "execute_menu_item": "execute"
 _RESOURCE_PATHS: Final = _names(
     "capabilities capabilities/scoped doctor doctor/runtime doctor/config tool-diagnostics custom-tools editor/active-tool editor/state scene/cameras scene/gameobject-api project/layers menu-items editor/prefab-stage prefab-api project/info pipeline/renderer-features rendering/stats editor/selection project/tags tests tool-groups instances scene/volumes editor/windows"
 )
+_COMPONENT_RESOURCE: Final = re.compile(r"scene/gameobject/-?\d+/(?:components|component/[^/?#]+)")
 _RESOURCE_PATTERNS: Final = (
     re.compile(r"tool-diagnostics/[^/?#]+"),
     re.compile(r"tests/(?:EditMode|PlayMode|editmode|playmode)"),
-    re.compile(r"scene/gameobject/-?\d+(?:/children|/components|/component/[^/?#]+)?"),
+    re.compile(r"scene/gameobject/-?\d+(?:/children)?"),
+    _COMPONENT_RESOURCE,
     re.compile(r"scene/gameobject-by-handle/[^/?#]+"),
     re.compile(r"prefab/[^/?#]+(?:/hierarchy)?"),
 )
@@ -422,6 +427,15 @@ def native_batch_parameters(params: Mapping[str, JsonValue]) -> dict[str, JsonVa
         seen.add(folded)
         normalized[native_key] = value
     return normalized
+
+
+def _component_read_permissions(evaluate_getters: JsonValue) -> frozenset[Permission]:
+    if evaluate_getters is True or evaluate_getters == "true":
+        # Project getters and serialization hooks can run arbitrary code and mutate state.
+        return CUSTOM_GRANTS | {Permission.READ}
+    if evaluate_getters is False or evaluate_getters == "false":
+        return frozenset({Permission.READ})
+    raise OperationPermissionError()
 
 
 def required_permissions(
@@ -498,6 +512,12 @@ def required_permissions(
             if preview or debug_preview:
                 return frozenset({Permission.READ, Permission.EDIT})
         return CUSTOM_GRANTS | {Permission.READ}
+    if name in _COMPONENT_READS:
+        if "evaluate_getters" in params and "evaluateGetters" in params:
+            raise OperationPermissionError()
+        return _component_read_permissions(
+            params.get("evaluate_getters", params.get("evaluateGetters", False))
+        )
     if name in _READ_COMMANDS:
         return frozenset({Permission.READ})
     if name in _TEST_COMMANDS:
@@ -725,6 +745,13 @@ def authorize_resource(authority: OperationGrants, uri: str | None = None) -> No
         and not any(pattern.fullmatch(route) for pattern in _RESOURCE_PATTERNS)
     ):
         raise OperationPermissionError()
+    if parts.query and _COMPONENT_RESOURCE.fullmatch(route):
+        query = parse_qs(parts.query, keep_blank_values=True)
+        values = query.get("evaluate_getters", ["false"])
+        if "evaluateGetters" in query or len(values) != 1:
+            raise OperationPermissionError()
+        if not _component_read_permissions(values[0]) <= authority.permissions:
+            raise OperationPermissionError()
 
 
 async def authorize_remote_operation(
