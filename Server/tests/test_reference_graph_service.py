@@ -591,6 +591,79 @@ async def test_cached_query_batches_sqlite_read_snapshots(setup, monkeypatch, wa
 
 
 @pytest.mark.asyncio
+async def test_cached_asset_pages_validate_only_relevant_providers(setup, monkeypatch):
+    service, _, ctx = setup
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    owner, target = "asset:" + "1" * 32, "asset:" + "2" * 32
+    entry, _ = await service.resolve(ctx, "status")
+    store = entry.workspace.store
+    validations = []
+    validate = service._validate_external
+
+    def record(*args):
+        validations.append([edge["provider"] for edge in args[1]["edges"]])
+        return validate(*args)
+
+    try:
+        assert await entry.engine.reconcile()
+        generation = store.observe(owner, "unity", "test", path="Assets/Owner.mat")
+        store.publish(owner, "unity", generation, [Edge(target, "dependency")])
+        monkeypatch.setattr(service, "_validate_external", record)
+        for node, direction, count in (
+            (owner, "outgoing", 1),
+            (target, "incoming", 1),
+            (target, "outgoing", 0),
+        ):
+            page = await service.execute(ctx, "query", {"node": node, "direction": direction})
+            assert len(page["data"]["edges"]) == count
+            assert page["data"]["graph_status"]["current"]
+        assert not validations
+
+        await service.execute(
+            ctx,
+            "declare",
+            {
+                "id": "mixed",
+                "owner": owner,
+                "edge": {"target": target, "kind": "declared"},
+                "expected_version": 0,
+            },
+        )
+        validations.clear()
+        mixed = await service.execute(ctx, "query", {"node": owner})
+        assert {edge["provider"] for edge in mixed["data"]["edges"]} == {"manual", "unity"}
+        assert len(validations) == 2 and all("manual" in page for page in validations)
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cached_unity_page_rejects_policy_change_after_edge_read(setup, monkeypatch):
+    service, _, ctx = setup
+    monkeypatch.setattr(service, "start", lambda *_, **__: None)
+    owner, target = "asset:" + "1" * 32, "asset:" + "2" * 32
+    entry, _ = await service.resolve(ctx, "status")
+    store = entry.workspace.store
+    try:
+        assert await entry.engine.reconcile()
+        generation = store.observe(owner, "unity", "test", path="Assets/Owner.mat")
+        store.publish(owner, "unity", generation, [Edge(target, "dependency")])
+        query = store.query
+
+        def change_after_read(*args, **kwargs):
+            page = query(*args, **kwargs)
+            assert page["edges"][0]["target"] == target
+            entry.workspace.set_policy({"exclude": ["Assets/Owner.mat"]}, expected_version=0)
+            return page
+
+        monkeypatch.setattr(store, "query", change_after_read)
+        with pytest.raises(RevisionConflict):
+            await service.execute(ctx, "query", {"node": owner})
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_unwatched_policy_change_before_opening_fences_cached_query(setup, monkeypatch):
     import hashlib
 

@@ -51,6 +51,17 @@ class ReferenceCollectionError(OSError):
     """The native collector could not read the requested evidence."""
 
 
+def _is_unity_asset_page(page: dict) -> bool:
+    # Empty pages also have no external grants, manual endpoints or runtime paths to check.
+    return not page.get("coverage") and all(
+        edge["provider"] == "unity"
+        and edge["owner"].startswith("asset:")
+        and isinstance(edge.get("target"), str)
+        and edge["target"].startswith("asset:")
+        for edge in page["edges"]
+    )
+
+
 def state_root() -> Path:
     override = os.environ.get("UNITY_MCP_REFERENCE_GRAPH_DIR")
     if override:
@@ -1062,6 +1073,7 @@ class ReferenceGraphService:
             if ignore_changed:
                 await drained_thread(workspace.block_admission)
         external_changed = False
+        local_query_page = False
         if action in {"declare", "remove_declaration", "set_source", "set_rule", "set_policy"}:
             if type(options.get("expected_version")) is not int or options["expected_version"] < 0:
                 raise ValueError("Read current state and supply its nonnegative expected_version")
@@ -1261,7 +1273,10 @@ class ReferenceGraphService:
                     else {}
                 ),
             )
-            external_changed = await drained_thread(self._validate_external, workspace, data)
+            # The store reads the page's revision and its edges in one transaction.
+            local_query_page = consistency == "cached" and _is_unity_asset_page(data)
+            if not local_query_page:
+                external_changed = await drained_thread(self._validate_external, workspace, data)
         elif action == "diagnostics":
             data = await drained_thread(
                 workspace.diagnostics,
@@ -1429,7 +1444,10 @@ class ReferenceGraphService:
             and not analysis_pending
             and not providers["addressables"]["errors"]
         )
-        if action in {"query", "diagnostics"}:
+        if local_query_page:
+            if data["revision"] != status["revision"]:
+                raise RevisionConflict("Graph changed before delivery; restart the page")
+        elif action in {"query", "diagnostics"}:
             external_changed |= await drained_thread(
                 self._validate_external, workspace, data, options.get("node")
             )
