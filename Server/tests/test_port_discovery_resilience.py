@@ -54,7 +54,7 @@ def test_mixed_heartbeat_formats_do_not_break_instance_sorting(
 
 
 @pytest.mark.parametrize("newest_first", [False, True])
-def test_duplicate_port_keeps_newest_status_with_mixed_timestamp_formats(
+def test_conflicting_legacy_claims_are_rejected_regardless_of_timestamp_order(
     isolated_registry: Path,
     monkeypatch: pytest.MonkeyPatch,
     newest_first: bool,
@@ -81,7 +81,7 @@ def test_duplicate_port_keeps_newest_status_with_mixed_timestamp_formats(
 
     instances = PortDiscovery.discover_all_unity_instances()
 
-    assert [instance.hash for instance in instances] == ["newer"]
+    assert instances == []
 
 
 def test_disappearing_port_registry_does_not_hide_surviving_candidate(
@@ -100,7 +100,7 @@ def test_disappearing_port_registry_does_not_hide_surviving_candidate(
 
 
 @pytest.mark.parametrize("responding", [True, False])
-def test_duplicate_port_is_probed_once_per_scan_without_losing_newest_metadata(
+def test_conflicting_legacy_port_is_probed_once_per_scan(
     isolated_registry,
     monkeypatch,
     responding,
@@ -126,8 +126,7 @@ def test_duplicate_port_is_probed_once_per_scan_without_losing_newest_metadata(
 
     first = PortDiscovery.discover_all_unity_instances()
     assert calls == [6401]
-    assert [instance.hash for instance in first] == ["1"]
-    assert first[0].status == ("running" if responding else "reloading")
+    assert first == []
     second = PortDiscovery.discover_all_unity_instances()
     assert calls == [6401, 6401], "Probe result persisted beyond its discovery scan"
     assert [instance.id for instance in first] == [instance.id for instance in second]
@@ -172,5 +171,5 @@ def test_duplicate_port_memo_uses_real_framed_probe_and_refreshes_next_scan(monk
             second = PortDiscovery.discover_all_unity_instances()
             server.result(timeout=watchdog_timeout())
     assert probes == [port, port]
-    assert [instance.hash for instance in first] == ["1"]
+    assert first == []
     assert [instance.id for instance in first] == [instance.id for instance in second]

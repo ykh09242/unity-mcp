@@ -25,6 +25,7 @@ class StdioAuthenticationError(RuntimeError):
 class StdioAuthentication:
     token_provider: Callable[[str], str | None]
     deadline: float
+    expected_generation: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +96,8 @@ def authenticate_stdio_session(
     if match is None:
         raise StdioAuthenticationError("Unsupported stdio authentication greeting")
     generation, challenge = match.groups()
+    if options.expected_generation is not None and generation != options.expected_generation:
+        raise StdioAuthenticationError("Stdio listener does not match the selected project launch")
     token = options.token_provider(generation)
     if token is None or not 32 <= len(token) <= 256:
         raise StdioAuthenticationError("Stdio launch credential unavailable")

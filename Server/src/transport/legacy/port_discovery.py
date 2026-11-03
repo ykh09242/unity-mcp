@@ -68,9 +68,9 @@ class PortDiscovery:
         return hashed
 
     @staticmethod
-    def _try_probe_unity_mcp(port: int) -> bool:
-        """Quickly check if a MCP for Unity listener is on this port.
-        Current greetings prove liveness without authenticating a disposable peer.
+    def _try_probe_unity_mcp(port: int) -> str | bool:
+        """Return the advertised v2 launch, True for a legacy pong, or False on failure.
+        Current greetings identify candidates without authenticating a disposable peer.
         Only recognized legacy peers receive a ping.
         """
         try:
@@ -100,13 +100,14 @@ class PortDiscovery:
                     if not handshake.endswith(b"\n"):
                         return False
                     banner = bytes(handshake).decode("ascii").rstrip("\r\n")
-                    if re.fullmatch(
+                    current = re.fullmatch(
                         r"WELCOME UNITY-MCP 2 FRAMING=1 AUTH=HMAC-SHA256 "
-                        r"SERVER=[0-9a-f]{32} CHALLENGE=[0-9a-f]{64}",
+                        r"SERVER=([0-9a-f]{32}) CHALLENGE=[0-9a-f]{64}",
                         banner,
-                    ):
+                    )
+                    if current:
                         # Authentication would replace the active authenticated client.
-                        return True
+                        return current[1]
                     if banner in ("WELCOME UNITY-MCP 1", "MCP/0.1"):
                         s.sendall(b"ping")
                         return b'"message":"pong"' in receive(512)
@@ -284,8 +285,7 @@ class PortDiscovery:
     def discover_unity_instance(instance_id: str) -> UnityInstanceInfo | None:
         """Probe an exact target and all identities competing for its ports.
 
-        A pong only identifies the protocol. All status metadata must therefore
-        be considered before reusing the full scan's newest viable port owner.
+        Check competing heartbeats against the same listener greeting as a full scan.
         Missing or displaced targets let the caller fall back to a full scan.
         """
         entries = PortDiscovery._read_status_entries()
@@ -313,7 +313,8 @@ class PortDiscovery:
         instances_by_port: dict[int, tuple[UnityInstanceInfo, datetime]] = {}
         # A scan is one liveness snapshot: legacy/duplicate status files for a
         # port do not need additional handshakes. Metadata still competes below.
-        probes_by_port: dict[int, bool] = {}
+        probes_by_port: dict[int, str | bool] = {}
+        conflicting_ports: set[int] = set()
         for status_path, data, file_mtime in entries:
             try:
                 # Extract hash from filename: unity-mcp-status-{hash}.json
@@ -325,6 +326,15 @@ class PortDiscovery:
                 project_name = PortDiscovery._extract_project_name(project_path)
                 port = data.get("unity_port")
                 is_reloading = data.get("reloading", False)
+                generation = data.get("listener_generation")
+                if data.get("reason") in ("starting", "start_failed", "stopped", "port_busy"):
+                    continue
+                if generation is not None and (
+                    not isinstance(generation, str) or not re.fullmatch(r"[0-9a-f]{32}", generation)
+                ):
+                    continue
+                if "listener_generation" in data and generation is None and not is_reloading:
+                    continue  # This Editor has not published a bound launch.
 
                 # Parse last_heartbeat
                 last_heartbeat = None
@@ -340,9 +350,13 @@ class PortDiscovery:
                 # Verify port is actually responding
                 if isinstance(port, int) and port not in probes_by_port:
                     probes_by_port[port] = PortDiscovery._try_probe_unity_mcp(port)
-                is_alive = probes_by_port.get(port, False) if isinstance(port, int) else False
+                probe = probes_by_port.get(port, False) if isinstance(port, int) else False
+                if isinstance(probe, str) and generation != probe:
+                    continue
+                if probe is True and "listener_generation" in data:
+                    continue
 
-                if not is_alive:
+                if not probe:
                     # If Unity says it's reloading and the status is fresh, don't drop the instance.
                     freshness = last_heartbeat or file_mtime
                     now = datetime.now(timezone.utc)
@@ -361,7 +375,13 @@ class PortDiscovery:
 
                 existing = instances_by_port.get(port)
                 if existing:
-                    _, existing_time = existing
+                    existing_instance, existing_time = existing
+                    if (
+                        existing_instance.hash != hash_value
+                        or existing_instance.path != project_path
+                    ):
+                        conflicting_ports.add(port)
+                        continue
                     if existing_time >= freshness:
                         logger.debug(
                             f"Skipping stale status entry {status_path.name} in favor of more recent data for port {port}"
@@ -380,6 +400,7 @@ class PortDiscovery:
                     # May not be available in current version
                     unity_version=data.get("unity_version"),
                     project_scoped_tools=data.get("project_scoped_tools", False),
+                    listener_generation=generation,
                 )
 
                 instances_by_port[port] = (instance, freshness)
@@ -392,6 +413,7 @@ class PortDiscovery:
         deduped_instances = [
             entry[0]
             for entry in sorted(instances_by_port.values(), key=lambda item: item[1], reverse=True)
+            if entry[0].port not in conflicting_ports
         ]
 
         logger.info(

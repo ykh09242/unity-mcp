@@ -233,7 +233,15 @@ def test_rediscovered_port_update_expires_while_lifecycle_holds_lock(
     holder_acquired = threading.Event()
     release_holder = threading.Event()
     monkeypatch.setattr(conn, "connect", lambda *args, **kwargs: False)
-    monkeypatch.setattr(uc.stdio_port_registry, "get_port", lambda instance_id=None: 6401)
+    conn.instance_id = "Main@deadbeef"
+    refreshed = uc.UnityInstanceInfo(
+        id=conn.instance_id,
+        name="Main",
+        path="/Main/Assets",
+        hash="deadbeef",
+        port=6401,
+        status="running",
+    )
 
     def hold_lifecycle_lock():
         assert start_holder.wait(watchdog_timeout())
@@ -244,7 +252,7 @@ def test_rediscovered_port_update_expires_while_lifecycle_holds_lock(
     def discover(**kwargs):
         start_holder.set()
         assert holder_acquired.wait(watchdog_timeout())
-        return []
+        return [refreshed]
 
     monkeypatch.setattr(uc.stdio_port_registry, "get_instances", discover)
     with ThreadPoolExecutor(max_workers=2) as executor:

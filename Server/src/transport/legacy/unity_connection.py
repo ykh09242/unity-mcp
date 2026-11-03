@@ -237,13 +237,16 @@ class UnityConnection:
     instance_id: str | None = None  # Instance identifier for reconnection
     auth_token_provider: Callable[[str], str | None] | None = field(default=None, repr=False)
     allow_legacy_auth: bool | None = None
+    selected_target: UnityInstanceInfo | None = field(default=None, repr=False)
     session_generation: str | None = field(default=None, init=False)
     authenticated_session: StdioAuthenticatedSession | None = field(default=None, init=False)
 
     def __post_init__(self):
         """Set port from discovery if not explicitly provided"""
         if self.port is None:
-            self.port = stdio_port_registry.get_port(self.instance_id)
+            self.selected_target = get_unity_connection_pool().resolve_instance(self.instance_id)
+            self.instance_id = self.selected_target.id
+            self.port = self.selected_target.port
         self._io_lock = threading.RLock()
         self._active_commands = 0
         self._retired = False
@@ -366,6 +369,22 @@ class UnityConnection:
             self._close_stdio_progress()
             self._authentication_failure = None
             try:
+                # Only an explicitly supplied address with no project selector is a raw dial.
+                if self.instance_id is not None and self.selected_target is None:
+                    try:
+                        self.selected_target = get_unity_connection_pool().resolve_instance(
+                            self.instance_id
+                        )
+                    except ConnectionError as exc:
+                        raise StdioAuthenticationError(str(exc)) from exc
+                    self.instance_id = self.selected_target.id
+                if self.selected_target is not None and (
+                    self.selected_target.id != self.instance_id
+                    or self.selected_target.port != self.port
+                ):
+                    raise StdioAuthenticationError(
+                        "Stdio endpoint does not match the selected project"
+                    )
                 # Bounded connect to avoid indefinite blocking
                 if connect_timeout is None:
                     connect_timeout = float(getattr(config, "connection_timeout", 1.0))
@@ -409,12 +428,21 @@ class UnityConnection:
                         raise StdioAuthenticationError("Incomplete stdio greeting")
                     text = bytes(buf).decode("ascii").strip()
 
+                    expected = (
+                        self.selected_target.listener_generation if self.selected_target else None
+                    )
                     if text.startswith("WELCOME UNITY-MCP 2") or "AUTH=" in text:
+                        if self.selected_target is not None and expected is None:
+                            raise StdioAuthenticationError(
+                                "Selected Unity project has no authenticated listener generation"
+                            )
                         session = authenticate_stdio_session(
                             self.sock,
                             text,
                             StdioAuthentication(
-                                self.auth_token_provider or read_stdio_token, handshake_deadline
+                                self.auth_token_provider or read_stdio_token,
+                                handshake_deadline,
+                                expected,
                             ),
                             capabilities=(
                                 CAPABILITY,
@@ -429,6 +457,13 @@ class UnityConnection:
                         self.use_framing = True
                         logger.debug("Authenticated stdio connection established")
                     else:
+                        if expected is not None or (
+                            self.selected_target is not None
+                            and self.selected_target.status == "reloading"
+                        ):
+                            raise StdioAuthenticationError(
+                                "Selected Unity project has not advertised a ready legacy listener"
+                            )
                         if not self.allow_legacy_auth:
                             raise StdioAuthenticationError(
                                 "Unauthenticated legacy stdio requires explicit UNITY_MCP_STDIO_ALLOW_LEGACY=1"
@@ -1148,32 +1183,25 @@ class UnityConnection:
                         )
                     last_error = e
 
-            # Re-discover the port for this specific instance
+            # Refresh a selected project's complete endpoint. A raw dial stays at its address.
+            self._check_deadline(deadline)
             try:
-                stdio_port_registry.get_instances(force_refresh=True)
-                new_port: int | None = None
-                if self.instance_id:
-                    # Try to rediscover the specific instance via shared registry
-                    refreshed_instance = stdio_port_registry.get_instance(self.instance_id)
-                    if refreshed_instance and isinstance(refreshed_instance.port, int):
-                        new_port = refreshed_instance.port
-                        logger.debug(f"Rediscovered instance {self.instance_id} on port {new_port}")
-                    else:
-                        logger.warning(
-                            f"Instance {self.instance_id} not found during reconnection; resolving through shared registry",
-                        )
-
-                # Resolve through the shared registry with the same explicit target.
-                if new_port is None:
-                    new_port = stdio_port_registry.get_port(self.instance_id)
-                    logger.info(f"Using Unity port from stdio_port_registry: {new_port}")
-
-                if new_port != self.port:
-                    logger.info(f"Unity port changed {self.port} -> {new_port}")
-                with self._command_lock(deadline):
-                    if self.port != new_port:
-                        self.disconnect()
-                        self.port = new_port
+                if self.instance_id is not None:
+                    instances = stdio_port_registry.get_instances(force_refresh=True)
+                    target = next((inst for inst in instances if inst.id == self.instance_id), None)
+                    if target is not None:
+                        with self._command_lock(deadline):
+                            previous = getattr(self.selected_target, "listener_generation", None)
+                            if previous and target.listener_generation is None:
+                                raise StdioAuthenticationError(
+                                    "Authenticated project lost its listener generation"
+                                )
+                            if self.port != target.port or previous != target.listener_generation:
+                                self.disconnect()
+                            self.port = target.port
+                            self.selected_target = target
+            except StdioAuthenticationError:
+                raise
             except TimeoutError:
                 raise
             except Exception as de:
@@ -1556,7 +1584,9 @@ class UnityConnectionPool:
                                 "Unity connection pool capacity reached; close unused editors and "
                                 "retry after discovery's idle grace period"
                             )
-                        conn = UnityConnection(port=target.port, instance_id=target.id)
+                        conn = UnityConnection(
+                            port=target.port, instance_id=target.id, selected_target=target
+                        )
                     owner = threading.Event()
                     self._selection_owners[target.id] = owner
                     break
@@ -1569,31 +1599,30 @@ class UnityConnectionPool:
 
         published = False
         try:
-            changing_port = conn.port != target.port
+            changing_endpoint = conn.port != target.port or (
+                getattr(conn.selected_target, "listener_generation", None)
+                != getattr(target, "listener_generation", None)
+            )
             # Stable busy connections retain their existing wire generation. A
-            # changed port must wait for that generation's command to settle.
+            # changed port or launch must wait for that generation's command to settle.
             with contextlib.ExitStack() as ownership:
                 acquired = conn._io_lock.acquire(blocking=False)
                 if acquired:
                     ownership.callback(conn._io_lock.release)
-                elif created or changing_port:
+                elif created or changing_endpoint:
                     ownership.enter_context(selection.lock(conn._io_lock))
                 reconnecting = False
                 try:
-                    if created or changing_port or acquired:
+                    if created or changing_endpoint or acquired:
                         selection.check()
                         self._check_selection_epoch(epoch)
                         if conn._retired:
                             raise ConnectionError("Unity connection was retired")
-                        if changing_port:
-                            logger.info(
-                                "Updating cached port for %s: %s -> %s",
-                                target.id,
-                                conn.port,
-                                target.port,
-                            )
+                        if changing_endpoint:
+                            logger.info("Updating cached stdio endpoint for %s", target.id)
                             conn.disconnect()
                             conn.port = target.port
+                        conn.selected_target = target
                         conn._ensure_live_connection()
                         reconnecting = not conn.sock
                         if reconnecting and not conn.connect(
@@ -2498,6 +2527,7 @@ async def _cancel_stdio_resume(
             instance_id=connection.instance_id,
             auth_token_provider=connection.auth_token_provider,
             allow_legacy_auth=False,
+            selected_target=connection.selected_target,
         )
         try:
             control.send_command(

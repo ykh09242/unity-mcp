@@ -20,6 +20,8 @@ def registry_environment(monkeypatch, tmp_path):
 
     monkeypatch.setattr(socket, "create_connection", deny_network)
     module = importlib.import_module("transport.legacy.stdio_port_registry")
+    connection = importlib.import_module("transport.legacy.unity_connection")
+    monkeypatch.setattr(connection, "_unity_connection_pool", connection.UnityConnectionPool())
     clock = [0.0]
     discovered = []
     scans = []
@@ -176,3 +178,19 @@ def test_send_rediscovery_does_not_retarget_missing_selection(registry_environme
     assert attempted == [6401, 6401]
     assert conn.port == 6401
     assert fallback == []
+
+
+def test_raw_port_retry_never_selects_an_unrelated_registry_project(
+    registry_environment, monkeypatch
+):
+    _, _, discovered, scans, fallback = registry_environment
+    discovered.append(_instance("Other", 6501))
+    connection = importlib.import_module("transport.legacy.unity_connection")
+    conn = connection.UnityConnection(port=6401)
+    attempts = []
+    monkeypatch.setattr(conn, "connect", lambda *a, **kw: attempts.append(conn.port) or False)
+    monkeypatch.setattr(connection.time, "sleep", lambda _: None)
+    with pytest.raises(ConnectionError, match="Could not connect"):
+        conn.send_command("manage_scene", {"action": "get_active"}, max_attempts=1)
+    assert attempts == [6401, 6401]
+    assert not scans and not fallback

@@ -60,6 +60,17 @@ def silent_bridge(monkeypatch, tmp_path):
     monkeypatch.setattr(uc.Path, "home", lambda: Path(tmp_path))
     monkeypatch.setattr(uc.stdio_port_registry, "get_port", lambda instance_id=None: port)
     monkeypatch.setattr(uc.stdio_port_registry, "get_instance", lambda instance_id: None)
+    target = UnityInstanceInfo(
+        id="Repro@deadbeef",
+        name="Repro",
+        hash="deadbeef",
+        path="/Repro/Assets",
+        port=port,
+        status="running",
+    )
+    pool = uc.UnityConnectionPool()
+    monkeypatch.setattr(pool, "resolve_instance", lambda _: target)
+    monkeypatch.setattr(uc, "_unity_connection_pool", pool)
     monkeypatch.setattr(config, "connection_timeout", 1.0)
     monkeypatch.setattr(config, "command_total_timeout", 2.0, raising=False)
     try:

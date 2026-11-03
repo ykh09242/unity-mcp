@@ -109,6 +109,7 @@ class UnityInstanceInfo(BaseModel):
     last_heartbeat: datetime | None = None
     unity_version: str | None = None
     project_scoped_tools: bool = False
+    listener_generation: str | None = Field(default=None, exclude=True)  # Local stdio routing
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization"""

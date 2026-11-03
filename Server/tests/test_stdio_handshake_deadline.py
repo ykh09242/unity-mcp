@@ -34,6 +34,7 @@ effective_deadline = min(1.0, outer_deadline) if outer_deadline is not None else
 if protocol == "legacy":
     reads = [(0.0, b"WELCOME UNITY-MCP 1 FRAMING=1"), (effective_deadline, b"\\n")]
 else:
+    conn.selected_target.listener_generation = generation
     reads = [(0.0, banner), (0.0, struct.pack(">Q", len(reply))),
              (0.0, reply[:-1]), (effective_deadline, reply[-1:])]
 sock = ClockedSocket(clock, reads)
@@ -56,6 +57,7 @@ config.command_total_timeout = 0.1
 if {protocol!r} == "legacy":
     reads = [(0.0, b"WELCOME UNITY-MCP 1 FRAMING=1"), (0.5, b"\\n")]
 else:
+    conn.selected_target.listener_generation = generation
     reads = [(0.0, banner), (0.0, struct.pack(">Q", len(reply))), (0.5, reply)]
 sock = ClockedSocket(clock, reads)
 module.socket.create_connection = lambda endpoint, timeout: sock

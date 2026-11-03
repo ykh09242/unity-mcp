@@ -213,13 +213,6 @@ def environment(monkeypatch):
 
 
 def _connection(environment, peer, *, legacy=False):
-    connection = uc.UnityConnection(
-        host="127.0.0.1",
-        port=peer.port,
-        instance_id=IDENTITY,
-        auth_token_provider=lambda _: TOKEN,
-        allow_legacy_auth=legacy,
-    )
     environment._known_instances[IDENTITY] = UnityInstanceInfo(
         id=IDENTITY,
         name="Owned",
@@ -227,6 +220,15 @@ def _connection(environment, peer, *, legacy=False):
         path="/Owned/Assets",
         port=peer.port,
         status="running",
+        listener_generation=None if legacy else peer.generation,
+    )
+    connection = uc.UnityConnection(
+        host="127.0.0.1",
+        port=peer.port,
+        instance_id=IDENTITY,
+        selected_target=environment._known_instances[IDENTITY],
+        auth_token_provider=lambda _: TOKEN,
+        allow_legacy_auth=legacy,
     )
     environment._connections[IDENTITY] = connection
     return connection
@@ -383,6 +385,9 @@ async def test_disconnect_and_old_peer_reconnect_clear_accepted_capabilities(env
     assert connection.session_generation is None
     with wire_peer(commands=0) as second:
         connection.port = second.port
+        connection.selected_target = connection.selected_target.model_copy(
+            update={"port": second.port, "listener_generation": second.generation}
+        )
         assert await asyncio.wait_for(asyncio.to_thread(connection.connect), watchdog_timeout())
         # Then: the new verified identity has no inherited optional authority.
         assert connection.authenticated_session.capabilities == frozenset()

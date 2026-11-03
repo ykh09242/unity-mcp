@@ -81,17 +81,18 @@ def test_target_cache_expires_for_changed_port_and_never_caches_failed_probes(ta
 def test_newer_other_identity_on_reused_port_forces_full_discovery(target_environment):
     pool, write, probes, _, _ = target_environment
     write("Other", "cafebabe", 6400, offset=1)
-    with pytest.raises(ConnectionError, match="Main@deadbeef.*not found"):
+    with pytest.raises(ConnectionError, match="No Unity Editor instances"):
         pool.get_connection("Main@deadbeef")
     assert "Main@deadbeef" not in pool._known_instances
     assert probes == [6400, 6400]
 
 
-def test_newer_selected_identity_wins_same_port_competition(target_environment):
+def test_newer_legacy_identity_cannot_claim_contested_port(target_environment):
     pool, write, probes, _, _ = target_environment
     write("Other", "cafebabe", 6400, offset=-1)
-    assert pool.get_connection("Main@deadbeef").port == 6400
-    assert probes == [6400]
+    with pytest.raises(ConnectionError, match="No Unity Editor instances"):
+        pool.get_connection("Main@deadbeef")
+    assert probes == [6400, 6400]
 
 
 @pytest.mark.parametrize(
@@ -139,6 +140,18 @@ def test_parallel_exact_target_calls_share_refresh(target_environment):
     assert probes == [6400]
 
 
+def test_stopped_launch_remains_visible_during_reload_only_while_port_is_offline(
+    target_environment,
+):
+    pool, write, _, _, available = target_environment
+    available.remove(6400)
+    write("Main", "deadbeef", 6400, reloading=True, reason="reloading", listener_generation=None)
+    assert pool.resolve_instance("Main@deadbeef").status == "reloading"
+    available.add(6400)
+    with pytest.raises(ConnectionError, match="No Unity Editor instances"):
+        pool.resolve_instance("Main@deadbeef", force_refresh=True)
+
+
 def test_full_cache_precedes_target_cache_and_validated_sixteen_hex_id_is_supported(
     target_environment,
 ):
@@ -157,7 +170,7 @@ def test_expired_target_metadata_cannot_retarget_reused_port(target_environment)
     pool.resolve_instance("Main@deadbeef")
     write("Other", "cafebabe", 6400, offset=1)
     clock[0] += 5
-    with pytest.raises(ConnectionError, match="Main@deadbeef.*not found"):
+    with pytest.raises(ConnectionError, match="No Unity Editor instances"):
         pool.resolve_instance("Main@deadbeef")
     assert "Main@deadbeef" not in pool._known_instances
     assert probes == [6400, 6400, 6400]

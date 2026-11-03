@@ -11,6 +11,7 @@ import threading
 import pytest
 
 from core.config import config
+from models.models import UnityInstanceInfo
 from tests.timing import watchdog_timeout
 from transport.legacy import unity_connection as uc
 from transport.legacy.stdio_auth import authentication_proof
@@ -80,7 +81,7 @@ def resume_peer(mode="completed", reloads=1, *, origin=False, business_result=No
             with peer:
                 peer.settimeout(watchdog_timeout(5))
                 generation, challenge, session = (
-                    secrets.token_hex(16),
+                    f"{1 if mode in ('cancel', 'cancel_after_completion') else attempt + 1:032x}",
                     secrets.token_hex(32),
                     secrets.token_hex(16),
                 )
@@ -208,6 +209,15 @@ def configure(monkeypatch, port, reconnect_failures=0):
                 reconnect_failures -= 1
                 raise ConnectionError("Editor is still reloading")
             selections += 1
+            connection.selected_target = UnityInstanceInfo(
+                id=connection.instance_id,
+                name="Owned",
+                path="/Owned/Assets",
+                hash="deadbeef",
+                port=port,
+                status="running",
+                listener_generation=f"{selections:032x}",
+            )
             assert connection.connect()
         return connection
 

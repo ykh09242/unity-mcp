@@ -2174,6 +2174,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 var payload = new
                 {
                     unity_port = currentUnityPort,
+                    listener_generation = authentication?.Generation,
                     reloading,
                     reason = reason ?? (reloading ? "reloading" : "ready"),
                     seq = heartbeatSeq,

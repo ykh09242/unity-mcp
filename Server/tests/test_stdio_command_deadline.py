@@ -71,6 +71,7 @@ payload = b'{"status":"success","result":{"ok":true}}'
 header = struct.pack(">Q", len(payload))
 # This fixture intentionally exercises the old framed protocol, not authentication.
 conn = module.UnityConnection(port=1111, instance_id="Selected@owned", allow_legacy_auth=True)
+conn.selected_target = module.UnityInstanceInfo(id=conn.instance_id, port=1111, name="Selected", hash="owned", path="/Selected/Assets", status="running")
 conn.use_framing = True
 """
 

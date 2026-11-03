@@ -1,12 +1,16 @@
 """Discovery cannot gain command or active-client replacement authority."""
 
 import json
+import os
 import socket
 import struct
+from types import SimpleNamespace
 
 import pytest
 
 from transport.legacy import port_discovery as discovery
+from transport.legacy import unity_connection as connections
+from transport.legacy.stdio_auth import StdioAuthenticationError, authentication_proof
 from transport.legacy.unity_connection import UnityConnectionPool
 
 CURRENT = (
@@ -53,7 +57,14 @@ def test_current_greeting_discovers_without_sending_or_replacing_active_client(
 ):
     monkeypatch.setenv("UNITY_MCP_STATUS_DIR", str(tmp_path))
     (tmp_path / "unity-mcp-status-deadbeef.json").write_text(
-        json.dumps({"project_path": "/Owned/Main/Assets", "unity_port": 6400}), encoding="utf-8"
+        json.dumps(
+            {
+                "project_path": "/Owned/Main/Assets",
+                "unity_port": 6400,
+                "listener_generation": "a" * 32,
+            }
+        ),
+        encoding="utf-8",
     )
     peer = ProbePeer([bytes([value]) for value in CURRENT] if fragmented else [CURRENT])
     monkeypatch.setattr(discovery.socket, "create_connection", lambda *_: peer)
@@ -129,18 +140,16 @@ def test_greeting_timeout_is_a_failed_probe(monkeypatch):
     assert peer.sent == []
 
 
-def test_discovery_preserves_working_mutually_authenticated_client(monkeypatch, tmp_path):
-    from types import SimpleNamespace
-    from transport.legacy import unity_connection as connections
-    from transport.legacy.stdio_auth import authentication_proof
-
+@pytest.fixture
+def bridge(monkeypatch, tmp_path):
     token = "owned-discovery-test-credential-" + "x" * 32
-    generation, challenge, session = "a" * 32, "b" * 64, "c" * 32
-    host = SimpleNamespace(active=None)
+    challenge, session = "b" * 64, "c" * 32
+    host = SimpleNamespace(active=None, generation="a" * 32, peers=[], commands=[])
 
     class AuthenticatedPeer(ProbePeer):
         def __init__(self):
-            super().__init__([CURRENT])
+            self.generation = host.generation
+            super().__init__([CURRENT.replace(b"a" * 32, self.generation.encode("ascii"))])
             self.pending = bytearray()
             self.timeout = 1.0
 
@@ -175,11 +184,16 @@ def test_discovery_preserves_working_mutually_authenticated_client(monkeypatch, 
                 return
             payload = bytes(self.pending[8:])
             self.pending.clear()
-            if payload == b"ping":
+            request = {"type": "ping"} if payload == b"ping" else json.loads(payload)
+            if request["type"] == "ping":
                 assert host.active is self
                 reply = {"status": "success", "result": {"message": "pong"}}
+            elif request["type"] == "manage_scene":
+                assert host.active is self and request["params"] == {"action": "get_active"}
+                host.commands.append(self.generation)
+                reply = {"status": "success", "result": {"editor": self.generation}}
             else:
-                request = json.loads(payload)
+                generation = self.generation
                 nonce = request["client_nonce"]
                 assert request["proof"] == authentication_proof(
                     token, ["client", generation, challenge, nonce]
@@ -191,24 +205,52 @@ def test_discovery_preserves_working_mutually_authenticated_client(monkeypatch, 
                     "type": "authenticated",
                     "version": 2,
                     "session_id": session,
+                    "capabilities": ["native_arbitration_v1"],
+                    "arbitration_generation": "f" * 32,
                     "proof": authentication_proof(
                         token, ["server", generation, challenge, nonce, session]
                     ),
                 }
+            if "arbitration" in request:
+                reply = {
+                    "native_arbitration": {
+                        **request["arbitration"],
+                        "disposition": "started",
+                        "retryable": False,
+                    },
+                    "payload": reply,
+                }
             encoded = json.dumps(reply).encode("ascii")
             self.chunks.append(struct.pack(">Q", len(encoded)) + encoded)
 
-    active, probe = AuthenticatedPeer(), AuthenticatedPeer()
-    peers = iter([active, probe])
-    monkeypatch.setattr(discovery.socket, "create_connection", lambda *_: next(peers))
-    monkeypatch.setattr(connections, "read_status_file", lambda *_: None)
+    def connect(*_):
+        peer = AuthenticatedPeer()
+        host.peers.append(peer)
+        return peer
+
+    monkeypatch.setattr(discovery.socket, "create_connection", connect)
+    monkeypatch.setattr(connections, "read_stdio_token", lambda _: token)
+    monkeypatch.delenv("UNITY_MCP_DEFAULT_INSTANCE", raising=False)
     monkeypatch.setenv("UNITY_MCP_STATUS_DIR", str(tmp_path))
-    (tmp_path / "unity-mcp-status-deadbeef.json").write_text(
-        json.dumps({"project_path": "/Owned/Main/Assets", "unity_port": 6400}), encoding="utf-8"
-    )
-    connection = connections.UnityConnection(
-        port=6400, instance_id="Main@deadbeef", auth_token_provider=lambda _: token
-    )
+
+    def publish(name, project_hash, modified, **fields):
+        path = tmp_path / f"unity-mcp-status-{project_hash}.json"
+        path.write_text(
+            json.dumps({"project_path": f"/Owned/{name}/Assets", "unity_port": 6400, **fields}),
+            encoding="utf-8",
+        )
+        os.utime(path, (modified, modified))
+
+    publish("Main", "deadbeef", 1, listener_generation=host.generation)
+    host.publish = publish
+    host.pool = UnityConnectionPool()
+    monkeypatch.setattr(connections, "_unity_connection_pool", host.pool)
+    yield host
+    host.pool.disconnect_all()
+
+
+def test_discovery_preserves_working_mutually_authenticated_client(bridge):
+    connection = connections.UnityConnection(port=6400, instance_id="Main@deadbeef")
     try:
         assert connection.connect()
         assert connection.send_command("ping", {}) == {"message": "pong"}
@@ -218,9 +260,142 @@ def test_discovery_preserves_working_mutually_authenticated_client(monkeypatch, 
         assert [instance.id for instance in pool.discover_all_instances()] == [
             connection.instance_id
         ]
+        discovery_probe, active, probe = bridge.peers
+        assert discovery_probe.closed and not discovery_probe.sent
         assert probe.closed and probe.sent == []
-        assert host.active is active and not active.closed
+        assert bridge.active is active and not active.closed
         assert connection.authenticated_session is before
         assert connection.send_command("ping", {}) == {"message": "pong"}
     finally:
         connection.disconnect()
+
+
+def scene(instance=None):
+    return connections.send_command_with_retry(
+        "manage_scene", {"action": "get_active"}, instance_id=instance
+    )
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"reason": "starting", "listener_generation": None},
+        {"reason": "port_busy", "reloading": True},
+        {"reason": "ready"},
+        {"listener_generation": "d" * 32},
+    ],
+)
+def test_newer_foreign_heartbeat_cannot_dispatch_to_bound_project(bridge, fields):
+    bridge.publish("Other", "cafebabe", 2, **fields)
+    with pytest.raises(ConnectionError, match="not found"):
+        scene("Other@cafebabe")
+    assert bridge.pool._connections == {} and not bridge.commands
+    assert scene() == {"editor": bridge.generation}
+    assert bridge.commands == [bridge.generation]
+
+
+@pytest.mark.asyncio
+async def test_operation_target_and_sender_only_admit_authenticated_project(bridge):
+    from services.registry.operation_target import capture_target
+
+    bridge.publish("Other", "cafebabe", 2, reason="starting")
+    wrong = "Other@cafebabe"
+    params = {"action": "get_active"}
+    try:
+        assert await capture_target(wrong) is None
+        refused = await connections.async_send_command_with_retry(
+            "manage_scene", params, instance_id=wrong
+        )
+        assert refused.success is False and wrong in refused.error
+        assert not bridge.commands and bridge.pool._connections == {}
+        target = await capture_target("Main@deadbeef")
+        assert target.negotiated and target.is_current()
+        assert target.transport_generation.startswith(bridge.generation + ":")
+        reply = await connections.async_send_command_with_retry("manage_scene", params)
+        assert reply == {"editor": bridge.generation}
+        assert bridge.commands == [bridge.generation]
+    finally:
+        await bridge.pool.aclose()
+
+
+def test_conflicting_claims_for_live_generation_fail_closed(bridge):
+    bridge.publish("Other", "cafebabe", 2, listener_generation=bridge.generation)
+    with pytest.raises(ConnectionError, match="No Unity Editor instances"):
+        scene("Other@cafebabe")
+    assert bridge.pool._connections == {} and not bridge.commands
+
+
+@pytest.mark.parametrize("registry_constructor", [False, True])
+def test_port_reused_after_discovery_never_authenticates_or_dispatches(
+    bridge, registry_constructor
+):
+    if registry_constructor:
+        connection = connections.UnityConnection(instance_id="Main@deadbeef")
+    else:
+        bridge.pool.resolve_instance("Main@deadbeef")
+    bridge.generation = "d" * 32
+    if registry_constructor:
+        assert not connection.connect()
+        assert connection.sock is None
+    else:
+        with pytest.raises(ConnectionError):
+            scene("Main@deadbeef")
+    assert bridge.pool._connections == {} and not bridge.commands
+    assert all(peer.closed and not peer.sent for peer in bridge.peers)
+
+
+@pytest.mark.parametrize("instance,port", [("Other@cafebabe", 6400), ("Main@deadbeef", 6401)])
+def test_explicit_constructor_port_cannot_override_selected_project(bridge, instance, port):
+    connection = connections.UnityConnection(port=port, instance_id=instance)
+    with pytest.raises(StdioAuthenticationError):
+        connection.send_command("manage_scene", {"action": "get_active"}, max_attempts=0)
+    assert connection.sock is None
+    assert not bridge.commands
+    assert all(peer.closed and not peer.sent for peer in bridge.peers)
+
+
+def test_implicit_constructor_without_matching_heartbeat_does_not_dial_raw_port(bridge, tmp_path):
+    (tmp_path / "unity-mcp-status-deadbeef.json").unlink()
+    with pytest.raises(ConnectionError, match="No Unity Editor instances"):
+        connections.UnityConnection()
+    assert not bridge.peers and not bridge.commands
+
+
+def test_selected_authenticated_project_cannot_downgrade_to_legacy(bridge, monkeypatch):
+    target = bridge.pool.resolve_instance("Main@deadbeef")
+    monkeypatch.setenv("UNITY_MCP_STDIO_ALLOW_LEGACY", "1")
+    peer = type(bridge.peers[0])()
+    peer.chunks = [b"WELCOME UNITY-MCP 1 FRAMING=1\n"]
+    monkeypatch.setattr(discovery.socket, "create_connection", lambda *_: peer)
+    with pytest.raises(ConnectionError):
+        scene(target.id)
+    assert peer.closed and not peer.sent
+    assert bridge.pool._connections == {} and not bridge.commands
+
+
+def test_legacy_selection_on_reused_port_cannot_authenticate_an_unrelated_v2_peer(
+    bridge, monkeypatch
+):
+    bridge.publish("Main", "deadbeef", 2)
+    monkeypatch.setenv("UNITY_MCP_STDIO_ALLOW_LEGACY", "1")
+    pong = b'{"message":"pong"}'
+    peer = ProbePeer([b"WELCOME UNITY-MCP 1 FRAMING=1\n", struct.pack(">Q", len(pong)) + pong])
+    with monkeypatch.context() as patch:
+        patch.setattr(discovery.socket, "create_connection", lambda *_: peer)
+        target = bridge.pool.resolve_instance("Main@deadbeef")
+    assert target.listener_generation is None
+    with pytest.raises(ConnectionError):
+        scene(target.id)
+    assert bridge.pool._connections == {} and not bridge.commands
+    assert all(peer.closed and not peer.sent for peer in bridge.peers)
+
+
+def test_same_port_new_project_launch_replaces_authenticated_pool_socket(bridge):
+    assert scene() == {"editor": bridge.generation}
+    old = bridge.active
+    bridge.generation = "e" * 32
+    bridge.publish("Main", "deadbeef", 3, listener_generation=bridge.generation)
+    bridge.pool.resolve_instance("Main@deadbeef", force_refresh=True)
+    assert scene("Main@deadbeef") == {"editor": bridge.generation}
+    assert old.closed and bridge.active is not old
+    assert bridge.commands == ["a" * 32, "e" * 32]

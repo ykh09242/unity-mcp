@@ -31,9 +31,19 @@ the banner or proof messages. This authenticates the local bridge; it does not
 encrypt loopback traffic or isolate applications running as the same OS user.
 
 Update the Editor package and its pinned Python server together. Python rejects
-old unauthenticated peers by default. `UNITY_MCP_STDIO_ALLOW_LEGACY=1` deliberately
-allows a genuinely old v1 banner; an advertised v2 authentication failure can
-never trigger fallback. The new Unity bridge always requires authentication.
+v2 project heartbeats that lack the listener generation. The Editor publishes
+this generation after binding its port. Discovery matches the project's
+heartbeat to the greeting, and the command socket must authenticate that same
+launch before use. This also applies when a sole project is automatically selected.
+Supplying a port alongside a project ID checks both against the selected heartbeat.
+An address-only connection requires an explicitly supplied port and no project selector.
+
+Python rejects old unauthenticated peers by default.
+`UNITY_MCP_STDIO_ALLOW_LEGACY=1` deliberately allows a generationless legacy
+heartbeat and a genuine v1 banner. Discovery rejects conflicting claims to the
+same legacy port. A lone v1 peer cannot prove project ownership after port
+reuse. A project advertising an authenticated generation always
+requires v2, including when legacy support is enabled.
 
 ## Command processing and JSON
 
