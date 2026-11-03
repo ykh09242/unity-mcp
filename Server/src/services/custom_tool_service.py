@@ -732,18 +732,29 @@ class CustomToolService:
         if isinstance(response, MCPResponse):
             return response
         if isinstance(response, dict):
-            return MCPResponse(
-                success=False
-                if response.get("_mcp_status") == "error"
-                else response.get("success", True),
-                message=response.get("message"),
-                code=response.get("code"),
-                error=response.get("error"),
-                hint=response.get("hint"),
-                data=response.get(
-                    "data", None if typed_output and "success" in response else response
-                ),
-            )
+            status = response.get("_mcp_status")
+            if (
+                not isinstance(response.get("success"), bool)
+                and status not in ("complete", "error", "pending")
+                and not response.keys() <= MCPResponse.model_fields.keys()
+            ):
+                # Keep raw business fields together, including a field named data.
+                return MCPResponse(success=True, data=response)
+            success = status != "error" and response.get("success", True)
+            try:
+                return MCPResponse(
+                    success=success,
+                    message=response.get("message"),
+                    code=response.get("code"),
+                    error=response.get("error"),
+                    hint=response.get("hint"),
+                    data=response.get(
+                        "data", None if typed_output and "success" in response else response
+                    ),
+                )
+            except ValidationError:
+                # A success or status marker alone does not make the fields typed metadata.
+                return MCPResponse(success=success is not False, data=response)
 
         return MCPResponse(success=False, message=str(response))
 

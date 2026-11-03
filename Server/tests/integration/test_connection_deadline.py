@@ -101,7 +101,7 @@ def test_send_command_with_retry_is_bounded_by_deadline(silent_bridge, tmp_path,
     start = time.monotonic()
     resp = uc.send_command_with_retry("get_editor_state", {}, instance_id="Repro@deadbeef")
     assert time.monotonic() - start < 6.0
-    assert uc._extract_response_reason(resp) == "reloading"
+    assert resp.data["reason"] == "reloading"
 
 
 def test_reload_signal_drops_socket_for_fresh_reconnect(silent_bridge, tmp_path):
@@ -113,7 +113,7 @@ def test_reload_signal_drops_socket_for_fresh_reconnect(silent_bridge, tmp_path)
 
     response = conn.send_command("get_editor_state", {})
     assert conn.sock is None
-    assert uc._extract_response_reason(response) == "reloading"
+    assert response.data["reason"] == "reloading"
 
 
 def test_connection_failure_refreshes_cached_port_before_backoff(monkeypatch) -> None:

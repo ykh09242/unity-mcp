@@ -64,7 +64,7 @@ def result(command, state, value):
 
 
 @contextmanager
-def resume_peer(mode="completed", reloads=1, *, origin=False):
+def resume_peer(mode="completed", reloads=1, *, origin=False, business_result=None):
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(4)
@@ -136,7 +136,11 @@ def resume_peer(mode="completed", reloads=1, *, origin=False):
                         commands.append(read_frame(peer))
                         started.set()  # The mutation is applied but its reply is lost.
                 elif attempt >= reloads:
-                    value = {"success": True, "data": {"applied": 1, "receipt": "original"}}
+                    value = (
+                        business_result
+                        if business_result is not None
+                        else {"success": True, "data": {"applied": 1, "receipt": "original"}}
+                    )
                     if mode == "unknown":
                         value = {
                             "status": "error",
@@ -235,6 +239,36 @@ async def test_deadline_after_queued_proof_uses_latest_wire_attempt(
                     "reason": "command_deadline_exceeded",
                     "dispatch": "not_dispatched",
                 }
+        finally:
+            connection.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "business",
+    [
+        {"message": {"id": 1}},
+        {"error": ["detail"]},
+        {"data": "raw", "count": 2},
+        {"success": True, "message": {"id": 1}},
+    ],
+)
+async def test_completed_custom_result_survives_stdio_delivery(monkeypatch, business):
+    from fastmcp import FastMCP
+    from models.models import ToolDefinitionModel
+    from services.custom_tool_service import CustomToolService
+
+    with resume_peer(reloads=0, business_result=business) as (port, commands, _, _):
+        connection = configure(monkeypatch, port)
+        monkeypatch.setattr(CustomToolService, "_instance", None)
+        service = CustomToolService(FastMCP("custom-stdio-result"), project_scoped_tools=True)
+        name = "fixture_custom_result"
+        service._register_project_tools("deadbeef", [ToolDefinitionModel(name=name)])
+        try:
+            response = await service.execute_tool("deadbeef", name, connection.instance_id)
+            assert response.success
+            assert response.data == business
+            assert [command["type"] for command in commands] == [name]
         finally:
             connection.disconnect()
 
