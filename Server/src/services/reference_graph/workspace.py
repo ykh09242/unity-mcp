@@ -314,6 +314,17 @@ class GraphWorkspace:
         with self._write(worker) as connection:
             self._set(connection, "progress", value)
 
+    def record_error(self, worker: str, error: str, *, defer_folder_proof: bool) -> dict:
+        with self._write(worker) as connection:
+            progress = self._state(connection, "progress", {})
+            progress.update(phase="error", error=error)
+            self._set(connection, "progress", progress)
+            scan = self._state(connection, "folder_scan")
+            if scan:
+                scan["defer_partial_proof"] = defer_folder_proof
+                self._set(connection, "folder_scan", scan)
+            return progress
+
     def policy(self, *, bounded: bool = False) -> dict:
         return {
             "respect_gitignore": True,
@@ -439,7 +450,9 @@ class GraphWorkspace:
         self._set(
             connection, "catalog_revision", self._state(connection, "catalog_revision", 0) + 1
         )
-        connection.execute("DELETE FROM graph_state WHERE key LIKE 'external_scan:%'")
+        connection.execute(
+            "DELETE FROM graph_state WHERE key IN ('folder_scan','change_page') OR key LIKE 'external_scan:%'"
+        )
 
     def _refresh_admission(self, connection, *, runtime: bool = False) -> None:
         admitted = self._admission(connection)
@@ -579,7 +592,7 @@ class GraphWorkspace:
                     "UPDATE graph_admission SET revision=(SELECT revision FROM graph_meta),ready=0 WHERE id=1"
                 )
             elif connection.execute(
-                "UPDATE graph_admission SET ready=1 WHERE id=1 AND ready=0"
+                "UPDATE graph_admission SET ready=1 WHERE id=1 AND ready=0 AND NOT EXISTS(SELECT 1 FROM graph_state WHERE key='folder_scan')"
             ).rowcount:
                 # Restored visibility must not reuse a revision captured while
                 # admission was blocked, even when the rules themselves match.
@@ -588,6 +601,7 @@ class GraphWorkspace:
 
     def finish_admission(self, worker: str) -> None:
         with self._write(worker) as connection:
+            connection.execute("DELETE FROM graph_state WHERE key='folder_scan'")
             if not connection.execute("SELECT ready FROM graph_admission WHERE id=1").fetchone()[0]:
                 self._refresh_admission(connection, runtime=True)
                 connection.execute("UPDATE graph_admission SET ready=1 WHERE id=1")
@@ -793,7 +807,14 @@ class GraphWorkspace:
             self._set(connection, "analysis_dirty", True)
 
     def record_page(
-        self, worker: str, assets: Iterable[dict], progress: dict, seen: str, *, force: bool = True
+        self,
+        worker: str,
+        assets: Iterable[dict],
+        progress: dict,
+        seen: str,
+        *,
+        force: bool = True,
+        folder_scan: dict | None = None,
     ) -> None:
         with self._write(worker) as connection:
             admitted = self._admission(connection)
@@ -881,6 +902,8 @@ class GraphWorkspace:
             if dirty_owners or catalog_changes:
                 self.store._bump(connection)
             self._set(connection, "progress", progress)
+            if folder_scan is not None:
+                self._set(connection, "folder_scan", folder_scan)
 
     def _delete(self, connection, owner: str) -> None:
         connection.execute("DELETE FROM graph_addressables WHERE owner=?", (owner,))
@@ -921,6 +944,7 @@ class GraphWorkspace:
 
     def finish_census(self, worker: str, seen: str, progress: dict) -> None:
         with self._write(worker) as connection:
+            connection.execute("DELETE FROM graph_state WHERE key='change_page'")
             removed = [
                 "asset:" + row[0]
                 for row in connection.execute(
@@ -938,25 +962,50 @@ class GraphWorkspace:
                 self.store._bump(connection)
             self._set(connection, "progress", progress)
 
-    def remove_path(self, worker: str, path: str) -> None:
+    def _remove_guids(self, connection, rows) -> None:
+        if rows:
+            self._remove_assets(connection, ["asset:" + row[0] for row in rows])
+            for table in ("graph_assets", "graph_asset_paths", "graph_blocked_keys"):
+                connection.executemany("DELETE FROM " + table + " WHERE guid=?", rows)
+            self.store._bump(connection)
+
+    def remove_path(self, worker: str, path: str, *, exact: bool = False) -> None:
         with self._write(worker) as connection:
-            rows = connection.execute(
-                "SELECT guid FROM graph_assets WHERE path=? UNION SELECT guid FROM graph_assets WHERE path>=? AND path<? UNION SELECT guid FROM graph_asset_paths WHERE path=? UNION SELECT guid FROM graph_asset_paths WHERE path>=? AND path<?",
-                (path, path + "/", path + "0", path, path + "/", path + "0"),
-            ).fetchall()
-            owners = ["asset:" + row[0] for row in rows]
-            self._remove_assets(connection, owners)
-            connection.executemany(
-                "DELETE FROM graph_assets WHERE guid=?", [(row[0],) for row in rows]
+            if exact:
+                rows = connection.execute(
+                    "SELECT guid FROM graph_asset_paths WHERE path=?", (path,)
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT guid FROM graph_assets WHERE path=? UNION SELECT guid FROM graph_assets WHERE path>=? AND path<? UNION SELECT guid FROM graph_asset_paths WHERE path=? UNION SELECT guid FROM graph_asset_paths WHERE path>=? AND path<?",
+                    (path, path + "/", path + "0", path, path + "/", path + "0"),
+                ).fetchall()
+            self._remove_guids(connection, rows)
+
+    def begin_folder_scan(self, worker: str, scan: dict, through: int) -> None:
+        with self._write(worker) as connection:
+            self._set(connection, "folder_scan", scan)
+            connection.execute(
+                "INSERT OR IGNORE INTO graph_state VALUES ('change_page',?)",
+                (_json({"through": through}),),
             )
-            connection.executemany(
-                "DELETE FROM graph_asset_paths WHERE guid=?", [(row[0],) for row in rows]
-            )
-            connection.executemany(
-                "DELETE FROM graph_blocked_keys WHERE guid=?", [(row[0],) for row in rows]
-            )
-            if rows:
+            if connection.execute(
+                "UPDATE graph_admission SET ready=0 WHERE id=1 AND ready=1"
+            ).rowcount:
                 self.store._bump(connection)
+
+    def remove_missing_guids(self, worker: str, guids: list[str], scan: dict) -> None:
+        with self._write(worker) as connection:
+            self._remove_guids(connection, [(guid,) for guid in guids])
+            self._set(connection, "folder_scan", scan)
+
+    def finish_changes(self, worker: str, progress: dict, page: dict | None) -> None:
+        with self._write(worker) as connection:
+            self._set(connection, "progress", progress)
+            if page:
+                self._set(connection, "change_page", page)
+            else:
+                connection.execute("DELETE FROM graph_state WHERE key='change_page'")
 
     def descendant_assets(self, path: str, after: tuple[str, str]) -> list[dict]:
         """Page only known descendant identities for targeted folder-move reconciliation."""
@@ -964,8 +1013,8 @@ class GraphWorkspace:
             return [
                 dict(row)
                 for row in connection.execute(
-                    "SELECT guid,path FROM graph_asset_paths WHERE path>=? AND path<? AND (path,guid)>(?,?) ORDER BY path,guid LIMIT 256",
-                    (path + "/", path + "0", *after),
+                    "SELECT guid,path FROM graph_asset_paths WHERE (path,guid)>(?,?) AND path<? ORDER BY path,guid LIMIT 256",
+                    (max(path + "/", after[0]), after[1], path + "0"),
                 )
             ]
 

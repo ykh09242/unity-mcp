@@ -1,6 +1,7 @@
 """Exercise durable reconciliation against the native paging protocol."""
 
 from tests.timing import watchdog_timeout
+from tests.test_reference_graph_service import setup as service_setup
 
 import asyncio
 from contextlib import contextmanager
@@ -555,6 +556,370 @@ def setup(tmp_path):
     workspace = GraphWorkspace(store)
     editor = Editor()
     return store, workspace, editor, Reconciler(workspace, editor, allowed)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("move", [False, True])
+async def test_folder_journal_resumes_after_each_budgeted_guid_and_reopen(setup, move):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    store, workspace, editor, engine = setup
+    workspace.set_policy({"respect_gitignore": False}, expected_version=0)
+    guids = [editor.add(i, f"Assets/Folder/{i}.asset")[6:] for i in (1, 2, 3)]
+    survivor = editor.add(4, "Assets/FolderBackup/Keep.asset")[6:]
+    assert await engine.reconcile()
+    for guid in guids:
+        if move:
+            editor.assets[guid]["path"] = editor.assets[guid]["path"].replace(
+                "/Folder/", "/Renamed/"
+            )
+        else:
+            del editor.assets[guid]
+    editor.event("Assets/Folder", deleted=True)
+    if move:
+        editor.event("Assets/Renamed")
+    editor.calls.clear()
+
+    for count in range(1, 4):
+        # A fresh worker gets status, rereads the journal, then has one RPC for a descendant.
+        workspace = GraphWorkspace(GraphStore(store.path, store.scope))
+        engine = Reconciler(workspace, editor, allowed, limits=CollectionLimits(max_pages=3))
+        with pytest.raises(CollectionBudgetExceeded, match="max_pages=3"):
+            await engine.reconcile()
+        assert not workspace.delivery_fence()[2]
+        assert [
+            p["guid"] for action, p in editor.calls if action == "asset" and "guid" in p
+        ] == guids[:count]
+        assert "Assets/Folder" not in json.dumps(workspace.progress())
+
+    assert [params["page_size"] for action, params in editor.calls if action == "changes"] == [
+        256,
+        2 if move else 1,
+        2 if move else 1,
+    ]
+    # The same limit eventually permits final publication after the dirty assets drain.
+    for _ in range(8):
+        try:
+            if await engine.reconcile():
+                break
+        except CollectionBudgetExceeded:
+            assert not workspace.delivery_fence()[2]
+    else:
+        pytest.fail("Folder reconciliation did not publish within the bounded retries")
+
+    assert workspace.delivery_fence()[2]
+    assert workspace.progress()["after"] == len(editor.events)
+    assert {item["guid"]: item["path"] for item in workspace.catalog()} == {
+        guid: editor.assets[guid]["path"] for guid in ([survivor, *guids] if move else [survivor])
+    }
+    assert not any(action == "inventory" for action, _ in editor.calls)
+    assert workspace.state("folder_scan") is None
+    assert workspace.state("change_page") is None
+
+
+@pytest.mark.asyncio
+async def test_leading_folder_delete_gets_remaining_byte_budget_before_batch_descriptions(setup):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    _, workspace, editor, engine = setup
+    workspace.set_policy({"respect_gitignore": False}, expected_version=0)
+    guids = [editor.add(i, f"Assets/Folder/{i}.asset")[6:] for i in range(3)]
+    assert await engine.reconcile()
+    after = len(editor.events)
+    editor.assets.clear()
+    editor.event("Assets/Folder", deleted=True)
+    editor.event("Assets/Other")
+    calls = []
+
+    async def batch_collector(action, **params):
+        calls.append(action)
+        if action == "assets":
+            return {
+                "assets": [{"path": path, "asset": {"present": False}} for path in params["paths"]]
+            }
+        response = await editor(action, **params)
+        if action == "status":
+            response["asset_batch_version"] = 1
+        return response
+
+    engine._collector = batch_collector
+    required = [
+        await batch_collector("status"),
+        await batch_collector("changes", epoch=editor.epoch, after=after),
+        await batch_collector("asset", guid=guids[0]),
+    ]
+    engine.limits = CollectionLimits(max_bytes=sum(len(json.dumps(value)) for value in required))
+    for guid in guids:
+        calls.clear()
+        with pytest.raises(CollectionBudgetExceeded, match="max_bytes"):
+            await engine.reconcile()
+        assert calls[:3] == ["status", "changes", "asset"]
+        assert workspace.state("folder_scan")["after"][1] == guid
+        assert not workspace.delivery_fence()[2]
+    assert workspace.catalog() == []
+
+
+@pytest.mark.asyncio
+async def test_nonfolder_dependency_limit_keeps_verified_partial_query_on_retry(
+    service_setup, monkeypatch
+):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    service, sender, ctx = service_setup
+    monkeypatch.setattr(service, "start", lambda *args, **kwargs: None)
+    entry, _ = await service.resolve(ctx, "status")
+    entry.engine.limits = CollectionLimits(max_dependency_items=1)
+    a, b, c = (str(i) * 32 for i in (1, 2, 3))
+    paused, release = asyncio.Event(), asyncio.Event()
+
+    async def native(instance, params):
+        response = await sender(instance, params)
+        if params["action"] == "inventory":
+            response["assets"] = [
+                {
+                    "guid": guid,
+                    "path": f"Assets/{name}.asset",
+                    "kind": "asset",
+                    "source_format": "none",
+                }
+                for guid, name in zip((a, b, c), "ABC")
+            ]
+        elif params["action"] == "dependencies":
+            guid = params["guid"]
+            if guid == c:
+                paused.set()
+                await release.wait()
+            response.update(
+                present=True,
+                fingerprint="fixture",
+                snapshot="deps",
+                next_offset=None,
+                targets={a: [b], b: [], c: [a, b]}[guid],
+            )
+        return response
+
+    service.send = native
+    try:
+        for _ in range(2):
+            paused.clear()
+            release.clear()
+            work = asyncio.create_task(entry.engine.reconcile())
+            try:
+                await asyncio.wait_for(paused.wait(), watchdog_timeout())
+                result = (await service.execute(ctx, "query", {"node": "asset:" + a}))["data"]
+                assert [edge["target"] for edge in result["edges"]] == ["asset:" + b]
+                assert result["graph_status"]["partial_static"]
+            finally:
+                release.set()
+                with pytest.raises(CollectionBudgetExceeded, match="max_dependency_items"):
+                    await work
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_folder_deletion_publishes_after_restart_with_exact_final_byte_budget(setup):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    store, workspace, editor, engine = setup
+    workspace.set_policy({"respect_gitignore": False}, expected_version=0)
+    for i in range(3):
+        editor.add(i, f"Assets/Folder/{i}.asset")
+    assert await engine.reconcile()
+    editor.assets.clear()
+    editor.event("Assets/Folder", deleted=True)
+    status = await editor("status")
+    journal = await editor("changes", epoch=editor.epoch, after=len(editor.events))
+    limits = CollectionLimits(max_bytes=2 * len(json.dumps(status)) + len(json.dumps(journal)))
+
+    for attempt in range(8):
+        workspace = GraphWorkspace(GraphStore(store.path, store.scope))
+        engine = Reconciler(workspace, editor, allowed, limits=limits)
+        editor.calls.clear()
+        try:
+            if await engine.reconcile():
+                break
+        except CollectionBudgetExceeded as error:
+            assert error.name == "max_bytes"
+            assert not workspace.delivery_fence()[2]
+    else:
+        pytest.fail("Folder deletion did not publish with enough bytes for its final status")
+    assert attempt > 0
+    assert [action for action, _ in editor.calls] == ["status", "changes", "status"]
+    assert workspace.progress()["after"] == len(editor.events)
+    assert workspace.catalog() == []
+    assert workspace.delivery_fence()[2]
+    assert workspace.state("folder_scan") is None
+
+
+@pytest.mark.asyncio
+async def test_deadline_after_journal_commit_preserves_requested_census(setup, monkeypatch):
+    from services.reference_graph.collection_protocol import CollectionBudgetExceeded
+
+    _, workspace, editor, engine = setup
+    removed = editor.add(1, "Assets/Removed/Child.asset")[6:]
+    assert await engine.reconcile()
+    del editor.assets[removed]
+    editor.events.append({"revision": 2, "kind": "addressables_catalog"})
+    editor.event("Assets/Removed", deleted=True)
+    editor.snapshot = None
+    editor.calls.clear()
+    finish = workspace.finish_changes
+    committed, release = threading.Event(), threading.Event()
+
+    def hold_committed_result(worker, progress, page):
+        finish(worker, progress, page)
+        if progress.get("census"):
+            committed.set()
+            assert release.wait(watchdog_timeout())
+
+    deadline = asyncio.timeout(None)
+    with monkeypatch.context() as patch:
+        patch.setattr(workspace, "finish_changes", hold_committed_result)
+        patch.setattr(asyncio, "timeout", lambda _: deadline)
+        task = asyncio.create_task(engine.reconcile())
+        try:
+            assert await asyncio.to_thread(committed.wait, watchdog_timeout())
+            deadline.reschedule(asyncio.get_running_loop().time())
+            await asyncio.sleep(0)
+        finally:
+            release.set()
+        with pytest.raises(CollectionBudgetExceeded, match="max_seconds"):
+            await task
+
+    progress = workspace.progress()
+    assert (progress["phase"], progress["after"], progress["census"]) == (
+        "error",
+        3,
+        {"requested": True},
+    )
+    assert not workspace.state("change_page")
+    assert workspace.state("folder_scan")["defer_partial_proof"]
+    assert await engine.reconcile()
+    assert workspace.state("folder_scan") is None
+    assert any(action == "inventory" for action, _ in editor.calls)
+
+
+@pytest.mark.asyncio
+async def test_reimported_folder_at_unchanged_path_censuses_unknown_children(setup):
+    _, workspace, editor, engine = setup
+    keep = editor.add(1, "Assets/Folder/Keep.asset")
+    assert await engine.reconcile()
+    new = editor.add(2, "Assets/Folder/New.asset")
+    editor.events.pop()  # Only the folder deletion and reimport are journaled.
+    editor.event("Assets/Folder", deleted=True)
+    editor.event("Assets/Folder")
+    editor.snapshot = None
+    editor.calls.clear()
+    assert await engine.reconcile()
+    assert {asset["guid"] for asset in workspace.catalog()} == {keep[6:], new[6:]}
+    assert sum(action == "inventory" for action, _ in editor.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_matching_destination_consumes_one_folder_move_proof(setup):
+    _, workspace, editor, engine = setup
+    existing = editor.add(1, "Assets/Old/Keep.asset")[6:]
+    assert await engine.reconcile()
+    editor.assets[existing]["path"] = "Assets/New/Keep.asset"
+    new = editor.add(2, "Assets/New/Added.asset")[6:]
+    editor.events.pop()
+    editor.event("Assets/Old", deleted=True)
+    editor.event("Assets/New")
+    editor.event("Assets/New")  # A later root import omits its new child.
+    editor.snapshot = None
+    original = engine._collector
+
+    async def collector(action, **params):
+        response = await original(action, **params)
+        if action == "changes":
+            response.update(
+                changes=editor.events[params["after"] :],
+                next_after=len(editor.events),
+                has_more=False,
+            )
+        return response
+
+    engine._collector = collector
+    editor.calls.clear()
+    assert await engine.reconcile()
+    assert {asset["guid"] for asset in workspace.catalog()} == {existing, new}
+    assert sum(action == "inventory" for action, _ in editor.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_journal_replays_later_folder_deletion_after_interrupted_rename(setup):
+    from services.reference_graph.collection_protocol import (
+        CollectionBudgetExceeded,
+        CollectionLimits,
+    )
+
+    store, workspace, editor, engine = setup
+    workspace.set_policy({"respect_gitignore": False}, expected_version=0)
+    guids = [editor.add(i, f"Assets/Old/{i}.asset")[6:] for i in range(3)]
+    assert await engine.reconcile()
+    before = editor.add(4, "Assets/Keep.asset")
+    for guid in guids:
+        editor.assets[guid]["path"] = editor.assets[guid]["path"].replace("/Old/", "/New/")
+    editor.event("Assets/Old", deleted=True)
+    editor.event("Assets/New")
+    engine.limits = CollectionLimits(max_pages=3)
+    with pytest.raises(CollectionBudgetExceeded):
+        await engine.reconcile()  # Imports the unrelated asset immediately before the delete.
+    with pytest.raises(CollectionBudgetExceeded):
+        await engine.reconcile()
+    assert workspace.state("folder_scan")["after"][1] == guids[0]
+
+    for guid in guids:
+        del editor.assets[guid]
+    editor.event("Assets/New", deleted=True)
+    editor.snapshot = None
+    reopened = GraphWorkspace(GraphStore(store.path, store.scope))
+    assert await Reconciler(reopened, editor, allowed).reconcile()
+    assert [item["guid"] for item in reopened.catalog()] == [before[6:]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("moved", [False, True])
+async def test_folder_cursor_write_failure_rolls_back_catalog_mutation(setup, moved, monkeypatch):
+    _, workspace, editor, engine = setup
+    guid = editor.add(1, "Assets/Folder/Keep.asset")[6:]
+    assert await engine.reconcile()
+    if moved:
+        editor.assets[guid]["path"] = "Assets/New/Keep.asset"
+    else:
+        del editor.assets[guid]
+    editor.event("Assets/Folder", deleted=True)
+    write = workspace._set
+
+    def interrupted(connection, key, value):
+        if key == "folder_scan" and value["after"][1] == guid:
+            raise OSError("interrupted cursor write")
+        write(connection, key, value)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(workspace, "_set", interrupted)
+        with pytest.raises(OSError, match="interrupted cursor write"):
+            await engine.reconcile()
+    assert workspace.state("folder_scan")["after"] == ["", ""]
+    assert [item["path"] for item in workspace.catalog()] == ["Assets/Folder/Keep.asset"]
+    assert not workspace.delivery_fence()[2]
+    assert await engine.reconcile()
+    assert [item["path"] for item in workspace.catalog()] == (
+        ["Assets/New/Keep.asset"] if moved else []
+    )
 
 
 @pytest.mark.asyncio

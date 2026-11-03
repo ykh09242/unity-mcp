@@ -294,7 +294,15 @@ class Reconciler:
             raise
         except Exception as error:
             try:
-                await self._phase("error", error=type(error).__name__ + ": " + str(error))
+                # Cancellation may have drained a committed SQLite write before
+                # its result reached this task. Preserve the durable checkpoint.
+                self.progress = await drained_thread(
+                    self.workspace.record_error,
+                    self.worker,
+                    type(error).__name__ + ": " + str(error),
+                    defer_folder_proof=isinstance(error, CollectionBudgetExceeded)
+                    and getattr(error, "name", None) in {"max_pages", "max_bytes", "max_seconds"},
+                )
             except RevisionConflict:
                 pass
             raise
@@ -322,7 +330,11 @@ class Reconciler:
         await self._compilation(compilation_context)
         # A complete catalog and journal permit narrowly scoped, current Unity
         # dependency pages while the remaining assets are being collected.
-        if not (await drained_thread(self.workspace.delivery_fence))[2]:
+        # A folder publication that exhausted its RPC, byte or time budget
+        # reserves retries for durable collection and the mandatory final checks.
+        if not (await drained_thread(self.workspace.delivery_fence))[2] and not (
+            await drained_thread(self.workspace.state, "folder_scan", {})
+        ).get("defer_partial_proof"):
             if ignore_snapshot is not None:
                 validated = False
                 try:
@@ -606,75 +618,121 @@ class Reconciler:
                 return
 
     async def _changes(self) -> None:
+        context = await drained_thread(self.workspace.state, "change_page", {})
         while True:
             await self.check()
+            after = self.progress["after"]
+            page_size = context["through"] - after if context else 256
             page = await self.collect(
-                "changes", epoch=self.progress["epoch"], after=self.progress["after"], page_size=256
+                "changes", epoch=self.progress["epoch"], after=after, page_size=page_size
             )
             if boolean(page.get("requires_census"), "requires_census"):
                 await self._census(await self.collect("status"), force=True)
+                context = {}
                 continue
             changes, following, more = change_page(
-                page, self.progress["after"], maximum=256, epoch=self.progress["epoch"]
+                page, after, maximum=256, epoch=self.progress["epoch"]
             )
             self._budget.admit_items(len(changes))
-            catalog = False
+            through = context.get("through", following)
+            if page["revision"] < through:
+                raise RevisionConflict("Collector journal moved behind its checkpoint")
+            if following > through:
+                changes = changes[: through - after]
+                more = True
             admitted = await drained_thread(self.workspace.admission)
-            moved_roots = set()
-            pending_assets = []
-            # Fence pending exclusions before fetching descriptions for the entire page.
             if any(
                 change.get("kind") != "addressables_catalog" and not admitted(change["path"])
                 for change in changes
             ):
                 await drained_thread(self.workspace.block_admission)
-            described = await self._describe_changes(changes)
-            descriptions = iter(described) if described is not None else None
-
-            async def flush_assets():
-                if pending_assets:
-                    await drained_thread(
-                        self.workspace.record_page,
-                        self.worker,
-                        pending_assets,
-                        self.progress,
-                        "event",
+            catalog = context.get("catalog", False)
+            moved_roots = set(context.get("moved_roots", []))
+            version = self.progress.get("editor", {}).get("asset_batch_version")
+            per_rpc = 32 if type(version) is int and version == 1 else 1
+            # Keep imports batched. A deletion owns its cursor and destination
+            # evidence until its journal position commits, even on worker restart.
+            offset = 0
+            while offset < len(changes):
+                change = changes[offset]
+                if change.get("deleted"):
+                    destination, needs_census = await self._remove_changed_path(
+                        change["path"], change["revision"], through
                     )
-                    pending_assets.clear()
-
-            for change in changes:
-                if change.get("kind") == "addressables_catalog":
-                    catalog |= change["revision"] > self.progress.get("catalog_through", -1)
-                    continue
-                path = change["path"]
-                if change["deleted"]:
-                    await flush_assets()
-                    moved_roots.update(await self._remove_changed_path(path))
+                    if destination:
+                        moved_roots.add(destination)
+                    catalog |= needs_census
+                    offset += 1
                 else:
-                    asset = (
-                        next(descriptions)
-                        if descriptions is not None
-                        else await self.collect("asset", path=path)
+                    end = next(
+                        (i for i in range(offset + 1, len(changes)) if changes[i].get("deleted")),
+                        len(changes),
                     )
-                    if asset.get("present"):
-                        self._budget.admit_items(1)
-                        pending_assets.append(asset)
-                    else:
-                        await flush_assets()
-                        # Folder moves/imports can affect descendants not listed individually.
-                        if path not in moved_roots:
-                            if admitted(path):
-                                await drained_thread(self.workspace.remove_path, self.worker, path)
-                            if change["revision"] > self.progress.get("catalog_through", -1):
-                                await drained_thread(self.workspace.block_admission)
-                                catalog = True
-            await flush_assets()
-            await self._phase("changes", after=following)
-            if catalog:
+                    # Leave room for legacy single-asset RPCs on constrained attempts.
+                    capacity = max(1, self._budget.limits.max_pages - self._budget.pages) * per_rpc
+                    end = min(end, offset + capacity)
+                    catalog |= await self._import_changes(
+                        changes[offset:end], admitted, moved_roots
+                    )
+                    offset = end
+                after = changes[offset - 1]["revision"]
+                context = (
+                    {"through": through, "catalog": catalog, "moved_roots": sorted(moved_roots)}
+                    if after < through
+                    else {}
+                )
+                progress = {**self.progress, "phase": "changes", "after": after}
+                if catalog and not context:
+                    # Keep the required census durable before requesting its first page.
+                    progress["census"] = {"requested": True}
+                await drained_thread(self.workspace.finish_changes, self.worker, progress, context)
+                self.progress = progress
+            if catalog and not context:
                 await self._census(await self.collect("status"), force=False)
                 continue
             if not more:
                 return
+
+    async def _import_changes(self, changes: list[dict], admitted, moved_roots: set[str]) -> bool:
+        described = await self._describe_changes(changes)
+        descriptions = iter(described) if described is not None else None
+        catalog = False
+        pending_assets = []
+
+        async def flush_assets():
+            if pending_assets:
+                await drained_thread(
+                    self.workspace.record_page, self.worker, pending_assets, self.progress, "event"
+                )
+                pending_assets.clear()
+
+        for change in changes:
+            if change.get("kind") == "addressables_catalog":
+                catalog |= change["revision"] > self.progress.get("catalog_through", -1)
+                continue
+            path = change["path"]
+            moved = path in moved_roots
+            moved_roots.discard(path)
+            asset = (
+                next(descriptions)
+                if descriptions is not None
+                else await self.collect("asset", path=path)
+            )
+            if asset.get("present"):
+                self._budget.admit_items(1)
+                pending_assets.append(asset)
+            else:
+                await flush_assets()
+                if not moved:
+                    if admitted(path):
+                        await drained_thread(
+                            self.workspace.remove_path, self.worker, path, exact=True
+                        )
+                    if change["revision"] > self.progress.get("catalog_through", -1):
+                        await drained_thread(self.workspace.block_admission)
+                        catalog = True
+        await flush_assets()
+        return catalog
 
     async def _describe_changes(self, changes: list[dict]) -> list[dict] | None:
         version = self.progress.get("editor", {}).get("asset_batch_version")
@@ -707,35 +765,59 @@ class Reconciler:
                 descriptions.append(asset)
         return descriptions
 
-    async def _remove_changed_path(self, path: str) -> set[str]:
-        after = ("", "")
-        destination, ambiguous = None, False
-        while candidates := await drained_thread(self.workspace.descendant_assets, path, after):
-            # A folder-only move can omit child events. Resolve known GUIDs before
-            # deleting the old prefix, without a global inventory or content read.
-            await drained_thread(self.workspace.block_admission)
-            assets = []
+    async def _remove_changed_path(
+        self, path: str, revision: int, through: int
+    ) -> tuple[str | None, bool]:
+        scan = await drained_thread(self.workspace.state, "folder_scan", {})
+        identity = [self.progress["epoch"], revision]
+        if scan.get("event") != identity:
+            scan = {"event": identity, "after": ["", ""], "destination": None, "ambiguous": False}
+        while not scan.get("census"):
+            candidates = await drained_thread(self.workspace.descendant_assets, path, scan["after"])
+            if not candidates:
+                break
+            if scan["after"] == ["", ""]:
+                await drained_thread(self.workspace.begin_folder_scan, self.worker, scan, through)
             for candidate in candidates:
-                asset = await self.collect("asset", guid=candidate["guid"])
-                if asset.get("present"):
-                    self._budget.admit_items(1)
-                    assets.append(asset)
-                    suffix = "/" + candidate["path"][len(path) + 1 :]
-                    if asset["path"].endswith(suffix):
-                        root = asset["path"][: -len(suffix)]
-                        if destination is None:
-                            destination = root
-                        elif destination != root:
-                            ambiguous = True
-                    else:
-                        ambiguous = True
-            if assets:
+                guid, old_path = candidate["guid"], candidate["path"]
+                asset = await self.collect("asset", guid=guid)
+                scan["after"] = [old_path, guid]
+                if not boolean(asset.get("present"), "present"):
+                    await drained_thread(
+                        self.workspace.remove_missing_guids, self.worker, [guid], scan
+                    )
+                    continue
+                self._budget.admit_items(1)
+                if asset.get("guid") != guid:
+                    raise RevisionConflict("Collector folder descendant identity changed")
+                current = text(asset.get("path"), "path")
+                if current != old_path and (current == path or current.startswith(path + "/")):
+                    # Relocation within the scan could displace an unvisited GUID.
+                    # Keep admission blocked and let inventory enumerate both identities.
+                    scan["census"] = True
+                    await drained_thread(
+                        self.workspace.begin_folder_scan, self.worker, scan, through
+                    )
+                    break
+                suffix = old_path[len(path) :]
+                if current != old_path and current.endswith(suffix):
+                    root = current[: -len(suffix)]
+                    if scan["destination"] is None:
+                        scan["destination"] = root
+                    elif scan["destination"] != root:
+                        scan["ambiguous"] = True
+                else:
+                    scan["ambiguous"] = True
                 await drained_thread(
-                    self.workspace.record_page, self.worker, assets, self.progress, "event"
+                    self.workspace.record_page,
+                    self.worker,
+                    [asset],
+                    self.progress,
+                    "event",
+                    folder_scan=scan,
                 )
-            after = (candidates[-1]["path"], candidates[-1]["guid"])
-        await drained_thread(self.workspace.remove_path, self.worker, path)
-        return {destination} if destination and not ambiguous else set()
+        await drained_thread(self.workspace.remove_path, self.worker, path, exact=True)
+        return (None if scan["ambiguous"] else scan["destination"]), scan.get("census", False)
 
     async def _assets(self, ignore_snapshot: str | None) -> None:
         await self._phase("collecting")

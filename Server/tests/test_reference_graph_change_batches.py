@@ -18,14 +18,20 @@ class Workspace:
     def admission(self):
         return lambda path: not path.startswith("Assets/Private/")
 
+    def state(self, key, fallback):
+        return fallback
+
     def block_admission(self):
         self.events.append(("block",))
 
     def record_page(self, worker, assets, progress, source):
         self.events.append(("record", tuple(asset["path"] for asset in assets)))
 
-    def remove_path(self, worker, path):
+    def remove_path(self, worker, path, *, exact=False):
         self.events.append(("remove", path))
+
+    def finish_changes(self, worker, progress, page):
+        pass
 
 
 def setup_reconciler(changes, version=1, malformed=False):
@@ -76,9 +82,9 @@ def setup_reconciler(changes, version=1, malformed=False):
     async def phase(name, **kwargs):
         worker.progress.update(kwargs)
 
-    async def remove(path):
+    async def remove(path, revision, through):
         worker.workspace.events.append(("remove", path))
-        return set()
+        return None, False
 
     worker.check = check
     worker.collect = collect
@@ -125,7 +131,8 @@ async def test_mixed_changes_preserve_application_order_and_legacy_fallback(vers
         ("remove", "Assets/Private/B"),
         ("record", ("Assets/C",)),
     ]
-    assert sum(action == "assets" for action, _ in calls) == (1 if type(version) is int else 0)
+    # Each import group can commit before the next deletion starts consuming its budget.
+    assert sum(action == "assets" for action, _ in calls) == (3 if type(version) is int else 0)
     assert sum(action == "asset" for action, _ in calls) == (0 if type(version) is int else 3)
 
 
