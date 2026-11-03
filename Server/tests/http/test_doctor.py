@@ -292,9 +292,11 @@ async def test_real_cold_stdio_discovery_ping_does_not_create_command_generation
 
     async with await asyncio.start_server(listener, "127.0.0.1", 0) as tcp:
         port = tcp.sockets[0].getsockname()[1]
+        status = {"project_path": "/Owned/Fixture/Assets", "unity_port": port}
+        if greeting == "v2":
+            status["listener_generation"] = "a" * 32
         (tmp_path / "unity-mcp-status-aaaa1111.json").write_text(
-            json.dumps({"project_path": "/Owned/Fixture/Assets", "unity_port": port}),
-            encoding="utf-8",
+            json.dumps(status), encoding="utf-8"
         )
         async with Client(doctor_server(), mode=mode, cache=False) as client:
             assert "mcpforunity://doctor" in [

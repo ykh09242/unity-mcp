@@ -306,9 +306,6 @@ async def test_initial_connection_cannot_publish_after_retirement(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_late_published_connection_is_sealed_before_final_disposal(monkeypatch):
-    import inspect
-    import sys
-
     pool = uc.UnityConnectionPool()
     target = SimpleNamespace(id="Main@deadbeef", port=6400)
     loop = asyncio.get_running_loop()
@@ -317,31 +314,15 @@ async def test_late_published_connection_is_sealed_before_final_disposal(monkeyp
     real_connect = uc.UnityConnection.connect
     monkeypatch.setattr(pool, "resolve_instance", lambda _: target)
     monkeypatch.setattr(uc.UnityConnection, "connect", lambda _, **kwargs: True)
-    source, first_line = inspect.getsourcelines(uc.UnityConnectionPool.get_connection)
-    publication_line = first_line + next(
-        index for index, line in enumerate(source) if "self._connections[target.id] = conn" in line
-    )
 
-    def select():
-        previous_trace = sys.gettrace()
+    class PausedPublication(dict):
+        def __setitem__(self, key, connection):
+            loop.call_soon_threadsafe(before_publication.set)
+            assert release.wait(watchdog_timeout())
+            super().__setitem__(key, connection)
 
-        def pause_at_publication(frame, event, _):
-            if (
-                frame.f_code is uc.UnityConnectionPool.get_connection.__code__
-                and event == "line"
-                and frame.f_lineno == publication_line
-            ):
-                loop.call_soon_threadsafe(before_publication.set)
-                assert release.wait(watchdog_timeout())
-            return pause_at_publication
-
-        sys.settrace(pause_at_publication)
-        try:
-            return pool.get_connection(target.id)
-        finally:
-            sys.settrace(previous_trace)
-
-    selecting = loop.run_in_executor(None, select)
+    pool._connections = PausedPublication()
+    selecting = loop.run_in_executor(None, pool.get_connection, target.id)
     await await_signal(before_publication, "selection passed its last retirement check")
     closing = asyncio.create_task(pool.aclose())
     try:
