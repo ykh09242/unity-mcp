@@ -2,6 +2,7 @@ from typing import Any
 import os
 import sys
 
+from core.config_provenance import safe_config_value
 from core.server_build import RUNNING_SERVER
 
 from fastmcp import Context
@@ -24,16 +25,24 @@ def _redact_argv(argv: list[str]) -> list[str]:
     # Every secret-bearing flag the server accepts takes a value, so the token after a bare
     # flag is always that value, even when it happens to start with "-".
     out: list[str] = []
-    hide_next = False
+    pending: str | None = None
     for arg in argv:
-        if hide_next:
-            out.append("***")
-            hide_next = False
+        if pending:
+            out.append(str(safe_config_value("http_url", arg)) if pending == "url" else "***")
+            pending = None
             continue
-        name, sep, _value = arg.partition("=")
+        name, sep, value = arg.partition("=")
         secret = name.startswith("-") and any(m in name.lower() for m in _SECRET_FLAG_MARKERS)
-        out.append(f"{name}=***" if secret and sep else arg)
-        hide_next = secret and not sep
+        # argparse also accepts an unambiguous prefix such as --http-u.
+        url = name.startswith("--h") and "--http-url".startswith(name)
+        if not (url or secret):
+            out.append(arg)
+        elif sep:
+            safe = safe_config_value("http_url", value) if url else "***"
+            out.append(f"{name}={safe}")
+        else:
+            out.append(name)
+            pending = "url" if url else "secret"
     return out
 
 

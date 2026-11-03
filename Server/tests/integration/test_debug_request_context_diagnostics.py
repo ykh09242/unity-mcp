@@ -82,3 +82,18 @@ def test_redact_argv_hides_the_value_even_when_it_starts_with_a_dash():
     assert mod._redact_argv(["--token", "abc", "--verbose"]) == ["--token", "***", "--verbose"]
     assert mod._redact_argv(["--password=hunter2"]) == ["--password=***"]
     assert mod._redact_argv(["positional", "--port", "1"]) == ["positional", "--port", "1"]
+
+
+@pytest.mark.parametrize("option", ["--http-url", "--http-u"])
+@pytest.mark.parametrize("joined", [True, False])
+def test_debug_argv_omits_sensitive_url_parts(option, joined):
+    from services.tools.debug_request_context import _redact_argv
+
+    url = "http://user:SYNTHETIC_PASSWORD@example.invalid:8080/private?signature=SYNTHETIC#fragment"
+    args = [f"{option}={url}"] if joined else [option, url]
+    expected = (
+        [f"{option}=http://example.invalid:8080/"]
+        if joined
+        else [option, "http://example.invalid:8080/"]
+    )
+    assert _redact_argv(args) == expected
