@@ -1,4 +1,4 @@
-"""Read-only bounded semantic UI capture; persistence belongs to the explicit CLI output."""
+"""Bounded semantic UI capture; persistence belongs to the explicit CLI output."""
 
 import re
 from typing import Annotated, Literal
@@ -94,7 +94,9 @@ class UiSnapshotRequest(BaseModel):
         "Capture a bounded complete semantic scene UI snapshot for ugui or uitoolkit. "
         "Returns stable hierarchy identities, text, active/render eligibility/interactable state, "
         "current bounds and renderer-cull evidence where available. Does not write files or change "
-        "resolution/layout. Ambiguous identities, overflow and unavailable live UI trees fail. "
+        "resolution/layout itself. uGUI capture can invoke project-defined component callbacks; "
+        "hosted requester and plugin credentials each require read, edit and run. UI Toolkit "
+        "capture requires read. Ambiguous identities, overflow and unavailable live UI trees fail. "
         "Actual occlusion, pixel visibility and event delivery are not proven."
         " Default captures use schema version 2 with fixed typed control states. Recognized editable "
         "input contents and owned text renderers are omitted before text access; ordinary labels "
@@ -110,7 +112,7 @@ class UiSnapshotRequest(BaseModel):
         "remain mutation handles only for the canonical auto root without identity_map."
     ),
     annotations=ToolAnnotations(
-        title="Capture UI Snapshot", readOnlyHint=True, destructiveHint=False
+        title="Capture UI Snapshot", readOnlyHint=False, destructiveHint=False
     ),
 )
 async def capture_ui_snapshot(

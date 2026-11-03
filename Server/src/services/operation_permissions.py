@@ -518,6 +518,12 @@ def required_permissions(
         return _component_read_permissions(
             params.get("evaluate_getters", params.get("evaluateGetters", False))
         )
+    if name == "capture_ui_snapshot":
+        # uGUI reads project-defined Graphic/Selectable members. An exact
+        # UI Toolkit selection uses the separate Toolkit capture path.
+        if params.get("framework") == "uitoolkit":
+            return frozenset({Permission.READ})
+        return CUSTOM_GRANTS | {Permission.READ}
     if name in _READ_COMMANDS:
         return frozenset({Permission.READ})
     if name in _TEST_COMMANDS:
