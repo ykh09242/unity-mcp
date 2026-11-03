@@ -26,6 +26,20 @@ namespace MCPForUnityTests.Editor.Services
     {
         private const int ReadTimeoutMs = 10000;
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ResumeDeadline_UsesOneEndpointAcrossAdmission(bool progress)
+        {
+            // A prelude consumed one second; journal admission then takes six seconds.
+            long receivedAt = progress ? 1000 : 2000;
+            long endpoint = StdioBridgeHost.ResumeDeadlineAtMs(receivedAt, 30000, 2000, 1002000, 1010000);
+            Assert.AreEqual(10000, endpoint);
+            Assert.AreEqual(2000, StdioBridgeHost.RemainingUntilMs(endpoint, 8000));
+            Assert.AreEqual(1, StdioBridgeHost.RemainingUntilMs(endpoint, 9999));
+            Assert.AreEqual(0, StdioBridgeHost.RemainingUntilMs(endpoint, 10000));
+            Assert.AreEqual(receivedAt + 5000, StdioBridgeHost.ResumeDeadlineAtMs(receivedAt, 5000, 2000, 1002000, 1010000));
+        }
+
         [TestCase("{\"type\":\"blender_bridge\",\"params\":{\"timeout_seconds\":900}}", 300000, 930000)]
         [TestCase("{\"type\":\"blender_bridge\",\"params\":{\"timeoutSeconds\":900}}", 300000, 930000)]
         [TestCase("{\"type\":\"blender_bridge\",\"params\":{\"timeout_seconds\":999999}}", 300000, 86430000)]

@@ -1068,6 +1068,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             return (int)Math.Max(0, Math.Min(int.MaxValue, remaining));
         }
 
+        internal static long ResumeDeadlineAtMs(long nativeStartMs, int nativeTimeoutMs, long monotonicNowMs, long utcNowMs, long senderDeadlineMs)
+        {
+            decimal senderRemaining = Math.Max(0m, (decimal)senderDeadlineMs - utcNowMs);
+            long senderEndpoint = monotonicNowMs + (long)Math.Min(senderRemaining, int.MaxValue);
+            return Math.Min(nativeStartMs + (long)nativeTimeoutMs, senderEndpoint);
+        }
+
+        internal static int RemainingUntilMs(long deadlineAtMs, long monotonicNowMs) => (int)Math.Max(0, Math.Min(int.MaxValue, deadlineAtMs - monotonicNowMs));
+
         private static void LogReceivedCommand(string commandText)
         {
             try
@@ -1156,6 +1165,14 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     resumeCommand = TransportJson.DeserializeCommand(commandText);
                 }
                 catch (JsonException) { /* Preserve the legacy invalid-command response path. */ }
+                int timeoutMs = ResolveCommandTimeoutMs(
+                    commandText,
+                    FrameIOTimeoutMs,
+                    session.Capabilities.Contains(NativeCommandArbitrator.Capability),
+                    out string requestNonce
+                );
+                bool optedIn = prelude == ProgressPrelude.Accepted;
+                long deadlineAtMs = optedIn ? admittedAt + timeoutMs : -1;
                 if (resumeCommand?.resume != null)
                 {
                     if (
@@ -1163,6 +1180,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         || resumeCommand.resume.Property("origin_generation") != null && !session.Capabilities.Contains(CommandResumeJournal.OriginCapability)
                     )
                         throw new IOException("Command continuation was not negotiated");
+                    JToken senderDeadline = resumeCommand.resume["deadline_unix_ms"];
+                    if (senderDeadline?.Type == JTokenType.Integer && long.TryParse(senderDeadline.ToString(Formatting.None), out long senderDeadlineMs))
+                        deadlineAtMs = ResumeDeadlineAtMs(
+                            admittedAt,
+                            timeoutMs,
+                            _uptime.ElapsedMilliseconds,
+                            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                            senderDeadlineMs
+                        );
                     var admission = await TransportCommandDispatcher
                         .RunOnMainThreadAsync(
                             () => CommandResumeState.Journal.Admit(resumeCommand.resume, resumeCommand.type, resumeCommand.@params),
@@ -1183,17 +1209,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 var result = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
                 TaskCompletionSource<string> pending = result;
                 timing = CommandPhaseTiming.Create(McpLogRecord.IsEnabled, CommandPhaseTiming.Transport.Stdio);
-                int timeoutMs = ResolveCommandTimeoutMs(
-                    commandText,
-                    FrameIOTimeoutMs,
-                    session.Capabilities.Contains(NativeCommandArbitrator.Capability),
-                    out string requestNonce
-                );
-                bool optedIn = prelude == ProgressPrelude.Accepted;
-                if (resumeCommand != null)
-                    timeoutMs = (int)
-                        Math.Max(1, Math.Min(timeoutMs, resumeCommand.resume.Value<long>("deadline_unix_ms") - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
-                int remainingMs = optedIn ? RemainingCommandMs(admittedAt, timeoutMs) : timeoutMs;
+                int remainingMs = deadlineAtMs >= 0 ? RemainingUntilMs(deadlineAtMs, _uptime.ElapsedMilliseconds) : timeoutMs;
                 if (remainingMs == 0)
                     throw new IOException("Stdio progress command deadline expired");
                 commandLifetime = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
@@ -1245,7 +1261,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                 Progress = optedIn ? new CommandProgressBuffer() : null,
                                 ProgressId = optedIn ? progressId : null,
                                 Session = session,
-                                DeadlineAtMs = optedIn || resumeCommand != null ? admittedAt + timeoutMs : 0,
+                                DeadlineAtMs = deadlineAtMs >= 0 ? deadlineAtMs : 0,
                                 ResumeCommand = resumeCommand,
                             };
                             commandQueue[commandId] = owned;
@@ -1270,7 +1286,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 try
                 {
                     using var responseWait = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
-                    int waitMs = optedIn ? RemainingCommandMs(admittedAt, timeoutMs) : timeoutMs;
+                    int waitMs = deadlineAtMs >= 0 ? RemainingUntilMs(deadlineAtMs, _uptime.ElapsedMilliseconds) : timeoutMs;
                     var completed = await Task.WhenAny(pending.Task, Task.Delay(waitMs, responseWait.Token)).ConfigureAwait(false);
                     responseWait.Cancel();
                     if (completed == pending.Task)
@@ -1310,11 +1326,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     timing?.Stop(CommandPhaseTiming.Phase.Serialization);
                 }
                 using var legacyWrite = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
-                // Preserve ordinary no-prelude timeout/result behavior. Only an
-                // accepted opt-in shares its original deadline with the final frame.
-                if (!optedIn)
+                // Preserve ordinary legacy result behavior; bounded calls share their endpoint.
+                if (deadlineAtMs < 0)
                     legacyWrite.CancelAfter(FrameIOTimeoutMs);
-                CancellationToken writeDeadline = optedIn ? commandLifetime.Token : legacyWrite.Token;
+                CancellationToken writeDeadline = deadlineAtMs >= 0 ? commandLifetime.Token : legacyWrite.Token;
                 timing?.Start(CommandPhaseTiming.Phase.Send);
                 await writer.WriteResultAsync(responseBytes, writeDeadline).ConfigureAwait(false);
                 timing?.Stop(CommandPhaseTiming.Phase.Send);
@@ -1856,9 +1871,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 TransportCommandOperation operation = null;
                 int remainingMs =
-                    queuedCommand.DeadlineAtMs == 0
-                        ? commandTimeoutMs
-                        : (int)Math.Max(0, Math.Min(int.MaxValue, queuedCommand.DeadlineAtMs - _uptime.ElapsedMilliseconds));
+                    queuedCommand.DeadlineAtMs == 0 ? commandTimeoutMs : RemainingUntilMs(queuedCommand.DeadlineAtMs, _uptime.ElapsedMilliseconds);
                 var cancellation = new CommandCancellation(queuedCommand.OwnerCancellation, remainingMs);
                 queuedCommand.ResumeCommand?.ResumeTicket?.Owner.BindCancellation(queuedCommand.ResumeCommand.ResumeTicket, cancellation.RequestCancellation);
                 try
