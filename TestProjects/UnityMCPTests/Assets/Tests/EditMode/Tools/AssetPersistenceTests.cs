@@ -325,6 +325,8 @@ namespace MCPForUnityTests.Editor.Tools
                 : failure == "invalid_value" ? new JObject { ["backing"] = "invalid" }
                 : new JObject { ["Value"] = 9 };
             string component = failure == "missing_component" ? "MissingComponentForAtomicTest" : nameof(PrefabAssignmentFixture);
+            if (failure == "invalid_value")
+                LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex(@"\[PropertyConversion\] Property value conversion failed\."));
             LogAssert.Expect(
                 LogType.Error,
                 new System.Text.RegularExpressions.Regex(".*Action 'modify' failed.*", System.Text.RegularExpressions.RegexOptions.Singleline)
