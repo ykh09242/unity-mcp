@@ -22,9 +22,11 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Final
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_TEMPLATE = REPO_ROOT / "manifest.json"
+MCPB_PACKAGE: Final = "@anthropic-ai/mcpb@2.1.2"
 
 
 def run_npx(arguments: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -117,7 +119,7 @@ def generate_mcpb(
         # Pack using mcpb CLI
         # Syntax: mcpb pack [directory] [output]
         try:
-            result = run_npx(["@anthropic-ai/mcpb", "pack", ".", str(staged_output)], build_dir)
+            result = run_npx(["--yes", MCPB_PACKAGE, "pack", ".", str(staged_output)], build_dir)
             print(result.stdout)
         except subprocess.CalledProcessError as e:
             print(f"MCPB pack failed:\n{e.stderr}", file=sys.stderr)

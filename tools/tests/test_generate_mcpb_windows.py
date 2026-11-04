@@ -57,7 +57,7 @@ def test_bundle_launches_cmd_shim_and_preserves_metacharacter_paths(
     bundle.generate_mcpb("1.2.3", output, icon)
     # Then argv is intact and no metacharacter content became a shell command.
     arguments = json.loads((tmp_path / "argv.json").read_text())
-    assert arguments[:3] == ["@anthropic-ai/mcpb", "pack", "."]
+    assert arguments[:4] == ["--yes", "@anthropic-ai/mcpb@2.1.2", "pack", "."]
     assert Path(arguments[-1]).parent.parent == destination
     assert output.read_bytes() == b"packed fixture"
     assert not (tmp_path / "side-effect").exists()

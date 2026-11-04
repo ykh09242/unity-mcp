@@ -1,7 +1,7 @@
 """Exercise an archive-installed server's public HTTP/CLI contracts without Unity.
 
 Run with the archive environment's Python, isolated mode and an empty working directory:
-    python -I /path/to/check_server_archive.py --forbid-source /path/to/checkout
+    python -I /path/to/check_server_archive.py --forbid-source CHECKOUT --candidate-sha FULL_SHA
 No listeners, Editor discovery, user configuration or external connections are allowed.
 """
 

@@ -41,7 +41,7 @@ def test_bundle_stages_selected_files_and_replaces_output(bundle_fixture, monkey
     versions = []
 
     def pack(command, cwd):
-        assert command[:3] == ["@anthropic-ai/mcpb", "pack", "."]
+        assert command[:4] == ["--yes", "@anthropic-ai/mcpb@2.1.2", "pack", "."]
         build = Path(cwd)
         manifest = json.loads((build / "manifest.json").read_text())
         versions.append(manifest["version"])

@@ -1,4 +1,4 @@
-FROM python:3.14-slim
+FROM python:3.14-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966
 
 # Keep Python output unbuffered and disable pip's cache to shrink layers
 ENV PYTHONUNBUFFERED=1 \
@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-RUN pip install uv
+RUN pip install uv==0.13.5
 
 # Keep the source layout used by package-source/version resolution, while
 # excluding tests, Unity projects, tooling and all local checkout state.
