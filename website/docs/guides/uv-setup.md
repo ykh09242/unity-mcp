@@ -110,3 +110,14 @@ cd <UnityMcpServer/src>
 uv sync
 uv run server.py
 ```
+
+## One-click installer failure handling
+
+The setup wizard downloads the official installer into a unique temporary
+directory and checks the downloader's exit status before executing that file.
+Download failures never invoke the installer. Script execution failures are
+reported separately, and the owned temporary installer directory is removed after
+the attempt. Windows uses PowerShell's terminating download errors and explicit
+exit status; macOS and Linux check curl's download result before invoking `sh`.
+The confirmation describes both stages. After a successful attempt, refresh the
+dependency check and inspect the detected uv path.
