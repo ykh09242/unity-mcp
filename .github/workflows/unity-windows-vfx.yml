@@ -1,0 +1,82 @@
+name: Windows VFX Assurance
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  rejectUntrustedRef:
+    if: github.ref != 'refs/heads/beta'
+    runs-on: ubuntu-26.04
+    permissions: {}
+    steps:
+      - run: |
+          echo '::error::Dispatch Windows VFX assurance from the trusted beta branch.'
+          exit 1
+
+  windowsVfx:
+    if: github.ref == 'refs/heads/beta'
+    runs-on: windows-2022
+    environment: windows-vfx
+    timeout-minutes: 120
+    concurrency:
+      group: unity-windows-player-license-${{ github.repository }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Require licensed execution policy
+        if: vars.UNITY_RUN_LICENSED_TESTS != 'true'
+        run: throw 'Set UNITY_RUN_LICENSED_TESTS to true to enable licensed assurance.'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify immutable beta revision
+        id: verify
+        run: |
+          $actual = git rev-parse HEAD
+          if ($env:GITHUB_REF -cne 'refs/heads/beta' -or $LASTEXITCODE -ne 0 -or $env:GITHUB_SHA -cnotmatch '^[0-9a-f]{40}$' -or $actual -cne $env:GITHUB_SHA) {
+            throw 'Checked-out revision must equal the dispatched beta commit.'
+          }
+          "Windows VFX source commit: $actual" >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+      - name: Provision signed Windows Editor
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'unity-vfx-editor'
+          "UNITY_INSTALL_ROOT=$root" >> $env:GITHUB_ENV
+          python tools/unity_windows_ci.py provision $root
+      - name: Prepare isolated project with reviewed optional packages
+        run: |
+          $pin = Get-Content tools/unity-player-e2e.json -Raw | ConvertFrom-Json
+          python tools/unity_ci_packages.py prepare --unity-version $pin.unity_version --unity-data "$env:UNITY_INSTALL_ROOT\installed\Editor\Data" --include-optional --output .unity-ci/windows-vfx
+      - name: Activate scoped Windows serial license
+        id: activate
+        env:
+          UNITY_EMAIL: ${{ secrets.WINDOWS_VFX_UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.WINDOWS_VFX_UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.WINDOWS_VFX_UNITY_SERIAL }}
+        run: python tools/unity_windows_ci.py activate "$env:UNITY_INSTALL_ROOT\installed\Editor\Unity.exe"
+      - name: Run and require Windows VFX file-lock tests
+        run: python tools/run_windows_vfx_tests.py --editor "$env:UNITY_INSTALL_ROOT\installed\Editor\Unity.exe"
+      - name: Return owned Windows license
+        id: returnLicense
+        if: always() && steps.activate.outcome != 'skipped'
+        run: python tools/unity_windows_ci.py return "$env:UNITY_INSTALL_ROOT\installed\Editor\Unity.exe"
+      - name: Retain NUnit and package resolution evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-vfx-${{ github.sha }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            .unity-ci/vfx-evidence/results.xml
+            .unity-ci/windows-vfx/resolved-packages.json
+            ${{ runner.temp }}/unity-vfx-editor/provision.json
