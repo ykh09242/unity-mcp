@@ -74,6 +74,71 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void CreateSpriteMergesExplicitImporterSettingsAndReadsBackSprite()
+        {
+            var response = Send("create_sprite", JObject.Parse("{width:2,height:2,importSettings:{filterMode:'Point'}}"));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var importer = (TextureImporter)AssetImporter.GetAtPath(_path);
+            Assert.AreEqual(TextureImporterType.Sprite, importer.textureType);
+            Assert.AreEqual(SpriteImportMode.Single, importer.spriteImportMode);
+            Assert.AreEqual(FilterMode.Point, importer.filterMode);
+            Assert.IsTrue(response["data"].Value<bool>("asSprite"));
+        }
+
+        [Test]
+        public void CreateMergesLegacySpriteSettingsAndExplicitOverrides()
+        {
+            var response = Send(
+                "create",
+                JObject.Parse(
+                    "{width:2,height:2,spriteSettings:{pivot:[0.25,0.75],pixelsPerUnit:32},importSettings:{filterMode:'Point',spritePixelsPerUnit:48}}"
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var importer = (TextureImporter)AssetImporter.GetAtPath(_path);
+            Assert.AreEqual(TextureImporterType.Sprite, importer.textureType);
+            Assert.AreEqual(FilterMode.Point, importer.filterMode);
+            Assert.AreEqual(48f, importer.spritePixelsPerUnit);
+            Assert.AreEqual(new Vector2(0.25f, 0.75f), importer.spritePivot);
+        }
+
+        [Test]
+        public void ConflictingSpriteTextureTypeIsRejectedBeforePublication()
+        {
+            AssertRejectedWithoutChanges("create_sprite", JObject.Parse("{importSettings:{textureType:'Default'}}"));
+        }
+
+        [Test]
+        public void PublicationFailureReportsSavedSourceAfterContinuationThrows()
+        {
+            string path = _root + "/Published.png";
+            byte[] bytes = File.ReadAllBytes(Absolute(_path));
+            var method = typeof(ManageTexture).GetMethod("PublishImageAndContinue", BindingFlags.NonPublic | BindingFlags.Static);
+            var response = JObject.FromObject(
+                method.Invoke(null, new object[] { path, bytes, null, new Action(() => throw new InvalidOperationException("fixture")) })
+            );
+            Assert.IsFalse(response.Value<bool>("success"));
+            Assert.IsTrue(response["data"].Value<bool>("source_saved"));
+            Assert.AreEqual(path, response["data"].Value<string>("path"));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(Absolute(path)));
+        }
+
+        [Test]
+        public void PublicationFailureReportsUnsavedSourceWhenWriteThrows()
+        {
+            string path = _root + "/Missing/Published.png";
+            byte[] bytes = File.ReadAllBytes(Absolute(_path));
+            var method = typeof(ManageTexture).GetMethod("PublishImageAndContinue", BindingFlags.NonPublic | BindingFlags.Static);
+            var response = JObject.FromObject(
+                method.Invoke(null, new object[] { path, bytes, null, new Action(() => Assert.Fail("Continuation must not run.")) })
+            );
+            Assert.IsFalse(response.Value<bool>("success"));
+            Assert.IsFalse(response["data"].Value<bool>("source_saved"));
+            Assert.AreEqual(path, response["data"].Value<string>("path"));
+            Assert.IsFalse(File.Exists(Absolute(path)));
+        }
+
+        [Test]
         public void TextureWritesCannotReplaceScriptsOrDeleteTheirFolder()
         {
             string script = _root + "/Victim.cs";

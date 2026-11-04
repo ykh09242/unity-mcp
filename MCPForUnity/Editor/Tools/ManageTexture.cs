@@ -323,6 +323,23 @@ namespace MCPForUnity.Editor.Tools
                 AtomicAssetFile.Replace(absolute, data, expectedDigest);
         }
 
+        // The continuation may fail after the atomic source write has already completed.
+        private static ErrorResponse PublishImageAndContinue(string path, byte[] data, string expectedDigest, Action continuation)
+        {
+            bool sourceSaved = false;
+            try
+            {
+                PublishImage(path, data, expectedDigest);
+                sourceSaved = true;
+                continuation();
+                return null;
+            }
+            catch (Exception e)
+            {
+                return PublicationFailure($"Failed to publish or import texture: {e.Message}", path, sourceSaved);
+            }
+        }
+
         private static object CreateTexture(JObject @params, bool asSprite)
         {
             string path = @params["path"]?.ToString();
@@ -347,14 +364,12 @@ namespace MCPForUnity.Editor.Tools
             string fullPath = AssetPathUtility.GetContainedAssetPath(path);
 
             Texture2D texture = null;
+            bool sourceSaved = false;
             try
             {
-                var importSettingsToken = @params["importSettings"];
-                var spriteSettingsToken = @params["spriteSettings"];
-                PreparedTextureImport applySettings =
-                    importSettingsToken != null
-                        ? PrepareTextureImporterSettings(importSettingsToken)
-                        : (asSprite || spriteSettingsToken != null ? PrepareSpriteSettings(spriteSettingsToken) : null);
+                var preparationError = PrepareImportSettingsParams(@params, out var applySettings, asSprite);
+                if (preparationError != null)
+                    return preparationError;
                 var fillColorToken = @params["fillColor"];
                 var patternToken = @params["pattern"];
                 var pixelsToken = @params["pixels"];
@@ -421,11 +436,20 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                PublishImage(fullPath, imageData, expectedDigest);
-
-                AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
-
-                var importReport = ApplyPreparedImportSettings(fullPath, applySettings);
+                JObject importReport = null;
+                var publicationError = PublishImageAndContinue(
+                    fullPath,
+                    imageData,
+                    expectedDigest,
+                    () =>
+                    {
+                        AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
+                        importReport = ApplyPreparedImportSettings(fullPath, applySettings);
+                    }
+                );
+                if (publicationError != null)
+                    return publicationError;
+                sourceSaved = true;
                 if (importReport?.Value<string>("error") != null)
                     return ImportSettingsResponse(fullPath, importReport, true);
 
@@ -454,7 +478,7 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception e)
             {
-                return new ErrorResponse($"Failed to create texture: {e.Message}");
+                return PublicationFailure($"Failed to create texture: {e.Message}", fullPath, sourceSaved);
             }
             finally
             {
@@ -496,6 +520,7 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Texture not found at path: {fullPath}");
 
             Texture2D editableTexture = null;
+            bool sourceSaved = false;
             try
             {
                 var rawSetPixels = @params["setPixels"];
@@ -503,14 +528,6 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse("setPixels must be an object.");
                 var setPixelsToken = rawSetPixels as JObject;
                 bool hasImportSettings = HasImportSettingsParams(@params);
-
-                // Validate import settings before any writes
-                if (hasImportSettings)
-                {
-                    var validationError = ValidateImportSettingsParams(@params);
-                    if (validationError != null)
-                        return validationError;
-                }
 
                 PreparedTextureImport applySettings = null;
                 if (hasImportSettings)
@@ -601,6 +618,7 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                     }
                     AtomicAssetFile.Replace(absolutePath, imageData, AtomicAssetFile.Digest(fileData));
+                    sourceSaved = true;
                     AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
                 }
 
@@ -609,7 +627,7 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception e)
             {
-                return new ErrorResponse($"Failed to modify texture: {e.Message}");
+                return PublicationFailure($"Failed to modify texture: {e.Message}", fullPath, sourceSaved);
             }
             finally
             {
@@ -681,6 +699,7 @@ namespace MCPForUnity.Editor.Tools
 
             string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             Texture2D texture = null;
+            bool sourceSaved = false;
             try
             {
                 var spriteSettingsToken = @params["spriteSettings"];
@@ -706,12 +725,20 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                PublishImage(fullPath, imageData, expectedDigest);
-
-                AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
-
-                // Configure as sprite if requested
-                var importReport = ApplyPreparedImportSettings(fullPath, applySettings);
+                JObject importReport = null;
+                var publicationError = PublishImageAndContinue(
+                    fullPath,
+                    imageData,
+                    expectedDigest,
+                    () =>
+                    {
+                        AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
+                        importReport = ApplyPreparedImportSettings(fullPath, applySettings);
+                    }
+                );
+                if (publicationError != null)
+                    return publicationError;
+                sourceSaved = true;
                 if (importReport?.Value<string>("error") != null)
                     return ImportSettingsResponse(fullPath, importReport, true);
 
@@ -738,7 +765,7 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception e)
             {
-                return new ErrorResponse($"Failed to create gradient texture: {e.Message}");
+                return PublicationFailure($"Failed to create gradient texture: {e.Message}", fullPath, sourceSaved);
             }
             finally
             {
@@ -783,6 +810,7 @@ namespace MCPForUnity.Editor.Tools
 
             string fullPath = AssetPathUtility.GetContainedAssetPath(path);
             Texture2D texture = null;
+            bool sourceSaved = false;
             try
             {
                 var spriteSettingsToken = @params["spriteSettings"];
@@ -800,12 +828,20 @@ namespace MCPForUnity.Editor.Tools
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
-                PublishImage(fullPath, imageData, expectedDigest);
-
-                AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
-
-                // Configure as sprite if requested
-                var importReport = ApplyPreparedImportSettings(fullPath, applySettings);
+                JObject importReport = null;
+                var publicationError = PublishImageAndContinue(
+                    fullPath,
+                    imageData,
+                    expectedDigest,
+                    () =>
+                    {
+                        AssetDatabase.ImportAsset(fullPath, ImportAssetOptions.ForceUpdate);
+                        importReport = ApplyPreparedImportSettings(fullPath, applySettings);
+                    }
+                );
+                if (publicationError != null)
+                    return publicationError;
+                sourceSaved = true;
                 if (importReport?.Value<string>("error") != null)
                     return ImportSettingsResponse(fullPath, importReport, true);
 
@@ -833,7 +869,7 @@ namespace MCPForUnity.Editor.Tools
             }
             catch (Exception e)
             {
-                return new ErrorResponse($"Failed to create noise texture: {e.Message}");
+                return PublicationFailure($"Failed to create noise texture: {e.Message}", fullPath, sourceSaved);
             }
             finally
             {
@@ -1035,47 +1071,42 @@ namespace MCPForUnity.Editor.Tools
             JToken asSpriteToken = @params["as_sprite"] ?? @params["spriteSettings"];
 
             bool hasImportSettings = importSettingsToken is JObject importObject && importObject.HasValues;
-            bool hasSpriteSettings =
-                (asSpriteToken is JObject spriteObject && spriteObject.HasValues)
-                || (asSpriteToken?.Type == JTokenType.Boolean && asSpriteToken.ReadScalar<bool>());
+            bool hasSpriteSettings = (asSpriteToken is JObject) || (asSpriteToken?.Type == JTokenType.Boolean && asSpriteToken.ReadScalar<bool>());
 
             return hasImportSettings || hasSpriteSettings;
         }
 
-        private static object ValidateImportSettingsParams(JObject @params)
-        {
-            JToken importSettingsToken = @params["import_settings"] ?? @params["importSettings"];
-            JToken asSpriteToken = @params["as_sprite"] ?? @params["spriteSettings"];
-
-            if (importSettingsToken != null && asSpriteToken != null)
-            {
-                return new ErrorResponse("Cannot specify both 'import_settings' and 'as_sprite'.");
-            }
-            return null;
-        }
-
-        private static object PrepareImportSettingsParams(JObject @params, out PreparedTextureImport apply)
+        private static object PrepareImportSettingsParams(JObject @params, out PreparedTextureImport apply, bool forceSprite = false)
         {
             apply = null;
-            JToken importSettingsToken = @params["import_settings"] ?? @params["importSettings"];
-            JToken asSpriteToken = @params["as_sprite"] ?? @params["spriteSettings"];
-
-            if (importSettingsToken != null && asSpriteToken != null)
+            JToken importToken = @params["import_settings"] ?? @params["importSettings"];
+            JToken spriteToken = @params["as_sprite"] ?? @params["spriteSettings"];
+            bool spriteRequested = forceSprite || (spriteToken != null && (spriteToken.Type != JTokenType.Boolean || spriteToken.ReadScalar<bool>()));
+            if (!spriteRequested)
             {
-                return new ErrorResponse(
-                    "Cannot specify both 'import_settings' and 'as_sprite'. " + "Use 'import_settings' with textureType='Sprite' instead."
-                );
+                if (importToken != null)
+                    apply = PrepareTextureImporterSettings(importToken);
+                return null;
             }
 
-            if (importSettingsToken != null)
-            {
-                apply = PrepareTextureImporterSettings(importSettingsToken);
-            }
-            else if (asSpriteToken != null && (asSpriteToken.Type == JTokenType.Boolean ? asSpriteToken.ReadScalar<bool>() : true))
-            {
-                apply = PrepareSpriteSettings(asSpriteToken.Type == JTokenType.Object ? asSpriteToken : null);
-            }
+            if (importToken != null && !(importToken is JObject))
+                throw new ArgumentException("Import settings must be an object.");
+            var merged = new JObject { ["textureType"] = "Sprite", ["spriteImportMode"] = "Single" };
+            if (spriteToken is JObject sprite)
+                foreach (var property in sprite.Properties())
+                    merged[
+                        property.Name == "pivot" ? "spritePivot"
+                        : property.Name == "pixelsPerUnit" ? "spritePixelsPerUnit"
+                        : property.Name
+                    ] = property.Value.DeepClone();
+            if (importToken is JObject explicitSettings)
+                foreach (var property in explicitSettings.Properties())
+                    merged[property.Name] = property.Value.DeepClone();
 
+            var textureType = merged["textureType"];
+            if (!TryParseEnum<TextureImporterType>(textureType?.ToString() ?? "", out var parsedType) || parsedType != TextureImporterType.Sprite)
+                return new ErrorResponse("Sprite creation requires textureType Sprite.");
+            apply = PrepareTextureImporterSettings(merged);
             return null;
         }
 
@@ -1383,6 +1414,11 @@ namespace MCPForUnity.Editor.Tools
 
             result = default;
             return false;
+        }
+
+        private static ErrorResponse PublicationFailure(string message, string path, bool sourceSaved)
+        {
+            return new ErrorResponse(message, new { path, source_saved = sourceSaved });
         }
 
         private static object ImportSettingsResponse(string path, JObject report, bool sourceSaved)

@@ -64,15 +64,6 @@ INVALID_CALLS = [
     ),
     (
         textures.manage_texture,
-        {
-            "action": "modify",
-            "path": "Assets/Foo.png",
-            "as_sprite": True,
-            "import_settings": {"readable": False},
-        },
-    ),
-    (
-        textures.manage_texture,
         {"action": "create", "path": "Assets/Foo.png", "width": 1, "height": 1, "pixels": "!!!!"},
     ),
     (
@@ -241,3 +232,19 @@ async def test_create_texture_keeps_native_import_settings_precedence(editor_io)
     params = editor_io[3].await_args.args[3]
     assert params["importSettings"]["isReadable"] is False
     assert "spriteSettings" in params
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["modify", "set_import_settings"])
+async def test_sprite_and_import_settings_are_forwarded_together(editor_io, action):
+    result = await textures.manage_texture(
+        None,
+        action,
+        path="Assets/Foo.png",
+        as_sprite={"pixels_per_unit": 32},
+        import_settings={"filter_mode": "point"},
+    )
+    assert result["success"] is True
+    params = editor_io[3].await_args.args[3]
+    assert params["spriteSettings"]["pixelsPerUnit"] == 32
+    assert params["importSettings"]["filterMode"] == "Point"

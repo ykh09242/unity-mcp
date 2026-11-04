@@ -761,15 +761,9 @@ async def manage_texture(
     if import_error:
         return {"success": False, "message": import_error}
     if (
-        action_lower in ("modify", "set_import_settings")
-        and import_settings_normalized is not None
-        and sprite_settings is not None
-    ):
-        return {"success": False, "message": "Cannot specify both import_settings and as_sprite."}
-    if (
         action_lower == "set_import_settings"
         and not import_settings_normalized
-        and not sprite_settings
+        and sprite_settings is None
     ):
         return {"success": False, "message": "Either import_settings or as_sprite is required."}
 
