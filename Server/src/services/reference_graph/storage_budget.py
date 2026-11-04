@@ -200,7 +200,13 @@ class StorageBudget:
                         db.executemany("INSERT INTO scopes VALUES (?,?,?,?)", existing)
                         db.execute("PRAGMA application_id=1431130690")
                         db.execute("PRAGMA user_version=1")
-                if db.execute("PRAGMA user_version").fetchone()[0] != 1:
+                version = db.execute("PRAGMA user_version").fetchone()[0]
+                if version == 1:
+                    with db:
+                        db.execute("BEGIN IMMEDIATE")
+                        db.execute("ALTER TABLE scopes ADD COLUMN project TEXT")
+                        db.execute("PRAGMA user_version=2")
+                elif version != 2:
                     raise ValueError("Unsupported reference graph budget ledger; preserve it")
                 yield db
 
@@ -261,7 +267,7 @@ class StorageBudget:
                     "Reference graph storage budget exhausted; retain saved work and ask the operator to raise budgets or archive unused scopes and rebuild the ledger with all graph servers stopped"
                 )
             db.execute(
-                "INSERT INTO scopes VALUES (?,?,?,?) ON CONFLICT(name) DO UPDATE SET capacity=excluded.capacity,reserved=excluded.reserved",
+                "INSERT INTO scopes(name,owner,capacity,reserved) VALUES (?,?,?,?) ON CONFLICT(name) DO UPDATE SET capacity=excluded.capacity,reserved=excluded.reserved",
                 (self.path.name, self.owner, requested, reserved),
             )
             return requested, reserved
@@ -274,15 +280,25 @@ class StorageBudget:
             )
         self.capacity, self.reserved = self._reserve(requested)
 
-    def previous_files(self) -> list[str]:
+    def identify_project(self, project: str) -> None:
+        """Record only a verified workspace identity; legacy entries remain unknown."""
+        if project == "default":
+            return
+        with self._ledger() as db, db:
+            db.execute(
+                "UPDATE scopes SET project=? WHERE name=? AND owner=?",
+                (_hash((project,)), self.path.name, self.owner),
+            )
+
+    def previous_files(self, project: str = "default") -> list[str]:
         """Only examine older scopes admitted for this exact authenticated principal."""
         with self._ledger() as db:
             return [
                 row[0]
                 for row in db.execute(
-                    "SELECT name FROM scopes WHERE owner=? AND rowid < "
+                    "SELECT name FROM scopes WHERE owner=? AND (?='default' OR project IS NULL OR project=?) AND rowid < "
                     "(SELECT rowid FROM scopes WHERE name=?) ORDER BY rowid DESC",
-                    (self.owner, self.path.name),
+                    (self.owner, project, _hash((project,)), self.path.name),
                 )
             ]
 

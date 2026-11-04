@@ -211,7 +211,7 @@ def test_unknown_legacy_restrictions_block_then_explicit_policy_recovers(tmp_pat
     assert third.policy()["exclude"] == []
 
 
-def test_locked_policy_candidate_leaves_admission_retryable(tmp_path, monkeypatch):
+def test_locked_policy_candidate_allows_explicit_recovery(tmp_path, monkeypatch):
     first = open_workspace(tmp_path, GraphScope("alice", "first", "project"))
     first.set_policy({"exclude": ["Assets/Private/**"]}, expected_version=0)
     second = GraphScope("alice", "second", "project")
@@ -224,9 +224,84 @@ def test_locked_policy_candidate_leaves_admission_retryable(tmp_path, monkeypatc
 
     with monkeypatch.context() as patch:
         patch.setattr(sqlite3, "connect", busy)
-        with pytest.raises(sqlite3.OperationalError, match="locked"):
-            open_workspace(tmp_path, second)
+        pending = open_workspace(tmp_path, second)
+        with pytest.raises(RevisionConflict, match="set_policy"):
+            pending.require_restart_policy()
+    pending.set_policy({"exclude": ["Assets/Private/**"]}, expected_version=0)
     assert open_workspace(tmp_path, second).policy()["exclude"] == ["Assets/Private/**"]
+
+
+@pytest.mark.parametrize("known_project", [False, True])
+@pytest.mark.parametrize("failure", ["corrupt", "unreadable"])
+def test_corrupt_foreign_project_isolated_without_losing_recovery(
+    tmp_path, known_project, failure, monkeypatch
+):
+    old = open_workspace(tmp_path, GraphScope("alice", "old", "foreign"))
+    if not known_project:
+        # Recreate the existing v1 ledger without project identity metadata.
+        with sqlite3.connect(tmp_path / ".storage.sqlite") as db:
+            db.execute("ALTER TABLE scopes RENAME TO old_scopes")
+            db.execute(
+                "CREATE TABLE scopes(name TEXT PRIMARY KEY,owner TEXT NOT NULL,capacity INTEGER NOT NULL,reserved INTEGER NOT NULL)"
+            )
+            db.execute("INSERT INTO scopes SELECT name,owner,capacity,reserved FROM old_scopes")
+            db.execute("DROP TABLE old_scopes")
+            db.execute("CREATE INDEX scopes_owner ON scopes(owner)")
+            db.execute("PRAGMA user_version=1")
+    corrupt = b"corrupt owned fixture"
+    if failure == "corrupt":
+        old.store.path.write_bytes(corrupt)
+    else:
+        from services.reference_graph import restart
+
+        readonly = restart._readonly
+
+        def unreadable(path):
+            if path == old.store.path:
+                raise PermissionError("fixture access denied")
+            return readonly(path)
+
+        monkeypatch.setattr(restart, "_readonly", unreadable)
+    current = open_workspace(tmp_path, GraphScope("alice", "new", "project"))
+    if failure == "corrupt":
+        assert old.store.path.read_bytes() == corrupt
+    if not known_project:
+        with pytest.raises(RevisionConflict, match="set_policy"):
+            current.require_restart_policy()
+        current.set_policy({"exclude": []}, expected_version=0)
+        with current.store._connect() as db:
+            assert db.execute("SELECT ready FROM graph_admission").fetchone()[0] == 0
+    current.require_restart_policy()
+    next_scope = open_workspace(tmp_path, GraphScope("alice", "next", "project"))
+    next_scope.require_restart_policy()
+
+
+@pytest.mark.asyncio
+async def test_corrupt_prior_policy_keeps_status_and_policy_recovery_available(
+    tmp_path, monkeypatch
+):
+    from services.reference_graph.service import local_user, ReferenceGraphService
+    from tests.test_reference_graph_service import Context, Sender
+
+    sender = Sender()
+    native = await sender("one", {"action": "status"})
+    old = open_workspace(tmp_path, GraphScope(local_user(), "old", native["project_id"]))
+    old.store.path.write_bytes(b"damaged prior fixture")
+    service = ReferenceGraphService(tmp_path, send=sender)
+    monkeypatch.setattr(service, "start", lambda *_args, **_kwargs: None)
+    ctx = Context(service)
+    try:
+        for action in ("status", "policy"):
+            result = await service.execute(ctx, action, {})
+            assert result["data"]["graph_status"]["policy_choice_required"]
+        with pytest.raises(RevisionConflict, match="set_policy"):
+            await service.execute(ctx, "query", {"node": "asset:example"})
+        await service.execute(ctx, "set_policy", {"expected_version": 0, "config": {"exclude": []}})
+        result = await service.execute(ctx, "policy", {})
+        assert result["data"]["version"] == 1
+        assert not result["data"]["graph_status"]["current"]
+    finally:
+        await service.aclose()
 
 
 @pytest.mark.asyncio

@@ -29,100 +29,102 @@ def _previous(store: GraphStore) -> tuple[str | None, list[str] | None, dict[str
     missing: set[str] = set()
     acknowledged_missing: set[str] = set()
     uncertain = False
-    for name in store._budget.previous_files():
+    for name in store._budget.previous_files(scope.project_id):
         if not re.fullmatch(r"[a-f0-9]{64}\.sqlite", name):
             continue
         path = store.path.with_name(name)
         key = name[:-7]
         try:
             path.lstat()
-        except FileNotFoundError:
-            # The ledger knows the principal, but no longer has this file's
-            # project or final policy. Record absence separately from every
-            # nonnegative policy version, including in subsequent repairs.
+            # Before the new Editor owns an explicit policy, an unreadable
+            # candidate cannot safely be treated as a permissive or absent one.
+            with closing(sqlite3.connect(_readonly(path), uri=True)) as db:
+                db.row_factory = sqlite3.Row
+                db.execute("BEGIN")
+                if db.execute("PRAGMA application_id").fetchone()[0] != GraphStore.APPLICATION_ID:
+                    continue
+                if not db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_state'"
+                ).fetchone():
+                    continue
+                # Recover the legacy Editor ID from its native status and
+                # independently reproduce the authenticated filename and DB ID.
+                identity = db.execute(
+                    "SELECT m.scope,coalesce(json_extract(i.value,'$.instance_id'),"
+                    "json_extract(p.value,'$.editor.instance_id')),coalesce("
+                    "json_extract(i.value,'$.project_id'),json_extract(p.value,'$.editor.project_id')) "
+                    "FROM graph_meta m LEFT JOIN graph_state i ON i.key='editor_identity' "
+                    "LEFT JOIN graph_state p ON p.key='progress'"
+                ).fetchone()
+                if identity is None:
+                    continue
+                # "default" is the native fallback when the physical project path
+                # could not be identified. Two such values cannot establish a match.
+                identified = scope.project_id != "default" and identity[2] not in (
+                    None,
+                    "",
+                    "default",
+                )
+                if identified and identity[2] != scope.project_id:
+                    continue
+                version, restricted = db.execute(
+                    "SELECT coalesce(json_extract(value,'$.version'),0),json_array_length(value,'$.exclude')>0 "
+                    "FROM graph_state WHERE key='policy'"
+                ).fetchone() or (0, False)
+                if not identified or not identity[1]:
+                    if restricted:
+                        versions[key] = version
+                        uncertain |= covered.get(key, -1) < version
+                    continue
+                previous = GraphScope(scope.user_id, identity[1], scope.project_id)
+                if previous.key != identity[0] or previous.key != key:
+                    raise ValueError("Reference graph identity does not match")
+                versions[key] = version
+                pending = GraphWorkspace._state(db, "restart_policy_pending", False)
+                if not pending:
+                    # Only versions explicitly incorporated by a newer resolved
+                    # scope can be superseded. Later edits in a still-live Editor
+                    # contribute their restrictions to the next Editor as well.
+                    for ancestor, seen in GraphWorkspace._state(
+                        db, "restart_policy_inputs", {}
+                    ).items():
+                        # Earlier records cannot acknowledge a later disappearance
+                        # or conceal a policy restored after an acknowledged absence.
+                        if seen == -1 and ancestor not in covered:
+                            acknowledged_missing.add(ancestor)
+                        elif seen >= 0 and ancestor not in acknowledged_missing:
+                            covered[ancestor] = max(covered.get(ancestor, -1), seen)
+                if covered.get(key, -1) < version:
+                    uncertain |= pending
+                    if restricted and not uncertain:
+                        try:
+                            policy = GraphWorkspace._state(db, "policy", bounded=True)
+                        except GraphResponseTooLarge:
+                            uncertain = True
+                        else:
+                            for pattern in policy["exclude"]:
+                                if pattern not in exclusions:
+                                    exclusions.add(pattern)
+                                    retained_bytes += len(_json(pattern).encode("utf-8")) + 1
+                                    if retained_bytes > PageBudget().capacity:
+                                        uncertain = True
+                                        break
+                if donor is None and not pending:
+                    earlier = GraphWorkspace._state(db, "restart_from")
+                    if (
+                        earlier
+                        and not db.execute(
+                            "SELECT 1 FROM graph_assets WHERE dirty=0 LIMIT 1"
+                        ).fetchone()
+                    ):
+                        donor = earlier
+                    else:
+                        donor = previous.instance_id
+        except (OSError, ValueError, sqlite3.DatabaseError):
+            # Unknown prior policy must remain repairable without treating the
+            # damaged candidate as permission to collect. Preserve its bytes.
             versions[key] = -1
             missing.add(key)
-            continue
-        # Before the new Editor owns an explicit policy, an unreadable
-        # candidate cannot safely be treated as a permissive or absent one.
-        with closing(sqlite3.connect(_readonly(path), uri=True)) as db:
-            db.row_factory = sqlite3.Row
-            db.execute("BEGIN")
-            if db.execute("PRAGMA application_id").fetchone()[0] != GraphStore.APPLICATION_ID:
-                continue
-            if not db.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_state'"
-            ).fetchone():
-                continue
-            # Recover the legacy Editor ID from its native status and
-            # independently reproduce the authenticated filename and DB ID.
-            identity = db.execute(
-                "SELECT m.scope,coalesce(json_extract(i.value,'$.instance_id'),"
-                "json_extract(p.value,'$.editor.instance_id')),coalesce("
-                "json_extract(i.value,'$.project_id'),json_extract(p.value,'$.editor.project_id')) "
-                "FROM graph_meta m LEFT JOIN graph_state i ON i.key='editor_identity' "
-                "LEFT JOIN graph_state p ON p.key='progress'"
-            ).fetchone()
-            if identity is None:
-                continue
-            # "default" is the native fallback when the physical project path
-            # could not be identified. Two such values cannot establish a match.
-            identified = scope.project_id != "default" and identity[2] not in (None, "", "default")
-            if identified and identity[2] != scope.project_id:
-                continue
-            version, restricted = db.execute(
-                "SELECT coalesce(json_extract(value,'$.version'),0),json_array_length(value,'$.exclude')>0 "
-                "FROM graph_state WHERE key='policy'"
-            ).fetchone() or (0, False)
-            if not identified or not identity[1]:
-                if restricted:
-                    versions[key] = version
-                    uncertain |= covered.get(key, -1) < version
-                continue
-            previous = GraphScope(scope.user_id, identity[1], scope.project_id)
-            if previous.key != identity[0] or previous.key != key:
-                raise ValueError("Reference graph identity does not match")
-            versions[key] = version
-            pending = GraphWorkspace._state(db, "restart_policy_pending", False)
-            if not pending:
-                # Only versions explicitly incorporated by a newer resolved
-                # scope can be superseded. Later edits in a still-live Editor
-                # contribute their restrictions to the next Editor as well.
-                for ancestor, seen in GraphWorkspace._state(
-                    db, "restart_policy_inputs", {}
-                ).items():
-                    # Earlier records cannot acknowledge a later disappearance
-                    # or conceal a policy restored after an acknowledged absence.
-                    if seen == -1 and ancestor not in covered:
-                        acknowledged_missing.add(ancestor)
-                    elif seen >= 0 and ancestor not in acknowledged_missing:
-                        covered[ancestor] = max(covered.get(ancestor, -1), seen)
-            if covered.get(key, -1) < version:
-                uncertain |= pending
-                if restricted and not uncertain:
-                    try:
-                        policy = GraphWorkspace._state(db, "policy", bounded=True)
-                    except GraphResponseTooLarge:
-                        uncertain = True
-                    else:
-                        for pattern in policy["exclude"]:
-                            if pattern not in exclusions:
-                                exclusions.add(pattern)
-                                retained_bytes += len(_json(pattern).encode("utf-8")) + 1
-                                if retained_bytes > PageBudget().capacity:
-                                    uncertain = True
-                                    break
-            if donor is None and not pending:
-                earlier = GraphWorkspace._state(db, "restart_from")
-                if (
-                    earlier
-                    and not db.execute(
-                        "SELECT 1 FROM graph_assets WHERE dirty=0 LIMIT 1"
-                    ).fetchone()
-                ):
-                    donor = earlier
-                else:
-                    donor = previous.instance_id
     return (
         donor,
         None if uncertain or missing - acknowledged_missing else sorted(exclusions),
@@ -135,12 +137,14 @@ def open_workspace(root: Path, scope: GraphScope) -> GraphWorkspace:
     with workspace.store._connect() as db:
         if workspace._state(db, "editor_identity") is not None:
             workspace.restart_policy_pending = workspace._state(db, "restart_policy_pending", False)
+            workspace.store._budget.identify_project(scope.project_id)
             return workspace
         fresh = not db.execute("SELECT 1 FROM graph_state LIMIT 1").fetchone()
     previous = _previous(workspace.store) if fresh else None
     with workspace.store._connect(write=True) as db:
         if workspace._state(db, "editor_identity") is not None:
             workspace.restart_policy_pending = workspace._state(db, "restart_policy_pending", False)
+            workspace.store._budget.identify_project(scope.project_id)
             return workspace
         # An existing Editor retains its own policy and its collection history.
         if (
@@ -170,6 +174,7 @@ def open_workspace(root: Path, scope: GraphScope) -> GraphWorkspace:
             "editor_identity",
             {"instance_id": scope.instance_id, "project_id": scope.project_id},
         )
+    workspace.store._budget.identify_project(scope.project_id)
     return workspace
 
 
