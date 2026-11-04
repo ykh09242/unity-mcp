@@ -1,6 +1,7 @@
 """Contracts for actual-client evidence and isolated Codex configuration."""
 
 import os
+import json
 from pathlib import Path
 import sys
 import tomllib
@@ -8,6 +9,7 @@ import tomllib
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import check_codex_interop
 from check_codex_interop import (
     InteropFailure,
     isolated_environment,
@@ -76,3 +78,40 @@ def test_modern_config_enables_real_client_opt_in_when_selected(tmp_path):
     # Then: Codex receives the feature gate needed to negotiate modern MCP.
     config = tomllib.loads((tmp_path / "config.toml").read_text(encoding="utf-8"))
     assert config["features"]["mcp_2026_07_28"] is True
+
+
+@pytest.mark.parametrize("outcome", ["passed", "failed", "mismatch", "mutable"])
+def test_execution_receipt_records_the_verified_checkout(tmp_path, monkeypatch, outcome):
+    # Given: the actual checkout SHA, without invoking any installed client or credentials.
+    actual = check_codex_interop.subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=check_codex_interop.ROOT, text=True
+    ).strip()
+    expected = "beta" if outcome == "mutable" else "0" * 40 if outcome == "mismatch" else actual
+    executed = []
+
+    def execute(function, *args):
+        executed.append(function)
+        if outcome == "failed":
+            raise InteropFailure("synthetic actual-client failure")
+        return {"status": "passed", "cases": []}
+
+    monkeypatch.setattr(check_codex_interop.anyio, "run", execute)
+    arguments = [
+        "--codex",
+        "unused-test-binary",
+        "--output",
+        str(tmp_path),
+        "--expected-sha",
+        expected,
+    ]
+    # When: the CLI emits success or failure evidence for the selected checkout.
+    if outcome == "passed":
+        assert check_codex_interop.main(arguments) == 0
+    else:
+        with pytest.raises(InteropFailure):
+            check_codex_interop.main(arguments)
+    # Then: the receipt exposes actual identity and mismatches never execute the client.
+    receipt = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert receipt["receiving_sha"] == actual
+    assert receipt["status"] == ("passed" if outcome == "passed" else "failed")
+    assert bool(executed) is (outcome in {"passed", "failed"})

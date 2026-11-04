@@ -9,6 +9,12 @@ on:
       - tools/tests/test_check_codex_interop.py
       - .github/workflows/codex-interop.yml
   workflow_dispatch: {}
+  workflow_call:
+    inputs:
+      ref:
+        description: "Exact receiving commit; must match the caller's immutable event SHA."
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -23,6 +29,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Verify exact receiving commit
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          printf 'Actual Codex receiving commit: `%s`\n' "$EXPECTED_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
@@ -48,12 +65,13 @@ jobs:
         run: |
           uv run --directory Server --locked --extra dev python ../tools/check_codex_interop.py \
             --codex "$RUNNER_TEMP/codex-interop-bin/codex-x86_64-unknown-linux-musl" \
+            --expected-sha "$GITHUB_SHA" \
             --output ../.tmp/codex-interop
       - name: Upload actual-client execution receipt
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: codex-interop-0.166.0
+          name: codex-interop-0.166.0-${{ github.sha }}
           path: .tmp/codex-interop/report.json
           include-hidden-files: true
           if-no-files-found: error

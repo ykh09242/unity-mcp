@@ -81,6 +81,14 @@ jobs:
       UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
       UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
 
+  codex_interop:
+    name: Actual Codex interoperability
+    needs: [changes]
+    if: github.repository != 'CoplayDev/unity-mcp' && needs.changes.outputs.profile == 'full'
+    uses: ./.github/workflows/codex-interop.yml
+    with:
+      ref: ${{ github.sha }}
+
   performance_report:
     name: CI performance report
     needs: [python_tests, unity_tests]
@@ -94,7 +102,7 @@ jobs:
 
   validation:
     name: Selected validation
-    needs: [changes, python_tests, unity_tests]
+    needs: [changes, python_tests, unity_tests, codex_interop]
     if: always() && github.repository != 'CoplayDev/unity-mcp'
     runs-on: ubuntu-26.04
     timeout-minutes: 5
@@ -110,6 +118,7 @@ jobs:
           CLASSIFICATION: ${{ needs.changes.result }}
           PYTHON_RESULT: ${{ needs.python_tests.result }}
           UNITY_RESULT: ${{ needs.unity_tests.result }}
+          CODEX_RESULT: ${{ needs.codex_interop.result }}
         run: |
           python3 tools/ci_scope.py check --profile "$PROFILE" --classification "$CLASSIFICATION" \
-            --python "$PYTHON_RESULT" --unity "$UNITY_RESULT"
+            --python "$PYTHON_RESULT" --unity "$UNITY_RESULT" --codex "$CODEX_RESULT"

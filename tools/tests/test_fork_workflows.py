@@ -183,6 +183,7 @@ def test_fork_beta_tools_pushes_select_reusable_python_validation(path: str) -> 
         "changes",
         "python_tests",
         "unity_tests",
+        "codex_interop",
         "performance_report",
         "validation",
     ]
@@ -468,7 +469,7 @@ def test_scope_selection_has_an_always_evaluated_blocking_gate() -> None:
         jobs["python_tests"]["with"]["validation_profile"] == "${{ needs.changes.outputs.profile }}"
     )
     gate = jobs["validation"]
-    assert gate["needs"] == ["changes", "python_tests", "unity_tests"]
+    assert gate["needs"] == ["changes", "python_tests", "unity_tests", "codex_interop"]
     assert gate["if"] == "always() && github.repository != 'CoplayDev/unity-mcp'"
     assert not gate.get("continue-on-error", False)
     check = next(step for step in gate["steps"] if step.get("name") == "Require selected checks")
@@ -479,6 +480,7 @@ def test_scope_selection_has_an_always_evaluated_blocking_gate() -> None:
         "CLASSIFICATION": "${{ needs.changes.result }}",
         "PYTHON_RESULT": "${{ needs.python_tests.result }}",
         "UNITY_RESULT": "${{ needs.unity_tests.result }}",
+        "CODEX_RESULT": "${{ needs.codex_interop.result }}",
     }
 
 
@@ -562,7 +564,7 @@ def test_fork_timing_reports_are_outside_the_required_dependency_path() -> None:
     assert report["with"]["include_ci_stages"] is True
     assert report["permissions"] == {"contents": "read", "actions": "read"}
     gate = jobs["validation"]
-    assert gate["needs"] == ["changes", "python_tests", "unity_tests"]
+    assert gate["needs"] == ["changes", "python_tests", "unity_tests", "codex_interop"]
     assert gate["permissions"] == {"contents": "read"}
     assert not any("ci_test_performance.py" in step.get("run", "") for step in gate["steps"])
 

@@ -17,6 +17,7 @@ from importlib import import_module
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -471,18 +472,36 @@ async def run(codex: str, output: Path) -> dict[str, JsonValue]:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--codex", default=shutil.which("codex"), help="Pinned actual Codex binary")
     parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
+    parser.add_argument("--expected-sha", help="Exact receiving commit to verify before execution")
+    args = parser.parse_args(argv)
     if not args.codex:
         parser.error("--codex is required when codex is absent from PATH")
     args.output.mkdir(parents=True, exist_ok=True)
     path = args.output / "report.json"
     path.unlink(missing_ok=True)
+    receiving_sha = None
     try:
+        receiving_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        ).stdout.strip()
+        require(bool(re.fullmatch(r"[0-9a-f]{40}", receiving_sha)), "Invalid checkout SHA")
+        if args.expected_sha is not None:
+            require(
+                bool(re.fullmatch(r"[0-9a-f]{40}", args.expected_sha))
+                and receiving_sha == args.expected_sha,
+                "Checkout does not match the immutable expected SHA",
+            )
         report = anyio.run(run, args.codex, args.output.resolve())
+        report["receiving_sha"] = receiving_sha
     except (
         InteropFailure,
         OSError,
@@ -492,7 +511,11 @@ def main() -> int:
         ValueError,
     ) as error:
         path.write_text(
-            json.dumps({"status": "failed", "error": str(error)[:2000]}) + "\n", encoding="utf-8"
+            json.dumps(
+                {"status": "failed", "receiving_sha": receiving_sha, "error": str(error)[:2000]}
+            )
+            + "\n",
+            encoding="utf-8",
         )
         raise
     path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

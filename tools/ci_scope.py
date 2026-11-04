@@ -101,13 +101,13 @@ def select(event: Path | None, repository: Path, github_repository: str = "") ->
         return "full", "Push range could not be verified"
 
 
-def gate(profile: str, classification: str, python: str, unity: str) -> bool:
+def gate(profile: str, classification: str, python: str, unity: str, codex: str) -> bool:
     return (
         classification == "success"
         and python == "success"
         and (
-            (profile == "full" and unity == "success")
-            or (profile == "tools-only" and unity == "skipped")
+            (profile == "full" and unity == "success" and codex == "success")
+            or (profile == "tools-only" and unity == "skipped" and codex == "skipped")
         )
     )
 
@@ -120,11 +120,11 @@ def main(argv: list[str] | None = None) -> int:
     selection.add_argument("--event", type=Path, default=Path(event) if event else None)
     selection.add_argument("--repository", type=Path, default=Path.cwd())
     check = commands.add_parser("check")
-    for name in ("profile", "classification", "python", "unity"):
+    for name in ("profile", "classification", "python", "unity", "codex"):
         check.add_argument(f"--{name}", required=True)
     args = parser.parse_args(argv)
     if args.command == "check":
-        passed = gate(args.profile, args.classification, args.python, args.unity)
+        passed = gate(args.profile, args.classification, args.python, args.unity, args.codex)
         print(
             "Selected validation passed"
             if passed

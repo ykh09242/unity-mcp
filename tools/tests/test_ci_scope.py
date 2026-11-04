@@ -57,7 +57,22 @@ def test_unknown_mixed_or_structural_changes_require_full_validation(changes):
     ],
 )
 def test_gate_requires_every_selected_workflow(profile, classification, python, unity, expected):
-    assert ci_scope.gate(profile, classification, python, unity) is expected
+    interop = "success" if profile == "full" else "skipped"
+    assert ci_scope.gate(profile, classification, python, unity, interop) is expected
+
+
+@pytest.mark.parametrize("interop", ["", "skipped", "failure", "cancelled", "missing", "pending"])
+def test_full_gate_rejects_absent_or_unsuccessful_actual_codex(interop):
+    # Given: every other selected check succeeded.
+    # When/Then: actual Codex must also have succeeded.
+    assert not ci_scope.gate("full", "success", "success", "success", interop)
+
+
+@pytest.mark.parametrize("interop", ["success", "failure", "cancelled", ""])
+def test_tools_only_gate_requires_actual_codex_to_be_unselected(interop):
+    # Given: the allowlisted tools profile omits product validation.
+    # When/Then: unexpected execution or missing status does not certify that profile.
+    assert not ci_scope.gate("tools-only", "success", "success", "skipped", interop)
 
 
 @pytest.mark.parametrize("prior", ["success", "failure", "cancelled", "in_progress", "missing"])
@@ -153,6 +168,8 @@ def test_check_cli_failure_is_nonzero():
                 "success",
                 "--unity",
                 "skipped",
+                "--codex",
+                "success",
             ]
         )
         == 1
