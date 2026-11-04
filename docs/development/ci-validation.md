@@ -13,6 +13,8 @@ Editor tests by themselves. Keep the repository Actions variable
 | --- | --- |
 | Python 3.11–3.15 | Server and shared repository tool test suites, plus correctness lint |
 | Windows, Linux and macOS bootstrap | Cold/offline server bootstrap checks |
+| Credential stores and child processes | Synthetic .NET filesystem and process regressions on Windows, Linux and macOS |
+| Codex interoperability | A checksum-pinned Codex CLI exercises the checked-out server on full fork-beta runs |
 | Unity version matrix | Runtime, Editor and test assembly compilation for Windows, macOS and Linux defines |
 | Optional packages | Pinned Cinemachine, ProBuilder and graphics dependency preparation and integrity checks |
 | Native EditMode, PlayMode and optional integration tests | **Skipped**; compilation and package preparation do not execute these tests |
@@ -97,7 +99,7 @@ tests. The HTTP subprocess runs serially to avoid nested worker pools.
 The fork-beta caller checks the complete push range with `tools/ci_scope.py`. Only
 modifications entirely within its exact tooling/reporting allowlist select `tools-only`:
 all tool tests on all five Python minors plus Pylint. That profile omits server tests,
-bootstrap and the reusable Unity workflow. It does not filter individual test cases.
+bootstrap, Unity and Codex interoperability. It does not filter individual test cases.
 Product changes, shared fixtures, dependencies, CI definitions, unknown or mixed paths,
 file additions/deletions/renames, missing history and unverifiable ranges select `full`.
 Reduced validation also requires a completed successful fork-beta push run for the exact
@@ -107,12 +109,19 @@ The existing push trigger also includes CustomTools and tool-reference documenta
 which are consumed by server regression tests. Unrelated documentation-only pushes
 retain the existing workflow path filters.
 
-`Selected validation` always evaluates after classification and both reusable callers.
-It requires every selected caller to succeed and permits a skipped Unity caller only for
-the recognized `tools-only` profile. Failed classification, cancellation and unexpected
-skips fail this gate. Manual runs, pull requests, release callers and unspecified reusable
+`Selected validation` evaluates the classifier and the Python, Unity and Codex jobs.
+A full run requires all three jobs to succeed. A `tools-only` run requires Python
+to succeed and both Unity and Codex to report `skipped`. Failed classification,
+cancellation and unexpected skips fail this gate. Manual runs, pull requests,
+release callers and unspecified reusable
 inputs retain full validation. The independent license-free compile workflow retains its
 existing path/matrix policy. No branch-protection settings are changed automatically.
+
+For full beta validation, `codex-interop.yml` checks out the caller's commit and
+verifies the event SHA and Git checkout before starting the pinned Codex 0.166.0
+binary. The client uses an isolated configuration to exercise the server. The
+artifact name, job summary and `receiving_sha` in the execution receipt identify
+the tested commit. The same workflow also supports pull requests and manual runs.
 
 The advisory performance report runs alongside `Selected validation` after the selected
 test callers finish. The gate does not wait for artifact downloads, timing comparisons or
@@ -358,6 +367,17 @@ are disabled consistently across local and CI hosts. Python correctness lint rem
 The existing configuration adds only the verified Ubuntu runner label missing from this
 actionlint release. See [actionlint usage](https://github.com/rhysd/actionlint/blob/v1.7.12/docs/usage.md).
 
+### Credential store assurance
+
+`credential-assurance.yml` runs when a pull request to `main` or `beta`, or a
+push to `beta`, changes the key store, its fixtures or their workflow contract.
+Each operating system runs two .NET 9 fixtures against temporary stores and
+synthetic child programs. They check concurrent first use, preservation of
+derivation material, complete authenticated ciphertext, process cleanup and
+explicit failure when credential removal cannot be confirmed. The Windows
+fixture also exercises file sharing conflicts during publication. Synthetic
+credential material stays in the runner's temporary directory.
+
 ## Unity
 
 [`unity-versions.json`](../../tools/unity-versions.json) is the authoritative matrix consumed by
@@ -490,9 +510,20 @@ Coverage includes native ProBuilder creation/conversion/UVs, volume texture refe
 TMP font sizing and Undo, and shared-font preview preservation. The renderer-feature
 tests temporarily activate their own URP asset/renderer and restore the original pipeline
 selection afterward. Installing URP alone would leave those tests skipped.
-Windows file-lock failure cases are listed separately in `requiredTestsWindows`; the
-Linux CI jobs require the platform-independent list. Record local Windows results
-separately, including the deliberately skipped case-sensitive AssetDatabase scenario.
+Linux CI requires the platform-independent methods. To run the Windows VFX
+file-lock cases, dispatch **Windows VFX Assurance** from the protected `beta`
+branch. GitHub exposes manual dispatch after the workflow exists on the default
+branch. Restrict the `windows-vfx` GitHub Environment to the `beta` branch,
+set `UNITY_RUN_LICENSED_TESTS=true`, and store `WINDOWS_VFX_UNITY_EMAIL`,
+`WINDOWS_VFX_UNITY_PASSWORD` and `WINDOWS_VFX_UNITY_SERIAL` in that environment.
+
+The hosted Windows job verifies the dispatched SHA, installs the signed Editor
+pinned in `tools/unity-player-e2e.json` (6000.0.69f1) and prepares the reviewed
+`unity-six-lts` packages in an isolated project. Passing requires a successful
+Editor exit and a fresh passing NUnit result for every method in
+`vfx-graph.requiredTestsWindows`. The workflow attempts to return the license
+after the run. Its artifact retains the NUnit XML and installation and package
+receipts for 14 days, labelled with the commit and run attempt.
 
 Fork beta pushes enter through `fork-beta-tools.yml`, including changes limited to test
 sources or package profiles. The upstream beta release caller remains upstream-only, so
