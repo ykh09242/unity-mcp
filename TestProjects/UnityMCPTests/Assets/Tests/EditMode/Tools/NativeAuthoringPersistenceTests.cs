@@ -18,29 +18,46 @@ namespace MCPForUnityTests.Editor.Tools
     {
         private string folder;
         private Scene scene;
+        private bool ownsScene;
 
         [SetUp]
         public void SetUp()
         {
-            Assert.IsTrue(
-                Application.isBatchMode && Environment.GetEnvironmentVariable("UNITY_MCP_OWNED_TRANSPORT_TESTS") == "1",
-                "Requires an owned batch test Editor."
-            );
+            ownsScene = false;
+            folder = null;
+            RequireOwnedEditor(Application.isBatchMode, Environment.GetEnvironmentVariable("UNITY_MCP_OWNED_TRANSPORT_TESTS"));
             Assert.IsNull(PrefabStageUtility.GetCurrentPrefabStage(), "Run in an owned Editor without an existing Prefab Stage.");
+            ownsScene = true;
             scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             SceneManager.SetActiveScene(scene);
             folder = "Assets/NativeAuthoring_" + Guid.NewGuid().ToString("N");
             AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
         }
 
+        internal static void RequireOwnedEditor(bool isBatchMode, string ownershipFlag)
+        {
+            if (!isBatchMode || ownershipFlag != "1")
+                Assert.Ignore("Scene-mutating authoring scenarios require the dedicated owned batch test runner.");
+        }
+
         [TearDown]
         public void TearDown()
         {
-            StageUtility.GoToMainStage();
-            Undo.ClearAll();
-            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-            if (folder != null)
-                AssetDatabase.DeleteAsset(folder);
+            if (!ownsScene)
+                return;
+            try
+            {
+                StageUtility.GoToMainStage();
+                Undo.ClearAll();
+                EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                if (folder != null)
+                    AssetDatabase.DeleteAsset(folder);
+            }
+            finally
+            {
+                ownsScene = false;
+                folder = null;
+            }
         }
 
         [TestCase("body3d")]
@@ -212,6 +229,26 @@ namespace MCPForUnityTests.Editor.Tools
             }
             else
                 Assert.Fail("Missing component for " + kind);
+        }
+    }
+
+    public class NativeAuthoringRunnerModeTests
+    {
+        [TestCase(false, null)]
+        [TestCase(false, "1")]
+        [TestCase(true, null)]
+        [TestCase(true, "")]
+        [TestCase(true, "0")]
+        [TestCase(true, "true")]
+        public void UnownedRunner_SkipsSceneMutations(bool isBatchMode, string ownershipFlag)
+        {
+            Assert.Throws<IgnoreException>(() => NativeAuthoringPersistenceTests.RequireOwnedEditor(isBatchMode, ownershipFlag));
+        }
+
+        [Test]
+        public void OwnedBatchRunner_AllowsRequiredNativeScenarios()
+        {
+            Assert.DoesNotThrow(() => NativeAuthoringPersistenceTests.RequireOwnedEditor(true, "1"));
         }
     }
 }

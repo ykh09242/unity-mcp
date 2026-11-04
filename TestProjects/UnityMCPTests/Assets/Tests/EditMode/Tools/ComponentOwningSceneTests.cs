@@ -18,10 +18,7 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("set_property")]
         public void ExplicitTargetInOtherScene_DoesNotDirtyCleanPrefabStage(string action)
         {
-            Assert.IsTrue(
-                Application.isBatchMode && Environment.GetEnvironmentVariable("UNITY_MCP_OWNED_TRANSPORT_TESTS") == "1",
-                "Requires an owned batch test Editor."
-            );
+            NativeAuthoringPersistenceTests.RequireOwnedEditor(Application.isBatchMode, Environment.GetEnvironmentVariable("UNITY_MCP_OWNED_TRANSPORT_TESTS"));
             Assert.IsNull(PrefabStageUtility.GetCurrentPrefabStage(), "Run in an owned Editor without an existing Prefab Stage.");
             string folder = "Assets/ComponentOwningScene_" + Guid.NewGuid().ToString("N");
             AssetDatabase.CreateFolder("Assets", Path.GetFileName(folder));
