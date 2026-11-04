@@ -4143,6 +4143,7 @@ Check connection status to Unity MCP server.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
+| --ready | boolean | optional | nargs=1, flag | — | — | Require authenticated discovery and a unique Unity target. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp texture`
