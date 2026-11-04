@@ -53,6 +53,22 @@ Serialized Vector2 fields such as `m_AnchorMin` and `m_AnchoredPosition` accept 
 object containing exactly finite numeric `x` and `y` values. Child `.x` / `.y`
 writes continue to work. Invalid vectors are rejected without saving the prefab.
 
+## Recover after script creation publishes source
+
+A script creation error can occur after the atomic file write succeeds. In that
+case, `data.source_saved=true`, `path`, and `uri` confirm the completed source
+publication. They do not guarantee that later callbacks left those bytes intact.
+`failed_stage` identifies the follow-up boundary; `refresh_attempted` records
+whether import/compilation was attempted. When that attempt throws,
+`refresh_confirmation="unknown"` preserves uncertainty about its side effects,
+and `refresh_error` contains at most 512 characters.
+
+Inspect the source and current Editor import/compile state before continuing.
+Request a separate refresh when necessary. Do not replay script creation: the
+published source remains owned by that completed write, and a duplicate creation
+is refused. Pre-publication validation and existing-file errors do not claim
+that this request saved source.
+
 ## Recover from a connection change
 
 The Editor process, project identity and connection session have different

@@ -58,6 +58,7 @@ namespace MCPForUnity.Editor.Tools
         private static Action<string, bool> _preparedRefreshForTests = null;
         private static Action<string> _preparedCommitStageForTests = null;
         private static Action<string> _scriptWriteBeforeCommitForTests = null;
+        private static Action<string> _createScriptImportForTests = null;
 
         internal static ErrorResponse RequireExplicitConsent()
         {
@@ -387,22 +388,45 @@ namespace MCPForUnity.Editor.Tools
                 McpLog.Warn($"Script validation warnings for {name}:\n" + string.Join("\n", validationErrors));
             }
 
+            bool sourceSaved = false;
+            bool refreshAttempted = false;
             try
             {
                 using var folders = new AssetFolderScope();
                 folders.EnsureParentDirectory(relativePath);
                 fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
                 WriteScriptFile(fullPath, contents, overwrite: false);
+                sourceSaved = true;
+                folders.Complete();
 
                 var uri = $"mcpforunity://path/{relativePath}";
                 var ok = new SuccessResponse($"Script '{name}.cs' created successfully at '{relativePath}'.", new { uri, scheduledRefresh = false });
 
-                ManageScriptRefreshHelpers.ImportAndRequestCompile(relativePath);
-                folders.Complete();
+                refreshAttempted = true;
+                if (_createScriptImportForTests != null)
+                    _createScriptImportForTests(relativePath);
+                else
+                    ManageScriptRefreshHelpers.ImportAndRequestCompile(relativePath);
                 return ok;
             }
             catch (Exception e)
             {
+                if (sourceSaved)
+                    return new ErrorResponse(
+                        "Script source was created, but a post-publication follow-up failed.",
+                        new
+                        {
+                            path = relativePath,
+                            uri = $"mcpforunity://path/{relativePath}",
+                            source_saved = true,
+                            failed_stage = refreshAttempted ? "import_and_compile" : "post_publication",
+                            refresh_attempted = refreshAttempted,
+                            refresh_status = refreshAttempted ? "failed" : "not_requested",
+                            refresh_confirmation = refreshAttempted ? "unknown" : "not_requested",
+                            refresh_error = e.Message.Substring(0, Math.Min(512, e.Message.Length)),
+                            recovery = "Inspect the saved source and Editor import/compile state. Do not replay creation; request refresh separately if needed.",
+                        }
+                    );
                 return new ErrorResponse($"Failed to create script '{relativePath}': {e.Message}");
             }
         }
