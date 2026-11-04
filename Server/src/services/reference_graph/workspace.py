@@ -9,8 +9,10 @@ from itertools import chain
 import json
 import stat
 import time
+import threading
 
 from services.reference_graph.analysis import Analysis, Catalog, CatalogLookups
+from services.reference_graph import catalog_delta
 from services.reference_graph.external import _pattern
 from services.reference_graph.ignore import GitIgnoreRules
 from services.reference_graph.response_budget import PageBudget, bounded_rows
@@ -39,12 +41,13 @@ class GraphWorkspace:
         self._mutations = None
         self._admission_cache = None
         self._key_cache = None
+        self._key_cache_lock = threading.Lock()
         with store._connect(write=True) as connection:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_workspace(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_workspace").fetchone()
-            if version is not None and version[0] not in (1, 2, 3, 4, 5, 6, 7, 8):
+            if version is not None and version[0] not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
                 raise ValueError("Unsupported graph workspace version")
             if version is None:
                 for statement in (
@@ -111,6 +114,9 @@ class GraphWorkspace:
                     connection.execute("DELETE FROM graph_worker")
                     self.store._bump(connection)
                 connection.execute("UPDATE graph_workspace SET version=8")
+            if version is None or version[0] < 9:
+                catalog_delta.initialize(connection)
+                connection.execute("UPDATE graph_workspace SET version=9")
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_asset_paths(guid TEXT PRIMARY KEY,path TEXT NOT NULL,seen TEXT NOT NULL)"
             )
@@ -433,6 +439,7 @@ class GraphWorkspace:
             self.store._bump(connection)
 
     def _reset_static(self, connection) -> None:
+        catalog_delta.reset(connection)
         for table in (
             "graph_assets",
             "graph_documents",
@@ -799,13 +806,14 @@ class GraphWorkspace:
             ],
         }
 
-    def _catalog_changed(self, connection, lookups: Iterable[str]) -> None:
+    def _catalog_changed(self, connection, lookups: Iterable[str], guids: Iterable[str]) -> None:
         connection.execute(
             "UPDATE graph_admission SET ready=0 WHERE id=1 AND EXISTS (SELECT 1 FROM sources WHERE provider LIKE 'runtime:%')"
         )
         self._set(
             connection, "catalog_revision", self._state(connection, "catalog_revision", 0) + 1
         )
+        catalog_delta.record(connection, self._state(connection, "catalog_revision"), guids)
         if not connection.execute(
             "SELECT 1 FROM graph_dependencies WHERE dependency GLOB 'catalog:*' LIMIT 1"
         ).fetchone():
@@ -849,6 +857,7 @@ class GraphWorkspace:
             admitted = self._admission(connection)
             dirty_owners = []
             catalog_changes = []
+            catalog_guids = set()
             readmitted = False
             for asset in assets:
                 owner = "asset:" + asset["guid"]
@@ -860,6 +869,7 @@ class GraphWorkspace:
                     displaced_owners = ["asset:" + item[0] for item in displaced]
                     self._invalidate(connection, displaced_owners)
                     for displaced_owner in displaced_owners:
+                        catalog_guids.add(displaced_owner[6:])
                         catalog_changes.append(
                             Catalog.changed_lookups(
                                 self._prior_asset(connection, displaced_owner[6:]), None
@@ -874,6 +884,7 @@ class GraphWorkspace:
                     (asset["guid"], asset["path"], seen),
                 )
                 if not admitted(asset["path"]):
+                    catalog_guids.add(asset["guid"])
                     catalog_changes.append(
                         Catalog.changed_lookups(old, {**asset, "_excluded": True})
                     )
@@ -914,6 +925,7 @@ class GraphWorkspace:
                     or old["path"] != asset["path"]
                 )
                 if old != asset:
+                    catalog_guids.add(guid)
                     catalog_changes.append(Catalog.changed_lookups(old, asset))
                     self._addressables(connection, asset)
                 connection.execute(
@@ -935,7 +947,9 @@ class GraphWorkspace:
             if dirty_owners:
                 self._invalidate(connection, dirty_owners)
             if catalog_changes:
-                self._catalog_changed(connection, chain.from_iterable(catalog_changes))
+                self._catalog_changed(
+                    connection, chain.from_iterable(catalog_changes), iter(catalog_guids)
+                )
             if dirty_owners or catalog_changes:
                 self.store._bump(connection)
             self._set(connection, "progress", progress)
@@ -974,6 +988,7 @@ class GraphWorkspace:
                     self._prior_asset(connection, owner[6:]), None
                 )
             ),
+            (owner[6:] for owner in owners),
         )
         self._invalidate(connection, owners)
         for owner in owners:
@@ -1715,12 +1730,28 @@ class GraphWorkspace:
 
     def key_admission(self):
         """Reuse a minimal key admission catalog across runtime pages."""
-        cache = self._key_cache
-        revision, assets = self.catalog_snapshot(cache[0] if cache else None)
-        if assets is not None:
-            cache = (revision, Catalog(assets))
-            self._key_cache = cache
-        return cache[1]
+        with self._key_cache_lock:
+            self._key_cache = self.refresh_catalog(self._key_cache)
+            return self._key_cache[1]
+
+    def refresh_catalog(self, cache: tuple[int, Catalog] | None) -> tuple[int, Catalog]:
+        """Update only journaled GUIDs; a gap, reset or cold open rebuilds safely."""
+        with self.store._connect() as connection:
+            revision = self._state(connection, "catalog_revision", 0)
+            if cache is not None and revision == cache[0]:
+                return cache
+            guids = catalog_delta.changed_guids(connection, cache[0], revision) if cache else None
+            if guids is None:
+                return revision, Catalog(self._catalog_rows(connection))
+            assets, removed = [], []
+            for guid in guids:
+                asset = self._prior_asset(connection, guid)
+                if asset is None:
+                    removed.append(guid)
+                else:
+                    assets.append(asset)
+        cache[1].update(assets, removed=removed)
+        return revision, cache[1]
 
     def provider_status(self, *, bounded: bool = False) -> dict:
         identity = []

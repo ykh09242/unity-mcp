@@ -8,11 +8,12 @@ composition through wrappers without rereading their source at every call site.
 
 from __future__ import annotations
 
-from bisect import bisect_left
+from bisect import bisect_left, insort
 from collections import Counter, OrderedDict, defaultdict, deque
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
 import re
+import threading
 
 import yaml
 from yaml.tokens import (
@@ -1073,20 +1074,80 @@ class Catalog:
         self.keys: dict[tuple[str, str], set[str]] = defaultdict(set)
         self.guids: set[str] = set()
         self.blocked: set[tuple[str, str]] = set()
-        self.addressables_unavailable = False
+        self._blocked_counts = Counter()
+        self._unavailable = set()
+        self._members = {}
+        self._lock = threading.RLock()
+        self.resource_keys = []
         for asset in assets:
-            if asset.get("_excluded"):
-                self.blocked.update(self.asset_keys(asset))
-                continue
-            self.addressables_unavailable |= self.unavailable(asset)
-            guid = asset["guid"].lower()
-            target = "asset:" + guid
-            self.guids.add(guid)
-            for key in self.asset_keys(asset):
-                self.keys[key].add(target)
+            self._add(asset, incremental=False)
         self.resource_keys = sorted(value for scheme, value in self.keys if scheme == "resources")
 
+    @property
+    def addressables_unavailable(self):
+        return bool(self._unavailable)
+
+    def _add(self, asset: dict, *, incremental: bool):
+        guid = asset["guid"].lower()
+        keys = self.asset_keys(asset)
+        excluded = bool(asset.get("_excluded"))
+        self._members[guid] = (keys, excluded)
+        if excluded:
+            self._blocked_counts.update(keys)
+            self.blocked.update(keys)
+            return
+        self.guids.add(guid)
+        if self.unavailable(asset):
+            self._unavailable.add(guid)
+        for key in keys:
+            if incremental and key[0] == "resources" and key not in self.keys:
+                insort(self.resource_keys, key[1])
+            self.keys[key].add("asset:" + guid)
+
+    def _remove(self, guid: str):
+        guid = guid.lower()
+        previous = self._members.pop(guid, None)
+        if previous is None:
+            return
+        keys, excluded = previous
+        self.guids.discard(guid)
+        self._unavailable.discard(guid)
+        for key in keys:
+            if excluded:
+                self._blocked_counts[key] -= 1
+                if not self._blocked_counts[key]:
+                    del self._blocked_counts[key]
+                    self.blocked.discard(key)
+            else:
+                self.keys[key].discard("asset:" + guid)
+                if not self.keys[key]:
+                    del self.keys[key]
+                    if key[0] == "resources":
+                        self.resource_keys.pop(bisect_left(self.resource_keys, key[1]))
+
+    def update(self, assets: Iterable[dict], *, removed: Iterable[str] = ()):
+        # Runtime readers share the key catalog. Resolve sees either side of a
+        # delta, never partially removed/reinserted memberships.
+        with self._lock:
+            for guid in removed:
+                self._remove(guid)
+            for asset in assets:
+                self._remove(asset["guid"])
+                self._add(asset, incremental=True)
+
     def resolve(
+        self,
+        scheme: str,
+        key: str,
+        mode: str = "single",
+        *,
+        lookups: CatalogLookups | None = None,
+        visit: Callable[[], None] | None = None,
+    ) -> tuple[set[str], str | None]:
+        with self._lock:
+            return self._resolve(scheme, key, mode, lookups=lookups, visit=visit)
+
+    def _resolve(
         self,
         scheme: str,
         key: str,

@@ -202,6 +202,14 @@ rules, manual declarations, runtime captures, snapshots and mutation receipts
 belong to their original Editor. Use `export_config` and `import_config` to
 transfer authored configuration explicitly.
 
+The storage ledger records a project digest after workspace identity is verified.
+Known foreign projects are skipped before their databases are opened. Legacy
+entries retain an unknown project marker: missing, corrupt, or unreadable prior
+policy candidates leave the new scope policy-pending, while `status`, `policy`,
+and `set_policy` remain available. Explicit policy recovery does not mark graph
+admission complete. Prior files are preserved, and failures opening the current
+scope still propagate.
+
 `watch` with `enabled:false` stops the current server's watcher. The next graph
 operation can activate it again; this is not a project-wide disable switch.
 Server shutdown joins background work and closes owned handles. A crashed server
@@ -209,6 +217,14 @@ can resume durable progress after its worker lease expires. Compilation/importin
 pauses collection without forcing `AssetDatabase.Refresh`, asset loads for source
 analysis, or project writes. Missing journal history triggers a complete census.
 `rebuild` clears derived evidence while retaining authored setup.
+
+Warm runtime, code-analysis, and external-source catalogs apply changed GUIDs
+and removal tombstones rather than reloading every asset payload. The durable
+identity journal retains at most 128 revisions and 8,192 GUID records; it stores
+no duplicate payloads. Missing or evicted history, policy resets, cold caches,
+and upgrades fall back to a complete catalog load. Cache updates retain shared
+key membership and exclusion/provider status, and publication still checks the
+catalog revision. Saved snapshots and authored configuration are unaffected.
 
 State uses `%LOCALAPPDATA%/unity-mcp/reference-graphs` on Windows,
 `~/Library/Application Support/unity-mcp/reference-graphs` on macOS, and

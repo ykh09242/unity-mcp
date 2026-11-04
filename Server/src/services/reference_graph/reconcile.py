@@ -1233,11 +1233,13 @@ class Reconciler:
                     yield Facts.from_dict(row["data"])
 
         try:
-            revision, assets = self.workspace.catalog_snapshot(cache[1] if cache else None)
+            revision, catalog = self.workspace.refresh_catalog(
+                (cache[1], cache[3].catalog) if cache else None
+            )
             if cache is None:
                 index = AnalysisIndex(
                     facts(),
-                    Catalog(assets),
+                    catalog,
                     [
                         rule["config"]
                         for rule in rules["rules"]
@@ -1254,8 +1256,7 @@ class Reconciler:
                     )
             else:
                 index = cache[3]
-                if assets is not None:
-                    index.catalog = Catalog(assets)
+                index.catalog = catalog
                 removed = (cache[2].keys() - manifest.keys()) | {
                     owner for owner in changed if manifest[owner]["format"] != "csharp"
                 }
@@ -1368,12 +1369,10 @@ class Reconciler:
         if not scan_pass or (force and not scan_pass["force"]):
             scan_pass = {"id": uuid.uuid4().hex, "force": force}
         await self._phase("external", external_errors={}, external_pass=scan_pass)
-        catalog_revision, assets = await drained_thread(
-            self.workspace.catalog_snapshot,
-            self._catalog_cache[0] if self._catalog_cache else None,
+        self._catalog_cache = await drained_thread(
+            self.workspace.refresh_catalog, self._catalog_cache
         )
-        if assets is not None:
-            self._catalog_cache = (catalog_revision, await drained_thread(Catalog, assets))
+        catalog_revision = self._catalog_cache[0]
         catalog = self._catalog_cache[1]
         rules = (await drained_thread(self.store.rules_state))["revision"]
         previous = await drained_thread(self.workspace.provider_status)
