@@ -113,7 +113,7 @@ def test_bundle_stages_manifest_icon_license_and_readme_before_pack(bundle_repo,
 
     def pack(command, cwd):
         stages.append(cwd)
-        assert command[:3] == ["@anthropic-ai/mcpb", "pack", "."]
+        assert command[:4] == ["--yes", "@anthropic-ai/mcpb@2.1.2", "pack", "."]
         manifest = json.loads((cwd / "manifest.json").read_text(encoding="utf-8"))
         assert manifest == {"version": "2.3.4", "icon": "icon.png", "name": "fixture"}
         for name in ("LICENSE", "README.md", "icon.png"):
