@@ -24,27 +24,19 @@ class ReadinessResult(TypedDict):
 
 
 def _target_available(instances: list[dict[str, JsonValue]], selector: str | None) -> bool:
-    """Require a unique discovered target; names and hash prefixes must be unambiguous."""
-    if selector is None:
-        return len(instances) == 1
-    selector = selector.strip()
+    """Mirror local command selection after the CLI omits an empty selector."""
     if not selector:
+        return len(instances) == 1
+    # Inventory hash is the registered project_hash, not the transport session_id.
+    # Keep this precedence aligned with main._select_local_session without importing
+    # the server application (and its process-wide initialization) into the CLI.
+    instance_hash = selector.rpartition("@")[2] if "@" in selector else selector
+    matches = [instance for instance in instances if instance.get("hash") == instance_hash]
+    if matches:
+        return len(matches) == 1
+    if "@" in selector:
         return False
-    matches = []
-    for instance in instances:
-        name = instance.get("project")
-        instance_hash = instance.get("hash")
-        if not isinstance(name, str) or not isinstance(instance_hash, str) or not instance_hash:
-            continue
-        if (
-            selector in (name, f"{name}@{instance_hash}", instance.get("session_id"))
-            or instance_hash.startswith(selector)
-            or "@" in selector
-            and name == selector.split("@", 1)[0]
-            and instance_hash.startswith(selector.split("@", 1)[1])
-        ):
-            matches.append(instance)
-    return len(matches) == 1
+    return sum(instance.get("project") == selector for instance in instances) == 1
 
 
 async def _readiness(config: CLIConfig) -> ReadinessResult:

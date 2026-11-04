@@ -72,9 +72,17 @@ health, authentication, discovery, or unique target selection fails. The JSON an
 table output separate `server_reachable`, `authentication` (`accepted`, `rejected`,
 or `unknown`), `instance_discovery`, and `target_ready`.
 
-With multiple Editors, supply `--instance` before `status`; readiness accepts a
-unique project name, hash prefix, `Name@Hash`, or session ID. Without a selector,
-exactly one discovered Editor is required. This read-only check verifies discovery
+With multiple Editors, supply `--instance` before `status`. Readiness uses the local
+command route's selection rules: the complete inventory `hash` matches first and
+must identify exactly one Editor. `Name@Hash` uses the complete hash after the last
+`@`; the name portion does not constrain an exact hash match. If there is no exact
+hash match, a selector without `@` can match one exact project name. Duplicate
+exact hash matches or duplicate fallback name matches are ambiguous. Hash prefixes
+and transport `session_id` values are not selectors, and whitespace is preserved.
+Copy the complete `hash`
+from `instance list`; project names containing `@` should use that hash. Without a
+selector (or with an empty CLI selector), exactly one discovered Editor is
+required. This read-only check verifies discovery
 availability; it does not dispatch a command or guarantee that compilation or a
 subsequent Editor operation will succeed. HTTP errors other than 401/403 leave
 authentication unknown. Rejected response bodies and credentials are not printed.
