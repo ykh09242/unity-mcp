@@ -358,18 +358,16 @@ Human-readable nested format:
 ```bash
 unity-mcp scene active
 # Output:
-# status: success
-# result:
-#   name: New Scene
-#   path: Assets/Scenes/New Scene.unity
-#   ...
+# name: New Scene
+# path: Assets/Scenes/New Scene.unity
+# ...
 ```
 
 ### JSON
 Machine-readable JSON:
 ```bash
 unity-mcp -f json scene active
-# Output: {"status": "success", "result": {...}}
+# Output: {"success": true, "data": {"name": "New Scene", "path": "Assets/Scenes/New Scene.unity"}}
 ```
 
 ### Table
@@ -379,7 +377,7 @@ unity-mcp -f table scene active
 # Output:
 # Key    | Value
 # -------+------
-# status | success
+# success | True
 # ...
 ```
 
@@ -1262,7 +1260,7 @@ unity-mcp [GLOBAL_OPTIONS] command subcommand [ARGS] [OPTIONS]
 3. **Use JSON output** for programmatic parsing:
 
    ```bash
-   unity-mcp -f json gameobject find "Player" | jq '.result'
+   unity-mcp -f json gameobject find "Player" | jq '.data'
    ```
 
 4. **Check connection first**:
