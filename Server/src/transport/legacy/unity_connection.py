@@ -7,7 +7,6 @@ from uuid import uuid4
 from core.config import config
 from core.server_build import RUNNING_SERVER
 import contextlib
-import codecs
 from contextvars import Context, ContextVar
 from dataclasses import dataclass, field, replace
 import errno
@@ -28,6 +27,7 @@ import weakref
 
 from pydantic_core import from_json
 from transport.json_decoder import decode_json
+from transport.legacy.unframed_json import UnframedJsonBoundary
 from models.response_limits import (
     MAX_RESPONSE_DEPTH,
     MAX_RESPONSE_NODES,
@@ -739,8 +739,7 @@ class UnityConnection:
                 raise
 
         data = bytearray()
-        decoder = codecs.getincrementaldecoder("utf-8")()
-        decoded_data = ""
+        boundary = UnframedJsonBoundary(MAX_RESPONSE_DEPTH)
         # Respect the socket's currently configured timeout
         try:
             while True:
@@ -750,25 +749,22 @@ class UnityConnection:
                 if not chunk:
                     if not data:
                         raise Exception("Connection closed before receiving data")
+                    if boundary.at_eof():
+                        return data
                     raise _UnityProtocolError(
                         "Connection closed with truncated unframed JSON response"
                     )
                 data.extend(chunk)
                 if len(data) > FRAMED_MAX:
                     raise _UnityProtocolError("Unframed response exceeds maximum size")
-                decoded_data += decoder.decode(chunk)
-
-                # Check if we've received a complete response
                 try:
-                    # Validate the original JSON without changing string escapes.
-                    json.loads(decoded_data)
-
-                    # If we get here, we have valid JSON
-                    logger.info(f"Received complete response ({len(data)} bytes)")
-                    return bytes(data)
-                except json.JSONDecodeError:
-                    # We haven't received a complete valid JSON response yet
-                    continue
+                    complete = boundary.feed(chunk)
+                except ValueError as exc:
+                    raise _UnityProtocolError(str(exc)) from exc
+                if complete:
+                    # Structural framing only. The command decodes/validates the
+                    # complete bytes once under its response-work reservation.
+                    return data
         except socket.timeout:
             logger.warning("Socket timeout during receive")
             if deadline is not None:

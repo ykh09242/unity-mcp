@@ -17,6 +17,14 @@ decoder's reservation. The worker checks the original command deadline before
 and after parsing; a refused or late response after dispatch retains an unknown
 execution outcome and never causes a mutation replay.
 
+Unframed compatibility replies use an incremental byte scanner for strings,
+escapes and nested containers, followed by one bounded complete-input decode.
+Scalar roots require whitespace or EOF so a fragmented number is not truncated.
+Trailing data in the received slab is rejected. As with any persistent unframed
+stream, bytes arriving after a complete container/string cannot be distinguished
+from a subsequent message without an external delimiter; framed transport avoids
+that ambiguity.
+
 The supported Codex client's stdio line and HTTP response limits are 8 MiB.
 Ordinary tool results, resource/prompt reads and completed wait-task observations use an
 8 MiB result budget minus 32 KiB reserved for the request ID, JSON-RPC envelope and
