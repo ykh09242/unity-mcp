@@ -42,11 +42,11 @@ def _previous(store: GraphStore) -> tuple[str | None, list[str] | None, dict[str
                 db.row_factory = sqlite3.Row
                 db.execute("BEGIN")
                 if db.execute("PRAGMA application_id").fetchone()[0] != GraphStore.APPLICATION_ID:
-                    continue
+                    raise ValueError("Prior reference graph ownership is unavailable")
                 if not db.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_state'"
                 ).fetchone():
-                    continue
+                    raise ValueError("Prior reference graph policy metadata is unavailable")
                 # Recover the legacy Editor ID from its native status and
                 # independently reproduce the authenticated filename and DB ID.
                 identity = db.execute(
@@ -57,7 +57,7 @@ def _previous(store: GraphStore) -> tuple[str | None, list[str] | None, dict[str
                     "LEFT JOIN graph_state p ON p.key='progress'"
                 ).fetchone()
                 if identity is None:
-                    continue
+                    raise ValueError("Prior reference graph identity is unavailable")
                 # "default" is the native fallback when the physical project path
                 # could not be identified. Two such values cannot establish a match.
                 identified = scope.project_id != "default" and identity[2] not in (
