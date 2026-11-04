@@ -17,3 +17,32 @@ first parent. The full locked Python and Unity matrices are unchanged.
 These selectors do not change GitHub's secret withholding for fork pull requests.
 Native execution still requires the existing licensed-execution policy and scoped
 credentials. No `pull_request_target` event or write permission is introduced.
+
+## Installed archive behavior
+
+The `installed_archive` job freezes the checked SHA before making a project-root
+ZIP from `<sha>:Server`, installs that archive into a fresh environment using
+`uv pip install`, and runs both probes with Python isolated mode (`-I`). This
+resolves the declared runtime dependency ranges independently of `Server/uv.lock`.
+The archive probe requires direct archive installation metadata and verifies that
+server and dependency imports live in that environment, outside the checkout. Its
+JSON evidence includes the frozen candidate SHA, resolved dependency versions,
+import origins and completed HTTP/CLI behaviors.
+
+The public checks cover healthy status without token disclosure, authentication,
+browser and duplicate-token rejection, authenticated empty-instance responses,
+command input validation, disconnected custom tools, CLI help/catalog loading and
+raw JSON errors. Requests use the real ASGI middleware and routes with an empty,
+owned hub; no application lifespan or Unity discovery is entered. Socket bind and
+connect attempts are rejected. Configuration homes, logs and persistent stores
+use owned temporary directories; inherited Unity MCP settings are removed. The
+existing registration probe separately enters only optional-kernel lifespans.
+
+Project-root ZIPs avoid uv 0.13.5's observed lack of subdirectory-fragment support
+for local file archives. This candidate check complements `server_bootstrap`,
+which still tests cold/offline installation from the pinned full GitHub archive
+with its `#subdirectory=Server` selector. The latter validates the published
+launcher source and may precede the current candidate until its pin is refreshed.
+The new job covers Windows, Linux and Intel macOS on Python 3.11 in CI; the locked
+Python 3.11-3.15 test matrix remains independent. These focused checks do not
+establish Unity execution, network listener behavior, or all unlocked combinations.
