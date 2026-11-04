@@ -61,7 +61,14 @@ def _execution_filter(methods: list[str]) -> str:
     """Factor validated literal methods into one exact NUnit name expression."""
 
     def factor(names: list[str]) -> str:
-        prefix = os.path.commonprefix(names)
+        # Branches preserve sorted order, so their extremes share the full prefix.
+        first, last = names[0], names[-1]
+        prefix_length = 0
+        for left, right in zip(first, last):
+            if left != right:
+                break
+            prefix_length += 1
+        prefix = first[:prefix_length]
         branches: dict[str, list[str]] = {}
         terminal = False
         for name in names:
