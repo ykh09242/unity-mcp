@@ -1,7 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Security
@@ -57,7 +59,7 @@ namespace MCPForUnity.Editor.Security
             try
             {
                 // Readers retain the old complete file while a writer publishes its replacement.
-                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+                using var stream = OpenPublishedCiphertext(path);
                 using var reader = new StreamReader(stream, Encoding.UTF8);
                 byte[] blob = Convert.FromBase64String(reader.ReadToEnd().Trim());
                 apiKey = Encoding.UTF8.GetString(Decrypt(blob));
@@ -173,6 +175,28 @@ namespace MCPForUnity.Editor.Security
 
         // ---------- helpers ----------
 
+        private static FileStream OpenPublishedCiphertext(string path)
+        {
+            var elapsed = Stopwatch.StartNew();
+            while (true)
+            {
+                try
+                {
+                    return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+                }
+                catch (IOException error)
+                    when (Application.platform == RuntimePlatform.WindowsEditor
+                        && ((error.HResult & 0xffff) == 32 || (error.HResult & 0xffff) == 2)
+                        && elapsed.ElapsedMilliseconds < 250
+                    )
+                {
+                    // ReplaceFile can briefly deny opens or hide an already-published name.
+                    // Retry only the open, never malformed content or missing derivation material.
+                    Thread.Sleep(10);
+                }
+            }
+        }
+
         private byte[] LoadOrCreate(string path, int len, bool create)
         {
             try
@@ -204,7 +228,10 @@ namespace MCPForUnity.Editor.Security
 
         private static byte[] ReadMaterial(string path, int len)
         {
-            byte[] existing = File.ReadAllBytes(path);
+            // A no-overwrite rename can still own a delete handle as another initializer opens the winner.
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            using var reader = new BinaryReader(stream);
+            byte[] existing = reader.ReadBytes(len + 1);
             if (existing.Length != len)
                 throw new CryptographicException("Invalid fallback key derivation material; existing bytes were preserved.");
             return existing;
