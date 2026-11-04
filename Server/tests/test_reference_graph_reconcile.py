@@ -2687,7 +2687,18 @@ async def test_yaml_stop_interrupts_work_and_releases_lease(setup, monkeypatch, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "previous,version,dirty_yaml", [(7, 8, False), (7, 9, False), (8, 9, False), (6, 9, True)]
+    "previous,version,dirty_yaml",
+    [
+        (7, 8, False),
+        (7, 9, False),
+        (8, 9, False),
+        (6, 9, True),
+        (7, 10, False),
+        (8, 10, False),
+        (9, 10, False),
+        (6, 10, True),
+        (10, 11, True),
+    ],
 )
 async def test_analysis_version_upgrade_scopes_only_known_migration(
     setup, previous, version, dirty_yaml
