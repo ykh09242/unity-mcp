@@ -31,9 +31,22 @@ internal static class LifecycleHarness
                 {
                     FakeProcess.Completes = false;
                     for (int i = 0; i < 100; i++)
-                        action.Action();
+                    {
+                        bool refused = false;
+                        try
+                        {
+                            action.Action();
+                        }
+                        catch (InvalidOperationException error)
+                            when (action.Name.EndsWith(" delete") && error.Message.StartsWith("Credential removal could not be confirmed."))
+                        {
+                            refused = true;
+                        }
+                        Require(refused == action.Name.EndsWith(" delete"), "Delete timeout did not report unconfirmed removal");
+                    }
                     int alive = FakeProcess.All.FindAll(p => p.Running).Count;
                     Console.WriteLine("TIMEOUT " + action.Name + ": alive=" + alive);
+                    Require(FakeProcess.All.Count == 100, "Not all timeout attempts executed");
                     Require(alive == 0, "Timed-out child processes survived disposal");
                     Require(FakeProcess.All.TrueForAll(p => p.Disposed), "Process handle was not disposed");
                     Require(FakeProcess.All.TrueForAll(p => p.StreamsDisposed), "Exposed streams were not disposed");
