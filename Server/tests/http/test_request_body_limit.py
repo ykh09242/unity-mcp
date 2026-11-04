@@ -22,6 +22,165 @@ from transport.request_body_limit_middleware import RequestBodyLimitMiddleware
 LIMIT = 256
 
 
+def test_completed_small_uploads_do_not_hold_reader_slots():
+    async def scenario():
+        entered = anyio.Event()
+        release = anyio.Event()
+        bodies = []
+
+        async def parser(scope, receive, send):
+            bodies.append(await Request(scope, receive).body())
+            if len(bodies) == 5:
+                entered.set()
+            await release.wait()
+            await send({"type": "http.response.start", "status": 200})
+
+        app = RequestBodyLimitMiddleware(parser, LIMIT, max_readers=1, max_ingress_bytes=25)
+        chunk = {"type": "http.request", "body": b"hello", "more_body": False}
+        async with anyio.create_task_group() as tasks:
+            for _ in range(5):
+                tasks.start_soon(invoke, app, scope_for(), [chunk])
+            await entered.wait()
+            sent, _ = await invoke(app, scope_for(), [chunk])
+            assert sent[0]["status"] == 503
+            tasks.cancel_scope.cancel()
+        release.set()
+        sent, _ = await invoke(app, scope_for(), [chunk])
+        assert sent[0]["status"] == 200
+
+    anyio.run(scenario)
+
+
+def test_partial_chunked_bodies_share_capacity_and_release_on_error():
+    async def scenario():
+        ready = anyio.Event()
+        gate = anyio.Event()
+        received = []
+
+        async def parser(scope, receive, send):
+            received.append((await receive())["body"])
+            if len(received) == 2:
+                ready.set()
+            await gate.wait()
+            raise RuntimeError("parser failed")
+
+        async def partial(body):
+            async def receive():
+                return {"type": "http.request", "body": body, "more_body": True}
+
+            async def send(message):
+                pass
+
+            with pytest.raises(RuntimeError):
+                await app(scope_for([(b"transfer-encoding", b"chunked")]), receive, send)
+
+        app = RequestBodyLimitMiddleware(parser, LIMIT, max_readers=3, max_ingress_bytes=7)
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(partial, b"1234")
+            tasks.start_soon(partial, b"567")
+            await ready.wait()
+            sent, reads = await invoke(
+                app,
+                scope_for([(b"transfer-encoding", b"chunked")]),
+                [{"type": "http.request", "body": b"8", "more_body": True}],
+            )
+            assert sent[0]["status"] == 503 and reads == 1
+            gate.set()
+        with pytest.raises(RuntimeError):
+            await invoke(
+                app,
+                scope_for(),
+                [{"type": "http.request", "body": b"1234567", "more_body": True}],
+            )
+
+    anyio.run(scenario)
+
+
+def test_stalled_upload_expires_and_releases_capacity():
+    async def scenario():
+        entered = anyio.Event()
+
+        async def parser(scope, receive, send):
+            await receive()
+
+        async def stalled():
+            entered.set()
+            await anyio.sleep_forever()
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        app = RequestBodyLimitMiddleware(parser, LIMIT, max_readers=1, upload_seconds=0.01)
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(app, scope_for(), stalled, send)
+            await entered.wait()
+            blocked, _ = await invoke(app, scope_for())
+            assert blocked[0]["status"] == 503
+        assert sent[0]["status"] == 408
+        accepted, _ = await invoke(app, scope_for(), [{"type": "http.disconnect"}])
+        assert accepted == []
+
+    anyio.run(scenario)
+
+
+def test_upload_deadline_ends_at_eof_while_response_remains_pending():
+    async def scenario():
+        entered = anyio.Event()
+        release = anyio.Event()
+        sent = []
+
+        async def parser(scope, receive, send):
+            await Request(scope, receive).body()
+            entered.set()
+            await release.wait()
+            await send({"type": "http.response.start", "status": 200})
+
+        async def receive():
+            return {"type": "http.request", "body": b"x", "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        app = RequestBodyLimitMiddleware(parser, LIMIT, upload_seconds=0.01)
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(app, scope_for(), receive, send)
+            await entered.wait()
+            await anyio.sleep(0.05)
+            release.set()
+        assert sent[0]["status"] == 200
+
+    anyio.run(scenario)
+
+
+def test_idle_get_stream_does_not_consume_body_capacity():
+    async def scenario():
+        waiting = anyio.Event()
+        release = anyio.Event()
+
+        async def handler(scope, receive, send):
+            await receive()
+
+        async def get_receive():
+            waiting.set()
+            await release.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            pass
+
+        app = RequestBodyLimitMiddleware(handler, LIMIT, max_readers=1)
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(app, scope_for(method="GET"), get_receive, send)
+            await waiting.wait()
+            sent, reads = await invoke(app, scope_for(), [{"type": "http.request", "body": b"x"}])
+            assert sent == [] and reads == 1
+            release.set()
+
+    anyio.run(scenario)
+
+
 def scope_for(headers=(), path="/", method="POST", scope_type="http"):
     return {
         "type": scope_type,
