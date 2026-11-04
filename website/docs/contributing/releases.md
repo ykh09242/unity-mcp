@@ -65,9 +65,11 @@ Inside this block, use exactly these headers and values:
 
 - **Component:** one of `unity`, `server`, `skill`, with one component per verification row. The component table's versions and immutable links must match metadata read at P, the server version read at S, and the independent skill pin C. The server archive must also match the manifest's `--from`.
 - **Verification kind:** `python`, `compile`, `package-preparation`, `native-editmode`, or `native-playmode`. Compilation, package preparation and Editor execution establish different facts.
-- **Actual result:** exactly `passed`, `failed`, `skipped`, `not-run`, or `historical`. Keep counts and environments in the linked actual records, not suffixes in this cell. A green workflow containing a skipped native job does not establish native execution.
+- The **Actual result** cell accepts `passed`, `failed`, `skipped`, `not-run`, or `historical`. A successful Python run with skipped cases uses the counted form below. Keep the environment and individual case outcomes in the linked records.
 - **Tested input:** `commit:` followed by the full lowercase 40-hex actual tested commit. Passed/current rows must match the selected component input P, S or C. Skipped/not-run rows use `none`. Historical local-native rows use `partial:` followed by the full lowercase SHA256 of their original nonempty source map.
 - **Evidence:** exactly one `[ID](HTTPS_URL)` link, with a unique lowercase ID matching `[a-z][a-z0-9-]{0,63}`. Retain the actual job/bundle, results and input records at that link. Local paths alone are not public retention.
+
+For a successful Python job with expected platform skips, write the actual counts in the result cell, for example `37 passed, 2 skipped`. Both counts must be positive and match the saved JUnit cases. The job must have zero failed or errored cases. Identify the platform in the scope and retain the report with the skipped cases and their reasons. Use plain `passed` when every case passed.
 
 A historical row still requires actual supported executed records with their original result, counts and environment. Local partial source maps cannot prove completeness, even when every remaining entry matches P. They are historical-only; deleting a source/test/metadata/config entry cannot turn them into current-release evidence. This first format has no complete-local-inventory adapter.
 

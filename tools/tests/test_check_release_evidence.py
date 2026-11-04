@@ -555,6 +555,48 @@ def test_other_supported_actual_record_formats(bundle: Bundle, mode: str) -> Non
     assert bundle.check(bundle.notes(mode)) == []
 
 
+@pytest.mark.parametrize(
+    ("published", "accepted"),
+    [
+        ("1 passed, 1 skipped", True),
+        ("passed", False),
+        ("2 passed, 1 skipped", False),
+        ("0 passed, 2 skipped", False),
+    ],
+)
+def test_mixed_python_run_discloses_verified_counts(
+    bundle: Bundle, published: str, accepted: bool
+) -> None:
+    entry = bundle.ci("python")
+    bundle.execution(entry, "Python 3.14.0 pytest\n")
+    entry["files"]["results"] = bundle.file(
+        "results",
+        '<testsuite tests="2" failures="0" errors="0" skipped="1">'
+        '<testcase name="common"/>'
+        '<testcase name="windows"><skipped message="Windows only"/></testcase></testsuite>',
+    )
+    bundle.index(entry)
+    issues = bundle.check(bundle.notes("python", result=published))
+    assert (issues == []) is accepted
+
+
+def test_mixed_python_row_cannot_hide_errors_or_an_entirely_skipped_run():
+    module = checker()
+    skipped = b'<testcase name="windows"><skipped/></testcase>'
+    all_skipped = (
+        b'<testsuite tests="1" errors="0" failures="0" skipped="1">' + skipped + b"</testsuite>"
+    )
+    with pytest.raises(module.EvidenceError, match="counts differ"):
+        module.junit_result(all_skipped, (1, 1))
+    mixed_error = (
+        b'<testsuite tests="3" errors="1" failures="0" skipped="1">'
+        b'<testcase name="common"/><testcase name="breaks"><error/></testcase>'
+        + skipped
+        + b"</testsuite>"
+    )
+    assert module.junit_result(mixed_error, (1, 1)) == (False, True)
+
+
 def test_duplicate_junit_case_records_cannot_fake_execution_counts(bundle: Bundle) -> None:
     # Given two duplicate case identities pretending to be two passing cases.
     entry = bundle.ci("python")

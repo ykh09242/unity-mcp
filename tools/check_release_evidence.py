@@ -322,6 +322,7 @@ class Row:
     tested: str
     evidence: str
     url: str
+    python_counts: tuple[int, int] | None = None
 
 
 def parse_notes(notes: str, selected: Components) -> list[Row]:
@@ -378,7 +379,16 @@ def parse_notes(notes: str, selected: Components) -> list[Row]:
             and digest(tested[8:], 64),
             "Invalid Tested input grammar",
         )
-        rows.append(Row(label, component, Kind(kind), Result(result), tested, eid, url))
+        # Publishing the two counts keeps skipped cases visible in the release itself.
+        counts = re.fullmatch(r"([1-9][0-9]*) passed, ([1-9][0-9]*) skipped", result)
+        python_counts = None
+        if counts:
+            require(kind == Kind.PYTHON.value, "Mixed pass/skip counts require Python evidence")
+            python_counts = int(counts[1]), int(counts[2])
+            result = Result.PASSED.value
+        rows.append(
+            Row(label, component, Kind(kind), Result(result), tested, eid, url, python_counts)
+        )
     return rows
 
 
@@ -550,7 +560,7 @@ def native_result(data: bytes) -> tuple[bool, bool]:
     return values["passed"] == values["total"] and status == "Passed", failures
 
 
-def junit_result(data: bytes) -> tuple[bool, bool]:
+def junit_result(data: bytes, published_counts: tuple[int, int] | None = None) -> tuple[bool, bool]:
     root = xml_root(data)
     require(root.tag in ("testsuites", "testsuite"), "Python results must be pytest JUnit XML")
     suites = [root] if root.tag == "testsuite" else list(root)
@@ -602,6 +612,12 @@ def junit_result(data: bytes) -> tuple[bool, bool]:
                 name not in root.attrib or count(root, name) == expected,
                 "JUnit root/suite totals disagree",
             )
+    if published_counts is not None:
+        require(
+            published_counts == (passed, skipped_total),
+            "Published pass/skip counts differ from JUnit",
+        )
+        return passed > 0 and not failures, bool(failures)
     return total == passed, bool(failures)
 
 
@@ -625,7 +641,9 @@ def native_log(data: bytes, kind: Kind) -> int:
     return int(endings[0])
 
 
-def check_execution(kind: Kind, files: dict[str, bytes]) -> tuple[bool, bool]:
+def check_execution(
+    kind: Kind, files: dict[str, bytes], python_counts: tuple[int, int] | None = None
+) -> tuple[bool, bool]:
     log = files["log"].decode("utf-8-sig")
     match kind:
         case Kind.COMPILE:
@@ -669,7 +687,7 @@ def check_execution(kind: Kind, files: dict[str, bytes]) -> tuple[bool, bool]:
                 re.search(r"Python [0-9]+\.[0-9]+", log) is not None and "pytest" in log,
                 "Python log lacks actual invocation/version",
             )
-            return junit_result(files["results"])
+            return junit_result(files["results"], python_counts)
         case Kind.EDIT | Kind.PLAY:
             complete, failed = native_result(files["results"])
             exit_code = native_log(files["log"], kind)
@@ -790,7 +808,7 @@ def validate_row(row: Row, entry: JsonMap, index_path: Path, selected: Component
         row.result == Result.HISTORICAL or revision == selected.revision(row.component),
         "Actual checkout is a different component input; retain it as historical",
     )
-    complete, failed = check_execution(row.kind, files)
+    complete, failed = check_execution(row.kind, files, row.python_counts)
     require(not failed or conclusion == "failure", "Actual failed cases contradict successful job")
     match row.result:
         case Result.PASSED:
