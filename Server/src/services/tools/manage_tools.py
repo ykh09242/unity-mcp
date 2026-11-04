@@ -79,26 +79,33 @@ async def manage_tools(
         from services.registry.task_search import SearchRequest, search_catalog
 
         if group is not None or tool is not None:
-            return {"error": "search accepts query and limit, without a group or tool selector."}
+            return {
+                "success": False,
+                "error": "search accepts query and limit, without a group or tool selector.",
+            }
         try:
             request = SearchRequest(query=query, limit=limit)
         except ValidationError:
             return {
-                "error": "search requires a nonempty query of at most 512 characters and limit 1..20."
+                "success": False,
+                "error": "search requires a nonempty query of at most 512 characters and limit 1..20.",
             }
         visible_names = {item.name for item in await _visible_tools(ctx)}
         return search_catalog(request, get_registered_tools(), visible_names=visible_names)
     if action in ("activate", "deactivate", "reset") and modern:
         if discovery is None or await discovery.scope_key(ctx) is None:
-            return {"error": UNSCOPED_GUIDANCE}
+            return {"success": False, "error": UNSCOPED_GUIDANCE}
     if action == "describe":
         from services.registry.task_search import action_maturity
 
         if group is not None or not tool:
-            return {"error": "describe requires a tool name and no group."}
+            return {"success": False, "error": "describe requires a tool name and no group."}
         definition = discovery.definitions.get(tool.strip()) if discovery is not None else None
         if definition is None:
-            return {"error": "Unknown built-in tool. Use list_groups to discover names."}
+            return {
+                "success": False,
+                "error": "Unknown built-in tool. Use list_groups to discover names.",
+            }
         return {
             "tool": definition.to_mcp_tool().model_dump(mode="json", exclude_none=True),
             "maturity": next(
@@ -117,12 +124,13 @@ async def manage_tools(
 
     if action in ("activate", "deactivate") and tool is not None:
         if group is not None:
-            return {"error": "Select exactly one group or tool."}
+            return {"success": False, "error": "Select exactly one group or tool."}
         tool = tool.strip()
         entry = next((item for item in get_registered_tools() if item["name"] == tool), None)
         if entry is None or entry.get("group") is None:
             return {
-                "error": "Unknown or always-visible tool. Use list_groups to discover selectable tools."
+                "success": False,
+                "error": "Unknown or always-visible tool. Use list_groups to discover selectable tools.",
             }
         operation = ctx.enable_components if action == "activate" else ctx.disable_components
         if discovery is not None:
@@ -139,10 +147,13 @@ async def manage_tools(
 
     if action in ("activate", "deactivate"):
         if not group:
-            return {"error": f"group or tool is required for {action}"}
+            return {"success": False, "error": f"group or tool is required for {action}"}
         group = group.strip().lower()
         if group not in TOOL_GROUPS:
-            return {"error": f"Unknown group '{group}'. Valid: {', '.join(sorted(TOOL_GROUPS))}"}
+            return {
+                "success": False,
+                "error": f"Unknown group '{group}'. Valid: {', '.join(sorted(TOOL_GROUPS))}",
+            }
 
     if action == "activate":
         tag = f"group:{group}"
@@ -189,7 +200,7 @@ async def manage_tools(
         if result.get("error"):
             msg = result["error"]
             if result.get("remote_sync_disabled"):
-                return {"error": msg}
+                return {"success": False, "error": msg}
             if result.get("unsupported"):
                 msg = (
                     "The connected Unity Editor does not support tool state syncing yet. "
@@ -198,7 +209,7 @@ async def manage_tools(
                 )
             else:
                 msg = f"Failed to sync tool visibility from Unity. Is Unity running? ({msg})"
-            return {"error": msg}
+            return {"success": False, "error": msg}
         return {
             "synced": True,
             "client_inventory_status": "unconfirmed",
@@ -240,7 +251,7 @@ async def manage_tools(
             ),
         }
 
-    return {"error": f"Unknown action '{action}'"}
+    return {"success": False, "error": f"Unknown action '{action}'"}
 
 
 async def _visible_tools(ctx: Context):

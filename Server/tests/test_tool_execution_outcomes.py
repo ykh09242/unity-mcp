@@ -222,3 +222,48 @@ def test_failure_projection_does_not_run_subclass_copy_after_admission(monkeypat
     assert result.structured_content is source.structured_content
     assert source.is_error is False
     assert response_size(result.to_mcp_result(), max_bytes=512) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"action": "activate"},
+        {"action": "deactivate", "group": "missing-group"},
+        {"action": "activate", "tool": "missing-tool"},
+        {"action": "activate", "group": "core", "tool": "missing-tool"},
+        {"action": "describe"},
+        {"action": "describe", "tool": "missing-tool"},
+        {"action": "search"},
+        {"action": "search", "query": "scene", "group": "core"},
+    ],
+)
+async def test_discovery_refusals_are_mcp_errors(mode, arguments):
+    from services.tools.manage_tools import manage_tools
+
+    server = FastMCP("discovery-refusal-contract")
+    server.add_middleware(ResponseLimitMiddleware())
+    server.tool(name="manage_tools")(manage_tools)
+    async with Client(server, mode=mode, cache=False) as client:
+        result = await client.call_tool("manage_tools", arguments, raise_on_error=False)
+    assert result.is_error is True
+    assert result.structured_content["success"] is False
+    assert result.structured_content["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["activate", "deactivate", "reset"])
+async def test_unscoped_discovery_selection_is_mcp_error(action):
+    from services.tools.manage_tools import manage_tools
+    from services.tool_discovery import UNSCOPED_GUIDANCE
+
+    server = FastMCP("unscoped-refusal-contract")
+    server.add_middleware(ResponseLimitMiddleware())
+    server.tool(name="manage_tools")(manage_tools)
+    async with Client(server, mode="2026-07-28", cache=False) as client:
+        result = await client.call_tool(
+            "manage_tools", {"action": action, "group": "core"}, raise_on_error=False
+        )
+    assert result.is_error is True
+    assert result.structured_content == {"success": False, "error": UNSCOPED_GUIDANCE}
