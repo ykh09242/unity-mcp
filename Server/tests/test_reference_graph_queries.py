@@ -6,6 +6,8 @@ import json
 import pytest
 
 from services.reference_graph.queries import GraphQueries
+from services.reference_graph import queries as query_module
+from services.reference_graph.response_budget import GraphResponseTooLarge, PageBudget
 from services.reference_graph.store import (
     Edge,
     GraphScope,
@@ -91,6 +93,105 @@ def test_path_retains_one_authorization_record_per_external_file(graph):
     )
     assert len(second["_search_evidence"]) == 1
     assert second["visited_nodes"] == 3
+
+
+def test_path_retains_only_runtime_authorization_fields(graph):
+    store, queries = graph
+    with store._connect(write=True) as db:
+        db.execute("INSERT INTO sources VALUES ('runtime:fixture',1,1,'{}')")
+    generation = store.observe_batch(
+        [
+            Observation(
+                "root",
+                "runtime:fixture",
+                "one",
+                path="Assets/Source.prefab",
+                provenance={
+                    "path": "Assets/Source.prefab",
+                    "target_path": "Assets/Target.prefab",
+                    "build": {"metadata": "x" * (1024 * 1024)},
+                },
+            )
+        ]
+    )[0]
+    store.publish(
+        "root", "runtime:fixture", generation, [Edge(f"child{i}", "runtime") for i in range(20)]
+    )
+    result = queries.path("root", "missing", direction="outgoing", limit=20)
+    assert result["visited_nodes"] == 21
+    assert all(
+        edge["provenance"]
+        == {"path": "Assets/Source.prefab", "target_path": "Assets/Target.prefab"}
+        for edge in result["_search_evidence"]
+    )
+
+
+def test_path_stops_before_retaining_excess_cumulative_authorization_proof(graph, monkeypatch):
+    store, queries = graph
+    with store._connect(write=True) as db:
+        db.execute("INSERT INTO sources VALUES ('runtime:fixture',1,1,'{}')")
+    for index in range(12):
+        owner = f"owner{index}"
+        generation = store.observe_batch(
+            [
+                Observation(
+                    owner, "runtime:fixture", "one", provenance={"path": "Assets/" + "x" * 300}
+                )
+            ]
+        )[0]
+        store.publish(owner, "runtime:fixture", generation, [Edge("root", "runtime")])
+
+    class SmallPageBudget(PageBudget):
+        def __init__(self, *, max_bytes=None):
+            super().__init__(max_bytes=20_000 if max_bytes is None else max_bytes)
+
+    seen = 0
+    original = queries._evidence
+
+    def observe(row):
+        nonlocal seen
+        seen += 1
+        return original(row)
+
+    monkeypatch.setattr(query_module, "PageBudget", SmallPageBudget)
+    monkeypatch.setattr(queries, "_evidence", observe)
+    with pytest.raises(GraphResponseTooLarge):
+        queries.path("root", "missing", direction="incoming", limit=12)
+    assert 2 <= seen < 12
+    with store._connect() as db:
+        assert db.execute("SELECT count(*) FROM graph_queries").fetchone()[0] == 0
+
+
+def test_path_charges_prior_proof_and_preserves_cursor_on_budget_failure(graph, monkeypatch):
+    store, queries = graph
+    with store._connect(write=True) as db:
+        db.execute("INSERT INTO sources VALUES ('runtime:fixture',1,1,'{}')")
+    for index in range(4):
+        owner = f"owner{index}"
+        generation = store.observe_batch(
+            [
+                Observation(
+                    owner, "runtime:fixture", "one", provenance={"path": "Assets/" + "x" * 300}
+                )
+            ]
+        )[0]
+        store.publish(owner, "runtime:fixture", generation, [Edge("root", "runtime")])
+
+    class SmallPageBudget(PageBudget):
+        def __init__(self, *, max_bytes=None):
+            super().__init__(max_bytes=20_000 if max_bytes is None else max_bytes)
+
+    monkeypatch.setattr(query_module, "PageBudget", SmallPageBudget)
+    first = queries.path("root", "missing", direction="incoming", limit=1)
+    second = queries.path(
+        "root", "missing", direction="incoming", limit=1, cursor=first["next_cursor"]
+    )
+    with store._connect() as db:
+        before = [tuple(row) for row in db.execute("SELECT * FROM graph_queries")]
+    with pytest.raises(GraphResponseTooLarge):
+        queries.path("root", "missing", direction="incoming", limit=1, cursor=second["next_cursor"])
+    with store._connect() as db:
+        assert [tuple(row) for row in db.execute("SELECT * FROM graph_queries")] == before
 
 
 def test_large_fanout_uses_continuations_and_no_total_result_cap(graph):

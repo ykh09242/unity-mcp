@@ -11,10 +11,12 @@ import json
 import time
 import uuid
 
+from models.response_limits import response_size
 from services.reference_graph.store import GraphStore, RevisionConflict, _hash, _json
 from services.reference_graph import snapshot_storage
 from services.reference_graph.response_budget import (
     MAX_REPLAY_BYTES,
+    GraphResponseTooLarge,
     PageBudget,
     bounded_rows,
     require_response,
@@ -299,7 +301,37 @@ class GraphQueries:
                 return (edge["provider"], edge["id"])
 
             prior = json.loads(job["result"]) if target is not None and job["result"] else {}
-            protected = {evidence_key(edge): edge for edge in prior.get("_search_evidence", [])}
+            protected = {}
+            proof_budget = PageBudget()
+
+            def retain_evidence(edge):
+                key = evidence_key(edge)
+                if key in protected:
+                    return
+                provider = edge["provider"]
+                compact = {"provider": provider, "owner": edge["owner"]}
+                if not provider.startswith("external:"):
+                    compact["id"] = edge["id"]
+                if provider == "manual":
+                    compact["target"] = edge["target"]
+                elif provider.startswith("runtime:"):
+                    compact["source_path"] = edge.get("source_path", "")
+                    provenance = edge.get("provenance", {})
+                    compact["provenance"] = {
+                        name: provenance[name]
+                        for name in ("path", "target_path")
+                        if name in provenance
+                    }
+                charge = response_size(
+                    compact, max_bytes=proof_budget.capacity, max_retained=proof_budget.capacity
+                )
+                if charge is None:
+                    raise GraphResponseTooLarge()
+                proof_budget.require({"_response_bytes": charge})
+                protected[key] = compact
+
+            for edge in prior.get("_search_evidence", []):
+                retain_evidence(edge)
             edges, budget = [], limit * 2
             page_budget, full = PageBudget(), False
             examined = 0
@@ -363,17 +395,7 @@ class GraphQueries:
                                 or evidence["target"].startswith("external:")
                             )
                         ):
-                            protected[evidence_key(evidence)] = {
-                                key: evidence[key]
-                                for key in (
-                                    "id",
-                                    "provider",
-                                    "owner",
-                                    "target",
-                                    "source_path",
-                                    "provenance",
-                                )
-                            }
+                            retain_evidence(evidence)
                     examined += 1
                     processed += 1
                     last_edge = row["id"]
