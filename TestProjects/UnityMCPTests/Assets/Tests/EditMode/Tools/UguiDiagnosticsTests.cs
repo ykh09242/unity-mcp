@@ -155,6 +155,25 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(Has(Diagnose(), "layout_driver_conflict", child), "A child participates if any ILayoutIgnorer returns false.");
         }
 
+        [TestCase(true)]
+        [TestCase(false)]
+        public void CustomIgnorerIsNotInvokedByPlainDiagnostics(bool enabled)
+        {
+#if MCP_UI14_UGUI_WITNESS
+            Set(Add(root, "UnityEngine.UI.HorizontalLayoutGroup"), "childControlWidth", true);
+            var child = Child("CustomIgnorer");
+            Set(Add(child, "UnityEngine.UI.ContentSizeFitter"), "horizontalFit", 2);
+            var witness = child.AddComponent<MCPForUnityTests.EditMode.Tools.Ui14ArmedIgnorer>();
+            witness.enabled = enabled;
+            witness.Armed = true;
+            var result = Diagnose();
+            Assert.AreEqual(0, witness.Calls);
+            Assert.IsFalse(Has(result, "layout_driver_conflict", child), "Unknown participation cannot establish a conflict.");
+#else
+            Assert.Ignore("Mandatory custom-interface witness was not compiled. Enable the owned native projection overlay; absence is not acceptance.");
+#endif
+        }
+
         [TestCase(2, 0, 1, false)]
         [TestCase(0, 2, 2, false)]
         [TestCase(0, 2, 1, true)]

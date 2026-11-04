@@ -238,7 +238,7 @@ namespace MCPForUnity.Editor.Tools
                             if (component == null)
                                 continue;
                             string name = component.GetType().FullName;
-                            if (PreviewTypes.Contains(name))
+                            if (PreviewTypes.Contains(name) && IsNativeUiType(component.GetType()))
                             {
                                 // A root screen-space Canvas makes AspectRatioFitter inert. The preview
                                 // deliberately uses WorldSpace, so preserve the source's eligibility.
@@ -279,7 +279,7 @@ namespace MCPForUnity.Editor.Tools
                                 copy.overrideSorting = sourceCanvas.overrideSorting;
                                 copy.enabled = sourceCanvas.enabled;
                             }
-                            else if (name == "TMPro.TextMeshProUGUI")
+                            else if (name == "TMPro.TextMeshProUGUI" && IsNativeUiType(component.GetType()))
                             {
                                 node.Text = component;
                                 limitations.Add(
@@ -700,13 +700,19 @@ namespace MCPForUnity.Editor.Tools
 
         private static T Read<T>(object target, string name, T fallback)
         {
-            if (target == null)
+            if (target == null || !IsNativeUiType(target.GetType()))
                 return fallback;
             var property = target.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
             if (property == null || !property.CanRead)
                 return fallback;
             object value = property.GetValue(target);
             return value is T typed ? typed : fallback;
+        }
+
+        private static bool IsNativeUiType(Type type)
+        {
+            string assembly = type.Assembly.GetName().Name;
+            return (assembly == "UnityEngine.UI" || assembly == "Unity.TextMeshPro") && type.Assembly.GetType(type.FullName, false) == type;
         }
 
         private static bool Enabled(Component component) => component != null && (!(component is Behaviour behaviour) || behaviour.enabled);
@@ -718,14 +724,14 @@ namespace MCPForUnity.Editor.Tools
         {
             if (!Enabled(scaler))
                 return Mathf.Max(0.0001f, fallback);
-            object modeValue = scaler.GetType().GetProperty("uiScaleMode")?.GetValue(scaler);
+            object modeValue = Read<object>(scaler, "uiScaleMode", null);
             int mode = modeValue == null ? 0 : Convert.ToInt32(modeValue);
             if (mode == 0)
                 return Mathf.Max(0.0001f, Read(scaler, "scaleFactor", 1f));
             Vector2 reference = Read(scaler, "referenceResolution", new Vector2(800, 600));
             float x = size.x / reference.x,
                 y = size.y / reference.y;
-            object matchValue = scaler.GetType().GetProperty("screenMatchMode")?.GetValue(scaler);
+            object matchValue = Read<object>(scaler, "screenMatchMode", null);
             int match = matchValue == null ? 0 : Convert.ToInt32(matchValue);
             if (match == 1)
                 return Mathf.Min(x, y);
@@ -953,7 +959,8 @@ namespace MCPForUnity.Editor.Tools
                 );
             if (node.Source.parent == null)
                 return;
-            if (IgnoredByParentLayout(node.Source, anyTypes))
+            // Unknown custom ignorers make participation uncertain; omit the conflict claim.
+            if (IgnoredByParentLayout(node.Source, anyTypes) != false)
                 return;
             var parent = node.Source.parent.gameObject;
             var grid = ComponentNamed(parent, "UnityEngine.UI.GridLayoutGroup", componentTypes);
@@ -973,7 +980,7 @@ namespace MCPForUnity.Editor.Tools
                 );
         }
 
-        private static bool IgnoredByParentLayout(RectTransform rect, Dictionary<string, Type> anyTypes)
+        private static bool? IgnoredByParentLayout(RectTransform rect, Dictionary<string, Type> anyTypes)
         {
             var type = ResolveType("UnityEngine.UI.ILayoutIgnorer", anyTypes, false);
             var property = type?.GetProperty("ignoreLayout");
@@ -983,12 +990,20 @@ namespace MCPForUnity.Editor.Tools
             if (ignorers.Length == 0)
                 return false;
             // LayoutGroup does not filter disabled ignorers and includes a child if any one opts in.
-            return ignorers.All(component => (bool)property.GetValue(component));
+            bool unknown = false;
+            foreach (var component in ignorers)
+            {
+                if (!IsNativeUiType(component.GetType()))
+                    unknown = true;
+                else if (!(bool)property.GetValue(component))
+                    return false;
+            }
+            return unknown ? (bool?)null : true;
         }
 
         private static int EnumValue(Component component, string property)
         {
-            object value = component?.GetType().GetProperty(property)?.GetValue(component);
+            object value = Read<object>(component, property, null);
             return value == null ? 0 : Convert.ToInt32(value);
         }
 
