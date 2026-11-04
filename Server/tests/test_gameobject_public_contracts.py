@@ -44,7 +44,7 @@ def test_gameobject_cli_lifecycle_transforms_and_single_json(tmp_path):
             requests.append(json.loads(request.content))
             return httpx.Response(200, json=copy.deepcopy(raw))
 
-        connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond))
         connection._auth_headers = lambda config: {}
         runner = CliRunner()
 

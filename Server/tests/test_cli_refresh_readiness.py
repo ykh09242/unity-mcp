@@ -45,7 +45,7 @@ def refresh_cli(monkeypatch):
         monkeypatch.setattr(
             connection.httpx,
             "AsyncClient",
-            lambda: client_type(
+            lambda **_options: client_type(
                 transport=httpx.MockTransport(respond),
             ),
         )

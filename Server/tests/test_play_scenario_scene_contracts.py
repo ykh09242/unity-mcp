@@ -218,7 +218,7 @@ def test_cli_scene_save_and_recording_scope(monkeypatch, tmp_path):
     monkeypatch.setattr(
         connection.httpx,
         "AsyncClient",
-        lambda: client_type(transport=httpx.MockTransport(respond), trust_env=False),
+        lambda **_options: client_type(transport=httpx.MockTransport(respond), trust_env=False),
     )
     for args in [
         ["play-scenario", "save", str(path)],

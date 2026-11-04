@@ -46,7 +46,7 @@ def respond(request):
     body = {'status': 'success', 'result': value} if wrapped else value
     return httpx.Response(200, json=body)
 
-connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond))
+connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond))
 connection._auth_headers = lambda config: {}
 runner = CliRunner()
 

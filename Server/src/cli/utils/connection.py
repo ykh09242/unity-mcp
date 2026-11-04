@@ -10,6 +10,7 @@ import click
 import httpx
 
 from cli.utils.config import get_config, CLIConfig
+from cli.utils.project_context import exact_hash, is_loopback
 from core.local_auth import LOCAL_AUTH_HEADER, read_local_auth_token
 from models.unity_response import normalize_unity_response
 from services.animator_actions import guarded_animator_batch_member, guarded_animator_parameters
@@ -93,6 +94,13 @@ def _server_url(config: CLIConfig, path: str) -> str:
     return f"http://{host}:{config.port}{path}"
 
 
+def _http_client(config: CLIConfig) -> httpx.AsyncClient:
+    # A loopback launch token must never reach an intermediary selected by HTTP_PROXY.
+    if is_loopback(config.host.strip("[]").lower().removesuffix(".")):
+        return httpx.AsyncClient(trust_env=False, follow_redirects=False)
+    return httpx.AsyncClient()
+
+
 def _raise_structured_target_refusal(response: httpx.Response) -> None:
     """Preserve completed target-selection refusals for commands and inventory."""
     if response.status_code not in (404, 409):
@@ -158,8 +166,6 @@ async def send_command(
         payload["unity_instance"] = cfg.unity_instance
 
     if guarded:
-        from cli.utils.project_context import exact_hash, is_loopback
-
         if not is_loopback(cfg.host) or exact_hash(cfg.unity_instance) is None:
             raise click.UsageError(
                 "Project context requires a local server and a complete explicit instance hash."
@@ -171,8 +177,7 @@ async def send_command(
         click.echo(f"> POST {url} {json.dumps(visible)}", err=True)
 
     try:
-        options = {"trust_env": False, "follow_redirects": False} if guarded else {}
-        async with httpx.AsyncClient(**options) as client:
+        async with _http_client(cfg) as client:
             response = await client.post(
                 url,
                 json=payload,
@@ -256,7 +261,7 @@ async def check_connection(config: Optional[CLIConfig] = None) -> bool:
     url = _server_url(cfg, "/health")
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with _http_client(cfg) as client:
             response = await client.get(url, timeout=5)
             return response.status_code == 200
     except Exception:
@@ -282,7 +287,7 @@ async def list_unity_instances(config: Optional[CLIConfig] = None) -> Dict[str, 
     url = _server_url(cfg, "/api/instances")
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with _http_client(cfg) as client:
             response = await client.get(url, headers=_auth_headers(cfg), timeout=10)
             response.raise_for_status()
             data = response.json()
@@ -323,7 +328,7 @@ async def list_custom_tools(config: Optional[CLIConfig] = None) -> Dict[str, Any
         params["instance"] = cfg.unity_instance
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with _http_client(cfg) as client:
             response = await client.get(
                 url, params=params, headers=_auth_headers(cfg), timeout=cfg.timeout
             )

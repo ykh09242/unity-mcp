@@ -60,7 +60,7 @@ def config_transport(monkeypatch):
         )
         return httpx.Response(200, json={"success": True, "data": {"count": 0, "enabled": False}})
 
-    def client():
+    def client(**_options):
         trace["clients"].append(True)
         return client_type(transport=httpx.MockTransport(respond))
 
@@ -263,7 +263,7 @@ def test_configuration_smoke_in_fresh_process():
         def respond(request):
             requests.append((str(request.url), request.extensions["timeout"]))
             return httpx.Response(200, json={"success": True, "data": {"count": 0}})
-        connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond))
         connection._auth_headers = lambda config: {}
         runner = CliRunner()
         result = runner.invoke(cli, ["--format", "json", "raw", "fixture"])

@@ -144,7 +144,9 @@ def shader_http(monkeypatch):
         return httpx.Response(200, json=raw)
 
     monkeypatch.setattr(
-        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx,
+        "AsyncClient",
+        lambda **_options: client_type(transport=httpx.MockTransport(respond)),
     )
     monkeypatch.setattr(connection, "asyncio", SimpleNamespace(run=inline))
     monkeypatch.setattr(connection, "_auth_headers", lambda _config: {})

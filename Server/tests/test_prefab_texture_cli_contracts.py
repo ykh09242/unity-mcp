@@ -68,7 +68,9 @@ def domain_transport(monkeypatch):
         return httpx.Response(200, json=response)
 
     monkeypatch.setattr(
-        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx,
+        "AsyncClient",
+        lambda **_options: client_type(transport=httpx.MockTransport(respond)),
     )
     monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
     return response, requests
@@ -147,7 +149,9 @@ def test_prefab_hierarchy_pages_over_fifty_objects_without_loss_or_duplicates(mo
         )
 
     monkeypatch.setattr(
-        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx,
+        "AsyncClient",
+        lambda **_options: client_type(transport=httpx.MockTransport(respond)),
     )
     monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
     names = []
@@ -410,7 +414,7 @@ def test_json_output_through_actual_cli_in_fresh_process():
         def respond(request):
             requests.append(json.loads(request.content))
             return httpx.Response(200,json=response)
-        connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond))
         connection._auth_headers = lambda config: {}
         commands = [
             ["prefab","open","Assets/Fixture.prefab"],

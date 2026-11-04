@@ -67,7 +67,7 @@ def run_paging_adapter_contract(pages):
         def respond(request):
             http_requests.append(json.loads(request.content))
             return httpx.Response(200, json={"status": "success", "result": copy.deepcopy(current)})
-        connection.httpx.AsyncClient = lambda: base_client(transport=httpx.MockTransport(respond))
+        connection.httpx.AsyncClient = lambda **_options: base_client(transport=httpx.MockTransport(respond))
         connection._auth_headers = lambda config: {}
         runner = CliRunner()
         help_result = runner.invoke(cli, ["reflect", "search", "--help"])

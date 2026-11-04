@@ -81,7 +81,7 @@ def respond(request):
     if request.url.path == "/api/custom-tools": return httpx.Response(200, json={{"success": True, "tools": [{{"name": "owned_tool"}}]}})
     assert request.url.path == "/api/command"
     return httpx.Response(200, json={{"success": True, "data": {{"accepted": True}}}})
-connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond), trust_env=False)
+connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond), trust_env=False)
 for command in commands:
     before = len(requests)
     # When all public CLI endpoint paths run against the supplied host.
@@ -120,7 +120,7 @@ def respond(request):
     if failure == "connect": raise httpx.ConnectError("owned connection failure", request=request)
     if failure == "timeout": raise httpx.ReadTimeout("owned timeout", request=request)
     return httpx.Response(503, json={{"error": "owned HTTP failure"}})
-connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond), trust_env=False)
+connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond), trust_env=False)
 for command in commands:
     before = len(requests)
     # When the public CLI invokes each of the four endpoint contracts.
@@ -146,7 +146,7 @@ reply = {"success": False, "error": "owned rejected", "hint": "retry", "data": {
 def respond(request):
     requests.append(request)
     return httpx.Response(200, json=reply)
-connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond), trust_env=False)
+connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond), trust_env=False)
 # When the public raw command receives a completed Unity failure.
 result = runner.invoke(cli, ["--host", "::1", "--format", "json", "--instance", target, "raw", "fixture_query", "{}"])
 # Then its requested output and diagnostic payload survive with failed exit.

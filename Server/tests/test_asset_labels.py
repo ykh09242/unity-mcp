@@ -238,7 +238,7 @@ module.confirm_destructive_action=confirm
 def respond(request):
     requests.append(json.loads(request.content)); return httpx.Response(200,json=copy.deepcopy(reply))
 client_type=httpx.AsyncClient
-connection.httpx.AsyncClient=lambda:client_type(transport=httpx.MockTransport(respond))
+connection.httpx.AsyncClient=lambda **_options:client_type(transport=httpx.MockTransport(respond))
 connection._auth_headers=lambda config:{}
 runner=CliRunner(); prefix=["--format","json","--instance","Owned@labels","asset","labels"]
 revision="mcp-al-v1_"+"a"*32+"_"+"b"*64+"_"+"c"*64

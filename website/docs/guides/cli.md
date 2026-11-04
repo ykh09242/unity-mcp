@@ -40,7 +40,7 @@ Replace the example ID with a discovered one. Global options go **before** subco
 | `--instance` | `UNITY_MCP_INSTANCE` | Target Editor ID. |
 | `--verbose` | - | Write command requests and raw responses to stderr; use only with data safe to log. |
 
-Explicit options override corresponding environment settings. The CLI loads the current local token for loopback requests. Non-loopback connections need explicit credentials and trusted transport; see [authentication](./security.md#local-http-authentication).
+Explicit options override corresponding environment settings. The CLI connects directly to loopback addresses and bypasses environment proxies for commands, health checks and inventory. It loads the current local token for authenticated requests. Non-loopback connections need explicit credentials and trusted transport. See [authentication](./security.md#local-http-authentication).
 
 ## Discover exact commands
 

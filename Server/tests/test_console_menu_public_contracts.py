@@ -42,7 +42,7 @@ def respond(request):
     value = copy.deepcopy(reply)
     return httpx.Response(200, json={'status': 'success', 'result': value} if wrapped else value)
 
-connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond))
+connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond))
 connection._auth_headers = lambda config: {}
 runner = CliRunner()
 
@@ -307,7 +307,7 @@ def respond(request):
     data = [entry['message']] if params.get('format', 'plain') == 'plain' else [entry]
     return httpx.Response(200, json={'success': True, 'data': data})
 
-connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond))
+connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond))
 connection._auth_headers = lambda config: {}
 runner = CliRunner()
 

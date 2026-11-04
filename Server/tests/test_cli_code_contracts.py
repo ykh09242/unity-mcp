@@ -24,7 +24,9 @@ def script_response(monkeypatch):
         return httpx.Response(200, json={"status": "success", "result": response})
 
     monkeypatch.setattr(
-        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx,
+        "AsyncClient",
+        lambda **_options: client_type(transport=httpx.MockTransport(respond)),
     )
     monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
     return response, requests
@@ -209,15 +211,18 @@ def test_command_owned_success_message_is_not_duplicated(script_response):
 
 
 @pytest.mark.parametrize("command", [["read", "Assets/Foo.cs"], ["search", ".", "Assets/Foo.cs"]])
-def test_code_transport_errors_are_one_json_document(script_response, monkeypatch, command):
+def test_code_transport_errors_are_one_json_document(monkeypatch, command):
     # Given: the HTTP boundary cannot connect.
     client_type = httpx.AsyncClient
 
     def fail(request):
         raise httpx.ConnectError("offline", request=request)
 
+    monkeypatch.setattr(connection, "_auth_headers", lambda _cfg: {})
     monkeypatch.setattr(
-        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(fail))
+        connection.httpx,
+        "AsyncClient",
+        lambda **options: client_type(transport=httpx.MockTransport(fail), **options),
     )
     # When: the actual CLI executes a read or search.
     result = CliRunner().invoke(cli, ["--format", "json", "code", *command])

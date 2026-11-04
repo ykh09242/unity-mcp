@@ -60,7 +60,7 @@ def respond(request):
     assert body["type"] == "get_test_job"
     assert body["params"] == {"job_id": "owned-job", "includeDetails": True, "includeFailedTests": True}
     return httpx.Response(200, json=copy.deepcopy(reply))
-connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond), trust_env=False)
+connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond), trust_env=False)
 cases = [
     ("manual-clear", failed_job("Job cleared manually (stuck or orphaned)"), "Job cleared manually (stuck or orphaned)"),
     ("initialization-timeout", failed_job("Test job failed to initialize (tests did not start within timeout)"), "Test job failed to initialize"),

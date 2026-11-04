@@ -24,7 +24,9 @@ def command_response(monkeypatch):
         return httpx.Response(200, json=response)
 
     monkeypatch.setattr(
-        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx,
+        "AsyncClient",
+        lambda **_options: client_type(transport=httpx.MockTransport(respond)),
     )
     monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
     return response, requests
@@ -291,7 +293,9 @@ def test_transport_errors_still_exit_nonzero(monkeypatch, failure):
         return httpx.Response(503, json={"success": False, "error": "No Unity connected"})
 
     monkeypatch.setattr(
-        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx,
+        "AsyncClient",
+        lambda **_options: client_type(transport=httpx.MockTransport(respond)),
     )
     monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
     result = CliRunner().invoke(cli, ["scene", "active"])
@@ -390,7 +394,9 @@ def test_target_refusal_preserves_available_instances_and_failure_status(
         return httpx.Response(status_code, json=failure)
 
     monkeypatch.setattr(
-        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx,
+        "AsyncClient",
+        lambda **_options: client_type(transport=httpx.MockTransport(respond)),
     )
     monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
     arguments = ["--no-project-context", "--format", output_format]
@@ -419,7 +425,9 @@ def test_tool_inventory_success_retains_json_and_explicit_target(monkeypatch):
         return httpx.Response(200, json=inventory)
 
     monkeypatch.setattr(
-        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx,
+        "AsyncClient",
+        lambda **_options: client_type(transport=httpx.MockTransport(respond)),
     )
     monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
     result = CliRunner().invoke(
@@ -448,7 +456,9 @@ def test_tool_inventory_transport_errors_remain_failures(monkeypatch, failure):
         return httpx.Response(503, json={"success": False, "error": "No Unity connected"})
 
     monkeypatch.setattr(
-        connection.httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx,
+        "AsyncClient",
+        lambda **_options: client_type(transport=httpx.MockTransport(respond)),
     )
     monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
     result = CliRunner().invoke(cli, ["--no-project-context", "--format", "json", "tool", "list"])

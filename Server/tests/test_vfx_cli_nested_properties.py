@@ -36,7 +36,7 @@ def test_vfx_raw_nested_properties_before_transport(tmp_path):
             requests.append(json.loads(request.content))
             return httpx.Response(200, json=raw)
 
-        connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond))
 
         def run_inline(coroutine):
             try:

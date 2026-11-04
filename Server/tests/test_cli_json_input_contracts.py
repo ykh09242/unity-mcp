@@ -22,7 +22,7 @@ def command_requests(monkeypatch):
     monkeypatch.setattr(
         connection.httpx,
         "AsyncClient",
-        lambda: client_type(transport=httpx.MockTransport(respond), trust_env=False),
+        lambda **_options: client_type(transport=httpx.MockTransport(respond), trust_env=False),
     )
     monkeypatch.setattr(connection, "_auth_headers", lambda config: {})
     for key in ("HOST", "HTTP_PORT", "TIMEOUT", "FORMAT", "INSTANCE"):

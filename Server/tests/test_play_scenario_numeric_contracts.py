@@ -236,7 +236,7 @@ def test_cli_file_and_native_normalization_preserve_predicate(
     monkeypatch.setattr(
         connection.httpx,
         "AsyncClient",
-        lambda: client_type(transport=httpx.MockTransport(respond), trust_env=False),
+        lambda **_options: client_type(transport=httpx.MockTransport(respond), trust_env=False),
     )
     result = CliRunner().invoke(
         cli,

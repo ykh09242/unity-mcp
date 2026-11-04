@@ -41,7 +41,7 @@ def test_particle_graph_cli_payloads_and_responses(tmp_path):
         def respond(request):
             requests.append(json.loads(request.content))
             return httpx.Response(200, json=raw)
-        connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond))
         connection._auth_headers = lambda config: {}
         def check(condition, label):
             global checks

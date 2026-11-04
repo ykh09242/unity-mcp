@@ -196,7 +196,7 @@ def test_cli_file_retains_count_or_order_definition(monkeypatch, tmp_path, order
     monkeypatch.setattr(
         connection.httpx,
         "AsyncClient",
-        lambda: client_type(transport=httpx.MockTransport(respond), trust_env=False),
+        lambda **_options: client_type(transport=httpx.MockTransport(respond), trust_env=False),
     )
     result = CliRunner().invoke(
         cli, ["--instance", "Owned@fixture", "play-scenario", "save", str(path)]

@@ -40,7 +40,7 @@ def test_vfx_cli_renderer_wire_and_json_contracts(tmp_path):
         def respond(request):
             requests.append(json.loads(request.content))
             return httpx.Response(200, json=raw)
-        connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond))
         connection._auth_headers = lambda config: {}
         def check(condition, label):
             global checks

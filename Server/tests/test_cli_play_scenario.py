@@ -27,7 +27,7 @@ def wire(monkeypatch):
     monkeypatch.setattr(
         connection.httpx,
         "AsyncClient",
-        lambda: client_type(
+        lambda **_options: client_type(
             transport=httpx.MockTransport(respond),
             trust_env=False,
         ),
@@ -221,7 +221,7 @@ def test_cli_job_transport_failure_keeps_stderr_and_single_request(monkeypatch, 
     monkeypatch.setattr(
         connection.httpx,
         "AsyncClient",
-        lambda: client_type(transport=httpx.MockTransport(respond), trust_env=False),
+        lambda **_options: client_type(transport=httpx.MockTransport(respond), trust_env=False),
     )
     args = ["menu-start", "--job-id", JOB_ID] if action == "run" else [JOB_ID]
     # When: a job command encounters a transport error.

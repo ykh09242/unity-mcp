@@ -4,11 +4,17 @@ import os
 import socket
 from pathlib import Path
 
+import httpcore
 import httpx
 import pytest
 
 from cli.utils.config import CLIConfig
-from cli.utils.connection import list_custom_tools, list_unity_instances, send_command
+from cli.utils.connection import (
+    UnityConnectionError,
+    list_custom_tools,
+    list_unity_instances,
+    send_command,
+)
 from core.local_auth import (
     LOCAL_AUTH_FILE_ENV,
     LOCAL_AUTH_HEADER,
@@ -111,7 +117,7 @@ async def test_native_cli_attaches_current_token_for_every_control_request(
 
     client_type = httpx.AsyncClient
     monkeypatch.setattr(
-        httpx, "AsyncClient", lambda: client_type(transport=httpx.MockTransport(handle))
+        httpx, "AsyncClient", lambda **_options: client_type(transport=httpx.MockTransport(handle))
     )
     # When any of the supported CLI paths sends a request.
     cfg = CLIConfig()
@@ -123,3 +129,41 @@ async def test_native_cli_attaches_current_token_for_every_control_request(
         await list_custom_tools(cfg)
     # Then authentication reached the actual HTTP request.
     assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["command", "instances", "tools"])
+@pytest.mark.parametrize(
+    ("host", "next_hop"),
+    [
+        ("127.0.0.1", "127.0.0.1"),
+        ("LOCALHOST", "localhost"),
+        ("[::1]", "::1"),
+        ("remote.invalid", "proxy.invalid"),
+    ],
+)
+async def test_cli_loopback_control_never_routes_its_token_to_an_environment_proxy(
+    monkeypatch, operation, host, next_hop
+):
+    # Stop after actual HTTPX proxy selection and before opening a socket.
+    for name in ("http_proxy", "HTTP_PROXY"):
+        monkeypatch.setenv(name, "http://proxy.invalid:8181")
+    for name in ("no_proxy", "NO_PROXY"):
+        monkeypatch.setenv(name, "unrelated.invalid")
+    monkeypatch.setenv(LOCAL_AUTH_TOKEN_ENV, "synthetic-launch")
+    selected = []
+
+    async def stop_connect(_backend, host, port, **_options):
+        selected.append((host, port))
+        raise httpcore.ConnectError("test network boundary")
+
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", stop_connect)
+    cfg = CLIConfig(host=host, port=8080)
+    with pytest.raises(UnityConnectionError):
+        if operation == "command":
+            await send_command("read_console", {}, cfg)
+        elif operation == "instances":
+            await list_unity_instances(cfg)
+        else:
+            await list_custom_tools(cfg)
+    assert selected == [(next_hop, 8181 if next_hop == "proxy.invalid" else 8080)]

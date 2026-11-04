@@ -35,7 +35,7 @@ def test_status_formats_health_failures_and_environment_precedence(tmp_path):
             if current == "instances_failure":
                 return httpx.Response(503, json={"error": "controlled discovery failure"})
             return httpx.Response(200, json={"instances": [] if current == "empty" else copy.deepcopy(rows)})
-        connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond))
+        connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond))
         connection._auth_headers = lambda config: {}
         runner = CliRunner()
         for current in ("connected", "empty", "health_failure", "health_transport", "instances_failure", "instances_transport"):

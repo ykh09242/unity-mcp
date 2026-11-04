@@ -42,7 +42,7 @@ def instance_transport(monkeypatch, tmp_path):
         assert request.url.path == "/api/command"
         return httpx.Response(200, json=selected)
 
-    def create_client():
+    def create_client(**_options):
         client = client_type(transport=httpx.MockTransport(respond))
         clients.append(client)
         return client

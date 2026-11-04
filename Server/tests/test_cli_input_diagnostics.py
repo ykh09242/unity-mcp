@@ -47,7 +47,7 @@ def respond(request):
     assert body["unity_instance"] == "Selected@owned"
     requests.append(body)
     return httpx.Response(200, json=copy.deepcopy(reply))
-connection.httpx.AsyncClient = lambda: client_type(transport=httpx.MockTransport(respond), trust_env=False)
+connection.httpx.AsyncClient = lambda **_options: client_type(transport=httpx.MockTransport(respond), trust_env=False)
 failures = []
 for value, syntax_error in [("{'missing':}", True), ('{"unterminated":"x}', True),
     ("[]", False), ("null", False), ("false", False)]:
