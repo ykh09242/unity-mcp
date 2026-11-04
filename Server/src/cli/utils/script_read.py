@@ -3,7 +3,17 @@
 import base64
 from typing import Any
 
+import click
+
 from cli.utils.output import format_output
+
+
+def echo_script_read(
+    result: dict[str, Any], format_type: str, start_line: int | None, line_count: int | None
+) -> None:
+    """Write source as UTF-8 bytes so Windows does not expand its existing CRLF."""
+    rendered = format_script_read(result, format_type, start_line, line_count)
+    click.echo(rendered if format_type == "json" else rendered.encode("utf-8"))
 
 
 def script_contents(data: dict[str, Any]) -> str | None:

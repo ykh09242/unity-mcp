@@ -12,7 +12,7 @@ from cli.utils.output import format_output, print_error, print_success
 from cli.utils.connection import run_command, handle_unity_errors, UnityCommandError
 from cli.utils.parsers import parse_json_list_or_exit
 from cli.utils.confirmation import confirm_destructive_action
-from cli.utils.script_read import format_script_read
+from cli.utils.script_read import echo_script_read
 
 
 def _split_script_path(path: str) -> tuple[str, str]:
@@ -112,9 +112,7 @@ def read(path: str, start_line: Optional[int], line_count: Optional[int]):
     if line_count is not None:
         params["line_count"] = line_count
     result = run_command("manage_script", params, config)
-    rendered = format_script_read(result, config.format, start_line, line_count)
-    # Binary output prevents Windows text streams from expanding source CRLF to CRCRLF.
-    click.echo(rendered if config.format == "json" else rendered.encode("utf-8"))
+    echo_script_read(result, config.format, start_line, line_count)
 
 
 @script.command("delete")

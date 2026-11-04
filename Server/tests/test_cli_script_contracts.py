@@ -212,24 +212,30 @@ def test_edit_surfaces_stale_file_from_observed_sha(command_sender):
     assert command_sender.call_count == 1
 
 
-def test_read_preserves_crlf_in_real_stdout_subprocess():
+@pytest.mark.parametrize("command", ["code", "script"])
+@pytest.mark.parametrize("format_type", ["text", "json"])
+def test_read_preserves_crlf_in_real_stdout_subprocess(command, format_type):
     import os
     import subprocess
     import sys
 
     program = r"""
 import importlib
+import sys
 from cli.utils.config import CLIConfig
-module = importlib.import_module('cli.commands.script')
-module.get_config = lambda: CLIConfig(format='text')
+module = importlib.import_module('cli.commands.' + sys.argv[1])
+module.get_config = lambda: CLIConfig(format=sys.argv[2])
 module.run_command = lambda *args: {'success': True, 'data': {'contents': 'first\r\n한😀\r\n'}}
-module.script.main(args=['read', 'Assets/Foo.cs', '-s', '2', '-n', '1'])
+getattr(module, sys.argv[1]).main(args=['read', 'Assets/Foo.cs', '-s', '2', '-n', '1'])
 """
     process = subprocess.run(
-        [sys.executable, "-c", program],
+        [sys.executable, "-c", program, command, format_type],
         capture_output=True,
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         check=False,
     )
     assert process.returncode == 0, process.stderr.decode("utf-8", "replace")
-    assert process.stdout == "한😀\r\n".encode("utf-8") + b"\n"
+    if format_type == "json":
+        assert json.loads(process.stdout) == {"success": True, "data": {"contents": "한😀\r\n"}}
+    else:
+        assert process.stdout == "한😀\r\n".encode("utf-8") + b"\n"

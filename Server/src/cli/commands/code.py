@@ -15,7 +15,7 @@ from cli.utils.connection import (
     UnityCommandError,
     UnityConnectionError,
 )
-from cli.utils.script_read import format_script_read, script_contents
+from cli.utils.script_read import echo_script_read, script_contents
 
 _SEARCH_RESULT_LIMIT = 1000
 _EXCERPT_CHARS = 500
@@ -170,7 +170,7 @@ def read(path: str, start_line: Optional[int], line_count: Optional[int]):
     }
 
     result = _read_source(params, config)
-    click.echo(format_script_read(result, config.format, start_line, line_count))
+    echo_script_read(result, config.format, start_line, line_count)
 
 
 @code.command("search")
