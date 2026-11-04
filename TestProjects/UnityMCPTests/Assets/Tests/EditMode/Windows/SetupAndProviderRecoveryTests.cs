@@ -51,7 +51,7 @@ namespace MCPForUnityTests.EditMode.Windows
             public string DisplayName => Id;
             public McpStatus Status => default;
             public ConfiguredTransport ConfiguredTransport => default;
-            public bool SupportsAutoConfigure => true;
+            public bool SupportsAutoConfigure { get; set; } = true;
             public bool IsInstalled => true;
             public IReadOnlyList<ConfiguredTransport> SupportedTransports => Array.Empty<ConfiguredTransport>();
 
@@ -67,7 +67,7 @@ namespace MCPForUnityTests.EditMode.Windows
 
             public string GetManualSnippet() => "";
 
-            public IList<string> GetInstallationSteps() => Array.Empty<string>();
+            public IList<string> GetInstallationSteps() => new[] { "Open the synthetic client and paste the manual configuration." };
 
             public bool SupportsSkills => false;
 
@@ -304,6 +304,38 @@ namespace MCPForUnityTests.EditMode.Windows
                     UnityEngine.Object.DestroyImmediate(window);
                 probe.SetValue(null, old);
             }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ManualOnlyClientShowsInstructionsAndCannotBeAutomaticallyConfigured(bool includeAutomatic)
+        {
+            WithReadySetup(
+                (window, _) =>
+                {
+                    var manual = new Client { Id = "manual-only", SupportsAutoConfigure = false };
+                    var clients = new List<IMcpClientConfigurator> { manual };
+                    if (includeAutomatic)
+                        clients.Add(new Client { Id = "automatic" });
+                    var configured = new List<string>();
+                    Set(window, "getClients", (Func<IReadOnlyList<IMcpClientConfigurator>>)(() => clients));
+                    Set(window, "configureClient", (Action<IMcpClientConfigurator>)(c => configured.Add(c.Id)));
+                    Set(window, "finishSetup", (Action)(() => { }));
+                    Invoke(window, "ShowClientsStep");
+                    var row = window.rootVisualElement.Query<Toggle>().ToList().Find(toggle => toggle.label == manual.Id);
+                    Assert.IsNotNull(row);
+                    Assert.IsFalse(row.enabledSelf);
+                    Assert.IsFalse(row.value);
+                    var instructions = window.rootVisualElement.Query<Label>().ToList().Find(label => label.text.Contains("paste the manual configuration"));
+                    Assert.IsNotNull(instructions, "Detected manual clients must expose their installation steps.");
+                    StringAssert.DoesNotContain("retry", instructions.text.ToLowerInvariant());
+                    // Even a stale/programmatic selection must never bypass the capability check.
+                    row.SetValueWithoutNotify(true);
+                    Invoke(window, "OnConfigureSelectedClicked");
+                    CollectionAssert.AreEqual(includeAutomatic ? new[] { "automatic" } : Array.Empty<string>(), configured);
+                    Assert.AreEqual(includeAutomatic, window.rootVisualElement.Q<Button>("configure-selected-button").enabledSelf);
+                }
+            );
         }
 
         [Test]

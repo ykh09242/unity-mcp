@@ -271,14 +271,19 @@ namespace MCPForUnity.Editor.Windows
                 bool configured = configuredClients.Contains(c.Id);
                 var toggle = new Toggle(c.DisplayName)
                 {
-                    value = !configured && (!clientSelections.TryGetValue(c.Id, out bool selected) || selected),
+                    value = c.SupportsAutoConfigure && !configured && (!clientSelections.TryGetValue(c.Id, out bool selected) || selected),
                     tooltip = c.GetConfigPath(),
                 };
-                toggle.SetEnabled(!configured);
+                toggle.SetEnabled(c.SupportsAutoConfigure && !configured);
                 toggle.RegisterValueChangedCallback(evt => clientSelections[c.Id] = evt.newValue);
                 clientToggles.Add((c, toggle));
                 clientsList.Add(toggle);
-                var result = new Label(clientResults.TryGetValue(c.Id, out string message) ? message : "") { enableRichText = false };
+                string instructions = c.SupportsAutoConfigure
+                    ? clientResults.TryGetValue(c.Id, out string message)
+                        ? message
+                        : ""
+                    : "Manual setup required.\n" + string.Join("\n", c.GetInstallationSteps() ?? Array.Empty<string>());
+                var result = new Label(instructions) { enableRichText = false };
                 result.AddToClassList("help-text");
                 clientsList.Add(result);
                 clientResultLabels[c.Id] = result;
@@ -290,6 +295,10 @@ namespace MCPForUnity.Editor.Windows
                 clientsList.Add(empty);
                 configureSelectedButton.SetEnabled(false);
             }
+            else
+                configureSelectedButton.SetEnabled(
+                    clientToggles.Exists(item => item.client.SupportsAutoConfigure && !configuredClients.Contains(item.client.Id))
+                );
         }
 
         private void OnSkipClientsClicked() => CompleteSetup();
@@ -311,7 +320,7 @@ namespace MCPForUnity.Editor.Windows
                 failure = 0;
             foreach (var (client, toggle) in clientToggles)
             {
-                if (!toggle.value || configuredClients.Contains(client.Id))
+                if (!client.SupportsAutoConfigure || !toggle.value || configuredClients.Contains(client.Id))
                     continue;
                 string result;
                 try

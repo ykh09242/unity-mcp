@@ -131,3 +131,12 @@ After updating the Editor package, restart the client's MCP connection to load i
 List the client's tools/resources, then read `mcpforunity://instances`. Include a returned Editor ID on calls as described in [Multi-Instance Routing](../guides/multi-instance.md). A config file, tool list, or health response alone does not establish an Editor connection.
 
 For a shared remote service, use [Remote Server Auth](../guides/remote-server-auth.md), not the local-token example. Asset-generation provider credentials are separate from MCP authentication.
+
+## Manual-only clients in setup
+
+The setup wizard lists installed clients that require manual setup with an
+unchecked, disabled selection and their installation instructions. These clients
+are excluded from **Configure selected** and automatic retry. Follow the displayed
+manual steps, then use **Skip** to finish the wizard when no automatic clients are
+selected. An installation detected by the wizard does not imply automatic
+configuration support.
