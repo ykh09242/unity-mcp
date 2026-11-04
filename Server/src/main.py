@@ -14,8 +14,10 @@ from core.endpoint_logging import endpoint_for_log
 from transport.legacy.unity_connection import get_unity_connection_pool, UnityConnectionPool
 from services.tools import register_all_tools
 from core.telemetry import (
+    begin_telemetry_shutdown,
     record_milestone,
     record_telemetry,
+    start_telemetry,
     MilestoneType,
     RecordType,
 )
@@ -247,6 +249,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
         loop = asyncio.get_running_loop()
         PluginHub.configure(_plugin_registry, loop, mcp=server)
 
+    telemetry_owner = start_telemetry()
     telemetry_timers: list[threading.Timer] = []
 
     def defer_telemetry(callback):
@@ -271,8 +274,9 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                         "server_version": _server_version,
                         "startup_time": start_time,
                     },
+                    owner=telemetry_owner,
                 )
-                record_milestone(MilestoneType.FIRST_STARTUP)
+                record_milestone(MilestoneType.FIRST_STARTUP, owner=telemetry_owner)
             except Exception:
                 logger.debug("Deferred startup telemetry failed", exc_info=True)
 
@@ -344,6 +348,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                                     "connection_time_ms": (time.perf_counter() - start_clk) * 1000,
                                     "instance_count": len(instances),
                                 },
+                                owner=telemetry_owner,
                             )
                         )
                     except Exception as e:
@@ -364,6 +369,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                         "error": _err_msg,
                         "connection_time_ms": (time.perf_counter() - start_clk) * 1000,
                     },
+                    owner=telemetry_owner,
                 )
             )
         except Exception as e:
@@ -377,6 +383,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                         "error": _err_msg,
                         "connection_time_ms": (time.perf_counter() - start_clk) * 1000,
                     },
+                    owner=telemetry_owner,
                 )
             )
 
@@ -401,6 +408,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                         telemetry_timers,
                         _plugin_registry,
                         _unity_connection_pool,
+                        telemetry_owner,
                     ),
                     context=contextvars.Context(),
                 )
@@ -408,7 +416,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
 
 
 async def _shutdown_server_resources(
-    server, api_key_service, telemetry_timers, registry, pool
+    server, api_key_service, telemetry_timers, registry, pool, telemetry_owner=None
 ) -> None:
     from services.state.external_changes_scanner import external_changes_scanner
 
@@ -436,6 +444,9 @@ async def _shutdown_server_resources(
     # if an earlier callback raises, without clearing a live graph worker's lease.
     async with AsyncExitStack() as cleanup:
         cleanup.callback(clear_globals)
+        # Fence before the first cleanup await. The callback owns the captured
+        # collector even if a later lifespan opens while other resources drain.
+        cleanup.push_async_callback(owned_to_thread, begin_telemetry_shutdown(telemetry_owner))
         if api_key_service is not None:
             cleanup.push_async_callback(api_key_service.aclose)
         cleanup.push_async_callback(PluginHub.shutdown)

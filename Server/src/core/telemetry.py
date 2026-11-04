@@ -416,7 +416,7 @@ class TelemetryCollector:
         self, milestone: MilestoneType, data: dict[str, Any] | None = None
     ) -> bool:
         """Record a milestone event, returns True if this is the first occurrence"""
-        if not self.config.enabled:
+        if not self.config.enabled or self._shutdown:
             return False
         milestone_key = milestone.value
         with self._lock:
@@ -442,7 +442,7 @@ class TelemetryCollector:
         self, record_type: RecordType, data: dict[str, Any], milestone: MilestoneType | None = None
     ):
         """Record a telemetry event (async, non-blocking)"""
-        if not self.config.enabled:
+        if not self.config.enabled or self._shutdown:
             return
 
         # Allow fallback sender when httpx is unavailable (no early return)
@@ -488,7 +488,11 @@ class TelemetryCollector:
     def shutdown(self):
         """Shutdown the telemetry collector and worker thread."""
         self._shutdown = True
-        if self._worker and self._worker.is_alive():
+        if (
+            self._worker
+            and self._worker is not threading.current_thread()
+            and self._worker.is_alive()
+        ):
             self._worker.join(timeout=2.0)
 
     def _send_telemetry(self, record: TelemetryRecord):
@@ -572,34 +576,94 @@ class TelemetryCollector:
 
 # Global telemetry instance
 _telemetry_collector: TelemetryCollector | None = None
+_telemetry_lock = threading.Lock()
+_telemetry_closed = False
+_telemetry_owner = 0
 
 
-def get_telemetry() -> TelemetryCollector:
-    """Get the global telemetry collector instance"""
+def get_telemetry(*, owner: int | None = None) -> TelemetryCollector | None:
+    """Get one owned collector, or skip telemetry while closed or still draining."""
     global _telemetry_collector
-    if _telemetry_collector is None:
-        _telemetry_collector = TelemetryCollector()
-    return _telemetry_collector
+    with _telemetry_lock:
+        if _telemetry_closed or (owner is not None and owner != _telemetry_owner):
+            return None
+        if _telemetry_collector is not None and _telemetry_collector._shutdown:
+            worker = _telemetry_collector._worker
+            if worker is not None and worker.is_alive():
+                return None
+            _telemetry_collector = None
+        if _telemetry_collector is None:
+            # Publication and construction share the lock: a failed constructor
+            # never publishes, and shutdown cannot miss a newly started worker.
+            _telemetry_collector = TelemetryCollector()
+        return _telemetry_collector
+
+
+def start_telemetry() -> int:
+    """Open a server lifetime without initializing storage or starting a worker."""
+    global _telemetry_closed, _telemetry_owner
+    with _telemetry_lock:
+        _telemetry_owner += 1
+        _telemetry_closed = False
+        return _telemetry_owner
+
+
+def begin_telemetry_shutdown(owner: int | None = None) -> Callable[[], None]:
+    """Fence admission now; return cleanup to execute outside the singleton lock.
+
+    Keep a draining collector owned until its actual worker exits. A subsequent
+    lifetime skips telemetry rather than creating a second worker after a timeout.
+    """
+    global _telemetry_closed
+    with _telemetry_lock:
+        if owner is not None and owner != _telemetry_owner:
+            return lambda: None
+        _telemetry_closed = True
+        collector = _telemetry_collector
+        if collector is not None:
+            collector._shutdown = True
+    return collector.shutdown if collector is not None else lambda: None
+
+
+def shutdown_telemetry(owner: int | None = None) -> None:
+    """Retire the existing collector without initializing telemetry."""
+    begin_telemetry_shutdown(owner)()
 
 
 def reset_telemetry():
-    """Reset the global telemetry collector. For testing only."""
-    global _telemetry_collector
-    if _telemetry_collector is not None:
-        _telemetry_collector.shutdown()
-        _telemetry_collector = None
+    """Retire the old test lifetime and permit a fresh collector once drained."""
+    # Reopen under the same lock as fencing, so concurrent terminal shutdown
+    # cannot be overwritten after this callback finishes.
+    global _telemetry_closed, _telemetry_owner
+    with _telemetry_lock:
+        _telemetry_owner += 1
+        _telemetry_closed = False
+        collector = _telemetry_collector
+        if collector is not None:
+            collector._shutdown = True
+    if collector is not None:
+        collector.shutdown()
 
 
 def record_telemetry(
-    record_type: RecordType, data: dict[str, Any], milestone: MilestoneType | None = None
+    record_type: RecordType,
+    data: dict[str, Any],
+    milestone: MilestoneType | None = None,
+    *,
+    owner: int | None = None,
 ):
     """Convenience function to record telemetry"""
-    get_telemetry().record(record_type, data, milestone)
+    collector = get_telemetry(owner=owner)
+    if collector is not None:
+        collector.record(record_type, data, milestone)
 
 
-def record_milestone(milestone: MilestoneType, data: dict[str, Any] | None = None) -> bool:
+def record_milestone(
+    milestone: MilestoneType, data: dict[str, Any] | None = None, *, owner: int | None = None
+) -> bool:
     """Convenience function to record a milestone"""
-    return get_telemetry().record_milestone(milestone, data)
+    collector = get_telemetry(owner=owner)
+    return collector.record_milestone(milestone, data) if collector is not None else False
 
 
 def record_tool_usage(
@@ -688,4 +752,5 @@ def record_failure(component: str, error: Exception | str, metadata: dict[str, A
 
 def is_telemetry_enabled() -> bool:
     """Check if telemetry is enabled"""
-    return get_telemetry().config.enabled
+    collector = get_telemetry()
+    return collector.config.enabled if collector is not None else False
