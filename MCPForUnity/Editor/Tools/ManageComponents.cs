@@ -617,15 +617,8 @@ namespace MCPForUnity.Editor.Tools
             if (EditorApplication.isPlaying)
                 return;
 
-            var prefabStage = PrefabStageUtility.GetCurrentPrefabStage();
-            if (prefabStage != null)
-            {
-                EditorSceneManager.MarkSceneDirty(prefabStage.scene);
-            }
-            else
-            {
+            if (targetGo.scene.IsValid() && targetGo.scene.isLoaded)
                 EditorSceneManager.MarkSceneDirty(targetGo.scene);
-            }
         }
 
         private static GameObject FindTarget(JToken targetToken, string searchMethod)
