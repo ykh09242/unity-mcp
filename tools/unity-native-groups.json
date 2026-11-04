@@ -1,6 +1,61 @@
 {
   "schema_version": 1,
   "groups": {
+    "authoring-prefab-persistence": {
+      "methods": [
+        "MCPForUnityTests.Editor.Tools.NativeAuthoringPersistenceTests.InheritedComponent_RecordsOverrideAndSurvivesUndoRedoAndReopen"
+      ],
+      "disruptive": false,
+      "requires_graphics": true,
+      "platform_exclusions": {}
+    },
+    "authoring-owning-scene": {
+      "methods": [
+        "MCPForUnityTests.Editor.Tools.ComponentOwningSceneTests.ExplicitTargetInOtherScene_DoesNotDirtyCleanPrefabStage"
+      ],
+      "disruptive": false,
+      "requires_graphics": true,
+      "platform_exclusions": {}
+    },
+    "authoring-script-publication": {
+      "methods": [
+        "MCPForUnityTests.Editor.Tools.ScriptCreationPublicationTests.ImportFailure_AfterCreateReportsSavedSourceAndDoesNotReplayCreation",
+        "MCPForUnityTests.Editor.Tools.ScriptCreationPublicationTests.InvalidContents_BeforeCreateDoesNotClaimPublicationOrImport"
+      ],
+      "disruptive": false,
+      "requires_graphics": false,
+      "platform_exclusions": {}
+    },
+    "stdio-lifecycle": {
+      "methods": [
+        "MCPForUnityTests.Editor.Services.StdioBridgeLifecycleTests.ReloadTeardown_DoesNotRecordAUserStop",
+        "MCPForUnityTests.Editor.Services.StdioBridgeLifecycleTests.Dispatcher_RejectsCanceledOwnerWhileExecutionTokenIsStillLive",
+        "MCPForUnityTests.Editor.Services.StdioBridgeLifecycleTests.Stop_RetiresDeferredInitializationEvenWithoutListener",
+        "MCPForUnityTests.Editor.Services.StdioBridgeLifecycleTests.Stop_RejectsQueuedWorkBeforeCancellationPropagation",
+        "MCPForUnityTests.Editor.Services.StdioBridgeLifecycleTests.Stop_ReturnsWhileCancellationCallbackAndHandlerRemainOwned",
+        "MCPForUnityTests.Editor.Services.StdioQueueAllocationTests.BusyPollingAllocatesNothingAndStillCancelsWaitingOwners"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
+    },
+    "stdio-order-wakeup": {
+      "methods": [
+        "MCPForUnityTests.Editor.Services.StdioBridgeLifecycleTests.CompletedSlotReuse_PreservesLegacyAdmissionOrder",
+        "MCPForUnityTests.Editor.Services.EditorMainThreadWakeupTests.StdioIngress_RunsFromActualNativeTickWithoutItsUpdateCallback"
+      ],
+      "disruptive": false,
+      "platform_exclusions": {}
+    },
+    "stdio-explicit-stop-reload": {
+      "methods": [
+        "MCPForUnityTests.Editor.Services.StdioBridgeLifecycleTests.ExplicitStop_SurvivesActualDomainReloadUntilExplicitStart"
+      ],
+      "disruptive": true,
+      "platform_exclusions": {
+        "linux": "This actual domain-replacement cohort has only Windows native evidence.",
+        "darwin": "This actual domain-replacement cohort has only Windows native evidence."
+      }
+    },
     "inspector-stage-targets": {
       "methods": [
         "MCPForUnityTests.Editor.Tools.InspectorReloadTests.StageTransition_ReleasesStaleInspectorsAndPreservesUnrelatedLocks"

@@ -88,3 +88,21 @@ Other groups retain the headless default. The selected requirement is recorded
 in launch evidence. Run graphics groups on a host with a usable graphics device;
 a skipped panel case still fails the required-method gate. External owned warm
 controllers consuming `load_selection` must honor its `requiresGraphics` field.
+
+## Owned authoring and stdio regressions
+
+The authoring cohorts preserve the same isolated-project ownership requirements
+as the transport runner. Prefab/scene tests skip ordinary unowned Editors; the
+required-method gate makes such skips a failed dedicated run. After preparation:
+
+```powershell
+python tools/unity_editor_transport_qa.py launch --output reports/native-qa --group authoring-prefab-persistence --group authoring-owning-scene --group authoring-script-publication --label authoring-001 --isolation-verified
+python tools/unity_editor_transport_qa.py launch --output reports/native-qa --group stdio-lifecycle --group stdio-order-wakeup --label stdio-001 --isolation-verified
+python tools/unity_editor_transport_qa.py launch --output reports/native-qa --group stdio-explicit-stop-reload --label stdio-reload-001 --isolation-verified
+```
+
+Prefab and owning-scene cohorts require graphics; script publication alone does
+not. The final stdio cohort replaces the actual scripting domain and must run
+separately. Its initial native evidence is Windows-only. The ordinary stdio
+cohorts verify user-stop intent, FIFO, cancellation/settlement and native tick
+admission; see [stdio lifecycle recovery](stdio-lifecycle-recovery.md).
