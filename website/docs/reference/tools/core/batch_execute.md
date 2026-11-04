@@ -21,9 +21,9 @@ Execute multiple native MCP commands in one request. Batch independent operation
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `commands` | `list[dict[str, Any]]` | yes | List of commands with 'tool' and 'params' keys. |
-| `parallel` | `bool \| None` | — | Attempt to run read-only commands in parallel |
+| `parallel` | `bool \| None` | — | Compatibility request; the Editor currently executes commands sequentially |
 | `fail_fast` | `bool \| None` | — | Stop processing after the first failure |
-| `max_parallelism` | `int \| None` | — | Hint for the maximum number of parallel workers |
+| `max_parallelism` | `int \| None` | — | Compatibility hint; the Editor currently executes commands sequentially |
 | `validate_only` | `bool` | — | Validate action names without executing children; requires the peer preview capability |
 | `preview_scope` | `Literal['action_names', 'targets']` | — | With validate_only, inspect action names or supported concrete targets |
 | `preview` | `dict[str, Any] \| None` | — | Unmodified target-preview guard to recheck before supported mutations; no rollback or retry guarantee |
@@ -38,7 +38,7 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 <!-- examples:start -->
 ### Why batch?
 
-A loop of 10 individual `manage_gameobject` calls pays 10 round trips to Unity. `batch_execute` pays one. For multi-object setup, batches are routinely **10–100× faster**. Use them whenever the next call doesn't need the previous call's return value.
+A batch reduces Unity round trips when the next command does not need the previous command's return value. Actual latency depends on the commands and environment.
 
 ### Spawn three colored cubes in one round trip
 
@@ -95,9 +95,9 @@ A batch can mix any tools, as long as ordering inside the batch doesn't depend o
 
 Set `fail_fast: true` to abort the rest on the first failed step. Pass `fail_fast: false` (the default) to attempt every operation and collect per-step results, useful for "best-effort cleanup" patterns.
 
-### Parallel reads
+### Parallel compatibility options
 
-Pass `parallel: true` to let the server run **read-only** commands concurrently. Mutating ops still serialize for safety. Tune with `max_parallelism`.
+`parallel` and `max_parallelism` are compatibility options. The current Editor executes commands sequentially, including reads; a parallel request does not guarantee concurrency.
 
 ### Limits
 

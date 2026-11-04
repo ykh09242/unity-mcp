@@ -281,10 +281,12 @@ def _preview_reply_is_exact(
 async def batch_execute(
     ctx: Context,
     commands: Annotated[list[dict[str, Any]], "List of commands with 'tool' and 'params' keys."],
-    parallel: Annotated[bool | None, "Attempt to run read-only commands in parallel"] = None,
+    parallel: Annotated[
+        bool | None, "Compatibility request; the Editor currently executes commands sequentially"
+    ] = None,
     fail_fast: Annotated[bool | None, "Stop processing after the first failure"] = None,
     max_parallelism: Annotated[
-        int | None, "Hint for the maximum number of parallel workers"
+        int | None, "Compatibility hint; the Editor currently executes commands sequentially"
     ] = None,
     validate_only: Annotated[
         bool,

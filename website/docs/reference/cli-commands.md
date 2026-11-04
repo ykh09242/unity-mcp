@@ -739,7 +739,7 @@ Execute commands from inline JSON. Examples: unity-mcp batch inline '[&#123;"too
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | commands_json | text | required | nargs=1 | — | — |  |
-| --parallel | boolean | optional | nargs=1, flag | — | — | Execute read-only commands in parallel. |
+| --parallel | boolean | optional | nargs=1, flag | — | — | Request parallel execution; the Editor currently runs sequentially. |
 | --fail-fast | boolean | optional | nargs=1, flag | — | — | Stop on first failure. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
@@ -750,7 +750,7 @@ Execute commands from a JSON file. The JSON file should contain an array of comm
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | file | text | required | nargs=1 | — | — |  |
-| --parallel | boolean | optional | nargs=1, flag | — | — | Execute read-only commands in parallel. |
+| --parallel | boolean | optional | nargs=1, flag | — | — | Request parallel execution; the Editor currently runs sequentially. |
 | --fail-fast | boolean | optional | nargs=1, flag | — | — | Stop on first failure. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 

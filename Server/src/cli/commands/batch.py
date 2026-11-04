@@ -20,7 +20,11 @@ def batch():
 
 @batch.command("run")
 @click.argument("file", type=click.Path(exists=True, resolve_path=True))
-@click.option("--parallel", is_flag=True, help="Execute read-only commands in parallel.")
+@click.option(
+    "--parallel",
+    is_flag=True,
+    help="Request parallel execution; the Editor currently runs sequentially.",
+)
 @click.option("--fail-fast", is_flag=True, help="Stop on first failure.")
 @handle_unity_errors
 def batch_run(file: str, parallel: bool, fail_fast: bool):
@@ -79,7 +83,11 @@ def batch_run(file: str, parallel: bool, fail_fast: bool):
 
 @batch.command("inline")
 @click.argument("commands_json")
-@click.option("--parallel", is_flag=True, help="Execute read-only commands in parallel.")
+@click.option(
+    "--parallel",
+    is_flag=True,
+    help="Request parallel execution; the Editor currently runs sequentially.",
+)
 @click.option("--fail-fast", is_flag=True, help="Stop on first failure.")
 @handle_unity_errors
 def batch_inline(commands_json: str, parallel: bool, fail_fast: bool):
