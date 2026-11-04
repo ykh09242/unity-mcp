@@ -45,6 +45,30 @@ extension handlers outside these known response paths are not covered by the
 HTTP adaptation. The exact stdio writer check still applies to their outgoing
 frames and reports an unknown operation outcome if a response must be refused.
 
+## Stdio pipe shutdown
+
+The default SDK-claimed stdout pipe uses raw writes with exact partial-write
+offsets. A frame has a 30-second output deadline. Cancellation allows at most
+100 ms for an already handed-off frame to finish before interrupting the pipe
+writer. POSIX pipes use nonblocking writes; Windows uses synchronous write
+cancellation and waits for the registered worker to acknowledge completion.
+The Windows path does not depend on pipe support in `os.set_blocking`, which
+starts in Python 3.12; it also supports the server's Python 3.11 API floor.
+
+Cancellation is only a request to stop I/O: bytes and response reservations stay
+owned until the actual worker exits, and SDK descriptors are restored afterward.
+An interrupted partial frame is never restarted or followed by a replacement
+frame on that session. Output failure says nothing new about native execution;
+existing known results/receipts remain authoritative and unknown mutations must
+not be replayed to retrieve their output.
+
+Explicit caller-supplied binary/text sinks and non-pipe destinations retain the
+existing settle-before-release contract. The transport cannot impose an OS pipe
+wakeup on an opaque sink or close a caller-owned stream. The physical bound is
+therefore specific to supported default pipes and requires the OS cancellation
+operation to succeed; an OS wakeup error still cannot authorize abandoning a
+live worker or releasing its memory early.
+
 ## Recovering a large result
 
 When an admitted result exceeds the client delivery budget, its response contains

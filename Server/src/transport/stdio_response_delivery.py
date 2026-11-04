@@ -19,10 +19,12 @@ from mcp.types import ErrorData, JSONRPCError, JSONRPCResponse, jsonrpc_message_
 from models.response_limits import ResponseOwner
 from transport.response_delivery import MAX_MCP_RESPONSE_BYTES
 from transport.stdio_input_read import StdioInputRead
+from transport.stdio_output_write import StdioOutputWrite
 
 
 MAX_STDIO_INPUT_BYTES: Final = 64 * 1024 * 1024
 _INPUT_SLAB_BYTES: Final = 65_536
+STDIO_WRITE_TIMEOUT: Final = 30.0
 
 
 class _StdioInputTooLarge(ValueError):
@@ -351,7 +353,48 @@ async def _settled_stdio_worker(worker: asyncio.Task) -> None:
 async def _settled_binary_write(stdout: BinaryIO, payload: bytes) -> None:
     """Cancellation cannot release a response while its worker holds bytes."""
     operation = _BinaryWriteOperation(stdout, payload)
-    await _settled_stdio_operation(operation.run)
+    if not isinstance(stdout, StdioOutputWrite):
+        # Borrowed/opaque sinks retain their existing settle-before-release
+        # contract. They cannot safely be interrupted by closing someone else's FD.
+        await _settled_stdio_operation(operation.run)
+        return
+    worker = asyncio.create_task(anyio.to_thread.run_sync(stdout.run, operation.run))
+    try:
+        with anyio.fail_after(STDIO_WRITE_TIMEOUT):
+            await asyncio.shield(worker)
+    except BaseException as error:
+        with anyio.CancelScope(shield=True):
+            try:
+                # Preserve a handed-off short frame on ordinary shutdown. A
+                # blocked pipe gets only this bounded grace, never an unlimited
+                # shielded flush. Repeated Task.cancel cannot restart the grace.
+                grace = asyncio.get_running_loop().time() + (
+                    0.1 if isinstance(error, asyncio.CancelledError) else 0.0
+                )
+                while not worker.done() and asyncio.get_running_loop().time() < grace:
+                    try:
+                        await asyncio.wait(
+                            (worker,), timeout=max(0, grace - asyncio.get_running_loop().time())
+                        )
+                    except asyncio.CancelledError:
+                        continue
+                while not worker.done():
+                    # Retry the Windows registration-to-kernel-call race. Do not
+                    # release memory merely because cancellation was requested.
+                    stdout.interrupt()
+                    try:
+                        await asyncio.wait((worker,), timeout=0.05)
+                    except asyncio.CancelledError:
+                        continue
+            finally:
+                # An OS cancellation error must not abandon a still-live writer.
+                try:
+                    await _settled_stdio_worker(worker)
+                except (Exception, asyncio.CancelledError):
+                    pass
+        raise
+    finally:
+        operation.payload = b""
 
 
 @dataclass
@@ -507,6 +550,7 @@ async def retained_stdio_server(
         else:
             if binary_stdout is None:
                 binary_stdout, restore = _claim_sdk_stdout()
+                binary_stdout = StdioOutputWrite.for_pipe(binary_stdout)
             async with _owned_stdio_server(stdin, binary_stdout, delivery) as (read, write):
                 yield read, DeliverySendStream(write, delivery)
     finally:
