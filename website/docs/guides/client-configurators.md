@@ -317,3 +317,17 @@ Use this only if the client exposes an official CLI for managing MCP servers.
 - **No manual registration** is needed: `McpClientRegistry` auto-discovers all configurators with a public parameterless constructor.
 
 Following these patterns keeps all MCP client integrations consistent and lets users configure everything from the Unity MCP (ykh09242) window with minimal friction.
+
+## Generated stdio executable health
+
+JSON and Codex status checks validate the launcher file for recognized generated
+`uvx` entries as well as the selected server source. A missing executable or a
+launch command that disagrees with the current executable override needs repair:
+choose the current uv installation, then click **Configure** to regenerate the
+entry. Status checks report the issue without rewriting the launch command.
+
+This filesystem check does not execute a launcher or prove that its Python
+environment can start successfully. Custom commands, wrappers, arguments and
+environment settings keep their manual ownership; status does not probe or replace
+those launchers. Existing ownership receipts still govern any automatic source
+updates, and explicit configuration remains the way to repair a changed launcher.

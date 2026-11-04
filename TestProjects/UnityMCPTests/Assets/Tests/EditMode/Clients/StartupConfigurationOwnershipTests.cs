@@ -144,6 +144,55 @@ namespace MCPForUnityTests.Editor.Clients
             StringAssert.Contains(next, File.ReadAllText(client.GetConfigPath()));
         }
 
+        [TestCase("json", false)]
+        [TestCase("codex", false)]
+        [TestCase("json", true)]
+        [TestCase("codex", true)]
+        public void GeneratedExecutableMissingOrMovedRequiresExplicitRepair(string kind, bool moved)
+        {
+            var client = Create(kind);
+            client.Configure();
+            Assert.AreEqual(McpStatus.Configured, client.CheckStatus(false));
+            string original = File.ReadAllText(client.GetConfigPath());
+            string executable = Path.Combine(directory, "uvx.exe");
+            if (moved)
+            {
+                string nextDirectory = Path.Combine(directory, "moved");
+                Directory.CreateDirectory(nextDirectory);
+                string replacement = Path.Combine(nextDirectory, "uvx.exe");
+                File.Move(executable, replacement);
+                SetString(EditorPrefKeys.UvxPathOverride, replacement);
+            }
+            else
+                File.Delete(executable);
+            Assert.AreEqual(McpStatus.IncorrectPath, client.CheckStatus(true));
+            StringAssert.Contains("Configure", ((McpClientConfiguratorBase)client).Client.configStatus);
+            Assert.AreEqual(original, File.ReadAllText(client.GetConfigPath()), "Status must offer repair without changing the launch command.");
+            if (moved)
+            {
+                client.Configure();
+                Assert.AreEqual(McpStatus.Configured, client.CheckStatus(false));
+                StringAssert.Contains("moved", File.ReadAllText(client.GetConfigPath()));
+            }
+        }
+
+        [TestCase("json")]
+        [TestCase("codex")]
+        public void GeneratedExecutableMustFollowChangedOverrideEvenWhenOldFileStillExists(string kind)
+        {
+            var client = Create(kind);
+            client.Configure();
+            string replacementDirectory = Path.Combine(directory, "override");
+            Directory.CreateDirectory(replacementDirectory);
+            string replacement = Path.Combine(replacementDirectory, "uvx.exe");
+            File.WriteAllText(replacement, "inert fixture; never executed");
+            SetString(EditorPrefKeys.UvxPathOverride, replacement);
+            Assert.AreEqual(McpStatus.IncorrectPath, client.CheckStatus(false));
+            client.Configure();
+            Assert.AreEqual(McpStatus.Configured, client.CheckStatus(false));
+            StringAssert.Contains("override", File.ReadAllText(client.GetConfigPath()));
+        }
+
         [TestCase("0000000000000000000000000000000000000000", true)]
         [TestCase("ABCDEFabcdef1234567890123456789012345678", true)]
         [TestCase("0000000", false)]
@@ -281,7 +330,8 @@ namespace MCPForUnityTests.Editor.Clients
 
         private void SetString(string key, string value)
         {
-            strings[key] = EditorPrefs.HasKey(key) ? EditorPrefs.GetString(key) : null;
+            if (!strings.ContainsKey(key))
+                strings[key] = EditorPrefs.HasKey(key) ? EditorPrefs.GetString(key) : null;
             EditorPrefs.SetString(key, value);
         }
 

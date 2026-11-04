@@ -40,7 +40,7 @@ namespace MCPForUnity.Editor.Clients
                     attemptAutoRewrite
                     && GeneratedClientConfigOwnership.Owns("Codex", path, GeneratedStdioEntry(toml))
                     && EditorPrefs.GetBool(EditorPrefKeys.AutoRegisterEnabled, true);
-                if (CodexConfigHelper.TryParseCodexServer(toml, out _, out var args, out var url))
+                if (CodexConfigHelper.TryParseCodexServer(toml, out var command, out var args, out var url))
                 {
                     // Determine and set the configured transport type
                     if (!string.IsNullOrEmpty(url))
@@ -74,6 +74,17 @@ namespace MCPForUnity.Editor.Clients
                     bool matches = false;
                     bool hasVersionMismatch = false;
                     string mismatchReason = null;
+
+                    if (
+                        client.configuredTransport == Models.ConfiguredTransport.Stdio
+                        && !EditorConfigurationCache.Instance.UseHttpTransport
+                        && GeneratedStdioEntry(toml) != null
+                        && JsonFileMcpConfigurator.GeneratedExecutableIssue(command) is string executableIssue
+                    )
+                    {
+                        client.SetStatus(McpStatus.IncorrectPath, executableIssue);
+                        return client.status;
+                    }
 
                     if (client.configuredTransport != HttpEndpointUtility.GetCurrentServerTransport())
                     {

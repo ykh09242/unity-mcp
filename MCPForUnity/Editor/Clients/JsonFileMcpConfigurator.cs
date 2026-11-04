@@ -112,6 +112,12 @@ namespace MCPForUnity.Editor.Clients
                 string mismatchReason = null;
                 bool expectsHttp = client.SupportsHttpTransport && EditorConfigurationCache.Instance.UseHttpTransport;
 
+                if (generatedStdio && !expectsHttp && GeneratedExecutableIssue((string)serverConfig["command"]) is string executableIssue)
+                {
+                    client.SetStatus(McpStatus.IncorrectPath, executableIssue);
+                    return client.status;
+                }
+
                 if (hasCommand && !generatedStdio)
                 {
                     // An arbitrary executable, wrapper, uv tool run or Python script is a
@@ -238,6 +244,39 @@ namespace MCPForUnity.Editor.Clients
         // No fingerprint migration is inferred from an existing command shape: legacy
         // entries remain user-owned until an explicit Configure succeeds in this editor.
         internal static string GeneratedOwnershipKey(string path) => GeneratedClientConfigOwnership.Key("Json", path);
+
+        internal static string GeneratedExecutableIssue(string command)
+        {
+            // Inspect only recognized generated launchers. Never execute a wrapper during status.
+            string executable = command;
+            if (!string.IsNullOrEmpty(command) && !command.Contains('/') && !command.Contains('\\'))
+            {
+                executable = null;
+                string name =
+                    RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !command.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                        ? command + ".exe"
+                        : command;
+                foreach (string path in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
+                {
+                    if (string.IsNullOrWhiteSpace(path))
+                        continue;
+                    string candidate = Path.Combine(path.Trim().Trim('"'), name);
+                    if (!File.Exists(candidate))
+                        continue;
+                    executable = candidate;
+                    break;
+                }
+            }
+            if (string.IsNullOrEmpty(executable) || !File.Exists(executable))
+                return "Generated stdio executable is missing. Choose the current uv installation, then click Configure to repair the entry.";
+            if (MCPServiceLocator.Paths.HasUvxPathOverride)
+            {
+                string selected = MCPServiceLocator.Paths.GetUvxPath();
+                if (string.IsNullOrEmpty(selected) || !McpConfigurationHelper.PathsEqual(executable, selected))
+                    return "Generated stdio executable differs from the selected override. Click Configure to repair the entry.";
+            }
+            return null;
+        }
 
         private static bool OwnsGeneratedEntry(string path, JObject entry)
         {

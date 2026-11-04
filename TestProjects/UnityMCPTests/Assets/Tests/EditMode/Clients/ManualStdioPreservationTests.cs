@@ -153,6 +153,10 @@ namespace MCPForUnityTests.Editor.Clients
             string source = "https://github.com/ykh09242/unity-mcp/archive/0000000000000000000000000000000000000000.zip#subdirectory=Server";
             SavePath(EditorPrefKeys.GitUrlOverride, source);
             var entry = GeneratedEntry();
+            string executable = Path.Combine(directory, "uvx.exe");
+            File.WriteAllText(executable, "inert launcher fixture; never executed");
+            SavePath(EditorPrefKeys.UvxPathOverride, executable);
+            entry["command"] = executable;
             ((JArray)entry["args"])[3] = source;
             var configurator = Write(entry, out string original);
             Assert.AreEqual(McpStatus.Configured, configurator.CheckStatus(true));
