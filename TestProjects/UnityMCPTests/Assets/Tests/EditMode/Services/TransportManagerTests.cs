@@ -14,6 +14,13 @@ namespace MCPForUnityTests.Editor.Services
     /// </summary>
     public class TransportManagerTests
     {
+        [SetUp]
+        public void TraceOwnedTest()
+        {
+            if (Environment.GetEnvironmentVariable("UNITY_MCP_OWNED_TRANSPORT_TESTS") == "1")
+                UnityEngine.Debug.Log("Owned lifecycle test: " + TestContext.CurrentContext.Test.FullName);
+        }
+
         private sealed class ControlledClient : IMcpTransportClient
         {
             public readonly List<TaskCompletionSource<bool>> Starts = new List<TaskCompletionSource<bool>>();
@@ -51,7 +58,9 @@ namespace MCPForUnityTests.Editor.Services
             var manager = new TransportManager();
             manager.Configure(() => client, () => client);
             Task<bool> oldStart = manager.StartAsync(mode);
-            manager.StopAsync(mode).GetAwaiter().GetResult();
+            Task stop = manager.StopAsync(mode);
+            Assert.IsTrue(stop.IsCompleted, "StopThenStart: initial stop did not complete synchronously");
+            stop.GetAwaiter().GetResult();
             Task<bool> replacement = manager.StartAsync(mode);
             Assert.AreNotSame(oldStart, replacement);
             Assert.AreEqual(2, client.Starts.Count);
@@ -61,7 +70,9 @@ namespace MCPForUnityTests.Editor.Services
             client.Starts[1].SetResult(true);
             client.Starts[0].SetResult(oldSuccess);
 
+            Assert.IsTrue(oldStart.IsCompleted, "StopThenStart: retired start continuation was deferred");
             Assert.IsFalse(oldStart.Result);
+            Assert.IsTrue(replacement.IsCompleted, "StopThenStart: replacement start continuation was deferred");
             Assert.IsTrue(replacement.Result);
             Assert.AreEqual(1, client.StopCalls, "a retired failure must not stop the replacement");
             Assert.IsTrue(manager.HasConnectionIntent(mode));
@@ -90,7 +101,7 @@ namespace MCPForUnityTests.Editor.Services
             http.Starts[1].SetResult(true);
             stdio.Starts[1].SetResult(true);
             http.PendingStop.SetResult(true);
-            Assert.IsTrue(stop.IsCompleted);
+            Assert.IsTrue(stop.IsCompleted, "StopAll: stop continuation was deferred after completing the held stop");
             Assert.AreEqual(1, http.StopCalls);
             Assert.AreEqual(1, stdio.StopCalls);
         }
@@ -103,6 +114,7 @@ namespace MCPForUnityTests.Editor.Services
             manager.Configure(() => client, () => client);
             Task<bool> start = manager.StartAsync(TransportMode.Http);
             client.Starts[0].SetException(new InvalidOperationException("start failed"));
+            Assert.IsTrue(start.IsCompleted, "FailedStartException: start continuation was deferred after the exception");
             Assert.Throws<InvalidOperationException>(() => start.GetAwaiter().GetResult());
             Assert.AreEqual(1, client.StopCalls);
             Assert.IsFalse(manager.HasConnectionIntent(TransportMode.Http));
@@ -115,13 +127,17 @@ namespace MCPForUnityTests.Editor.Services
             var manager = new TransportManager();
             manager.Configure(() => client, () => client);
             Task<bool> oldStart = manager.StartAsync(TransportMode.Http);
-            manager.StopAsync(TransportMode.Http).GetAwaiter().GetResult();
+            Task stop = manager.StopAsync(TransportMode.Http);
+            Assert.IsTrue(stop.IsCompleted, "RetiredStartException: initial stop did not complete synchronously");
+            stop.GetAwaiter().GetResult();
             Task<bool> replacement = manager.StartAsync(TransportMode.Http);
             client.Starts[0].SetException(new InvalidOperationException("old failure"));
+            Assert.IsTrue(oldStart.IsCompleted, "RetiredStartException: retired start continuation was deferred after the exception");
             Assert.Throws<InvalidOperationException>(() => oldStart.GetAwaiter().GetResult());
             Assert.AreEqual(1, client.StopCalls);
             Assert.IsTrue(manager.HasConnectionIntent(TransportMode.Http));
             client.Starts[1].SetResult(true);
+            Assert.IsTrue(replacement.IsCompleted, "RetiredStartException: replacement start continuation was deferred");
             Assert.IsTrue(replacement.Result);
         }
 
@@ -138,7 +154,9 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreNotSame(oldStart, replacement);
             client.Starts[0].SetResult(false);
             client.Starts[1].SetResult(true);
+            Assert.IsTrue(oldStart.IsCompleted, "ForceStop: retired start continuation was deferred");
             Assert.IsFalse(oldStart.Result);
+            Assert.IsTrue(replacement.IsCompleted, "ForceStop: replacement start continuation was deferred");
             Assert.IsTrue(replacement.Result);
             Assert.AreEqual(1, client.StopCalls);
         }
@@ -149,6 +167,7 @@ namespace MCPForUnityTests.Editor.Services
             var manager = new TransportManager();
             manager.Configure(() => throw new InvalidOperationException("factory failed"), () => new ControlledClient());
             Task<bool> start = manager.StartAsync(TransportMode.Http);
+            Assert.IsTrue(start.IsCompleted, "FailedClientFactory: start did not complete after the factory threw");
             Assert.Throws<InvalidOperationException>(() => start.GetAwaiter().GetResult());
             Assert.IsFalse(manager.HasConnectionIntent(TransportMode.Http));
         }
@@ -244,7 +263,9 @@ namespace MCPForUnityTests.Editor.Services
             var client = new ExternallyControlledHttpClient();
             var manager = new TransportManager();
             manager.Configure(() => client, () => client);
-            Assert.IsTrue(manager.StartAsync(TransportMode.Http).Result);
+            Task<bool> start = manager.StartAsync(TransportMode.Http);
+            Assert.IsTrue(start.IsCompleted, "GetState disconnect: fake start did not complete synchronously");
+            Assert.IsTrue(start.Result);
             client.State = TransportState.Disconnected("websocket", "Server closed connection");
 
             Assert.IsFalse(manager.IsRunning(TransportMode.Http));
@@ -257,7 +278,9 @@ namespace MCPForUnityTests.Editor.Services
             var client = new ExternallyControlledHttpClient();
             var manager = new TransportManager();
             manager.Configure(() => client, () => client);
-            Assert.IsTrue(manager.StartAsync(TransportMode.Http).Result);
+            Task<bool> start = manager.StartAsync(TransportMode.Http);
+            Assert.IsTrue(start.IsCompleted, "GetState reconnect: fake start did not complete synchronously");
+            Assert.IsTrue(start.Result);
             client.State = TransportState.Connected("websocket", sessionId: "registered-session");
             Assert.AreEqual("registered-session", manager.GetState(TransportMode.Http).SessionId);
             client.State = TransportState.Connected("websocket", sessionId: "reconnected-session");

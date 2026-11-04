@@ -28,6 +28,9 @@ namespace MCPForUnityTests.Editor.Services
         [SetUp]
         public void SetUp()
         {
+            if (Environment.GetEnvironmentVariable("UNITY_MCP_OWNED_TRANSPORT_TESTS") == "1")
+                UnityEngine.Debug.Log("Owned lifecycle test: " + TestContext.CurrentContext.Test.FullName);
+
             _savedResumeFlag = SessionState.GetBool(HttpBridgeReloadHandler.ResumeSessionKey, false);
             _savedResumeStatus = HttpBridgeReloadHandler.ResumeStatus;
             _savedUseHttpTransport = EditorPrefs.GetBool(EditorPrefKeys.UseHttpTransport, true);
@@ -80,7 +83,9 @@ namespace MCPForUnityTests.Editor.Services
             var client = new DisconnectedHttpClient();
             var manager = new TransportManager();
             manager.Configure(() => client, () => client);
-            Assert.IsTrue(manager.StartAsync(TransportMode.Http).Result);
+            Task<bool> start = manager.StartAsync(TransportMode.Http);
+            Assert.IsTrue(start.IsCompleted, "BeforeReload disconnected: fake start did not complete synchronously");
+            Assert.IsTrue(start.Result);
             Assert.IsFalse(manager.IsRunning(TransportMode.Http));
             bool savedLatch = SessionState.GetBool(HttpAutoStartHandler.SessionInitKey, false);
             try
@@ -101,7 +106,9 @@ namespace MCPForUnityTests.Editor.Services
         public void BeforeReloadCore_ExplicitStop_DoesNotRestoreConnection()
         {
             StartBridge();
-            _manager.StopAsync(TransportMode.Http).GetAwaiter().GetResult();
+            Task stop = _manager.StopAsync(TransportMode.Http);
+            Assert.IsTrue(stop.IsCompleted, "BeforeReload explicit stop: fake stop did not complete synchronously");
+            stop.GetAwaiter().GetResult();
             HttpBridgeReloadHandler.OnBeforeAssemblyReloadCore(_manager);
             Assert.IsFalse(ResumeFlagSet);
         }
@@ -116,6 +123,7 @@ namespace MCPForUnityTests.Editor.Services
             HttpBridgeReloadHandler.OnBeforeAssemblyReloadCore(manager);
             Assert.IsTrue(ResumeFlagSet);
             client.Pending.SetResult(true);
+            Assert.IsTrue(pending.IsCompleted, "BeforeReload connecting: retired start continuation was deferred");
             Assert.IsFalse(pending.Result);
             Assert.IsFalse(manager.HasConnectionIntent(TransportMode.Http));
         }
