@@ -2,6 +2,7 @@
 
 import json
 import os
+import signal
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -153,7 +154,9 @@ def test_external_growth_reads_only_remaining_budget_plus_overflow_probe(tmp_pat
             assert 0 < size <= 8
             return self.stream.read(size)
 
-    monkeypatch.setattr(os, "fdopen", lambda *args: GrowingStream(fdopen(*args)))
+    monkeypatch.setattr(
+        os, "fdopen", lambda *args, **kwargs: GrowingStream(fdopen(*args, **kwargs))
+    )
     with pytest.raises(CollectionBudgetExceeded, match="max_source_bytes=7"):
         source.read(path.name)
     assert reads == [8]
@@ -299,6 +302,63 @@ def test_hardlinks_rejected_and_no_new_files_or_handles_retained(tmp_path):
     (root / "copy.json").unlink()
     path.unlink()
     assert list(root.iterdir()) == []
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="POSIX FIFOs")
+@pytest.mark.parametrize("operation", ["discover", "cached", "race_stamp", "race_read"])
+def test_external_fifo_fails_without_waiting_for_a_writer(tmp_path, monkeypatch, operation):
+    # These POSIX-only APIs are absent on the Windows lint host.
+    # pylint: disable=no-member
+    path = tmp_path / "data.json"
+    source = ExternalSource({"root": str(tmp_path), "include": ["*.json"]}, respect_gitignore=False)
+    if operation == "discover":
+        os.mkfifo(path)
+        run = lambda: [source.stamp(name) for name in source.files()]
+    elif operation == "cached":
+        path.write_bytes(b"{}")
+        source.stamp(path.name)
+        path.unlink()
+        os.mkfifo(path)
+        run = lambda: source.stamp(path.name)
+    else:
+        path.write_bytes(b"{}")
+        original_open = os.open
+
+        def swap_before_open(name, flags):
+            path.unlink()
+            os.mkfifo(path)
+            return original_open(name, flags)
+
+        monkeypatch.setattr(os, "open", swap_before_open)
+        run = lambda: (source.read if operation == "race_read" else source.stamp)(path.name)
+
+    def timed_out(*_):
+        pytest.fail("Opening a FIFO blocked")
+
+    previous = signal.signal(signal.SIGALRM, timed_out)
+    timer = signal.setitimer(signal.ITIMER_REAL, 2)
+    try:
+        with pytest.raises(PermissionError):
+            run()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, *timer)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def test_hardlink_created_during_open_is_rejected_before_read(tmp_path, monkeypatch):
+    path = tmp_path / "data.json"
+    path.write_bytes(b"{}")
+    source = ExternalSource({"root": str(tmp_path), "include": ["*.json"]}, respect_gitignore=False)
+    original_open = os.open
+
+    def link_before_open(name, flags):
+        os.link(path, tmp_path / "copy.json")
+        return original_open(name, flags)
+
+    monkeypatch.setattr(os, "open", link_before_open)
+    with pytest.raises(PermissionError):
+        source.read(path.name)
+    assert source.budget.decoded_bytes == 0
 
 
 def test_root_revocation_and_invalid_config_fail_closed(tmp_path):

@@ -8,6 +8,7 @@ publication and current access before exposing cached external evidence.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 import csv
 import hashlib
@@ -148,6 +149,41 @@ class Document:
     fingerprint: str
 
 
+def _require_regular(info: os.stat_result) -> None:
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise PermissionError("External input must be a single-link regular file")
+
+
+def _file_identity(info: os.stat_result) -> tuple[int, ...]:
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_nlink
+
+
+@contextmanager
+def _regular_descriptor(path: Path, before: os.stat_result) -> Iterator[int]:
+    """Reject raced special files before reading, including FIFOs without a writer."""
+    _require_regular(before)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags | getattr(os, "O_NONBLOCK", 0))
+    try:
+        opened = os.fstat(descriptor)
+        _require_regular(opened)
+        if _file_identity(before) != _file_identity(opened):
+            raise PermissionError("External input changed while opening")
+        yield descriptor
+        after = os.fstat(descriptor)
+        current = check_owned_path(path).stat()
+        # Windows path stat and handle fstat can report different ctime semantics.
+        if (
+            _file_identity(opened) != _file_identity(after)
+            or _file_identity(after) != _file_identity(current)
+            or opened.st_ctime_ns != after.st_ctime_ns
+            or before.st_ctime_ns != current.st_ctime_ns
+        ):
+            raise PermissionError("External input changed while checking access")
+    finally:
+        os.close(descriptor)
+
+
 class ExternalSource:
     def __init__(
         self,
@@ -191,33 +227,10 @@ class ExternalSource:
         except FileNotFoundError:
             self._ignore_checked.add(directory)
             return
-        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
-            raise PermissionError(
-                "Ignore rules must be unlinked regular files within the source grant"
-            )
         self.budget.check_source(before.st_size, 0)
-        descriptor = os.open(
-            path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-        )
-        with os.fdopen(descriptor, "rb") as stream:
-            opened = os.fstat(stream.fileno())
-            raw = self._read_bytes(stream)
-            after = os.fstat(stream.fileno())
-        current = check_owned_path(path).stat()
-        identity = lambda value: (
-            value.st_dev,
-            value.st_ino,
-            value.st_size,
-            value.st_mtime_ns,
-            value.st_nlink,
-        )
-        if (
-            identity(before) != identity(opened)
-            or identity(opened) != identity(after)
-            or identity(after) != identity(current)
-            or before.st_ctime_ns != current.st_ctime_ns
-        ):
-            raise PermissionError("Ignore rule file changed while reading")
+        with _regular_descriptor(path, before) as descriptor:
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                raw = self._read_bytes(stream)
         self._ignore.add(relative, raw.decode("utf-8-sig"))
         self._ignore_checked.add(directory)
 
@@ -252,31 +265,9 @@ class ExternalSource:
         """Read only explicitly opted-in, in-root Git identity metadata."""
         path = check_owned_path(self.root / ".git" / relative)
         before = path.stat()
-        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
-            raise PermissionError("Git metadata must be an unlinked regular file")
-        descriptor = os.open(
-            path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-        )
-        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
-            opened = os.fstat(stream.fileno())
-            identity = lambda value: (
-                value.st_dev,
-                value.st_ino,
-                value.st_size,
-                value.st_mtime_ns,
-                value.st_nlink,
-            )
-            if identity(before) != identity(opened):
-                raise PermissionError("Git metadata changed while opening")
-            yield from stream
-            after = os.fstat(stream.fileno())
-        current = check_owned_path(path).stat()
-        if (
-            identity(opened) != identity(after)
-            or identity(after) != identity(current)
-            or before.st_ctime_ns != current.st_ctime_ns
-        ):
-            raise PermissionError("Git metadata changed while reading")
+        with _regular_descriptor(path, before) as descriptor:
+            with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as stream:
+                yield from stream
 
     def repository_revision(self) -> dict:
         if not self.git_revision:
@@ -410,34 +401,10 @@ class ExternalSource:
         self.check_access()
         path = check_owned_path(self.root.joinpath(*_relative(relative)))
         before = path.stat()
-        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
-            raise PermissionError("External input must be an unlinked regular file")
         self.budget.check_source(before.st_size, 0)
-        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(path, flags)
-        with os.fdopen(descriptor, "rb") as stream:
-            opened = os.fstat(stream.fileno())
-            if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
-                raise PermissionError("External input changed while opening")
-            raw = self._read_bytes(stream)
-            after = os.fstat(stream.fileno())
-        current = check_owned_path(path).stat()
-        identity = lambda value: (
-            value.st_dev,
-            value.st_ino,
-            value.st_size,
-            value.st_mtime_ns,
-            value.st_nlink,
-        )
-        # Windows path stat and handle fstat can report different ctime semantics
-        # on supported Python versions. Compare ctime only within each API.
-        if (
-            identity(before) != identity(after)
-            or identity(after) != identity(current)
-            or before.st_ctime_ns != current.st_ctime_ns
-            or opened.st_ctime_ns != after.st_ctime_ns
-        ):
-            raise PermissionError("External input changed while reading; retry")
+        with _regular_descriptor(path, before) as descriptor:
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                raw = self._read_bytes(stream)
         return Document(raw.decode("utf-8-sig"), hashlib.sha256(raw).hexdigest())
 
     def stamp(self, relative: str) -> tuple[int, ...]:
@@ -447,34 +414,14 @@ class ExternalSource:
         self.check_access()
         path = check_owned_path(self.root.joinpath(*_relative(relative)))
         before = path.stat()
-        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(path, flags)
-        try:
-            opened = os.fstat(descriptor)
-        finally:
-            os.close(descriptor)
-        current = check_owned_path(path).stat()
-        identity = lambda value: (
-            value.st_dev,
-            value.st_ino,
-            value.st_size,
-            value.st_mtime_ns,
-            value.st_nlink,
-        )
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or opened.st_nlink != 1
-            or identity(before) != identity(opened)
-            or identity(opened) != identity(current)
-            or before.st_ctime_ns != current.st_ctime_ns
-        ):
-            raise PermissionError("External file changed while checking access")
+        with _regular_descriptor(path, before):
+            pass
         return (
-            current.st_dev,
-            current.st_ino,
-            current.st_size,
-            current.st_mtime_ns,
-            current.st_ctime_ns,
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
         )
 
 
