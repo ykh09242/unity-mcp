@@ -26,6 +26,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         public string CommandJson;
         public TaskCompletionSource<string> Tcs;
         public bool IsExecuting;
+        public LinkedListNode<string> QueueNode;
         public long EnqueuedAtMs;
         public int TimeoutMs;
         public CancellationToken OwnerCancellation;
@@ -96,6 +97,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private const double PortBusyStaleResetSeconds = 60.0;
         private static int heartbeatSeq = 0;
         private static Dictionary<string, QueuedCommand> commandQueue = new();
+        private static readonly LinkedList<string> commandOrder = new();
         private static readonly List<string> canceledCommandIds = new();
         private static int mainThreadId;
         private static int currentUnityPort = 6400;
@@ -767,6 +769,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     // Admission retirement is synchronous and callback-free. Queued work
                     // must be fenced before the asynchronous cancellation worker can run.
                     retiredAdmission?.Cancel();
+                    lock (lockObj)
+                    {
+                        // Executing owners retain their leases until actual settlement.
+                        // Unstarted owners can be retired synchronously with admission.
+                        foreach (string id in commandQueue.Where(item => !item.Value.IsExecuting).Select(item => item.Key).ToArray())
+                            CancelQueuedCommand(id, commandQueue[id]);
+                    }
                     launch = authentication;
                     authentication = null;
                     toClose = activeClients.Concat(authenticatingClients).ToArray();
@@ -1020,7 +1029,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                             commandQueue[id].Tcs.TrySetCanceled(connectionLifetime.Token);
                             commandQueue[id].Timing?.ExecutionDone();
                             ReleaseInput(commandQueue[id]);
-                            commandQueue.Remove(id);
+                            RemoveQueuedCommand(id);
                         }
                     }
                     int remaining;
@@ -1326,6 +1335,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                 ResponseBinding = responseBinding,
                             };
                             commandQueue[commandId] = owned;
+                            owned.QueueNode = commandOrder.AddLast(commandId);
                         }
                     }
                 }
@@ -1723,12 +1733,23 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 if (!commandQueue.TryGetValue(id, out var current) || !ReferenceEquals(current, expected) || current.IsExecuting)
                     return;
-                commandQueue.Remove(id);
+                RemoveQueuedCommand(id);
                 current.Tcs.TrySetCanceled(current.OwnerCancellation);
                 current.Progress?.Close();
                 current.Timing?.ExecutionDone();
                 ReleaseInput(current);
             }
+        }
+
+        // Called under lockObj. Lookup and admission order must retire together;
+        // dictionary free-slot reuse must never confer priority on a new command.
+        private static void RemoveQueuedCommand(string id)
+        {
+            if (!commandQueue.Remove(id, out var removed))
+                return;
+            if (removed.QueueNode != null)
+                commandOrder.Remove(removed.QueueNode);
+            removed.QueueNode = null;
         }
 
         private static ulong ReadUInt64BigEndian(byte[] buffer)
@@ -1800,7 +1821,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         commandQueue[id].Tcs.TrySetCanceled(commandQueue[id].OwnerCancellation);
                         commandQueue[id].Timing?.ExecutionDone();
                         ReleaseInput(commandQueue[id]);
-                        commandQueue.Remove(id);
+                        RemoveQueuedCommand(id);
                     }
                     canceledCommandIds.Clear();
                     if (canceledCommandIds.Capacity > 256)
@@ -1811,9 +1832,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         return;
                     }
 
-                    foreach (var kvp in commandQueue)
+                    foreach (string id in commandOrder)
                     {
-                        var queued = kvp.Value;
+                        var queued = commandQueue[id];
                         if (queued.IsExecuting)
                             continue;
                         // Old peers retain FIFO through actual settlement. Negotiated peers
@@ -1822,7 +1843,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         if (hasExecuting && !UsesNativeArbitration(queued))
                             continue;
                         queued.IsExecuting = true;
-                        work = kvp;
+                        work = new KeyValuePair<string, QueuedCommand>(id, queued);
                         break;
                     }
                 }
@@ -1840,7 +1861,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         tcs.SetResult(SerializeTimedResponse(emptyResponse, queuedCommand.Timing));
                         lock (lockObj)
                         {
-                            commandQueue.Remove(id);
+                            RemoveQueuedCommand(id);
                             ReleaseInput(queuedCommand);
                         }
                         queuedCommand.Timing?.ExecutionDone();
@@ -1854,7 +1875,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         tcs.SetResult(SerializeTimedResponse(pingResponse, queuedCommand.Timing));
                         lock (lockObj)
                         {
-                            commandQueue.Remove(id);
+                            RemoveQueuedCommand(id);
                             ReleaseInput(queuedCommand);
                         }
                         queuedCommand.Timing?.ExecutionDone();
@@ -1872,7 +1893,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         tcs.SetResult(SerializeTimedResponse(invalidJsonResponse, queuedCommand.Timing));
                         lock (lockObj)
                         {
-                            commandQueue.Remove(id);
+                            RemoveQueuedCommand(id);
                             ReleaseInput(queuedCommand);
                         }
                         queuedCommand.Timing?.ExecutionDone();
@@ -2031,7 +2052,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     queuedCommand.ResumeCommand?.ResumeTicket?.Owner.Release(queuedCommand.ResumeCommand.ResumeTicket);
                     lock (lockObj)
                     {
-                        commandQueue.Remove(commandId);
+                        RemoveQueuedCommand(commandId);
                         queuedCommand.Timing?.ExecutionDone();
                         payload = null;
                         ReleaseInput(queuedCommand);

@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Net.Sockets;
@@ -140,6 +141,75 @@ namespace MCPForUnityTests.Editor.Services
             {
                 processing.SetValue(null, 0);
                 execution.Cancel();
+                handlers.Remove(name);
+            }
+        }
+
+        [Test]
+        public async Task CompletedSlotReuse_PreservesLegacyAdmissionOrder()
+        {
+            AssertIdle();
+            CommandRegistry.Initialize();
+            var handlers = (IDictionary)typeof(CommandRegistry).GetField("_handlers", Static).GetValue(null);
+            var processing = typeof(StdioBridgeHost).GetField("processingCommands", Static);
+            string name = "stdio_fifo_" + Guid.NewGuid().ToString("N");
+            string token = new string('f', 64);
+            var first = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var calls = new List<string>();
+            var peers = new List<TcpClient>();
+            handlers[name] = new HandlerInfo(
+                name,
+                null,
+                parameters =>
+                {
+                    string label = parameters.Value<string>("label");
+                    calls.Add(label);
+                    return label == "A" ? first.Task : Task.FromResult<object>(new { label });
+                }
+            );
+            void Enqueue(string label, int count)
+            {
+                var peer = Connect(StdioBridgeHost.GetCurrentPort(), token);
+                peers.Add(peer);
+                Send(
+                    peer.GetStream(),
+                    new JObject
+                    {
+                        ["type"] = name,
+                        ["params"] = new JObject { ["label"] = label },
+                    }.ToString(Formatting.None)
+                );
+                Assert.IsTrue(
+                    SpinWait.SpinUntil(() => StdioBridgeHost.QueuedCommandCount == count, 5000),
+                    "Each peer must be admitted before the next peer sends."
+                );
+            }
+            try
+            {
+                StdioBridgeHost.StartOwned(0, token);
+                processing.SetValue(null, 1);
+                Enqueue("A", 1);
+                processing.SetValue(null, 0);
+                Pump();
+                processing.SetValue(null, 1);
+                CollectionAssert.AreEqual(new[] { "A" }, calls);
+                Enqueue("B", 2);
+                Enqueue("C", 3);
+                first.TrySetResult(new { done = true });
+                await PumpUntilAsync(() => StdioBridgeHost.QueuedCommandCount == 2);
+                Enqueue("D", 3);
+                processing.SetValue(null, 0);
+                await PumpUntilAsync(() => StdioBridgeHost.QueuedCommandCount == 0);
+                CollectionAssert.AreEqual(new[] { "A", "B", "C", "D" }, calls, "New work must not inherit a completed dictionary slot's priority.");
+            }
+            finally
+            {
+                first.TrySetResult(new { cleanup = true });
+                processing.SetValue(null, 0);
+                foreach (var peer in peers)
+                    peer.Dispose();
+                StdioBridgeHost.Stop();
+                await PumpUntilAsync(() => StdioBridgeHost.QueuedCommandCount == 0 && StdioBridgeHost.ReservedInputBytes == 0);
                 handlers.Remove(name);
             }
         }
@@ -398,7 +468,7 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
-        private static TcpClient Connect(int port, string token)
+        internal static TcpClient Connect(int port, string token)
         {
             var client = new TcpClient();
             try
@@ -449,7 +519,7 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
-        private static void Send(NetworkStream stream, string text)
+        internal static void Send(NetworkStream stream, string text)
         {
             byte[] bytes = Encoding.UTF8.GetBytes(text);
             byte[] header = new byte[8];
