@@ -26,9 +26,28 @@ def gameobject():
 )
 @click.option("--include-inactive", "-i", is_flag=True, help="Include inactive GameObjects.")
 @click.option("--limit", "-l", default=50, type=int, help="Maximum results to return.")
-@click.option("--cursor", "-c", default=0, type=int, help="Pagination cursor (offset).")
+@click.option(
+    "--scene-scope",
+    type=click.Choice(["legacy", "active", "all_loaded"]),
+    default="legacy",
+    show_default=True,
+    help="Scene selection; active/all_loaded use opaque continuation cursors.",
+)
+@click.option(
+    "--cursor",
+    "-c",
+    default=None,
+    help="Legacy numeric offset or scoped opaque 32-hex continuation token.",
+)
 @handle_unity_errors
-def find(search_term: str, method: str, include_inactive: bool, limit: int, cursor: int):
+def find(
+    search_term: str,
+    method: str,
+    include_inactive: bool,
+    limit: int,
+    cursor: str | None,
+    scene_scope: str,
+):
     """Find GameObjects by search criteria.
 
     \b
@@ -39,18 +58,28 @@ def find(search_term: str, method: str, include_inactive: bool, limit: int, curs
         unity-mcp gameobject find "Rigidbody" --method by_component
         unity-mcp gameobject find "/Canvas/Panel" --method by_path
     """
+    params: dict[str, Any] = {
+        "searchMethod": method,
+        "searchTerm": search_term,
+        "includeInactive": include_inactive,
+        "pageSize": limit,
+    }
+    if scene_scope == "legacy":
+        params["cursor"] = click.INT.convert(cursor if cursor is not None else "0", None, None)
+    else:
+        if not 1 <= limit <= 500:
+            raise click.BadParameter(
+                "must be between 1 and 500 for scoped searches", param_hint="--limit"
+            )
+        params["scene_scope"] = scene_scope
+        if cursor is not None:
+            if re.fullmatch(r"[0-9a-fA-F]{32}", cursor) is None:
+                raise click.BadParameter(
+                    "must be an opaque 32-hex token for scoped searches", param_hint="--cursor"
+                )
+            params["cursor"] = cursor
     config = get_config()
-    result = run_command(
-        "find_gameobjects",
-        {
-            "searchMethod": method,
-            "searchTerm": search_term,
-            "includeInactive": include_inactive,
-            "pageSize": limit,
-            "cursor": cursor,
-        },
-        config,
-    )
+    result = run_command("find_gameobjects", params, config)
     click.echo(format_output(result, config.format))
 
 

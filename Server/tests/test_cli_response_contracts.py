@@ -497,3 +497,51 @@ def test_large_batch_failure_keeps_execution_summary_before_bounded_outcomes():
     assert "rollbackStatus: not_attempted" in rendered
     assert "[0]" in rendered
     assert "omitted" in rendered
+
+
+@pytest.mark.parametrize(
+    ("options", "pagination"),
+    [
+        ([], {"cursor": 0}),
+        (["--cursor", "25"], {"cursor": 25}),
+        (["--scene-scope", "active"], {"scene_scope": "active"}),
+        (
+            ["--scene-scope", "all_loaded", "--cursor", "a1" * 16],
+            {"scene_scope": "all_loaded", "cursor": "a1" * 16},
+        ),
+    ],
+)
+def test_gameobject_find_dispatches_legacy_offsets_and_scoped_tokens(
+    command_response, options, pagination
+):
+    _, requests = command_response
+    result = CliRunner().invoke(cli, ["gameobject", "find", "Enemy", "--limit", "12", *options])
+    assert result.exit_code == 0, result.output
+    assert requests == [
+        {
+            "type": "find_gameobjects",
+            "params": {
+                "searchMethod": "by_name",
+                "searchTerm": "Enemy",
+                "includeInactive": False,
+                "pageSize": 12,
+                **pagination,
+            },
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--cursor", "not-an-offset"],
+        ["--scene-scope", "active", "--cursor", "0"],
+        ["--scene-scope", "all_loaded", "--cursor", "g" * 32],
+        ["--scene-scope", "active", "--limit", "501"],
+    ],
+)
+def test_gameobject_find_rejects_invalid_pagination_without_dispatch(command_response, options):
+    _, requests = command_response
+    result = CliRunner().invoke(cli, ["gameobject", "find", "Enemy", *options])
+    assert result.exit_code == 2, result.output
+    assert requests == []

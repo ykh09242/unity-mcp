@@ -468,6 +468,13 @@ unity-mcp gameobject find "Enemy" --method by_tag
 unity-mcp gameobject find --method by_id -- -81840  # -- before a negative ID
 unity-mcp gameobject find "Rigidbody" --method by_component
 
+# Legacy pagination keeps integer offsets (default scope)
+unity-mcp gameobject find "Enemy" --cursor 50 --limit 50
+
+# Scoped pagination: copy data.nextCursor unchanged from each response
+unity-mcp gameobject find "Enemy" --scene-scope active --limit 50
+unity-mcp gameobject find "Enemy" --scene-scope all_loaded --cursor <32-hex-token>
+
 # Create GameObject
 unity-mcp gameobject create "Empty"                    # Empty object
 unity-mcp gameobject create "MyCube" --primitive Cube  # Primitive
@@ -494,6 +501,15 @@ unity-mcp gameobject duplicate "Cube"
 # Move relative to another object
 unity-mcp gameobject move "Cube" --reference "Player" --direction up --distance 2
 ```
+
+`gameobject find --scene-scope` accepts `legacy` (default), `active`, or
+`all_loaded`. Active scope uses Unity's reported active scene; all-loaded scope
+searches loaded ordinary scenes, excluding preview and prefab stages. Scoped
+searches accept `--limit` from 1 to 500 and an optional opaque 32-hex `--cursor`.
+Omit the cursor for the first page, then preserve the search options and pass
+`data.nextCursor` unchanged while `data.hasMore` is true. Empty continuation pages
+are valid. Restart the search after scene edits, cursor expiry, or domain reload.
+Legacy searches retain their existing numeric cursor and method-dependent scope.
 
 ### Component Commands
 
