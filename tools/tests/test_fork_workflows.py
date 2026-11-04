@@ -430,9 +430,20 @@ def test_workload_reports_select_explicit_python_and_compile_cohorts() -> None:
     )
     assert "--workload python" in compare["run"]
     compile_report = workflow("compile-check.yml")["jobs"]["performance_report"]
-    assert "--workload compile" in compile_report["steps"][1]["run"]
     assert (
-        compile_report["steps"][1]["env"]["CI_WORKLOAD_MAX_PARALLEL"]
+        "--workload compile"
+        in next(
+            step
+            for step in compile_report["steps"]
+            if step.get("name") == "Record completed CI stages"
+        )["run"]
+    )
+    assert (
+        next(
+            step
+            for step in compile_report["steps"]
+            if step.get("name") == "Record completed CI stages"
+        )["env"]["CI_WORKLOAD_MAX_PARALLEL"]
         == workflow("compile-check.yml")["jobs"]["compile"]["strategy"]["max-parallel"]
     )
 
@@ -488,7 +499,12 @@ def test_compile_stage_reporting_is_read_only_and_observational() -> None:
     assert report["continue-on-error"] is True
     assert report["permissions"] == {"contents": "read", "actions": "read"}
     assert not jobs["compile"].get("continue-on-error", False)
-    assert "tools/ci_test_performance.py stages" in report["steps"][1]["run"]
+    assert (
+        "tools/ci_test_performance.py stages"
+        in next(
+            step for step in report["steps"] if step.get("name") == "Record completed CI stages"
+        )["run"]
+    )
 
 
 def test_python_dependency_cache_does_not_mask_cold_bootstrap() -> None:
