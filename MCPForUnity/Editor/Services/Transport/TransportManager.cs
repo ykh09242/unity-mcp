@@ -131,7 +131,11 @@ namespace MCPForUnity.Editor.Services.Transport
             return true;
         }
 
-        public async Task StopAsync(TransportMode? mode = null)
+        public Task StopAsync(TransportMode? mode = null) => StopAsync(mode, false);
+
+        internal Task StopStdioForReloadAsync() => StopAsync(TransportMode.Stdio, true);
+
+        private async Task StopAsync(TransportMode? mode, bool forReload)
         {
             async Task StopClient(IMcpTransportClient client, TransportMode clientMode, long generation)
             {
@@ -139,7 +143,10 @@ namespace MCPForUnity.Editor.Services.Transport
                     return;
                 try
                 {
-                    await client.StopAsync();
+                    if (forReload && client is StdioTransportClient stdio)
+                        await stdio.StopForReloadAsync();
+                    else
+                        await client.StopAsync();
                 }
                 catch (Exception ex)
                 {

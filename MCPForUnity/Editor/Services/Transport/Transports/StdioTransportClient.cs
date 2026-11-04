@@ -117,8 +117,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         public Task StopAsync()
         {
+            return StopAsync(_stopBridge);
+        }
+
+        internal Task StopForReloadAsync() => StopAsync(StdioBridgeHost.StopForReload);
+
+        private Task StopAsync(Action stopBridge)
+        {
             RetirePendingStart();
-            _stopBridge();
+            stopBridge();
             _state = TransportState.Disconnected("stdio");
             return Task.CompletedTask;
         }

@@ -99,7 +99,7 @@ namespace MCPForUnity.Editor.Services
                 {
                     // Stop only stdio before reload. This is centralized here so resume-flag updates
                     // and teardown cannot race each other via separate beforeAssemblyReload handlers.
-                    var stopTask = MCPServiceLocator.TransportManager.StopAsync(TransportMode.Stdio);
+                    var stopTask = MCPServiceLocator.TransportManager.StopStdioForReloadAsync();
                     try
                     {
                         stopTask.Wait(500);
@@ -109,7 +109,7 @@ namespace MCPForUnity.Editor.Services
                     // Legacy safety: stdio may have been started outside TransportManager state.
                     try
                     {
-                        StdioBridgeHost.Stop();
+                        StdioBridgeHost.StopForReload();
                     }
                     catch { }
                 }
@@ -128,7 +128,7 @@ namespace MCPForUnity.Editor.Services
 
         internal static bool PersistResumeIntent(bool isRunning)
         {
-            bool shouldResume = !EditorConfigurationCache.Instance.UseHttpTransport && (isRunning || IsResumePending);
+            bool shouldResume = !StdioBridgeHost.IsExplicitlyStopped && !EditorConfigurationCache.Instance.UseHttpTransport && (isRunning || IsResumePending);
             if (shouldResume)
                 SessionState.SetBool(ResumeSessionKey, true);
             else

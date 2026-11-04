@@ -16,6 +16,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEngine.TestTools;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -24,6 +25,83 @@ namespace MCPForUnityTests.Editor.Services
     public class StdioBridgeLifecycleTests
     {
         private const BindingFlags Static = BindingFlags.NonPublic | BindingFlags.Static;
+
+        private static readonly string ReloadDomain = Guid.NewGuid().ToString("N");
+        private const string StopSessionKey = "MCPForUnity.StdioExplicitlyStopped";
+        private bool savedStop;
+        private bool hadStop;
+
+        [SetUp]
+        public void SaveStopIntent()
+        {
+            savedStop = SessionState.GetBool(StopSessionKey, false);
+            hadStop = savedStop == SessionState.GetBool(StopSessionKey, true);
+        }
+
+        [TearDown]
+        public void RestoreStopIntent()
+        {
+            typeof(StdioBridgeHost).GetField("explicitlyStopped", Static).SetValue(null, savedStop);
+            if (hadStop)
+                SessionState.SetBool(StopSessionKey, savedStop);
+            else
+                SessionState.EraseBool(StopSessionKey);
+        }
+
+        [UnityTest, Explicit("Requires an isolated batch Editor; this test replaces the scripting domain.")]
+        public IEnumerator ExplicitStop_SurvivesActualDomainReloadUntilExplicitStart()
+        {
+            Assert.IsTrue(UnityEngine.Application.isBatchMode, "Actual reload requires an isolated batch Editor.");
+            AssertIdle();
+            const string domainKey = "MCPForUnity.Tests.StdioStoppedDomain";
+            SessionState.SetString(domainKey, ReloadDomain);
+            try
+            {
+                StdioBridgeHost.StartOwned(0, new string('b', 64));
+                StdioBridgeHost.Stop();
+                EditorUtility.RequestScriptReload();
+                yield return new WaitForDomainReload();
+                Assert.AreNotEqual(SessionState.GetString(domainKey, ""), ReloadDomain, "This must witness an actual replacement domain.");
+                // Batch startup is intentionally disabled. Exercise the same scheduling gate
+                // used by the interactive domain initializer without publishing an endpoint.
+                typeof(StdioBridgeHost).GetMethod("ScheduleInitRetry", Static, null, Type.EmptyTypes, null).Invoke(null, null);
+                Assert.IsFalse((bool)typeof(StdioBridgeHost).GetField("initScheduled", Static).GetValue(null), "End Session must survive domain replacement.");
+                Assert.IsFalse(StdioBridgeHost.IsRunning);
+                StdioBridgeHost.StartOwned(0, new string('b', 64));
+                Assert.IsTrue(StdioBridgeHost.IsRunning, "An explicit Start must resume the stopped session.");
+            }
+            finally
+            {
+                StdioBridgeHost.Stop();
+                SessionState.EraseString(domainKey);
+            }
+        }
+
+        [Test]
+        public void ReloadTeardown_DoesNotRecordAUserStop()
+        {
+            AssertIdle();
+            var manager = new TransportManager();
+            var client = new StdioTransportClient();
+            manager.Configure(() => client, () => client);
+            // Materialize the real client without starting the preference-backed endpoint.
+            typeof(TransportManager).GetField("_stdioClient", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(manager, client);
+            try
+            {
+                StdioBridgeHost.StartOwned(0, new string('c', 64));
+                manager.StopStdioForReloadAsync().GetAwaiter().GetResult();
+                Assert.IsFalse(StdioBridgeHost.IsRunning);
+                typeof(StdioBridgeHost).GetMethod("ScheduleInitRetry", Static, null, Type.EmptyTypes, null).Invoke(null, null);
+                Assert.IsTrue(
+                    (bool)typeof(StdioBridgeHost).GetField("initScheduled", Static).GetValue(null),
+                    "Reload teardown must preserve automatic startup eligibility."
+                );
+            }
+            finally
+            {
+                StdioBridgeHost.Stop();
+            }
+        }
 
         [Test]
         public void Dispatcher_RejectsCanceledOwnerWhileExecutionTokenIsStillLive()
@@ -193,7 +271,7 @@ namespace MCPForUnityTests.Editor.Services
         [TestCase(true, false)]
         [TestCase(false, true)]
         [TestCase(true, true)]
-        public void Stop_ReturnsWhileCancellationCallbackAndHandlerRemainOwned(bool throws, bool callbackFirst)
+        public async Task Stop_ReturnsWhileCancellationCallbackAndHandlerRemainOwned(bool throws, bool callbackFirst)
         {
             AssertIdle();
             CommandRegistry.Initialize();
@@ -231,7 +309,7 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.IsTrue(StdioBridgeHost.IsRunning);
                 peer = Connect(StdioBridgeHost.GetCurrentPort(), token);
                 Send(peer.GetStream(), new JObject { ["type"] = name, ["params"] = new JObject() }.ToString(Formatting.None));
-                PumpUntil(() => entered.IsSet);
+                await PumpUntilAsync(() => entered.IsSet);
                 Assert.AreEqual(1, StdioBridgeHost.QueuedCommandCount);
                 Assert.Greater(StdioBridgeHost.ReservedInputBytes, 0);
                 stopping = Task.Run(StdioBridgeHost.Stop);
@@ -245,7 +323,7 @@ namespace MCPForUnityTests.Editor.Services
                     releaseCallback.Set();
                 else
                     handler.TrySetResult(new { done = true });
-                PumpFor(100);
+                await Task.Delay(100);
                 Assert.AreEqual(
                     1,
                     StdioBridgeHost.QueuedCommandCount,
@@ -254,7 +332,7 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.Greater(StdioBridgeHost.ReservedInputBytes, 0, "The old command must retain input ownership through complete settlement.");
                 releaseCallback.Set();
                 handler.TrySetResult(new { done = true });
-                PumpUntil(() => StdioBridgeHost.QueuedCommandCount == 0 && StdioBridgeHost.ReservedInputBytes == 0);
+                await PumpUntilAsync(() => StdioBridgeHost.QueuedCommandCount == 0 && StdioBridgeHost.ReservedInputBytes == 0);
                 Assert.AreEqual(1, callbacks);
                 Assert.IsTrue(StdioBridgeHost.IsRunning, "The old drain must not poison a valid replacement launch.");
                 Assert.AreSame(replacement, typeof(StdioBridgeHost).GetField("authentication", Static).GetValue(null));
@@ -267,9 +345,22 @@ namespace MCPForUnityTests.Editor.Services
                     Assert.IsTrue(stopping.Wait(TimeSpan.FromSeconds(5)));
                 peer?.Dispose();
                 StdioBridgeHost.Stop();
-                PumpUntil(() => StdioBridgeHost.QueuedCommandCount == 0 && StdioBridgeHost.ReservedInputBytes == 0);
+                await PumpUntilAsync(() => StdioBridgeHost.QueuedCommandCount == 0 && StdioBridgeHost.ReservedInputBytes == 0);
                 registration.Dispose();
                 handlers.Remove(name);
+            }
+        }
+
+        private static async Task PumpUntilAsync(Func<bool> done)
+        {
+            var watch = Stopwatch.StartNew();
+            while (!done())
+            {
+                Pump();
+                Assert.Less(watch.ElapsedMilliseconds, 5000, "Owned work did not settle.");
+                // Settlement includes handlers whose continuations belong to Unity's context.
+                // A synchronous spin here prevents the real owner from ever completing.
+                await Task.Yield();
             }
         }
 

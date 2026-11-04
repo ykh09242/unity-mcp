@@ -77,7 +77,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private static bool isStarting = false;
         private static long startIntentEpoch;
         private static bool startRequested;
-        private static bool explicitlyStopped;
+        private const string ExplicitStopSessionKey = "MCPForUnity.StdioExplicitlyStopped";
+        private static bool explicitlyStopped = SessionState.GetBool(ExplicitStopSessionKey, false);
+        private static SynchronizationContext editorContext;
         private static int? requestedOwnedPort;
         private static string requestedOwnedToken;
         private static EditorApplication.CallbackFunction initializationCallback;
@@ -249,6 +251,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         static StdioBridgeHost()
         {
+            editorContext = SynchronizationContext.Current;
+            AssemblyReloadEvents.beforeAssemblyReload += PersistStopIntent;
             try
             {
                 mainThreadId = Thread.CurrentThread.ManagedThreadId;
@@ -277,6 +281,32 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         }
 
         private static bool IsCurrentStart(long intent) => startRequested && intent == startIntentEpoch;
+
+        internal static bool IsExplicitlyStopped
+        {
+            get
+            {
+                lock (startStopLock)
+                    return explicitlyStopped;
+            }
+        }
+
+        private static void PersistStopIntent()
+        {
+            lock (startStopLock)
+                SessionState.SetBool(ExplicitStopSessionKey, explicitlyStopped);
+        }
+
+        private static void SetStopIntent(bool stopped)
+        {
+            explicitlyStopped = stopped;
+            if (Thread.CurrentThread.ManagedThreadId == mainThreadId)
+                PersistStopIntent();
+            else
+                // Read the current intent on delivery: a late worker-stop post cannot
+                // overwrite a newer explicit start. Reload also flushes synchronously.
+                editorContext?.Post(_ => PersistStopIntent(), null);
+        }
 
         private static void CancelStartupCallbacks()
         {
@@ -513,7 +543,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 CancelStartupCallbacks();
                 startRequested = true;
-                explicitlyStopped = false;
+                SetStopIntent(false);
                 requestedOwnedPort = ownedPort;
                 requestedOwnedToken = ownedToken;
                 StartBridge(ownedPort, ownedToken, ++startIntentEpoch);
@@ -701,9 +731,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             return newListener;
         }
 
-        public static void Stop() => StopBridge(true);
+        public static void Stop() => StopBridge(true, true);
 
-        private static void StopBridge(bool retireStartup)
+        internal static void StopForReload() => StopBridge(true);
+
+        private static void StopBridge(bool retireStartup, bool explicitStop = false)
         {
             Task toWait;
             CancellationTokenSource cancel;
@@ -717,7 +749,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 bool hadStartup = startRequested;
                 if (retireStartup)
                 {
-                    explicitlyStopped = true;
+                    if (explicitStop)
+                        SetStopIntent(true);
                     RetireStartup();
                 }
                 if (!isRunning && listener == null && cts == null && (!retireStartup || !hadStartup))
