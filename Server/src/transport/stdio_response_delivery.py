@@ -358,7 +358,9 @@ async def _settled_binary_write(stdout: BinaryIO, payload: bytes) -> None:
         # contract. They cannot safely be interrupted by closing someone else's FD.
         await _settled_stdio_operation(operation.run)
         return
-    worker = asyncio.create_task(anyio.to_thread.run_sync(stdout.run, operation.run))
+    worker = asyncio.create_task(
+        anyio.to_thread.run_sync(stdout.run, operation.run, limiter=stdout.write_slot)
+    )
     try:
         with anyio.fail_after(STDIO_WRITE_TIMEOUT):
             await asyncio.shield(worker)

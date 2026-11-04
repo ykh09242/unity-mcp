@@ -5,9 +5,47 @@ import os
 from textwrap import dedent
 
 import pytest
+import anyio
 
 from tests.stdio_process import owned_sdk_process
 from tests.timing import watchdog_timeout
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["deadline", "cancel"])
+async def test_owned_output_settles_while_all_default_worker_tokens_are_held(monkeypatch, mode):
+    import transport.stdio_response_delivery as module
+    from transport.stdio_output_write import StdioOutputWrite
+
+    default = anyio.to_thread.current_default_thread_limiter()
+    borrowers = [object() for _ in range(default.total_tokens)]
+    for borrower in borrowers:
+        await default.acquire_on_behalf_of(borrower)
+    read_fd, write_fd = os.pipe()
+    source = os.fdopen(write_fd, "wb", buffering=0)
+    output = StdioOutputWrite.for_pipe(source)
+    monkeypatch.setattr(module, "STDIO_WRITE_TIMEOUT", 0.05)
+    task = asyncio.create_task(module._settled_binary_write(output, b"x" * (1024 * 1024)))
+    try:
+        await asyncio.sleep(0)
+        if mode == "cancel":
+            task.cancel()
+        done, _ = await asyncio.wait((task,), timeout=watchdog_timeout(2))
+        assert task in done, "owned output waited for unrelated default worker tokens"
+        assert default.borrowed_tokens == len(borrowers)
+        with pytest.raises(TimeoutError if mode == "deadline" else asyncio.CancelledError):
+            task.result()
+        assert output._thread_id is None and not source.closed
+    finally:
+        # A RED run can still have a job queued on the default limiter. Release
+        # only our tokens, then await its stopped holder before closing our pipe.
+        for borrower in borrowers:
+            default.release_on_behalf_of(borrower)
+        if not task.done():
+            task.cancel()
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), watchdog_timeout())
+        source.close()
+        os.close(read_fd)
 
 
 @pytest.mark.asyncio

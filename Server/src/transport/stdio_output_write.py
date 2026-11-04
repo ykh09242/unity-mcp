@@ -6,6 +6,8 @@ import os
 import stat
 import threading
 
+import anyio
+
 from transport.stdio_input_read import _interrupt_windows_read as _interrupt_windows_io
 
 
@@ -18,6 +20,9 @@ class StdioOutputWrite:
         self._stopped = threading.Event()
         self._lock = threading.Lock()
         self._thread_id = None
+        # One serial consumer owns this pipe. Unrelated AnyIO jobs must never
+        # prevent its writer from starting and acknowledging a shutdown request.
+        self.write_slot = anyio.CapacityLimiter(1)
 
     @classmethod
     def for_pipe(cls, source):

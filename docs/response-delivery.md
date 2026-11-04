@@ -54,6 +54,8 @@ offsets. A frame has a 30-second output deadline. Cancellation allows at most
 100 ms for an already handed-off frame to finish before interrupting the pipe
 writer. POSIX pipes use nonblocking writes; Windows uses synchronous write
 cancellation and waits for the registered worker to acknowledge completion.
+The serial pipe writer owns a dedicated worker-admission token, so exhausted
+shared AnyIO worker tokens cannot prevent it from starting and settling shutdown.
 The Windows path does not depend on pipe support in `os.set_blocking`, which
 starts in Python 3.12; it also supports the server's Python 3.11 API floor.
 
