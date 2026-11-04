@@ -1691,7 +1691,8 @@ Find GameObjects by search criteria. Examples: unity-mcp gameobject find "Player
 | --method / -m | choice: by_name, by_path, by_id, by_tag, by_layer, by_component | optional | nargs=1 | "by_name" | — | Search method. |
 | --include-inactive / -i | boolean | optional | nargs=1, flag | — | — | Include inactive GameObjects. |
 | --limit / -l | integer | optional | nargs=1 | 50 | — | Maximum results to return. |
-| --cursor / -c | integer | optional | nargs=1 | 0 | — | Pagination cursor (offset). |
+| --scene-scope | choice: legacy, active, all_loaded | optional | nargs=1 | "legacy" | — | Scene selection; active/all_loaded use opaque continuation cursors. |
+| --cursor / -c | text | optional | nargs=1 | — | — | Legacy numeric offset or scoped opaque 32-hex continuation token. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp gameobject modify`
