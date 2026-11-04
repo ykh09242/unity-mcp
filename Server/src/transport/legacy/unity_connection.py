@@ -196,7 +196,12 @@ def _decode_unity_response(data: bytes | bytearray, deadline: float | None = Non
     """Bound structural work and graph allocation before invoking a JSON decoder."""
     raw_owner, graph_owner = ResponseOwner(), ResponseOwner()
     try:
-        if not _stdio_decode_raw_budget.reserve(raw_owner, 5 * len(data) + 4096):
+        # Growing receive buffers retain spare allocation. Builtin descriptors
+        # count that storage without invoking a subclass's __sizeof__ hook.
+        raw_storage = (
+            bytearray.__sizeof__(data) if isinstance(data, bytearray) else bytes.__sizeof__(data)
+        )
+        if not _stdio_decode_raw_budget.reserve(raw_owner, raw_storage + 4 * len(data) + 128):
             raise _UnityProtocolError("Unity response decode capacity unavailable")
         profile = bounded_json_profile(
             data, max_bytes=FRAMED_MAX, max_depth=MAX_RESPONSE_DEPTH, max_nodes=MAX_RESPONSE_NODES

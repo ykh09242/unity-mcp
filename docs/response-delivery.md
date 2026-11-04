@@ -11,8 +11,10 @@ limits before allocating JSON objects. Its 128 MiB framed envelope ceiling is
 unchanged. Concurrent decoders reserve proportional raw/text working bytes and
 decoded graph estimates in thread-safe budgets: at most `5 * 128 MiB + 4096`
 raw/text bytes and the existing 512 MiB graph ceiling. These are working-set
-reservations, separate from downstream response delivery ownership; there is no
-fixed two-decoder gate. A cancelled async caller cannot release a running
+reservations; the raw charge includes a growing bytearray's allocated spare
+capacity, plus worst-case decoded Unicode storage, rather than logical bytes alone.
+They are separate from downstream response delivery ownership; there is no fixed
+two-decoder gate. A cancelled async caller cannot release a running
 decoder's reservation. The worker checks the original command deadline before
 and after parsing; a refused or late response after dispatch retains an unknown
 execution outcome and never causes a mutation replay.

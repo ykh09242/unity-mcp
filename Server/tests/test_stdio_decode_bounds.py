@@ -1,6 +1,7 @@
 """Admission and deadline behavior at the real stdio response decoder boundary."""
 
 import asyncio
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -154,3 +155,26 @@ def test_small_responses_can_decode_concurrently_and_release_on_error(monkeypatc
     with pytest.raises(ValueError):
         uc._decode_unity_response(b'{"value":invalid}')
     assert graph.retained_bytes == 0
+
+
+def test_raw_admission_counts_bytearray_spare_capacity_with_wide_unicode(monkeypatch):
+    wire = b'{"text":"' + b"a" * (1024 * 1024) + "😀".encode() + b'"}'
+    raw = bytearray()
+    for offset in range(0, len(wire), 65_536):
+        raw.extend(wire[offset : offset + 65_536])
+    logical_charge = 5 * len(raw) + 4096
+    actual_storage = sys.getsizeof(raw) + sys.getsizeof(raw.decode("utf-8"))
+    assert actual_storage > logical_charge  # This fixture has real spare allocation.
+    budget = SharedReadBudget(max_bytes=(logical_charge + actual_storage) // 2)
+    monkeypatch.setattr(uc, "_stdio_decode_raw_budget", budget)
+    calls = []
+    original = uc.from_json
+
+    def decode(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(uc, "from_json", decode)
+    with pytest.raises(uc._UnityProtocolError, match="capacity"):
+        uc._decode_unity_response(raw)
+    assert calls == [] and budget.retained_bytes == 0
