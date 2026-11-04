@@ -6,6 +6,17 @@ existing native workload and complete admitted MCP result graph retain their
 containing both text and structured content consumes the complete graph budget;
 duplicating a native payload does not increase that budget.
 
+The legacy Unity stdio response decoder also checks the shared depth and node
+limits before allocating JSON objects. Its 128 MiB framed envelope ceiling is
+unchanged. Concurrent decoders reserve proportional raw/text working bytes and
+decoded graph estimates in thread-safe budgets: at most `5 * 128 MiB + 4096`
+raw/text bytes and the existing 512 MiB graph ceiling. These are working-set
+reservations, separate from downstream response delivery ownership; there is no
+fixed two-decoder gate. A cancelled async caller cannot release a running
+decoder's reservation. The worker checks the original command deadline before
+and after parsing; a refused or late response after dispatch retains an unknown
+execution outcome and never causes a mutation replay.
+
 The supported Codex client's stdio line and HTTP response limits are 8 MiB.
 Ordinary tool results, resource/prompt reads and completed wait-task observations use an
 8 MiB result budget minus 32 KiB reserved for the request ID, JSON-RPC envelope and

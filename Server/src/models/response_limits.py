@@ -492,6 +492,26 @@ def bound_response(value: Any) -> Any:
 def bounded_json_text(
     raw: str | bytes | bytearray, *, max_bytes: int, max_depth: int, max_nodes: int
 ) -> str | None:
+    """Return structurally bounded text, retaining the existing malformed-input contract."""
+    try:
+        profile = bounded_json_profile(
+            raw, max_bytes=max_bytes, max_depth=max_depth, max_nodes=max_nodes
+        )
+    except UnicodeError:
+        return None
+    return profile.text if profile is not None and profile.complete_strings else None
+
+
+@dataclass(frozen=True, slots=True)
+class JsonTextProfile:
+    text: str
+    nodes: int
+    complete_strings: bool
+
+
+def bounded_json_profile(
+    raw: str | bytes | bytearray, *, max_bytes: int, max_depth: int, max_nodes: int
+) -> JsonTextProfile | None:
     """Reject large, deep or wide raw frames before allocating a decoded graph.
 
     Count containers and scalar starts outside strings. Skip long quoted values
@@ -500,23 +520,20 @@ def bounded_json_text(
     """
     if len(raw) > max_bytes:
         return None
-    try:
-        raw_type = type(raw)
-        exact_bytes = raw_type is bytes or raw_type is bytearray
-        text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
-        # Strict built-in decoding or exact ASCII proves the checked byte length.
-        # Subclasses retain recounting because their hooks may change the content.
-        known_byte_length = exact_bytes or (raw_type is str and text.isascii())
-        if (
-            not known_byte_length
-            and sum(
-                len(text[offset : offset + 65_536].encode("utf-8"))
-                for offset in range(0, len(text), 65_536)
-            )
-            > max_bytes
-        ):
-            return None
-    except UnicodeError:
+    raw_type = type(raw)
+    exact_bytes = raw_type is bytes or raw_type is bytearray
+    text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw
+    # Strict built-in decoding or exact ASCII proves the checked byte length.
+    # Subclasses retain recounting because their hooks may change the content.
+    known_byte_length = exact_bytes or (raw_type is str and text.isascii())
+    if (
+        not known_byte_length
+        and sum(
+            len(text[offset : offset + 65_536].encode("utf-8"))
+            for offset in range(0, len(text), 65_536)
+        )
+        > max_bytes
+    ):
         return None
     index = depth = nodes = 0
     scalar = False
@@ -528,7 +545,9 @@ def bounded_json_text(
             while True:
                 end = text.find('"', end)
                 if end < 0:
-                    return None
+                    # A complete-input decoder owns syntax/error reporting. There
+                    # are no further scalar starts inside an unfinished string.
+                    return JsonTextProfile(text, nodes, False) if nodes <= max_nodes else None
                 slash = end - 1
                 while slash > index and text[slash] == "\\":
                     slash -= 1
@@ -554,4 +573,4 @@ def bounded_json_text(
         if nodes > max_nodes:
             return None
         index += 1
-    return text
+    return JsonTextProfile(text, nodes, True)

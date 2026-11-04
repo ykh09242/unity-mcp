@@ -28,6 +28,13 @@ import weakref
 
 from pydantic_core import from_json
 from transport.json_decoder import decode_json
+from models.response_limits import (
+    MAX_RESPONSE_DEPTH,
+    MAX_RESPONSE_NODES,
+    ResponseOwner,
+    bounded_json_profile,
+)
+from services.tools.shared_read_budget import SharedReadBudget
 
 if TYPE_CHECKING:
     import asyncio
@@ -178,10 +185,38 @@ class _AsyncAdmissionGate:
         return self._lock.locked()
 
 
-def _decode_unity_response(data: bytes | bytearray) -> Any:
-    """Decode JSON before callers enforce the existing object response shape."""
-    # Retain this helper and its imported native decoder for existing adapters.
-    return decode_json(data, native_decoder=from_json)
+# Raw bytes and worst-case Unicode text coexist. Graph reservations use the
+# existing process-wide retained ceiling, with proportional charges (not a fixed
+# number of decoders). The sync worker alone owns and releases these reservations.
+_stdio_decode_raw_budget = SharedReadBudget(max_bytes=5 * FRAMED_MAX + 4096)
+_stdio_decode_graph_budget = SharedReadBudget()
+
+
+def _decode_unity_response(data: bytes | bytearray, deadline: float | None = None) -> Any:
+    """Bound structural work and graph allocation before invoking a JSON decoder."""
+    raw_owner, graph_owner = ResponseOwner(), ResponseOwner()
+    try:
+        if not _stdio_decode_raw_budget.reserve(raw_owner, 5 * len(data) + 4096):
+            raise _UnityProtocolError("Unity response decode capacity unavailable")
+        profile = bounded_json_profile(
+            data, max_bytes=FRAMED_MAX, max_depth=MAX_RESPONSE_DEPTH, max_nodes=MAX_RESPONSE_NODES
+        )
+        if profile is None:
+            raise _UnityProtocolError("Unity response exceeds structural limits")
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("Unity command exceeded total deadline during response preparse")
+        # Keys, scalar objects, containers and their slots fit the shared 512-byte
+        # per-node estimate. Text's Unicode width bounds all decoded string data.
+        text_charge = (
+            4 * len(profile.text) + 128 if "\\u" in profile.text else sys.getsizeof(profile.text)
+        )
+        charge = 512 * profile.nodes + text_charge
+        if not _stdio_decode_graph_budget.reserve(graph_owner, charge):
+            raise _UnityProtocolError("Unity response decode capacity unavailable")
+        return decode_json(data, fallback_text=profile.text, native_decoder=from_json)
+    finally:
+        graph_owner.release()
+        raw_owner.release()
 
 
 def read_status_file(target_hash: str | None = None) -> dict | None:
@@ -1084,7 +1119,9 @@ class UnityConnection:
                         self.sock.settimeout(restore_timeout)
 
                     # Parse
-                    resp = _decode_unity_response(response_data)
+                    self._check_deadline(deadline)
+                    resp = _decode_unity_response(response_data, deadline)
+                    self._check_deadline(deadline)
                     if not isinstance(resp, dict):
                         raise _UnityProtocolError("Unity response must be a JSON object")
                     if _resume is not None:
