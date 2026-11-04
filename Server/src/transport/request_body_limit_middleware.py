@@ -1,11 +1,13 @@
 """Bound HTTP ingress before request chunks reach framework body parsers."""
 
 from typing import Final
+from collections.abc import Callable, Mapping
 
 import anyio
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from starlette._utils import get_route_path
 
 # Ingress capacity, not an increase to the smaller Unity command budget.
 MAX_HTTP_REQUEST_BYTES: Final = 64 * 1024 * 1024
@@ -34,6 +36,7 @@ class RequestBodyLimitMiddleware:
         max_readers: int = MAX_HTTP_BODY_READERS,
         upload_seconds: float = HTTP_BODY_UPLOAD_SECONDS,
         max_ingress_bytes: int = MAX_HTTP_INGRESS_BYTES,
+        route_body_limits: Mapping[str, Callable[[], int]] | None = None,
     ) -> None:
         self.app = app
         self.max_body_size = max_body_size
@@ -42,16 +45,21 @@ class RequestBodyLimitMiddleware:
         self.max_ingress_bytes = max_ingress_bytes
         self.active_readers = 0
         self.retained_bytes = 0
+        self.route_body_limits = route_body_limits or {}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
+        route_limit = self.route_body_limits.get(get_route_path(scope))
+        max_body_size = (
+            min(self.max_body_size, route_limit()) if route_limit else self.max_body_size
+        )
         lengths = [
             value for name, value in scope.get("headers", []) if name.lower() == b"content-length"
         ]
-        ceiling = str(self.max_body_size).encode("ascii")
+        ceiling = str(max_body_size).encode("ascii")
         invalid_length = False
         for value in lengths:
             value = value.strip()
@@ -117,7 +125,7 @@ class RequestBodyLimitMiddleware:
                     admitted = True
                     upload_scope.deadline = anyio.current_time() + self.upload_seconds
                 size = len(message.get("body", b""))
-                if size > self.max_body_size - total_size:
+                if size > max_body_size - total_size:
                     rejected = True
                     finish_reader()
                     # The rejected chunk is not needed during error delivery or its traceback.

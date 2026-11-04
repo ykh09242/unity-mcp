@@ -63,7 +63,7 @@ from transport.catalog_subscriptions import (
     CatalogSubscriptionLifetimeMiddleware,
     install_catalog_subscriptions,
 )
-from transport.mcp_version_middleware import McpVersionMiddleware
+from transport.mcp_version_middleware import McpVersionMiddleware, mcp_request_body_limit
 from transport.inventory_ordering import InventoryOrderingMiddleware
 from transport.session_state_store import SessionStateStore
 from transport.skills_extension import install_skills
@@ -656,7 +656,15 @@ class UnityMCP(FastMCP):
                 app.add_middleware(WaitTaskDeliveryMiddleware)
             app.add_middleware(McpVersionMiddleware, path=app.state.path)
             app.add_middleware(CatalogSubscriptionLifetimeMiddleware)
-        app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_HTTP_REQUEST_BYTES)
+        app.add_middleware(
+            RequestBodyLimitMiddleware,
+            max_body_size=MAX_HTTP_REQUEST_BYTES,
+            route_body_limits=(
+                {app.state.path: mcp_request_body_limit(app)}
+                if app.state.transport_type == "streamable-http"
+                else None
+            ),
+        )
         app.add_middleware(
             ResponseRetentionMiddleware,
             legacy_sse_message_path=(
