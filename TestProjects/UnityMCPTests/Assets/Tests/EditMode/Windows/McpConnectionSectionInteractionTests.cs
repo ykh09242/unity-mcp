@@ -321,6 +321,51 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.AreEqual(2, fetches);
         }
 
+        [TestCase("file:///tmp/login")]
+        [TestCase("custom://login")]
+        [TestCase("//example.com/login")]
+        [TestCase("https://user@example.com/login")]
+        [TestCase("https://example.com\\@evil.example/login")]
+        [TestCase("https://example.com/\nlogin")]
+        [TestCase("https:///example.com")]
+        public void UnsafeLoginUrl_IsNotCached(string url)
+        {
+            var section = CreateSection();
+            UseHttp("remote");
+            int fetches = 0;
+            int opens = 0;
+            Set(
+                section,
+                "loginUrlFetcher",
+                new Func<string, Task<string>>(_ =>
+                {
+                    fetches++;
+                    return Task.FromResult(url);
+                })
+            );
+            Set(section, "loginUrlOpener", new Action<string>(_ => opens++));
+            Set(section, "loginDialog", new Action<string, string, string>((title, message, button) => { }));
+            Invoke(section, "OnGetApiKeyClicked");
+            Assert.IsNull(((Task<string>)Invoke(section, "GetLoginUrlAsync")).Result);
+            Assert.IsNull(Get<string>(section, "cachedLoginUrl"));
+            Assert.AreEqual(2, fetches);
+            Assert.AreEqual(0, opens);
+        }
+
+        [Test]
+        public void LoginUrl_OnDifferentHttpsHostIsOpenedAndCached()
+        {
+            var section = CreateSection();
+            UseHttp("remote");
+            const string url = "https://identity.example/authorize?state=abc";
+            string opened = null;
+            Set(section, "loginUrlFetcher", new Func<string, Task<string>>(_ => Task.FromResult(url)));
+            Set(section, "loginUrlOpener", new Action<string>(value => opened = value));
+            Invoke(section, "OnGetApiKeyClicked");
+            Assert.AreEqual(url, opened);
+            Assert.AreEqual(url, Get<string>(section, "cachedLoginUrl"));
+        }
+
         [Test]
         public void LoginFailure_ForOldEndpointDoesNotFaultOrPopulateCache()
         {

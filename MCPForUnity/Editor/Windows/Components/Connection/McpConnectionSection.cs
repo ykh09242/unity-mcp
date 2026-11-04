@@ -61,6 +61,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private string cachedLoginUrl;
         private string cachedLoginBaseUrl;
         private Func<string, Task<string>> loginUrlFetcher = FetchLoginUrlAsync;
+        private Action<string> loginUrlOpener = Application.OpenURL;
+        private Action<string, string, string> loginDialog = (title, message, button) => EditorUtility.DisplayDialog(title, message, button);
 
         private bool connectionToggleInProgress;
         private bool unityPortDirty;
@@ -1110,10 +1112,10 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     return;
                 if (string.IsNullOrEmpty(loginUrl))
                 {
-                    EditorUtility.DisplayDialog("API Key", "API key management is not available for this server. Contact your server administrator.", "OK");
+                    loginDialog("API Key", "API key management is not available for this server. Contact your server administrator.", "OK");
                     return;
                 }
-                Application.OpenURL(loginUrl);
+                loginUrlOpener(loginUrl);
             }
             catch (Exception ex)
             {
@@ -1144,7 +1146,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             try
             {
                 string loginUrl = await loginUrlFetcher(baseUrl);
-                if (!IsLoginContextCurrent(baseUrl))
+                if (!IsLoginContextCurrent(baseUrl) || !IsSafeLoginUrl(loginUrl))
                     return null;
                 cachedLoginUrl = loginUrl;
                 cachedLoginBaseUrl = baseUrl;
@@ -1156,6 +1158,19 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     McpLog.Debug($"Failed to fetch login URL from {baseUrl}: {ex.Message}");
                 return null;
             }
+        }
+
+        private static bool IsSafeLoginUrl(string value)
+        {
+            if (string.IsNullOrEmpty(value) || !value.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                return false;
+            foreach (char character in value)
+                if (char.IsWhiteSpace(character) || char.IsControl(character) || character == '\\')
+                    return false;
+            return Uri.TryCreate(value, UriKind.Absolute, out Uri uri)
+                && uri.Scheme == Uri.UriSchemeHttps
+                && !string.IsNullOrEmpty(uri.Host)
+                && string.IsNullOrEmpty(uri.UserInfo);
         }
 
         private bool IsLoginContextCurrent(string baseUrl)
