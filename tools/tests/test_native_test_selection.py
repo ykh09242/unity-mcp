@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -41,6 +42,85 @@ def test_group_selection_has_complete_inventory_and_exact_method_filter(tmp_path
     assert selection["required"] == ["Fixture.First", "Fixture.Second"]
     assert selection["filter"] == "Fixture.First;Fixture.Second"
     assert len(selection["manifestSha256"]) == 64
+
+
+def execution_pattern(selection):
+    # .NET's absolute end anchor is \z; Python 3.11 calls that same anchor \Z.
+    expression = selection["executionFilter"]
+    assert expression.startswith(r"\A")
+    assert expression.endswith(r"\z")
+    assert ";" not in expression
+    return re.compile(expression[:-2] + r"\Z")
+
+
+def test_execution_filter_matches_only_literal_methods_and_parameterized_cases(tmp_path):
+    path = manifest(tmp_path)
+    data = json.loads(path.read_text())
+    methods = ["Shared.Fixture.First", "Shared.Fixture.FirstLong", "Shared.Fixture.Second"]
+    data["groups"]["ordinary"]["methods"] = methods
+    path.write_text(json.dumps(data))
+    selection = qa.load_selection(path, ["ordinary"], "win32")
+    pattern = execution_pattern(selection)
+    assert selection["required"] == methods
+    assert selection["filter"] == ";".join(methods)
+    assert selection["executionFilter"].count(r"Shared\.Fixture\.") == 1
+    for method in methods:
+        for suffix in ("", "()", '(1,"case")', '("nested(value)","line\nbreak")'):
+            assert pattern.search(method + suffix)
+    for candidate in (
+        "Shared.Fixture",
+        "Shared.Fixture.FirstLonger",
+        "Shared.Fixture.First.More",
+        "Shared.Fixture.First(1)extra",
+        "Shared.Fixture.First(1",
+        "Shared.Fixture.First\n",
+        "Other.Shared.Fixture.First",
+        "SharedxFixture.First",
+        "Shared.FixturexFirst",
+    ):
+        assert not pattern.search(candidate)
+
+
+def test_execution_filter_preserves_group_order_and_deduplicates_inventory(tmp_path):
+    path = manifest(tmp_path)
+    data = json.loads(path.read_text())
+    data["groups"]["additional"] = {
+        "methods": ["Fixture.Second", "Fixture.Third"],
+        "disruptive": False,
+        "platform_exclusions": {},
+    }
+    path.write_text(json.dumps(data))
+    selection = qa.load_selection(path, ["additional", "ordinary"], "win32")
+    assert selection["required"] == ["Fixture.Second", "Fixture.Third", "Fixture.First"]
+    assert selection["filter"] == "Fixture.Second;Fixture.Third;Fixture.First"
+    pattern = execution_pattern(selection)
+    assert {
+        name
+        for name in ("Fixture.First", "Fixture.Second", "Fixture.Third", "Fixture.No")
+        if pattern.search(name)
+    } == set(selection["required"])
+
+
+def test_execution_filter_escapes_dots_and_preserves_unicode_identifiers(tmp_path):
+    path = manifest(tmp_path)
+    data = json.loads(path.read_text())
+    methods = ["Náme.Fixturé.Test_1", "Náme.Fixturé._Test"]
+    data["groups"]["ordinary"]["methods"] = methods
+    path.write_text(json.dumps(data))
+    pattern = execution_pattern(qa.load_selection(path, ["ordinary"], "win32"))
+    assert all(pattern.search(method) for method in methods)
+    assert not pattern.search("NámexFixturé.Test_1")
+    assert not pattern.search("Náme.FixturéxTest_1")
+
+
+@pytest.mark.parametrize("method", ["Fixture.Test.*", "Fixture.Test|Other", "Fixture.Test(1)"])
+def test_execution_filter_cannot_accept_raw_regex_methods(tmp_path, method):
+    path = manifest(tmp_path)
+    data = json.loads(path.read_text())
+    data["groups"]["ordinary"]["methods"] = [method]
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="fully qualified"):
+        qa.load_selection(path, ["ordinary"], "win32")
 
 
 def test_disruptive_selection_cannot_share_an_editor_launch(tmp_path):
@@ -214,8 +294,33 @@ def test_interrupted_refresh_is_marked_unlaunchable(tmp_path, monkeypatch):
 def test_repository_manifest_method_inventory_is_valid():
     path = Path(__file__).parents[1] / "unity-native-groups.json"
     data = json.loads(path.read_text())
+    all_methods = {method for group in data["groups"].values() for method in group["methods"]}
     for name in data["groups"]:
-        assert qa.load_selection(path, [name], "win32")["required"]
+        selection = qa.load_selection(path, [name], "win32")
+        pattern = execution_pattern(selection)
+        assert selection["required"]
+        assert {method for method in all_methods if pattern.search(method)} == set(
+            selection["required"]
+        )
+        for method in selection["required"]:
+            assert pattern.search(method + "(1)")
+            assert not pattern.search(method + "Extra")
+            assert not pattern.search(method.rpartition(".")[0])
+
+
+def test_combined_repository_inventory_uses_one_compact_execution_expression():
+    path = Path(__file__).parents[1] / "unity-native-groups.json"
+    data = json.loads(path.read_text())
+    groups = [name for name, group in data["groups"].items() if not group["disruptive"]]
+    selection = qa.load_selection(path, groups, "win32")
+    pattern = execution_pattern(selection)
+    expected = list(
+        dict.fromkeys(method for group in groups for method in data["groups"][group]["methods"])
+    )
+    assert selection["required"] == expected
+    assert selection["filter"] == ";".join(expected)
+    assert all(pattern.search(method) for method in expected)
+    assert len(selection["executionFilter"]) < len(selection["filter"])
 
 
 @pytest.mark.parametrize(

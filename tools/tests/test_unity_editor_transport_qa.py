@@ -143,6 +143,29 @@ class UnityEditorTransportRunnerTests(unittest.TestCase):
         self.assertEqual(0, self.run_fake(OwnedFakeProcess([0])))
         self.assertIn("-nographics", self.record()["command"])
 
+    def test_launch_uses_execution_filter_and_accepts_original_inventory_assertion(self):
+        self.passed_xml()
+        self.args.filter = "OwnedFixture.Criterion"
+        with (
+            patch.object(
+                qa.subprocess,
+                "Popen",
+                side_effect=lambda *a, **k: self.spawn(OwnedFakeProcess([0])),
+            ) as popen,
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(0, qa.launch(self.args))
+        record = self.record()
+        selection = record["selection"]
+        self.assertEqual(["OwnedFixture.Criterion"], selection["required"])
+        self.assertEqual(self.args.filter, selection["filter"])
+        self.assertEqual(
+            r"\AOwnedFixture\.Criterion(?:\([\s\S]*\))?\z", selection["executionFilter"]
+        )
+        command = record["command"]
+        self.assertEqual(selection["executionFilter"], command[command.index("-testFilter") + 1])
+        self.assertEqual(command, popen.call_args.args[0])
+
     def test_nonzero_exit_cannot_pass_even_with_passed_xml(self):
         self.passed_xml()
         process = OwnedFakeProcess([2])

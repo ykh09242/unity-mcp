@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 
 _EXCLUDED = {"library", "temp", "logs", "obj", ".git", "__pycache__"}
@@ -54,6 +55,32 @@ def tree_files(root, *, excluded_roots=()):
             path = Path(directory) / name
             result[path.relative_to(root).as_posix()] = digest(path)
     return result
+
+
+def _execution_filter(methods: list[str]) -> str:
+    """Factor validated literal methods into one exact NUnit name expression."""
+
+    def factor(names: list[str]) -> str:
+        prefix = os.path.commonprefix(names)
+        branches: dict[str, list[str]] = {}
+        terminal = False
+        for name in names:
+            tail = name[len(prefix) :]
+            if tail:
+                branches.setdefault(tail[0], []).append(tail)
+            else:
+                terminal = True
+        alternatives = [factor(branch) for branch in branches.values()]
+        if terminal:
+            alternatives.append("")
+        suffix = "|".join(alternatives)
+        if len(alternatives) > 1:
+            suffix = "(?:" + suffix + ")"
+        return re.escape(prefix) + suffix
+
+    # NUnit constructs a Regex for each name match. One factored expression avoids
+    # repeating both the common prefixes and the traversal for each method filter.
+    return r"\A" + factor(sorted(methods)) + r"(?:\([\s\S]*\))?\z"
 
 
 def load_selection(path, groups, platform):
@@ -107,6 +134,7 @@ def load_selection(path, groups, platform):
         "groups": list(groups),
         "required": required,
         "filter": ";".join(required),
+        "executionFilter": _execution_filter(required),
         "requiresGraphics": requires_graphics,
         "manifestSha256": hashlib.sha256(raw).hexdigest(),
         "platform": platform,

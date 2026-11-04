@@ -198,7 +198,7 @@ def _launch(args):
         "-testPlatform",
         "EditMode",
         "-testFilter",
-        selection["filter"],
+        selection["executionFilter"],
         "-testResults",
         str(result_path),
         "-logFile",
