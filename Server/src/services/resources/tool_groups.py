@@ -26,6 +26,8 @@ from services.registry import (
     ),
 )
 async def get_tool_groups(ctx: Context) -> dict[str, Any]:
+    discovery = getattr(ctx.fastmcp, "_tool_discovery", None)
+    defaults = discovery.default_groups if discovery else DEFAULT_ENABLED_GROUPS
     group_tools = get_group_tool_names()
     groups = []
     for name in sorted(TOOL_GROUPS.keys()):
@@ -34,14 +36,15 @@ async def get_tool_groups(ctx: Context) -> dict[str, Any]:
             {
                 "name": name,
                 "description": TOOL_GROUPS[name],
-                "default_enabled": name in DEFAULT_ENABLED_GROUPS,
+                "default_enabled": name in defaults,
                 "tools": tools,
                 "tool_count": len(tools),
             }
         )
     return {
         "groups": groups,
+        "profile": discovery.profile if discovery else "core",
         "total_groups": len(groups),
-        "default_enabled": sorted(DEFAULT_ENABLED_GROUPS),
+        "default_enabled": sorted(defaults),
         "usage": "Call manage_tools(action='activate', group='<name>') to enable a group.",
     }

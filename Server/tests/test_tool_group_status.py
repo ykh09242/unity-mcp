@@ -216,3 +216,31 @@ def test_specialized_groups_start_hidden_and_reveal_complete_unchanged_schemas()
                 assert visible["capture_camera"].input_schema == schemas["capture_camera"]
         asyncio.run(scenario())
     """)
+
+
+def test_group_resource_exposes_configured_profile_defaults():
+    run_sdk_regression("""
+        import asyncio, json, os, sys
+        sys.path.insert(0, "src")
+        from fastmcp import Client, FastMCP
+        from services.tool_discovery import ToolDiscovery
+        from services.resources.tool_groups import get_tool_groups
+        from services.registry import DEFAULT_ENABLED_GROUPS, TOOL_GROUPS
+
+        async def scenario():
+            for profile, expected in (
+                ("minimal", set()), ("core", set(DEFAULT_ENABLED_GROUPS)),
+                ("full", set(TOOL_GROUPS)),
+            ):
+                os.environ["UNITY_MCP_TOOL_PROFILE"] = profile
+                server = FastMCP("profile-resource-contract")
+                server._tool_discovery = ToolDiscovery(server, {}, {}, hosted=False)
+                server.resource("mcpforunity://tool-groups")(get_tool_groups)
+                async with Client(server) as client:
+                    contents = await client.read_resource("mcpforunity://tool-groups")
+                    payload = json.loads(contents[0].text)
+                assert payload["profile"] == profile, payload
+                assert payload["default_enabled"] == sorted(expected), payload
+                assert {row["name"] for row in payload["groups"] if row["default_enabled"]} == expected
+        asyncio.run(scenario())
+    """)
