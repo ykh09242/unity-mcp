@@ -47,7 +47,7 @@ class GraphWorkspace:
                 "CREATE TABLE IF NOT EXISTS graph_workspace(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_workspace").fetchone()
-            if version is not None and version[0] not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
+            if version is not None and version[0] not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
                 raise ValueError("Unsupported graph workspace version")
             if version is None:
                 for statement in (
@@ -117,6 +117,11 @@ class GraphWorkspace:
             if version is None or version[0] < 9:
                 catalog_delta.initialize(connection)
                 connection.execute("UPDATE graph_workspace SET version=9")
+            if version is None or version[0] < 10:
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS graph_asset_failures_retry ON graph_asset_failures(retry_at,guid)"
+                )
+                connection.execute("UPDATE graph_workspace SET version=10")
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_asset_paths(guid TEXT PRIMARY KEY,path TEXT NOT NULL,seen TEXT NOT NULL)"
             )
@@ -1078,12 +1083,21 @@ class GraphWorkspace:
             ]
 
     def dirty_assets(self, limit: int = 100, *, after: str = "") -> list[dict]:
+        """Merge indexed dirty/retry pages before hydrating their deduplicated payloads."""
         with self.store._connect() as connection:
             return [
                 json.loads(row[0])
                 for row in connection.execute(
-                    "SELECT a.payload FROM graph_assets a LEFT JOIN graph_asset_failures f USING(guid) WHERE a.guid>? AND (a.dirty=1 OR f.retry_at<=?) ORDER BY a.guid LIMIT ?",
-                    (after, time.time(), limit),
+                    "WITH candidates(guid) AS ("
+                    "SELECT guid FROM (SELECT guid FROM graph_assets "
+                    "WHERE dirty=1 AND guid>? ORDER BY guid LIMIT ?) "
+                    "UNION "
+                    "SELECT guid FROM (SELECT f.guid FROM graph_asset_failures f "
+                    "INDEXED BY graph_asset_failures_retry JOIN graph_assets a ON a.guid=f.guid "
+                    "WHERE f.retry_at<=? AND f.guid>? ORDER BY f.guid LIMIT ?)"
+                    "), page AS (SELECT guid FROM candidates ORDER BY guid LIMIT ?) "
+                    "SELECT a.payload FROM page JOIN graph_assets a USING(guid) ORDER BY a.guid",
+                    (after, limit, time.time(), after, limit, limit),
                 )
             ]
 
