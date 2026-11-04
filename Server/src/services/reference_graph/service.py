@@ -949,20 +949,27 @@ class ReferenceGraphService:
                     adapters[provider].stamp(path)
             changed = False
         else:
-            evidence = result.get("_search_evidence", [])
-            self._validate_manual_endpoints(
-                workspace,
-                (
-                    node
-                    for edge in evidence
-                    if edge["provider"] == "manual"
-                    for node in (edge["owner"], edge["target"])
-                ),
-                check_access=True,
-            )
-            changed = self._validate_external(
-                workspace, {**result, "edges": result.get("edges", []) + evidence}
-            )
+            changed = self._validate_external(workspace, result)
+            if "_search_proof" in result:
+                from services.reference_graph.path_proof import batches
+
+                evidence_batches = batches(workspace.store, result)
+            else:
+                legacy = result.get("_search_evidence", [])
+                evidence_batches = (legacy,) if legacy else ()
+            for evidence in evidence_batches:
+                _check_exploration_stop()
+                self._validate_manual_endpoints(
+                    workspace,
+                    (
+                        node
+                        for edge in evidence
+                        if edge["provider"] == "manual"
+                        for node in (edge["owner"], edge["target"])
+                    ),
+                    check_access=True,
+                )
+                changed |= self._validate_external(workspace, {**result, "edges": evidence})
         for provider in adapters:
             self._operator_grant(workspace.store.scope, sources[provider]["config"])
         if workspace.store.revision() != result["revision"]:
@@ -1632,6 +1639,7 @@ class ReferenceGraphService:
             status["queue_idle"] = False
         # Internal bounded authorization inputs are never part of tool output.
         data.pop("_search_evidence", None)
+        data.pop("_search_proof", None)
         data.pop("_history_access", None)
         data.pop("_history_nodes", None)
         runtime_policy = data.pop("_runtime_policy", None)

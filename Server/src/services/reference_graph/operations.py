@@ -202,6 +202,7 @@ def cleanup(workspace, *, before, limit=100):
         removed, obsolete, scratch, budget = 0, 0, 0, limit
         for identity, finished, abandoned in rows:
             tables = [
+                ("graph_query_proofs", "job", identity),
                 ("graph_query_nodes", "job", identity),
                 ("graph_query_queue", "job", identity),
             ]

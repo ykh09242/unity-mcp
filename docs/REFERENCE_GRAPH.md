@@ -307,6 +307,17 @@ the root `.storage.lock` inode; never remove or move live lock or ledger files.
 Preserve unknown files and user-authored data. A storage error is not permission
 to delete saved work.
 
+Path searches retain protected search evidence in the owning query's SQLite
+storage, including evidence outside the selected route. Responses and replay
+records carry only a private scope-bound proof marker. Every delivery rechecks
+the accumulated proof in count- and byte-bounded batches, with cancellation
+checks between batches and the existing source, policy, and revision fences.
+Total revalidation work remains linear in accumulated proof; no authorization
+grant is cached across requests. Proof consumes the normal scope storage budget
+and is reclaimed by `release_query` or bounded cleanup of completed, obsolete,
+or abandoned jobs. Existing inline-proof jobs migrate on continuation; snapshots
+and authored data are preserved.
+
 See the measured [storage comparison](development/reference-graph-storage.md),
 [analysis coverage and timings](development/reference-graph-analysis.md), and
 [collector protocol](development/reference-graph-collector.md) for details.

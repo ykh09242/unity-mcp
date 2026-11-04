@@ -7,6 +7,7 @@ import pytest
 
 from services.reference_graph.queries import GraphQueries
 from services.reference_graph import queries as query_module
+from services.reference_graph import path_proof
 from services.reference_graph.response_budget import GraphResponseTooLarge, PageBudget
 from services.reference_graph.store import (
     Edge,
@@ -91,7 +92,7 @@ def test_path_retains_one_authorization_record_per_external_file(graph):
     second = queries.path(
         "file", "missing", direction="outgoing", limit=1, cursor=first["next_cursor"]
     )
-    assert len(second["_search_evidence"]) == 1
+    assert sum(map(len, path_proof.batches(store, second))) == 1
     assert second["visited_nodes"] == 3
 
 
@@ -122,11 +123,12 @@ def test_path_retains_only_runtime_authorization_fields(graph):
     assert all(
         edge["provenance"]
         == {"path": "Assets/Source.prefab", "target_path": "Assets/Target.prefab"}
-        for edge in result["_search_evidence"]
+        for batch in path_proof.batches(store, result)
+        for edge in batch
     )
 
 
-def test_path_stops_before_retaining_excess_cumulative_authorization_proof(graph, monkeypatch):
+def test_path_durable_proof_exceeds_page_budget_without_blocking_progress(graph, monkeypatch):
     store, queries = graph
     with store._connect(write=True) as db:
         db.execute("INSERT INTO sources VALUES ('runtime:fixture',1,1,'{}')")
@@ -145,53 +147,37 @@ def test_path_stops_before_retaining_excess_cumulative_authorization_proof(graph
         def __init__(self, *, max_bytes=None):
             super().__init__(max_bytes=20_000 if max_bytes is None else max_bytes)
 
-    seen = 0
-    original = queries._evidence
-
-    def observe(row):
-        nonlocal seen
-        seen += 1
-        return original(row)
-
     monkeypatch.setattr(query_module, "PageBudget", SmallPageBudget)
-    monkeypatch.setattr(queries, "_evidence", observe)
-    with pytest.raises(GraphResponseTooLarge):
-        queries.path("root", "missing", direction="incoming", limit=12)
-    assert 2 <= seen < 12
-    with store._connect() as db:
-        assert db.execute("SELECT count(*) FROM graph_queries").fetchone()[0] == 0
+    monkeypatch.setattr(path_proof, "PageBudget", SmallPageBudget)
+    result = queries.path("root", "missing", direction="incoming", limit=12)
+    batches = list(path_proof.batches(store, result))
+    assert sum(map(len, batches)) == 12
+    assert "_search_evidence" not in result
 
 
-def test_path_charges_prior_proof_and_preserves_cursor_on_budget_failure(graph, monkeypatch):
+def test_path_oversized_individual_proof_rolls_back_progress(graph, monkeypatch):
     store, queries = graph
     with store._connect(write=True) as db:
         db.execute("INSERT INTO sources VALUES ('runtime:fixture',1,1,'{}')")
-    for index in range(4):
-        owner = f"owner{index}"
-        generation = store.observe_batch(
-            [
-                Observation(
-                    owner, "runtime:fixture", "one", provenance={"path": "Assets/" + "x" * 300}
-                )
-            ]
-        )[0]
-        store.publish(owner, "runtime:fixture", generation, [Edge("root", "runtime")])
+    generation = store.observe_batch(
+        [
+            Observation(
+                "owner", "runtime:fixture", "one", provenance={"path": "Assets/" + "x" * 3000}
+            )
+        ]
+    )[0]
+    store.publish("owner", "runtime:fixture", generation, [Edge("root", "runtime")])
 
     class SmallPageBudget(PageBudget):
         def __init__(self, *, max_bytes=None):
             super().__init__(max_bytes=20_000 if max_bytes is None else max_bytes)
 
     monkeypatch.setattr(query_module, "PageBudget", SmallPageBudget)
-    first = queries.path("root", "missing", direction="incoming", limit=1)
-    second = queries.path(
-        "root", "missing", direction="incoming", limit=1, cursor=first["next_cursor"]
-    )
-    with store._connect() as db:
-        before = [tuple(row) for row in db.execute("SELECT * FROM graph_queries")]
     with pytest.raises(GraphResponseTooLarge):
-        queries.path("root", "missing", direction="incoming", limit=1, cursor=second["next_cursor"])
+        queries.path("root", "missing", direction="incoming", limit=1)
     with store._connect() as db:
-        assert [tuple(row) for row in db.execute("SELECT * FROM graph_queries")] == before
+        assert db.execute("SELECT count(*) FROM graph_queries").fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM graph_query_proofs").fetchone()[0] == 0
 
 
 def test_large_fanout_uses_continuations_and_no_total_result_cap(graph):
@@ -372,11 +358,12 @@ def test_query_schema_upgrade_preserves_existing_resumable_job(graph):
     page = queries.impact("a", direction="outgoing", limit=1)
     with store._connect(write=True) as db:
         db.execute("ALTER TABLE graph_queries DROP COLUMN abandoned")
+        db.execute("DROP TABLE graph_query_proofs")
         db.execute("UPDATE graph_queries_schema SET version=1")
     upgraded = GraphQueries(store)
     assert upgraded.impact("a", direction="outgoing", limit=1, cursor=page["next_cursor"])
     with store._connect() as db:
-        assert db.execute("SELECT version FROM graph_queries_schema").fetchone()[0] == 2
+        assert db.execute("SELECT version FROM graph_queries_schema").fetchone()[0] == 3
         assert db.execute("SELECT abandoned FROM graph_queries").fetchone()[0] == 0
 
 

@@ -13,7 +13,7 @@ import uuid
 
 from models.response_limits import response_size
 from services.reference_graph.store import GraphStore, RevisionConflict, _hash, _json
-from services.reference_graph import snapshot_storage
+from services.reference_graph import path_proof, snapshot_storage
 from services.reference_graph.response_budget import (
     MAX_REPLAY_BYTES,
     GraphResponseTooLarge,
@@ -41,7 +41,7 @@ class GraphQueries:
                 "CREATE TABLE IF NOT EXISTS graph_queries_schema(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_queries_schema").fetchone()
-            if version and version[0] not in (1, 2):
+            if version and version[0] not in (1, 2, 3):
                 raise ValueError("Unsupported graph query schema")
             if version is None:
                 for statement in (
@@ -59,6 +59,9 @@ class GraphQueries:
                     "ALTER TABLE graph_queries ADD COLUMN abandoned INTEGER NOT NULL DEFAULT 0"
                 )
                 connection.execute("UPDATE graph_queries_schema SET version=2")
+            if version is None or version[0] < 3:
+                path_proof.initialize(connection)
+                connection.execute("UPDATE graph_queries_schema SET version=3")
             snapshot_storage.initialize(connection)
 
     @staticmethod
@@ -276,7 +279,9 @@ class GraphQueries:
                 cursor,
             )
             if target is not None and not created and job["result"]:
-                if "_search_evidence" not in json.loads(job["result"]):
+                if not {"_search_evidence", "_search_proof"}.intersection(
+                    json.loads(job["result"])
+                ):
                     raise RevisionConflict(
                         "Path predates evidence authorization; start a new query"
                     )
@@ -292,22 +297,17 @@ class GraphQueries:
                     "INSERT INTO graph_query_queue(job,node) VALUES (?,?)", (job["id"], node)
                 )
 
-            # Search progress depends on every examined protected edge, even
-            # when it is not on the eventual route. Retain only that evidence
-            # in the bounded replay payload for reauthorization on later pages.
+            # Search progress depends on every examined protected edge. Its
+            # compact proof belongs to the durable job, never the response.
             def evidence_key(edge):
                 if edge["provider"].startswith("external:"):
                     return (edge["provider"], edge["owner"])
                 return (edge["provider"], edge["id"])
 
             prior = json.loads(job["result"]) if target is not None and job["result"] else {}
-            protected = {}
-            proof_budget = PageBudget()
 
             def retain_evidence(edge):
-                key = evidence_key(edge)
-                if key in protected:
-                    return
+                key = _hash(evidence_key(edge))
                 provider = edge["provider"]
                 compact = {"provider": provider, "owner": edge["owner"]}
                 if not provider.startswith("external:"):
@@ -322,13 +322,17 @@ class GraphQueries:
                         for name in ("path", "target_path")
                         if name in provenance
                     }
+                proof_budget = PageBudget()
                 charge = response_size(
                     compact, max_bytes=proof_budget.capacity, max_retained=proof_budget.capacity
                 )
                 if charge is None:
                     raise GraphResponseTooLarge()
                 proof_budget.require({"_response_bytes": charge})
-                protected[key] = compact
+                connection.execute(
+                    "INSERT OR IGNORE INTO graph_query_proofs(job,identity,payload) VALUES (?,?,?)",
+                    (job["id"], key, _json(compact)),
+                )
 
             for edge in prior.get("_search_evidence", []):
                 retain_evidence(edge)
@@ -446,7 +450,7 @@ class GraphQueries:
                     "path_found": True if route_node else None if more else False,
                     "path_order": "target_to_start",
                     "target": target,
-                    "_search_evidence": list(protected.values()),
+                    "_search_proof": path_proof.marker(connection, self.store.scope.key, job["id"]),
                 }
             return self._finish_page(
                 connection,
@@ -680,6 +684,7 @@ class GraphQueries:
 
     @staticmethod
     def _release(connection, identity: str) -> bool:
+        connection.execute("DELETE FROM graph_query_proofs WHERE job=?", (identity,))
         connection.execute("DELETE FROM graph_query_nodes WHERE job=?", (identity,))
         connection.execute("DELETE FROM graph_query_queue WHERE job=?", (identity,))
         return connection.execute("DELETE FROM graph_queries WHERE id=?", (identity,)).rowcount > 0
