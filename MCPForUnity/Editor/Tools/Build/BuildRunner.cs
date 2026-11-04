@@ -532,12 +532,14 @@ namespace MCPForUnity.Editor.Tools.Build
             return EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray();
         }
 
+        internal static Func<Scene, bool> SaveSceneForBuild = scene => EditorSceneManager.SaveScene(scene);
+
         /// <summary>
         /// Saves assets and dirty open scenes before building so BuildPipeline does not block on
         /// a save dialog. Scenes that have never been saved carry an empty path, and handing one
         /// to Unity's save API opens the modal "Save Scene" file panel — the exact block this is
         /// meant to prevent — so those are skipped with a warning instead. Mirrors the guard in
-        /// TestRunnerService.SaveDirtyScenes.
+        /// TestRunnerService.SaveDirtyScenes. Failure to save a named scene aborts preparation.
         /// </summary>
         internal static void SaveBeforeBuild()
         {
@@ -560,14 +562,17 @@ namespace MCPForUnity.Editor.Tools.Build
                     continue;
                 }
 
+                bool saved;
                 try
                 {
-                    EditorSceneManager.SaveScene(scene);
+                    saved = SaveSceneForBuild(scene);
                 }
                 catch (Exception ex)
                 {
-                    McpLog.Warn($"[MCP Build] Failed to save dirty scene '{scene.name}': {ex.Message}");
+                    throw new InvalidOperationException($"Failed to save dirty scene '{scene.path}': {ex.Message}", ex);
                 }
+                if (!saved)
+                    throw new InvalidOperationException($"Failed to save dirty scene '{scene.path}': Unity returned false.");
             }
         }
     }
