@@ -76,15 +76,45 @@ def test_docker_daemon_calls_have_deadlines(monkeypatch, tmp_path, operation):
 def test_hard_exit_does_not_wait_for_stalled_cleanup(tmp_path, phase):
     # Given: a completely synthetic launcher inside an owned Python process.
     code = r"""
-import sys, threading
+import sys, threading, time
 from pathlib import Path
 from types import SimpleNamespace
 sys.path.insert(0, sys.argv[1])
 import local_harness as h
 work = Path(sys.argv[2])
+execution_entered = threading.Event()
+cleanup_entered = threading.Event()
+cleanup_start = None
+if sys.argv[3] == "execution":
+    # Arrange expiry only after smoke starts. Freeze the cleanup clock while
+    # its worker is scheduled and publishes recovery evidence, then exercise
+    # the real 150ms hard-exit wait against an actually stalled teardown.
+    class TestThread(threading.Thread):
+        def run(self):
+            if self.name == "harness-watchdog":
+                assert execution_entered.wait(5), "smoke did not start"
+            super().run()
+
+        def start(self):
+            super().start()
+            if self.name == "harness-expired-cleanup":
+                assert cleanup_entered.wait(5), "teardown did not start"
+
+    def monotonic():
+        if cleanup_start is not None:
+            return 1.0 + time.monotonic() - cleanup_start
+        return float(execution_entered.is_set())
+
+    h.time = SimpleNamespace(monotonic=monotonic, sleep=time.sleep)
+    h.threading = SimpleNamespace(
+        Thread=TestThread, Timer=threading.Timer,
+        Event=threading.Event, Lock=threading.Lock)
 def stop(handle):
+    global cleanup_start
     with (work / "cleanup-attempts").open("a") as log:
         log.write("attempt\n")
+    cleanup_start = time.monotonic()
+    cleanup_entered.set()
     if sys.argv[3] != "expired-cleaned":
         threading.Event().wait()
 h.make_launcher = lambda _: SimpleNamespace(
@@ -94,6 +124,7 @@ h.make_launcher = lambda _: SimpleNamespace(
 h.wait_for_ready = lambda *a: h.ReadyInfo(6400, "fake@12345678", "fake")
 def smoke(*a, **kw):
     if sys.argv[3] == "execution":
+        execution_entered.set()
         threading.Event().wait()
     if sys.argv[3] == "expired-cleaned":
         threading.Event().wait(1.05)
