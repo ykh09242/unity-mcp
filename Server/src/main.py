@@ -497,7 +497,7 @@ def _normalize_instance_token(instance_token: str | None) -> tuple[str | None, s
     if not instance_token:
         return None, None
     if "@" in instance_token:
-        name_part, _, hash_part = instance_token.partition("@")
+        name_part, _, hash_part = instance_token.rpartition("@")
         return (name_part or None), (hash_part or None)
     return None, instance_token
 
@@ -507,10 +507,12 @@ def _select_local_session(
     instance_token: str | None,
 ) -> tuple[str | None, SessionDetails | None]:
     """Resolve one unique target, preferring exact hashes over project names."""
-    if not instance_token:
+    if instance_token is None:
         return (
             next(iter(sessions.sessions.items())) if len(sessions.sessions) == 1 else (None, None)
         )
+    if not isinstance(instance_token, str) or not instance_token:
+        return None, None
     instance_name, instance_hash = _normalize_instance_token(instance_token)
     matches = [pair for pair in sessions.sessions.items() if pair[1].hash == instance_hash]
     if matches:
@@ -527,6 +529,15 @@ def _select_local_session(
 
 def _local_target_refusal(sessions: SessionList, instance_token: str | None) -> JSONResponse:
     """Expose selectable IDs without dispatching an ambiguous or absent target."""
+    if instance_token is not None and (not isinstance(instance_token, str) or not instance_token):
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "Unity instance must be a nonempty string or null",
+                "data": {"dispatch": "not_dispatched"},
+            },
+            status_code=400,
+        )
     _, target_hash = _normalize_instance_token(instance_token)
     exists = not instance_token or any(
         details.hash == target_hash

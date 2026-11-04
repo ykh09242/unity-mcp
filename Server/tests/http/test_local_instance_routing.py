@@ -56,7 +56,7 @@ def test_command_routes_by_explicit_hash_with_duplicate_names(
 
 
 @pytest.mark.parametrize("route", ["command", "custom-tools", "custom-command"])
-@pytest.mark.parametrize("selector", [None, "", "SameName"])
+@pytest.mark.parametrize("selector", [None, "SameName"])
 def test_multiple_editors_refuse_missing_or_ambiguous_target(
     routing_client, monkeypatch, route, selector
 ):
@@ -233,3 +233,82 @@ def test_duplicate_exact_hash_or_incomplete_selector_never_dispatches(
     assert response.status_code in (404, 409)
     assert response.json()["success"] is False
     dispatch.assert_not_awaited()
+
+
+@pytest.mark.parametrize("selector", [False, True, 0, 1, [], {}, ["aaaa1111"], ""])
+@pytest.mark.parametrize("command", ["manage_scene", "execute_custom_tool"])
+def test_single_editor_rejects_invalid_target_without_dispatch(
+    routing_client, monkeypatch, selector, command
+):
+    sessions = SessionList(
+        sessions={
+            "only": SessionDetails(
+                project="Game@2026", hash="aaaa1111", unity_version="6000", connected_at="now"
+            )
+        }
+    )
+    monkeypatch.setattr(PluginHub, "get_sessions", AsyncMock(return_value=sessions))
+    dispatch = AsyncMock(return_value={"success": True})
+    execute = AsyncMock()
+    monkeypatch.setattr(PluginHub, "send_command", dispatch)
+    monkeypatch.setattr(CustomToolService.get_instance(), "execute_tool", execute)
+    response = routing_client.post(
+        "/api/command",
+        json={
+            "type": command,
+            "unity_instance": selector,
+            "params": {"tool_name": "OwnedMutation"},
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["data"]["dispatch"] == "not_dispatched"
+    dispatch.assert_not_awaited()
+    execute.assert_not_awaited()
+
+
+@pytest.mark.parametrize("route", ["command", "custom-tools"])
+@pytest.mark.parametrize("selector", ["Game@2026@aaaa1111", "aaaa1111", None])
+def test_project_name_at_sign_and_omission_preserve_exact_target(
+    routing_client, monkeypatch, route, selector
+):
+    sessions = SessionList(
+        sessions={
+            "only": SessionDetails(
+                project="Game@2026", hash="aaaa1111", unity_version="6000", connected_at="now"
+            )
+        }
+    )
+    monkeypatch.setattr(PluginHub, "get_sessions", AsyncMock(return_value=sessions))
+    dispatch = AsyncMock(return_value={"success": True})
+    listing = AsyncMock(return_value=[])
+    monkeypatch.setattr(PluginHub, "send_command", dispatch)
+    monkeypatch.setattr(CustomToolService.get_instance(), "list_registered_tools", listing)
+    if route == "command":
+        response = routing_client.post(
+            "/api/command", json={"type": "manage_scene", "unity_instance": selector}
+        )
+        dispatch.assert_awaited_once()
+        assert dispatch.await_args.args[0] == "only"
+    else:
+        response = routing_client.get(
+            "/api/custom-tools", params={"instance": selector} if selector else {}
+        )
+        listing.assert_awaited_once_with("aaaa1111")
+    assert response.status_code == 200
+
+
+def test_custom_tools_rejects_empty_selector_with_single_editor(routing_client, monkeypatch):
+    sessions = SessionList(
+        sessions={
+            "only": SessionDetails(
+                project="Game", hash="aaaa1111", unity_version="6000", connected_at="now"
+            )
+        }
+    )
+    monkeypatch.setattr(PluginHub, "get_sessions", AsyncMock(return_value=sessions))
+    listing = AsyncMock(return_value=[])
+    monkeypatch.setattr(CustomToolService.get_instance(), "list_registered_tools", listing)
+    response = routing_client.get("/api/custom-tools", params={"instance": ""})
+    assert response.status_code == 400
+    assert response.json()["data"]["dispatch"] == "not_dispatched"
+    listing.assert_not_awaited()
