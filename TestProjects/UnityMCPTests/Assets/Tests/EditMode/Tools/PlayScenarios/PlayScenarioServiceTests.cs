@@ -17,6 +17,7 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         private const string SessionKey = "MCPForUnity.PlayScenario.V1";
         private static readonly Type Service = typeof(PlayScenarioService);
         private readonly Dictionary<FieldInfo, object> _previous = new Dictionary<FieldInfo, object>();
+        private readonly Dictionary<FieldInfo, object> _previousCheckpoint = new Dictionary<FieldInfo, object>();
         private string _saved;
         private string[] _savedDefinitions;
 
@@ -34,6 +35,9 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             _savedDefinitions = new[] { SessionState.GetString(SessionKey + ".definition.0", ""), SessionState.GetString(SessionKey + ".definition.1", "") };
             foreach (FieldInfo field in Service.GetFields(BindingFlags.Static | BindingFlags.NonPublic).Where(field => !field.IsLiteral && !field.IsInitOnly))
                 _previous[field] = field.GetValue(null);
+            var checkpoint = Service.GetField("Checkpoint", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            foreach (FieldInfo field in checkpoint.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic).Where(field => !field.IsInitOnly))
+                _previousCheckpoint[field] = field.GetValue(checkpoint);
         }
 
         [TearDown]
@@ -44,6 +48,9 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             Invoke("Detach");
             foreach (var pair in _previous)
                 pair.Key.SetValue(null, pair.Value);
+            var checkpoint = Service.GetField("Checkpoint", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            foreach (var pair in _previousCheckpoint)
+                pair.Key.SetValue(checkpoint, pair.Value);
             if (_saved.Length == 0)
                 SessionState.EraseString(SessionKey);
             else
@@ -51,6 +58,73 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             for (int i = 0; i < 2; i++)
                 SessionState.SetString(SessionKey + ".definition." + i, _savedDefinitions[i]);
             _previous.Clear();
+            _previousCheckpoint.Clear();
+        }
+
+        [Test]
+        public void FailedStartRestoresPreviousJobAndCheckpointAndCanBeRetried()
+        {
+            if (EditorApplication.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode)
+                Assert.Ignore("This test requires a stable Edit Mode editor.");
+            PlayScenarioRun previous = StartingRun();
+            var previousEngine = new PlayScenarioEngine(previous, new UnityPlayScenarioHost());
+            previousEngine.Cancel(previous.StartedUnixMs + 1);
+            Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, previousEngine);
+            Service.GetField("_finalized", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, true);
+            var checkpoint = (PlayScenarioSessionCheckpoint)Service.GetField("Checkpoint", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            checkpoint.Write(previous, previous.Scenario);
+            string saved = SessionState.GetString(SessionKey, "");
+            string[] slots = { SessionState.GetString(SessionKey + ".definition.0", ""), SessionState.GetString(SessionKey + ".definition.1", "") };
+            string jobId = Guid.NewGuid().ToString("N");
+            checkpoint.BeforePointerWrite = () => throw new InvalidOperationException("injected checkpoint failure");
+            try
+            {
+                Assert.Throws<InvalidOperationException>(() => PlayScenarioService.Start(previous.Scenario, 1, 30, jobId));
+                Assert.AreSame(previousEngine, Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null));
+                Assert.IsFalse(PlayScenarioService.IsBusy);
+                Assert.AreEqual(0, PlayScenarioService.ActiveSubscriptionCount);
+                Assert.AreEqual(0, QueuedPlayRequests());
+                Assert.AreEqual(saved, SessionState.GetString(SessionKey, ""));
+                Assert.AreEqual(slots[0], SessionState.GetString(SessionKey + ".definition.0", ""));
+                Assert.AreEqual(slots[1], SessionState.GetString(SessionKey + ".definition.1", ""));
+                Assert.AreEqual(previous.JobId, (string)checkpoint.Read(saved)["job_id"]);
+                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var suite = new PlayScenarioSuiteDefinition
+                {
+                    Name = "admission-suite",
+                    Scenarios = new List<string> { previous.Scenario.Name },
+                };
+                var suiteState = PlayScenarioSuiteRunner.Create(suite, new[] { previous.Scenario }, 1, 30, null, now);
+                var runner = new PlayScenarioSuiteRunner(
+                    suiteState,
+                    (definition, repeats, timeout, childId, revision) =>
+                    {
+                        PlayScenarioService.Start(definition, repeats, timeout, childId, revision);
+                        return null;
+                    },
+                    id => null,
+                    id => null,
+                    () => { },
+                    () => PlayScenarioService.IsBusy
+                );
+                runner.Tick(now, true);
+                Assert.AreEqual("failed", suiteState.Report.Status);
+                Assert.AreEqual("failed", suiteState.Report.Scenarios[0].Status);
+                Assert.IsFalse(PlayScenarioService.IsBusy, "A terminal suite must not leave its child running.");
+                Assert.AreEqual(0, PlayScenarioService.ActiveSubscriptionCount);
+                Assert.AreEqual(0, QueuedPlayRequests());
+            }
+            finally
+            {
+                checkpoint.BeforePointerWrite = null;
+            }
+            var response = (IMcpResponse)PlayScenarioService.Start(previous.Scenario, 1, 30, jobId);
+            Assert.IsTrue(response.Success);
+            var current = (PlayScenarioEngine)Service.GetField("_engine", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            Assert.AreEqual(jobId, current.State.JobId);
+            Assert.IsTrue(current.State.Steps.All(step => step.Status == "pending"));
+            Invoke("Detach");
+            current.Release();
         }
 
         [Test]

@@ -48,6 +48,9 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
                 PlayScenarioRun state = Checkpoint.Read(saved).ToObject<PlayScenarioRun>(JsonSerializer.Create());
                 if (state == null)
                     return;
+                _failureCapture?.Dispose();
+                _failureCapture = null;
+                _processedUnexpectedLogCount = 0;
                 _engine = CreateEngine(state);
                 _finalized = !_engine.Running;
                 if (_engine.Running)
@@ -138,24 +141,65 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             {
                 // A missing package registration must not prevent execution in an embedded project.
             }
-            _engine = CreateEngine(state);
-            _finalized = false;
-            _suppressCapture = false;
-            Attach();
-            if (EditorApplication.isPlaying)
-                _engine.EnteredPlayMode();
-            Synchronize(true);
-            // Return the job before a possible domain reload. No transport retry is needed.
-            if (!EditorApplication.isPlaying)
-                _playRequest = EditorMainThreadWakeup.Schedule(RequestPlay);
-            return new SuccessResponse("Scenario job started.", Snapshot(state));
+            var previousEngine = _engine;
+            bool previousFinalized = _finalized;
+            bool previousSuppressCapture = _suppressCapture;
+            int previousProcessedLogs = _processedUnexpectedLogCount;
+            var previousCapture = _failureCapture;
+            var previousLogs = _logs;
+            string previousActivityJobId = _activityJobId;
+            int previousActivityRevision = _activityRevision;
+            bool previousActivityFinalized = _activityFinalized;
+            bool? previousActivityResourcesReleased = _activityResourcesReleased;
+            try
+            {
+                _engine = CreateEngine(state);
+                _failureCapture = null;
+                _processedUnexpectedLogCount = 0;
+                _finalized = false;
+                _suppressCapture = false;
+                Attach();
+                if (EditorApplication.isPlaying)
+                    _engine.EnteredPlayMode();
+                // Prepare all fallible work before publishing the durable checkpoint.
+                var response = new SuccessResponse("Scenario job started.", Snapshot(state));
+                if (!EditorApplication.isPlaying)
+                    _playRequest = EditorMainThreadWakeup.Schedule(RequestPlay);
+                Synchronize(true);
+                try
+                {
+                    previousCapture?.Dispose();
+                }
+                catch (Exception)
+                {
+                    // Admission is already committed; an old capture cannot undo it.
+                }
+                return response;
+            }
+            catch
+            {
+                Detach();
+                if (_failureCapture != previousCapture)
+                    _failureCapture?.Dispose();
+                _failureCapture = previousCapture;
+                _logs = previousLogs;
+                if (_engine != previousEngine)
+                    _engine?.Release();
+                _engine = previousEngine;
+                _finalized = previousFinalized;
+                _suppressCapture = previousSuppressCapture;
+                _processedUnexpectedLogCount = previousProcessedLogs;
+                _activityJobId = previousActivityJobId;
+                _activityRevision = previousActivityRevision;
+                _activityFinalized = previousActivityFinalized;
+                _activityResourcesReleased = previousActivityResourcesReleased;
+                OperationActivity.Invalidate();
+                throw;
+            }
         }
 
         private static PlayScenarioEngine CreateEngine(PlayScenarioRun state)
         {
-            _failureCapture?.Dispose();
-            _failureCapture = null;
-            _processedUnexpectedLogCount = 0;
             return new PlayScenarioEngine(
                 state,
                 new UnityPlayScenarioHost(state.Scenario.LogPolicy, state.Scenario.UsesExplicitSceneSemantics),

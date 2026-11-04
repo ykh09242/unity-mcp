@@ -20,6 +20,7 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         private WeakReference frozen;
         private string identity;
         private int frozenBytes;
+        internal Action BeforePointerWrite;
 
         internal PlayScenarioSessionCheckpoint(string key, Type type, string member, int? maximumBytes = null)
         {
@@ -64,13 +65,31 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
             int bytes = inputs == null ? frozenBytes : Encoding.UTF8.GetByteCount(inputs);
             if (maximumBytes.HasValue && (long)bytes + Encoding.UTF8.GetByteCount(json) > maximumBytes.Value)
                 throw new InvalidOperationException("Suite session snapshot exceeds its 40 MiB limit.");
-            if (changed)
-                SessionState.SetString(key + ".definition." + next[0], inputs);
-            // If either write fails, the previous pointer still resolves to its other slot.
-            SessionState.SetString(key, json);
+            string slot = key + ".definition." + next[0];
+            string previousSlot = changed ? SessionState.GetString(slot, "") : null;
+            try
+            {
+                if (changed)
+                    SessionState.SetString(slot, inputs);
+                BeforePointerWrite?.Invoke();
+                // The prior pointer continues to resolve until this commit succeeds.
+                SessionState.SetString(key, json);
+            }
+            catch
+            {
+                if (changed)
+                {
+                    if (previousSlot.Length == 0)
+                        SessionState.EraseString(slot);
+                    else
+                        SessionState.SetString(slot, previousSlot);
+                }
+                throw;
+            }
             if (changed)
             {
-                SessionState.EraseString(key + ".definition." + (next[0] == '0' ? '1' : '0'));
+                // Keep the previous slot until the next replacement.  The pointer write
+                // is the commit point, so no fallible storage operation follows it.
                 identity = next;
                 frozenBytes = bytes;
                 frozen = new WeakReference(definition);
