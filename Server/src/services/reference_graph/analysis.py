@@ -566,18 +566,14 @@ def parse_csharp(
     usings, aliases = imports[""]["usings"], imports[""]["aliases"]
     candidates = []
     declarations = {}
+    generic_calls = _generic_call_starts(tokens, pairs, check)
     for i, token in enumerate(tokens):
         check()
         if token.text != "(" or i not in pairs:
             continue
         name_end = i - 1
         if name_end >= 0 and tokens[name_end].text == ">":
-            depth = 1
-            name_end -= 1
-            while name_end >= 0 and depth:
-                check()
-                depth += (tokens[name_end].text == ">") - (tokens[name_end].text == "<")
-                name_end -= 1
+            name_end = generic_calls.get(i, 0) - 1
         if name_end < 0 or tokens[name_end].kind != "id" or tokens[name_end].text in _CONTROL:
             continue
         start = name_end
@@ -763,7 +759,9 @@ def parse_csharp(
             import_scopes[i],
             tuple(argument_names),
             tuple(_argument_type(part, parameter_types) for part in argument_parts),
-            _generic_type(tokens, i, check),
+            _generic_type(tokens[generic_calls[i] + 1 : i - 1], check)
+            if i in generic_calls
+            else "",
         )
         method_calls[identity].append(len(calls))
         calls.append(call)
@@ -804,24 +802,35 @@ def parse_csharp(
     )
 
 
-def _generic_type(
-    tokens: list[Token], opening: int, check: Callable[[], None] = lambda: None
-) -> str:
-    if not opening or tokens[opening - 1].text != ">":
-        return ""
-    depth, start = 1, opening - 2
-    while start >= 0:
+def _generic_call_starts(
+    tokens: list[Token], pairs: dict[int, int], check: Callable[[], None]
+) -> dict[int, int]:
+    """Match type argument lists once; a comparison before '(' has no list to consume."""
+    openings, calls = [], {}
+    for i, token in enumerate(tokens):
         check()
-        depth += (tokens[start].text == ">") - (tokens[start].text == "<")
-        if not depth:
-            parts = tokens[start + 1 : opening - 1]
-            return (
-                "".join(token.text for token in parts)
-                if len(_split(parts, ",", check)) == 1
-                else ""
-            )
-        start -= 1
-    return ""
+        if token.text == "<":
+            openings.append(i)
+        elif not openings:
+            continue
+        elif token.text == ">":
+            start = openings.pop()
+            if i + 1 < len(tokens) and tokens[i + 1].text == "(":
+                calls[i + 1] = start
+                openings.clear()  # An invocation cannot occur inside a type argument.
+        elif token.text in (")", "]"):
+            while openings and openings[-1] > pairs.get(i, -1):
+                openings.pop()
+        elif token.text == "(":
+            if tokens[i - 1].text not in ("<", ",", "("):  # A tuple type may start here.
+                openings.clear()
+        elif token.kind != "id" and token.text not in (".", "::", ",", "?", "*", "["):
+            openings.clear()
+    return calls
+
+
+def _generic_type(parts: list[Token], check: Callable[[], None]) -> str:
+    return "".join(token.text for token in parts) if len(_split(parts, ",", check)) == 1 else ""
 
 
 def _argument_type(tokens: list[Token], parameters: dict[str, str]) -> str:

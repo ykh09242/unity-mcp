@@ -123,6 +123,35 @@ def test_constant_method_membership_does_not_scan_every_method(monkeypatch):
     assert comparisons < count * 16
 
 
+@pytest.mark.parametrize("one_statement", [True, False])
+def test_comparison_parentheses_do_not_rescan_the_source(one_statement):
+    def parse(count):
+        comparison = "a > (b + 1)"
+        conditions = (
+            "if (" + " && ".join([comparison] * count) + ") {}"
+            if one_statement
+            else ("if (" + comparison + ") {}") * count
+        )
+        source = (
+            "class Use { void Run() { "
+            + conditions
+            + 'UnityEngine.Resources.Load<Box<List<(int, string[])>>>("one"); }}'
+        )
+        checkpoints = 0
+
+        def check():
+            nonlocal checkpoints
+            checkpoints += 1
+
+        parsed = parse_csharp("script", "Assets/Use.cs", source, check=check)
+        assert [(call.name, call.target_type) for call in parsed.calls] == [
+            ("UnityEngine.Resources.Load", "Box<List<(int,string[])>>")
+        ]
+        return checkpoints
+
+    assert parse(256) < 3 * parse(128)
+
+
 @pytest.mark.parametrize("stage", ["tokens", "declarations", "expression", "preprocessor"])
 def test_parser_cooperatively_checks_cancellation_inside_work(stage, monkeypatch):
     import services.reference_graph.analysis as module
