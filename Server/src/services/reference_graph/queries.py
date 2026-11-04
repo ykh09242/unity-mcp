@@ -273,6 +273,11 @@ class GraphQueries:
                 },
                 cursor,
             )
+            if target is not None and not created and job["result"]:
+                if "_search_evidence" not in json.loads(job["result"]):
+                    raise RevisionConflict(
+                        "Path predates evidence authorization; start a new query"
+                    )
             if replay is not None:
                 return replay
             visited = job["visited"]
@@ -284,6 +289,17 @@ class GraphQueries:
                 connection.execute(
                     "INSERT INTO graph_query_queue(job,node) VALUES (?,?)", (job["id"], node)
                 )
+
+            # Search progress depends on every examined protected edge, even
+            # when it is not on the eventual route. Retain only that evidence
+            # in the bounded replay payload for reauthorization on later pages.
+            def evidence_key(edge):
+                if edge["provider"].startswith("external:"):
+                    return (edge["provider"], edge["owner"])
+                return (edge["provider"], edge["id"])
+
+            prior = json.loads(job["result"]) if target is not None and job["result"] else {}
+            protected = {evidence_key(edge): edge for edge in prior.get("_search_evidence", [])}
             edges, budget = [], limit * 2
             page_budget, full = PageBudget(), False
             examined = 0
@@ -315,7 +331,7 @@ class GraphQueries:
                             full = True
                             break
                     else:
-                        # Search retains only parent links, never aggregate evidence.
+                        # Enforce the per-edge budget even when no route is returned.
                         PageBudget().require(row)
                     neighbor = row["target"] if direction == "outgoing" else row["owner"]
                     inserted = connection.execute(
@@ -339,7 +355,25 @@ class GraphQueries:
                     else:
                         # Discovery still rejects corrupt evidence outside the
                         # chosen route, but need not retain its decoded payload.
-                        self._evidence(row)
+                        evidence = self._evidence(row)
+                        if evidence["provider"].startswith(("external:", "runtime:")) or (
+                            evidence["provider"] == "manual"
+                            and (
+                                evidence["owner"].startswith("external:")
+                                or evidence["target"].startswith("external:")
+                            )
+                        ):
+                            protected[evidence_key(evidence)] = {
+                                key: evidence[key]
+                                for key in (
+                                    "id",
+                                    "provider",
+                                    "owner",
+                                    "target",
+                                    "source_path",
+                                    "provenance",
+                                )
+                            }
                     examined += 1
                     processed += 1
                     last_edge = row["id"]
@@ -390,6 +424,7 @@ class GraphQueries:
                     "path_found": True if route_node else None if more else False,
                     "path_order": "target_to_start",
                     "target": target,
+                    "_search_evidence": list(protected.values()),
                 }
             return self._finish_page(
                 connection,

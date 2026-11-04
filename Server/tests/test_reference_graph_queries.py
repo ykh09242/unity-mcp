@@ -74,6 +74,25 @@ def test_impact_preserves_cycles_multiple_routes_and_replayable_pages(graph):
     assert queries.release(first["query_id"])
 
 
+def test_path_retains_one_authorization_record_per_external_file(graph):
+    store, queries = graph
+    store.set_source(
+        "external:fixture", {"root": "/synthetic", "include": ["*.json"]}, expected_version=0
+    )
+    generation = store.observe(
+        "file", "external:fixture", "one", path="data.json", source_version=1
+    )
+    store.publish(
+        "file", "external:fixture", generation, [Edge("one", "external"), Edge("two", "external")]
+    )
+    first = queries.path("file", "missing", direction="outgoing", limit=1)
+    second = queries.path(
+        "file", "missing", direction="outgoing", limit=1, cursor=first["next_cursor"]
+    )
+    assert len(second["_search_evidence"]) == 1
+    assert second["visited_nodes"] == 3
+
+
 def test_large_fanout_uses_continuations_and_no_total_result_cap(graph):
     store, queries = graph
     publish(store, "root", [f"child{i}" for i in range(1200)])

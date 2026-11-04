@@ -234,6 +234,136 @@ async def external_fixture(service, sender, ctx, root, monkeypatch, files=1):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("revoke_at", ["first", "continuation", "route", "replay"])
+async def test_path_rechecks_all_search_evidence_before_delivery(
+    setup, tmp_path, monkeypatch, revoke_at
+):
+    service, sender, ctx = setup
+    root = tmp_path / "settings"
+    entry, target = await external_fixture(service, sender, ctx, root, monkeypatch)
+    owner = next(iter(entry.workspace.external_inputs("external:fixture").values()))["owner"]
+    await service.execute(
+        ctx,
+        "declare",
+        {
+            "id": "route",
+            "owner": target,
+            "edge": {"target": "destination", "kind": "declared"},
+            "expected_version": 0,
+        },
+    )
+    options = {"node": owner, "target": "destination", "direction": "outgoing", "limit": 1}
+    if revoke_at != "first":
+        first = (await service.execute(ctx, "path", options))["data"]
+        assert first["visited_nodes"] == 2 and first["path_found"] is None
+        options["cursor"] = first["next_cursor"]
+        if revoke_at in {"route", "replay"}:
+            second = (await service.execute(ctx, "path", options))["data"]
+            assert second["path_found"] is True
+            if revoke_at == "route":
+                options["cursor"] = second["next_cursor"]
+    (root / "0.json").unlink()
+    with pytest.raises(FileNotFoundError):
+        await service.execute(ctx, "path", options)
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_path_rechecks_external_manual_endpoint_during_search(setup, tmp_path, monkeypatch):
+    service, sender, ctx = setup
+    root = tmp_path / "settings"
+    entry, _ = await external_fixture(service, sender, ctx, root, monkeypatch)
+    owner = entry.workspace.external_inputs("external:fixture")["0.json"]["owner"]
+    await service.execute(
+        ctx,
+        "declare",
+        {
+            "id": "endpoint",
+            "owner": "start",
+            "edge": {"target": owner, "kind": "declared"},
+            "expected_version": 0,
+        },
+    )
+    (root / "0.json").unlink()
+    with pytest.raises(FileNotFoundError):
+        await service.execute(
+            ctx, "path", {"node": "start", "target": "missing", "direction": "outgoing", "limit": 1}
+        )
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_path_stops_further_external_file_checks(setup, tmp_path, monkeypatch):
+    service, sender, ctx = setup
+    root = tmp_path / "settings"
+    entry, _ = await external_fixture(service, sender, ctx, root, monkeypatch, files=2)
+    for path, item in entry.workspace.external_inputs("external:fixture").items():
+        await service.execute(
+            ctx,
+            "declare",
+            {
+                "id": path,
+                "owner": "start",
+                "edge": {"target": item["owner"], "kind": "declared"},
+                "expected_version": 0,
+            },
+        )
+    started, release = threading.Event(), threading.Event()
+    calls = []
+    stamp = ExternalSource.stamp
+
+    def pause_first(adapter, path):
+        calls.append(path)
+        if len(calls) == 1:
+            started.set()
+            assert release.wait(watchdog_timeout())
+        return stamp(adapter, path)
+
+    monkeypatch.setattr(ExternalSource, "stamp", pause_first)
+    task = asyncio.create_task(
+        service.execute(
+            ctx,
+            "path",
+            {
+                "node": "start",
+                "target": "missing",
+                "direction": "outgoing",
+                "limit": 2,
+            },
+        )
+    )
+    assert await asyncio.to_thread(started.wait, watchdog_timeout())
+    task.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(calls) == 1
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_path_does_not_validate_unrelated_external_files(setup, tmp_path, monkeypatch):
+    service, sender, ctx = setup
+    root = tmp_path / "settings"
+    entry, target = await external_fixture(service, sender, ctx, root, monkeypatch, files=2)
+    owner = entry.workspace.external_inputs("external:fixture")["0.json"]["owner"]
+    (root / "1.json").unlink()
+    result = await service.execute(
+        ctx,
+        "path",
+        {
+            "node": owner,
+            "target": target,
+            "direction": "outgoing",
+            "limit": 1,
+        },
+    )
+    assert result["data"]["path_found"] is True
+    await service.aclose()
+
+
+@pytest.mark.asyncio
 async def test_empty_external_result_requires_explicit_checked_snapshot(
     setup, tmp_path, monkeypatch
 ):

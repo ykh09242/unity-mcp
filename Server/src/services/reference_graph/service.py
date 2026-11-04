@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import threading
 import time
 
 from core.config import config
@@ -41,6 +42,15 @@ from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
 from transport.command_timeout import configured_wait_timeout
+
+
+_exploration_stop = contextvars.ContextVar("reference_graph_exploration_stop", default=None)
+
+
+def _check_exploration_stop() -> None:
+    stop = _exploration_stop.get()
+    if stop is not None and stop.is_set():
+        raise InterruptedError("Exploration validation cancelled")
 
 
 class ScopeChanged(RevisionConflict):
@@ -815,6 +825,7 @@ class ReferenceGraphService:
         adapters = {}
         repositories = {}
         for provider, identity in pairs:
+            _check_exploration_stop()
             cached = metadata.get((provider, identity))
             if cached is None or not cached["enabled"]:
                 raise RevisionConflict("External evidence changed; synchronize again")
@@ -844,7 +855,9 @@ class ReferenceGraphService:
             raise RevisionConflict("Graph changed before delivery; restart the page")
         return bool(stale)
 
-    def _validate_manual_endpoints(self, workspace: GraphWorkspace, owners) -> None:
+    def _validate_manual_endpoints(
+        self, workspace: GraphWorkspace, owners, *, check_access: bool = False
+    ) -> None:
         owners = {owner for owner in owners if owner.startswith("external:")}
         if not owners:
             return
@@ -856,6 +869,7 @@ class ReferenceGraphService:
         policy = workspace.policy(bounded=True)
         adapters = {}
         for row in rows:
+            _check_exploration_stop()
             if not row["enabled"]:
                 raise RevisionConflict("Manual endpoint source is no longer enabled")
             if row["provider"] not in adapters:
@@ -866,6 +880,8 @@ class ReferenceGraphService:
                 raise RevisionConflict(
                     "Manual endpoint is excluded by the current collection policy"
                 )
+            if check_access:
+                adapters[row["provider"]].stamp(row["path"])
 
     def _validate_checked_sources(
         self, workspace: GraphWorkspace, expected: dict, revision: int
@@ -896,6 +912,16 @@ class ReferenceGraphService:
         if workspace.store.revision() != revision:
             raise RevisionConflict("Graph changed before checked delivery; restart the page")
 
+    async def _validate_exploration_page(self, workspace: GraphWorkspace, result: dict) -> bool:
+        stop = threading.Event()
+        token = _exploration_stop.set(stop)
+        try:
+            return await drained_thread(
+                self._validate_exploration, workspace, result, _cancel_event=stop
+            )
+        finally:
+            _exploration_stop.reset(token)
+
     def _validate_exploration(self, workspace: GraphWorkspace, result: dict) -> bool:
         """Reauthorize current and historical evidence without retaining grants."""
         wanted = result.get("sources", {})
@@ -923,7 +949,20 @@ class ReferenceGraphService:
                     adapters[provider].stamp(path)
             changed = False
         else:
-            changed = self._validate_external(workspace, result)
+            evidence = result.get("_search_evidence", [])
+            self._validate_manual_endpoints(
+                workspace,
+                (
+                    node
+                    for edge in evidence
+                    if edge["provider"] == "manual"
+                    for node in (edge["owner"], edge["target"])
+                ),
+                check_access=True,
+            )
+            changed = self._validate_external(
+                workspace, {**result, "edges": result.get("edges", []) + evidence}
+            )
         for provider in adapters:
             self._operator_grant(workspace.store.scope, sources[provider]["config"])
         if workspace.store.revision() != result["revision"]:
@@ -1326,7 +1365,7 @@ class ReferenceGraphService:
             await drained_thread(self._validate_receipt_sources, workspace, source_fence)
             editor = await entry.collect("status")
             if action == "mutation_diff":
-                external_changed = await drained_thread(self._validate_exploration, workspace, data)
+                external_changed = await self._validate_exploration_page(workspace, data)
         elif action == "query":
             if prepared_page is not None:
                 data, local_query_page = prepared_page, page_state is not None
@@ -1383,7 +1422,7 @@ class ReferenceGraphService:
 
                 data = await drained_thread(produce_page)
             if action in {"explain", "impact", "path", "snapshot", "diff"}:
-                external_changed = await drained_thread(self._validate_exploration, workspace, data)
+                external_changed = await self._validate_exploration_page(workspace, data)
         elif action == "declarations":
             data = {
                 "declarations": await drained_thread(
@@ -1496,7 +1535,7 @@ class ReferenceGraphService:
                 self._validate_external, workspace, data, options.get("node")
             )
         elif action in {"explain", "impact", "path", "snapshot", "diff", "mutation_diff"}:
-            external_changed |= await drained_thread(self._validate_exploration, workspace, data)
+            external_changed |= await self._validate_exploration_page(workspace, data)
         if checked_providers is not None:
             await drained_thread(
                 self._validate_checked_sources, workspace, checked_providers, data["revision"]
@@ -1592,6 +1631,7 @@ class ReferenceGraphService:
             current = False
             status["queue_idle"] = False
         # Internal bounded authorization inputs are never part of tool output.
+        data.pop("_search_evidence", None)
         data.pop("_history_access", None)
         data.pop("_history_nodes", None)
         runtime_policy = data.pop("_runtime_policy", None)
