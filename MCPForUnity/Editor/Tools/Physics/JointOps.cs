@@ -320,6 +320,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             Undo.RecordObject(joint, $"Configure {joint.GetType().Name}");
             foreach (var change in changes)
                 change();
+            if (PrefabUtility.IsPartOfPrefabInstance(joint))
+                PrefabUtility.RecordPrefabInstancePropertyModifications(joint);
             EditorUtility.SetDirty(joint);
 
             return new

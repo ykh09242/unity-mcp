@@ -1,5 +1,12 @@
 # Prefab authoring and Editor lifecycle recovery
 
+## Persist direct component changes
+
+Physics body/joint configuration, collider material assignment, and UI component
+configuration record property overrides on the component that was changed. Undo
+and Redo remain available. Save the owning scene to persist instance overrides;
+these operations do not apply the changes back to the prefab asset.
+
 ## Inspect prefab changes before saving
 
 Use `prefab_contents` with `action="modify_contents"` and `preview_only=true` to

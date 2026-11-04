@@ -353,6 +353,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             Undo.RecordObject(rb, "Configure Rigidbody");
             foreach (var change in changes)
                 change();
+            if (PrefabUtility.IsPartOfPrefabInstance(rb))
+                PrefabUtility.RecordPrefabInstancePropertyModifications(rb);
             EditorUtility.SetDirty(rb);
 
             return new
@@ -491,6 +493,8 @@ namespace MCPForUnity.Editor.Tools.Physics
             Undo.RecordObject(rb2d, "Configure Rigidbody2D");
             foreach (var change in changes)
                 change();
+            if (PrefabUtility.IsPartOfPrefabInstance(rb2d))
+                PrefabUtility.RecordPrefabInstancePropertyModifications(rb2d);
             EditorUtility.SetDirty(rb2d);
 
             return new

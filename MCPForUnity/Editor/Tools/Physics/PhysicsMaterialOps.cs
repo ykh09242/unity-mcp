@@ -107,6 +107,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     Undo.RecordObject(collider3D, "Assign Physics Material");
                     collider3D.sharedMaterial = mat3D;
+                    if (PrefabUtility.IsPartOfPrefabInstance(collider3D))
+                        PrefabUtility.RecordPrefabInstancePropertyModifications(collider3D);
                     EditorUtility.SetDirty(collider3D);
                     return new
                     {
@@ -145,6 +147,8 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     Undo.RecordObject(collider2D, "Assign Physics Material 2D");
                     collider2D.sharedMaterial = mat2D;
+                    if (PrefabUtility.IsPartOfPrefabInstance(collider2D))
+                        PrefabUtility.RecordPrefabInstancePropertyModifications(collider2D);
                     EditorUtility.SetDirty(collider2D);
                     return new
                     {

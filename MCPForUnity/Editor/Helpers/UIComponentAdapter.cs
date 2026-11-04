@@ -87,6 +87,8 @@ namespace MCPForUnity.Editor.Helpers
                 Property("visualTreeAsset").SetValue(Component, source);
                 Property("sortingOrder").SetValue(Component, sortOrder);
             }
+            if (PrefabUtility.IsPartOfPrefabInstance(Component))
+                PrefabUtility.RecordPrefabInstancePropertyModifications(Component);
             EditorUtility.SetDirty(Component);
         }
 
