@@ -9,6 +9,7 @@ from enum import StrEnum
 from typing import Final, TypeAlias
 from urllib.parse import parse_qs, urlsplit
 
+from core.batch_limits import ABSOLUTE_MAX_COMMANDS_PER_BATCH
 from services.animator_actions import (
     RUNTIME_ANIMATOR_ACTIONS,
     animator_runtime_opt_in,
@@ -450,8 +451,12 @@ def required_permissions(
         return frozenset({Permission.RUN})
     if name in {"batch_execute", "batch_validate", "batch_apply_preview"}:
         commands = params.get("commands")
-        if not isinstance(commands, list) or not 1 <= len(commands) <= 100:
+        if not isinstance(commands, list) or not commands:
             raise OperationPermissionError()
+        if len(commands) > ABSOLUTE_MAX_COMMANDS_PER_BATCH:
+            raise ValueError(
+                f"batch_execute supports at most {ABSOLUTE_MAX_COMMANDS_PER_BATCH} commands; received {len(commands)}"
+            )
         required: set[Permission] = set()
         for member in commands:
             if not isinstance(member, dict):
