@@ -194,8 +194,7 @@ namespace MCPForUnity.Editor.Clients
                 bool canAutoRewrite =
                     attemptAutoRewrite
                     && generatedStdio
-                    && OwnsGeneratedEntry(path, serverConfig)
-                    && EditorPrefs.GetBool(EditorPrefKeys.AutoRegisterEnabled, true);
+                    && GeneratedClientConfigOwnership.CanAutomaticallyRefresh("Json", path, serverConfig.ToString(Formatting.None));
                 if (hasVersionMismatch)
                 {
                     if (canAutoRewrite)
@@ -278,9 +277,16 @@ namespace MCPForUnity.Editor.Clients
             return null;
         }
 
-        private static bool OwnsGeneratedEntry(string path, JObject entry)
+        internal override bool CanAutomaticallyRefresh()
         {
-            return GeneratedClientConfigOwnership.Owns("Json", path, entry.ToString(Formatting.None));
+            string path = GetConfigPath();
+            if (!File.Exists(path))
+                return false;
+            var root = JObject.Parse(File.ReadAllText(path));
+            string container = string.IsNullOrEmpty(client.ServerContainerKey) ? "mcpServers" : client.ServerContainerKey;
+            var entry =
+                (client.IsVsCodeLayout ? root["servers"]?["unityMCP"] ?? root["mcp"]?["servers"]?["unityMCP"] : root[container]?["unityMCP"]) as JObject;
+            return GeneratedClientConfigOwnership.CanAutomaticallyRefresh("Json", path, IsGeneratedStdioEntry(entry) ? entry.ToString(Formatting.None) : null);
         }
 
         private string WriteGeneratedConfiguration(string path)

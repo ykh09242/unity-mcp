@@ -1,6 +1,7 @@
 using System;
 using System.Security.Cryptography;
 using System.Text;
+using MCPForUnity.Editor.Constants;
 using UnityEditor;
 
 namespace MCPForUnity.Editor.Clients
@@ -9,6 +10,19 @@ namespace MCPForUnity.Editor.Clients
     internal static class GeneratedClientConfigOwnership
     {
         internal static string Key(string format, string path) => "MCPForUnity.Generated" + format + "Config." + Fingerprint(path);
+
+        internal static bool CanAutomaticallyRefresh(string format, string path, string entry) =>
+            EditorPrefs.GetBool(EditorPrefKeys.AutoRegisterEnabled, true) && Owns(format, path, entry);
+
+        internal static string Receipt(string format, string path) => EditorPrefs.HasKey(Key(format, path)) ? EditorPrefs.GetString(Key(format, path)) : null;
+
+        internal static void RestoreReceipt(string format, string path, string receipt)
+        {
+            if (receipt == null)
+                EditorPrefs.DeleteKey(Key(format, path));
+            else
+                EditorPrefs.SetString(Key(format, path), receipt);
+        }
 
         internal static bool Owns(string format, string path, string entry)
         {
@@ -20,12 +34,10 @@ namespace MCPForUnity.Editor.Clients
 
         internal static void Record(string format, string path, string entry)
         {
-            string key = Key(format, path);
-            if (entry == null)
-                EditorPrefs.DeleteKey(key);
-            else
-                EditorPrefs.SetString(key, Fingerprint(entry));
+            RestoreReceipt(format, path, EntryReceipt(entry));
         }
+
+        internal static string EntryReceipt(string entry) => entry == null ? null : Fingerprint(entry);
 
         private static string Fingerprint(string value)
         {

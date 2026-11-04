@@ -1,12 +1,10 @@
 using System;
-using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Clients;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
-using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -72,31 +70,15 @@ namespace MCPForUnity.Editor.Migrations
                     if (!configurator.SupportsAutoConfigure)
                         continue;
 
-                    // Handle CLI-based configurators (e.g., Claude Code CLI)
-                    // CheckStatus with attemptAutoRewrite=true will auto-reregister if version mismatch
-                    if (configurator is ClaudeCliMcpConfigurator cliConfigurator)
-                    {
-                        var previousStatus = configurator.Status;
-                        configurator.CheckStatus(attemptAutoRewrite: true);
-                        if (configurator.Status != previousStatus)
-                        {
-                            touchedAny = true;
-                        }
-                        continue;
-                    }
-
-                    // Handle JSON file-based configurators
-                    if (!ConfigUsesStdIo(configurator.Client))
+                    // A source/version migration must preserve the stored transport. Normal
+                    // status refresh may follow a selected transport, but migration never does.
+                    if (EditorConfigurationCache.Instance.UseHttpTransport || !configurator.CanAutomaticallyRefresh())
                         continue;
 
-                    // Skip clients that don't support the current transport setting —
-                    // Configure() would throw (e.g., Claude Desktop when HTTP is enabled).
-                    bool useHttp = EditorConfigurationCache.Instance.UseHttpTransport;
-                    if (useHttp && !configurator.Client.SupportsHttpTransport)
-                        continue;
-
-                    MCPServiceLocator.Client.ConfigureClient(configurator);
-                    touchedAny = true;
+                    if (configurator.CheckStatus(attemptAutoRewrite: true) == McpStatus.Configured)
+                        touchedAny = true;
+                    else
+                        hadFailures = true;
                 }
                 catch (Exception ex)
                 {
@@ -105,20 +87,20 @@ namespace MCPForUnity.Editor.Migrations
                 }
             }
 
+            if (hadFailures)
+            {
+                McpLog.Warn("Stdio MCP upgrade encountered errors; will retry next session.");
+                return;
+            }
+
             if (!touchedAny)
             {
-                // Nothing needed refreshing; still record version so we don't rerun every launch
+                // No eligible entries needed refreshing; still avoid rerunning each launch.
                 try
                 {
                     EditorPrefs.SetString(LastUpgradeKey, upgradeIdentity);
                 }
                 catch { }
-                return;
-            }
-
-            if (hadFailures)
-            {
-                McpLog.Warn("Stdio MCP upgrade encountered errors; will retry next session.");
                 return;
             }
 
@@ -132,43 +114,5 @@ namespace MCPForUnity.Editor.Migrations
         }
 
         internal static string GetUpgradeIdentity(string version, string source) => version + "|" + source;
-
-        private static bool ConfigUsesStdIo(McpClient client)
-        {
-            return JsonConfigUsesStdIo(client);
-        }
-
-        private static bool JsonConfigUsesStdIo(McpClient client)
-        {
-            string configPath = McpConfigurationHelper.GetClientConfigPath(client);
-            if (string.IsNullOrEmpty(configPath) || !File.Exists(configPath))
-            {
-                return false;
-            }
-
-            try
-            {
-                var root = JObject.Parse(File.ReadAllText(configPath));
-
-                JToken unityNode = null;
-                if (client.IsVsCodeLayout)
-                {
-                    unityNode = root.SelectToken("servers.unityMCP") ?? root.SelectToken("mcp.servers.unityMCP");
-                }
-                else
-                {
-                    unityNode = root.SelectToken("mcpServers.unityMCP");
-                }
-
-                if (unityNode == null)
-                    return false;
-
-                return unityNode["command"] != null;
-            }
-            catch
-            {
-                return false;
-            }
-        }
     }
 }

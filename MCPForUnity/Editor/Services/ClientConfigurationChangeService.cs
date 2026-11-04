@@ -127,7 +127,8 @@ namespace MCPForUnity.Editor.Services
         internal string TargetHash,
             ContextHash,
             Proposed,
-            OriginalEntry;
+            OriginalEntry,
+            OriginalOwnership;
         internal byte[] Original;
         internal bool Bom;
     }
@@ -138,7 +139,9 @@ namespace MCPForUnity.Editor.Services
         internal IMcpClientConfigurator Client;
         internal string TargetHash,
             WrittenEntry,
-            OriginalEntry;
+            OriginalEntry,
+            OriginalOwnership,
+            WrittenOwnership;
     }
 
     public sealed class ClientConfigurationChangeResult
@@ -233,6 +236,9 @@ namespace MCPForUnity.Editor.Services
                     ContextHash = context,
                     Original = bytes,
                     OriginalEntry = original,
+                    OriginalOwnership = OwnershipFormat(target) is string ownershipFormat
+                        ? GeneratedClientConfigOwnership.Receipt(ownershipFormat, target.Path)
+                        : null,
                     Proposed = proposal,
                     Bom = bom,
                     Operation = operation,
@@ -278,6 +284,9 @@ namespace MCPForUnity.Editor.Services
             ValidateInputs(inputs);
             if (currentContext != preview.ContextHash)
                 return "stale_context";
+            string ownershipFormat = OwnershipFormat(target);
+            if (ownershipFormat != null && GeneratedClientConfigOwnership.Receipt(ownershipFormat, target.Path) != preview.OriginalOwnership)
+                return "stale_context";
             return SameBytes(Read(target.Path), preview.Original) ? "prepared" : "stale_file";
         }
 
@@ -289,12 +298,19 @@ namespace MCPForUnity.Editor.Services
                 if (code != "prepared")
                     return Result(code);
                 string writtenEntry = Entry(preview.Proposed, target);
+                string ownershipFormat = OwnershipFormat(target);
+                string priorOwnership = ownershipFormat == null ? null : GeneratedClientConfigOwnership.Receipt(ownershipFormat, target.Path);
+                string writtenOwnership = GeneratedClientConfigOwnership.EntryReceipt(OwnershipEntry(target, preview.Proposed));
                 if (SameEntry(writtenEntry, preview.OriginalEntry, target.Format))
                 {
+                    // Explicit confirmation may adopt this exact reviewed generated entry.
+                    // Status/migration paths never adopt an entry merely from its shape.
+                    if (ownershipFormat != null)
+                        GeneratedClientConfigOwnership.RestoreReceipt(ownershipFormat, target.Path, writtenOwnership);
                     pending = null;
                     return Result("unchanged");
                 }
-                Commit(target.Path, preview.Proposed, preview.Bom, preview.Original);
+                CommitWithOwnership(target, preview.Proposed, preview.Bom, preview.Original, writtenOwnership);
                 undo = new ClientConfigurationReceipt
                 {
                     Target = target,
@@ -302,6 +318,8 @@ namespace MCPForUnity.Editor.Services
                     TargetHash = preview.TargetHash,
                     OriginalEntry = preview.OriginalEntry,
                     WrittenEntry = writtenEntry,
+                    OriginalOwnership = priorOwnership,
+                    WrittenOwnership = writtenOwnership,
                 };
                 pending = null;
                 return new ClientConfigurationChangeResult { Code = "applied", Receipt = undo };
@@ -327,6 +345,9 @@ namespace MCPForUnity.Editor.Services
                 string document = Decode(bytes, out bool bom);
                 if (!SameEntry(Entry(document, target), receipt.WrittenEntry, target.Format))
                     return Result("owned_entry_changed");
+                string ownershipFormat = OwnershipFormat(target);
+                if (ownershipFormat != null && GeneratedClientConfigOwnership.Receipt(ownershipFormat, target.Path) != receipt.WrittenOwnership)
+                    return Result("owned_entry_changed");
                 string restored;
                 if (target.Format == "json")
                 {
@@ -343,7 +364,7 @@ namespace MCPForUnity.Editor.Services
                         document,
                         receipt.OriginalEntry == null ? null : CodexConfigHelper.ParseConfiguration(receipt.OriginalEntry)
                     );
-                Commit(target.Path, restored, bom, bytes);
+                CommitWithOwnership(target, restored, bom, bytes, receipt.OriginalOwnership);
                 undo = null;
                 pending = null;
                 return Result("restored");
@@ -369,7 +390,59 @@ namespace MCPForUnity.Editor.Services
                 Commit(path, updated, bom, original);
         }
 
-        private void Commit(string path, string text, bool bom, byte[] expected)
+        private static string OwnershipFormat(ClientConfigurationFileTarget target) =>
+            target.ClientIdentity is CodexMcpConfigurator ? "Codex"
+            : target.ClientIdentity is OpenCodeConfigurator ? "OpenCode"
+            : target.ClientIdentity is JsonFileMcpConfigurator ? "Json"
+            : null;
+
+        private static string OwnershipEntry(ClientConfigurationFileTarget target, string document)
+        {
+            if (target.ClientIdentity is CodexMcpConfigurator)
+                return CodexMcpConfigurator.GeneratedStdioEntry(document);
+            var entry = target.Format == "json" ? JsonContainer(ParseJson(document), target.Descriptor, false)?["unityMCP"] as JObject : null;
+            if (target.ClientIdentity is OpenCodeConfigurator)
+                return OpenCodeConfigurator.GeneratedStdioEntry(entry);
+            return target.ClientIdentity is JsonFileMcpConfigurator && JsonFileMcpConfigurator.IsGeneratedStdioEntry(entry)
+                ? entry.ToString(Formatting.None)
+                : null;
+        }
+
+        private void CommitWithOwnership(ClientConfigurationFileTarget target, string text, bool bom, byte[] expected, string ownership)
+        {
+            string format = OwnershipFormat(target);
+            if (format == null)
+            {
+                Commit(target.Path, text, bom, expected);
+                return;
+            }
+            string previous = GeneratedClientConfigOwnership.Receipt(format, target.Path);
+            // Metadata is prepared first: if it cannot be stored, no file is changed.
+            // Any refused/failed guarded replacement restores the exact prior receipt.
+            GeneratedClientConfigOwnership.RestoreReceipt(format, target.Path, ownership);
+            try
+            {
+                Commit(
+                    target.Path,
+                    text,
+                    bom,
+                    expected,
+                    () =>
+                    {
+                        if (GeneratedClientConfigOwnership.Receipt(format, target.Path) != ownership)
+                            throw new McpConfigurationHelper.ConfigurationConflictException();
+                    }
+                );
+            }
+            catch
+            {
+                if (GeneratedClientConfigOwnership.Receipt(format, target.Path) == ownership)
+                    GeneratedClientConfigOwnership.RestoreReceipt(format, target.Path, previous);
+                throw;
+            }
+        }
+
+        private void Commit(string path, string text, bool bom, byte[] expected, Action validateOwnership = null)
         {
             if (Encoding.UTF8.GetByteCount(text) + (bom ? 3 : 0) > FileLimit)
                 throw new ConfigurationLimitException();
@@ -382,6 +455,7 @@ namespace MCPForUnity.Editor.Services
                 () =>
                 {
                     beforeCommitComparison?.Invoke();
+                    validateOwnership?.Invoke();
                     if (readLock())
                         throw new ConfigurationLockedException();
                     ValidatePath(path);

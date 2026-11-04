@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using MCPForUnity.Editor.Clients;
 using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Migrations;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
@@ -24,12 +26,19 @@ namespace MCPForUnityTests.Editor.Clients
         private readonly Dictionary<string, string> strings = new();
         private readonly Dictionary<string, bool?> flags = new();
         private string directory;
+        private object registry;
+        private string claudeConfigDirectory;
 
         [SetUp]
         public void SetUp()
         {
             directory = Path.Combine(Path.GetTempPath(), "UnityMCPStartupOwnership_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
+            registry = typeof(McpClientRegistry).GetField("cached", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            claudeConfigDirectory = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+            Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", directory);
+            SetString(EditorPrefKeys.ClientProjectDirOverride, directory);
+            SetString(EditorPrefKeys.LastStdIoUpgradeVersion, "");
             string executable = Path.Combine(directory, "uvx.exe");
             File.WriteAllText(executable, "synthetic executable; never executed");
             SetString(EditorPrefKeys.UvxPathOverride, executable);
@@ -45,6 +54,9 @@ namespace MCPForUnityTests.Editor.Clients
         [TearDown]
         public void TearDown()
         {
+            typeof(McpClientRegistry).GetField("cached", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, registry);
+            Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", claudeConfigDirectory);
+            EditorPrefs.DeleteKey(GeneratedClientConfigOwnership.Key("Claude", Path.Combine(directory, ".claude.json") + "|" + Path.GetFullPath(directory)));
             foreach (var pair in strings)
                 if (pair.Value == null)
                     EditorPrefs.DeleteKey(pair.Key);
@@ -281,6 +293,394 @@ namespace MCPForUnityTests.Editor.Clients
             ((JArray)entry["args"]).Add("--custom");
             Assert.IsFalse(JsonFileMcpConfigurator.IsGeneratedStdioEntry(entry));
         }
+
+        [TestCase("manual")]
+        [TestCase("legacy")]
+        [TestCase("edited")]
+        [TestCase("disabled")]
+        [TestCase("http-selected")]
+        public void MigrationPreservesEntriesWithoutAutomaticSourceRefreshPermission(string fixture)
+        {
+            var client = Create("json");
+            client.Configure();
+            string document = File.ReadAllText(client.GetConfigPath());
+            if (fixture == "manual")
+                document = UnownedDocument("json", "manual");
+            else if (fixture == "legacy")
+                EditorPrefs.DeleteKey(GeneratedClientConfigOwnership.Key("Json", client.GetConfigPath()));
+            else if (fixture == "edited")
+                document = document.Replace(FirstSource, "mcpforunity==0.1.0");
+            else if (fixture == "disabled")
+                EditorPrefs.SetBool(EditorPrefKeys.AutoRegisterEnabled, false);
+            else
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
+                EditorConfigurationCache.Instance.Refresh();
+            }
+            File.WriteAllText(client.GetConfigPath(), document);
+            EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, NextSource);
+            RunMigration(client);
+            Assert.AreEqual(document, File.ReadAllText(client.GetConfigPath()));
+        }
+
+        [Test]
+        public void MigrationRefreshesOwnedEntryAndRetriesAnEntirelyFailedAttempt()
+        {
+            var client = Create("json");
+            client.Configure();
+            EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, NextSource);
+            EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, true);
+            RunMigration(client);
+            Assert.AreEqual("", EditorPrefs.GetString(EditorPrefKeys.LastStdIoUpgradeVersion));
+            StringAssert.Contains(FirstSource, File.ReadAllText(client.GetConfigPath()));
+            EditorPrefs.SetBool(EditorPrefKeys.LockCursorConfig, false);
+            RunMigration(client);
+            StringAssert.Contains(NextSource, File.ReadAllText(client.GetConfigPath()));
+            Assert.AreEqual(
+                StdIoVersionMigration.GetUpgradeIdentity(AssetPathUtility.GetPackageVersion(), NextSource),
+                EditorPrefs.GetString(EditorPrefKeys.LastStdIoUpgradeVersion)
+            );
+        }
+
+        private static void RunMigration(IMcpClientConfigurator client)
+        {
+            typeof(McpClientRegistry)
+                .GetField("cached", BindingFlags.Static | BindingFlags.NonPublic)
+                .SetValue(null, new List<IMcpClientConfigurator> { client });
+            typeof(StdIoVersionMigration).GetMethod("RunMigrationIfNeeded", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+        }
+
+        [TestCase("codex", false)]
+        [TestCase("opencode", false)]
+        [TestCase("codex", true)]
+        [TestCase("opencode", true)]
+        public void PreviewApplyEstablishesOwnershipIncludingUnchangedExplicitConfirmation(string kind, bool unchanged)
+        {
+            var client = Create(kind);
+            var service = ChangeService();
+            if (unchanged)
+            {
+                client.Configure();
+                EditorPrefs.DeleteKey(GeneratedClientConfigOwnership.Key(kind == "codex" ? "Codex" : "OpenCode", client.GetConfigPath()));
+            }
+            var preview = service.Prepare(client);
+            Assert.IsTrue(preview.CanApply, preview.Code);
+            Assert.AreEqual(unchanged ? "unchanged" : "applied", service.Apply(preview, client).Code);
+            EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, NextSource);
+            Assert.AreEqual(McpStatus.Configured, client.CheckStatus(true));
+            StringAssert.Contains(NextSource, File.ReadAllText(client.GetConfigPath()));
+        }
+
+        [TestCase("codex", false)]
+        [TestCase("opencode", false)]
+        [TestCase("codex", true)]
+        [TestCase("opencode", true)]
+        public void RestoreReinstatesPriorOwnershipAndProtectsManualEntries(string kind, bool owned)
+        {
+            var client = Create(kind);
+            if (owned)
+                client.Configure();
+            else
+                File.WriteAllText(client.GetConfigPath(), UnownedDocument(kind, "manual"));
+            string key = GeneratedClientConfigOwnership.Key(kind == "codex" ? "Codex" : "OpenCode", client.GetConfigPath());
+            string originalOwnership = EditorPrefs.HasKey(key) ? EditorPrefs.GetString(key) : null;
+            EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, NextSource);
+            var service = ChangeService();
+            var applied = service.Apply(service.Prepare(client), client);
+            Assert.AreEqual("applied", applied.Code);
+            Assert.IsTrue(EditorPrefs.HasKey(key));
+            Assert.AreEqual("restored", service.Restore(applied.Receipt, client).Code);
+            Assert.AreEqual(originalOwnership, EditorPrefs.HasKey(key) ? EditorPrefs.GetString(key) : null);
+            string restored = File.ReadAllText(client.GetConfigPath());
+            client.CheckStatus(true);
+            if (owned)
+                StringAssert.Contains(NextSource, File.ReadAllText(client.GetConfigPath()));
+            else
+                Assert.AreEqual(restored, File.ReadAllText(client.GetConfigPath()));
+        }
+
+        [TestCase("codex")]
+        [TestCase("opencode")]
+        public void ApplyRejectsOwnershipChangesSincePreview(string kind)
+        {
+            var client = Create(kind);
+            client.Configure();
+            var service = ChangeService();
+            EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, NextSource);
+            var preview = service.Prepare(client);
+            string key = GeneratedClientConfigOwnership.Key(kind == "codex" ? "Codex" : "OpenCode", client.GetConfigPath());
+            EditorPrefs.SetString(key, "concurrent-ownership-change");
+            byte[] before = File.ReadAllBytes(client.GetConfigPath());
+            Assert.AreEqual("stale_context", service.Apply(preview, client).Code);
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(client.GetConfigPath()));
+            Assert.AreEqual("concurrent-ownership-change", EditorPrefs.GetString(key));
+        }
+
+        [TestCase("codex")]
+        [TestCase("opencode")]
+        public void FinalOwnershipRacePreservesNewerReceiptAndExistingFile(string kind)
+        {
+            var client = Create(kind);
+            client.Configure();
+            var service = ChangeService();
+            EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, NextSource);
+            var preview = service.Prepare(client);
+            string key = GeneratedClientConfigOwnership.Key(kind == "codex" ? "Codex" : "OpenCode", client.GetConfigPath());
+            byte[] before = File.ReadAllBytes(client.GetConfigPath());
+            typeof(ClientConfigurationChangeService)
+                .GetField("beforeCommitComparison", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(service, new Action(() => EditorPrefs.SetString(key, "newer-ownership")));
+            Assert.AreEqual("stale_file", service.Apply(preview, client).Code);
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(client.GetConfigPath()));
+            Assert.AreEqual("newer-ownership", EditorPrefs.GetString(key));
+        }
+
+        [TestCase("codex")]
+        [TestCase("opencode")]
+        public void FailedApplyOrRestorePreservesFileAndOwnershipAsOneTransaction(string kind)
+        {
+            var client = Create(kind);
+            client.Configure();
+            string before = File.ReadAllText(client.GetConfigPath());
+            string key = GeneratedClientConfigOwnership.Key(kind == "codex" ? "Codex" : "OpenCode", client.GetConfigPath());
+            string ownership = EditorPrefs.GetString(key);
+            EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, NextSource);
+            var service = ChangeService();
+            var preview = service.Prepare(client);
+            var hook = typeof(ClientConfigurationChangeService).GetField("beforeCommitComparison", BindingFlags.Instance | BindingFlags.NonPublic);
+            hook.SetValue(service, new Action(() => throw new IOException("injected transaction failure")));
+            Assert.AreEqual("write_failed", service.Apply(preview, client).Code);
+            Assert.AreEqual(before, File.ReadAllText(client.GetConfigPath()));
+            Assert.AreEqual(ownership, EditorPrefs.GetString(key));
+            hook.SetValue(service, null);
+            var applied = service.Apply(service.Prepare(client), client);
+            Assert.AreEqual("applied", applied.Code);
+            string written = File.ReadAllText(client.GetConfigPath());
+            string writtenOwnership = EditorPrefs.GetString(key);
+            Assert.AreNotEqual(ownership, writtenOwnership);
+            hook.SetValue(service, new Action(() => throw new IOException("injected restore failure")));
+            Assert.AreEqual("write_failed", service.Restore(applied.Receipt, client).Code);
+            Assert.AreEqual(written, File.ReadAllText(client.GetConfigPath()));
+            Assert.AreEqual(writtenOwnership, EditorPrefs.GetString(key));
+        }
+
+        [TestCase("manual")]
+        [TestCase("legacy")]
+        [TestCase("edited")]
+        [TestCase("disabled")]
+        public void ClaudeAutomaticEntryPointPreservesUnownedEditedAndDisabledRegistrations(string fixture)
+        {
+            string path = Path.Combine(directory, ".claude.json");
+            var entry = new JObject
+            {
+                ["type"] = "stdio",
+                ["command"] = "uvx",
+                ["args"] = new JArray("--from", FirstSource, "mcp-for-unity", "--transport", "stdio"),
+            };
+            if (fixture == "manual")
+                entry["command"] = "wrapper";
+            if (fixture == "edited")
+            {
+                GeneratedClientConfigOwnership.Record("Claude", path + "|" + Path.GetFullPath(directory), entry.ToString(Newtonsoft.Json.Formatting.None));
+                ((JArray)entry["args"]).Add("--manual");
+            }
+            File.WriteAllText(
+                path,
+                new JObject { ["projects"] = new JObject { [directory] = new JObject { ["mcpServers"] = new JObject { ["UnityMCP"] = entry } } } }.ToString()
+            );
+            if (fixture == "disabled")
+            {
+                GeneratedClientConfigOwnership.Record("Claude", path + "|" + Path.GetFullPath(directory), entry.ToString(Newtonsoft.Json.Formatting.None));
+                EditorPrefs.SetBool(EditorPrefKeys.AutoRegisterEnabled, false);
+            }
+            var cli = new MemoryCli(directory);
+            byte[] before = File.ReadAllBytes(path);
+            cli.CheckStatusWithProjectDir(directory, false, "inert-cli", UnityEngine.Application.platform, false, NextSource, true);
+            Assert.AreEqual(0, cli.Calls);
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ClaudeOwnedAutomaticRefreshUsesRealRegistrationAndRetriesFailure(bool failFirst)
+        {
+            var cli = new MemoryCli(directory);
+            cli.Configure();
+            string path = Path.Combine(directory, ".claude.json");
+            string key = GeneratedClientConfigOwnership.Key("Claude", path + "|" + Path.GetFullPath(directory));
+            Assert.IsTrue(EditorPrefs.HasKey(key));
+            string originalOwnership = EditorPrefs.GetString(key);
+            cli.Source = NextSource;
+            cli.FailNext = failFirst;
+            cli.CheckStatusWithProjectDir(directory, false, "inert-cli", UnityEngine.Application.platform, false, NextSource, true);
+            if (failFirst)
+            {
+                StringAssert.Contains(FirstSource, File.ReadAllText(path));
+                Assert.AreEqual(originalOwnership, EditorPrefs.GetString(key));
+                cli.FailNext = false;
+                cli.CheckStatusWithProjectDir(directory, false, "inert-cli", UnityEngine.Application.platform, false, NextSource, true);
+            }
+            Assert.AreEqual(McpStatus.Configured, cli.Status);
+            StringAssert.Contains(NextSource, File.ReadAllText(path));
+            Assert.AreNotEqual(originalOwnership, EditorPrefs.GetString(key));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CapturedClaudeRegistrationPublishesOnlyItsUnchangedSuccessfulSnapshot(bool edited)
+        {
+            var cli = new MemoryCli(directory);
+            System.Threading.Tasks.Task.Run(() => cli.Configure()).GetAwaiter().GetResult();
+            string path = Path.Combine(directory, ".claude.json");
+            string key = GeneratedClientConfigOwnership.Key("Claude", path + "|" + Path.GetFullPath(directory));
+            Assert.IsFalse(EditorPrefs.HasKey(key), "Background configuration must not write EditorPrefs.");
+            if (edited)
+                File.WriteAllText(path, File.ReadAllText(path).Replace("uvx", "wrapper"));
+            typeof(ClaudeCliMcpConfigurator).GetMethod("CompleteConfigurationOwnership", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(cli, null);
+            Assert.AreEqual(!edited, EditorPrefs.HasKey(key));
+            byte[] before = File.ReadAllBytes(path);
+            cli.Source = NextSource;
+            cli.CheckStatusWithProjectDir(directory, false, "inert-cli", UnityEngine.Application.platform, false, NextSource, true);
+            if (edited)
+                CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+            else
+                StringAssert.Contains(NextSource, File.ReadAllText(path));
+        }
+
+        [Test]
+        public void ClaudeCompletionPreservesNewerOwnedEntryObservedBeforeCapture()
+        {
+            string identity = Path.Combine(directory, ".claude.json") + "|" + Path.GetFullPath(directory);
+            var cli = new MemoryCli(directory);
+            cli.AfterAdd = path =>
+            {
+                var document = JObject.Parse(File.ReadAllText(path));
+                var newer = document["projects"][directory]["mcpServers"]["UnityMCP"];
+                newer["args"][1] = NextSource;
+                File.WriteAllText(path, document.ToString());
+                GeneratedClientConfigOwnership.Record("Claude", identity, newer.ToString(Newtonsoft.Json.Formatting.None));
+            };
+            cli.Configure();
+            string config = File.ReadAllText(Path.Combine(directory, ".claude.json"));
+            var observed = JObject.Parse(config)["projects"][directory]["mcpServers"]["UnityMCP"];
+            Assert.IsTrue(GeneratedClientConfigOwnership.Owns("Claude", identity, observed.ToString(Newtonsoft.Json.Formatting.None)));
+            StringAssert.Contains(NextSource, config);
+        }
+
+        [Test]
+        public void ClaudeOwnershipUsesObservedJsonWhenCliReordersFields()
+        {
+            var cli = new MemoryCli(directory) { ReorderOutput = true };
+            cli.Configure();
+            string path = Path.Combine(directory, ".claude.json");
+            var observed = JObject.Parse(File.ReadAllText(path))["projects"][directory]["mcpServers"]["UnityMCP"];
+            Assert.IsTrue(
+                GeneratedClientConfigOwnership.Owns("Claude", path + "|" + Path.GetFullPath(directory), observed.ToString(Newtonsoft.Json.Formatting.None))
+            );
+            cli.Source = NextSource;
+            Assert.AreEqual(
+                McpStatus.Configured,
+                cli.CheckStatusWithProjectDir(directory, false, "inert-cli", UnityEngine.Application.platform, false, NextSource, true)
+            );
+            StringAssert.Contains(NextSource, File.ReadAllText(path));
+        }
+
+        private sealed class MemoryCli : ClaudeCliMcpConfigurator
+        {
+            private readonly string project;
+            internal int Calls;
+            internal string Source = FirstSource;
+            internal bool FailNext;
+            internal bool ReorderOutput;
+            internal Action<string> AfterAdd;
+
+            internal MemoryCli(string project)
+                : base(new McpClient { name = "Owned test Claude" }) => this.project = project;
+
+            public override void Configure() =>
+                ConfigureWithCapturedValues(
+                    project,
+                    "inert-cli",
+                    null,
+                    false,
+                    null,
+                    "uvx",
+                    null,
+                    "mcp-for-unity",
+                    "",
+                    null,
+                    ConfiguredTransport.Stdio,
+                    false,
+                    capturedFromArguments: new[] { "--from", Source }
+                );
+
+            protected override bool RunCli(
+                string executable,
+                string arguments,
+                string directory,
+                out string stdout,
+                out string stderr,
+                int timeout,
+                string pathPrepend
+            )
+            {
+                Calls++;
+                stdout = stderr = "";
+                string path = Path.Combine(project, ".claude.json");
+                var root = File.Exists(path) ? JObject.Parse(File.ReadAllText(path)) : new JObject { ["projects"] = new JObject() };
+                if (arguments.StartsWith("mcp remove ", StringComparison.Ordinal))
+                    ((JObject)root["projects"]?[project]?["mcpServers"])?.Remove("UnityMCP");
+                else
+                {
+                    JObject entry = null;
+                    foreach (string source in new[] { FirstSource, NextSource })
+                    {
+                        var candidate = new JObject
+                        {
+                            ["type"] = "stdio",
+                            ["command"] = "uvx",
+                            ["args"] = new JArray("--from", source, "mcp-for-unity"),
+                        };
+                        var reordered = new JObject
+                        {
+                            ["args"] = candidate["args"].DeepClone(),
+                            ["type"] = "stdio",
+                            ["command"] = "uvx",
+                        };
+                        if (
+                            arguments != ClaudeHttpAuth.BuildRegistrationArguments(candidate)
+                            && arguments != ClaudeHttpAuth.BuildRegistrationArguments(reordered)
+                        )
+                            continue;
+                        if (FailNext && source == NextSource)
+                            return false;
+                        entry = ReorderOutput ? reordered : candidate;
+                    }
+                    Assert.IsNotNull(entry, "Unexpected fake CLI request");
+                    root["projects"][project] = new JObject { ["mcpServers"] = new JObject { ["UnityMCP"] = entry } };
+                }
+                File.WriteAllText(path, root.ToString());
+                if (arguments.StartsWith("mcp add-json ", StringComparison.Ordinal))
+                    AfterAdd?.Invoke(path);
+                return true;
+            }
+        }
+
+        private static ClientConfigurationChangeService ChangeService() =>
+            new ClientConfigurationChangeService(
+                format =>
+                    (ClientConfigurationInputs)
+                        typeof(ClientConfigurationChangeService)
+                            .GetMethod("Capture", BindingFlags.Static | BindingFlags.NonPublic)
+                            .Invoke(null, new object[] { format }),
+                client => new ClientConfigurationFileTarget(
+                    client,
+                    client.Id,
+                    client.GetConfigPath(),
+                    client is CodexMcpConfigurator ? "toml" : "json",
+                    ((McpClientConfiguratorBase)client).Client
+                )
+            );
 
         private IMcpClientConfigurator Create(string kind)
         {

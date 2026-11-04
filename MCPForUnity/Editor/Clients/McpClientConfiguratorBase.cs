@@ -58,6 +58,9 @@ namespace MCPForUnity.Editor.Clients
         public ConfiguredTransport ConfiguredTransport => client.configuredTransport;
         public virtual bool SupportsAutoConfigure => true;
 
+        // Automatic lifecycle work must never infer ownership from a command's shape alone.
+        internal virtual bool CanAutomaticallyRefresh() => false;
+
         // Default to a filesystem check on the configured path. Concrete configurators
         // whose presence isn't path-based (CLI binaries, etc.) override this. This makes
         // any future configurator that forgets to override fail-closed rather than be

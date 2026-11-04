@@ -104,11 +104,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
                     client.SetStatus(McpStatus.Configured);
                     client.configuredTransport = HttpEndpointUtility.GetCurrentServerTransport();
                 }
-                else if (
-                    attemptAutoRewrite
-                    && GeneratedClientConfigOwnership.Owns("OpenCode", path, GeneratedStdioEntry(unityMcp))
-                    && EditorPrefs.GetBool(EditorPrefKeys.AutoRegisterEnabled, true)
-                )
+                else if (attemptAutoRewrite && GeneratedClientConfigOwnership.CanAutomaticallyRefresh("OpenCode", path, GeneratedStdioEntry(unityMcp)))
                 {
                     Configure();
                 }
@@ -223,7 +219,17 @@ namespace MCPForUnity.Editor.Clients.Configurators
                 config["$schema"] = SchemaUrl;
         }
 
-        private static string GeneratedStdioEntry(JObject entry)
+        internal override bool CanAutomaticallyRefresh()
+        {
+            string path = GetConfigPath();
+            return GeneratedClientConfigOwnership.CanAutomaticallyRefresh(
+                "OpenCode",
+                path,
+                GeneratedStdioEntry(TryLoadConfig(path)?["mcp"]?[ServerName] as JObject)
+            );
+        }
+
+        internal static string GeneratedStdioEntry(JObject entry)
         {
             if (
                 entry?["type"]?.Value<string>() != LocalType

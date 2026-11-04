@@ -36,10 +36,7 @@ namespace MCPForUnity.Editor.Clients
                 }
 
                 string toml = File.ReadAllText(path);
-                bool canAutoRewrite =
-                    attemptAutoRewrite
-                    && GeneratedClientConfigOwnership.Owns("Codex", path, GeneratedStdioEntry(toml))
-                    && EditorPrefs.GetBool(EditorPrefKeys.AutoRegisterEnabled, true);
+                bool canAutoRewrite = attemptAutoRewrite && GeneratedClientConfigOwnership.CanAutomaticallyRefresh("Codex", path, GeneratedStdioEntry(toml));
                 if (CodexConfigHelper.TryParseCodexServer(toml, out var command, out var args, out var url))
                 {
                     // Determine and set the configured transport type
@@ -181,7 +178,13 @@ namespace MCPForUnity.Editor.Clients
             }
         }
 
-        private static string GeneratedStdioEntry(string document)
+        internal override bool CanAutomaticallyRefresh()
+        {
+            string path = GetConfigPath();
+            return File.Exists(path) && GeneratedClientConfigOwnership.CanAutomaticallyRefresh("Codex", path, GeneratedStdioEntry(File.ReadAllText(path)));
+        }
+
+        internal static string GeneratedStdioEntry(string document)
         {
             var root = CodexConfigHelper.ParseConfiguration(document);
             if (

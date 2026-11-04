@@ -903,6 +903,7 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                         capturedFromArguments: fromArgs
                     );
                 });
+                state.Client.CompleteConfigurationOwnership();
                 if (!IsCurrentCliState(client, state))
                     return;
                 state.Pending = false;

@@ -156,7 +156,7 @@ namespace MCPForUnityTests.Editor.Windows
             // A's result says unregister, but B has no registration when clicked.
             Invoke(section, "OnConfigureClicked");
             yield return WaitFor(() => client.Calls.Count > 0 && Label(section) == "Configured", "Completed CLI action for project B");
-            Assert.That(client.Calls[0], Does.StartWith(projectB + "|mcp add "));
+            Assert.That(client.Calls[0], Does.StartWith(projectB + "|mcp add-json --scope local UnityMCP "));
         }
 
         [UnityTest]

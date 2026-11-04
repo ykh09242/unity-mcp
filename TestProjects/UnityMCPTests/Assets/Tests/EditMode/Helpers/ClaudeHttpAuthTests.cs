@@ -349,7 +349,7 @@ namespace MCPForUnityTests.Editor.Helpers
         {
             var client = new ClaudeCodeConfigurator().CreateOperationClient(Path.Combine(directory, "synthetic-user-config.json"));
             var method = typeof(ClaudeCliMcpConfigurator).GetMethod("BuildHttpRegistrationArguments", BindingFlags.Instance | BindingFlags.NonPublic);
-            return (string)method.Invoke(client, new object[] { project, executable, url, true, apiKey });
+            return (string)method.Invoke(client, new object[] { project, executable, url, true, apiKey, null });
         }
 
         [Test]
