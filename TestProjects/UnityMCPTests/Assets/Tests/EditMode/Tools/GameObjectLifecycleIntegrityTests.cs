@@ -367,6 +367,145 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [TestCase("empty")]
+        [TestCase("primitive")]
+        [TestCase("prefab")]
+        public void CreateInvalidLayer_PreservesObjectsTagsAssetsAndSelection(string source)
+        {
+            CreateAssetRoot();
+            var existing = Owned("Existing");
+            var request = Create();
+            if (source == "primitive")
+                request["primitiveType"] = "Cube";
+            if (source == "prefab")
+            {
+                string path = assetRoot + "/Source.prefab";
+                Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(existing, path));
+                request["prefabPath"] = path;
+            }
+            else
+            {
+                request["saveAsPrefab"] = true;
+                request["prefabPath"] = assetRoot + "/Nested/Rejected.prefab";
+            }
+            Selection.activeGameObject = existing;
+            var before = Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray();
+            string[] tags = UnityEditorInternal.InternalEditorUtility.tags;
+            string tag = prefix + "UncreatedTag";
+            request["tag"] = tag;
+            request["layer"] = prefix + "MissingLayer";
+            try
+            {
+                var response = Call(request);
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("layer", response.Value<string>("error").ToLowerInvariant());
+                CollectionAssert.AreEqual(before, Objects().Select(go => go.GetInstanceIDCompat()).OrderBy(id => id).ToArray());
+                CollectionAssert.AreEqual(tags, UnityEditorInternal.InternalEditorUtility.tags);
+                Assert.AreSame(existing, Selection.activeGameObject);
+                Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot + "/Nested"));
+            }
+            finally
+            {
+                if (UnityEditorInternal.InternalEditorUtility.tags.Contains(tag))
+                    UnityEditorInternal.InternalEditorUtility.RemoveTag(tag);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CreateMissingPropertyTarget_DoesNotAllocateOrDeleteTags(bool preexistingTag)
+        {
+            string tag = prefix + "PropertyTag";
+            if (preexistingTag)
+                UnityEditorInternal.InternalEditorUtility.AddTag(tag);
+            string[] before = UnityEditorInternal.InternalEditorUtility.tags;
+            try
+            {
+                var request = Create();
+                request["tag"] = tag;
+                request["componentProperties"] = new JObject { ["Light"] = new JObject { ["intensity"] = 1 } };
+                var response = Call(request);
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.IsEmpty(Objects());
+                CollectionAssert.AreEqual(before, UnityEditorInternal.InternalEditorUtility.tags);
+            }
+            finally
+            {
+                if (UnityEditorInternal.InternalEditorUtility.tags.Contains(tag))
+                    UnityEditorInternal.InternalEditorUtility.RemoveTag(tag);
+            }
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void CreateFailedPrefabPublication_RollsBackOnlyNewTags(bool preexistingTag, bool throws)
+        {
+            CreateAssetRoot();
+            var existing = Owned("Existing");
+            Selection.activeGameObject = existing;
+            string tag = prefix + "PublicationTag";
+            if (preexistingTag)
+                UnityEditorInternal.InternalEditorUtility.AddTag(tag);
+            string[] before = UnityEditorInternal.InternalEditorUtility.tags;
+            var original = GameObjectCreate.SavePrefabForCreation;
+            int calls = 0;
+            GameObjectCreate.SavePrefabForCreation = (go, path) =>
+            {
+                calls++;
+                Assert.AreEqual(tag, go.tag);
+                if (throws)
+                    throw new InvalidOperationException("injected prefab publication failure");
+                return null;
+            };
+            try
+            {
+                var request = Create();
+                request["tag"] = tag;
+                request["saveAsPrefab"] = true;
+                request["prefabPath"] = assetRoot + "/Nested/Rejected.prefab";
+                var response = Call(request);
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(1, calls);
+                CollectionAssert.AreEqual(new[] { existing }, Objects());
+                CollectionAssert.AreEqual(before, UnityEditorInternal.InternalEditorUtility.tags);
+                Assert.AreSame(existing, Selection.activeGameObject);
+                Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot + "/Nested"));
+            }
+            finally
+            {
+                GameObjectCreate.SavePrefabForCreation = original;
+                if (UnityEditorInternal.InternalEditorUtility.tags.Contains(tag))
+                    UnityEditorInternal.InternalEditorUtility.RemoveTag(tag);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CreateRuntimePropertyFailure_RollsBackOnlyNewTags(bool preexistingTag)
+        {
+            string tag = prefix + "RuntimePropertyTag";
+            if (preexistingTag)
+                UnityEditorInternal.InternalEditorUtility.AddTag(tag);
+            string[] before = UnityEditorInternal.InternalEditorUtility.tags;
+            try
+            {
+                var request = Create();
+                request["tag"] = tag;
+                request["componentsToAdd"] = new JArray("Light");
+                request["componentProperties"] = new JObject { ["Light"] = new JObject { ["transform.NoSuchField_ValidationAudit"] = 1 } };
+                Assert.IsFalse(Call(request).Value<bool>("success"));
+                Assert.IsEmpty(Objects());
+                CollectionAssert.AreEqual(before, UnityEditorInternal.InternalEditorUtility.tags);
+            }
+            finally
+            {
+                if (UnityEditorInternal.InternalEditorUtility.tags.Contains(tag))
+                    UnityEditorInternal.InternalEditorUtility.RemoveTag(tag);
+            }
+        }
+
         [Test]
         public void RejectedParent_PreservesExistingObjectsAndSelection()
         {

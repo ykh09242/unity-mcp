@@ -12,7 +12,39 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 {
     internal static class GameObjectCreate
     {
+        internal static Func<GameObject, string, GameObject> SavePrefabForCreation = (gameObject, path) =>
+            PrefabUtility.SaveAsPrefabAssetAndConnect(gameObject, path, InteractionMode.UserAction);
+
         internal static object Handle(JObject @params)
+        {
+            GameObject createdObject = null;
+            string createdTag = null;
+            object result = null;
+            try
+            {
+                result = Create(@params, ref createdObject, ref createdTag);
+                return result;
+            }
+            finally
+            {
+                if (!(result is SuccessResponse))
+                {
+                    try
+                    {
+                        if (createdObject != null)
+                            UnityEngine.Object.DestroyImmediate(createdObject);
+                    }
+                    finally
+                    {
+                        // Only the tag allocated by this request is owned by this rollback.
+                        if (createdTag != null && InternalEditorUtility.tags.Contains(createdTag))
+                            InternalEditorUtility.RemoveTag(createdTag);
+                    }
+                }
+            }
+        }
+
+        private static object Create(JObject @params, ref GameObject newGo, ref string createdTag)
         {
             string name = @params["name"]?.ToString();
             if (string.IsNullOrEmpty(name))
@@ -27,7 +59,10 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             string primitiveType = @params["primitiveType"]?.ToString();
             bool? setActive = @params["setActive"]?.ReadScalar<bool?>();
             bool? isStatic = @params["isStatic"]?.ReadScalar<bool?>();
-            GameObject newGo = null;
+            string layerName = @params["layer"]?.ToString();
+            int layerId = string.IsNullOrEmpty(layerName) ? -1 : LayerMask.NameToLayer(layerName);
+            if (!string.IsNullOrEmpty(layerName) && layerId == -1)
+                return new ErrorResponse($"Invalid layer specified: '{layerName}'. Use a valid layer name.");
 
             Vector3? position;
             Vector3? rotation;
@@ -228,7 +263,10 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             try
             {
                 // Validate against the primitive's native components before applying fields or allocating tags.
-                ManageGameObjectCommon.ValidateComponentParameters(@params, validateRemovals: false, componentSource: newGo);
+                var plannedTypes = ManageGameObjectCommon.ValidateComponentParameters(@params, validateRemovals: false, componentSource: newGo);
+                var propertyError = GameObjectComponentHelpers.ValidateModifyPropertyTargets(newGo, @params["componentProperties"] as JObject, plannedTypes);
+                if (propertyError != null)
+                    return propertyError;
             }
             catch (ArgumentException e)
             {
@@ -257,6 +295,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     McpLog.Info($"[ManageGameObject.Create] Tag '{tag}' not found. Creating it.");
                     try
                     {
+                        createdTag = tag;
                         InternalEditorUtility.AddTag(tag);
                     }
                     catch (Exception ex)
@@ -278,19 +317,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             // Set Layer
-            string layerName = @params["layer"]?.ToString();
-            if (!string.IsNullOrEmpty(layerName))
-            {
-                int layerId = LayerMask.NameToLayer(layerName);
-                if (layerId != -1)
-                {
-                    newGo.layer = layerId;
-                }
-                else
-                {
-                    McpLog.Warn($"[ManageGameObject.Create] Layer '{layerName}' not found. Using default layer.");
-                }
-            }
+            if (layerId != -1)
+                newGo.layer = layerId;
 
             // Add Components
             if (@params["componentsToAdd"] is JArray componentsToAddArray)
@@ -355,7 +383,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                     folders.EnsureParentDirectory(finalPrefabPath);
 
                     AssetPathUtility.GetFullAssetPath(finalPrefabPath);
-                    GameObject prefabAsset = PrefabUtility.SaveAsPrefabAssetAndConnect(newGo, finalPrefabPath, InteractionMode.UserAction);
+                    GameObject prefabAsset = SavePrefabForCreation(newGo, finalPrefabPath);
 
                     if (prefabAsset == null)
                     {
