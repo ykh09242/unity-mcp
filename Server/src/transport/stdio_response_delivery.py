@@ -18,6 +18,7 @@ from mcp.types import ErrorData, JSONRPCError, JSONRPCResponse, jsonrpc_message_
 
 from models.response_limits import ResponseOwner
 from transport.response_delivery import MAX_MCP_RESPONSE_BYTES
+from transport.stdio_input_read import StdioInputRead
 
 
 MAX_STDIO_INPUT_BYTES: Final = 64 * 1024 * 1024
@@ -44,7 +45,8 @@ class _BoundedStdioInput:
     """Bound raw line bytes before decoding; preserve SDK universal newlines."""
 
     def __init__(self, source, max_bytes: int = MAX_STDIO_INPUT_BYTES):
-        self.source, self.max_bytes = source, max_bytes
+        self.source, self.max_bytes = StdioInputRead(source), max_bytes
+        self.read_slot = anyio.CapacityLimiter(1)
         self.pending = b""
         self.skip_lf = False
 
@@ -54,7 +56,26 @@ class _BoundedStdioInput:
     async def __anext__(self) -> str:
         operation = _InputLineOperation(self._readline)
         try:
-            await _settled_stdio_operation(operation.run)
+            worker = asyncio.create_task(
+                anyio.to_thread.run_sync(self.source.run, operation.run, limiter=self.read_slot)
+            )
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                with anyio.CancelScope(shield=True):
+                    try:
+                        while not worker.done():
+                            # Cancellation can arrive between two native reads, or
+                            # before the worker starts. Retry until it acknowledges.
+                            self.source.interrupt()
+                            try:
+                                await asyncio.wait((worker,), timeout=0.05)
+                            except asyncio.CancelledError:
+                                continue
+                    finally:
+                        # Even an OS wakeup error must not restore a live descriptor.
+                        await _settled_stdio_worker(worker)
+                raise
             line = operation.line
         finally:
             operation.line = ""
@@ -380,21 +401,23 @@ async def _owned_stdio_server(
         raise RuntimeError("Installed MCP stdio context stream API is unsupported")
     read_writer, read = streams(0)
     write, write_reader = streams(0)
+    input_scope = anyio.CancelScope()
 
     async def input_reader():
-        try:
-            async with read_writer:
-                async for line in stdin:
-                    try:
-                        message = jsonrpc_message_adapter.validate_json(line, by_name=False)
-                    except Exception as exc:
-                        await read_writer.send(exc)
-                        line = None
-                        continue
-                    await read_writer.send(SessionMessage(message))
-                    line = message = None
-        except anyio.ClosedResourceError:
-            await anyio.lowlevel.checkpoint()
+        with input_scope:
+            try:
+                async with read_writer:
+                    async for line in stdin:
+                        try:
+                            message = jsonrpc_message_adapter.validate_json(line, by_name=False)
+                        except Exception as exc:
+                            await read_writer.send(exc)
+                            line = None
+                            continue
+                        await read_writer.send(SessionMessage(message))
+                        line = message = None
+            except anyio.ClosedResourceError:
+                await anyio.lowlevel.checkpoint()
 
     async def output_writer():
         try:
@@ -446,6 +469,11 @@ async def _owned_stdio_server(
         group.start_soon(input_reader)
         group.start_soon(output_writer)
         yield read, write
+        if isinstance(stdin, _BoundedStdioInput):
+            # A successful server return also ends the owned read. Allow
+            # outbound frames already received by the writer to finish.
+            input_scope.cancel()
+            write.close()
 
 
 @asynccontextmanager

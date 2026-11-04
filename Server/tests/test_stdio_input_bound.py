@@ -4,8 +4,10 @@ from tests.timing import await_signal, watchdog_timeout
 
 import asyncio
 import io
+import os
 import threading
 import json
+from textwrap import dedent
 from types import SimpleNamespace
 
 import pytest
@@ -284,6 +286,114 @@ async def test_real_sdk_short_roundtrip_open_stdin_then_no_newline_oversize_and_
         assert process.returncode == 0
         errors = await process.stderr.read()
         assert b"owned diverted stdout" in errors and b"owned bound rejected" in errors
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("partial", [False, True])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_owned_stdin_restores_wire_while_parent_writer_stays_open(tmp_path, partial, cancel):
+    # Instrument the real SDK claim in the child. Signal when its worker is waiting
+    # for the first bytes, or has consumed a partial frame and needs more.
+    program = (
+        dedent("""
+        import asyncio, os, sys
+        from transport import stdio_response_delivery as transport
+
+        async def main():
+            waiting = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            claim = transport.sdk_stdio._claim_fd
+            releases = []
+            reading = False
+            original_readline = transport._BoundedStdioInput._readline
+            def observe_start(reader):
+                if os.name != 'nt' and not PARTIAL:
+                    loop.call_soon_threadsafe(waiting.set)
+                return original_readline(reader)
+            transport._BoundedStdioInput._readline = observe_start
+            def observe_claim(fd, stream, mode, open_diversion):
+                buffer, release = claim(fd, stream, mode, open_diversion)
+                def release_once():
+                    assert not reading
+                    releases.append(fd)
+                    release()
+                if fd != 0:
+                    return buffer, release_once
+                class Observed:
+                    partial = False
+                    def fileno(self):
+                        return buffer.fileno()
+                    def read1(self, size):
+                        nonlocal reading
+                        reading = True
+                        try:
+                            if os.name == 'nt' and self.partial == PARTIAL:
+                                loop.call_soon_threadsafe(waiting.set)
+                            chunk = buffer.read1(size)
+                            self.partial |= bool(chunk)
+                            if os.name != 'nt' and chunk and PARTIAL:
+                                loop.call_soon_threadsafe(waiting.set)
+                            return chunk
+                        finally:
+                            reading = False
+                return Observed(), release_once
+            transport.sdk_stdio._claim_fd = observe_claim
+            async def serve():
+                async with transport.retained_stdio_server():
+                    await (asyncio.Event() if CANCEL else waiting).wait()
+            task = asyncio.create_task(serve())
+            await waiting.wait()
+            if CANCEL:
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                assert CANCEL
+            assert releases == [1, 0]
+            print('restored', flush=True)
+            assert os.read(0, 1) == b'Z'
+        asyncio.run(main())
+    """)
+        .replace("PARTIAL", str(partial))
+        .replace("CANCEL", str(cancel))
+    )
+    async with owned_sdk_process(program, tmp_path) as process:
+        if partial:
+            process.stdin.write(b'{"partial"')
+            await process.stdin.drain()
+        restored = await asyncio.wait_for(process.stdout.readline(), watchdog_timeout())
+        assert restored.rstrip() == b"restored"
+        process.stdin.write(b"Z")
+        await process.stdin.drain()
+        assert await asyncio.wait_for(process.wait(), watchdog_timeout()) == 0
+
+
+@pytest.mark.asyncio
+async def test_sdk_in_place_input_delivers_prefetched_line_with_writer_still_open(monkeypatch):
+    read_fd, write_fd = os.pipe()
+    with os.fdopen(read_fd, "r", encoding="utf-8") as source, os.fdopen(write_fd, "wb") as writer:
+        writer.write(b"_prefetched\r\n")
+        writer.flush()
+        assert source.buffer.read(1) == b"_"
+        monkeypatch.setattr(module.sys, "stdin", source)
+        reader, restore = module._claim_sdk_stdin()
+        assert restore is None
+        line = await asyncio.wait_for(reader.__anext__(), watchdog_timeout())
+        assert line == "prefetched\n"
+        if os.name == "posix":
+            assert os.get_blocking(read_fd)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("empty", [False, True])
+async def test_redirected_file_and_null_stdin_reach_eof(tmp_path, monkeypatch, empty):
+    path = tmp_path / "stdin"
+    path.write_bytes("한글".encode())
+    with open(os.devnull if empty else path, encoding="utf-8") as source:
+        monkeypatch.setattr(module.sys, "stdin", source)
+        reader, restore = module._claim_sdk_stdin()
+        assert restore is None
+        assert [line async for line in reader] == ([] if empty else ["한글"])
 
 
 @pytest.mark.asyncio
