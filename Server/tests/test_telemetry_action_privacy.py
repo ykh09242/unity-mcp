@@ -99,7 +99,7 @@ async def main():
          patch.object(custom, "get_unity_connection_pool", lambda: SimpleNamespace(discover_all_instances=lambda: [])):
         for key in ("DISABLE_TELEMETRY", "UNITY_MCP_DISABLE_TELEMETRY", "MCP_DISABLE_TELEMETRY"):
             os.environ.pop(key, None)
-        collector = telemetry.get_telemetry()
+        collector = await anyio.to_thread.run_sync(telemetry.get_telemetry)
         put = collector._queue.put_nowait
         def capture(record):
             queued.append(copy.deepcopy(record.data))
@@ -182,7 +182,7 @@ async def main():
             count = len(sent)
             async with Client(app, mode=sys.argv[1]) as client:
                 await client.call_tool("manage_camera", {"action": SECRETS[0]})
-            disabled = telemetry.get_telemetry()
+            disabled = await anyio.to_thread.run_sync(telemetry.get_telemetry)
             check("optout_" + optout, not disabled.config.enabled and disabled._queue.empty() and disabled._worker is None and len(sent) == count)
             telemetry.reset_telemetry()
             config.telemetry_enabled = True

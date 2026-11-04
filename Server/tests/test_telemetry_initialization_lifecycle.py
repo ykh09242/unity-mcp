@@ -185,31 +185,44 @@ def test_invalid_utf8_uuid_uses_in_memory_fallback(controlled_telemetry, tmp_pat
 
 def test_concurrent_first_use_owns_one_actual_worker(controlled_telemetry, monkeypatch):
     telemetry, _, received, requests = controlled_telemetry
-    callers = threading.Barrier(3)
     constructing = threading.Event()
-    duplicate = threading.Event()
+    contender_arrived = threading.Event()
     release = threading.Event()
     collectors = []
+    state_lock = telemetry._telemetry_lock
+
+    class ObservedLock:
+        def __enter__(self):
+            acquired = state_lock.acquire(blocking=False)
+            if threading.current_thread().name.startswith("telemetry-contender"):
+                contender_arrived.set()
+            if not acquired:
+                state_lock.acquire()
+
+        def __exit__(self, *_args):
+            state_lock.release()
 
     def load(collector):
         collectors.append(collector)
-        (constructing if len(collectors) == 1 else duplicate).set()
+        constructing.set()
         assert release.wait(watchdog_timeout())
 
     monkeypatch.setattr(telemetry.TelemetryCollector, "_load_persistent_data", load)
-
-    def first_use():
-        callers.wait(timeout=watchdog_timeout())
-        return telemetry.get_telemetry()
+    monkeypatch.setattr(telemetry, "_telemetry_lock", ObservedLock())
 
     try:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(first_use) for _ in range(2)]
-            callers.wait(timeout=watchdog_timeout())
+        with (
+            ThreadPoolExecutor(max_workers=1) as executor,
+            ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="telemetry-contender"
+            ) as contender,
+        ):
+            first = executor.submit(telemetry.get_telemetry)
             assert constructing.wait(watchdog_timeout())
-            duplicate.wait(0.2)
+            second = contender.submit(telemetry.get_telemetry)
+            assert contender_arrived.wait(watchdog_timeout())
             release.set()
-            results = [future.result(timeout=watchdog_timeout()) for future in futures]
+            results = [future.result(timeout=watchdog_timeout()) for future in (first, second)]
         assert len(collectors) == 1
         assert results[0] is results[1]
         telemetry.record_tool_usage("owned_tool", True, 1.0)
@@ -359,13 +372,15 @@ def test_reset_completion_cannot_reopen_concurrent_shutdown(controlled_telemetry
         release.set()
 
 
-def test_shutdown_waits_for_in_progress_publication(controlled_telemetry, monkeypatch):
+def test_shutdown_retires_in_progress_publication(controlled_telemetry, monkeypatch):
     telemetry, _, _, _ = controlled_telemetry
     constructing = threading.Event()
     shutdown_started = threading.Event()
     release = threading.Event()
+    collectors = []
 
-    def load(_collector):
+    def load(collector):
+        collectors.append(collector)
         constructing.set()
         assert release.wait(watchdog_timeout())
 
@@ -381,9 +396,11 @@ def test_shutdown_waits_for_in_progress_publication(controlled_telemetry, monkey
             shutdown = executor.submit(close)
             assert shutdown_started.wait(watchdog_timeout())
             release.set()
-            collector = first_use.result(timeout=watchdog_timeout())
+            result = first_use.result(timeout=watchdog_timeout())
             shutdown.result(timeout=watchdog_timeout())
-        assert not collector._worker.is_alive()
+        assert result is None
+        assert len(collectors) == 1
+        assert not collectors[0]._worker.is_alive()
         assert telemetry.get_telemetry() is None
     finally:
         release.set()

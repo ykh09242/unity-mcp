@@ -7,8 +7,9 @@ Fire-and-forget telemetry sender with a single background worker.
 - Small network timeouts to prevent stalls.
 """
 
+import asyncio
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from importlib import import_module, metadata
 import json
@@ -581,9 +582,63 @@ _telemetry_closed = False
 _telemetry_owner = 0
 
 
+@dataclass(slots=True)
+class _TelemetryInitialization:
+    """Own a mutable construction result until publication or retirement finishes."""
+
+    owner: int
+    done: threading.Event = field(default_factory=threading.Event)
+    collector: TelemetryCollector | None = None
+    error: BaseException | None = None
+
+
+_telemetry_initialization: _TelemetryInitialization | None = None
+
+
+def _initialize_telemetry(initialization: _TelemetryInitialization) -> None:
+    """Construct outside the state lock and retire results from an obsolete lifetime."""
+    global _telemetry_collector, _telemetry_initialization
+    try:
+        collector = TelemetryCollector()
+        with _telemetry_lock:
+            initialization.collector = collector
+            _telemetry_collector = collector
+            retired = _telemetry_closed or initialization.owner != _telemetry_owner
+            if retired:
+                collector._shutdown = True
+        if retired:
+            collector.shutdown()
+    except BaseException as error:
+        # Release the reservation even on interruption; sync callers re-raise it.
+        initialization.error = error
+        logger.debug("Telemetry initialization failed: %s", type(error).__name__)
+    finally:
+        with _telemetry_lock:
+            if _telemetry_initialization is initialization:
+                _telemetry_initialization = None
+            initialization.done.set()
+
+
+def _close_telemetry(
+    collector: TelemetryCollector | None, initialization: _TelemetryInitialization | None
+) -> None:
+    """Observe construction for a bounded period; its owner retires any late result."""
+    if initialization is not None:
+        initialization.done.wait(timeout=2.0)
+        if initialization.done.is_set() and initialization.collector is not None:
+            initialization.collector.shutdown()
+    if collector is not None:
+        collector.shutdown()
+
+
 def get_telemetry(*, owner: int | None = None) -> TelemetryCollector | None:
-    """Get one owned collector, or skip telemetry while closed or still draining."""
-    global _telemetry_collector
+    """Get one collector; async callers skip rather than wait for filesystem work."""
+    global _telemetry_collector, _telemetry_initialization
+    try:
+        asyncio.get_running_loop()
+        asynchronous = True
+    except RuntimeError:
+        asynchronous = False
     with _telemetry_lock:
         if _telemetry_closed or (owner is not None and owner != _telemetry_owner):
             return None
@@ -592,11 +647,46 @@ def get_telemetry(*, owner: int | None = None) -> TelemetryCollector | None:
             if worker is not None and worker.is_alive():
                 return None
             _telemetry_collector = None
-        if _telemetry_collector is None:
-            # Publication and construction share the lock: a failed constructor
-            # never publishes, and shutdown cannot miss a newly started worker.
-            _telemetry_collector = TelemetryCollector()
-        return _telemetry_collector
+        if _telemetry_collector is not None:
+            return _telemetry_collector
+        initialization = _telemetry_initialization
+        creator = initialization is None
+        if initialization is None:
+            initialization = _TelemetryInitialization(_telemetry_owner)
+            _telemetry_initialization = initialization
+    if creator:
+        if asynchronous:
+            thread = threading.Thread(
+                target=_initialize_telemetry,
+                args=(initialization,),
+                name="unity-mcp-telemetry-initialization",
+                daemon=True,
+            )
+            try:
+                thread.start()
+            except BaseException as error:
+                with _telemetry_lock:
+                    initialization.error = error
+                    _telemetry_initialization = None
+                    initialization.done.set()
+                raise
+        else:
+            _initialize_telemetry(initialization)
+    if asynchronous:
+        return None
+    initialization.done.wait()
+    if initialization.error is not None:
+        raise initialization.error
+    with _telemetry_lock:
+        collector = initialization.collector
+        if (
+            _telemetry_closed
+            or initialization.owner != _telemetry_owner
+            or collector is None
+            or collector._shutdown
+        ):
+            return None
+        return collector
 
 
 def start_telemetry() -> int:
@@ -620,9 +710,10 @@ def begin_telemetry_shutdown(owner: int | None = None) -> Callable[[], None]:
             return lambda: None
         _telemetry_closed = True
         collector = _telemetry_collector
+        initialization = _telemetry_initialization
         if collector is not None:
             collector._shutdown = True
-    return collector.shutdown if collector is not None else lambda: None
+    return lambda: _close_telemetry(collector, initialization)
 
 
 def shutdown_telemetry(owner: int | None = None) -> None:
@@ -639,10 +730,10 @@ def reset_telemetry():
         _telemetry_owner += 1
         _telemetry_closed = False
         collector = _telemetry_collector
+        initialization = _telemetry_initialization
         if collector is not None:
             collector._shutdown = True
-    if collector is not None:
-        collector.shutdown()
+    _close_telemetry(collector, initialization)
 
 
 def record_telemetry(

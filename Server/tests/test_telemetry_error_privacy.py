@@ -86,7 +86,7 @@ async def main():
     with patch.object(telemetry.httpx, "Client", lambda **kwargs: client_type(transport=httpx.MockTransport(sink), **kwargs)):
         for key in ("DISABLE_TELEMETRY", "UNITY_MCP_DISABLE_TELEMETRY", "MCP_DISABLE_TELEMETRY"):
             os.environ.pop(key, None)
-        collector = telemetry.get_telemetry()
+        collector = await anyio.to_thread.run_sync(telemetry.get_telemetry)
         put = collector._queue.put_nowait
         def capture(record):
             queued.append(copy.deepcopy(record.data))
@@ -195,7 +195,7 @@ async def main():
                     await client.call_tool("manage_editor", {"action": "telemetry_status"})
                     await client.read_resource("mcpforunity://editor/prefab-stage")
             telemetry.record_failure("disabled", SENSITIVE[3])
-            disabled = telemetry.get_telemetry()
+            disabled = await anyio.to_thread.run_sync(telemetry.get_telemetry)
             check(optout, not disabled.config.enabled and disabled._queue.empty() and disabled._worker is None and len(sent) == count)
             telemetry.reset_telemetry()
             config.telemetry_enabled = True
