@@ -192,10 +192,27 @@ def cli(
 
 
 @cli.command("status")
+@click.option(
+    "--ready", is_flag=True, help="Require authenticated discovery and a unique Unity target."
+)
 @pass_context
-def status(ctx: Context):
+def status(ctx: Context, ready: bool):
     """Check connection status to Unity MCP server."""
     config = ctx.config or get_config()
+
+    if ready:
+        from cli.utils.status import run_readiness
+
+        readiness = run_readiness(config)
+        if config.format != "text":
+            click.echo(format_output(readiness, config.format))
+        elif readiness["success"]:
+            print_success("Ready: authenticated discovery found a unique Unity target.")
+        else:
+            print_error(f"Readiness failed: {readiness['error']}")
+        if not readiness["success"]:
+            sys.exit(1)
+        return
 
     if config.format != "text":
         connected = run_check_connection(config)

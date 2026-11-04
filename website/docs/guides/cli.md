@@ -62,3 +62,19 @@ Use `unity-mcp --format json script read Assets/Scripts/Player.cs --start-line 1
 Use `--format json` for one machine-readable stdout document; diagnostics go to stderr. Explicit Unity command failures return nonzero exit status while retaining native diagnostic data. Check both exit status and the returned payload, including failed child commands/jobs.
 
 Save returned job IDs and poll them; do not rerun a mutation when a timeout may have occurred after dispatch. Budget errors call for smaller requests, not disabled safeguards. High-impact commands still need Editor consent. Never log authentication headers or private input files into shared job artifacts.
+
+## Explicit readiness checks
+
+`unity-mcp status` keeps its health-only exit contract: a healthy server can exit
+successfully even when instance discovery fails or no Editor is connected. For
+automation, use `unity-mcp --format json status --ready`. This exits nonzero if
+health, authentication, discovery, or unique target selection fails. The JSON and
+table output separate `server_reachable`, `authentication` (`accepted`, `rejected`,
+or `unknown`), `instance_discovery`, and `target_ready`.
+
+With multiple Editors, supply `--instance` before `status`; readiness accepts a
+unique project name, hash prefix, `Name@Hash`, or session ID. Without a selector,
+exactly one discovered Editor is required. This read-only check verifies discovery
+availability; it does not dispatch a command or guarantee that compilation or a
+subsequent Editor operation will succeed. HTTP errors other than 401/403 leave
+authentication unknown. Rejected response bodies and credentials are not printed.
