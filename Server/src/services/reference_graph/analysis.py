@@ -9,7 +9,7 @@ composition through wrappers without rereading their source at every call site.
 from __future__ import annotations
 
 from bisect import bisect_left
-from collections import OrderedDict, defaultdict, deque
+from collections import Counter, OrderedDict, defaultdict, deque
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
 import re
@@ -33,7 +33,7 @@ from services.reference_graph.store import Edge, _hash
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
-ANALYSIS_VERSION = 9
+ANALYSIS_VERSION = 10
 # Limit both the semantic value and nonliteral representation before allocating
 # expanded storage. Source size alone cannot bound repeated constant expansion.
 MAX_EXPRESSION_CHARS = 65536
@@ -89,6 +89,9 @@ _IDENT = re.compile(r"@?[^\W\d]\w*", re.UNICODE)
 _STRING_PREFIX = re.compile(r'(?:\$+@?|@\$?)?("{3,}|"|\')')
 _DELIMITER_RUN = re.compile(r'\{+|\}+|"+|\$+')
 _GUID = re.compile(r"^[0-9a-fA-F]{32}$")
+_LAMBDA_PREFIXES = {"return", "async", "static", "=", "=>", "(", "[", "{", ",", "?", ":", "??"}
+_TYPE_ARGUMENT_SUFFIXES = frozenset("()[]{}.,;:?>=!&|^") | {"?.", "::"}
+_TYPE_PATTERN_PREFIXES = {"is", "as", "not", "case", "out", "ref", "in"}
 _CONTROL = {
     "if",
     "while",
@@ -113,6 +116,7 @@ class Token:
     line: int
     kind: str = "symbol"
     value: str | None = None
+    lambda_parameter: bool = False
 
 
 def _string_value(value: str, check: Callable[[], None] = lambda: None) -> str | None:
@@ -369,7 +373,7 @@ def _expression(
         and len(tokens) % 2
     ):
         name = "".join(t.text for t in tokens)
-        if name.partition(".")[0] in locals_:
+        if tokens[0].lambda_parameter or name.partition(".")[0] in locals_:
             return UNKNOWN
         if name in parameters:
             return (("parameter", name),)
@@ -566,14 +570,17 @@ def parse_csharp(
     usings, aliases = imports[""]["usings"], imports[""]["aliases"]
     candidates = []
     declarations = {}
-    generic_calls = _generic_call_starts(tokens, pairs, check)
+    type_arguments = _type_argument_openings(tokens, pairs, check)
+    lambda_headers = (
+        _mark_lambda_parameters(tokens, pairs, type_arguments, check) if "=>" in source else set()
+    )
     for i, token in enumerate(tokens):
         check()
-        if token.text != "(" or i not in pairs:
+        if token.text != "(" or i not in pairs or i in lambda_headers:
             continue
         name_end = i - 1
         if name_end >= 0 and tokens[name_end].text == ">":
-            name_end = generic_calls.get(i, 0) - 1
+            name_end = type_arguments.get(i - 1, 0) - 1
         if name_end < 0 or tokens[name_end].kind != "id" or tokens[name_end].text in _CONTROL:
             continue
         start = name_end
@@ -637,6 +644,8 @@ def parse_csharp(
         for i in range(method[3] + 1, min(method[4], len(tokens))):
             check()
             inside_method[i] = True
+            if i in lambda_headers or tokens[i].lambda_parameter:
+                continue
             if (
                 i + 1 < len(tokens)
                 and tokens[i].kind == "id"
@@ -705,6 +714,8 @@ def parse_csharp(
         if (
             not inside_method[i]
             and i not in parameter_positions
+            and i not in lambda_headers
+            and not tokens[i].lambda_parameter
             and tokens[i].kind == "id"
             and (tokens[i - 1].kind == "id" or tokens[i - 1].text in (">", "]", "?", "*", ",", ")"))
             and tokens[i - 1].text
@@ -753,14 +764,15 @@ def parse_csharp(
             tokens[start].line,
             scopes[i],
             identity,
-            "." in name
+            tokens[start].lambda_parameter
+            or "." in name
             and receiver in (locals_ | set(parameters))
             and tokens[start].text != "global",
             import_scopes[i],
             tuple(argument_names),
             tuple(_argument_type(part, parameter_types) for part in argument_parts),
-            _generic_type(tokens[generic_calls[i] + 1 : i - 1], check)
-            if i in generic_calls
+            _generic_type(tokens[type_arguments[i - 1] + 1 : i - 1], check)
+            if i - 1 in type_arguments
             else "",
         )
         method_calls[identity].append(len(calls))
@@ -802,11 +814,11 @@ def parse_csharp(
     )
 
 
-def _generic_call_starts(
+def _type_argument_openings(
     tokens: list[Token], pairs: dict[int, int], check: Callable[[], None]
 ) -> dict[int, int]:
     """Match type argument lists once; a comparison before '(' has no list to consume."""
-    openings, calls = [], {}
+    openings, matches = [], {}
     for i, token in enumerate(tokens):
         check()
         if token.text == "<":
@@ -815,8 +827,19 @@ def _generic_call_starts(
             continue
         elif token.text == ">":
             start = openings.pop()
-            if i + 1 < len(tokens) and tokens[i + 1].text == "(":
-                calls[i + 1] = start
+            following = tokens[i + 1].text if i + 1 < len(tokens) else ""
+            if following in _TYPE_ARGUMENT_SUFFIXES:
+                matches[i] = start
+            elif i + 1 < len(tokens) and tokens[i + 1].kind == "id":
+                # A generic type pattern may precede a designation. Otherwise
+                # 'a < b, c > d' has a real expression boundary at the comma.
+                head = start - 1
+                while head >= 2 and tokens[head - 1].text in (".", "::"):
+                    check()
+                    head -= 2
+                if head > 0 and tokens[head - 1].text in _TYPE_PATTERN_PREFIXES:
+                    matches[i] = start
+            if following == "(":
                 openings.clear()  # An invocation cannot occur inside a type argument.
         elif token.text in (")", "]"):
             while openings and openings[-1] > pairs.get(i, -1):
@@ -826,11 +849,90 @@ def _generic_call_starts(
                 openings.clear()
         elif token.kind != "id" and token.text not in (".", "::", ",", "?", "*", "["):
             openings.clear()
-    return calls
+    return matches
 
 
 def _generic_type(parts: list[Token], check: Callable[[], None]) -> str:
     return "".join(token.text for token in parts) if len(_split(parts, ",", check)) == 1 else ""
+
+
+def _lambda_parameter_names(header: list[Token], check: Callable[[], None]) -> list[str]:
+    if header[0].text != "(":
+        return [header[0].text]
+    names = []
+    for part in _split(header[1:-1], ",", check):
+        # The final identifier before an optional default is the parameter.
+        declaration = _split(part, "=", check)[0] if part else []
+        if declaration and declaration[-1].kind == "id":
+            names.append(declaration[-1].text)
+    return names
+
+
+def _mark_lambda_parameters(
+    tokens: list[Token],
+    pairs: dict[int, int],
+    type_arguments: dict[int, int],
+    check: Callable[[], None],
+) -> set[int]:
+    """Mark parameter uses within their own bodies and keep headers out of member/local discovery."""
+    headers, events = set(), defaultdict(list)
+    enclosing, after_colon = [], {}
+    stop = len(tokens)
+    # Walking backwards makes the next boundary at each nesting level available
+    # even for chains of expression lambdas, without rescanning their bodies.
+    for i in range(len(tokens) - 1, -1, -1):
+        check()
+        text = tokens[i].text
+        opening = type_arguments.get(i, pairs.get(i, i))
+        if opening < i:
+            enclosing.append((opening, stop))
+            stop = i
+        elif enclosing and enclosing[-1][0] == i:
+            _, stop = enclosing.pop()
+        elif text in (",", ";"):
+            stop = i
+        elif text == ":":
+            after_colon[i], stop = stop, i
+        elif text == "?" and stop in after_colon:
+            stop = after_colon[stop]
+        elif text == "=>" and i:
+            start = pairs.get(i - 1, i - 1) if tokens[i - 1].text == ")" else i - 1
+            if not start or (tokens[start].text != "(" and tokens[start].kind != "id"):
+                continue
+            introducer = tokens[start - 1].text
+            if introducer not in _LAMBDA_PREFIXES:
+                continue
+            if (
+                introducer in ("{", ",")
+                and enclosing
+                and tokens[enclosing[-1][0] - 1].text == "switch"
+            ):
+                continue
+            headers.update(range(start, i))
+            end = (
+                pairs.get(i + 1, stop)
+                if i + 1 < len(tokens) and tokens[i + 1].text == "{"
+                else stop
+            )
+            for name in _lambda_parameter_names(tokens[start:i], check):
+                events[i].append((name, 1))
+                events[end].append((name, -1))
+
+    if events:
+        active = Counter()
+        for i, token in enumerate(tokens):
+            check()
+            for name, change in events.get(i, ()):
+                active[name] += change
+                if not active[name]:
+                    del active[name]
+            if (
+                token.kind == "id"
+                and token.text in active
+                and not (i + 1 < len(tokens) and tokens[i + 1].text == "::")
+            ):
+                tokens[i] = replace(token, lambda_parameter=True)
+    return headers
 
 
 def _argument_type(tokens: list[Token], parameters: dict[str, str]) -> str:
@@ -840,7 +942,7 @@ def _argument_type(tokens: list[Token], parameters: dict[str, str]) -> str:
             return "char" if token.text.startswith("'") else "string"
         if token.text in {"true", "false"}:
             return "bool"
-        if token.text in parameters:
+        if not token.lambda_parameter and token.text in parameters:
             return parameters[token.text]
     literal = re.fullmatch(
         r"([+-]?)(0[xX][0-9a-fA-F_]+|0[bB][01_]+|[0-9][0-9_]*)([uU][lL]?|[lL][uU]?)?",

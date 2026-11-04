@@ -79,6 +79,110 @@ def test_iteration_and_pattern_values_do_not_resolve_shadowed_constants(body):
     assert any(issue["reason"] == "dynamic_key" for issue in result.unresolved)
 
 
+@pytest.mark.parametrize(
+    "parameters", ["Key", "(Key)", "(other, Key)", "(string Key)", "(int other, string Key)"]
+)
+def test_lambda_parameter_shadows_constant_only_inside_its_body(parameters):
+    delegate = (
+        "System.Func<int, string, object>" if "," in parameters else "System.Func<string, object>"
+    )
+    item = facts(
+        "caller",
+        f"""class Use {{
+const string Key="one";
+{delegate} Run() {{
+    UnityEngine.Resources.Load(Key);
+    return {parameters} => UnityEngine.Resources.Load(Key);
+}}
+}}""",
+    )
+    result = AnalysisIndex([item], catalog()).analyze("caller")
+    assert [(edge.key, edge.line) for edge in result.edges] == [("one", 4)]
+    assert any(
+        issue["reason"] == "dynamic_key" and issue["line"] == 5 for issue in result.unresolved
+    )
+
+
+def test_nested_lambda_receiver_and_capture_have_distinct_scopes():
+    item = facts(
+        "caller",
+        """using UnityEngine;
+class Use {
+const string Key="three";
+void Run() {
+    Register(Resources => { Register(x => Resources.Load("one")); },
+             x => Resources.Load("two"));
+    Resources.Load(Key);
+} }""",
+    )
+    result = AnalysisIndex([item], catalog()).analyze("caller")
+    assert {edge.key for edge in result.edges} == {"two", "three"}
+    assert any(issue["reason"] == "unresolved_receiver" for issue in result.unresolved)
+
+
+@pytest.mark.parametrize(
+    ("parameter_type", "body"),
+    [
+        ("Loader", 'Resources => Resources.Load("one")'),
+        ("System.Func<string, object>", 'Load => Load("one")'),
+    ],
+)
+def test_returned_lambda_does_not_bind_a_shadowed_loader(parameter_type, body):
+    item = facts(
+        "caller",
+        f"""using UnityEngine; using static UnityEngine.Resources;
+class Loader {{ public object Load(string key) => null; }}
+class Use {{ System.Func<{parameter_type}, object> Run() {{ return {body}; }} }}""",
+    )
+    result = AnalysisIndex([item], catalog()).analyze("caller")
+    assert not result.edges
+    assert any(issue["reason"] == "unresolved_receiver" for issue in result.unresolved)
+
+
+def test_lambda_in_expression_bodied_wrapper_captures_method_parameter():
+    loader = facts(
+        "loader",
+        "class Loader { public static System.Func<int, object> Make(string key) => x => UnityEngine.Resources.Load(key); }",
+    )
+    caller = facts("caller", 'class Use { void Run() { Loader.Make("one"); } }')
+    assert keys(AnalysisIndex([loader, caller], catalog())) == {"one"}
+
+
+def test_lambda_scope_distinguishes_relational_arguments_from_generic_type_patterns():
+    item = facts(
+        "caller",
+        """class Use {
+const string Key="one";
+void Run() {
+    Register(Key => a < b, c > d && UnityEngine.Resources.Load(Key) != null);
+    Register(Key => value is NS.Pair<int, string> pair && UnityEngine.Resources.Load(Key) != null);
+} }""",
+    )
+    result = AnalysisIndex([item], catalog()).analyze("caller")
+    assert [(edge.key, edge.line) for edge in result.edges] == [("one", 4)]
+    assert any(
+        issue["reason"] == "dynamic_key" and issue["line"] == 5 for issue in result.unresolved
+    )
+
+
+def test_conditional_and_switch_arms_preserve_lambda_scope_boundaries():
+    item = facts(
+        "caller",
+        """class Use {
+const string Key="one";
+System.Func<string, object> Select(bool enabled, string value) => enabled
+    ? Key => Other<int, string>.Flag ? UnityEngine.Resources.Load(Key) : UnityEngine.Resources.Load(Key)
+    : value switch { Key => x => UnityEngine.Resources.Load(Key), _ => null };
+}""",
+    )
+    result = AnalysisIndex([item], catalog()).analyze("caller")
+    assert [(edge.key, edge.line) for edge in result.edges] == [("one", 5)]
+    assert (
+        sum(issue["reason"] == "dynamic_key" and issue["line"] == 4 for issue in result.unresolved)
+        == 2
+    )
+
+
 def test_binding_uncertainty_keeps_explicit_global_loader_evidence_in_other_methods():
     item = facts(
         "caller",
