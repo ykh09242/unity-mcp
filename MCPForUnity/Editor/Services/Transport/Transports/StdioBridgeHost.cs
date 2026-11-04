@@ -676,6 +676,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     {
                         _processCommandsHooked = true;
                         EditorApplication.update += ProcessCommands;
+                        EditorMainThreadWakeup.Pump += ProcessCommands;
                     }
                     try
                     {
@@ -755,6 +756,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         SetStopIntent(true);
                     RetireStartup();
                 }
+                if (_processCommandsHooked)
+                {
+                    EditorApplication.update -= ProcessCommands;
+                    EditorMainThreadWakeup.Pump -= ProcessCommands;
+                    _processCommandsHooked = false;
+                }
                 if (!isRunning && listener == null && cts == null && (!retireStartup || !hadStartup))
                     return;
                 stoppedEpoch = ++lifecycleEpoch;
@@ -833,7 +840,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 if (lifecycleEpoch != stoppedEpoch)
                     return;
-                // The permanently hooked command pump still drains actual old owners.
+                // Executing owners settle independently of the retired admission pump.
                 try
                 {
                     EditorApplication.quitting -= Stop;
@@ -1346,11 +1353,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     cancelQueued = commandLifetime.Token.Register(() => CancelQueuedCommand(commandId, owned));
                 if (owned?.Progress != null)
                     progressPump = PumpStdioProgressAsync(client, writer, launch, session, commandId, owned, commandLifetime.Token, stopProgress.Token);
-                try
-                {
-                    EditorApplication.QueuePlayerLoopUpdate();
-                }
-                catch { }
+                EditorMainThreadWakeup.Request();
                 string response;
                 using var watchLifetime = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
                 Task disconnectWatch = WatchPendingDisconnectAsync(client, pending.Task, connectionLifetime, watchLifetime.Token);
@@ -1750,6 +1753,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             if (removed.QueueNode != null)
                 commandOrder.Remove(removed.QueueNode);
             removed.QueueNode = null;
+            if (isRunning && commandOrder.Count > 0)
+                EditorMainThreadWakeup.Request();
         }
 
         private static ulong ReadUInt64BigEndian(byte[] buffer)
@@ -1791,6 +1796,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 return;
             if (Interlocked.Exchange(ref processingCommands, 1) == 1)
                 return;
+            bool admitted = false;
             try
             {
                 double now = EditorApplication.timeSinceStartup;
@@ -1850,6 +1856,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                 if (work.Value != null)
                 {
+                    admitted = true;
                     string id = work.Key;
                     QueuedCommand queuedCommand = work.Value;
                     string commandText = queuedCommand.CommandJson;
@@ -1906,6 +1913,14 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             finally
             {
                 Interlocked.Exchange(ref processingCommands, 0);
+                // Advance ready work after this bounded admission. A blocked legacy tail
+                // waits for settlement/removal to signal again instead of spinning ticks.
+                if (admitted)
+                {
+                    lock (lockObj)
+                        if (isRunning && commandOrder.Count > 0)
+                            EditorMainThreadWakeup.Request();
+                }
             }
         }
 

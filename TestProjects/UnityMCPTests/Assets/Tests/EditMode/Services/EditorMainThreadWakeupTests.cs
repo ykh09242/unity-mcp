@@ -1,7 +1,15 @@
 using System;
+using System.Collections;
+using System.Diagnostics;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport.Transports;
+using MCPForUnity.Editor.Tools;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
@@ -13,6 +21,62 @@ namespace MCPForUnityTests.Editor.Services
     {
         private static readonly MethodInfo NativeTick = typeof(EditorMainThreadWakeup).GetMethod("NativeTick", BindingFlags.NonPublic | BindingFlags.Static);
         private static readonly MethodInfo Update = typeof(EditorMainThreadWakeup).GetMethod("Drain", BindingFlags.NonPublic | BindingFlags.Static);
+
+        [Test]
+        public async Task StdioIngress_RunsFromActualNativeTickWithoutItsUpdateCallback()
+        {
+            Assert.IsFalse(StdioBridgeHost.IsRunning, "Use an idle test Editor; never replace another listener.");
+            if (!EditorMainThreadWakeup.NativeWakeAvailable)
+                Assert.Ignore("Native tick is unavailable; the separate fallback tests still apply.");
+            const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Static;
+            const string stopKey = "MCPForUnity.StdioExplicitlyStopped";
+            bool stopped = StdioBridgeHost.IsExplicitlyStopped;
+            bool hadStop = SessionState.GetBool(stopKey, false) == SessionState.GetBool(stopKey, true);
+            CommandRegistry.Initialize();
+            var handlers = (IDictionary)typeof(CommandRegistry).GetField("_handlers", flags).GetValue(null);
+            var pump = (EditorApplication.CallbackFunction)
+                Delegate.CreateDelegate(typeof(EditorApplication.CallbackFunction), typeof(StdioBridgeHost).GetMethod("ProcessCommands", flags));
+            string name = "stdio_native_tick_" + Guid.NewGuid().ToString("N");
+            string token = new string('d', 64);
+            int calls = 0;
+            handlers[name] = new HandlerInfo(name, _ => new { calls = ++calls }, null);
+            try
+            {
+                StdioBridgeHost.StartOwned(0, token);
+                EditorApplication.update -= pump;
+                using var peer = StdioBridgeLifecycleTests.Connect(StdioBridgeHost.GetCurrentPort(), token);
+                StdioBridgeLifecycleTests.Send(peer.GetStream(), new JObject { ["type"] = name }.ToString(Formatting.None));
+                var watch = Stopwatch.StartNew();
+                while (calls == 0 && watch.ElapsedMilliseconds < 5000)
+                    await Task.Delay(10);
+                Assert.AreEqual(1, calls, "Actual native tick delivery must admit stdio when its regular update callback is absent.");
+                pump();
+                NativeTick.Invoke(null, null);
+                Assert.AreEqual(1, calls, "Fallback and native callbacks must not execute an admitted command twice.");
+            }
+            finally
+            {
+                EditorApplication.update += pump;
+                StdioBridgeHost.Stop();
+                var watch = Stopwatch.StartNew();
+                while ((StdioBridgeHost.QueuedCommandCount != 0 || StdioBridgeHost.ReservedInputBytes != 0) && watch.ElapsedMilliseconds < 5000)
+                    await Task.Yield();
+                handlers.Remove(name);
+                typeof(StdioBridgeHost).GetField("explicitlyStopped", flags).SetValue(null, stopped);
+                if (hadStop)
+                    SessionState.SetBool(stopKey, stopped);
+                else
+                    SessionState.EraseBool(stopKey);
+            }
+            Assert.AreEqual(0, StdioBridgeHost.QueuedCommandCount);
+            Assert.AreEqual(0, StdioBridgeHost.ReservedInputBytes);
+            var subscribers = (Action)typeof(EditorMainThreadWakeup).GetField("Pump", flags).GetValue(null);
+            Assert.IsFalse(
+                subscribers?.GetInvocationList().Any(callback => callback.Method.DeclaringType == typeof(StdioBridgeHost)) ?? false,
+                "Stop must detach the stdio native pump."
+            );
+            Assert.IsFalse(EditorApplication.update?.GetInvocationList().Contains(pump) ?? false, "Stop must detach the fallback pump.");
+        }
 
         [Test]
         public void ScheduledWork_RunsFromNativeTickWithoutAnInspectorDelayCall()
