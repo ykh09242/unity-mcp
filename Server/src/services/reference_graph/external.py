@@ -29,6 +29,16 @@ from services.reference_graph.ignore import GitIgnoreRules
 from services.reference_graph.collection_protocol import CollectionBudget, CollectionLimits
 
 _CSV_LIMIT_LOCK = threading.Lock()
+# Match quoted spans without copying or unescaping them. Possessive runs also
+# keep malformed unterminated strings linear; json.loads owns syntax errors.
+_JSON_NODE_MARKERS = re.compile(
+    r"""
+        "(?:[^"\\]++|\\.)*+"?        # Skip a quoted key or value.
+        | ,                         # A sibling follows.
+        | [\[{](?![ \t\r\n]*+[\]}]) # A nonempty container has a first child.
+    """,
+    re.DOTALL | re.VERBOSE,
+)
 
 
 def _relative(path: str, *, pattern: bool = False) -> tuple[str, ...]:
@@ -437,6 +447,15 @@ def _unique_object(
     return value
 
 
+def _admit_json_nodes(text: str, check: Callable[[], None], visit: Callable[[], None]) -> None:
+    """Charge the root, the first child of each nonempty container, and every sibling."""
+    visit()
+    for marker in _JSON_NODE_MARKERS.finditer(text):
+        check()
+        if text[marker.start()] != '"':
+            visit()
+
+
 def _values(
     relative: str,
     text: str,
@@ -458,6 +477,7 @@ def _values(
             check()
             return float(value)
 
+        _admit_json_nodes(text, check, visit)
         document = json.loads(
             text,
             object_pairs_hook=unique_object,
@@ -475,7 +495,6 @@ def _values(
             except StopIteration:
                 pending.pop()
                 continue
-            visit()
             path = (
                 parent
                 if key is None

@@ -432,6 +432,36 @@ def test_wide_json_traversal_has_bounded_auxiliary_memory():
     )
 
 
+@pytest.mark.parametrize("tail", ["0]", "invalid]"])
+def test_dense_json_stops_decoding_at_node_budget(tail):
+    text = "[" + "0," * 1_000_000 + tail
+    budget = CollectionBudget(CollectionLimits(max_items=8))
+    checks = 0
+
+    def check():
+        nonlocal checks
+        checks += 1
+
+    with pytest.raises(CollectionBudgetExceeded, match="max_items=8"):
+        analyze_document(
+            "dense.json", text, Catalog([]), [], check=check, visit=lambda: budget.admit_items(1)
+        )
+    assert checks < 32
+    assert budget.items == 8
+
+
+def test_json_node_admission_counts_empty_containers_and_skips_string_punctuation():
+    from services.reference_graph.external import _values
+
+    text = r'{"\u002f": [ { }, [ ], "a\",\\[{},", 1e2, false, null ], "~": -1}'
+    budget = CollectionBudget(CollectionLimits(max_items=9))
+    assert list(_values("data.json", text, visit=lambda: budget.admit_items(1))) == [
+        ("/~1/2", 'a",\\[{},', 0, "/~1/2"),
+        ("/~0", -1, 0, "/~0"),
+    ]
+    assert budget.items == 9
+
+
 @pytest.mark.parametrize(
     "name,text", [("data.json", "[null,false,{},[]]"), ("data.csv", "a,b\nx,y\n")]
 )
