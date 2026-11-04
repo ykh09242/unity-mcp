@@ -18,6 +18,10 @@ namespace MCPForUnity.Editor.Services.Transport
         private Func<IMcpTransportClient> _stdioFactory;
         private Task<bool> _httpStartTask;
         private Task<bool> _stdioStartTask;
+        private long _httpGeneration;
+        private long _stdioGeneration;
+        private bool _httpConnectionIntent;
+        private bool _stdioConnectionIntent;
 
         public TransportManager()
         {
@@ -57,21 +61,59 @@ namespace MCPForUnity.Editor.Services.Transport
                 return inFlight;
             }
 
-            Task<bool> started = StartCoreAsync(mode);
-            if (mode == TransportMode.Http)
-                _httpStartTask = started;
-            else
-                _stdioStartTask = started;
+            long generation = BeginIntent(mode);
+            Task<bool> started = StartCoreAsync(mode, generation);
+            if (IsCurrent(mode, generation))
+            {
+                if (mode == TransportMode.Http)
+                    _httpStartTask = started;
+                else
+                    _stdioStartTask = started;
+            }
             return started;
         }
 
-        private async Task<bool> StartCoreAsync(TransportMode mode)
+        private async Task<bool> StartCoreAsync(TransportMode mode, long generation)
         {
-            IMcpTransportClient client = GetOrCreateClient(mode);
-
-            bool started = await client.StartAsync();
+            IMcpTransportClient client;
+            try
+            {
+                client = GetOrCreateClient(mode);
+            }
+            catch
+            {
+                if (IsCurrent(mode, generation))
+                    EndIntent(mode);
+                throw;
+            }
+            bool started;
+            try
+            {
+                started = await client.StartAsync();
+            }
+            catch
+            {
+                if (IsCurrent(mode, generation))
+                {
+                    long cleanupGeneration = EndIntent(mode);
+                    try
+                    {
+                        await client.StopAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        McpLog.Warn($"Error while stopping transport {client.TransportName}: {ex.Message}");
+                    }
+                    if (IsCurrent(mode, cleanupGeneration))
+                        UpdateState(mode, TransportState.Disconnected(client.TransportName, "Failed to start"));
+                }
+                throw;
+            }
+            if (!IsCurrent(mode, generation))
+                return false;
             if (!started)
             {
+                long cleanupGeneration = EndIntent(mode);
                 try
                 {
                     await client.StopAsync();
@@ -80,7 +122,8 @@ namespace MCPForUnity.Editor.Services.Transport
                 {
                     McpLog.Warn($"Error while stopping transport {client.TransportName}: {ex.Message}");
                 }
-                UpdateState(mode, TransportState.Disconnected(client.TransportName, client.State?.Error ?? "Failed to start"));
+                if (IsCurrent(mode, cleanupGeneration))
+                    UpdateState(mode, TransportState.Disconnected(client.TransportName, client.State?.Error ?? "Failed to start"));
                 return false;
             }
 
@@ -90,7 +133,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
         public async Task StopAsync(TransportMode? mode = null)
         {
-            async Task StopClient(IMcpTransportClient client, TransportMode clientMode)
+            async Task StopClient(IMcpTransportClient client, TransportMode clientMode, long generation)
             {
                 if (client == null)
                     return;
@@ -104,24 +147,30 @@ namespace MCPForUnity.Editor.Services.Transport
                 }
                 finally
                 {
-                    UpdateState(clientMode, TransportState.Disconnected(client.TransportName));
+                    if (IsCurrent(clientMode, generation))
+                        UpdateState(clientMode, TransportState.Disconnected(client.TransportName));
                 }
             }
 
             if (mode == null)
             {
-                await StopClient(_httpClient, TransportMode.Http);
-                await StopClient(_stdioClient, TransportMode.Stdio);
+                long httpGeneration = EndIntent(TransportMode.Http);
+                long stdioGeneration = EndIntent(TransportMode.Stdio);
+                Task httpStop = StopClient(_httpClient, TransportMode.Http, httpGeneration);
+                Task stdioStop = StopClient(_stdioClient, TransportMode.Stdio, stdioGeneration);
+                await Task.WhenAll(httpStop, stdioStop);
                 return;
             }
 
             if (mode == TransportMode.Http)
             {
-                await StopClient(_httpClient, TransportMode.Http);
+                long generation = EndIntent(TransportMode.Http);
+                await StopClient(_httpClient, TransportMode.Http, generation);
             }
             else
             {
-                await StopClient(_stdioClient, TransportMode.Stdio);
+                long generation = EndIntent(TransportMode.Stdio);
+                await StopClient(_stdioClient, TransportMode.Stdio, generation);
             }
         }
 
@@ -173,17 +222,63 @@ namespace MCPForUnity.Editor.Services.Transport
 
         public bool IsRunning(TransportMode mode) => GetState(mode).IsConnected;
 
+        /// <summary>Whether a start is active, including while connecting or reconnecting.</summary>
+        public bool HasConnectionIntent(TransportMode mode) =>
+            mode switch
+            {
+                TransportMode.Http => _httpConnectionIntent,
+                TransportMode.Stdio => _stdioConnectionIntent,
+                _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported transport mode"),
+            };
+
+        private long BeginIntent(TransportMode mode)
+        {
+            if (mode == TransportMode.Http)
+            {
+                _httpConnectionIntent = true;
+                return ++_httpGeneration;
+            }
+            if (mode == TransportMode.Stdio)
+            {
+                _stdioConnectionIntent = true;
+                return ++_stdioGeneration;
+            }
+            throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported transport mode");
+        }
+
+        private long EndIntent(TransportMode mode)
+        {
+            if (mode == TransportMode.Http)
+            {
+                _httpConnectionIntent = false;
+                _httpStartTask = null;
+                return ++_httpGeneration;
+            }
+            if (mode == TransportMode.Stdio)
+            {
+                _stdioConnectionIntent = false;
+                _stdioStartTask = null;
+                return ++_stdioGeneration;
+            }
+            throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported transport mode");
+        }
+
+        private bool IsCurrent(TransportMode mode, long generation) =>
+            mode == TransportMode.Http ? _httpGeneration == generation : _stdioGeneration == generation;
+
         /// <summary>
         /// Synchronous teardown for shutdown/reload hooks where async awaits are not possible.
         /// </summary>
         public void ForceStop(TransportMode mode)
         {
+            long generation = EndIntent(mode);
             IMcpTransportClient client = GetClient(mode);
             string transportName = client?.TransportName ?? mode.ToString().ToLowerInvariant();
 
             if (client == null)
             {
-                UpdateState(mode, TransportState.Disconnected(transportName));
+                if (IsCurrent(mode, generation))
+                    UpdateState(mode, TransportState.Disconnected(transportName));
                 return;
             }
 
@@ -204,7 +299,8 @@ namespace MCPForUnity.Editor.Services.Transport
             }
             finally
             {
-                UpdateState(mode, TransportState.Disconnected(transportName));
+                if (IsCurrent(mode, generation))
+                    UpdateState(mode, TransportState.Disconnected(transportName));
             }
         }
 

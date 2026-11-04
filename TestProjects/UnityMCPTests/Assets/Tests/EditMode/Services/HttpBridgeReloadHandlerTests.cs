@@ -75,6 +75,83 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void BeforeReloadCore_DisconnectedAfterStart_PreservesReconnectIntent()
+        {
+            var client = new DisconnectedHttpClient();
+            var manager = new TransportManager();
+            manager.Configure(() => client, () => client);
+            Assert.IsTrue(manager.StartAsync(TransportMode.Http).Result);
+            Assert.IsFalse(manager.IsRunning(TransportMode.Http));
+            bool savedLatch = SessionState.GetBool(HttpAutoStartHandler.SessionInitKey, false);
+            try
+            {
+                SessionState.SetBool(HttpAutoStartHandler.SessionInitKey, true);
+                HttpBridgeReloadHandler.OnBeforeAssemblyReloadCore(manager);
+                Assert.IsTrue(ResumeFlagSet);
+                Assert.IsFalse(manager.HasConnectionIntent(TransportMode.Http));
+                Assert.IsTrue(HttpBridgeReloadHandler.OnAfterAssemblyReloadCore(), "the auto-start latch must not suppress reload resume");
+            }
+            finally
+            {
+                SessionState.SetBool(HttpAutoStartHandler.SessionInitKey, savedLatch);
+            }
+        }
+
+        [Test]
+        public void BeforeReloadCore_ExplicitStop_DoesNotRestoreConnection()
+        {
+            StartBridge();
+            _manager.StopAsync(TransportMode.Http).GetAwaiter().GetResult();
+            HttpBridgeReloadHandler.OnBeforeAssemblyReloadCore(_manager);
+            Assert.IsFalse(ResumeFlagSet);
+        }
+
+        [Test]
+        public void BeforeReloadCore_Connecting_PreservesIntentAndRetiresStart()
+        {
+            var client = new ConnectingHttpClient();
+            var manager = new TransportManager();
+            manager.Configure(() => client, () => client);
+            Task<bool> pending = manager.StartAsync(TransportMode.Http);
+            HttpBridgeReloadHandler.OnBeforeAssemblyReloadCore(manager);
+            Assert.IsTrue(ResumeFlagSet);
+            client.Pending.SetResult(true);
+            Assert.IsFalse(pending.Result);
+            Assert.IsFalse(manager.HasConnectionIntent(TransportMode.Http));
+        }
+
+        private sealed class ConnectingHttpClient : IMcpTransportClient
+        {
+            public readonly TaskCompletionSource<bool> Pending = new TaskCompletionSource<bool>();
+            public bool IsConnected => false;
+            public string TransportName => "http";
+            public TransportState State => TransportState.Disconnected("http");
+
+            public Task<bool> StartAsync() => Pending.Task;
+
+            public Task StopAsync() => Task.CompletedTask;
+
+            public Task<bool> VerifyAsync() => Task.FromResult(false);
+
+            public Task ReregisterToolsAsync() => Task.CompletedTask;
+        }
+
+        private sealed class DisconnectedHttpClient : IMcpTransportClient
+        {
+            public bool IsConnected => false;
+            public string TransportName => "http";
+            public TransportState State => TransportState.Disconnected("http", "reconnecting");
+
+            public Task<bool> StartAsync() => Task.FromResult(true);
+
+            public Task StopAsync() => Task.CompletedTask;
+
+            public Task<bool> VerifyAsync() => Task.FromResult(false);
+
+            public Task ReregisterToolsAsync() => Task.CompletedTask;
+        }
+
+        [Test]
         public void BeforeReloadCore_BridgeNotRunning_PreservesPendingFlag()
         {
             SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, true);

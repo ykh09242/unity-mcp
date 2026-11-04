@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.Transport;
 using NUnit.Framework;
@@ -12,6 +14,145 @@ namespace MCPForUnityTests.Editor.Services
     /// </summary>
     public class TransportManagerTests
     {
+        private sealed class ControlledClient : IMcpTransportClient
+        {
+            public readonly List<TaskCompletionSource<bool>> Starts = new List<TaskCompletionSource<bool>>();
+            public int StopCalls;
+            public TaskCompletionSource<bool> PendingStop;
+            public TransportState State { get; set; } = TransportState.Disconnected("controlled");
+            public bool IsConnected => State.IsConnected;
+            public string TransportName => "controlled";
+
+            public Task<bool> StartAsync()
+            {
+                var completion = new TaskCompletionSource<bool>();
+                Starts.Add(completion);
+                return completion.Task;
+            }
+
+            public Task StopAsync()
+            {
+                StopCalls++;
+                return PendingStop?.Task ?? Task.CompletedTask;
+            }
+
+            public Task<bool> VerifyAsync() => Task.FromResult(IsConnected);
+
+            public Task ReregisterToolsAsync() => Task.CompletedTask;
+        }
+
+        [TestCase(TransportMode.Http, false)]
+        [TestCase(TransportMode.Http, true)]
+        [TestCase(TransportMode.Stdio, false)]
+        [TestCase(TransportMode.Stdio, true)]
+        public void StopThenStart_RetiredCompletionDoesNotStopReplacement(TransportMode mode, bool oldSuccess)
+        {
+            var client = new ControlledClient();
+            var manager = new TransportManager();
+            manager.Configure(() => client, () => client);
+            Task<bool> oldStart = manager.StartAsync(mode);
+            manager.StopAsync(mode).GetAwaiter().GetResult();
+            Task<bool> replacement = manager.StartAsync(mode);
+            Assert.AreNotSame(oldStart, replacement);
+            Assert.AreEqual(2, client.Starts.Count);
+            Assert.AreSame(replacement, manager.StartAsync(mode), "the replacement intent still coalesces");
+
+            client.State = TransportState.Connected("controlled", sessionId: "replacement");
+            client.Starts[1].SetResult(true);
+            client.Starts[0].SetResult(oldSuccess);
+
+            Assert.IsFalse(oldStart.Result);
+            Assert.IsTrue(replacement.Result);
+            Assert.AreEqual(1, client.StopCalls, "a retired failure must not stop the replacement");
+            Assert.IsTrue(manager.HasConnectionIntent(mode));
+            Assert.IsTrue(manager.IsRunning(mode));
+        }
+
+        [Test]
+        public void StopAll_RetiresBothPendingStartsBeforeAwaitingStop()
+        {
+            var http = new ControlledClient();
+            var stdio = new ControlledClient();
+            http.PendingStop = new TaskCompletionSource<bool>();
+            var manager = new TransportManager();
+            manager.Configure(() => http, () => stdio);
+            Task<bool> oldHttp = manager.StartAsync(TransportMode.Http);
+            Task<bool> oldStdio = manager.StartAsync(TransportMode.Stdio);
+            Task stop = manager.StopAsync();
+            Assert.IsFalse(stop.IsCompleted);
+            Assert.AreEqual(1, stdio.StopCalls, "both modes must be stopped before awaiting either one");
+            Task<bool> nextHttp = manager.StartAsync(TransportMode.Http);
+            Task<bool> nextStdio = manager.StartAsync(TransportMode.Stdio);
+            Assert.AreNotSame(oldHttp, nextHttp);
+            Assert.AreNotSame(oldStdio, nextStdio);
+            http.Starts[0].SetResult(false);
+            stdio.Starts[0].SetResult(false);
+            http.Starts[1].SetResult(true);
+            stdio.Starts[1].SetResult(true);
+            http.PendingStop.SetResult(true);
+            Assert.IsTrue(stop.IsCompleted);
+            Assert.AreEqual(1, http.StopCalls);
+            Assert.AreEqual(1, stdio.StopCalls);
+        }
+
+        [Test]
+        public void FailedStartException_CleansUpIntent()
+        {
+            var client = new ControlledClient();
+            var manager = new TransportManager();
+            manager.Configure(() => client, () => client);
+            Task<bool> start = manager.StartAsync(TransportMode.Http);
+            client.Starts[0].SetException(new InvalidOperationException("start failed"));
+            Assert.Throws<InvalidOperationException>(() => start.GetAwaiter().GetResult());
+            Assert.AreEqual(1, client.StopCalls);
+            Assert.IsFalse(manager.HasConnectionIntent(TransportMode.Http));
+        }
+
+        [Test]
+        public void RetiredStartException_DoesNotCleanUpReplacement()
+        {
+            var client = new ControlledClient();
+            var manager = new TransportManager();
+            manager.Configure(() => client, () => client);
+            Task<bool> oldStart = manager.StartAsync(TransportMode.Http);
+            manager.StopAsync(TransportMode.Http).GetAwaiter().GetResult();
+            Task<bool> replacement = manager.StartAsync(TransportMode.Http);
+            client.Starts[0].SetException(new InvalidOperationException("old failure"));
+            Assert.Throws<InvalidOperationException>(() => oldStart.GetAwaiter().GetResult());
+            Assert.AreEqual(1, client.StopCalls);
+            Assert.IsTrue(manager.HasConnectionIntent(TransportMode.Http));
+            client.Starts[1].SetResult(true);
+            Assert.IsTrue(replacement.Result);
+        }
+
+        [Test]
+        public void ForceStop_RetiresPendingStartAndAllowsReplacement()
+        {
+            var client = new ControlledClient();
+            var manager = new TransportManager();
+            manager.Configure(() => client, () => client);
+            Task<bool> oldStart = manager.StartAsync(TransportMode.Http);
+            manager.ForceStop(TransportMode.Http);
+            Assert.IsFalse(manager.HasConnectionIntent(TransportMode.Http));
+            Task<bool> replacement = manager.StartAsync(TransportMode.Http);
+            Assert.AreNotSame(oldStart, replacement);
+            client.Starts[0].SetResult(false);
+            client.Starts[1].SetResult(true);
+            Assert.IsFalse(oldStart.Result);
+            Assert.IsTrue(replacement.Result);
+            Assert.AreEqual(1, client.StopCalls);
+        }
+
+        [Test]
+        public void FailedClientFactory_ClearsIntent()
+        {
+            var manager = new TransportManager();
+            manager.Configure(() => throw new InvalidOperationException("factory failed"), () => new ControlledClient());
+            Task<bool> start = manager.StartAsync(TransportMode.Http);
+            Assert.Throws<InvalidOperationException>(() => start.GetAwaiter().GetResult());
+            Assert.IsFalse(manager.HasConnectionIntent(TransportMode.Http));
+        }
+
         private sealed class PendingTransportClient : IMcpTransportClient
         {
             public readonly TaskCompletionSource<bool> Pending = new TaskCompletionSource<bool>();

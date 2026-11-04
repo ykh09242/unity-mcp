@@ -86,7 +86,7 @@ namespace MCPForUnity.Editor.Services
 
         internal static void OnBeforeAssemblyReloadCore(TransportManager transport)
         {
-            if (transport.IsRunning(TransportMode.Http))
+            if (transport.HasConnectionIntent(TransportMode.Http) || transport.IsRunning(TransportMode.Http))
             {
                 SessionState.SetBool(ResumeSessionKey, true);
                 SessionState.SetString(ResumeStatusSessionKey, "Waiting for assembly reload to finish");
