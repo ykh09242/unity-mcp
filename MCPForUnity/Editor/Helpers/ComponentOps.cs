@@ -1555,7 +1555,7 @@ namespace MCPForUnity.Editor.Helpers
         /// property with a differently named native field (SpriteRenderer.sprite is m_Sprite), so
         /// fall back to comparing names case-insensitively with the m_ prefix and underscores removed.
         /// </summary>
-        private static SerializedProperty FindTopLevelProperty(SerializedObject so, string propertyName, string normalizedName, out string error)
+        internal static SerializedProperty FindTopLevelProperty(SerializedObject so, string propertyName, string normalizedName, out string error)
         {
             error = null;
             var prop = so.FindProperty(propertyName) ?? so.FindProperty(normalizedName);

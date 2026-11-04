@@ -23,7 +23,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             return value;
         }
 
-        internal static void ValidateComponentParameters(JObject parameters, bool validateRemovals, GameObject componentSource = null)
+        internal static List<Type> ValidateComponentParameters(JObject parameters, bool validateRemovals, GameObject componentSource = null)
         {
             var additionDefinitions = new List<KeyValuePair<Type, JObject>>();
             Type transformType =
@@ -103,12 +103,13 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             JToken componentProperties = parameters["componentProperties"];
             if (componentProperties == null || componentProperties.Type == JTokenType.Null)
-                return;
+                return presentTypes;
             if (!(componentProperties is JObject propertyMap))
                 throw new ArgumentException("'componentProperties' must be an object.");
             foreach (JProperty component in propertyMap.Properties())
                 if (string.IsNullOrWhiteSpace(component.Name) || !(component.Value is JObject))
                     throw new ArgumentException("Each 'componentProperties' entry must map a nonempty component type name to an object.");
+            return presentTypes;
         }
 
         internal static GameObject FindMutationTarget(JToken targetToken, string searchMethod, JObject findParams = null)

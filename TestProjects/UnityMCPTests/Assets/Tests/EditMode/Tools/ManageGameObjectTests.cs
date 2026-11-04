@@ -200,7 +200,7 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
-        public void SetComponentProperties_CollectsAllFailuresAndAppliesValidOnes()
+        public void SetComponentProperties_ReportsInvalidMembersWithoutApplyingOtherWrites()
         {
             // Arrange - add Transform and Rigidbody components to test with
             var transform = testGameObject.transform;
@@ -250,62 +250,23 @@ namespace MCPForUnityTests.Editor.Tools
             var originalMass = rigidbody.mass;
             var originalUseGravity = rigidbody.useGravity;
 
-            Debug.Log($"BEFORE TEST - Mass: {rigidbody.mass}, UseGravity: {rigidbody.useGravity}");
-
-            // Expect the warning logs from the invalid properties
             LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex("Property 'rotatoin' not found"));
             LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex("Property 'invalidProp' not found"));
 
-            // Act
-            var result = ManageGameObject.HandleCommand(setPropertiesParams);
+            var response = JObject.FromObject(ManageGameObject.HandleCommand(setPropertiesParams));
 
-            Debug.Log($"AFTER TEST - Mass: {rigidbody.mass}, UseGravity: {rigidbody.useGravity}");
-            Debug.Log($"AFTER TEST - LocalPosition: {transform.localPosition}");
-            Debug.Log($"AFTER TEST - LocalScale: {transform.localScale}");
-
-            // Assert - verify that valid properties were set despite invalid ones
-            Assert.AreEqual(new Vector3(1.0f, 2.0f, 3.0f), transform.localPosition, "Valid localPosition should be set even with other invalid properties");
-            Assert.AreEqual(new Vector3(2.0f, 2.0f, 2.0f), transform.localScale, "Valid localScale should be set even with other invalid properties");
-            Assert.AreEqual(5.0f, rigidbody.mass, 0.001f, "Valid mass should be set even with other invalid properties");
-            Assert.AreEqual(true, rigidbody.useGravity, "Valid useGravity should be set even with other invalid properties");
-
-            // Verify the result indicates errors (since we had invalid properties)
-            Assert.IsNotNull(result, "Should return a result object");
-
-            // The collect-and-continue behavior means we should get an error response
-            // that contains info about the failed properties, but valid ones were still applied
-            // This proves the collect-and-continue behavior is working
-
-            // Harden: verify structured error response with failures list contains both invalid fields
-            var successProp = result.GetType().GetProperty("success");
-            Assert.IsNotNull(successProp, "Result should expose 'success' property");
-            Assert.IsFalse((bool)successProp.GetValue(result), "Result.success should be false for partial failure");
-
-            var dataProp = result.GetType().GetProperty("data");
-            Assert.IsNotNull(dataProp, "Result should include 'data' with errors");
-            var dataVal = dataProp.GetValue(result);
-            Assert.IsNotNull(dataVal, "Result.data should not be null");
-            var errorsProp = dataVal.GetType().GetProperty("errors");
-            Assert.IsNotNull(errorsProp, "Result.data should include 'errors' list");
-            var errorsEnum = errorsProp.GetValue(dataVal) as System.Collections.IEnumerable;
-            Assert.IsNotNull(errorsEnum, "errors should be enumerable");
-
-            bool foundRotatoin = false;
-            bool foundInvalidProp = false;
-            foreach (var err in errorsEnum)
-            {
-                string s = err?.ToString() ?? string.Empty;
-                if (s.Contains("rotatoin"))
-                    foundRotatoin = true;
-                if (s.Contains("invalidProp"))
-                    foundInvalidProp = true;
-            }
-            Assert.IsTrue(foundRotatoin, "errors should mention the misspelled 'rotatoin' property");
-            Assert.IsTrue(foundInvalidProp, "errors should mention the 'invalidProp' property");
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(originalLocalPosition, transform.localPosition);
+            Assert.AreEqual(originalLocalScale, transform.localScale);
+            Assert.AreEqual(originalMass, rigidbody.mass);
+            Assert.AreEqual(originalUseGravity, rigidbody.useGravity);
+            var errors = (JArray)response["data"]["errors"];
+            Assert.IsTrue(errors.Any(error => error.ToString().Contains("rotatoin")));
+            Assert.IsTrue(errors.Any(error => error.ToString().Contains("invalidProp")));
         }
 
         [Test]
-        public void SetComponentProperties_ContinuesAfterException()
+        public void SetComponentProperties_ConversionFailureRestoresValidWrites()
         {
             // Arrange - create scenario that might cause exceptions
             var rigidbody = testGameObject.AddComponent<Rigidbody>();
@@ -323,57 +284,23 @@ namespace MCPForUnityTests.Editor.Tools
                 {
                     ["Rigidbody"] = new JObject
                     {
-                        ["mass"] = 2.5f, // Valid - should be set
+                        ["mass"] = 2.5f,
                         ["velocity"] = "invalid_type", // Invalid type - will cause exception
-                        ["useGravity"] = false, // Valid - should still be set after exception
+                        ["useGravity"] = false,
                     },
                 },
             };
 
-            // Expect the error logs from the invalid property
-            // Note: PropertyConversion logs "Error converting token to..." when conversion fails,
-            // then ComponentOps catches the exception and returns an error string (no second Error log).
-            // GameObjectComponentHelpers logs the failure as a warning.
-            LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex("Error converting token to UnityEngine.Vector3"));
+            LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex(@"\[PropertyConversion\] Property value conversion failed\.$"));
             LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex(@"\[ManageGameObject\].*Failed to set property 'velocity'"));
 
-            // Act
-            var result = ManageGameObject.HandleCommand(setPropertiesParams);
+            var response = JObject.FromObject(ManageGameObject.HandleCommand(setPropertiesParams));
 
-            // Assert - verify that valid properties before AND after the exception were still set
-            Assert.AreEqual(2.5f, rigidbody.mass, 0.001f, "Mass should be set even if later property causes exception");
-            Assert.AreEqual(false, rigidbody.useGravity, "UseGravity should be set even if previous property caused exception");
-
-            Assert.IsNotNull(result, "Should return a result even with exceptions");
-
-            // The key test: processing continued after the exception and set useGravity
-            // This proves the collect-and-continue behavior works even with exceptions
-
-            // Harden: verify structured error response contains velocity failure
-            var successProp2 = result.GetType().GetProperty("success");
-            Assert.IsNotNull(successProp2, "Result should expose 'success' property");
-            Assert.IsFalse((bool)successProp2.GetValue(result), "Result.success should be false when an exception occurs for a property");
-
-            var dataProp2 = result.GetType().GetProperty("data");
-            Assert.IsNotNull(dataProp2, "Result should include 'data' with errors");
-            var dataVal2 = dataProp2.GetValue(result);
-            Assert.IsNotNull(dataVal2, "Result.data should not be null");
-            var errorsProp2 = dataVal2.GetType().GetProperty("errors");
-            Assert.IsNotNull(errorsProp2, "Result.data should include 'errors' list");
-            var errorsEnum2 = errorsProp2.GetValue(dataVal2) as System.Collections.IEnumerable;
-            Assert.IsNotNull(errorsEnum2, "errors should be enumerable");
-
-            bool foundVelocityError = false;
-            foreach (var err in errorsEnum2)
-            {
-                string s = err?.ToString() ?? string.Empty;
-                if (s.Contains("velocity"))
-                {
-                    foundVelocityError = true;
-                    break;
-                }
-            }
-            Assert.IsTrue(foundVelocityError, "errors should include a message referencing 'velocity'");
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(1f, rigidbody.mass);
+            Assert.IsTrue(rigidbody.useGravity);
+            var errors = (JArray)response["data"]["errors"];
+            Assert.IsTrue(errors.Any(error => error.ToString().Contains("velocity")));
         }
 
         [Test]

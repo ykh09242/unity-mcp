@@ -486,6 +486,8 @@ namespace MCPForUnityTests.Editor.Tools
         [TestCase("componentsToRemove", "[\"Component\"]")]
         [TestCase("componentsToRemove", "[\"BoxCollider\",\"Component\"]")]
         [TestCase("componentsToRemove", "[\"NoSuchComponent_ValidationAudit\"]")]
+        [TestCase("componentProperties", "{\"Light\":{\"intensity\":1}}")]
+        [TestCase("componentProperties", "{\"BoxCollider\":{\"enabled\":false,\"NoSuchField_ValidationAudit\":1}}")]
         public void InvalidModifyMutationInput_PreservesEarlierFields(string field, string json)
         {
             var target = Owned("Target");
@@ -520,6 +522,108 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(goDirty, EditorUtility.GetDirtyCount(target));
             Assert.AreEqual(transformDirty, EditorUtility.GetDirtyCount(target.transform));
             Assert.AreSame(parent, Selection.activeGameObject);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ModifyStagedComponent_PreservesUndoBoundary(bool fail)
+        {
+            var target = Owned("StagedTarget");
+            var before = target.AddComponent<BoxCollider>();
+            before.size = new Vector3(7, 8, 9);
+            var earlier = Owned("EarlierEdit");
+            Undo.IncrementCurrentGroup();
+            Undo.RecordObject(earlier, "Earlier edit");
+            earlier.name = prefix + "Unrelated";
+            Undo.FlushUndoRecordObjects();
+
+            string originalName = target.name;
+            string renamed = prefix + "StagedRename";
+            var properties = new JObject { ["intensity"] = 3 };
+            // This nested member needs its live component. Fail after adding the Light and removing the collider.
+            if (fail)
+                properties["transform.NoSuchField_ValidationAudit"] = 1;
+            var request = new JObject
+            {
+                ["action"] = "modify",
+                ["target"] = target.GetInstanceIDCompat(),
+                ["searchMethod"] = "by_id",
+                ["name"] = renamed,
+                ["position"] = new JArray(1, 2, 3),
+                ["componentsToRemove"] = new JArray("BoxCollider"),
+                ["componentsToAdd"] = new JArray("Light"),
+                ["componentProperties"] = new JObject { ["Light"] = properties },
+            };
+            var result = Call(request);
+            Assert.AreEqual(!fail, result.Value<bool>("success"), result.ToString());
+            if (!fail)
+            {
+                Assert.AreEqual(renamed, target.name);
+                Assert.AreEqual(new Vector3(1, 2, 3), target.transform.position);
+                Assert.IsNull(target.GetComponent<BoxCollider>());
+                Assert.AreEqual(3f, target.GetComponent<Light>().intensity);
+                Undo.PerformUndo();
+            }
+            Assert.AreEqual(originalName, target.name);
+            Assert.AreEqual(Vector3.zero, target.transform.position);
+            Assert.IsNull(target.GetComponent<Light>());
+            Assert.AreEqual(new Vector3(7, 8, 9), target.GetComponent<BoxCollider>().size);
+            Assert.AreEqual(prefix + "Unrelated", earlier.name);
+            Undo.PerformUndo();
+            Assert.AreEqual(prefix + "EarlierEdit", earlier.name);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ModifyPrefabStageRoot_PublishesAssetRenameOnlyAfterComponentEdits(bool fail)
+        {
+            CreateAssetRoot();
+            var source = Owned("StageSource");
+            string path = assetRoot + "/Original.prefab";
+            string newName = prefix + "RenamedStage";
+            string newPath = assetRoot + "/" + newName + ".prefab";
+            Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(source, path));
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"));
+            var stage = PrefabStageUtility.OpenPrefab(path);
+            try
+            {
+                var root = stage.prefabContentsRoot;
+                string originalName = root.name;
+                var properties = new JObject { ["intensity"] = 4 };
+                if (fail)
+                    properties["transform.NoSuchField_ValidationAudit"] = 1;
+                var result = Call(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = root.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
+                        ["name"] = newName,
+                        ["componentsToAdd"] = new JArray("Light"),
+                        ["componentProperties"] = new JObject { ["Light"] = properties },
+                    }
+                );
+                Assert.AreEqual(!fail, result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual(fail ? path : newPath, AssetDatabase.GUIDToAssetPath(guid));
+                Assert.IsNull(AssetDatabase.LoadAssetAtPath<GameObject>(fail ? newPath : path));
+                Assert.AreEqual(fail ? originalName : newName, stage.prefabContentsRoot.name);
+                if (fail)
+                    Assert.IsNull(stage.prefabContentsRoot.GetComponent<Light>());
+                else
+                    Assert.AreEqual(4f, stage.prefabContentsRoot.GetComponent<Light>().intensity);
+            }
+            finally
+            {
+                try
+                {
+                    stage.ClearDirtiness();
+                }
+                finally
+                {
+                    StageUtility.GoToMainStage();
+                }
+            }
         }
 
         [TestCase("RectTransform")]

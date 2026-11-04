@@ -375,6 +375,71 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
         }
 
+        // Use the component layout after the requested removals, additions and their dependencies.
+        // Native fields of a new component and ordered writes through nested owners need a live instance.
+        internal static ErrorResponse ValidateModifyPropertyTargets(GameObject target, JObject propertyMap, List<Type> plannedTypes)
+        {
+            if (propertyMap == null)
+                return null;
+            var errors = new List<string>();
+            var componentErrors = new List<ErrorResponse>();
+            foreach (JProperty entry in propertyMap.Properties())
+            {
+                bool resolved = ComponentResolver.TryResolve(entry.Name, out Type type, out _);
+                Component existing = resolved ? target.GetComponent(type) : target.GetComponent(entry.Name);
+                type ??= existing?.GetType();
+                Type planned = type == null ? null : plannedTypes.FirstOrDefault(type.IsAssignableFrom);
+                if (planned == null)
+                {
+                    string message = $"Component '{entry.Name}' not found on '{target.name}' after requested component changes.";
+                    errors.Add(message);
+                    componentErrors.Add(new ErrorResponse(message));
+                    continue;
+                }
+                // Adding a RectTransform replaces Transform rather than appending another one.
+                if (planned == typeof(Transform) && plannedTypes.Contains(typeof(RectTransform)))
+                    planned = typeof(RectTransform);
+                if (existing == null || existing.GetType() != planned)
+                    continue;
+
+                var failures = new List<string>();
+                using var serialized = new SerializedObject(existing);
+                foreach (JProperty property in ((JObject)entry.Value).Properties())
+                {
+                    string name = property.Name;
+                    if (name.Contains('.') || name.Contains('['))
+                        continue;
+                    string normalized = ParamCoercion.NormalizePropertyName(name);
+                    if (ComponentOps.ResolveMemberType(planned, name, normalized) != null)
+                        continue;
+                    using var nativeField = ComponentOps.FindTopLevelProperty(serialized, name, normalized, out string error);
+                    if (nativeField == null)
+                    {
+                        string message = error ?? MissingPropertyMessage(name, planned);
+                        failures.Add(message);
+                        McpLog.Warn($"[ManageGameObject] {message}");
+                    }
+                }
+                if (failures.Count > 0)
+                {
+                    errors.AddRange(failures);
+                    componentErrors.Add(new ErrorResponse($"One or more properties failed on '{entry.Name}'.", new { errors = failures }));
+                }
+            }
+            return errors.Count == 0
+                ? null
+                : new ErrorResponse($"One or more component property operations failed on '{target.name}'.", new { componentErrors, errors });
+        }
+
+        private static string MissingPropertyMessage(string name, Type componentType)
+        {
+            var available = ComponentResolver.GetAllComponentProperties(componentType);
+            var suggestions = ComponentResolver.GetFuzzyPropertySuggestions(name, available);
+            return suggestions.Any()
+                ? $"Property '{name}' not found. Did you mean: {string.Join(", ", suggestions)}? Available: [{string.Join(", ", available)}]"
+                : $"Property '{name}' not found. Available: [{string.Join(", ", available)}]";
+        }
+
         /// <summary>
         /// Applies a "componentProperties" object (as accepted by 'modify') to every named
         /// component already present on <paramref name="targetGo"/>. Shared by 'create' and
@@ -504,11 +569,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                         string msg = setError;
                         if (msg == null || msg.Contains("not found"))
                         {
-                            var availableProperties = ComponentResolver.GetAllComponentProperties(targetComponent.GetType());
-                            var suggestions = ComponentResolver.GetFuzzyPropertySuggestions(propName, availableProperties);
-                            msg = suggestions.Any()
-                                ? $"Property '{propName}' not found. Did you mean: {string.Join(", ", suggestions)}? Available: [{string.Join(", ", availableProperties)}]"
-                                : $"Property '{propName}' not found. Available: [{string.Join(", ", availableProperties)}]";
+                            msg = MissingPropertyMessage(propName, targetComponent.GetType());
                         }
                         McpLog.Warn($"[ManageGameObject] {msg}");
                         failures.Add(msg);

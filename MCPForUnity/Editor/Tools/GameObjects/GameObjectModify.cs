@@ -1,5 +1,7 @@
 #nullable disable
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
@@ -36,8 +38,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 return new ErrorResponse($"Invalid layer specified: '{layerName}'. Use a valid layer name.");
             }
 
-            bool? isStatic = @params["isStatic"]?.ReadScalar<bool?>();
-
             Vector3? position;
             Vector3? rotation;
             Vector3? scale;
@@ -48,56 +48,129 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 rotation = ManageGameObjectCommon.ReadOptionalVector3(@params, "rotation");
                 scale = ManageGameObjectCommon.ReadOptionalVector3(@params, "scale");
                 transformOptions = GameObjectTransformOptions.Read(@params, targetGo);
-                ManageGameObjectCommon.ValidateComponentParameters(@params, validateRemovals: true, componentSource: targetGo);
+                var plannedTypes = ManageGameObjectCommon.ValidateComponentParameters(@params, validateRemovals: true, componentSource: targetGo);
+                var propertyError = GameObjectComponentHelpers.ValidateModifyPropertyTargets(targetGo, @params["componentProperties"] as JObject, plannedTypes);
+                if (propertyError != null)
+                    return propertyError;
             }
             catch (ArgumentException e)
             {
                 return new ErrorResponse(e.Message);
             }
 
-            Undo.RecordObject(targetGo.transform, "Modify GameObject Transform");
-            Undo.RecordObject(targetGo, "Modify GameObject Properties");
-
-            bool modified = false;
-
             string name = @params["name"]?.ToString() ?? @params["new_name"]?.ToString() ?? @params["newName"]?.ToString();
-            if (!string.IsNullOrEmpty(name) && targetGo.name != name)
+            var stage = PrefabStageUtility.GetCurrentPrefabStage();
+            string assetPath = null;
+            string newAssetPath = null;
+            string assetGuid = null;
+            if (!string.IsNullOrEmpty(name) && name != targetGo.name && stage != null && stage.prefabContentsRoot == targetGo)
             {
-                // Check if we're renaming the root object of an open prefab stage
-                var prefabStageForRename = PrefabStageUtility.GetCurrentPrefabStage();
-                bool isRenamingPrefabRoot = prefabStageForRename != null && prefabStageForRename.prefabContentsRoot == targetGo;
+                assetPath = stage.assetPath;
+                newAssetPath = AssetPathUtility.NormalizeSeparators(Path.Combine(Path.GetDirectoryName(assetPath), name + ".prefab"));
+                assetGuid = AssetDatabase.AssetPathToGUID(assetPath);
+                string existingGuid = AssetDatabase.AssetPathToGUID(newAssetPath);
+                if (!string.IsNullOrEmpty(existingGuid) && existingGuid != assetGuid)
+                    return new ErrorResponse($"Cannot rename prefab root to '{name}': a prefab already exists at '{newAssetPath}'.");
+            }
 
-                if (isRenamingPrefabRoot)
+            Undo.IncrementCurrentGroup();
+            int group = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName("Modify GameObject");
+            string createdTag = null;
+            bool renameAttempted = false;
+            ErrorResponse failure;
+            try
+            {
+                object result = Apply(@params, targetGo, name, layerId, transformOptions, position, rotation, scale, ref createdTag);
+                failure = result as ErrorResponse;
+                if (failure == null)
                 {
-                    // Rename the prefab asset file to match the new name (avoids Unity dialog)
-                    string assetPath = prefabStageForRename.assetPath;
-                    string directory = System.IO.Path.GetDirectoryName(assetPath);
-                    string newAssetPath = AssetPathUtility.NormalizeSeparators(System.IO.Path.Combine(directory, name + ".prefab"));
-
-                    // Only rename if the path actually changes
-                    if (newAssetPath != assetPath)
+                    Undo.FlushUndoRecordObjects();
+                    Undo.CollapseUndoOperations(group);
+                    // AssetDatabase moves are outside Undo. Publish the move only after every object edit succeeds.
+                    if (assetPath != null && assetPath != newAssetPath)
                     {
-                        // Check for collision using GUID comparison
-                        string currentGuid = AssetDatabase.AssetPathToGUID(assetPath);
-                        string existingGuid = AssetDatabase.AssetPathToGUID(newAssetPath);
-
-                        // Collision only if there's a different asset at the new path
-                        if (!string.IsNullOrEmpty(existingGuid) && existingGuid != currentGuid)
-                        {
-                            return new ErrorResponse($"Cannot rename prefab root to '{name}': a prefab already exists at '{newAssetPath}'.");
-                        }
-
-                        // Rename the asset file
-                        string renameError = AssetDatabase.RenameAsset(assetPath, name);
-                        if (!string.IsNullOrEmpty(renameError))
-                        {
-                            return new ErrorResponse($"Failed to rename prefab asset: {renameError}");
-                        }
-
-                        McpLog.Info($"[GameObjectModify] Renamed prefab asset from '{assetPath}' to '{newAssetPath}'");
+                        renameAttempted = true;
+                        string error = AssetDatabase.RenameAsset(assetPath, name);
+                        if (!string.IsNullOrEmpty(error))
+                            failure = new ErrorResponse($"Failed to rename prefab asset: {error}");
+                    }
+                    if (failure == null)
+                    {
+                        Undo.IncrementCurrentGroup();
+                        return result;
                     }
                 }
+            }
+            catch (Exception e)
+            {
+                failure = new ErrorResponse($"Failed to modify GameObject: {e.Message}");
+            }
 
+            var rollbackErrors = new List<string>();
+            try
+            {
+                Undo.FlushUndoRecordObjects();
+                Undo.RevertAllDownToGroup(group);
+            }
+            catch (Exception e)
+            {
+                rollbackErrors.Add("Undo: " + e.Message);
+            }
+            finally
+            {
+                Undo.IncrementCurrentGroup();
+            }
+            try
+            {
+                if (createdTag != null && InternalEditorUtility.tags.Contains(createdTag))
+                    InternalEditorUtility.RemoveTag(createdTag);
+                if (createdTag != null && InternalEditorUtility.tags.Contains(createdTag))
+                    rollbackErrors.Add($"The newly created tag '{createdTag}' still exists.");
+            }
+            catch (Exception e)
+            {
+                rollbackErrors.Add("Tag: " + e.Message);
+            }
+            if (renameAttempted)
+            {
+                try
+                {
+                    string currentPath = AssetDatabase.GUIDToAssetPath(assetGuid);
+                    if (currentPath == newAssetPath)
+                        AssetDatabase.MoveAsset(currentPath, assetPath);
+                    if (AssetDatabase.GUIDToAssetPath(assetGuid) != assetPath)
+                        rollbackErrors.Add($"The prefab is no longer at '{assetPath}'.");
+                }
+                catch (Exception e)
+                {
+                    rollbackErrors.Add("Prefab asset: " + e.Message);
+                }
+            }
+            string rollback =
+                rollbackErrors.Count == 0
+                    ? "Reverted recorded Unity edits. Effects of callbacks or nonserialized setters may remain."
+                    : "Rollback incomplete: " + string.Join(" ", rollbackErrors);
+            return new ErrorResponse(failure.Error + " " + rollback, failure.Data);
+        }
+
+        private static object Apply(
+            JObject @params,
+            GameObject targetGo,
+            string name,
+            int layerId,
+            GameObjectTransformOptions transformOptions,
+            Vector3? position,
+            Vector3? rotation,
+            Vector3? scale,
+            ref string createdTag
+        )
+        {
+            Undo.RecordObject(targetGo.transform, "Modify GameObject Transform");
+            Undo.RecordObject(targetGo, "Modify GameObject Properties");
+            bool modified = false;
+            if (!string.IsNullOrEmpty(name) && targetGo.name != name)
+            {
                 targetGo.name = name;
                 RecordPrefabOverrides(targetGo);
                 modified = true;
@@ -118,11 +191,12 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             {
                 string tagToSet = string.IsNullOrEmpty(tag) ? "Untagged" : tag;
 
-                if (tagToSet != "Untagged" && !System.Linq.Enumerable.Contains(InternalEditorUtility.tags, tagToSet))
+                if (tagToSet != "Untagged" && !InternalEditorUtility.tags.Contains(tagToSet))
                 {
                     McpLog.Info($"[ManageGameObject] Tag '{tagToSet}' not found. Creating it.");
                     try
                     {
+                        createdTag = tagToSet;
                         InternalEditorUtility.AddTag(tagToSet);
                     }
                     catch (Exception ex)
@@ -143,16 +217,14 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 }
             }
 
-            if (!string.IsNullOrEmpty(layerName))
+            if (layerId != -1 && targetGo.layer != layerId)
             {
-                if (layerId != -1 && targetGo.layer != layerId)
-                {
-                    targetGo.layer = layerId;
-                    RecordPrefabOverrides(targetGo);
-                    modified = true;
-                }
+                targetGo.layer = layerId;
+                RecordPrefabOverrides(targetGo);
+                modified = true;
             }
 
+            bool? isStatic = @params["isStatic"]?.ReadScalar<bool?>();
             if (isStatic.HasValue)
             {
                 var desiredFlags = isStatic.Value ? (StaticEditorFlags)~0 : 0;
