@@ -171,7 +171,7 @@ class ResponseLimitMiddleware(ResponseCatalogLimits):
                 owner.on_release.append(forget_owner)
                 request_owners = request.scope.get("state", {}).get(_OWNER_STATE)
                 if request_owners is not None:
-                    request_owners.append(owner)
+                    request_owners.append((request_id, owner))
             return result
         except BaseException as error:
             # SDK dispatch can translate an exception into a protocol error and
@@ -336,7 +336,7 @@ class ResponseRetentionMiddleware:
         session = _scope_session(scope)
         sse = False
         legacy_sse = False
-        request_owners: list[ResponseOwner] = []
+        request_owners: list[tuple[str | int, ResponseOwner]] = []
         owned_scope = {**scope, "state": {**scope.get("state", {}), _OWNER_STATE: request_owners}}
 
         async def send_owned(message):
@@ -352,7 +352,12 @@ class ResponseRetentionMiddleware:
             body = message.get("body", b"")
             # Only legacy SSE advertises a separate POST endpoint. A standalone
             # Streamable HTTP GET has no ownership of concurrent POST replies.
-            if sse and body.startswith((b"event: endpoint\r\n", b"event: endpoint\n")):
+            if (
+                scope.get("method") == "GET"
+                and self.legacy_sse_message_prefix is not None
+                and sse
+                and body.startswith((b"event: endpoint\r\n", b"event: endpoint\n"))
+            ):
                 match = _endpoint_session.search(body[:65_536])
                 if match is not None:
                     legacy_sse = True
@@ -366,8 +371,15 @@ class ResponseRetentionMiddleware:
                 if sse
                 else not message.get("more_body", False)
             )
-            if session is not None and request_id is not None and complete:
-                _release_http_owner(_owner_key(scope, session, request_id))
+            if request_id is not None and complete:
+                if legacy_sse and session is not None:
+                    _release_http_owner(_owner_key(scope, session, request_id))
+                elif scope.get("method") == "POST":
+                    # A rejected duplicate can send an error with the same ID
+                    # while the original POST is still blocked in send().
+                    for owned_id, request_owner in request_owners:
+                        if owned_id == request_id:
+                            request_owner.release()
 
         try:
             await self.app(owned_scope, receive, send_owned)
@@ -384,7 +396,7 @@ class ResponseRetentionMiddleware:
                 and b"mcp-session-id" not in dict(scope.get("headers", []))
             )
             if not legacy_post:
-                for request_owner in request_owners:
+                for _, request_owner in request_owners:
                     request_owner.release()
             if session is not None:
                 if scope.get("method") == "GET" and legacy_sse:

@@ -131,6 +131,50 @@ async def test_modern_duplicate_ids_release_each_http_request(
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("json_response", [True, False])
+async def test_rejected_modern_duplicate_cannot_release_blocked_post(
+    plugin_result_delivery, json_response
+):
+    from main import UnityMCP
+
+    server = UnityMCP("inert-late-duplicate-id")
+    server.add_middleware(ResponseLimitMiddleware())
+
+    @server.tool
+    async def preview() -> dict:
+        return await PluginHub.send_command("unity", "run_tests", {})
+
+    app = server.http_app(transport="http", path="/mcp", json_response=json_response)
+    url = "/mcp?session_id=shared"
+    call = {**_body("tools/call", {"name": "preview", "arguments": {}}), "id": 9}
+    headers = [
+        (b"mcp-protocol-version", MODERN_VERSION.encode()),
+        (b"mcp-method", b"tools/call"),
+        (b"mcp-name", b"preview"),
+    ]
+    original = Wire(app, "POST", url, call, headers, blocked_id=9)
+    duplicate = Wire(app, "POST", url, call, headers)
+    async with app.router.lifespan_context(app):
+        task = asyncio.create_task(original.run())
+        try:
+            await await_signal(original.blocked, "original response blocked", producers=[task])
+            charge = PluginHub._retained_results.total_bytes
+            assert charge > 0
+
+            await asyncio.wait_for(duplicate.run(), watchdog_timeout())
+            error_frame = await duplicate.until_body(b'"error"')
+            assert b'"id":9' in error_frame.replace(b" ", b"")
+            assert not task.done()
+            assert PluginHub._retained_results.total_bytes == charge
+            assert sum(map(len, _http_response_owners.values())) == 1
+        finally:
+            original.resume.set()
+            await asyncio.wait_for(task, watchdog_timeout())
+        assert PluginHub._retained_results.total_bytes == 0
+        assert _http_response_owners == {}
+
+
 class PostCompletionGate:
     """Hold a completed legacy POST until its real stream writer has a charged result."""
 
