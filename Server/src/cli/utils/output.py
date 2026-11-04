@@ -10,7 +10,11 @@ _TABLE_ROW_LIMIT = 50
 
 
 def format_output(
-    data: Any, format_type: str = "text", *, show_success_message: bool = False
+    data: Any,
+    format_type: str = "text",
+    *,
+    show_success_message: bool = False,
+    detailed_lists: bool = False,
 ) -> str:
     """Format output based on requested format type.
 
@@ -19,6 +23,7 @@ def format_output(
         format_type: One of 'text', 'json', 'table'
         show_success_message: Opt in when the formatter owns success acknowledgements.
             Existing commands that print their own success text leave this disabled.
+        detailed_lists: Render nested list fields instead of compact name/id summaries.
 
     Returns:
         Formatted string
@@ -28,7 +33,9 @@ def format_output(
     elif format_type == "table":
         return format_as_table(data)
     else:
-        return format_as_text(data, show_success_message=show_success_message)
+        return format_as_text(
+            data, show_success_message=show_success_message, detailed_lists=detailed_lists
+        )
 
 
 def format_as_json(data: Any) -> str:
@@ -39,7 +46,13 @@ def format_as_json(data: Any) -> str:
         return json.dumps({"error": f"JSON serialization failed: {e}", "raw": str(data)})
 
 
-def format_as_text(data: Any, indent: int = 0, *, show_success_message: bool = True) -> str:
+def format_as_text(
+    data: Any,
+    indent: int = 0,
+    *,
+    show_success_message: bool = True,
+    detailed_lists: bool = False,
+) -> str:
     """Format data as human-readable text."""
     prefix = "  " * indent
 
@@ -65,7 +78,12 @@ def format_as_text(data: Any, indent: int = 0, *, show_success_message: bool = T
         if "success" in data and data.get("success"):
             result = data.get("data") or data.get("result") or data
             if result != data:
-                return format_as_text(result, indent, show_success_message=show_success_message)
+                return format_as_text(
+                    result,
+                    indent,
+                    show_success_message=show_success_message,
+                    detailed_lists=detailed_lists,
+                )
             if (
                 show_success_message
                 and data.get("message")
@@ -81,18 +99,24 @@ def format_as_text(data: Any, indent: int = 0, *, show_success_message: bool = T
                 continue  # Skip meta fields
             if isinstance(value, dict):
                 lines.append(f"{prefix}{key}:")
-                lines.append(format_as_text(value, indent + 1))
+                lines.append(format_as_text(value, indent + 1, detailed_lists=detailed_lists))
             elif isinstance(value, list):
                 lines.append(f"{prefix}{key}: [{len(value)} items]")
                 if len(value) <= 10:
                     for i, item in enumerate(value):
-                        lines.append(f"{prefix}  [{i}] {_format_list_item(item)}")
+                        lines.append(
+                            f"{prefix}  [{i}] {_format_list_item(item, detailed=detailed_lists, indent=indent + 2)}"
+                        )
                 else:
                     for i, item in enumerate(value[:5]):
-                        lines.append(f"{prefix}  [{i}] {_format_list_item(item)}")
+                        lines.append(
+                            f"{prefix}  [{i}] {_format_list_item(item, detailed=detailed_lists, indent=indent + 2)}"
+                        )
                     lines.append(f"{prefix}  ... ({len(value) - 10} more)")
                     for i, item in enumerate(value[-5:], len(value) - 5):
-                        lines.append(f"{prefix}  [{i}] {_format_list_item(item)}")
+                        lines.append(
+                            f"{prefix}  [{i}] {_format_list_item(item, detailed=detailed_lists, indent=indent + 2)}"
+                        )
             else:
                 lines.append(f"{prefix}{key}: {value}")
         return "\n".join(lines)
@@ -102,7 +126,9 @@ def format_as_text(data: Any, indent: int = 0, *, show_success_message: bool = T
             return f"{prefix}(empty list)"
         lines = [f"{prefix}[{len(data)} items]"]
         for i, item in enumerate(data[:20]):
-            lines.append(f"{prefix}  [{i}] {_format_list_item(item)}")
+            lines.append(
+                f"{prefix}  [{i}] {_format_list_item(item, detailed=detailed_lists, indent=indent + 2)}"
+            )
         if len(data) > 20:
             lines.append(f"{prefix}  ... ({len(data) - 20} more)")
         return "\n".join(lines)
@@ -149,8 +175,10 @@ def _failure_detail_lines(value: Any, indent: int, depth: int = 0):
         yield f"{prefix}{_bounded_detail(value)}"
 
 
-def _format_list_item(item: Any) -> str:
+def _format_list_item(item: Any, *, detailed: bool = False, indent: int = 0) -> str:
     """Format a single list item."""
+    if detailed and isinstance(item, (dict, list)):
+        return "\n" + format_as_text(item, indent, detailed_lists=True)
     if isinstance(item, dict):
         # Try to find a name/id field for display
         name = item.get("name") or item.get("Name") or item.get("id") or item.get("Id")

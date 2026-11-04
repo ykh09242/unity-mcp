@@ -1261,6 +1261,42 @@ class TestIntegration:
             assert result.exit_code == 0
             assert "Deleted" in result.output
 
+    @pytest.mark.parametrize("include_transform", [False, True])
+    @pytest.mark.parametrize("output_format", ["text", "json"])
+    def test_scene_hierarchy_transform_coordinates(self, runner, include_transform, output_format):
+        node = {"name": "Player", "instanceID": -300, "childCount": 0}
+        if include_transform:
+            node["transform"] = {
+                "position": [12, 34, 56],
+                "rotation": [7, 89, 10],
+                "scale": [2, 3, 4],
+            }
+        response = {"success": True, "data": {"nodes": [node], "hasMore": False}}
+        args = ["--format", output_format, "scene", "hierarchy"]
+        if include_transform:
+            args.append("--include-transform")
+        with patch("cli.commands.scene.run_command", return_value=response) as sender:
+            result = runner.invoke(cli, args)
+        assert result.exit_code == 0, result.output
+        assert sender.call_args.args[1].get("includeTransform", False) == include_transform
+        if output_format == "json":
+            assert json.loads(result.stdout) == response
+        elif include_transform:
+            for label, coordinates in node["transform"].items():
+                assert label in result.stdout
+                assert all(
+                    f"[{index}] {value}\n" in result.stdout
+                    for index, value in enumerate(coordinates)
+                )
+        else:
+            assert "Player (ID: -300)" in result.stdout
+            assert "transform" not in result.stdout
+
+    def test_generic_named_list_remains_compact(self):
+        rendered = format_output({"nodes": [{"name": "Player", "position": [12, 34, 56]}]})
+        assert "Player" in rendered
+        assert "position" not in rendered
+
     def test_scene_hierarchy_with_data(self, runner):
         """Test scene hierarchy with realistic data."""
         hierarchy_response = {

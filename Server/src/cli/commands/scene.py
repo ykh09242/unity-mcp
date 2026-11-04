@@ -61,7 +61,7 @@ def hierarchy(
         params["includeTransform"] = True
 
     result = run_command("manage_scene", params, config)
-    click.echo(format_output(result, config.format))
+    click.echo(format_output(result, config.format, detailed_lists=include_transform))
 
 
 @scene.command("active")
