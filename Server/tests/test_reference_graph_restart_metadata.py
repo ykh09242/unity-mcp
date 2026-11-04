@@ -1,5 +1,6 @@
 """Readable prior SQLite files still require valid ownership and policy metadata."""
 
+from contextlib import closing
 import sqlite3
 
 import pytest
@@ -12,7 +13,7 @@ from services.reference_graph.store import GraphScope, RevisionConflict
 def test_invalid_prior_metadata_cannot_silently_authorize_collection(tmp_path, damage):
     old = open_workspace(tmp_path, GraphScope("alice", "old", "project"))
     old.set_policy({"exclude": ["Assets/Private/**"]}, expected_version=0)
-    with sqlite3.connect(old.store.path) as db:
+    with closing(sqlite3.connect(old.store.path)) as db, db:
         if damage == "application_id":
             db.execute("PRAGMA application_id=0")
         elif damage == "policy_table":

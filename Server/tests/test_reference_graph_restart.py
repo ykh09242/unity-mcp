@@ -1,5 +1,6 @@
 """A replacement Editor gets independently verified facts in a new owned DB."""
 
+from contextlib import closing
 import hashlib
 import sqlite3
 
@@ -239,7 +240,7 @@ def test_corrupt_foreign_project_isolated_without_losing_recovery(
     old = open_workspace(tmp_path, GraphScope("alice", "old", "foreign"))
     if not known_project:
         # Recreate the existing v1 ledger without project identity metadata.
-        with sqlite3.connect(tmp_path / ".storage.sqlite") as db:
+        with closing(sqlite3.connect(tmp_path / ".storage.sqlite")) as db, db:
             db.execute("ALTER TABLE scopes RENAME TO old_scopes")
             db.execute(
                 "CREATE TABLE scopes(name TEXT PRIMARY KEY,owner TEXT NOT NULL,capacity INTEGER NOT NULL,reserved INTEGER NOT NULL)"
