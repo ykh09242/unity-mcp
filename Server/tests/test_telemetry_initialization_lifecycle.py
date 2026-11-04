@@ -375,7 +375,7 @@ def test_reset_completion_cannot_reopen_concurrent_shutdown(controlled_telemetry
 def test_shutdown_retires_in_progress_publication(controlled_telemetry, monkeypatch):
     telemetry, _, _, _ = controlled_telemetry
     constructing = threading.Event()
-    shutdown_started = threading.Event()
+    shutdown_fenced = threading.Event()
     release = threading.Event()
     collectors = []
 
@@ -385,8 +385,9 @@ def test_shutdown_retires_in_progress_publication(controlled_telemetry, monkeypa
         assert release.wait(watchdog_timeout())
 
     def close():
-        shutdown_started.set()
-        telemetry.shutdown_telemetry()
+        finish_shutdown = telemetry.begin_telemetry_shutdown()
+        shutdown_fenced.set()
+        finish_shutdown()
 
     monkeypatch.setattr(telemetry.TelemetryCollector, "_load_persistent_data", load)
     try:
@@ -394,7 +395,7 @@ def test_shutdown_retires_in_progress_publication(controlled_telemetry, monkeypa
             first_use = executor.submit(telemetry.get_telemetry)
             assert constructing.wait(watchdog_timeout())
             shutdown = executor.submit(close)
-            assert shutdown_started.wait(watchdog_timeout())
+            assert shutdown_fenced.wait(watchdog_timeout())
             release.set()
             result = first_use.result(timeout=watchdog_timeout())
             shutdown.result(timeout=watchdog_timeout())
