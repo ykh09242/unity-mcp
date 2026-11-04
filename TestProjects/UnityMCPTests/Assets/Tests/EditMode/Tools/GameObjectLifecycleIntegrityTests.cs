@@ -315,6 +315,58 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(assetRoot, AssetDatabase.GUIDToAssetPath(guid));
         }
 
+        [TestCase("empty", true)]
+        [TestCase("primitive", true)]
+        [TestCase("prefab", false)]
+        [TestCase("prefab", null)]
+        public void CreateStaticFlag_IsExplicitAndPreservesOmittedPrefabDefault(string source, bool? isStatic)
+        {
+            var request = Create();
+            if (source == "primitive")
+                request["primitiveType"] = "Cube";
+            if (source == "prefab")
+            {
+                CreateAssetRoot();
+                var template = Owned("StaticTemplate");
+                GameObjectUtility.SetStaticEditorFlags(template, StaticEditorFlags.BatchingStatic);
+                string path = assetRoot + "/Static.prefab";
+                Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(template, path));
+                UnityEngine.Object.DestroyImmediate(template);
+                request["prefabPath"] = path;
+            }
+            if (isStatic.HasValue)
+                request["isStatic"] = isStatic.Value;
+            var response = Call(request);
+            Succeeded(response);
+            Assert.AreEqual(isStatic ?? true, ResponseObject(response).isStatic);
+            if (!isStatic.HasValue)
+                Assert.AreEqual(StaticEditorFlags.BatchingStatic, GameObjectUtility.GetStaticEditorFlags(ResponseObject(response)));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CreateStaticFlag_IsPublishedInSavedPrefab(bool isStatic)
+        {
+            CreateAssetRoot();
+            string path = assetRoot + "/Published.prefab";
+            var request = Create();
+            request["saveAsPrefab"] = true;
+            request["prefabPath"] = path;
+            request["isStatic"] = isStatic;
+            var response = Call(request);
+            Succeeded(response);
+            Assert.AreEqual(isStatic, ResponseObject(response).isStatic);
+            var contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                Assert.AreEqual(isStatic, contents.isStatic, "The published asset must contain the requested flag before it is reloaded.");
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+        }
+
         [Test]
         public void RejectedParent_PreservesExistingObjectsAndSelection()
         {

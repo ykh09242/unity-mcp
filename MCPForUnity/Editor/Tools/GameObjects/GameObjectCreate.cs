@@ -26,6 +26,7 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             string tag = @params["tag"]?.ToString();
             string primitiveType = @params["primitiveType"]?.ToString();
             bool? setActive = @params["setActive"]?.ReadScalar<bool?>();
+            bool? isStatic = @params["isStatic"]?.ReadScalar<bool?>();
             GameObject newGo = null;
 
             Vector3? position;
@@ -244,6 +245,9 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             }
 
             transformOptions.Apply(newGo.transform, position, rotation, scale);
+
+            if (isStatic.HasValue)
+                GameObjectUtility.SetStaticEditorFlags(newGo, isStatic.Value ? (StaticEditorFlags)~0 : 0);
 
             // Set Tag
             if (!string.IsNullOrEmpty(tag))
