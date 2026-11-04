@@ -16,6 +16,8 @@ No fixture calls an operating-system credential service or uses actual keys.
   seven invocation paths, exposed-stream disposal, pending IO cleanup, start /
   stream setup / read / write / disposal failures, and existing value, stdin,
   structured-argument and nonzero-exit behavior.
+  Linux and macOS delete timeouts must report unconfirmed credential removal;
+  each of the 100 attempts still must dispose every process and exposed stream.
 - `ProcessHarness` runs the production helper against real child processes of
   the fixture executable. It checks simultaneous output draining, 256 KiB full
   pipes, a 4 MiB blocked stdin write, timeout termination, failed startup and
@@ -26,6 +28,8 @@ No fixture calls an operating-system credential service or uses actual keys.
 These verify managed ownership and real process/pipe behavior on the host OS.
 They do not run the Unity Editor, macOS Keychain or Linux libsecret. Termination
 can still be denied by the OS; cleanup in that case remains best effort.
+The dedicated `credential-assurance.yml` workflow runs both runners on Windows,
+Linux and macOS when credential sources, fixtures or their workflow change.
 
 For a historical source comparison, `LifecycleHarness.csproj` accepts
 `--property:KeyStoreSourceRoot=<directory>` containing the two platform source
