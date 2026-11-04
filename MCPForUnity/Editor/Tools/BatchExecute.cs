@@ -456,7 +456,8 @@ namespace MCPForUnity.Editor.Tools
                     }
                     catch (NativeCommandBlockedException ex)
                     {
-                        SetOutcome(outcomes, index, "not_run", ex.Reason);
+                        for (int remaining = index; remaining < outcomes.Count; remaining++)
+                            SetOutcome(outcomes, remaining, "not_run", ex.Reason);
                         nativeNotStartedCount++;
                         anyCommandFailed = true;
                         commandResults.Add(

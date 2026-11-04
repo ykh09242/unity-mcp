@@ -217,6 +217,7 @@ namespace MCPForUnityTests.Editor.Services
                         arbitration = Binding(),
                         @params = new JObject
                         {
+                            ["failFast"] = false,
                             ["commands"] = new JArray(new JObject { ["tool"] = Name }, new JObject { ["tool"] = second }, new JObject { ["tool"] = second }),
                         },
                     },
@@ -244,6 +245,9 @@ namespace MCPForUnityTests.Editor.Services
                 Assert.AreEqual("partial", (string)data["executionStatus"]);
                 Assert.AreEqual("not_run", (string)data["outcomes"][1]["state"]);
                 Assert.AreEqual("native_job_active", (string)data["outcomes"][1]["reason"]);
+                Assert.AreEqual("succeeded", (string)data["outcomes"][0]["state"]);
+                Assert.AreEqual("not_run", (string)data["outcomes"][2]["state"]);
+                Assert.AreEqual("native_job_active", (string)data["outcomes"][2]["reason"]);
             }
             finally
             {
