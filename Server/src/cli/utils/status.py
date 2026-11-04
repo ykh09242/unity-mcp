@@ -92,7 +92,7 @@ async def _readiness(config: CLIConfig) -> ReadinessResult:
             if result["success"]
             else "No unique Unity target is ready; verify --instance and discovery."
         )
-    except (httpx.HTTPError, ValueError, OSError):
+    except (connection.UnityConnectionError, httpx.HTTPError, ValueError, OSError):
         # Do not echo response bodies, authentication material or rejected selectors.
         pass
     return result
