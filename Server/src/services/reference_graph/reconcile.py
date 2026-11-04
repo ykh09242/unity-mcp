@@ -325,7 +325,10 @@ class Reconciler:
         await drained_thread(self.workspace.ensure_analysis_version, self.worker, ANALYSIS_VERSION)
         compilation_context = status.get("compilation_context")
         if not self.progress.get("initialized") or self.progress.get("census"):
-            await self._census(status, force=True)
+            census = self.progress.get("census") or {}
+            await self._census(
+                status, force=census.get("force", not self.progress.get("initialized"))
+            )
         await self._changes()
         await self._compilation(compilation_context)
         # A complete catalog and journal permit narrowly scoped, current Unity
@@ -587,7 +590,7 @@ class Reconciler:
             progress = {
                 **self.progress,
                 "epoch": epoch,
-                "after": revision,
+                "after": revision if census["force"] else min(self.progress["after"], revision),
                 "catalog_through": census["through"],
             }
             if following is not None:

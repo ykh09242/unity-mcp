@@ -1502,6 +1502,52 @@ async def test_compile_failure_and_journal_overflow_do_not_claim_freshness(setup
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("later_page", [False, True])
+async def test_catalog_census_replays_import_after_snapshot_starts(setup, resume, later_page):
+    store, workspace, editor, engine = setup
+    old = editor.add(
+        1, "Assets/Resources/Old.prefab", keys=[{"scheme": "resources", "value": "Old"}]
+    )
+    new = editor.add(
+        2, "Assets/Resources/New.prefab", keys=[{"scheme": "resources", "value": "New"}]
+    )
+    caller = editor.add(
+        3, "Assets/Caller.cs", 'class C { void M() { UnityEngine.Resources.Load("Old"); } }'
+    )
+    assert await engine.reconcile()
+    assert {edge["target"] for edge in store.query(caller)["edges"]} == {old}
+    editor.events.append({"revision": 4, "kind": "addressables_catalog"})
+    editor.snapshot = None
+    original = engine.collect
+    added = False
+
+    async def collect(action, **params):
+        nonlocal added
+        if action == "inventory" and not added:
+            added = True
+            if later_page:
+                editor.event("Assets/Resources/Old.prefab")
+                editor.event("Assets/Resources/New.prefab")
+            editor.add(
+                3, "Assets/Caller.cs", 'class C { void M() { UnityEngine.Resources.Load("New"); } }'
+            )
+        return await original(action, **params)
+
+    engine.collect = collect
+    if resume:
+        editor.fail_offset = 2
+        with pytest.raises(OSError, match="interrupted page"):
+            await engine.reconcile()
+        editor.fail_offset = None
+        store = GraphStore(store.path, store.scope)
+        workspace = GraphWorkspace(store)
+        engine = Reconciler(workspace, editor, allowed)
+    assert await engine.reconcile()
+    assert {edge["target"] for edge in store.query(caller)["edges"]} == {new}
+
+
+@pytest.mark.asyncio
 async def test_addressables_catalog_replay_handles_old_snapshot_without_loop(setup):
     store, _, editor, engine = setup
     target = editor.add(1, "Assets/A.prefab", keys=[{"scheme": "addressables", "value": "old"}])
