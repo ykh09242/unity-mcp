@@ -1,11 +1,12 @@
 """Exercise the console entry point, MCP handshake, and plugin command wire path."""
 
 from tests.timing import watchdog_timeout
+from tests.http.bound_http_server import ENDPOINT_ENV, reported_port
+from tests.stdio_process import native_python
 
 import json
 import os
 import re
-import socket
 import subprocess
 import sys
 import time
@@ -13,6 +14,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import httpx
 import pytest
@@ -85,16 +87,12 @@ def local_server_process(
     tmp_path: Path, *, module: str = "main", validation_url: str | None = None
 ) -> Iterator[tuple[str, int, str]]:
     """Start an isolated production server using the selected worktree's source."""
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
     token_path = tmp_path / "launch-token"
+    server_root = Path(__file__).resolve().parents[2]
     env = {
         **os.environ,
         "PYTHONPATH": os.pathsep.join(
-            filter(
-                None, (str(Path(__file__).resolve().parents[2] / "src"), os.getenv("PYTHONPATH"))
-            )
+            filter(None, (str(server_root / "src"), os.getenv("PYTHONPATH")))
         ),
         "DISABLE_TELEMETRY": "1",
         "UNITY_MCP_SKIP_STARTUP_CONNECT": "1",
@@ -102,7 +100,6 @@ def local_server_process(
         "UNITY_MCP_LOCAL_AUTH_TOKEN_FILE": str(token_path),
         "UNITY_MCP_LOG_DIR": str(tmp_path / "logs"),
     }
-    url = f"http://127.0.0.1:{port}"
     remote_args = (
         [
             "--http-remote-hosted",
@@ -113,25 +110,23 @@ def local_server_process(
         if validation_url is not None
         else []
     )
-    command = [
-        sys.executable,
-        "-m",
-        module,
-        "--transport",
-        "http",
-        "--http-host",
-        "127.0.0.1",
-        "--http-port",
-        str(port),
-        "--project-scoped-tools",
-        *remote_args,
-    ]
     log_path = tmp_path / "server.log"
     token = ""
-    with log_path.open("w", encoding="utf-8") as log:
+    with TemporaryDirectory(dir=tmp_path) as control, log_path.open("w", encoding="utf-8") as log:
+        endpoint = Path(control) / "endpoint.json"
+        env[ENDPOINT_ENV] = str(endpoint)
+        source_paths = tuple(Path(path) for path in env["PYTHONPATH"].split(os.pathsep) if path)
+        # Keep the interpreter bootstrap and inherited search paths out of failure reports.
+        command = [
+            str(Path(__file__).with_name("bound_http_server.py")),
+            module,
+            "127.0.0.1",
+            "--project-scoped-tools",
+            *remote_args,
+        ]
         process = subprocess.Popen(
-            command,
-            cwd=Path(__file__).resolve().parents[2],
+            native_python(command, (server_root, *source_paths)),
+            cwd=server_root,
             env=env,
             stdout=log,
             stderr=log,
@@ -140,6 +135,7 @@ def local_server_process(
         try:
             with httpx.Client(timeout=0.5, trust_env=False) as client:
                 deadline = time.monotonic() + watchdog_timeout(20)
+                port = None
                 while time.monotonic() < deadline:
                     exit_code = process.poll()
                     if exit_code is not None:
@@ -153,6 +149,12 @@ def local_server_process(
                                 token,
                             )
                         )
+                    if port is None:
+                        port = reported_port(endpoint, process.pid)
+                        if port is None:
+                            time.sleep(0.05)
+                            continue
+                        url = f"http://127.0.0.1:{port}"
                     try:
                         token = ""
                         if validation_url is None:
@@ -160,8 +162,8 @@ def local_server_process(
                                 token = token_path.read_text(encoding="utf-8").strip()
                             except FileNotFoundError:
                                 pass  # The owned launch has not published its credential yet.
-                        # The free-port handoff can race another listener. Public
-                        # health alone cannot prove that this is our local child.
+                        # Owning the address is only the first step; the local
+                        # control plane must also enforce this launch's credential.
                         if (
                             (validation_url is not None or token)
                             and client.get(f"{url}/health").status_code == 200
@@ -223,6 +225,31 @@ def running_server(tmp_path):
     """Keep the plugin registration scenario's server isolated to its test."""
     with local_server_process(tmp_path) as server:
         yield server
+
+
+def test_assigned_http_port_is_owned_before_server_entry(tmp_path, monkeypatch):
+    # Compete for the selected address immediately before the real CLI starts.
+    probe = tmp_path / "owned_port_probe.py"
+    probe.write_text(
+        "import errno, socket, sys\n"
+        "import main\n"
+        "port = int(sys.argv[sys.argv.index('--http-port') + 1])\n"
+        "assert port > 0\n"
+        "with socket.socket() as contender:\n"
+        "    try:\n"
+        "        contender.bind(('127.0.0.1', port))\n"
+        "        contender.listen()\n"
+        "    except OSError as error:\n"
+        "        if error.errno != errno.EADDRINUSE and getattr(error, 'winerror', None) != 10013:\n"
+        "            raise\n"
+        "    main.main()\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    with local_server_process(tmp_path, module=probe.stem) as (url, port, token):
+        assert port > 0
+        assert url == f"http://127.0.0.1:{port}"
+        assert token
 
 
 @pytest.mark.asyncio
@@ -318,7 +345,15 @@ def controlled_startup(tmp_path, monkeypatch):
     process.__enter__.return_value = process
     process.__exit__.return_value = False
     process.poll.side_effect = lambda: state.exit_code
-    monkeypatch.setattr(subprocess, "Popen", lambda *_, **__: process)
+    process.pid = state.reported_pid = 12345
+
+    def spawn(_command, *, env, **_kwargs):
+        Path(env[ENDPOINT_ENV]).write_text(
+            json.dumps({"pid": state.reported_pid, "port": 49152}), encoding="ascii"
+        )
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", spawn)
     actual_client = httpx.Client
 
     def respond(request):
@@ -403,6 +438,17 @@ def test_remote_readiness_does_not_require_a_local_launch_token(tmp_path, contro
         assert token == ""
         assert not (tmp_path / "launch-token").exists()
         assert [request.url.path for request in state.requests] == ["/health"]
+    process.terminate.assert_called_once()
+    process.wait.assert_called_once()
+
+
+def test_foreign_endpoint_report_is_rejected_before_probing(tmp_path, controlled_startup):
+    state, process = controlled_startup
+    state.reported_pid = process.pid + 1
+    with pytest.raises(ValueError, match="Invalid endpoint"):
+        with local_server_process(tmp_path, validation_url="https://owned.invalid/validate"):
+            pytest.fail("A foreign endpoint was accepted")
+    assert state.requests == []
     process.terminate.assert_called_once()
     process.wait.assert_called_once()
 

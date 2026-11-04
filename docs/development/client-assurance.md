@@ -9,6 +9,10 @@ stdio ownership scenarios live in `test_client_assurance_identity.py`. All three
 belong to the existing isolated HTTP test group so legacy test-module stubs cannot
 replace the real SDK.
 
+For HTTP, the child binds an OS-assigned loopback port and supplies the same
+listening socket to the CLI. The parent checks the PID in the child's endpoint
+report, then verifies HTTP readiness and, in local mode, the launch credential.
+
 The test-only CLI entry point adds 512 scalar tools through the production
 registry and a resource exposing retained-state counters. It does not replace
 middleware, routing, authorization, schema validation, or command dispatch.
