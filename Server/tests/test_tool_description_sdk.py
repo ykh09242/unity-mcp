@@ -32,7 +32,7 @@ class SdkConnection:
     def protocol_version(self):
         return self.client.protocol_version
 
-    async def list_tools(self, *, cursor=None, meta=None):
+    async def list_tools_mcp(self, *, cursor=None, meta=None):
         from mcp_types import PaginatedRequestParams, RequestParamsMeta
 
         self.trace.append(("tools/list", copy.deepcopy(meta)))
@@ -42,7 +42,7 @@ class SdkConnection:
             )
         )
 
-    async def list_resources(self, *, cursor=None, meta=None):
+    async def list_resources_mcp(self, *, cursor=None, meta=None):
         from mcp_types import PaginatedRequestParams, RequestParamsMeta
 
         self.trace.append(("resources/list", copy.deepcopy(meta)))
@@ -52,7 +52,7 @@ class SdkConnection:
             )
         )
 
-    async def read_resource(self, uri, *, meta=None):
+    async def read_resource_mcp(self, uri, *, meta=None):
         from mcp_types import RequestParamsMeta
 
         self.trace.append((uri, copy.deepcopy(meta)))
@@ -166,7 +166,7 @@ def install_connection(monkeypatch, server):
     )
     monkeypatch.setattr(
         inspection,
-        "_make_client",
+        "DiagnosticClient",
         lambda cfg, protocol, factory, headers: SdkConnection(server, protocol, trace),
     )
     return inspection, trace
@@ -484,7 +484,7 @@ class ScriptedConnection:
     async def __aexit__(self, *_):
         self.closed = True
 
-    async def list_tools(self, **_):
+    async def list_tools_mcp(self, **_):
         import anyio
         from mcp_types import ListToolsResult, Tool
 
@@ -504,7 +504,7 @@ async def test_incomplete_cursor_listing_never_becomes_complete_not_found(monkey
 
     connection = ScriptedConnection(repeat_cursor=True)
     monkeypatch.setattr(inspection, "_auth_headers", lambda _: {})
-    monkeypatch.setattr(inspection, "_make_client", lambda *_: connection)
+    monkeypatch.setattr(inspection, "DiagnosticClient", lambda *_: connection)
     receipt = await inspection.inspect_tool(CLIConfig(), "missing")
     assert receipt.exit_code == 3 and receipt.advertised is None
     assert receipt.reason == "listing_incomplete" and receipt.partial
@@ -520,7 +520,7 @@ async def test_early_match_is_not_authoritative_after_incomplete_listing(monkeyp
     import cli.utils.tool_description as inspection
 
     class Incomplete(ScriptedConnection):
-        async def list_tools(self, **_):
+        async def list_tools_mcp(self, **_):
             self.calls += 1
             if ending == "deadline" and self.calls > 1:
                 await anyio.sleep_forever()
@@ -532,7 +532,7 @@ async def test_early_match_is_not_authoritative_after_incomplete_listing(monkeyp
     connection = Incomplete()
     monkeypatch.setattr(inspection, "_READ_TIMEOUT_SECONDS", 0.03)
     monkeypatch.setattr(inspection, "_auth_headers", lambda _: {})
-    monkeypatch.setattr(inspection, "_make_client", lambda *_: connection)
+    monkeypatch.setattr(inspection, "DiagnosticClient", lambda *_: connection)
     receipt = await inspection.inspect_tool(CLIConfig(), "fixture")
     assert receipt.exit_code == 3 and receipt.advertised is None
     assert receipt.tool is None and receipt.schema_source == "unavailable"
@@ -550,7 +550,7 @@ async def test_oversized_selected_schema_is_not_rendered_or_validated(monkeypatc
         [{"name": "fixture", "inputSchema": {"type": "object", "description": secret * 15000}}]
     )
     monkeypatch.setattr(inspection, "_auth_headers", lambda _: {})
-    monkeypatch.setattr(inspection, "_make_client", lambda *_: connection)
+    monkeypatch.setattr(inspection, "DiagnosticClient", lambda *_: connection)
     receipt = await inspection.inspect_tool(CLIConfig(), "fixture")
     assert receipt.exit_code == 3 and receipt.reason == "inspection_limit"
     assert receipt.tool is None and secret not in receipt.model_dump_json()
@@ -565,7 +565,7 @@ async def test_single_read_deadline_closes_without_later_operations(monkeypatch)
     connection = ScriptedConnection(block=True)
     monkeypatch.setattr(inspection, "_READ_TIMEOUT_SECONDS", 0.03)
     monkeypatch.setattr(inspection, "_auth_headers", lambda _: {})
-    monkeypatch.setattr(inspection, "_make_client", lambda *_: connection)
+    monkeypatch.setattr(inspection, "DiagnosticClient", lambda *_: connection)
     receipt = await inspection.inspect_tool(CLIConfig(), "fixture")
     assert receipt.exit_code == 3 and receipt.reason == "deadline"
     assert receipt.advertised is None and connection.calls == 1 and connection.closed
@@ -612,7 +612,7 @@ async def test_connection_entry_cannot_spend_the_cleanup_grace_on_reads(monkeypa
     monkeypatch.setattr(inspection, "_READ_TIMEOUT_SECONDS", 30.0)
     monkeypatch.setattr(inspection, "_CLEANUP_GRACE_SECONDS", 0.3)
     monkeypatch.setattr(inspection, "_auth_headers", lambda _: {})
-    monkeypatch.setattr(inspection, "_make_client", lambda *_: connection)
+    monkeypatch.setattr(inspection, "DiagnosticClient", lambda *_: connection)
     monkeypatch.setattr(
         inspection,
         "anyio",
@@ -639,7 +639,7 @@ async def test_auth_failure_is_static_and_never_opens_sdk(monkeypatch):
 
     monkeypatch.setattr(inspection, "_auth_headers", auth)
     monkeypatch.setattr(
-        inspection, "_make_client", lambda *_: pytest.fail("auth failure opened SDK")
+        inspection, "DiagnosticClient", lambda *_: pytest.fail("auth failure opened SDK")
     )
     receipt = await inspection.inspect_tool(CLIConfig(), "fixture")
     assert receipt.exit_code == 1 and receipt.reason == "auth_required"
@@ -664,7 +664,7 @@ async def test_conflicting_duplicate_advertisement_never_chooses_a_callable_sche
         ]
     )
     monkeypatch.setattr(inspection, "_auth_headers", lambda _: {})
-    monkeypatch.setattr(inspection, "_make_client", lambda *_: connection)
+    monkeypatch.setattr(inspection, "DiagnosticClient", lambda *_: connection)
     receipt = await inspection.inspect_tool(CLIConfig(), "fixture")
     assert receipt.exit_code == 3 and receipt.reason == "listing_incomplete"
     assert receipt.tool is None and receipt.advertised is None
@@ -678,7 +678,7 @@ async def test_bounded_public_inspection_refuses_without_schema_evaluation(monke
     import cli.utils.tool_description as inspection
 
     class Pages(ScriptedConnection):
-        async def list_tools(self, **_):
+        async def list_tools_mcp(self, **_):
             self.calls += 1
             return ListToolsResult(tools=[], nextCursor=f"page-{self.calls}")
 
@@ -693,7 +693,7 @@ async def test_bounded_public_inspection_refuses_without_schema_evaluation(monke
         entries = [{"name": f"tool_{index}", "inputSchema": {}} for index in range(513)]
     connection = Pages() if limit == "pages" else ScriptedConnection(entries)
     monkeypatch.setattr(inspection, "_auth_headers", lambda _: {})
-    monkeypatch.setattr(inspection, "_make_client", lambda *_: connection)
+    monkeypatch.setattr(inspection, "DiagnosticClient", lambda *_: connection)
     receipt = await inspection.inspect_tool(CLIConfig(), "fixture")
     assert receipt.exit_code == 3
     assert receipt.reason == (
@@ -748,7 +748,7 @@ async def test_stalled_cleanup_is_separately_bounded_and_reported(monkeypatch):
     monkeypatch.setattr(inspection, "_READ_TIMEOUT_SECONDS", 0.03)
     monkeypatch.setattr(inspection, "_CLEANUP_GRACE_SECONDS", 0.03)
     monkeypatch.setattr(inspection, "_auth_headers", lambda _: {})
-    monkeypatch.setattr(inspection, "_make_client", lambda *_: connection)
+    monkeypatch.setattr(inspection, "DiagnosticClient", lambda *_: connection)
     monkeypatch.setattr(
         inspection,
         "anyio",
@@ -787,7 +787,7 @@ async def test_fast_read_cannot_lend_remaining_read_budget_to_cleanup(monkeypatc
     monkeypatch.setattr(inspection, "_READ_TIMEOUT_SECONDS", 1.0)
     monkeypatch.setattr(inspection, "_CLEANUP_GRACE_SECONDS", 0.03)
     monkeypatch.setattr(inspection, "_auth_headers", lambda _: {})
-    monkeypatch.setattr(inspection, "_make_client", lambda *_: connection)
+    monkeypatch.setattr(inspection, "DiagnosticClient", lambda *_: connection)
     receipt = await inspection.inspect_tool(CLIConfig(), "fixture")
     assert close_started is not None and anyio.current_time() - close_started < 0.2
     assert receipt.tool is not None and receipt.cleanup_complete is False and receipt.partial
@@ -812,7 +812,7 @@ async def test_expired_auth_worker_never_starts_sdk_later(monkeypatch):
     monkeypatch.setattr(inspection, "_READ_TIMEOUT_SECONDS", 0.03)
     monkeypatch.setattr(inspection, "_auth_headers", auth)
     monkeypatch.setattr(
-        inspection, "_make_client", lambda *_: pytest.fail("expired auth started SDK")
+        inspection, "DiagnosticClient", lambda *_: pytest.fail("expired auth started SDK")
     )
     try:
         receipt = await inspection.inspect_tool(CLIConfig(), "fixture")

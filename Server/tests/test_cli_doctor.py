@@ -63,7 +63,7 @@ async def test_sdk_diagnostic_proves_only_its_own_target(command_hub, monkeypatc
     server = doctor_server()
     monkeypatch.setattr(
         connection,
-        "_make_client",
+        "DiagnosticClient",
         lambda cfg, protocol, factory, headers: Client(server, mode=protocol, cache=False),
     )
     receipt = await connection.diagnose(CLIConfig(unity_instance="Fixture@aaaa1111"), mode)
@@ -84,7 +84,7 @@ async def test_discovery_missing_doctor_is_incomplete_not_native_success(monkeyp
     server = FastMCP("old-server")
     monkeypatch.setattr(
         connection,
-        "_make_client",
+        "DiagnosticClient",
         lambda cfg, protocol, factory, headers: Client(server, mode=protocol, cache=False),
     )
     receipt = await connection.diagnose(CLIConfig(unity_instance="Fixture@aaaa1111"), "auto")
@@ -444,7 +444,7 @@ async def test_missing_target_classifies_only_from_current_visible_inventory(
 
     monkeypatch.setattr(
         connection,
-        "_make_client",
+        "DiagnosticClient",
         lambda cfg, protocol, factory, headers: Client(server, mode=protocol, cache=False),
     )
     receipt = await connection.diagnose(CLIConfig(unity_instance="Missing@cccc3333"), "legacy")
@@ -468,7 +468,7 @@ async def test_unclassified_resource_error_is_unknown_and_redacted(monkeypatch):
 
     monkeypatch.setattr(
         connection,
-        "_make_client",
+        "DiagnosticClient",
         lambda cfg, protocol, factory, headers: Client(server, mode=protocol, cache=False),
     )
     receipt = await connection.diagnose(CLIConfig(unity_instance="Fixture@aaaa1111"), "legacy")
@@ -495,7 +495,9 @@ async def test_shared_deadline_closes_sdk_session_and_keeps_native_residual_unkn
             stopped.set()
 
     client = Client(server, mode="legacy", cache=False)
-    monkeypatch.setattr(connection, "_make_client", lambda cfg, protocol, factory, headers: client)
+    monkeypatch.setattr(
+        connection, "DiagnosticClient", lambda cfg, protocol, factory, headers: client
+    )
     started = anyio.current_time()
     receipt = await connection.diagnose(
         CLIConfig(unity_instance="Fixture@aaaa1111", timeout=1), "legacy"
@@ -518,7 +520,7 @@ async def test_missing_sdk_is_dependency_failure_before_connection(monkeypatch):
 
     monkeypatch.setattr(connection.metadata, "version", missing)
     monkeypatch.setattr(
-        connection, "_make_client", lambda *_: pytest.fail("missing dependency connected")
+        connection, "DiagnosticClient", lambda *_: pytest.fail("missing dependency connected")
     )
     receipt = await connection.diagnose(CLIConfig(unity_instance="Fixture@aaaa1111"))
     assert receipt.exit_code == 4 and receipt.reason == "dependency_missing"
@@ -555,7 +557,7 @@ async def test_unknown_native_read_cannot_be_promoted_by_matching_source(monkeyp
 
     monkeypatch.setattr(
         connection,
-        "_make_client",
+        "DiagnosticClient",
         lambda cfg, protocol, factory, headers: Client(server, mode=protocol, cache=False),
     )
     receipt = await connection.diagnose(CLIConfig(unity_instance="Fixture@aaaa1111"))
@@ -630,7 +632,7 @@ async def test_incomplete_or_invalid_peer_receipt_never_becomes_success(monkeypa
         server.add_middleware(Catalog())
     monkeypatch.setattr(
         connection,
-        "_make_client",
+        "DiagnosticClient",
         lambda cfg, protocol, factory, headers: Client(server, mode=protocol, cache=False),
     )
     receipt = await connection.diagnose(CLIConfig(unity_instance="Fixture@aaaa1111"), "legacy")
@@ -689,7 +691,7 @@ async def test_actual_http_read_timeout_closes_owned_sdk_streams(monkeypatch):
     clients = []
     streams = []
     wire_admissions = []
-    make_client = connection._make_client
+    make_client = connection.DiagnosticClient
     init_stream = connection._BoundedStream.__init__
     send_request = httpx2.AsyncHTTPTransport.handle_async_request
 
@@ -706,7 +708,7 @@ async def test_actual_http_read_timeout_closes_owned_sdk_streams(monkeypatch):
         wire_admissions.append((request.method, anyio.current_time()))
         return await send_request(transport, request)
 
-    monkeypatch.setattr(connection, "_make_client", capture_client)
+    monkeypatch.setattr(connection, "DiagnosticClient", capture_client)
     monkeypatch.setattr(connection._BoundedStream, "__init__", capture_stream)
     monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", capture_admission)
     async with live_mcp(server, []) as port:
@@ -762,7 +764,7 @@ async def test_slow_real_sdk_teardown_leaves_no_detached_owned_tasks(monkeypatch
     original_http = httpx2.AsyncHTTPTransport
     clients = []
     streams = []
-    make_client = connection._make_client
+    make_client = connection.DiagnosticClient
     init_stream = connection._BoundedStream.__init__
 
     class SlowHTTPTransport(original_http):
@@ -785,7 +787,7 @@ async def test_slow_real_sdk_teardown_leaves_no_detached_owned_tasks(monkeypatch
         streams.append(stream)
 
     monkeypatch.setattr(httpx2, "AsyncHTTPTransport", SlowHTTPTransport)
-    monkeypatch.setattr(connection, "_make_client", capture_client)
+    monkeypatch.setattr(connection, "DiagnosticClient", capture_client)
     monkeypatch.setattr(connection._BoundedStream, "__init__", capture_stream)
     async with live_mcp(FastMCP("slow-owned-http-close"), []) as port:
         before = set(asyncio.all_tasks())
@@ -916,7 +918,7 @@ async def test_contradictory_source_receipt_never_becomes_exit_zero(
 
     monkeypatch.setattr(
         connection,
-        "_make_client",
+        "DiagnosticClient",
         lambda cfg, protocol, factory, headers: Client(server, mode=protocol, cache=False),
     )
     result = await connection.diagnose(CLIConfig(unity_instance="Fixture@aaaa1111"), "legacy")

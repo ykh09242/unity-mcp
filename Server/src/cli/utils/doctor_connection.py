@@ -134,7 +134,7 @@ class DoctorHttpFactory:
         )
 
 
-class _SdkConnection:
+class DiagnosticClient:
     """A public MCP client/transport lifetime owned by the calling diagnostic task."""
 
     def __init__(
@@ -146,7 +146,6 @@ class _SdkConnection:
         self.headers = headers
         self._stack = None
         self._client = None
-        self._connected = False
 
     async def __aenter__(self):
         from mcp.client import Client
@@ -158,7 +157,9 @@ class _SdkConnection:
                 self.factory(headers=self.headers, timeout=httpx2.Timeout(self.factory.remaining()))
             )
             transport = streamable_http_client(
-                _server_url(self.config, "/mcp"), http_client=http, max_sse_event_size=1_048_576
+                _server_url(self.config, "/mcp"),
+                http_client=http,
+                max_sse_event_size=self.factory.response_limit,
             )
             client = await stack.enter_async_context(
                 Client(
@@ -169,7 +170,6 @@ class _SdkConnection:
                 )
             )
             self._client = client
-            self._connected = True
             self._stack = stack.pop_all()
             return self
 
@@ -178,7 +178,6 @@ class _SdkConnection:
             if self._stack is not None:
                 return await self._stack.__aexit__(exc_type, exc_value, traceback)
         finally:
-            self._connected = False
             self._client = None
             self._stack = None
 
@@ -187,24 +186,26 @@ class _SdkConnection:
         return self._client.protocol_version if self._client is not None else None
 
     def is_connected(self) -> bool:
-        return self._connected
+        return self._client is not None
 
-    async def list_resources_mcp(self, *, cursor=None, cache_mode="bypass"):
-        return await self._client.list_resources(cursor=cursor, cache_mode=cache_mode)
+    async def list_tools_mcp(self, *, cursor=None, meta=None):
+        return await self._client.list_tools(
+            cursor=cursor, meta=self._meta(meta), cache_mode="bypass"
+        )
 
-    async def read_resource(self, uri, *, meta=None):
+    async def list_resources_mcp(self, *, cursor=None, meta=None, cache_mode="bypass"):
+        return await self._client.list_resources(
+            cursor=cursor, meta=self._meta(meta), cache_mode=cache_mode
+        )
+
+    async def read_resource_mcp(self, uri, *, meta=None):
+        return await self._client.read_resource(uri, meta=self._meta(meta), cache_mode="bypass")
+
+    @staticmethod
+    def _meta(value):
         from mcp_types import RequestParamsMeta
 
-        result = await self._client.read_resource(
-            uri, meta=RequestParamsMeta(**meta) if meta is not None else None, cache_mode="bypass"
-        )
-        return result.contents
-
-
-def _make_client(
-    config: CLIConfig, protocol: str, factory: DoctorHttpFactory, headers: dict[str, str]
-):
-    return _SdkConnection(config, protocol, factory, headers)
+        return RequestParamsMeta(**value) if value is not None else None
 
 
 def _endpoint(config: CLIConfig) -> str | None:
@@ -304,7 +305,7 @@ async def _target_failure(
         discovery="passed",
     )
     try:
-        blocks = await client.read_resource("mcpforunity://instances")
+        blocks = (await client.read_resource_mcp("mcpforunity://instances")).contents
         if len(blocks) != 1 or not hasattr(blocks[0], "text"):
             return failure
         text = blocks[0].text
@@ -390,9 +391,10 @@ async def _read(client, config: CLIConfig, protocol: Literal["auto", "legacy"]) 
     from mcp.shared.exceptions import MCPError
 
     try:
-        blocks = await client.read_resource(
+        result = await client.read_resource_mcp(
             _DOCTOR_URI, meta={"unity_instance": config.unity_instance}
         )
+        blocks = result.contents
     except MCPError:
         return await _target_failure(client, config, protocol)
     if len(blocks) != 1 or not hasattr(blocks[0], "text"):
@@ -524,7 +526,7 @@ async def diagnose(
             headers = await anyio.to_thread.run_sync(_auth_headers, config, abandon_on_cancel=True)
         if anyio.current_time() >= deadline:
             return _failure(config, protocol, "deadline", 3, "retry_later")
-        client = _make_client(config, protocol, factory, headers)
+        client = DiagnosticClient(config, protocol, factory, headers)
     except TimeoutError:
         return _failure(config, protocol, "deadline", 3, "retry_later").model_copy(
             update={"residual_auth_io": "unknown"}

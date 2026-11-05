@@ -11,8 +11,8 @@ import httpx2
 from pydantic import ValidationError
 
 from cli.utils.config import CLIConfig
-from cli.utils.connection import UnityConnectionError, _auth_headers, _server_url
-from cli.utils.doctor_connection import DoctorHttpFactory, DiagnosticLimit
+from cli.utils.connection import UnityConnectionError, _auth_headers
+from cli.utils.doctor_connection import DiagnosticClient, DiagnosticLimit, DoctorHttpFactory
 from models.capabilities import ProjectCapabilitiesResponse
 from models.tool_description import ToolAvailability, ToolDescriptionReceipt
 from models.tool_diagnostics import ToolDiagnosticsResponse
@@ -104,83 +104,13 @@ def _evidence(reason="source_unavailable", *, observed=False):
     }
 
 
-class _ToolClient:
-    """Public SDK lifetime only; budget transport is reused from committed DEV09."""
-
-    def __init__(self, config, protocol, factory, headers):
-        self.config, self.protocol = config, protocol
-        self.factory, self.headers = factory, headers
-        self.stack = None
-        self.client = None
-
-    async def __aenter__(self):
-        from mcp.client import Client
-        from mcp.client.streamable_http import streamable_http_client
-
-        async with AsyncExitStack() as stack:
-            http = await stack.enter_async_context(
-                self.factory(headers=self.headers, timeout=httpx2.Timeout(self.factory.remaining()))
-            )
-            transport = streamable_http_client(
-                _server_url(self.config, "/mcp"),
-                http_client=http,
-                max_sse_event_size=_MESSAGE_BYTES,
-            )
-            self.client = await stack.enter_async_context(
-                Client(
-                    transport,
-                    mode=self.protocol,
-                    cache=None,
-                    read_timeout_seconds=self.factory.remaining(),
-                )
-            )
-            self.stack = stack.pop_all()
-            return self
-
-    async def __aexit__(self, *args):
-        try:
-            if self.stack is not None:
-                return await self.stack.__aexit__(*args)
-        finally:
-            self.stack = self.client = None
-
-    @property
-    def protocol_version(self):
-        return self.client.protocol_version
-
-    async def list_tools(self, *, cursor=None, meta=None):
-        from mcp_types import RequestParamsMeta
-
-        return await self.client.list_tools(
-            cursor=cursor, meta=RequestParamsMeta(**meta) if meta else None, cache_mode="bypass"
-        )
-
-    async def list_resources(self, *, cursor=None, meta=None):
-        from mcp_types import RequestParamsMeta
-
-        return await self.client.list_resources(
-            cursor=cursor, meta=RequestParamsMeta(**meta) if meta else None, cache_mode="bypass"
-        )
-
-    async def read_resource(self, uri, *, meta=None):
-        from mcp_types import RequestParamsMeta
-
-        return await self.client.read_resource(
-            uri, meta=RequestParamsMeta(**meta) if meta else None, cache_mode="bypass"
-        )
-
-
-def _make_client(config, protocol, factory, headers):
-    return _ToolClient(config, protocol, factory, headers)
-
-
 async def _listing(client, name, meta, deadline, state):
     cursor, seen = None, set()
     total = 0
     fallback = False
     for _ in range(_MAX_PAGES):
         _remaining(deadline)
-        page = await client.list_tools(cursor=cursor, meta=meta)
+        page = await client.list_tools_mcp(cursor=cursor, meta=meta)
         total += len(page.tools)
         if total > _MAX_COMPONENTS:
             break
@@ -224,7 +154,7 @@ async def _resource_uris(client, meta, deadline):
     total = 0
     for _ in range(_MAX_PAGES):
         _remaining(deadline)
-        page = await client.list_resources(cursor=cursor, meta=meta)
+        page = await client.list_resources_mcp(cursor=cursor, meta=meta)
         total += len(page.resources)
         if total > _MAX_COMPONENTS:
             raise DiagnosticLimit()
@@ -250,7 +180,7 @@ async def _read_project(client, meta, deadline, state, name):
             return
         try:
             _remaining(deadline)
-            response = await client.read_resource(uri, meta=meta)
+            response = await client.read_resource_mcp(uri, meta=meta)
             if len(response.contents) != 1 or not hasattr(response.contents[0], "text"):
                 return
             text = response.contents[0].text
@@ -469,7 +399,7 @@ async def inspect_tool(config: CLIConfig, name: str, *, protocol="auto") -> Tool
     else:
         try:
             _remaining(deadline)
-            client = _make_client(config, protocol, factory, headers)
+            client = DiagnosticClient(config, protocol, factory, headers)
             with anyio.fail_after(_remaining(deadline) + _CLEANUP_GRACE_SECONDS) as maximum_scope:
                 async with AsyncExitStack() as stack:
                     try:
