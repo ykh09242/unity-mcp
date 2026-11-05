@@ -42,8 +42,12 @@ class ScenePeer(PluginStream):
             "message": "fixture loaded",
             "data": {"path": "Assets/Scenes/A.unity"},
         }
-        self.command_send, self.command_receive = anyio.create_memory_object_stream(16)
+        self.command_send = None
         super().__init__(self.observed_app, principal, project_hash, name)
+
+    async def connect(self, group):
+        await group.start(self.respond)
+        await super().connect(group)
 
     async def observed_app(self, scope, receive, send):
         if self.token:
@@ -65,9 +69,11 @@ class ScenePeer(PluginStream):
 
         await self.actual_app(scope, receive, observed)
 
-    async def respond(self):
-        async with self.command_receive:
-            async for command in self.command_receive:
+    async def respond(self, *, task_status=anyio.TASK_STATUS_IGNORED):
+        self.command_send, receive = anyio.create_memory_object_stream(16)
+        async with receive:
+            task_status.started()
+            async for command in receive:
                 self.reply_done = anyio.Event()
                 if command["name"] in {"manage_scene", "scene_lifecycle", "scene_inspect"}:
                     self.loads.append(command)
@@ -102,8 +108,8 @@ class ScenePeer(PluginStream):
                 await self.reply_done.wait()
             await self.close()
         finally:
-            await self.command_send.aclose()
-            await self.command_receive.aclose()
+            if self.command_send is not None:
+                await self.command_send.aclose()
 
 
 @pytest.fixture
@@ -162,7 +168,6 @@ async def connected(flow_server, *, tools=None):
             )
             try:
                 await peer.connect(group)
-                group.start_soon(peer.respond)
                 await peer.catalog(
                     tools
                     if tools is not None
@@ -600,7 +605,6 @@ async def test_current_session_replacement_refuses_pending_input(flow_server):
         replacement = ScenePeer(peer.actual_app, "alice-key", "a", "A")
         try:
             await replacement.connect(group)
-            group.start_soon(replacement.respond)
             await replacement.catalog([{"name": "manage_scene"}])
             assert replacement.session_id != peer.session_id
             # When: a retry carries valid SDK state for the superseded generation.
@@ -628,7 +632,6 @@ async def test_other_project_and_foreign_tenant_cannot_consume_the_question(flow
         try:
             for other in others:
                 await other.connect(group)
-                group.start_soon(other.respond)
                 await other.catalog([{"name": "manage_scene"}])
             # When: a valid echo is sent with changed project or foreign credentials.
             for selector, headers in [("B@b", {}), ("C@c", {"x-api-key": "bob-key"})]:

@@ -527,9 +527,9 @@ class PluginHub(WebSocketEndpoint):
         sockets.update({key: value[0] for key, value in cls._admitted.items()})
         for websocket in sockets.values():
             websocket.state.plugin_auth_retired = True
-            task = getattr(websocket.state, "plugin_auth_task", None)
-            if task is not None:
-                task.cancel()
+            scope = getattr(websocket.state, "plugin_auth_scope", None)
+            if scope is not None:
+                scope.cancel()
 
     async def dispatch(self) -> None:
         """Own admission through connect failures, registration and disconnect."""
@@ -571,7 +571,8 @@ class PluginHub(WebSocketEndpoint):
         async with AsyncExitStack() as lifetime:
             self._credential_lifetime = lifetime
             lifetime.callback(setattr, self, "_credential_lifetime", None)
-            websocket.state.plugin_auth_task = asyncio.current_task()
+            # Retirement cancels this dispatch without cancelling the ASGI host's task.
+            websocket.state.plugin_auth_scope = lifetime.enter_context(anyio.CancelScope())
             try:
                 # Include welcome write in the registration deadline.
                 deadline = asyncio.get_running_loop().time() + self.REGISTRATION_TIMEOUT

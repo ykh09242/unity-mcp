@@ -190,6 +190,8 @@ def test_phases(phase_probe, request, index):
             "-m",
             "pytest",
             str(probe),
+            "-c",
+            str(server_root / "tests" / "pytest.ini"),
             "-n",
             "4",
             "--max-worker-restart=0",

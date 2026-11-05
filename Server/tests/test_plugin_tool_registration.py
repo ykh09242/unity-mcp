@@ -107,7 +107,7 @@ def test_unregistered_and_hosted_plugins_do_not_publish_global_tools(tmp_path):
             registry = PluginRegistry()
             PluginHub.configure(registry, mcp=mcp)
             socket = AsyncMock()
-            socket.state = SimpleNamespace(plugin_registered=False, plugin_auth_task=None)
+            socket.state = SimpleNamespace(plugin_registered=False, plugin_auth_scope=None)
             hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
             payload = {"type": "register_tools", "tools": [{"name": "private_custom"}]}
 
