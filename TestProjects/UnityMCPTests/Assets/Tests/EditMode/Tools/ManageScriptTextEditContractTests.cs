@@ -614,4 +614,108 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(expectedIndex, (int)args[3]);
         }
     }
+
+    public class DeferredScriptRefreshTests
+    {
+        private Type scheduler;
+        private System.Collections.Generic.HashSet<string> paths;
+        private FieldInfo compilePending;
+        private MethodInfo process;
+        private string[] savedPaths;
+        private bool savedCompilePending;
+
+        [SetUp]
+        public void SetUp()
+        {
+            scheduler = typeof(ManageScript).Assembly.GetType("MCPForUnity.Editor.Tools.RefreshDebounce", true);
+            const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+            paths = (System.Collections.Generic.HashSet<string>)scheduler.GetField("_paths", flags).GetValue(null);
+            compilePending = scheduler.GetField("_compilePending", flags);
+            process = scheduler.GetMethod("ProcessPending", flags);
+            savedPaths = new string[paths.Count];
+            paths.CopyTo(savedPaths);
+            savedCompilePending = (bool)compilePending.GetValue(null);
+            paths.Clear();
+            compilePending.SetValue(null, false);
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            paths.Clear();
+            foreach (string path in savedPaths)
+                paths.Add(path);
+            compilePending.SetValue(null, savedCompilePending);
+        }
+
+        private void Run(Action<string> import, Action compile, Action<string> error) => process.Invoke(null, new object[] { import, compile, error });
+
+        [Test]
+        public void FirstImportFailureRetainsWholeBatchAndReportsFailure()
+        {
+            paths.Add("Assets/One.cs");
+            paths.Add("Assets/Two.cs");
+            int imports = 0,
+                compilations = 0;
+            string failure = null;
+            Run(
+                _ =>
+                {
+                    imports++;
+                    throw new InvalidOperationException("injected import failure");
+                },
+                () => compilations++,
+                message => failure = message
+            );
+            Assert.AreEqual(1, imports);
+            Assert.AreEqual(0, compilations);
+            CollectionAssert.AreEquivalent(new[] { "Assets/One.cs", "Assets/Two.cs" }, paths);
+            StringAssert.Contains("injected import failure", failure);
+            Run(_ => imports++, () => compilations++, message => Assert.Fail(message));
+            Assert.AreEqual(3, imports);
+            Assert.AreEqual(1, compilations);
+            Assert.IsEmpty(paths);
+        }
+
+        [Test]
+        public void CompileFailureRetainsCompilationWithoutReimporting()
+        {
+            paths.Add("Assets/One.cs");
+            paths.Add("Assets/Two.cs");
+            int imports = 0,
+                compilations = 0;
+            string failure = null;
+            Run(
+                _ => imports++,
+                () =>
+                {
+                    compilations++;
+                    throw new InvalidOperationException("injected compile failure");
+                },
+                message => failure = message
+            );
+            Assert.AreEqual(2, imports);
+            Assert.IsEmpty(paths);
+            Assert.IsTrue((bool)compilePending.GetValue(null));
+            StringAssert.Contains("injected compile failure", failure);
+            Run(_ => imports++, () => compilations++, message => Assert.Fail(message));
+            Assert.AreEqual(2, imports);
+            Assert.AreEqual(2, compilations);
+            Assert.IsFalse((bool)compilePending.GetValue(null));
+        }
+
+        [Test]
+        public void TwoSuccessfulImportsRequestCompilationOnce()
+        {
+            paths.Add("Assets/One.cs");
+            paths.Add("Assets/Two.cs");
+            int imports = 0,
+                compilations = 0;
+            Run(_ => imports++, () => compilations++, message => Assert.Fail(message));
+            Assert.AreEqual(2, imports);
+            Assert.AreEqual(1, compilations);
+            Assert.IsEmpty(paths);
+            Assert.IsFalse((bool)compilePending.GetValue(null));
+        }
+    }
 }

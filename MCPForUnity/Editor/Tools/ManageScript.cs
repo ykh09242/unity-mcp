@@ -4885,7 +4885,6 @@ namespace MCPForUnity.Editor.Tools
     // Debounced refresh/compile scheduler to coalesce bursts of edits
     static class RefreshDebounce
     {
-        private static int _pending;
         private static readonly object _lock = new object();
         private static readonly HashSet<string> _paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -4894,11 +4893,11 @@ namespace MCPForUnity.Editor.Tools
 
         // Guard to ensure we only have a single ticking callback running.
         private static bool _scheduled;
+        private static bool _compilePending;
 
         public static void Schedule(string relPath, TimeSpan window)
         {
             // Record that work is pending and track the path in a threadsafe way.
-            Interlocked.Exchange(ref _pending, 1);
             lock (_lock)
             {
                 _paths.Add(relPath);
@@ -4938,24 +4937,52 @@ namespace MCPForUnity.Editor.Tools
                 return;
             }
 
-            if (Interlocked.Exchange(ref _pending, 0) == 1)
+            ProcessPending(
+                p => AssetDatabase.ImportAsset(p, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport),
+                () => UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation(),
+                message => McpLog.Error(message)
+            );
+        }
+
+        // One attempt per scheduled batch. A later Schedule explicitly retries retained work.
+        private static void ProcessPending(Action<string> import, Action compile, Action<string> reportFailure)
+        {
+            string[] batch;
+            lock (_lock)
             {
-                string[] toImport;
+                batch = _paths.ToArray();
+                _paths.Clear();
+            }
+            int next = 0;
+            try
+            {
+                for (; next < batch.Length; next++)
+                {
+                    import(ManageScriptRefreshHelpers.SanitizeAssetsPath(batch[next]));
+                    lock (_lock)
+                        _compilePending = true;
+                }
+                bool needsCompile;
                 lock (_lock)
+                    needsCompile = _compilePending;
+                if (needsCompile)
                 {
-                    toImport = _paths.ToArray();
-                    _paths.Clear();
+                    compile();
+                    lock (_lock)
+                        _compilePending = false;
                 }
-                foreach (var p in toImport)
-                {
-                    var sp = ManageScriptRefreshHelpers.SanitizeAssetsPath(p);
-                    AssetDatabase.ImportAsset(sp, ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport);
-                }
-#if UNITY_EDITOR
-                UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation();
-#endif
-                // Fallback if needed:
-                // AssetDatabase.Refresh();
+            }
+            catch (Exception e)
+            {
+                lock (_lock)
+                    for (int i = next; i < batch.Length; i++)
+                        _paths.Add(batch[i]);
+                reportFailure(
+                    "[ManageScript] Deferred refresh failed: "
+                        + e.Message
+                        + ". Saved source was not replayed. Remaining imports and compilation are retained until another script refresh is scheduled; "
+                        + "alternatively inspect the Editor and refresh manually."
+                );
             }
         }
     }
