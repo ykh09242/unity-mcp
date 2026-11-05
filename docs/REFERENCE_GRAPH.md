@@ -253,6 +253,14 @@ and upgrades fall back to a complete catalog load. Cache updates retain shared
 key membership and exclusion/provider status, and publication still checks the
 catalog revision. Saved snapshots and authored configuration are unaffected.
 
+Code analysis keeps the most recent 8,192 document changes in a separate journal
+of owner IDs. A warm pass loads changed C# facts, rebinds affected callers, and
+pages the durable queue of owners awaiting publication. Deleted documents and
+unavailable inputs lose their bindings. An edit can affect many callers when
+they share a declaration. On restart, cache eviction, rule changes, or a journal
+gap, the server rebuilds the C# index in pages. The worker checks document and
+catalog generations and the rules revision before completing analysis.
+
 State uses `%LOCALAPPDATA%/unity-mcp/reference-graphs` on Windows,
 `~/Library/Application Support/unity-mcp/reference-graphs` on macOS, and
 `$XDG_STATE_HOME/unity-mcp/reference-graphs` (default `~/.local/state`) on Linux.

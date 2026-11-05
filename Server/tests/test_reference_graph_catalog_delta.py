@@ -5,11 +5,9 @@ import json
 import pytest
 
 from services.reference_graph.analysis import Catalog
-from services.reference_graph import catalog_delta
-from services.reference_graph.reconcile import Reconciler
+from services.reference_graph import analysis_cache, catalog_delta
 from services.reference_graph.store import GraphScope, GraphStore
 from services.reference_graph.workspace import GraphWorkspace
-from tests.test_reference_graph_reconcile import Editor, allowed
 
 
 @pytest.mark.parametrize("consumer", ["runtime", "analysis"])
@@ -25,12 +23,16 @@ def test_warm_catalog_decodes_and_indexes_only_changed_assets(tmp_path, monkeypa
         for index in range(2000)
     ]
     workspace.record_page("worker", assets, {}, "scan")
-    engine = Reconciler(workspace, Editor(), allowed)
+    cache = None
 
     def catalog():
+        nonlocal cache
         if consumer == "runtime":
             return workspace.key_admission()
-        return engine._refresh_analysis({}, {"revision": 0, "rules": []}, set())[0].catalog
+        cache, _ = analysis_cache.refresh(
+            workspace, cache, {"revision": 0, "rules": []}, lambda: None
+        )
+        return cache.index.catalog
 
     catalog()
     decoded, indexed = [], []

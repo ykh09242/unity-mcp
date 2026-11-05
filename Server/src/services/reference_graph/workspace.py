@@ -12,7 +12,7 @@ import time
 import threading
 
 from services.reference_graph.analysis import Analysis, Catalog, CatalogLookups
-from services.reference_graph import catalog_delta, external_changes
+from services.reference_graph import catalog_delta, document_delta, external_changes
 from services.reference_graph.external import _pattern
 from services.reference_graph.ignore import GitIgnoreRules
 from services.reference_graph.response_budget import PageBudget, bounded_rows
@@ -47,7 +47,7 @@ class GraphWorkspace:
                 "CREATE TABLE IF NOT EXISTS graph_workspace(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_workspace").fetchone()
-            if version is not None and version[0] not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
+            if version is not None and version[0] not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
                 raise ValueError("Unsupported graph workspace version")
             if version is None:
                 for statement in (
@@ -122,6 +122,9 @@ class GraphWorkspace:
                     "CREATE INDEX IF NOT EXISTS graph_asset_failures_retry ON graph_asset_failures(retry_at,guid)"
                 )
                 connection.execute("UPDATE graph_workspace SET version=10")
+            if version is None or version[0] < 11:
+                document_delta.initialize(connection)
+                connection.execute("UPDATE graph_workspace SET version=11")
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_asset_paths(guid TEXT PRIMARY KEY,path TEXT NOT NULL,seen TEXT NOT NULL)"
             )
@@ -446,6 +449,7 @@ class GraphWorkspace:
 
     def _reset_static(self, connection) -> None:
         catalog_delta.reset(connection)
+        document_delta.reset(connection)
         for table in (
             "graph_assets",
             "graph_documents",
@@ -761,8 +765,15 @@ class GraphWorkspace:
     def observe(self, worker: str, observation: Observation) -> int:
         return self.observe_many(worker, [observation])[0]
 
-    def observe_many(self, worker: str, observations: Iterable[Observation]) -> list[int]:
+    def observe_many(
+        self,
+        worker: str,
+        observations: Iterable[Observation],
+        *,
+        document_generation: int | None = None,
+    ) -> list[int]:
         with self._write(worker) as connection:
+            document_delta.require_generation(connection, document_generation)
             generations = []
             for observation in observations:
                 generations.append(self.store._observe(connection, observation))
@@ -977,10 +988,6 @@ class GraphWorkspace:
         )
         connection.execute("DELETE FROM edges WHERE owner=? AND provider<>'manual'", (owner,))
         connection.execute("UPDATE nodes SET present=0 WHERE id=?", (owner,))
-        connection.execute(
-            "INSERT OR IGNORE INTO graph_changed_inputs SELECT owner FROM graph_documents WHERE owner=? AND format='csharp'",
-            (owner,),
-        )
         connection.execute("DELETE FROM graph_documents WHERE owner=?", (owner,))
         connection.execute("DELETE FROM graph_analysis WHERE owner=?", (owner,))
         connection.execute("DELETE FROM graph_issues WHERE owner=?", (owner,))
@@ -1198,12 +1205,16 @@ class GraphWorkspace:
 
     def blocked_analysis(self) -> set[str]:
         with self.store._connect() as connection:
-            return {
-                row[0]
-                for row in connection.execute(
-                    "WITH RECURSIVE blocked(owner) AS (SELECT 'asset:'||guid FROM graph_asset_failures UNION SELECT d.owner FROM graph_dependencies d JOIN blocked b ON d.dependency=b.owner) SELECT owner FROM blocked"
-                )
-            }
+            return self._blocked_analysis(connection)
+
+    @staticmethod
+    def _blocked_analysis(connection) -> set[str]:
+        return {
+            row[0]
+            for row in connection.execute(
+                "WITH RECURSIVE blocked(owner) AS (SELECT 'asset:'||guid FROM graph_asset_failures UNION SELECT d.owner FROM graph_dependencies d JOIN blocked b ON d.dependency=b.owner) SELECT owner FROM blocked"
+            )
+        }
 
     def save_document(
         self, worker: str, owner: str, format_: str, fingerprint: str, payload: dict
@@ -1233,11 +1244,6 @@ class GraphWorkspace:
                     else None,
                 ),
             )
-            if format_ == "csharp" or (old is not None and old[1] == "csharp"):
-                connection.execute(
-                    "INSERT OR IGNORE INTO graph_changed_inputs VALUES (?)", (owner,)
-                )
-            self._set(connection, "analysis_dirty", True)
             self.store._bump(connection)
             return True
 
@@ -1275,7 +1281,7 @@ class GraphWorkspace:
     def drop_document(self, worker: str, owner: str) -> None:
         with self._write(worker) as connection:
             previous = connection.execute(
-                "SELECT format FROM graph_documents WHERE owner=?", (owner,)
+                "SELECT 1 FROM graph_documents WHERE owner=?", (owner,)
             ).fetchone()
             if previous is None:
                 return
@@ -1293,11 +1299,6 @@ class GraphWorkspace:
                 "UPDATE observations SET generation=generation+1,state='deleted',error=NULL WHERE owner=? AND provider='code'",
                 (owner,),
             )
-            if previous[0] == "csharp":
-                connection.execute(
-                    "INSERT OR IGNORE INTO graph_changed_inputs VALUES (?)", (owner,)
-                )
-            self._set(connection, "analysis_dirty", True)
             self.store._bump(connection)
 
     def changed_inputs(self) -> set[str]:
@@ -1333,9 +1334,15 @@ class GraphWorkspace:
             raise RevisionConflict("Catalog changed during analysis")
 
     def publish_many(
-        self, worker: str, publications: Iterable[tuple], *, catalog_revision: int | None = None
+        self,
+        worker: str,
+        publications: Iterable[tuple],
+        *,
+        catalog_revision: int | None = None,
+        document_generation: int | None = None,
     ) -> list[bool]:
         with self._write(worker) as connection:
+            document_delta.require_generation(connection, document_generation)
             self._require_catalog(connection, catalog_revision)
             return [self._publish(connection, *publication) for publication in publications]
 
@@ -1363,12 +1370,14 @@ class GraphWorkspace:
         before_publish: Callable[[], None] = lambda: None,
         catalog_lookups: CatalogLookups | None = None,
         catalog_revision: int | None = None,
+        document_generation: int | None = None,
         check: Callable[[], None] = lambda: None,
     ) -> None:
         """Stage bounded batches outside visible evidence, then promote atomically."""
 
         def require_current(connection):
             check()
+            document_delta.require_generation(connection, document_generation)
             self._require_catalog(connection, catalog_revision)
             if not self.store._current(connection, owner, provider, generation):
                 raise RevisionConflict("Graph inputs changed during streamed analysis")
@@ -1489,16 +1498,59 @@ class GraphWorkspace:
         self.store._bump(connection)
         return True
 
+    @classmethod
+    def _require_analysis_inputs(
+        cls, connection, rules_revision, catalog_revision, document_generation
+    ):
+        document_delta.require_generation(connection, document_generation)
+        cls._require_catalog(connection, catalog_revision)
+        if (
+            connection.execute("SELECT rules_revision FROM graph_meta").fetchone()[0]
+            != rules_revision
+        ):
+            raise RevisionConflict("Analysis rules changed during reconciliation")
+
+    def queue_analysis(
+        self,
+        worker,
+        owners,
+        rules_revision,
+        catalog_revision,
+        document_generation,
+        *,
+        all_documents,
+    ):
+        with self._write(worker) as connection:
+            self._require_analysis_inputs(
+                connection, rules_revision, catalog_revision, document_generation
+            )
+            if all_documents:
+                document_delta.queue_all(connection)
+            else:
+                document_delta.queue(connection, owners)
+
+    def pending_analysis(self, after: str, limit: int = 100) -> list[str]:
+        with self.store._connect() as connection:
+            return document_delta.pending(connection, after, limit)
+
     def finish_analysis(
-        self, worker: str, rules_revision: int, catalog_revision: int | None = None
+        self,
+        worker: str,
+        rules_revision: int,
+        catalog_revision: int | None = None,
+        *,
+        document_generation: int | None = None,
+        blocked: set[str] | None = None,
     ) -> None:
         with self._write(worker) as connection:
-            self._require_catalog(connection, catalog_revision)
-            if (
-                connection.execute("SELECT rules_revision FROM graph_meta").fetchone()[0]
-                != rules_revision
+            self._require_analysis_inputs(
+                connection, rules_revision, catalog_revision, document_generation
+            )
+            if blocked is not None and (
+                self._blocked_analysis(connection) != blocked
+                or document_delta.has_eligible_pending(connection, blocked)
             ):
-                raise RevisionConflict("Analysis rules changed during reconciliation")
+                raise RevisionConflict("Analysis inputs were invalidated during publication")
             self._set(connection, "analysis_dirty", False)
             self._set(connection, "analyzed_rules_revision", rules_revision)
             connection.execute("DELETE FROM graph_changed_inputs")

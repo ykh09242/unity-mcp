@@ -20,6 +20,7 @@ import time
 import threading
 import uuid
 
+from services.reference_graph import analysis_cache
 from services.reference_graph.analysis import (
     ANALYSIS_VERSION,
     Analysis,
@@ -1172,109 +1173,57 @@ class Reconciler:
             return
         await self._phase("analyzing")
 
-        def inputs():
-            with self.store.read_snapshot():
-                blocked = self.workspace.blocked_analysis()
-                manifest = {
-                    owner: row
-                    for owner, row in self.workspace.document_manifest().items()
-                    if owner not in blocked
-                }
-                return (
-                    manifest,
-                    self.workspace.changed_inputs(),
-                    self.workspace.state("catalog_revision", 0),
-                )
-
-        manifest, changed, expected_revision = await drained_thread(inputs)
-        index, affected, catalog_revision = await drained_thread(
-            self._refresh_analysis, manifest, rules, changed, _cancel_event=self.stopped
-        )
-        if catalog_revision != expected_revision:
-            raise RevisionConflict("Catalog changed while selecting analysis inputs")
-        selected = [
-            owner
-            for owner, row in manifest.items()
-            if rules_changed or row["state"] != "ready" or owner in affected
-        ]
-        for offset in range(0, len(selected), 100):
-            await self.check()
-            documents = await drained_thread(
-                self.workspace.documents, selected[offset : offset + 100]
+        try:
+            candidate, affected = await drained_thread(
+                analysis_cache.refresh,
+                self.workspace,
+                self._analysis_cache,
+                rules,
+                self._check_thread,
+                _cancel_event=self.stopped,
             )
+            await drained_thread(
+                self.workspace.queue_analysis,
+                self.worker,
+                affected,
+                candidate.rules_revision,
+                candidate.catalog_revision,
+                candidate.document_generation,
+                all_documents=rules_changed,
+                _cancel_event=self.stopped,
+            )
+        except BaseException:
+            # The old binding index may already be mutated. Until every affected
+            # owner is durably queued only a fresh index can recover its work.
+            self._analysis_cache = None
+            raise
+        self._analysis_cache = candidate
+        after = ""
+        while owners := await drained_thread(self.workspace.pending_analysis, after):
+            await self.check()
+            after = owners[-1]
+            selected = [owner for owner in owners if owner not in candidate.blocked]
+            if not selected:
+                continue
+            documents = await drained_thread(self.workspace.documents, selected)
             await drained_thread(
                 self._analyze_batch,
                 documents,
-                index,
-                rules["revision"],
-                catalog_revision,
+                candidate.index,
+                candidate.rules_revision,
+                candidate.catalog_revision,
+                document_generation=candidate.document_generation,
                 _cancel_event=self.stopped,
             )
         await drained_thread(
-            self.workspace.finish_analysis, self.worker, rules["revision"], catalog_revision
+            self.workspace.finish_analysis,
+            self.worker,
+            candidate.rules_revision,
+            candidate.catalog_revision,
+            document_generation=candidate.document_generation,
+            blocked=candidate.blocked,
         )
         self._analysis_used = time.monotonic()
-
-    def _refresh_analysis(self, manifest: dict, rules: dict, changed_inputs: set[str]) -> tuple:
-        cache = self._analysis_cache
-        if cache is not None and cache[0] != rules["revision"]:
-            cache = None
-        fingerprints = {
-            owner: (row["format"], row["fingerprint"]) for owner, row in manifest.items()
-        }
-        changed = sorted(
-            owner
-            for owner in manifest
-            if cache is None
-            or cache[2].get(owner) != fingerprints[owner]
-            or owner in changed_inputs
-        )
-
-        def facts():
-            owners = [owner for owner in changed if manifest[owner]["format"] == "csharp"]
-            for offset in range(0, len(owners), 256):
-                self._check_thread()
-                for row in self.workspace.documents(owners[offset : offset + 256]):
-                    self._check_thread()
-                    yield Facts.from_dict(row["data"])
-
-        try:
-            revision, catalog = self.workspace.refresh_catalog(
-                (cache[1], cache[3].catalog) if cache else None
-            )
-            if cache is None:
-                index = AnalysisIndex(
-                    facts(),
-                    catalog,
-                    [
-                        rule["config"]
-                        for rule in rules["rules"]
-                        if rule["config"].get("enabled", True)
-                    ],
-                    check=self._check_thread,
-                )
-                affected = index.affected(changed_inputs)
-                if changed_inputs:
-                    # A fresh index has no former symbol lookups. Changed declarations
-                    # can rebind ready callers without a persisted dependency on them.
-                    affected.update(
-                        owner for owner, row in manifest.items() if row["format"] == "csharp"
-                    )
-            else:
-                index = cache[3]
-                index.catalog = catalog
-                removed = (cache[2].keys() - manifest.keys()) | {
-                    owner for owner in changed if manifest[owner]["format"] != "csharp"
-                }
-                affected = index.update(facts(), removed=removed)
-                affected.update(index.affected(changed_inputs))
-            self._analysis_cache = (rules["revision"], revision, fingerprints, index)
-            self._analysis_used = time.monotonic()
-            return index, affected, revision
-        except BaseException:
-            # An interrupted in-place update must never become a reusable index.
-            self._analysis_cache = None
-            raise
 
     @staticmethod
     def _build_index(documents: list[dict], assets: list[dict], rules: dict) -> AnalysisIndex:
@@ -1290,6 +1239,8 @@ class Reconciler:
         index: AnalysisIndex,
         rules_revision: int,
         catalog_revision: int | None = None,
+        *,
+        document_generation: int | None = None,
     ) -> None:
         observations = [
             Observation(
@@ -1311,7 +1262,9 @@ class Reconciler:
             )
             for row in documents
         ]
-        generations = self.workspace.observe_many(self.worker, observations)
+        generations = self.workspace.observe_many(
+            self.worker, observations, document_generation=document_generation
+        )
         publications = []
         for row, generation in zip(documents, generations):
             self._check_thread()
@@ -1328,6 +1281,7 @@ class Reconciler:
                         lambda owner=row["owner"]: index.transitive_dependencies(owner),
                         catalog_lookups=lookups,
                         catalog_revision=catalog_revision,
+                        document_generation=document_generation,
                         check=self._check_thread,
                     )
                     continue
@@ -1356,7 +1310,10 @@ class Reconciler:
         self._check_thread()
         if not all(
             self.workspace.publish_many(
-                self.worker, publications, catalog_revision=catalog_revision
+                self.worker,
+                publications,
+                catalog_revision=catalog_revision,
+                document_generation=document_generation,
             )
         ):
             raise RevisionConflict("Analysis inputs changed before publication")
