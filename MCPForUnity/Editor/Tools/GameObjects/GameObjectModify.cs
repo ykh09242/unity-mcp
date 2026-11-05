@@ -1,7 +1,6 @@
 #nullable disable
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
@@ -60,24 +59,17 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             string name = @params["name"]?.ToString() ?? @params["new_name"]?.ToString() ?? @params["newName"]?.ToString();
             var stage = PrefabStageUtility.GetCurrentPrefabStage();
-            string assetPath = null;
-            string newAssetPath = null;
-            string assetGuid = null;
             if (!string.IsNullOrEmpty(name) && name != targetGo.name && stage != null && stage.prefabContentsRoot == targetGo)
-            {
-                assetPath = stage.assetPath;
-                newAssetPath = AssetPathUtility.NormalizeSeparators(Path.Combine(Path.GetDirectoryName(assetPath), name + ".prefab"));
-                assetGuid = AssetDatabase.AssetPathToGUID(assetPath);
-                string existingGuid = AssetDatabase.AssetPathToGUID(newAssetPath);
-                if (!string.IsNullOrEmpty(existingGuid) && existingGuid != assetGuid)
-                    return new ErrorResponse($"Cannot rename prefab root to '{name}': a prefab already exists at '{newAssetPath}'.");
-            }
+                return new ErrorResponse(
+                    "Renaming a Prefab Stage root through modify is unsupported because the prefab asset path is not covered by Undo. "
+                        + "Save or otherwise preserve stage changes, close Prefab Mode, and rename the prefab asset in the Project window. "
+                        + "No changes from this request were applied."
+                );
 
             Undo.IncrementCurrentGroup();
             int group = Undo.GetCurrentGroup();
             Undo.SetCurrentGroupName("Modify GameObject");
             string createdTag = null;
-            bool renameAttempted = false;
             ErrorResponse failure;
             try
             {
@@ -87,19 +79,8 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 {
                     Undo.FlushUndoRecordObjects();
                     Undo.CollapseUndoOperations(group);
-                    // AssetDatabase moves are outside Undo. Publish the move only after every object edit succeeds.
-                    if (assetPath != null && assetPath != newAssetPath)
-                    {
-                        renameAttempted = true;
-                        string error = AssetDatabase.RenameAsset(assetPath, name);
-                        if (!string.IsNullOrEmpty(error))
-                            failure = new ErrorResponse($"Failed to rename prefab asset: {error}");
-                    }
-                    if (failure == null)
-                    {
-                        Undo.IncrementCurrentGroup();
-                        return result;
-                    }
+                    Undo.IncrementCurrentGroup();
+                    return result;
                 }
             }
             catch (Exception e)
@@ -131,21 +112,6 @@ namespace MCPForUnity.Editor.Tools.GameObjects
             catch (Exception e)
             {
                 rollbackErrors.Add("Tag: " + e.Message);
-            }
-            if (renameAttempted)
-            {
-                try
-                {
-                    string currentPath = AssetDatabase.GUIDToAssetPath(assetGuid);
-                    if (currentPath == newAssetPath)
-                        AssetDatabase.MoveAsset(currentPath, assetPath);
-                    if (AssetDatabase.GUIDToAssetPath(assetGuid) != assetPath)
-                        rollbackErrors.Add($"The prefab is no longer at '{assetPath}'.");
-                }
-                catch (Exception e)
-                {
-                    rollbackErrors.Add("Prefab asset: " + e.Message);
-                }
             }
             string rollback =
                 rollbackErrors.Count == 0

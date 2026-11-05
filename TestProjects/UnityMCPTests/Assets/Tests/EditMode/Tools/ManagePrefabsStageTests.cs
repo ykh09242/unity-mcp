@@ -387,6 +387,76 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual("OutsidePrefabStage", outside.name);
         }
 
+        [Test]
+        public void ModifyPrefabRoot_RejectsRenameAndPreservesUndoRedoAndDirtyContent()
+        {
+            string path = CreateTestPrefab("RenameStageRoot");
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            AssertOpenPrefabStage(path);
+            var stage = PrefabStageUtility.GetCurrentPrefabStage();
+            var autoSave = typeof(PrefabStage).GetProperty(
+                "autoSave",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+            );
+            Assert.IsNotNull(autoSave);
+            bool previousAutoSave = (bool)autoSave.GetValue(stage);
+            try
+            {
+                autoSave.SetValue(stage, false);
+                var unsaved = new GameObject("UnsavedBeforeRename");
+                unsaved.transform.SetParent(stage.prefabContentsRoot.transform, false);
+                EditorSceneManager.MarkSceneDirty(stage.scene);
+                var response = JObject.FromObject(
+                    ManageGameObject.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify",
+                            ["target"] = stage.prefabContentsRoot.GetInstanceIDCompat(),
+                            ["newName"] = "RenamedStageRoot",
+                        }
+                    )
+                );
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                StringAssert.Contains("unsupported", response.Value<string>("error"));
+                Assert.AreEqual(path, AssetDatabase.GUIDToAssetPath(guid));
+                Assert.AreEqual(Vector3.zero, stage.prefabContentsRoot.transform.localPosition);
+                AssertRootMatchesAsset(stage, guid, "after rejected rename");
+
+                var modification = JObject.FromObject(
+                    ManageGameObject.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify",
+                            ["target"] = stage.prefabContentsRoot.GetInstanceIDCompat(),
+                            ["position"] = new JArray(2, 3, 4),
+                        }
+                    )
+                );
+                Assert.IsTrue(modification.Value<bool>("success"), modification.ToString());
+                Assert.AreEqual(new Vector3(2, 3, 4), stage.prefabContentsRoot.transform.localPosition);
+                Undo.PerformUndo();
+                Assert.AreEqual(Vector3.zero, stage.prefabContentsRoot.transform.localPosition);
+                AssertRootMatchesAsset(stage, guid, "after Undo");
+                Undo.PerformRedo();
+                Assert.AreEqual(new Vector3(2, 3, 4), stage.prefabContentsRoot.transform.localPosition);
+                AssertRootMatchesAsset(stage, guid, "after Redo");
+            }
+            finally
+            {
+                autoSave.SetValue(stage, previousAutoSave);
+            }
+        }
+
+        private static void AssertRootMatchesAsset(PrefabStage stage, string guid, string phase)
+        {
+            string assetPath = AssetDatabase.GUIDToAssetPath(guid);
+            TestContext.WriteLine($"{phase}: root={stage.prefabContentsRoot.name}, path={assetPath}, dirty={stage.scene.isDirty}");
+            Assert.IsNotEmpty(assetPath, phase);
+            Assert.AreEqual(Path.GetFileNameWithoutExtension(assetPath), stage.prefabContentsRoot.name, phase);
+            Assert.IsTrue(stage.scene.isDirty, phase);
+            Assert.IsNotNull(stage.prefabContentsRoot.transform.Find("UnsavedBeforeRename"), phase);
+        }
+
         private string CreateTestPrefab(string rootName)
         {
             string prefabPath = Path.Combine(tempDirectory, $"{rootName}.prefab").Replace('\\', '/');

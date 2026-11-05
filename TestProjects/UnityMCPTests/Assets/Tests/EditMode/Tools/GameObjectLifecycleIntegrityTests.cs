@@ -766,13 +766,11 @@ namespace MCPForUnityTests.Editor.Tools
 
         [TestCase(false)]
         [TestCase(true)]
-        public void ModifyPrefabStageRoot_PublishesAssetRenameOnlyAfterComponentEdits(bool fail)
+        public void ModifyPrefabStageRoot_SameNamePreservesComponentRollback(bool fail)
         {
             CreateAssetRoot();
             var source = Owned("StageSource");
             string path = assetRoot + "/Original.prefab";
-            string newName = prefix + "RenamedStage";
-            string newPath = assetRoot + "/" + newName + ".prefab";
             Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(source, path));
             string guid = AssetDatabase.AssetPathToGUID(path);
             Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"));
@@ -790,15 +788,14 @@ namespace MCPForUnityTests.Editor.Tools
                         ["action"] = "modify",
                         ["target"] = root.GetInstanceIDCompat(),
                         ["searchMethod"] = "by_id",
-                        ["name"] = newName,
+                        ["name"] = originalName,
                         ["componentsToAdd"] = new JArray("Light"),
                         ["componentProperties"] = new JObject { ["Light"] = properties },
                     }
                 );
                 Assert.AreEqual(!fail, result.Value<bool>("success"), result.ToString());
-                Assert.AreEqual(fail ? path : newPath, AssetDatabase.GUIDToAssetPath(guid));
-                Assert.IsNull(AssetDatabase.LoadAssetAtPath<GameObject>(fail ? newPath : path));
-                Assert.AreEqual(fail ? originalName : newName, stage.prefabContentsRoot.name);
+                Assert.AreEqual(path, AssetDatabase.GUIDToAssetPath(guid));
+                Assert.AreEqual(originalName, stage.prefabContentsRoot.name);
                 if (fail)
                     Assert.IsNull(stage.prefabContentsRoot.GetComponent<Light>());
                 else
