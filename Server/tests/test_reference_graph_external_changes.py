@@ -44,9 +44,10 @@ class Producer:
         finally:
             self.closed += 1
 
-    def send(self, *events):
+    def send(self, *events, ordered=False):
         observed = Event()
-        self.batches.put(({(change, str(path)) for change, path in events}, observed))
+        batch = [(change, str(path)) for change, path in events]
+        self.batches.put((batch if ordered else set(batch), observed))
         assert observed.wait(10)
 
 
@@ -119,6 +120,197 @@ async def test_idle_delta_and_registration_gap(tracked, monkeypatch):
     (root / "explicit.json").write_text("{}")
     assert await engine.reconcile()
     assert "explicit.json" in workspace.external_inputs(provider)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rule_first", [False, True])
+@pytest.mark.parametrize("interrupt", [False, True])
+async def test_policy_gap_rehashes_admitted_same_stamp_content(
+    tracked, monkeypatch, rule_first, interrupt
+):
+    import os
+    from services.reference_graph.external_changes import ExternalChanges
+
+    engine, workspace, provider, root, producer, clock = tracked
+    path, denied = root / "receipt.json", root / "private-after-edit.json"
+    for candidate in (path, denied):
+        candidate.write_text('{"value":1}')
+    unchanged = root / "unchanged.json"
+    unchanged.write_text("{}")
+    ignore = root / ".gitignore"
+    ignore.write_text("old-name.json\n")
+    stamp = ExternalSource.stamp
+    monkeypatch.setattr(ExternalSource, "stamp", lambda self, name: (*stamp(self, name)[:-1], 0))
+    poll = partial(engine.reconcile, external_mode="tracked")
+    assert await poll() and await poll()
+    verified = workspace.provider_status()[provider]["last_verified_at"]
+    old = workspace.external_inputs(provider)
+    observe = workspace.observe_external
+
+    def observe_changed(worker, observation, **kwargs):
+        assert observation.owner != old[unchanged.name]["owner"], (
+            "unchanged analysis was already verified"
+        )
+        return observe(worker, observation, **kwargs)
+
+    monkeypatch.setattr(workspace, "observe_external", observe_changed)
+    for candidate in (path, denied):
+        stat = candidate.stat()
+        candidate.write_text('{"value":2}')
+        os.utime(candidate, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    ignore.write_text(denied.name + "\n")
+    events = [(Change.modified, path), (Change.modified, denied), (Change.modified, ignore)]
+    registration = engine.external_changes.registrations[provider]
+    producer.send(*(reversed(events) if rule_first else events), ordered=True)
+    registration.thread.join(10)
+    assert not registration.thread.is_alive()
+    with workspace.store._connect() as db:
+        journal = db.execute(
+            "SELECT path FROM graph_external_events WHERE provider=?", (provider,)
+        ).fetchall()
+    assert all(denied.name not in row[0] for row in journal)
+    reads = []
+    read = ExternalSource.read
+
+    def record(adapter, name):
+        assert name != denied.name
+        reads.append(name)
+        return read(adapter, name)
+
+    monkeypatch.setattr(ExternalSource, "read", record)
+    if interrupt:
+
+        def interrupted(adapter, name):
+            assert name != denied.name
+            raise RuntimeError("lost process before content recovery")
+
+        # A replacement tracker on the same durable store must inherit the obligation.
+        with monkeypatch.context() as patch:
+            patch.setattr(ExternalSource, "read", interrupted)
+            with pytest.raises(RuntimeError, match="before content recovery"):
+                await poll()
+        assert workspace.provider_status()[provider]["last_verified_at"] == verified
+        engine.external_changes.close()
+        engine.external_changes = ExternalChanges(
+            workspace, watch=producer.watch, clock=lambda: clock[0]
+        )
+    assert await poll()
+    rows = workspace.external_inputs(provider)
+    assert path.name in reads
+    assert rows[path.name]["fingerprint"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert rows[unchanged.name]["fingerprint"] == old[unchanged.name]["fingerprint"]
+    assert denied.name not in rows
+    assert await poll()
+    reads.clear()
+    clock[0] += 61
+    assert await poll() and not reads
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "loss",
+    ["batch_cap", "journal_cap", "unreadable_journal", "failed_journal", "registration_window"],
+)
+async def test_lost_content_hint_recovers_without_persisting_names(tracked, monkeypatch, loss):
+    import os
+    from contextlib import contextmanager
+    from threading import current_thread
+    from services.reference_graph import external_changes as changes
+
+    engine, workspace, provider, root, producer, _ = tracked
+    path = root / "value.json"
+    path.write_text('{"v":1}')
+    before = path.stat()
+    stamp = ExternalSource.stamp
+    monkeypatch.setattr(ExternalSource, "stamp", lambda self, name: (*stamp(self, name)[:-1], 0))
+    poll = partial(engine.reconcile, external_mode="tracked")
+
+    def edit():
+        path.write_text('{"v":2}')
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+    if loss == "registration_window":
+        producer.before_ready = edit
+        assert await poll() and await poll()
+    else:
+        assert await poll() and await poll()
+        old = engine.external_changes.registrations[provider]
+        edit()
+        if loss == "failed_journal":
+            connect = workspace.store._connect
+
+            @contextmanager
+            def unavailable(**options):
+                if options.get("write") and current_thread().name == "graph-external-watch":
+                    raise OSError("event and gap writes both failed")
+                with connect(**options) as db:
+                    yield db
+
+            with monkeypatch.context() as patch:
+                patch.setattr(workspace.store, "_connect", unavailable)
+                producer.send((Change.modified, path))
+                old.thread.join(10)
+            engine.external_changes.close()
+            # No in-memory loss marker survives this restart.
+            engine.external_changes = changes.ExternalChanges(workspace, watch=producer.watch)
+        elif loss == "unreadable_journal":
+            producer.send((Change.modified, path))
+            monkeypatch.setattr(changes, "MAX_PATH_BYTES", 1)
+        else:
+            monkeypatch.setattr(changes, "MAX_PATHS", 1)
+            events = [(Change.modified, path), (Change.modified, root / "other.json")]
+            if loss == "batch_cap":
+                producer.send(*events)
+            else:
+                for event in events:
+                    producer.send(event)
+            old.thread.join(10)
+        assert await poll()
+    assert (
+        workspace.external_inputs(provider)[path.name]["fingerprint"]
+        == hashlib.sha256(path.read_bytes()).hexdigest()
+    )
+
+
+@pytest.mark.asyncio
+async def test_older_full_scan_cannot_acknowledge_another_producers_later_gap(tracked, monkeypatch):
+    import os
+    from services.reference_graph.external_changes import Batch, ExternalChanges
+
+    engine, workspace, provider, root, producer, _ = tracked
+    path = root / "value.json"
+    path.write_text('{"v":1}')
+    before = path.stat()
+    stamp = ExternalSource.stamp
+    monkeypatch.setattr(ExternalSource, "stamp", lambda self, name: (*stamp(self, name)[:-1], 0))
+    poll = partial(engine.reconcile, external_mode="tracked")
+    assert await poll() and await poll()
+    owner = engine.external_changes
+    registration = owner.registrations[provider]
+    # A second entry owns the reconciler lease but has no handle to the first
+    # entry's idle native watcher. Both use the same durable graph.
+    engine.external_changes = ExternalChanges(workspace, watch=producer.watch)
+    acknowledge = Batch.acknowledge
+
+    def later_loss(batch, *args, **kwargs):
+        path.write_text('{"v":2}')
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        producer.send((Change.modified, path), (Change.modified, root / ".gitignore"))
+        registration.thread.join(10)
+        acknowledge(batch, *args, **kwargs)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(Batch, "acknowledge", later_loss)
+            assert await engine.reconcile()
+        assert await engine.reconcile()
+        assert (
+            workspace.external_inputs(provider)[path.name]["fingerprint"]
+            == hashlib.sha256(path.read_bytes()).hexdigest()
+        )
+    finally:
+        engine.external_changes.close()
+        engine.external_changes = owner
 
 
 @pytest.mark.asyncio
@@ -786,7 +978,7 @@ def test_targeted_discovery_lists_each_affected_directory_once(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["targeted", "directory_sweep"])
+@pytest.mark.parametrize("mode", ["targeted", "directory_sweep", "lost_batch"])
 @pytest.mark.parametrize("mutation", ["rename", "ancestor", "ignore", "included"])
 async def test_event_content_requires_current_entry_and_ancestor_rules(
     tracked, monkeypatch, mode, mutation
@@ -863,7 +1055,12 @@ async def test_event_content_requires_current_entry_and_ancestor_rules(
     monkeypatch.setattr(ExternalSource, "_entry_inodes", count_entries)
     monkeypatch.setattr(ExternalSource, "read", on_read)
     monkeypatch.setattr(external, "_regular_descriptor", race)
-    producer.send((Change.added, canonical if mode == "targeted" else denied))
+    if mode == "lost_batch":
+        registration = engine.external_changes.registrations[provider]
+        producer.send((Change.added, canonical), (Change.modified, ignore))
+        registration.thread.join(10)
+    else:
+        producer.send((Change.added, canonical if mode == "targeted" else denied))
     if mutation == "included":
         assert await poll()
         assert reads == [identity.st_size]

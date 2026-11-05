@@ -1502,6 +1502,7 @@ class Reconciler:
             paths = plan.files
             previous = plan.previous
         hinted = adapter.hint_matcher(plan.batch.paths) if plan.batch and plan.batch.paths else None
+        rehash_all = plan.batch is not None and plan.batch.rehash_all
         failures = 0
         pending = []
         resumed = []
@@ -1527,15 +1528,29 @@ class Reconciler:
             try:
                 current_stamp = adapter.stamp(path)
                 stamp = _json(current_stamp)
-                if (
+                needs_analysis = (
                     old is None
-                    or (hinted and hinted(path, current_stamp))
                     or (scan_pass["force"] and not (old["seen"] or "").startswith(pass_prefix))
                     or (old["state"] != "ready" and old["checkpoint"] is None)
                     or old["stamp"] != stamp
                     or old["analysis_key"] != analysis_key
+                )
+                document = (
+                    adapter.read(path)
+                    if needs_analysis or (hinted and hinted(path, current_stamp))
+                    else None
+                )
+                if (
+                    document is not None
+                    and rehash_all
+                    and not needs_analysis
+                    and document.fingerprint == fingerprint
                 ):
-                    document = adapter.read(path)
+                    # The lost notification requires content proof. Reuse the verified
+                    # analysis when its inputs and freshly read bytes still match.
+                    verify_document(path, stamp)
+                    document = None
+                if document is not None:
                     fingerprint = document.fingerprint
                     generation = self.workspace.observe_external(
                         self.worker,

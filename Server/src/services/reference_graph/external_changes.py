@@ -24,6 +24,11 @@ MAX_PROVIDERS = 8
 MAX_PATHS = 512
 MAX_PATH_BYTES = 128 * 1024
 VERIFY_SECONDS = 60
+# A clean retirement preserves captured hints. Legacy gap=1 rows and a live
+# incarnation with no surviving producer must be treated as lost content hints.
+LOST = 1
+RETIRED = 2
+ALL_ADMITTED = ".///"
 
 
 def initialize(connection) -> None:
@@ -65,8 +70,12 @@ class Batch:
     full: bool
     gap: bool
 
+    @property
+    def rehash_all(self) -> bool:
+        return ALL_ADMITTED in self.paths
+
     @classmethod
-    def capture(cls, workspace, provider) -> Batch | None:
+    def capture(cls, workspace, provider, *, live=False, resuming=False) -> Batch | None:
         # Even a retired incarnation's known hints are useful during a full scan.
         # Skipping traversal additionally requires a matching, gap-free live registration.
         with workspace.store._connect() as db:
@@ -77,20 +86,25 @@ class Batch:
             ).fetchone()
             if row is None:
                 return None
-            paths, size = [], 0
-            for (path,) in db.execute(
-                "SELECT CASE WHEN length(CAST(path AS BLOB))<=? THEN path END "
-                "FROM graph_external_events WHERE provider=? ORDER BY path LIMIT ?",
-                (MAX_PATH_BYTES, provider, MAX_PATHS + 1),
-            ):
-                if path is None or len(paths) == MAX_PATHS:
-                    return None
-                size += len(path.encode("utf-8"))
-                if size > MAX_PATH_BYTES:
-                    return None
-                paths.append(path)
+            gap = row[4]
+            if gap == LOST or (gap == 0 and (not live or row[3] is None)) or resuming:
+                # Ignore the old rule snapshot and any raw/partial event names.
+                # Only subsequently enumerated, currently admitted files can match.
+                paths = [ALL_ADMITTED]
+            else:
+                paths, size = [], 0
+                for (path,) in db.execute(
+                    "SELECT CASE WHEN length(CAST(path AS BLOB))<=? THEN path END "
+                    "FROM graph_external_events WHERE provider=? ORDER BY path LIMIT ?",
+                    (MAX_PATH_BYTES, provider, MAX_PATHS + 1),
+                ):
+                    size += len(path.encode("utf-8")) if path is not None else 0
+                    if path is None or len(paths) == MAX_PATHS or size > MAX_PATH_BYTES:
+                        paths = [ALL_ADMITTED]
+                        break
+                    paths.append(path)
         full = row[3] is None or any(path.endswith("//") for path in paths)
-        return cls((provider, row[0]), row[1], row[2], tuple(paths), full, bool(row[4]))
+        return cls((provider, row[0]), row[1], row[2], tuple(paths), full, bool(gap) or not live)
 
     def acknowledge(self, workspace, worker, *, verified=False):
         if not verified and not self.paths:
@@ -108,6 +122,11 @@ class Batch:
                     "UPDATE graph_external_watch SET verified_at=? "
                     "WHERE provider=? AND incarnation=? AND gap=0",
                     (time.time(), *self.key),
+                )
+            elif self.gap:
+                db.execute(
+                    "UPDATE graph_external_watch SET gap=? WHERE provider=? AND incarnation=? AND sequence=? AND gap=?",
+                    (RETIRED, *self.key, self.sequence, LOST),
                 )
 
 
@@ -169,6 +188,7 @@ class Registration:
             self.thread.join()
 
     def _run(self):
+        gap = LOST
         try:
             with closing(
                 self.watch(
@@ -185,11 +205,16 @@ class Registration:
             ) as changes:
                 for events in changes:
                     if self.stop.is_set():
+                        if not events:
+                            gap = RETIRED
                         break
                     if events and not self._record(events):
                         break
                     # The generator is lazy. Its first yield follows native registration.
                     self.ready.set()
+                else:
+                    if self.stop.is_set():
+                        gap = RETIRED
         except Exception:
             # Any backend or database failure breaks continuity, including quota/IO errors.
             pass
@@ -199,8 +224,8 @@ class Registration:
             # Process memory is already invalid, even if this write also fails.
             with suppress(Exception), self.workspace.store._connect(write=True) as db:
                 db.execute(
-                    "UPDATE graph_external_watch SET gap=1 WHERE provider=? AND incarnation=?",
-                    self.key,
+                    "UPDATE graph_external_watch SET gap=?,sequence=sequence+1 WHERE provider=? AND incarnation=? AND gap=0",
+                    (gap, *self.key),
                 )
 
     def _event_hints(self, change, path):
@@ -220,7 +245,7 @@ class Registration:
         if str(path.parent) not in self.scope.directories:
             # Invalidate only plausible, already registered parents.
             key = unicodedata.normalize("NFD", str(path.parent).casefold())
-            return self.directory_hints.get(key, (".///",))
+            return self.directory_hints.get(key, (ALL_ADMITTED,))
         relative = path.relative_to(self.root).as_posix()
         with suppress(ValueError):
             if self.accepts(relative):
@@ -274,7 +299,7 @@ class Registration:
     def batch(self) -> Batch | None:
         if self.stop.is_set():
             return None
-        batch = Batch.capture(self.workspace, self.provider)
+        batch = Batch.capture(self.workspace, self.provider, live=True)
         if batch is None or batch.key != self.key or batch.signature != self.signature or batch.gap:
             return None
         batch.full |= self.clock() >= self.deadline
@@ -305,6 +330,7 @@ class ExternalChanges:
 
     def plan(self, provider, signature, adapter, *, require_full, check) -> ScanPlan:
         registration = self.registrations.get(provider)
+        resuming = registration is None
         batch = (
             registration.batch() if registration and signature == registration.signature else None
         )
@@ -335,7 +361,10 @@ class ExternalChanges:
             self.close(provider)
             registration = None
         return ScanPlan(
-            signature, registration, batch or Batch.capture(self.workspace, provider), WatchScope()
+            signature,
+            registration,
+            batch or Batch.capture(self.workspace, provider, resuming=resuming),
+            WatchScope(),
         )
 
     def finish(self, plan, worker, provider, adapter, make_adapter, check):
