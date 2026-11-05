@@ -191,7 +191,9 @@ namespace MCPForUnityTests.EditMode.Tools
                         round,
                         () =>
                         {
-                            JObject start = ReferenceGraphCollectorTests.Call("inventory", "page_size", 1);
+                            // Resume consumer A's immutable inventory. A new tokenless
+                            // census after imports intentionally refreshes and expires A.
+                            JObject start = ReferenceGraphCollectorTests.Call("inventory", "snapshot", token, "offset", 0, "page_size", 1);
                             Assert.AreEqual(token, start.Value<string>("snapshot"));
                             long after = start.Value<long>("revision");
                             while (true)

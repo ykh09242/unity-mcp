@@ -32,6 +32,14 @@ measurement test demonstrates that failure and restores the original checkpoint.
 A versioned, reader-preserving inventory could be investigated separately; these
 numbers do not establish its memory cost or benefit.
 
+An explicit tokenless inventory request after an import starts a new shared census
+and can expire a previous reader's token. The supported A/import/B/A sequence is:
+A starts, an import advances the journal, B starts a fresh census, and A receives
+`reference_inventory_snapshot_invalid` and restarts. A request carrying A's snapshot
+continues that immutable inventory until expiration or replacement. The cached-census
+measurement now supplies its snapshot explicitly; expecting token reuse from a fresh
+tokenless request after forcing an old inventory revision was fixture drift.
+
 Source output SHA-256, byte count, all 129 pages and mutation rejection were
 checked for every variant. Serialized journal JSON is byte-identical. Collector
 regressions passed alongside the candidate, and a separate actual domain reload

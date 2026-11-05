@@ -507,6 +507,8 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(fresh["snapshot"], Call("inventory", "page_size", 1)["snapshot"]);
             var stale = Assert.Throws<TargetInvocationException>(() => Call("inventory", "snapshot", snapshot, "offset", 0, "page_size", 1));
             Assert.IsInstanceOf<InvalidOperationException>(stale.InnerException);
+            Assert.AreEqual("InvalidInventorySnapshotException", stale.InnerException.GetType().Name);
+            StringAssert.Contains("restart the census", stale.InnerException.Message);
         }
 
         [Test]
