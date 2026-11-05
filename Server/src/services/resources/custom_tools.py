@@ -12,6 +12,7 @@ from services.custom_tool_service import (
 )
 from services.registry import mcp_for_unity_resource
 from services.tools import get_unity_instance_from_context
+from transport.protocol import is_sessionless
 
 
 class CustomToolsData(BaseModel):
@@ -34,7 +35,12 @@ async def get_custom_tools(ctx: Context) -> CustomToolsResourceResponse | MCPRes
     if not unity_instance:
         return MCPResponse(
             success=False,
-            message="No active Unity instance. Call set_active_instance with Name@hash from mcpforunity://instances.",
+            message=(
+                "No active Unity instance. "
+                "Pass _meta.unity_instance on each resource read with Name@hash from mcpforunity://instances."
+                if is_sessionless(ctx)
+                else "No active Unity instance. Call set_active_instance with Name@hash from mcpforunity://instances."
+            ),
         )
 
     project_id = await asyncio.to_thread(resolve_project_id_for_unity_instance, unity_instance)

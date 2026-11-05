@@ -13,6 +13,7 @@ from services.custom_tool_service import (
 )
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from transport.protocol import is_sessionless
 
 
 @mcp_for_unity_tool(
@@ -43,7 +44,12 @@ async def execute_custom_tool(
     if not unity_instance:
         return MCPResponse(
             success=False,
-            message="No active Unity instance. Call set_active_instance with Name@hash from mcpforunity://instances.",
+            message=(
+                "No active Unity instance. "
+                "Pass unity_instance on each tool call with Name@hash from mcpforunity://instances."
+                if is_sessionless(ctx)
+                else "No active Unity instance. Call set_active_instance with Name@hash from mcpforunity://instances."
+            ),
         )
 
     project_id = await owned_to_thread(resolve_project_id_for_unity_instance, unity_instance)

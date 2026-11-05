@@ -21,6 +21,39 @@ def run_sdk_regression(source):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_missing_custom_tool_target_recovery_matches_real_sdk_protocol():
+    run_sdk_regression("""
+        import asyncio, json, sys
+        sys.path.insert(0, "src")
+        from fastmcp import FastMCP, Client, Context
+        from services.resources.custom_tools import get_custom_tools
+        from services.tools.execute_custom_tool import execute_custom_tool
+
+        async def scenario():
+            # Given: real SDK requests in both supported protocol eras, without a target.
+            mcp = FastMCP("custom-target-recovery")
+            mcp.tool(execute_custom_tool)
+            @mcp.resource("mcpforunity://custom-tools")
+            async def catalog(ctx: Context) -> str:
+                return (await get_custom_tools(ctx)).model_dump_json()
+            for mode in ("legacy", "2026-07-28"):
+                async with Client(mcp, mode=mode) as client:
+                    # When: custom execution and catalog discovery lack a selected editor.
+                    tool = await client.call_tool("execute_custom_tool", {"tool_name": "fixture"})
+                    resource = await client.read_resource("mcpforunity://custom-tools")
+                    messages = [tool.structured_content["message"], json.loads(resource[0].text)["message"]]
+                    # Then: each response describes a selection supported by that protocol.
+                    if mode == "legacy":
+                        assert all("set_active_instance" in message for message in messages), messages
+                    else:
+                        assert all("set_active_instance" not in message for message in messages), messages
+                        assert "unity_instance" in messages[0] and "each tool call" in messages[0]
+                        assert "_meta.unity_instance" in messages[1]
+                    assert all("mcpforunity://instances" in message for message in messages)
+        asyncio.run(scenario())
+    """)
+
+
 def test_dynamic_custom_tool_registers_and_executes_through_real_sdk():
     run_sdk_regression("""
         import asyncio, sys
