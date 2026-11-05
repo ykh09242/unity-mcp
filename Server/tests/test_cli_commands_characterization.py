@@ -48,15 +48,17 @@ def runner():
 
 
 @pytest.fixture
-def mock_config():
-    """Standard mock configuration for CLI commands."""
-    return CLIConfig(
+def mock_config(monkeypatch):
+    """Use the same isolated configuration for commands and their error wrapper."""
+    config = CLIConfig(
         host="127.0.0.1",
         port=8080,
         timeout=30,
         format="text",
         unity_instance=None,
     )
+    monkeypatch.setattr("cli.utils.config._config", config)
+    return config
 
 
 @pytest.fixture
@@ -242,25 +244,32 @@ class TestJSONParsingPattern:
 class TestErrorHandlingPattern:
     """Verify consistent error handling across command modules.
 
-    Current behavior: All commands have try/except wrapping run_command(),
-    catch UnityConnectionError, print_error(), and sys.exit(1).
+    Connection failures follow the configured output format and exit with code 1.
     """
 
-    def test_prefab_open_catches_unity_connection_error(self, runner, mock_config):
-        """Test prefab open handles connection errors gracefully.
-
-        Captures: try/except around run_command(), catches UnityConnectionError,
-        calls print_error(str(e)), then sys.exit(1).
-        """
+    @pytest.mark.parametrize("output_format", ["text", "json"])
+    def test_prefab_open_catches_unity_connection_error(self, runner, mock_config, output_format):
+        """Transport failures respect the selected format without retrying the mutation."""
+        mock_config.format = output_format
         with patch("cli.commands.prefab.get_config", return_value=mock_config):
             with patch(
                 "cli.commands.prefab.run_command",
                 side_effect=UnityConnectionError("Connection failed"),
-            ):
+            ) as mock_run:
                 result = runner.invoke(prefab, ["open", "Assets/Prefabs/Test.prefab"])
 
                 assert result.exit_code == 1
-                assert "Connection failed" in result.output
+                mock_run.assert_called_once()
+                if output_format == "json":
+                    document = json.loads(result.stdout)
+                    assert set(document) == {"success", "code", "error"}
+                    assert document["success"] is False
+                    assert document["code"] == "connection_error"
+                    assert document["error"]
+                    assert result.stderr == ""
+                else:
+                    assert result.stdout == ""
+                    assert "Connection failed" in result.stderr
 
     def test_component_add_catches_unity_connection_error(self, runner, mock_config):
         """Test component add handles connection errors.
