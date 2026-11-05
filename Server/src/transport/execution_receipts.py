@@ -51,6 +51,7 @@ from services.execution_receipt_identity import (
     capture_identity,
 )
 from services.execution_receipts import ExecutionReceiptStore, ReceiptInvocation, ReceiptView
+from services.tools.response_work import needs_response_worker, response_work
 from services.operation_permissions import Permission, required_permissions
 from transport.local_auth_middleware import AUTHENTICATED_LOCAL_STATE
 from transport.local_project_context import full_hash
@@ -662,6 +663,7 @@ class ExecutionReceipts:
         ctx=None,
         request=None,
         version_selector: str | None = None,
+        large_rest_input: bool = False,
     ) -> PreparedExecution | ToolResult:
         require_supported_sdk()
         store = self.require_store()
@@ -673,21 +675,27 @@ class ExecutionReceipts:
             raise ReceiptNotFound("receipt_not_found")
         memory = ResponseOwner()
         try:
-            charge = response_size(
-                {"arguments": arguments, "context": semantic_context},
-                max_bytes=MAX_ARGUMENT_BYTES,
-                max_nodes=MAX_ARGUMENT_NODES,
+            charge = await response_work(
+                lambda: response_size(
+                    {"arguments": arguments, "context": semantic_context},
+                    max_bytes=MAX_ARGUMENT_BYTES,
+                    max_nodes=MAX_ARGUMENT_NODES,
+                ),
+                large=large_rest_input,
             )
             if charge is None:
                 raise ReceiptInvalid("receipt_request_graph_limit")
             _working.reserve(charge + METADATA_WORKING_BYTES, memory)
-            identity = capture_identity(
-                surface=surface,
-                name=name,
-                arguments=arguments,
-                options=options,
-                semantic_context=semantic_context,
-                component_version=version_selector,
+            identity = await response_work(
+                lambda: capture_identity(
+                    surface=surface,
+                    name=name,
+                    arguments=arguments,
+                    options=options,
+                    semantic_context=semantic_context,
+                    component_version=version_selector,
+                ),
+                large=large_rest_input,
             )
             await authority.check()
             existing = await self.io(
@@ -904,7 +912,18 @@ def install_execution_receipts(server, root: Path | None, *, private_root: bool 
     return runtime
 
 
-async def execute_receipted_rest(runtime, request, raw_body: dict, route: Surface, forward):
+def rest_receipt_options(body) -> ReceiptOptions:
+    if body.type == "get_execution_receipt":
+        raise ReceiptInvalid("receipt_control_cannot_create_receipt")
+    options = ReceiptOptions.parse(body.execution)
+    if full_hash(body.unity_instance) != options.project_hash:
+        raise ReceiptInvalid("execution_receipt_project_mismatch")
+    return options
+
+
+async def execute_receipted_rest(
+    runtime, request, raw_body, route: Surface, forward, *, options=None
+):
     """Wrap the existing authenticated local route, preserving its public body/status.
 
     Receipt result retrieval exposes the explicit {http_status, body} result envelope;
@@ -916,23 +935,37 @@ async def execute_receipted_rest(runtime, request, raw_body: dict, route: Surfac
     from transport.local_project_context import ContextCommand, ReceiptCommand
 
     model = ContextCommand if route == "/api/context-command" else ReceiptCommand
-    body = model.model_validate(raw_body)
-    if body.type == "get_execution_receipt":
-        raise ReceiptInvalid("receipt_control_cannot_create_receipt")
-    options = ReceiptOptions.parse(raw_body["execution"])
-    if full_hash(body.unity_instance) != options.project_hash:
-        raise ReceiptInvalid("execution_receipt_project_mismatch")
-    envelope = body.model_dump(mode="json", exclude={"execution"}, exclude_unset=True)
-    prepared = await runtime.prepare(
-        options=options,
-        surface=route,
-        name=body.type,
-        arguments=body.params,
-        semantic_context=envelope,
-        policy_params=body.params,
-        custom=body.type == "execute_custom_tool",
-        request=request,
+    body = raw_body if isinstance(raw_body, model) else model.model_validate(raw_body)
+    if options is None:
+        options = rest_receipt_options(body)
+    large = needs_response_worker(body)
+    envelope = await response_work(
+        lambda: body.model_dump(mode="json", exclude={"execution"}, exclude_unset=True),
+        large=large,
     )
+    try:
+        prepared = await runtime.prepare(
+            options=options,
+            surface=route,
+            name=body.type,
+            arguments=body.params,
+            semantic_context=envelope,
+            policy_params=body.params,
+            custom=body.type == "execute_custom_tool",
+            request=request,
+            large_rest_input=large,
+        )
+    except ReceiptInvalid:
+        if isinstance(raw_body, dict):
+            raise
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "Invalid REST receipt input",
+                "data": {"dispatch": "not_dispatched"},
+            },
+            status_code=400,
+        )
     if isinstance(prepared, ToolResult):
         result = prepared
     else:
@@ -940,7 +973,10 @@ async def execute_receipted_rest(runtime, request, raw_body: dict, route: Surfac
         # The recursive request has no execution option, so no receipt can be bypassed
         # or admitted twice. Existing budgets/project fences/custom handling stay intact.
         async def invoke() -> ToolResult:
-            payload = json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode()
+            payload = await response_work(
+                lambda: json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode(),
+                large=large,
+            )
             sent = False
 
             async def receive():
@@ -981,7 +1017,7 @@ async def rest_receipt_control(runtime, request, body: dict):
     """Use the same stored-record authorization without selecting a live Unity target."""
     from starlette.responses import JSONResponse
 
-    if body.keys() - {"type", "params", "unity_instance", "expected_project"}:
+    if len(body) > 4 or body.keys() - {"type", "params", "unity_instance", "expected_project"}:
         raise ReceiptInvalid("invalid_receipt_lookup")
     params = body.get("params", {})
     allowed = {
@@ -992,7 +1028,7 @@ async def rest_receipt_control(runtime, request, body: dict):
         "idempotency_key",
         "include_result",
     }
-    if type(params) is not dict or params.keys() - allowed:
+    if type(params) is not dict or len(params) > len(allowed) or params.keys() - allowed:
         raise ReceiptInvalid("invalid_receipt_lookup")
     result = await runtime.control(
         action=params.get("action", "describe"),

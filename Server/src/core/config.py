@@ -15,6 +15,21 @@ _INITIAL_DEFAULTS: dict[str, ConfigValue] = {}
 _INITIAL_ORIGINS: dict[str, ConfigOrigin] = {}
 
 
+def positive_http_limit(suffix: str, default: int) -> int:
+    """Read a server-instance HTTP admission limit at construction time."""
+    name = "UNITY_MCP_" + suffix
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+        if value > 0:
+            return value
+    except ValueError:
+        pass
+    raise ValueError(f"{name} must be a positive integer")
+
+
 def parse_trusted_proxy_cidrs(value: str) -> tuple[IPv4Network | IPv6Network, ...]:
     """Require explicit proxy networks; a catch-all would trust caller-supplied identity."""
     if not value.strip():

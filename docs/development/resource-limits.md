@@ -18,6 +18,20 @@ the machine's RAM, GPU memory or disk.
 | Legacy and Blender | Legacy framed results allow 128 MiB including framing/envelope overhead. Blender socket responses allow 64 MiB and preserve an explicit wait up to 24 hours. Connect probes stay short. |
 | Native local TCP connections | Up to 64 authenticated clients, 16 simultaneous authentications and 128 commands. A new client does not evict an existing authenticated connection. |
 
+Local REST command routes scan JSON depth and node count before decoding.
+The parser budgets raw bytes, Unicode text, decoded strings and an estimated
+512 bytes per JSON node for containers and validation copies. An escaped string
+that can widen during decoding adds a temporary working reservation based on
+the longest such string. The parser returns that capacity after decoding. The defaults are
+512 MiB per request and 1 GiB across both routes on one server. Set
+`UNITY_MCP_REST_PARSE_REQUEST_BYTES` and `UNITY_MCP_REST_PARSE_TOTAL_BYTES`
+to positive byte counts to change these estimates. Parsing inputs of 64 KiB or
+more uses bounded workers. A running parser keeps its reservation through
+cancellation, and an admitted envelope stays charged through route execution.
+Invalid JSON or envelope fields receive HTTP 400, structural or individual
+size limits receive 413, and aggregate pressure receives 503. These responses
+include `data.dispatch = "not_dispatched"`.
+
 Native local TCP input frames retain the 128 MiB maximum. Before allocating a
 body, the host reserves five times its declared UTF-8 size for input buffering
 and text retention. Frames larger than 8 KiB share a 1280 MiB FIFO budget;

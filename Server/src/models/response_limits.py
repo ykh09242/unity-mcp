@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 from collections.abc import Iterator, MutableMapping
 from contextvars import ContextVar
@@ -21,6 +22,12 @@ MAX_RESPONSE_RETAINED_BYTES = 512 * 1024 * 1024
 _MAX_FAST_JSON_BYTES = 2 * 1024 * 1024
 _MIN_LARGE_ASCII_CHARS = 256 * 1024
 _ASCII_JSON_CHUNK_CHARS = 4096
+
+# A JSON Unicode escape starts at an odd backslash in its run. Start at the
+# first slash, skip pairs without backtracking, then require a value above
+# Latin-1. ASCII and Latin-1 both fit a one-byte Python string builder.
+_WIDE_JSON_ESCAPE = re.compile(r"\\(?<!\\\\)(?:\\\\)*+u(?!00)[0-9a-fA-F]{4}")
+_WIDE_LITERAL = re.compile(r"[^\x00-\xff]")
 
 
 @dataclass(slots=True)
@@ -507,10 +514,16 @@ class JsonTextProfile:
     text: str
     nodes: int
     complete_strings: bool
+    max_widening_string: int = 0
 
 
 def bounded_json_profile(
-    raw: str | bytes | bytearray, *, max_bytes: int, max_depth: int, max_nodes: int
+    raw: str | bytes | bytearray,
+    *,
+    max_bytes: int,
+    max_depth: int,
+    max_nodes: int,
+    profile_string_widening: bool = False,
 ) -> JsonTextProfile | None:
     """Reject large, deep or wide raw frames before allocating a decoded graph.
 
@@ -536,6 +549,10 @@ def bounded_json_profile(
     ):
         return None
     index = depth = nodes = 0
+    max_widening_string = 0
+    check_literals = profile_string_widening and not text.isascii()
+    escape_marker = "\\" if check_literals else "\\u"
+    check_widening = profile_string_widening and escape_marker in text
     scalar = False
     while index < len(text):
         char = text[index]
@@ -554,6 +571,19 @@ def bounded_json_profile(
                 if (end - slash - 1) % 2 == 0:
                     break
                 end += 1
+            if (
+                check_widening
+                and end - index > max_widening_string
+                and text.find(escape_marker, index + 1, end) >= 0
+                and (
+                    check_literals
+                    and _WIDE_LITERAL.search(text, index + 1, end)
+                    or _WIDE_JSON_ESCAPE.search(text, index + 1, end)
+                )
+            ):
+                # Escapes can force the JSON decoder's current string builder
+                # to widen while its previous storage and string pieces coexist.
+                max_widening_string = end - index
             index = end
             scalar = False
         elif char in "[{":
@@ -573,4 +603,4 @@ def bounded_json_profile(
         if nodes > max_nodes:
             return None
         index += 1
-    return JsonTextProfile(text, nodes, True)
+    return JsonTextProfile(text, nodes, True, max_widening_string)

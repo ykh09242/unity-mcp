@@ -76,6 +76,8 @@ from transport.request_body_limit_middleware import (
     MAX_HTTP_REQUEST_BYTES,
     RequestBodyLimitMiddleware,
 )
+from transport.rest_command_input import InputFailure, ReceiptedCommand, RestCommandInput
+from services.execution_receipt_identity import ReceiptConflict, ReceiptInvalid
 from transport.response_limit_middleware import ResponseLimitMiddleware, ResponseRetentionMiddleware
 from models.response_limits import bound_response
 from starlette.routing import WebSocketRoute
@@ -789,6 +791,29 @@ def create_mcp_server(
 
     # Only expose CLI routes if running locally (not in remote hosted mode)
     if not config.http_remote_hosted:
+        command_inputs = RestCommandInput()
+
+        async def parsed_rest_command(request, path, forward, execute):
+            async with command_inputs.parse(
+                request, guarded=path == "/api/context-command"
+            ) as body:
+                if isinstance(body, InputFailure):
+                    return body.response()
+                if isinstance(body, ReceiptedCommand):
+                    return await execute_receipted_rest(
+                        mcp._execution_receipts,
+                        request,
+                        body.body,
+                        path,
+                        forward,
+                        options=body.options,
+                    )
+                if isinstance(body, dict) and body["type"] == "get_execution_receipt":
+                    try:
+                        return await rest_receipt_control(mcp._execution_receipts, request, body)
+                    except ReceiptInvalid:
+                        return InputFailure.INVALID.response()
+                return await execute(body)
 
         @mcp.custom_route("/api/server/shutdown", methods=["POST"])
         async def local_shutdown_route(request: Request) -> JSONResponse:
@@ -798,73 +823,58 @@ def create_mcp_server(
         async def cli_command_route(request: Request) -> JSONResponse:
             """REST endpoint for CLI commands to Unity."""
             try:
-                body = await request.json()
-                if isinstance(body, dict) and "execution" in body:
-                    return await execute_receipted_rest(
-                        mcp._execution_receipts, request, body, "/api/command", cli_command_route
-                    )
-                if isinstance(body, dict) and body.get("type") == "get_execution_receipt":
-                    return await rest_receipt_control(mcp._execution_receipts, request, body)
-
-                command_type = body.get("type")
-                params = body.get("params", {})
-                unity_instance = body.get("unity_instance")
-
-                if not command_type:
-                    return JSONResponse(
-                        {"success": False, "error": "Missing 'type' field"}, status_code=400
-                    )
-
-                policy_command = command_type
-                policy_params = params if isinstance(params, dict) else {}
-                if command_type == "execute_custom_tool":
-                    policy_command = (
-                        policy_params.get("tool_name") or policy_params.get("name") or command_type
-                    )
-                    policy_params = (
-                        policy_params.get("parameters") or policy_params.get("params") or {}
-                    )
-                    if not isinstance(policy_params, dict):
-                        policy_params = {}
-                started_at = asyncio.get_running_loop().time()
-                budget = _CommandBudget(
-                    started_at + PluginHub._command_timeouts(policy_command, policy_params)[1]
+                return await parsed_rest_command(
+                    request, "/api/command", cli_command_route, cli_command
                 )
-                scope = asyncio.timeout_at(budget.expires_at)
-                token = http_request_budget.set(_HttpRequestBudget(started_at, budget, scope))
-                try:
-                    async with scope:
-                        return await _execute_cli_command(command_type, params, unity_instance)
-                except TimeoutError:
-                    if not scope.expired():
-                        raise
-                    return JSONResponse(bound_response(budget.timeout_response(policy_command)))
-                finally:
-                    http_request_budget.reset(token)
-
             except Exception as e:
                 logger.error("CLI command failed (%s)", type(e).__name__)
                 return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+        async def cli_command(body: dict) -> JSONResponse:
+            command_type = body["type"]
+            params = body.get("params", {})
+            unity_instance = body.get("unity_instance")
+
+            policy_command = command_type
+            policy_params = params
+            if command_type == "execute_custom_tool":
+                policy_command = (
+                    policy_params.get("tool_name") or policy_params.get("name") or command_type
+                )
+                policy_params = policy_params.get("parameters") or policy_params.get("params") or {}
+                if not isinstance(policy_params, dict):
+                    policy_params = {}
+            started_at = asyncio.get_running_loop().time()
+            budget = _CommandBudget(
+                started_at + PluginHub._command_timeouts(policy_command, policy_params)[1]
+            )
+            scope = asyncio.timeout_at(budget.expires_at)
+            token = http_request_budget.set(_HttpRequestBudget(started_at, budget, scope))
+            try:
+                async with scope:
+                    return await _execute_cli_command(command_type, params, unity_instance)
+            except TimeoutError:
+                if not scope.expired():
+                    raise
+                return JSONResponse(bound_response(budget.timeout_response(policy_command)))
+            finally:
+                http_request_budget.reset(token)
 
         @mcp.custom_route("/api/context-command", methods=["POST"])
         async def context_command_route(request: Request) -> JSONResponse:
             """Fail closed on old/mismatched registrations; never change MCP selection."""
             started_at = asyncio.get_running_loop().time()
             try:
-                raw_body = await request.json()
-                if isinstance(raw_body, dict) and "execution" in raw_body:
-                    return await execute_receipted_rest(
-                        mcp._execution_receipts,
-                        request,
-                        raw_body,
-                        "/api/context-command",
-                        context_command_route,
-                    )
-                if isinstance(raw_body, dict) and raw_body.get("type") == "get_execution_receipt":
-                    return await rest_receipt_control(mcp._execution_receipts, request, raw_body)
-                body = ContextCommand.model_validate(raw_body)
-            except (ValueError, UnicodeError):
+                return await parsed_rest_command(
+                    request,
+                    "/api/context-command",
+                    context_command_route,
+                    partial(context_command, started_at=started_at),
+                )
+            except ReceiptConflict:
                 return JSONResponse(LocalProjectContext().refuse("project_context_invalid"))
+
+        async def context_command(body: ContextCommand, *, started_at: float) -> JSONResponse:
             target_hash = full_hash(body.unity_instance)
             root = normalized_root(body.expected_project.root)
             context = LocalProjectContext()
