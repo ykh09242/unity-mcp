@@ -34,7 +34,7 @@ def refresh_cli(monkeypatch):
     client_type = httpx.AsyncClient
     requests = []
 
-    def invoke(handler, args=(), timeout=30):
+    def invoke(handler, args=(), timeout=30, output_format="json"):
         def respond(request):
             assert request.url.path == "/api/command"
             payload = json.loads(request.content)
@@ -55,7 +55,7 @@ def refresh_cli(monkeypatch):
                 "--instance",
                 "Fixture@hash",
                 "--format",
-                "json",
+                output_format,
                 "--timeout",
                 str(timeout),
                 "editor",
@@ -280,7 +280,8 @@ def test_refresh_readiness_definitive_rejection_is_not_retried(refresh_cli):
     assert len(requests) == 2
 
 
-def test_refresh_readiness_authentication_error_is_not_retried(refresh_cli):
+@pytest.mark.parametrize("output_format", ["json", "text"])
+def test_refresh_readiness_authentication_error_is_not_retried(refresh_cli, output_format):
     invoke, requests, _ = refresh_cli
 
     def handler(payload):
@@ -288,10 +289,18 @@ def test_refresh_readiness_authentication_error_is_not_retried(refresh_cli):
             return httpx.Response(200, json=ACKNOWLEDGED)
         return httpx.Response(401, json={"error": "Unauthorized"})
 
-    result = invoke(handler)
+    result = invoke(handler, output_format=output_format)
     assert result.exit_code == 1
-    assert "HTTP error from server: 401" in result.stderr
+    if output_format == "json":
+        document = json.loads(result.stdout)
+        assert document["success"] is False
+        assert document["code"] == "connection_error"
+        assert document["error"]
+        assert result.stderr == ""
+    else:
+        assert "HTTP error from server: 401" in result.stderr
     assert len(requests) == 2
+    assert [payload["type"] for payload, _ in requests] == ["refresh_unity", "get_editor_state"]
 
 
 def test_canonical_advice_import_does_not_start_threads_or_connect(tmp_path):

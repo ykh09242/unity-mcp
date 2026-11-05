@@ -141,13 +141,22 @@ initial['data']['instanceID'] = 101
 
 transport_lost = True
 for args, wires in ui_cases:
-    before = len(requests)
-    result = runner.invoke(cli, ['--format', 'json', 'ui', *args])
-    check(result.exit_code == 1, 'transport loss fails ' + args[0])
-    check([(row['type'], row['params']) for row in requests[before:]] == wires,
-          'transport loss never retries or compensates ' + args[0])
-    check('Controlled transport loss' in result.output, 'transport diagnostic ' + args[0])
-    check('Created' not in result.output, 'transport loss has no creation success ' + args[0])
+    for output_format in ('json', 'text'):
+        before = len(requests)
+        result = runner.invoke(cli, ['--format', output_format, 'ui', *args])
+        label = args[0] + ' ' + output_format
+        check(result.exit_code == 1, 'transport loss fails ' + label)
+        check([(row['type'], row['params']) for row in requests[before:]] == wires,
+              'transport loss never retries or compensates ' + label)
+        if output_format == 'json':
+            document = json.loads(result.stdout)
+            check(document.get('success') is False and document.get('code') == 'connection_error'
+                  and bool(document.get('error')), 'structured transport diagnostic ' + label)
+            check(result.stderr == '', 'JSON transport stderr is empty ' + label)
+        else:
+            check(result.stdout == '' and 'Controlled transport loss' in result.stderr,
+                  'human transport diagnostic stays on stderr ' + label)
+        check('Created' not in result.output, 'transport loss has no creation success ' + label)
 transport_lost = False
 
 texture_cases = [

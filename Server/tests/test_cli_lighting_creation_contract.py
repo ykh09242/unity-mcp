@@ -156,8 +156,10 @@ def test_intensity_failure_does_not_claim_omitted_color_step_completed():
     assert progress["failedStep"] == "set_intensity"
 
 
-def test_initial_connection_error_does_not_claim_an_object_was_created():
+@pytest.mark.parametrize("output_format", ["json", "text"])
+def test_initial_connection_error_does_not_claim_an_object_was_created(monkeypatch, output_format):
     # Given no successful create response, its outcome and object identity are unknown.
+    monkeypatch.setattr("cli.utils.config._config", CLIConfig(format=output_format))
     with patch(
         "cli.utils.connection.send_command",
         new_callable=AsyncMock,
@@ -167,8 +169,17 @@ def test_initial_connection_error_does_not_claim_an_object_was_created():
         result = CliRunner().invoke(lighting, ["create", "Owned"])
     assert result.exit_code == 1
     assert send.call_count == 1
-    assert "Connection timed out" in result.stderr
+    if output_format == "json":
+        document = json.loads(result.stdout)
+        assert document["success"] is False
+        assert document["code"] == "connection_error"
+        assert document["error"]
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert "Connection timed out" in result.stderr
     assert "lightingCreation" not in result.output
+    assert "Created" not in result.output
 
 
 @pytest.mark.parametrize(

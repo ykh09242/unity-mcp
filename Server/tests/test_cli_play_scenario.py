@@ -204,7 +204,10 @@ def test_cli_successful_cancel_keeps_terminal_report_and_exit_zero(wire, status)
 
 @pytest.mark.parametrize("action", ["status", "run", "cancel"])
 @pytest.mark.parametrize("failure", ["http", "connect", "timeout"])
-def test_cli_job_transport_failure_keeps_stderr_and_single_request(monkeypatch, action, failure):
+@pytest.mark.parametrize("output_format", ["json", "text"])
+def test_cli_job_transport_failure_preserves_output_format_and_single_request(
+    monkeypatch, action, failure, output_format
+):
     # Given: the request boundary fails rather than returning a native job report.
     calls = []
     client_type = httpx.AsyncClient
@@ -225,13 +228,21 @@ def test_cli_job_transport_failure_keeps_stderr_and_single_request(monkeypatch, 
     )
     args = ["menu-start", "--job-id", JOB_ID] if action == "run" else [JOB_ID]
     # When: a job command encounters a transport error.
-    result = CliRunner().invoke(cli, ["--format", "json", "play-scenario", action, *args])
-    # Then: existing transport diagnostics stay on stderr with no report or retry.
+    result = CliRunner().invoke(cli, ["--format", output_format, "play-scenario", action, *args])
+    # Then: the selected failure format contains no native job report or retry.
     assert result.exit_code == 1
-    assert result.stdout == ""
-    assert {"http": "HTTP error", "connect": "Cannot connect", "timeout": "timed out"}[
-        failure
-    ] in result.stderr
+    if output_format == "json":
+        document = json.loads(result.stdout)
+        assert set(document) == {"success", "code", "error"}
+        assert document["success"] is False
+        assert document["code"] == "connection_error"
+        assert document["error"]
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert {"http": "HTTP error", "connect": "Cannot connect", "timeout": "timed out"}[
+            failure
+        ] in result.stderr
     assert len(calls) == 1
 
 
