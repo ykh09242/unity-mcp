@@ -10,7 +10,7 @@ python mcp_source.py --manifest TestProjects/UnityMCPTests/Packages/manifest.jso
 
 选项 4 会指向本地 `MCPForUnity/`，移除旧的 `com.coplaydev.unity-mcp` 依赖、添加 `com.ykh09242.unity-mcp`，并迁移已有 `testables` 条目。请将此本地 manifest 变更保留在本机。托管编译和授权 Unity CI 使用 `tools/unity_ci_packages.py` 动态准备隔离的 manifest。
 
-| [English](README-DEV.md) | [简体中文](README-DEV-zh.md) |
+| [English](../../website/docs/contributing/dev-setup.md) | [简体中文](README-DEV-zh.md) |
 |---------------------------|------------------------------|
 
 ## 贡献代码
