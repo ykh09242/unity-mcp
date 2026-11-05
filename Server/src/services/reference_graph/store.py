@@ -201,7 +201,11 @@ class GraphStore:
         return cls(Path(root) / (scope.key + ".sqlite"), scope)
 
     def __init__(self, path: Path, scope: GraphScope):
-        from services.reference_graph.storage_budget import StorageBudget, file_lock
+        from services.reference_graph.storage_budget import (
+            StorageBudget,
+            claim_directory,
+            file_lock,
+        )
 
         if not isinstance(scope, GraphScope):
             raise ValueError("A resolved graph identity is required")
@@ -213,6 +217,7 @@ class GraphStore:
         self.path = check_owned_path(Path(path))
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         check_owned_path(self.path)
+        self._directory_owner = claim_directory(self.path.parent, self)
         # A missing-main check and sidecar probe must share creation ownership:
         # another opener can otherwise create a live WAL between those reads.
         # Existing stores keep their lock-free preflight. Release creation

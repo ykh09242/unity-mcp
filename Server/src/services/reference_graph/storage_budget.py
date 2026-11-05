@@ -12,7 +12,10 @@ import os
 from pathlib import Path
 import sqlite3
 import stat
+import threading
 from typing import Final
+import uuid
+import weakref
 
 from core.file_lock import FileLockError, file_lock as shared_file_lock
 from services.reference_graph.store import _hash, check_owned_path
@@ -23,6 +26,11 @@ LEDGER_BYTES: Final = 16 * MIB
 LEDGER_ALLOWANCE: Final = 2 * LEDGER_BYTES + MIB
 SIDECARS: Final = ("", "-wal", "-shm", "-journal")
 PROGRESS_INSTRUCTIONS: Final = 5000
+ARCHIVE_PENDING: Final = ".archive-pending.json"
+LIVE_PREFIX: Final = ".graph-live-"
+_process_token = uuid.uuid4().hex
+_directory_owners: dict[tuple[str, int], list] = {}
+_directory_guard = threading.Lock()
 
 
 class StorageBudgetError(ValueError):
@@ -103,6 +111,37 @@ def _reservation(capacity: int) -> int:
     return 6 * capacity + MIB
 
 
+def claim_directory(root: Path, owner: object) -> weakref.finalize:
+    """Keep offline maintenance out while any local store can still access this root."""
+    key = (os.path.normcase(str(root.resolve(strict=True))), os.getpid())
+    with file_lock(root / ".storage.lock"):
+        pending = root / ARCHIVE_PENDING
+        _regular(pending)
+        if pending.exists():
+            raise StorageBudgetError(
+                "Reference graph archival is incomplete; stop graph servers and resume maintenance"
+            )
+        with _directory_guard:
+            entry = _directory_owners.get(key)
+            if entry is None:
+                lock = file_lock(root / f"{LIVE_PREFIX}{os.getpid()}-{_process_token}.lock")
+                lock.__enter__()
+                entry = [lock, 0]
+                _directory_owners[key] = entry
+            entry[1] += 1
+    return weakref.finalize(owner, _release_directory, key)
+
+
+def _release_directory(key: tuple[str, int]) -> None:
+    with _directory_guard:
+        entry = _directory_owners[key]
+        entry[1] -= 1
+        if not entry[1]:
+            del _directory_owners[key]
+            # Keep the inode stable. Maintenance may already be probing it.
+            entry[0].__exit__(None, None, None)
+
+
 class StorageBudget:
     """A scope's monotonically reserved capacity; existing saved work is never evicted."""
 
@@ -120,6 +159,11 @@ class StorageBudget:
     def _ledger(self) -> Iterator[sqlite3.Connection]:
         root = self.path.parent
         with file_lock(root / ".storage.lock"):
+            _regular(root / ARCHIVE_PENDING)
+            if (root / ARCHIVE_PENDING).exists():
+                raise StorageBudgetError(
+                    "Reference graph archival is incomplete; resume maintenance"
+                )
             path = root / ".storage.sqlite"
             for suffix in SIDECARS:
                 _regular(Path(str(path) + suffix))
@@ -177,7 +221,15 @@ class StorageBudget:
                         db.execute("BEGIN IMMEDIATE")
                         db.execute("ALTER TABLE scopes ADD COLUMN project TEXT")
                         db.execute("PRAGMA user_version=2")
-                elif version != 2:
+                    version = 2
+                if version == 2:
+                    with db:
+                        db.execute("BEGIN IMMEDIATE")
+                        db.execute(
+                            "CREATE TABLE IF NOT EXISTS archived_scopes(name TEXT PRIMARY KEY,owner TEXT NOT NULL,project TEXT,receipt TEXT NOT NULL)"
+                        )
+                        db.execute("PRAGMA user_version=3")
+                elif version != 3:
                     raise ValueError("Unsupported reference graph budget ledger; preserve it")
                 yield db
 
@@ -185,6 +237,12 @@ class StorageBudget:
         self, requested: int, *, admitting: bool = False, existing_bytes: int = 0
     ) -> tuple[int, int]:
         with self._ledger() as db, db:
+            if db.execute(
+                "SELECT 1 FROM archived_scopes WHERE name=?", (self.path.name,)
+            ).fetchone():
+                raise StorageBudgetError(
+                    "This reference graph scope was archived; preserve its archive and use a new Editor identity"
+                )
             row = db.execute(
                 "SELECT owner,capacity,reserved FROM scopes WHERE name=?", (self.path.name,)
             ).fetchone()
@@ -235,7 +293,7 @@ class StorageBudget:
                 or user_total + growth > self.policy.user_bytes
             ):
                 raise StorageBudgetError(
-                    "Reference graph storage budget exhausted; retain saved work and ask the operator to raise budgets or archive unused scopes and rebuild the ledger with all graph servers stopped"
+                    "Reference graph storage budget exhausted; retain saved work and ask the operator to raise budgets or use offline reference graph maintenance to archive unused scopes"
                 )
             db.execute(
                 "INSERT INTO scopes(name,owner,capacity,reserved) VALUES (?,?,?,?) ON CONFLICT(name) DO UPDATE SET capacity=excluded.capacity,reserved=excluded.reserved",
@@ -264,7 +322,7 @@ class StorageBudget:
     def previous_files(self, project: str = "default") -> list[str]:
         """Only examine older scopes admitted for this exact authenticated principal."""
         with self._ledger() as db:
-            return [
+            current = [
                 row[0]
                 for row in db.execute(
                     "SELECT name FROM scopes WHERE owner=? AND (?='default' OR project IS NULL OR project=?) AND rowid < "
@@ -272,6 +330,18 @@ class StorageBudget:
                     (self.owner, project, _hash((project,)), self.path.name),
                 )
             ]
+            # A missing archived candidate deliberately enters existing explicit
+            # policy recovery. A newer scope can acknowledge that absence; never
+            # silently forget exclusions merely because their database moved.
+            archived = [
+                row[0]
+                for row in db.execute(
+                    "SELECT name FROM archived_scopes WHERE owner=? AND "
+                    "(?='default' OR project IS NULL OR project=?) ORDER BY rowid DESC",
+                    (self.owner, project, _hash((project,))),
+                )
+            ]
+            return current + archived
 
     @contextmanager
     def writer(self, connection: sqlite3.Connection) -> Iterator["WriteMeter"]:

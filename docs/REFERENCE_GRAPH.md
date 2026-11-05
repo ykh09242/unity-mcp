@@ -349,14 +349,70 @@ still require capacity.
 ### Recovering capacity
 
 Explicitly delete unneeded snapshots to reuse pages, or raise the applicable
-budgets and restart cooperating servers. To reclaim scope reservations through
-archival, stop **every graph server using the directory** and back up the complete
-directory first. Archive selected scope databases, their sidecars and scope-lock
-files outside the state directory, then archive `.storage.sqlite` and its
-sidecars. Restart to inventory the remaining SQLite files conservatively. Preserve
-the root `.storage.lock` inode; never remove or move live lock or ledger files.
-Preserve unknown files and user-authored data. A storage error is not permission
-to delete saved work.
+budgets and restart cooperating servers. The local maintenance module can reclaim
+one selected scope reservation through explicit archival. It is an **offline
+operation**: stop every graph server using the directory, including older binaries,
+before inspection or archival. `--all-servers-stopped` is the operator's assertion
+of that prerequisite, not a switch that stops processes. Back up the directory
+before maintenance. Use the Python environment containing the upgraded server:
+
+```sh
+python -m services.reference_graph.maintenance list --directory /absolute/state --all-servers-stopped
+python -m services.reference_graph.maintenance inspect --directory /absolute/state --scope <64-character-scope-digest> --destination /absolute/archives/selected-scope --all-servers-stopped
+python -m services.reference_graph.maintenance archive --directory /absolute/state --scope <64-character-scope-digest> --destination /absolute/archives/selected-scope --all-servers-stopped --apply
+```
+
+On Windows use absolute Windows paths and quote paths containing spaces. The
+destination's parent must exist; the selected archive directory must be new and
+outside the state directory. `list` returns at most 50 scope reservations, with
+`next_after` for the next `--after` page; `--limit` accepts 1 through 100. Select
+the exact lowercase scope digest from that inventory. Unknown files are not
+eligible. `inspect` and `archive` without `--apply` are dry runs. They report the
+scope, principal/project digests, known-file sizes and SHA-256 checksums, reserved
+capacity, evidence/history counts, policy version/exclusion count, and the number
+of retained scopes referencing that policy. Stored document contents, source
+configuration and raw user identities are not printed. Lock files may be created
+by inspection, but graph data and reservations are not changed. Results are JSON;
+failure returns a nonzero exit status.
+
+Upgraded servers hold a directory ownership lock while any graph handle remains
+alive. Maintenance serializes with new openers and refuses a live ownership lock,
+selected scope writer/policy lock, or unexpired worker lease. It does not infer
+inactivity from file age or expired worker leases alone. Older binaries cannot
+participate in lifetime ownership, so stopping all servers remains mandatory.
+The upgraded reservation ledger uses version 3; older servers refuse that ledger.
+Initialize/upgrade the directory with the current server before using maintenance.
+
+Applying the command copies only the selected database and its present `-wal`,
+`-shm`, and `-journal` sidecars. It flushes and verifies every copy before removing
+any original, then atomically records an archive receipt and releases that scope's
+reservation. `archive.json` retains the inventory and checksums beside the complete
+database evidence, policies, authored setup, snapshots and mutation history.
+The ledger and all stable lock files stay in place; retained scopes, unknown files
+and user-authored files are preserved. Archival requires extra disk space for the
+verified copy. There is no automatic eviction, vacuum, history deletion, or bulk
+ledger rebuild.
+
+An interrupted operation leaves `.archive-pending.json` in the state directory.
+New graph handles refuse to open while it exists. Keep all servers stopped and
+repeat the **same archive command**, scope and destination; omit `--apply` first
+to inspect `recovery_required`, then use `--apply` to resume. Completed copies are
+verified and reused, and an already committed ledger release is not applied twice.
+Copy/permission/ledger failures retain the reservation until recovery completes.
+Conflicting or changed copies are refused and require operator investigation;
+never remove the pending marker, ledger, or locks to bypass recovery. Unknown files
+and incomplete metadata fragments remain preserved. File contents are flushed;
+directory entries are also synced where the platform supports it. This is process
+interruption recovery, not a substitute for backups against disk or power loss.
+
+Archived scopes cannot be reopened under the same Editor identity. The ledger
+keeps a policy-candidate tombstone without consuming a scope reservation. A future
+Editor may require the existing explicit `set_policy` recovery flow before
+collection, so archival never silently drops prior exclusions. Retained Editors
+keep their policies and history. Archive restoration/import is not provided by
+this command: preserve the archive intact and use `export_config`/`import_config`
+before archival when authored setup must transfer to another Editor. A storage
+error is not permission to delete saved work.
 
 Path searches retain protected search evidence in the owning query's SQLite
 storage, including evidence outside the selected route. Responses and replay
