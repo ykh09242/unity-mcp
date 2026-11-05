@@ -5,6 +5,20 @@ optimizations affect the internal Unity bridge and server reads; they do not
 replace MCP JSON-RPC with a private protocol. Existing tool defaults are
 preserved; `read_console` adds an optional response-field selection.
 
+## HTTP request admission
+
+HTTP accepts up to 64 MiB per body, 256 MiB of retained body data across
+requests, and 32 concurrent upload readers. In hosted mode, credentials for
+the same verified user share 128 MiB and 16 retained requests by default.
+Set `UNITY_MCP_HTTP_PRINCIPAL_RETAINED_BYTES` and
+`UNITY_MCP_HTTP_PRINCIPAL_RETAINED_REQUESTS` to positive integers to change
+the per-user shares. Admission pressure returns HTTP 503.
+
+The upload reader slot is released at the end of the body. Each user's request
+and byte reservations are released when the downstream application exits,
+including cancellation and failed delivery. Local requests and anonymous public
+routes use the global limits.
+
 ## Connection negotiation
 
 The WebSocket server advertises its supported `capabilities` in `welcome`. Unity

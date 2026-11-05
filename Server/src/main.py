@@ -683,6 +683,7 @@ class UnityMCP(FastMCP):
         app.add_middleware(
             RequestBodyLimitMiddleware,
             max_body_size=MAX_HTTP_REQUEST_BYTES,
+            hosted=config.http_remote_hosted,
             route_body_limits=(
                 {app.state.path: mcp_request_body_limit(app)}
                 if app.state.transport_type == "streamable-http"
