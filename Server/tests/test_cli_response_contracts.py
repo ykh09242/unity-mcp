@@ -464,13 +464,11 @@ def test_tool_inventory_transport_errors_remain_failures(monkeypatch, failure):
     result = CliRunner().invoke(cli, ["--no-project-context", "--format", "json", "tool", "list"])
     assert result.exit_code == 1
     assert len(requests) == 1
-    assert result.stdout == ""
-    assert {
-        "http": "HTTP error",
-        "non_json_refusal": "HTTP error",
-        "connect": "Cannot connect",
-        "timeout": "timed out",
-    }[failure] in result.stderr
+    assert result.stderr == ""
+    failure_document = json.loads(result.stdout)
+    assert failure_document["success"] is False
+    assert failure_document["code"] == "connection_error"
+    assert failure_document["error"]
 
 
 def test_large_batch_failure_keeps_execution_summary_before_bounded_outcomes():

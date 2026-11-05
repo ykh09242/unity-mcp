@@ -125,14 +125,14 @@ for command in commands:
     before = len(requests)
     # When the public CLI invokes each of the four endpoint contracts.
     result = runner.invoke(cli, ["--host", "::1", "--port", "18080", "--timeout", "17", "--instance", target, "--format", "json"] + command)
-    # Then the existing error output/exit contract is preserved.
+    # Then every boundary preserves nonzero status and one JSON failure document.
     assert result.exit_code == 1 and len(requests) == before + 1, (result.exception, result.output)
     if command == ["status"]:
         assert json.loads(result.stdout)["success"] is False and result.stderr == ""
     else:
-        assert result.stdout == ""
-        expected = "Cannot connect" if failure == "connect" else "timed out" if failure == "timeout" else "HTTP error from server: 503"
-        assert expected in result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["success"] is False and payload["code"] == "connection_error"
+        assert payload["error"] and result.stderr == ""
 """,
         tmp_path,
     )

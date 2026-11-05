@@ -17,6 +17,7 @@ from cli.utils.config import (
 from cli.utils.connection import (
     UnityConnectionError,
     handle_unity_errors,
+    print_connection_error,
     run_check_connection,
     run_command,
     run_list_instances,
@@ -271,7 +272,7 @@ def list_instances(ctx: Context):
         instances = run_list_instances(config)
         click.echo(format_output(instances, config.format))
     except UnityConnectionError as e:
-        print_error(str(e))
+        print_connection_error(e, config.format)
         sys.exit(1)
 
 
@@ -312,7 +313,7 @@ def raw_command(ctx: Context, command_type: str, params: tuple):
         result = run_command(command_type, params_dict, config)
         click.echo(format_output(result, config.format))
     except UnityConnectionError as e:
-        print_error(str(e))
+        print_connection_error(e, config.format)
         sys.exit(1)
 
 

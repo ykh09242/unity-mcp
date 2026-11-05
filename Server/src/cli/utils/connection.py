@@ -33,11 +33,33 @@ class UnityCommandError(Exception):
 F = TypeVar("F", bound=Callable[..., Any])
 
 
+def print_connection_error(error: UnityConnectionError, format_type: str) -> None:
+    """Render setup/transport failures without echoing credentials in JSON mode."""
+    from cli.utils.output import format_output, print_error
+
+    if format_type == "json":
+        # Exceptions and HTTP bodies can echo credentials. Keep the public
+        # diagnostic fixed instead of serializing untrusted transport text.
+        click.echo(
+            format_output(
+                {
+                    "success": False,
+                    "code": "connection_error",
+                    "error": "Unity MCP connection failed. Verify the server is running, reachable, and its local authentication token is available.",
+                },
+                "json",
+            )
+        )
+    else:
+        print_error(str(error))
+
+
 def handle_unity_errors(func: F) -> F:
     """Handle failed Unity commands and transport errors consistently.
 
-    Preserve completed command responses in the requested output format;
-    print transport errors separately. Both exit with code 1.
+    Preserve completed command responses in the requested output format.
+    JSON transport failures omit untrusted exception/response diagnostics;
+    text transport failures retain their human stderr output. Both exit with code 1.
 
     Usage:
         @scene.command("active")
@@ -48,7 +70,7 @@ def handle_unity_errors(func: F) -> F:
             click.echo(format_output(result, config.format))
     """
     import click
-    from cli.utils.output import format_output, print_error
+    from cli.utils.output import format_output
 
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -58,7 +80,7 @@ def handle_unity_errors(func: F) -> F:
             click.echo(format_output(e.response, get_config().format))
             sys.exit(1)
         except UnityConnectionError as e:
-            print_error(str(e))
+            print_connection_error(e, get_config().format)
             sys.exit(1)
 
     return wrapper  # type: ignore[return-value]
@@ -187,7 +209,7 @@ async def send_command(
             if cfg.verbose:
                 click.echo(
                     f"< {response.status_code}"
-                    if guarded
+                    if guarded or (cfg.format == "json" and not 200 <= response.status_code < 300)
                     else f"< {response.status_code} {response.text}",
                     err=True,
                 )
