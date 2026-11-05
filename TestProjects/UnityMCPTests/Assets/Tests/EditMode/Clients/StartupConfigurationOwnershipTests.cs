@@ -10,6 +10,7 @@ using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Migrations;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -585,6 +586,292 @@ namespace MCPForUnityTests.Editor.Clients
             StringAssert.Contains(NextSource, File.ReadAllText(path));
         }
 
+        [TestCase("json")]
+        [TestCase("codex")]
+        [TestCase("opencode")]
+        public void FileRefreshPreservesManualReplacementAfterStatusRead(string kind)
+        {
+            var client = Create(kind);
+            client.Configure();
+            string path = client.GetConfigPath();
+            string format =
+                kind == "codex" ? "Codex"
+                : kind == "opencode" ? "OpenCode"
+                : "Json";
+            string receipt = GeneratedClientConfigOwnership.Receipt(format, path);
+            string manual = UnownedDocument(kind, "manual");
+            // Resolving this local source emits a synchronous log during status validation,
+            // after the selected entry was read and before its writer reads the file.
+            Directory.CreateDirectory(Path.Combine(directory, "Server"));
+            File.WriteAllText(Path.Combine(directory, "Server", "pyproject.toml"), "");
+            EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, directory);
+            DuringLog("Auto-corrected server source override", () => File.WriteAllText(path, manual), () => client.CheckStatus(true));
+            Assert.AreEqual(manual, File.ReadAllText(path));
+            Assert.AreEqual(receipt, GeneratedClientConfigOwnership.Receipt(format, path));
+        }
+
+        [TestCase("json", false)]
+        [TestCase("codex", false)]
+        [TestCase("opencode", false)]
+        [TestCase("json", true)]
+        public void FileRefreshRechecksOwnershipAtWrite(string kind, bool migration)
+        {
+            var client = Create(kind);
+            client.Configure();
+            string path = client.GetConfigPath();
+            string format =
+                kind == "codex" ? "Codex"
+                : kind == "opencode" ? "OpenCode"
+                : "Json";
+            byte[] original = File.ReadAllBytes(path);
+            EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, NextSource);
+            var previous = MCPServiceLocator.Paths;
+            var paths = new SyntheticClientPaths { UvxPath = Path.Combine(directory, "uvx.exe") };
+            // JSON and Codex first resolve the existing executable during status. All
+            // three resolve the executable while constructing the replacement.
+            int remaining = kind == "opencode" ? 1 : 2;
+            paths.OnResolveUvx = () =>
+            {
+                if (--remaining == 0)
+                    GeneratedClientConfigOwnership.RestoreReceipt(format, path, "newer-receipt");
+            };
+            try
+            {
+                MCPServiceLocator.Register(paths);
+                if (migration)
+                    RunMigration(client);
+                else
+                    client.CheckStatus(true);
+            }
+            finally
+            {
+                MCPServiceLocator.Register(previous);
+            }
+            Assert.LessOrEqual(remaining, 0, "Expected the replacement builder to resolve the fixture executable.");
+            CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+            Assert.AreEqual("newer-receipt", GeneratedClientConfigOwnership.Receipt(format, path));
+            if (migration)
+                Assert.AreEqual("", EditorPrefs.GetString(EditorPrefKeys.LastStdIoUpgradeVersion));
+        }
+
+        [TestCase("entry")]
+        [TestCase("receipt")]
+        [TestCase("disabled")]
+        public void ClaudeAutomaticRefreshRefusesChangedAuthorizationBeforeCli(string change)
+        {
+            var cli = new MemoryCli(directory);
+            cli.Configure();
+            string path = Path.Combine(directory, ".claude.json");
+            string identity = path + "|" + Path.GetFullPath(directory);
+            string receipt = GeneratedClientConfigOwnership.Receipt("Claude", identity);
+            string document = File.ReadAllText(path);
+            if (change == "entry")
+                document = document.Replace("uvx", "manual-wrapper");
+            int calls = cli.Calls;
+            cli.Source = NextSource;
+            DuringLog(
+                "Re-registering...",
+                () =>
+                {
+                    if (change == "entry")
+                        File.WriteAllText(path, document);
+                    else if (change == "disabled")
+                        EditorPrefs.SetBool(EditorPrefKeys.AutoRegisterEnabled, false);
+                    else
+                        GeneratedClientConfigOwnership.RestoreReceipt("Claude", identity, "newer-receipt");
+                },
+                () => cli.CheckStatusWithProjectDir(directory, false, "inert-cli", UnityEngine.Application.platform, false, NextSource, true)
+            );
+            Assert.AreEqual(calls, cli.Calls);
+            Assert.AreEqual(document, File.ReadAllText(path));
+            Assert.AreEqual(change == "receipt" ? "newer-receipt" : receipt, GeneratedClientConfigOwnership.Receipt("Claude", identity));
+        }
+
+        [TestCase("json")]
+        [TestCase("codex")]
+        [TestCase("opencode")]
+        public void AutomaticFileRefreshRefusesTransportChangedDuringStdioBuild(string kind)
+        {
+            var client = Create(kind);
+            client.Configure();
+            string path = client.GetConfigPath();
+            string format =
+                kind == "codex" ? "Codex"
+                : kind == "opencode" ? "OpenCode"
+                : "Json";
+            string receipt = GeneratedClientConfigOwnership.Receipt(format, path);
+            byte[] original = File.ReadAllBytes(path);
+            EditorPrefs.SetString(EditorPrefKeys.GitUrlOverride, NextSource);
+            var previous = MCPServiceLocator.Paths;
+            var paths = new SyntheticClientPaths { UvxPath = Path.Combine(directory, "uvx.exe") };
+            // The innermost stdio builder resolves uvx after selecting its transport.
+            // JSON and TOML first resolve it during status and again in the outer writer.
+            int remaining = kind == "opencode" ? 1 : 3;
+            paths.OnResolveUvx = () =>
+            {
+                if (--remaining == 0)
+                    SelectLocalHttp();
+            };
+            string tokenFile = Environment.GetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE");
+            try
+            {
+                Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", Path.Combine(directory, "absent-fixture-token"));
+                MCPServiceLocator.Register(paths);
+                client.CheckStatus(true);
+            }
+            finally
+            {
+                MCPServiceLocator.Register(previous);
+                Environment.SetEnvironmentVariable("UNITY_MCP_LOCAL_AUTH_TOKEN_FILE", tokenFile);
+            }
+            Assert.LessOrEqual(remaining, 0, "The fixture must switch selection during the stdio build.");
+            CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+            Assert.AreEqual(receipt, GeneratedClientConfigOwnership.Receipt(format, path));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ClaudeAutomaticRefreshBindsTransportToItsDispatch(bool afterDispatch)
+        {
+            var cli = new MemoryCli(directory);
+            cli.Configure();
+            string path = Path.Combine(directory, ".claude.json");
+            byte[] original = File.ReadAllBytes(path);
+            string identity = path + "|" + Path.GetFullPath(directory);
+            string receipt = GeneratedClientConfigOwnership.Receipt("Claude", identity);
+            int calls = cli.Calls;
+            cli.Source = NextSource;
+            DuringLog(
+                afterDispatch ? "Successfully registered" : "Re-registering...",
+                SelectLocalHttp,
+                () => cli.CheckStatusWithProjectDir(directory, false, "inert-cli", UnityEngine.Application.platform, false, NextSource, true)
+            );
+            if (afterDispatch)
+            {
+                StringAssert.Contains(NextSource, File.ReadAllText(path));
+                Assert.AreEqual(ConfiguredTransport.Stdio, cli.ConfiguredTransport);
+            }
+            else
+            {
+                Assert.AreEqual(calls, cli.Calls);
+                CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+                Assert.AreEqual(receipt, GeneratedClientConfigOwnership.Receipt("Claude", identity));
+            }
+        }
+
+        private void SelectLocalHttp()
+        {
+            SetString(EditorPrefKeys.HttpTransportScope, "local");
+            EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, true);
+            EditorConfigurationCache.Instance.Refresh();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ClaudeCompletedAutomaticAddPublishesOnlyAgainstItsPriorReceipt(bool superseded)
+        {
+            var cli = new MemoryCli(directory);
+            cli.Configure();
+            string path = Path.Combine(directory, ".claude.json");
+            string identity = path + "|" + Path.GetFullPath(directory);
+            cli.Source = NextSource;
+            cli.AfterAdd = _ =>
+            {
+                // The CLI already wrote its exact stdio entry. Its caller has not
+                // yet observed the result or published ownership.
+                SelectLocalHttp();
+                if (superseded)
+                    GeneratedClientConfigOwnership.RestoreReceipt("Claude", identity, "newer-receipt");
+            };
+            cli.CheckStatusWithProjectDir(directory, false, "inert-cli", UnityEngine.Application.platform, false, NextSource, true);
+            cli.AfterAdd = null;
+            var written = JObject.Parse(File.ReadAllText(path))["projects"][directory]["mcpServers"]["UnityMCP"];
+            StringAssert.Contains(NextSource, written.ToString());
+            if (superseded)
+                Assert.AreEqual("newer-receipt", GeneratedClientConfigOwnership.Receipt("Claude", identity));
+            else
+            {
+                Assert.IsTrue(GeneratedClientConfigOwnership.Owns("Claude", identity, written.ToString(Newtonsoft.Json.Formatting.None)));
+                Assert.AreEqual(McpStatus.Configured, cli.Status);
+                Assert.AreEqual(ConfiguredTransport.Stdio, cli.ConfiguredTransport);
+            }
+            EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, false);
+            EditorConfigurationCache.Instance.Refresh();
+            int calls = cli.Calls;
+            cli.Source = FirstSource;
+            cli.CheckStatusWithProjectDir(directory, false, "inert-cli", UnityEngine.Application.platform, false, FirstSource, true);
+            Assert.AreEqual(superseded ? calls : calls + 2, cli.Calls);
+            StringAssert.Contains(superseded ? NextSource : FirstSource, File.ReadAllText(path));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ClaudeValueReceiptCannotAuthorizeRenamedRegistration(bool renameDuringAutomaticAdd)
+        {
+            var cli = new MemoryCli(directory);
+            cli.Configure();
+            string path = Path.Combine(directory, ".claude.json");
+            string identity = path + "|" + Path.GetFullPath(directory);
+            string originalReceipt = GeneratedClientConfigOwnership.Receipt("Claude", identity);
+            // Older versions recorded the value fingerprint alone. Keep this fixture
+            // independent of the representation used by a new explicit registration.
+            var first = JObject.Parse(File.ReadAllText(path))["projects"][directory]["mcpServers"]["UnityMCP"];
+            string legacy = GeneratedClientConfigOwnership.EntryReceipt(first.ToString(Newtonsoft.Json.Formatting.None));
+            if (!renameDuringAutomaticAdd)
+                GeneratedClientConfigOwnership.RestoreReceipt("Claude", identity, legacy);
+
+            void Rename(string file)
+            {
+                var doc = JObject.Parse(File.ReadAllText(file));
+                var servers = (JObject)doc["projects"][directory]["mcpServers"];
+                var entry = servers["UnityMCP"].DeepClone();
+                servers.Remove("UnityMCP");
+                servers["unitymcp"] = entry;
+                File.WriteAllText(file, doc.ToString());
+            }
+
+            cli.Source = NextSource;
+            if (renameDuringAutomaticAdd)
+            {
+                cli.AfterAdd = Rename;
+                cli.CheckStatusWithProjectDir(directory, false, "inert-cli", UnityEngine.Application.platform, false, NextSource, true);
+                cli.AfterAdd = null;
+                StringAssert.Contains(NextSource, File.ReadAllText(path));
+                cli.Source = FirstSource;
+            }
+            else
+                Rename(path);
+            string renamed = File.ReadAllText(path);
+            StringAssert.Contains("\"unitymcp\"", renamed);
+            int calls = cli.Calls;
+            cli.CheckStatusWithProjectDir(directory, false, "inert-cli", UnityEngine.Application.platform, false, cli.Source, true);
+            Assert.AreEqual(calls, cli.Calls, "A differently named registration must not be removed.");
+            Assert.AreEqual(renamed, File.ReadAllText(path));
+            Assert.AreEqual(renameDuringAutomaticAdd ? originalReceipt : legacy, GeneratedClientConfigOwnership.Receipt("Claude", identity));
+        }
+
+        private static void DuringLog(string marker, Action edit, Action run)
+        {
+            bool edited = false;
+            void OnLog(string message, string trace, UnityEngine.LogType type)
+            {
+                if (edited || !message.Contains(marker))
+                    return;
+                edited = true;
+                edit();
+            }
+            UnityEngine.Application.logMessageReceived += OnLog;
+            try
+            {
+                run();
+            }
+            finally
+            {
+                UnityEngine.Application.logMessageReceived -= OnLog;
+            }
+            Assert.IsTrue(edited, "Expected the synchronous configuration callback.");
+        }
+
         private sealed class MemoryCli : ClaudeCliMcpConfigurator
         {
             private readonly string project;
@@ -641,11 +928,21 @@ namespace MCPForUnityTests.Editor.Clients
                             ["command"] = "uvx",
                             ["args"] = new JArray("--from", source, "mcp-for-unity"),
                         };
+                        // Automatic status uses the main-thread builder and the same
+                        // inert executable/profile preferences as the file fixtures.
+                        var refreshed = new JObject
+                        {
+                            ["type"] = "stdio",
+                            ["command"] = Path.Combine(project, "uvx.exe"),
+                            ["args"] = new JArray("--no-cache", "--refresh", "--python", ">=3.11", "--from", source, "mcp-for-unity"),
+                        };
+                        if (arguments == ClaudeHttpAuth.BuildRegistrationArguments(refreshed))
+                            candidate = refreshed;
                         var reordered = new JObject
                         {
                             ["args"] = candidate["args"].DeepClone(),
                             ["type"] = "stdio",
-                            ["command"] = "uvx",
+                            ["command"] = candidate["command"].DeepClone(),
                         };
                         if (
                             arguments != ClaudeHttpAuth.BuildRegistrationArguments(candidate)

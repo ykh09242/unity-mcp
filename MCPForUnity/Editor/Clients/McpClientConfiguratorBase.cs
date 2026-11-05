@@ -59,7 +59,7 @@ namespace MCPForUnity.Editor.Clients
         public virtual bool SupportsAutoConfigure => true;
 
         // Automatic lifecycle work must never infer ownership from a command's shape alone.
-        internal virtual bool CanAutomaticallyRefresh() => false;
+        internal virtual McpStatus? RefreshForStdioMigration() => null;
 
         // Default to a filesystem check on the configured path. Concrete configurators
         // whose presence isn't path-based (CLI binaries, etc.) override this. This makes

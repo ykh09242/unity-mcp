@@ -23,20 +23,30 @@ namespace MCPForUnity.Editor.Clients
 
         public override bool IsInstalled => ParentDirectoryExists(GetConfigPath());
 
-        public override McpStatus CheckStatus(bool attemptAutoRewrite = true)
+        public override McpStatus CheckStatus(bool attemptAutoRewrite = true) => CheckStatus(attemptAutoRewrite, false).Value;
+
+        internal override McpStatus? RefreshForStdioMigration() => CheckStatus(true, true);
+
+        private McpStatus? CheckStatus(bool attemptAutoRewrite, bool migrationOnly)
         {
             try
             {
                 string path = GetConfigPath();
                 if (!File.Exists(path))
                 {
+                    if (migrationOnly)
+                        return null;
                     client.SetStatus(McpStatus.NotConfigured);
                     client.configuredTransport = Models.ConfiguredTransport.Unknown;
                     return client.status;
                 }
 
                 string toml = File.ReadAllText(path);
-                bool canAutoRewrite = attemptAutoRewrite && GeneratedClientConfigOwnership.CanAutomaticallyRefresh("Codex", path, GeneratedStdioEntry(toml));
+                var automatic = attemptAutoRewrite
+                    ? GeneratedClientConfigOwnership.AutomaticRefresh.Capture("Codex", path, GeneratedStdioEntry(toml), migrationOnly)
+                    : null;
+                if (migrationOnly && automatic == null)
+                    return null;
                 if (CodexConfigHelper.TryParseCodexServer(toml, out var command, out var args, out var url))
                 {
                     // Determine and set the configured transport type
@@ -85,7 +95,7 @@ namespace MCPForUnity.Editor.Clients
 
                     if (client.configuredTransport != HttpEndpointUtility.GetCurrentServerTransport())
                     {
-                        if (!canAutoRewrite)
+                        if (automatic == null)
                         {
                             client.SetStatus(
                                 McpStatus.IncorrectPath,
@@ -131,9 +141,9 @@ namespace MCPForUnity.Editor.Clients
 
                     if (hasVersionMismatch)
                     {
-                        if (canAutoRewrite)
+                        if (automatic != null)
                         {
-                            Configure();
+                            WriteGeneratedConfiguration(path, automatic);
                             return client.status;
                         }
                         client.SetStatus(McpStatus.VersionMismatch, mismatchReason);
@@ -145,9 +155,9 @@ namespace MCPForUnity.Editor.Clients
                     client.configuredTransport = Models.ConfiguredTransport.Unknown;
                 }
 
-                if (canAutoRewrite)
+                if (automatic != null)
                 {
-                    Configure();
+                    WriteGeneratedConfiguration(path, automatic);
                 }
                 else
                 {
@@ -163,25 +173,19 @@ namespace MCPForUnity.Editor.Clients
             return client.status;
         }
 
-        public override void Configure()
+        public override void Configure() => WriteGeneratedConfiguration(GetConfigPath(), null);
+
+        private void WriteGeneratedConfiguration(string path, GeneratedClientConfigOwnership.AutomaticRefresh automatic)
         {
-            string path = GetConfigPath();
-            string result = McpConfigurationHelper.ConfigureCodexClient(path, client);
+            string result = McpConfigurationHelper.ConfigureCodexClient(path, client, null, automatic, recordOwnership: true);
             if (result == "Configured successfully")
             {
-                GeneratedClientConfigOwnership.Record("Codex", path, GeneratedStdioEntry(File.ReadAllText(path)));
                 CheckStatus(attemptAutoRewrite: false);
             }
             else
             {
                 throw new InvalidOperationException(result);
             }
-        }
-
-        internal override bool CanAutomaticallyRefresh()
-        {
-            string path = GetConfigPath();
-            return File.Exists(path) && GeneratedClientConfigOwnership.CanAutomaticallyRefresh("Codex", path, GeneratedStdioEntry(File.ReadAllText(path)));
         }
 
         internal static string GeneratedStdioEntry(string document)

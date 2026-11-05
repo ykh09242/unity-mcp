@@ -16,8 +16,13 @@ namespace MCPForUnityTests.Editor.Helpers
     {
         internal string UvxPath;
         internal string ClaudePath;
+        internal Action OnResolveUvx;
 
-        public string GetUvxPath() => UvxPath;
+        public string GetUvxPath()
+        {
+            OnResolveUvx?.Invoke();
+            return UvxPath;
+        }
 
         public string GetClaudeCliPath() => ClaudePath;
 

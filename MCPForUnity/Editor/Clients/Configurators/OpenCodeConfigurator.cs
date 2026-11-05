@@ -77,7 +77,11 @@ namespace MCPForUnity.Editor.Clients.Configurators
             }
         }
 
-        public override McpStatus CheckStatus(bool attemptAutoRewrite = true)
+        public override McpStatus CheckStatus(bool attemptAutoRewrite = true) => CheckStatus(attemptAutoRewrite, false).Value;
+
+        internal override McpStatus? RefreshForStdioMigration() => CheckStatus(true, true);
+
+        private McpStatus? CheckStatus(bool attemptAutoRewrite, bool migrationOnly)
         {
             client.configuredTransport = ConfiguredTransport.Unknown;
             try
@@ -87,6 +91,8 @@ namespace MCPForUnity.Editor.Clients.Configurators
 
                 if (config == null)
                 {
+                    if (migrationOnly)
+                        return null;
                     client.SetStatus(McpStatus.NotConfigured);
                     return client.status;
                 }
@@ -95,18 +101,25 @@ namespace MCPForUnity.Editor.Clients.Configurators
 
                 if (unityMcp == null)
                 {
+                    if (migrationOnly)
+                        return null;
                     client.SetStatus(McpStatus.NotConfigured);
                     return client.status;
                 }
 
+                var automatic = attemptAutoRewrite
+                    ? GeneratedClientConfigOwnership.AutomaticRefresh.Capture("OpenCode", path, GeneratedStdioEntry(unityMcp), migrationOnly)
+                    : null;
+                if (migrationOnly && automatic == null)
+                    return null;
                 if (EntryMatchesCurrentTransport(unityMcp))
                 {
                     client.SetStatus(McpStatus.Configured);
                     client.configuredTransport = HttpEndpointUtility.GetCurrentServerTransport();
                 }
-                else if (attemptAutoRewrite && GeneratedClientConfigOwnership.CanAutomaticallyRefresh("OpenCode", path, GeneratedStdioEntry(unityMcp)))
+                else if (automatic != null)
                 {
-                    Configure();
+                    WriteGeneratedConfiguration(path, automatic);
                 }
                 else
                 {
@@ -121,11 +134,12 @@ namespace MCPForUnity.Editor.Clients.Configurators
             return client.status;
         }
 
-        public override void Configure()
+        public override void Configure() => WriteGeneratedConfiguration(GetConfigPath(), null);
+
+        private void WriteGeneratedConfiguration(string path, GeneratedClientConfigOwnership.AutomaticRefresh automatic)
         {
             try
             {
-                string path = GetConfigPath();
                 JObject writtenEntry = null;
                 ClientConfigurationChangeService.Shared.MutateFile(
                     path,
@@ -146,11 +160,13 @@ namespace MCPForUnity.Editor.Clients.Configurators
                                 ex
                             );
                         }
+                        automatic?.ValidateEntry(path, GeneratedStdioEntry(config["mcp"]?[ServerName] as JObject));
                         ApplyConfiguration(config, null, document == null);
                         writtenEntry = (JObject)config["mcp"][ServerName];
                         return config.ToString(Formatting.Indented);
                     },
-                    createIfMissing: true
+                    createIfMissing: true,
+                    beforeCommit: automatic == null ? null : () => automatic.ValidateProposal((string)writtenEntry["url"])
                 );
                 GeneratedClientConfigOwnership.Record("OpenCode", path, GeneratedStdioEntry(writtenEntry));
                 CheckStatus(attemptAutoRewrite: false);
@@ -217,16 +233,6 @@ namespace MCPForUnity.Editor.Clients.Configurators
             servers[ServerName] = entry;
             if (addSchema)
                 config["$schema"] = SchemaUrl;
-        }
-
-        internal override bool CanAutomaticallyRefresh()
-        {
-            string path = GetConfigPath();
-            return GeneratedClientConfigOwnership.CanAutomaticallyRefresh(
-                "OpenCode",
-                path,
-                GeneratedStdioEntry(TryLoadConfig(path)?["mcp"]?[ServerName] as JObject)
-            );
         }
 
         internal static string GeneratedStdioEntry(JObject entry)

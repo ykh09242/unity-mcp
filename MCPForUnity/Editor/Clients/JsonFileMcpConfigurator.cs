@@ -24,13 +24,19 @@ namespace MCPForUnity.Editor.Clients
 
         public override bool IsInstalled => ParentDirectoryExists(GetConfigPath());
 
-        public override McpStatus CheckStatus(bool attemptAutoRewrite = true)
+        public override McpStatus CheckStatus(bool attemptAutoRewrite = true) => CheckStatus(attemptAutoRewrite, false).Value;
+
+        internal override McpStatus? RefreshForStdioMigration() => CheckStatus(true, true);
+
+        private McpStatus? CheckStatus(bool attemptAutoRewrite, bool migrationOnly)
         {
             try
             {
                 string path = GetConfigPath();
                 if (!File.Exists(path))
                 {
+                    if (migrationOnly)
+                        return null;
                     client.SetStatus(McpStatus.NotConfigured);
                     client.configuredTransport = Models.ConfiguredTransport.Unknown;
                     return client.status;
@@ -40,6 +46,7 @@ namespace MCPForUnity.Editor.Clients
                 string[] args = null;
                 string configuredUrl = null;
                 bool configExists = false;
+                bool writableEntry = true;
                 JObject serverConfig = null;
 
                 {
@@ -51,6 +58,7 @@ namespace MCPForUnity.Editor.Clients
                         unityToken = client.IsVsCodeLayout
                             ? rootConfig["servers"]?["unityMCP"] ?? rootConfig["mcp"]?["servers"]?["unityMCP"]
                             : rootConfig[containerKey]?["unityMCP"];
+                        writableEntry = !client.IsVsCodeLayout || rootConfig["servers"]?["unityMCP"] != null;
                     }
 
                     if (unityToken is JObject unityObj)
@@ -77,6 +85,8 @@ namespace MCPForUnity.Editor.Clients
 
                 if (!configExists)
                 {
+                    if (migrationOnly)
+                        return null;
                     client.SetStatus(McpStatus.MissingConfig);
                     client.configuredTransport = Models.ConfiguredTransport.Unknown;
                     return client.status;
@@ -85,6 +95,18 @@ namespace MCPForUnity.Editor.Clients
                 // Determine and set the configured transport type
                 bool hasCommand = serverConfig["command"]?.Type == JTokenType.String && !string.IsNullOrWhiteSpace((string)serverConfig["command"]);
                 bool generatedStdio = IsGeneratedStdioEntry(serverConfig);
+                var automatic =
+                    attemptAutoRewrite && writableEntry && generatedStdio
+                        ? GeneratedClientConfigOwnership.AutomaticRefresh.Capture(
+                            "Json",
+                            path,
+                            serverConfig.ToString(Formatting.None),
+                            migrationOnly,
+                            client.SupportsHttpTransport
+                        )
+                        : null;
+                if (migrationOnly && automatic == null)
+                    return null;
                 if (hasCommand || (args != null && args.Length > 0))
                 {
                     client.configuredTransport = Models.ConfiguredTransport.Stdio;
@@ -191,15 +213,11 @@ namespace MCPForUnity.Editor.Clients
                     return client.status;
                 }
 
-                bool canAutoRewrite =
-                    attemptAutoRewrite
-                    && generatedStdio
-                    && GeneratedClientConfigOwnership.CanAutomaticallyRefresh("Json", path, serverConfig.ToString(Formatting.None));
                 if (hasVersionMismatch)
                 {
-                    if (canAutoRewrite)
+                    if (automatic != null)
                     {
-                        var result = WriteGeneratedConfiguration(path);
+                        var result = WriteGeneratedConfiguration(path, automatic);
                         if (result == "Configured successfully")
                         {
                             return CheckStatus(attemptAutoRewrite: false);
@@ -214,9 +232,9 @@ namespace MCPForUnity.Editor.Clients
                         client.SetStatus(McpStatus.VersionMismatch, mismatchReason);
                     }
                 }
-                else if (canAutoRewrite)
+                else if (automatic != null)
                 {
-                    var result = WriteGeneratedConfiguration(path);
+                    var result = WriteGeneratedConfiguration(path, automatic);
                     if (result == "Configured successfully")
                     {
                         return CheckStatus(attemptAutoRewrite: false);
@@ -277,30 +295,8 @@ namespace MCPForUnity.Editor.Clients
             return null;
         }
 
-        internal override bool CanAutomaticallyRefresh()
-        {
-            string path = GetConfigPath();
-            if (!File.Exists(path))
-                return false;
-            var root = JObject.Parse(File.ReadAllText(path));
-            string container = string.IsNullOrEmpty(client.ServerContainerKey) ? "mcpServers" : client.ServerContainerKey;
-            var entry =
-                (client.IsVsCodeLayout ? root["servers"]?["unityMCP"] ?? root["mcp"]?["servers"]?["unityMCP"] : root[container]?["unityMCP"]) as JObject;
-            return GeneratedClientConfigOwnership.CanAutomaticallyRefresh("Json", path, IsGeneratedStdioEntry(entry) ? entry.ToString(Formatting.None) : null);
-        }
-
-        private string WriteGeneratedConfiguration(string path)
-        {
-            string result = McpConfigurationHelper.WriteMcpConfiguration(path, client);
-            if (result != "Configured successfully")
-                return result;
-            var root = JObject.Parse(File.ReadAllText(path));
-            string containerKey = string.IsNullOrEmpty(client.ServerContainerKey) ? "mcpServers" : client.ServerContainerKey;
-            var entry =
-                (client.IsVsCodeLayout ? root["servers"]?["unityMCP"] ?? root["mcp"]?["servers"]?["unityMCP"] : root[containerKey]?["unityMCP"]) as JObject;
-            GeneratedClientConfigOwnership.Record("Json", path, IsGeneratedStdioEntry(entry) ? entry.ToString(Formatting.None) : null);
-            return result;
-        }
+        private string WriteGeneratedConfiguration(string path, GeneratedClientConfigOwnership.AutomaticRefresh automatic = null) =>
+            McpConfigurationHelper.WriteMcpConfiguration(path, client, null, automatic, recordOwnership: true);
 
         internal static bool IsGeneratedStdioEntry(JObject entry)
         {

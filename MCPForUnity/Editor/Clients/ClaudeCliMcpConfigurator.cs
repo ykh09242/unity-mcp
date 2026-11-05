@@ -113,7 +113,16 @@ namespace MCPForUnity.Editor.Clients
         /// Checks the Claude CLI registration status.
         /// MUST be called from the main Unity thread due to EditorPrefs and Application.dataPath access.
         /// </summary>
-        public override McpStatus CheckStatus(bool attemptAutoRewrite = true)
+        public override McpStatus CheckStatus(bool attemptAutoRewrite = true) => CheckCurrentStatus(attemptAutoRewrite, null);
+
+        internal override McpStatus? RefreshForStdioMigration()
+        {
+            bool admitted = false;
+            var status = CheckCurrentStatus(true, () => admitted = true);
+            return admitted ? status : null;
+        }
+
+        private McpStatus CheckCurrentStatus(bool attemptAutoRewrite, Action admitMigration)
         {
             // Capture main-thread-only values before delegating to thread-safe method
             string projectDir = GetClientProjectDir();
@@ -136,7 +145,8 @@ namespace MCPForUnity.Editor.Clients
                 attemptAutoRewrite,
                 HasClientProjectDirOverride,
                 expectedHttpUrl,
-                expectedHeaders
+                expectedHeaders,
+                admitMigration
             );
         }
 
@@ -159,12 +169,13 @@ namespace MCPForUnity.Editor.Clients
             bool attemptAutoRewrite = false,
             bool hasProjectDirOverride = false,
             string expectedHttpUrl = null,
-            IDictionary<string, string> expectedHttpHeaders = null
+            IDictionary<string, string> expectedHttpHeaders = null,
+            Action admitMigration = null
         )
         {
             try
             {
-                if (string.IsNullOrEmpty(claudePath))
+                if (string.IsNullOrEmpty(claudePath) && admitMigration == null)
                 {
                     client.SetStatus(McpStatus.NotConfigured, "Claude CLI not found");
                     client.configuredTransport = Models.ConfiguredTransport.Unknown;
@@ -177,7 +188,8 @@ namespace MCPForUnity.Editor.Clients
                     throw new ArgumentNullException(nameof(projectDir), "Project directory must be provided for thread-safe execution");
                 }
 
-                hasSelectedLocalRegistration = ReadSelectedLocalRegistrations(projectDir).Count > 0;
+                var selected = ReadSelectedLocalRegistrations(projectDir);
+                hasSelectedLocalRegistration = selected.Count > 0;
 
                 // Read Claude Code config directly from ~/.claude.json instead of using slow CLI
                 // This is instant vs 15+ seconds for `claude mcp list` which does health checks
@@ -200,6 +212,38 @@ namespace MCPForUnity.Editor.Clients
                 // UnityMCP is registered - check transport and version
                 bool currentUseHttp = useHttpTransport;
                 var serverConfig = configResult.serverConfig;
+                bool isMainThread = System.Threading.Thread.CurrentThread.ManagedThreadId == 1;
+                // Older receipts fingerprint only the value. The CLI writes this exact
+                // name; a differently cased registration may be displayed but not claimed.
+                var automatic =
+                    attemptAutoRewrite
+                    && isMainThread
+                    && selected.Count == 1
+                    && selected.TryGetValue("UnityMCP", out var localEntry)
+                    && JToken.DeepEquals(localEntry, serverConfig)
+                    && (string)serverConfig["type"] == "stdio"
+                    && JsonFileMcpConfigurator.IsGeneratedStdioEntry(serverConfig)
+                        ? GeneratedClientConfigOwnership.AutomaticRefresh.Capture(
+                            "Claude",
+                            OwnershipPath(projectDir),
+                            localEntry.ToString(Formatting.None),
+                            admitMigration != null,
+                            selectedTransport: !useHttpTransport ? ConfiguredTransport.Stdio
+                                : isRemoteScope ? ConfiguredTransport.HttpRemote
+                                : ConfiguredTransport.Http
+                        )
+                        : null;
+                if (admitMigration != null)
+                {
+                    if (automatic == null)
+                        return client.status;
+                    admitMigration();
+                    if (string.IsNullOrEmpty(claudePath))
+                    {
+                        client.SetStatus(McpStatus.NotConfigured, "Claude CLI not found");
+                        return client.status;
+                    }
+                }
 
                 // Determine registered transport type
                 string registeredType = serverConfig["type"]?.ToString()?.ToLowerInvariant() ?? "";
@@ -250,10 +294,7 @@ namespace MCPForUnity.Editor.Clients
                 // If there's any mismatch and auto-rewrite is enabled, re-register
                 if (hasTransportMismatch || hasVersionMismatch)
                 {
-                    // Configure() requires main thread (accesses EditorPrefs, Application.dataPath)
-                    // Only attempt auto-rewrite if we're on the main thread
-                    bool isMainThread = System.Threading.Thread.CurrentThread.ManagedThreadId == 1;
-                    if (attemptAutoRewrite && isMainThread && CanAutomaticallyRefresh(projectDir, serverConfig))
+                    if (automatic != null)
                     {
                         string reason = hasTransportMismatch
                             ? $"Transport mismatch (registered: {(registeredWithHttp ? "HTTP" : "stdio")}, expected: {(currentUseHttp ? "HTTP" : "stdio")})"
@@ -263,7 +304,7 @@ namespace MCPForUnity.Editor.Clients
                         {
                             // Mark the mismatch before idempotent synchronous re-registration.
                             client.SetStatus(McpStatus.IncorrectPath);
-                            Configure();
+                            Register(projectDir, claudePath, automatic.Transport, selected, automatic, expectedPackageSource);
                             return client.status;
                         }
                         catch (Exception ex)
@@ -335,32 +376,16 @@ namespace MCPForUnity.Editor.Clients
 
         public override void Configure()
         {
-            Register();
+            Register(GetClientProjectDir(), MCPServiceLocator.Paths.GetClaudeCliPath(), HttpEndpointUtility.GetCurrentServerTransport());
         }
 
         private string OwnershipPath(string projectDir) => (capturedUserConfigPath ?? GetUserConfigPath()) + "|" + Path.GetFullPath(projectDir);
 
-        internal override bool CanAutomaticallyRefresh()
-        {
-            string projectDir = GetClientProjectDir();
-            var config = ReadClaudeCodeConfig(projectDir);
-            return config.error == null && CanAutomaticallyRefresh(projectDir, config.serverConfig);
-        }
-
-        private bool CanAutomaticallyRefresh(string projectDir, JObject entry)
-        {
-            var local = ReadSelectedLocalRegistrations(projectDir);
-            return local.Count == 1
-                && entry != null
-                && JToken.DeepEquals(local.Values.Single(), entry)
-                && (string)entry["type"] == "stdio"
-                && JsonFileMcpConfigurator.IsGeneratedStdioEntry(entry)
-                && GeneratedClientConfigOwnership.CanAutomaticallyRefresh("Claude", OwnershipPath(projectDir), entry.ToString(Newtonsoft.Json.Formatting.None));
-        }
-
         // Captured CLI work may run off-thread. Publish its exact successful snapshot only
         // on the main thread, after verifying that no newer operation/manual edit replaced it.
-        internal void CompleteConfigurationOwnership()
+        internal void CompleteConfigurationOwnership() => PublishConfigurationOwnership(null);
+
+        private void PublishConfigurationOwnership(GeneratedClientConfigOwnership.AutomaticRefresh automatic)
         {
             if (pendingOwnershipSnapshot == null)
                 return;
@@ -369,7 +394,11 @@ namespace MCPForUnity.Editor.Clients
             string snapshot = pendingOwnershipSnapshot;
             string entry = pendingOwnershipEntry;
             pendingOwnershipSnapshot = null;
-            if (OwnershipPath(project) == path && OwnershipSnapshot(ReadSelectedLocalRegistrations(project)) == snapshot)
+            if (
+                OwnershipPath(project) == path
+                && OwnershipSnapshot(ReadSelectedLocalRegistrations(project)) == snapshot
+                && (automatic == null || automatic.MatchesPriorReceipt(path))
+            )
                 GeneratedClientConfigOwnership.Record("Claude", path, entry);
         }
 
@@ -378,21 +407,21 @@ namespace MCPForUnity.Editor.Clients
                 Newtonsoft.Json.Formatting.None
             );
 
-        private void CaptureConfigurationOwnership(string projectDir, JObject expected)
+        private void CaptureConfigurationOwnership(string projectDir, JObject expected, GeneratedClientConfigOwnership.AutomaticRefresh automatic = null)
         {
             var local = ReadSelectedLocalRegistrations(projectDir);
             // A different entry may already have been written and owned by a newer operation
             // before this worker returns. A mismatch does not authorize revoking its receipt.
             pendingOwnershipSnapshot = null;
-            if (expected == null ? local.Count != 0 : local.Count != 1 || !JToken.DeepEquals(local.Values.Single(), expected))
+            local.TryGetValue("UnityMCP", out var written);
+            if (expected == null ? local.Count != 0 : local.Count != 1 || !JToken.DeepEquals(written, expected))
                 return;
             pendingOwnershipProject = projectDir;
             pendingOwnershipPath = OwnershipPath(projectDir);
             pendingOwnershipSnapshot = OwnershipSnapshot(local);
-            pendingOwnershipEntry =
-                expected != null && (string)expected["type"] == "stdio" ? local.Values.Single().ToString(Newtonsoft.Json.Formatting.None) : null;
+            pendingOwnershipEntry = expected != null && (string)expected["type"] == "stdio" ? written.ToString(Newtonsoft.Json.Formatting.None) : null;
             if (System.Threading.Thread.CurrentThread.ManagedThreadId == 1)
-                CompleteConfigurationOwnership();
+                PublishConfigurationOwnership(automatic);
         }
 
         /// <summary>
@@ -539,26 +568,30 @@ namespace MCPForUnity.Editor.Clients
                 client.configStatus = "Local registration removed; shared or inherited registration remains unchanged.";
         }
 
-        private void Register()
+        private void Register(
+            string projectDir,
+            string claudePath,
+            ConfiguredTransport transport,
+            Dictionary<string, JObject> selected = null,
+            GeneratedClientConfigOwnership.AutomaticRefresh automatic = null,
+            string expectedSource = null
+        )
         {
             pendingOwnershipSnapshot = null;
-            var pathService = MCPServiceLocator.Paths;
-            string claudePath = pathService.GetClaudeCliPath();
+            automatic?.ValidateOwnership();
             if (string.IsNullOrEmpty(claudePath))
             {
                 throw new InvalidOperationException("Claude CLI not found. Please install Claude Code first.");
             }
 
-            bool useHttpTransport = EditorConfigurationCache.Instance.UseHttpTransport;
-            string projectDir = GetClientProjectDir();
-
             string args;
             JObject expectedEntry = null;
+            bool useHttpTransport = transport != ConfiguredTransport.Stdio;
             if (useHttpTransport)
             {
-                string httpUrl = HttpEndpointUtility.GetMcpRpcUrl();
                 // Use --scope local to register in the project-local config, avoiding conflicts with user-level config (#664)
-                bool remote = HttpEndpointUtility.IsRemoteScope();
+                bool remote = transport == ConfiguredTransport.HttpRemote;
+                string httpUrl = remote ? HttpEndpointUtility.GetRemoteMcpRpcUrl() : HttpEndpointUtility.GetLocalMcpRpcUrl();
                 string apiKey = remote ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty) : null;
                 args = BuildHttpRegistrationArguments(projectDir, claudePath, httpUrl, remote, apiKey, out expectedEntry);
             }
@@ -567,7 +600,9 @@ namespace MCPForUnity.Editor.Clients
                 GetExistingConfigForRegistration(projectDir);
                 var (uvxPath, _, packageName) = AssetPathUtility.GetUvxCommandParts();
                 string devFlags = AssetPathUtility.GetUvxDevFlags();
-                var fromArgs = AssetPathUtility.GetBetaServerFromArgsList();
+                var fromArgs = string.IsNullOrEmpty(expectedSource)
+                    ? AssetPathUtility.GetBetaServerFromArgsList()
+                    : AssetPathUtility.GetBetaServerFromArgsList(expectedSource, null);
                 // Use --scope local to register in the project-local config, avoiding conflicts with user-level config (#664)
                 args = BuildStdioRegistrationArguments(uvxPath, fromArgs, packageName, devFlags, StartupToolProfile.Selection);
                 expectedEntry = BuildStdioRegistrationEntry(uvxPath, fromArgs, packageName, devFlags, StartupToolProfile.Selection);
@@ -593,8 +628,16 @@ namespace MCPForUnity.Editor.Clients
             }
             catch { }
 
-            ReplaceSelectedLocalRegistration(claudePath, projectDir, pathPrepend, args);
-            CaptureConfigurationOwnership(projectDir, expectedEntry);
+            Action authorize = null;
+            if (automatic != null)
+            {
+                string entry = selected.Values.Single().ToString(Formatting.None);
+                authorize = () => automatic.ValidateEntry(OwnershipPath(GetClientProjectDir()), entry);
+            }
+            ReplaceSelectedLocalRegistration(claudePath, projectDir, pathPrepend, args, selected, authorize);
+            // The CLI has already written its selected transport. Record the observed
+            // result only while the original target and ownership receipt still agree.
+            CaptureConfigurationOwnership(projectDir, expectedEntry, automatic);
 
             McpLog.Info($"Successfully registered with Claude Code using {(useHttpTransport ? "HTTP" : "stdio")} transport.");
 
@@ -602,7 +645,7 @@ namespace MCPForUnity.Editor.Clients
             // The UI will trigger an async verification check separately to avoid blocking
             hasSelectedLocalRegistration = true;
             client.SetStatus(McpStatus.Configured);
-            client.configuredTransport = HttpEndpointUtility.GetCurrentServerTransport();
+            client.configuredTransport = transport;
         }
 
         public override void Unregister()
@@ -685,21 +728,46 @@ namespace MCPForUnity.Editor.Clients
             };
 
         // The CLI owns configuration writes. Never rewrite the shared user document to clean up other scopes.
-        private void ReplaceSelectedLocalRegistration(string claudePath, string projectDir, string pathPrepend, string arguments)
+        private void ReplaceSelectedLocalRegistration(
+            string claudePath,
+            string projectDir,
+            string pathPrepend,
+            string arguments,
+            Dictionary<string, JObject> expected = null,
+            Action authorize = null
+        )
         {
-            var previous = ReadSelectedLocalRegistrations(projectDir);
+            var previous = expected ?? ReadSelectedLocalRegistrations(projectDir);
+            bool dispatched = false;
             string failure = "Claude CLI could not remove the selected local registration.";
             try
             {
-                RemoveSelectedLocalRegistrations(claudePath, projectDir, pathPrepend, previous);
+                RemoveSelectedLocalRegistrations(
+                    claudePath,
+                    projectDir,
+                    pathPrepend,
+                    previous,
+                    () =>
+                    {
+                        authorize?.Invoke();
+                        dispatched = true;
+                    },
+                    requireExactEntry: authorize != null
+                );
                 failure = "Failed to register with Claude Code.";
+                authorize?.Invoke();
+                if (authorize != null && ReadSelectedLocalRegistrations(projectDir).Count != 0)
+                    throw new McpConfigurationHelper.ConfigurationConflictException();
+                dispatched = true;
                 if (!RunCli(claudePath, arguments, projectDir, out _, out _, 15000, pathPrepend))
                     throw new InvalidOperationException(failure);
             }
             catch (Exception error)
             {
                 string recovery =
-                    error is TimeoutException ? UncertainRecoveryMessage : RecoverSelectedLocalRegistrations(claudePath, projectDir, pathPrepend, previous);
+                    error is TimeoutException ? UncertainRecoveryMessage
+                    : !dispatched ? "The selected registration was not changed."
+                    : RecoverSelectedLocalRegistrations(claudePath, projectDir, pathPrepend, previous, authorize);
                 // CLI output/configuration can contain credentials. Report only the operation and recovery state.
                 string message = failure + " " + recovery;
                 client.SetStatus(McpStatus.Error, message);
@@ -710,7 +778,13 @@ namespace MCPForUnity.Editor.Clients
         private const string UncertainRecoveryMessage =
             "The CLI may still be running; automatic recovery was not attempted. Wait for it to stop, then inspect the selected local registration before retrying.";
 
-        private string RecoverSelectedLocalRegistrations(string claudePath, string projectDir, string pathPrepend, Dictionary<string, JObject> previous)
+        private string RecoverSelectedLocalRegistrations(
+            string claudePath,
+            string projectDir,
+            string pathPrepend,
+            Dictionary<string, JObject> previous,
+            Action authorize
+        )
         {
             try
             {
@@ -722,6 +796,7 @@ namespace MCPForUnity.Editor.Clients
                     if (current.ContainsKey(entry.Key))
                         continue;
                     // Restore only a missing exact entry, through the CLI, preserving other scopes and settings.
+                    authorize?.Invoke();
                     RunCli(claudePath, ClaudeHttpAuth.BuildRegistrationArguments(entry.Value, entry.Key), projectDir, out _, out _, 15000, pathPrepend);
                     current = ReadSelectedLocalRegistrations(projectDir);
                     if (!current.TryGetValue(entry.Key, out var restored) || !JToken.DeepEquals(restored, entry.Value))
@@ -744,7 +819,14 @@ namespace MCPForUnity.Editor.Clients
             }
         }
 
-        private void RemoveSelectedLocalRegistrations(string claudePath, string projectDir, string pathPrepend, Dictionary<string, JObject> expected = null)
+        private void RemoveSelectedLocalRegistrations(
+            string claudePath,
+            string projectDir,
+            string pathPrepend,
+            Dictionary<string, JObject> expected = null,
+            Action beforeDispatch = null,
+            bool requireExactEntry = false
+        )
         {
             try
             {
@@ -760,9 +842,13 @@ namespace MCPForUnity.Editor.Clients
                     var current = ReadSelectedLocalRegistrations(projectDir);
                     if (
                         current.Count != remaining.Count
-                        || current.Any(pair => !remaining.TryGetValue(pair.Key, out var old) || !JToken.DeepEquals(old, pair.Value))
+                        || current.Any(pair =>
+                            !remaining.TryGetValue(pair.Key, out var old)
+                            || (requireExactEntry ? old.ToString(Formatting.None) != pair.Value.ToString(Formatting.None) : !JToken.DeepEquals(old, pair.Value))
+                        )
                     )
                         throw new InvalidOperationException("Local registration changed during configuration. Inspect it before retrying.");
+                    beforeDispatch?.Invoke();
                     if (!RunCli(claudePath, $"mcp remove --scope local {name}", projectDir, out _, out _, 5000, pathPrepend))
                         throw new InvalidOperationException(
                             "Claude CLI could not remove the selected local registration. Other scopes were preserved; check configuration permissions and retry."

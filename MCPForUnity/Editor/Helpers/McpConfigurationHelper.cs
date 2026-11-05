@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using MCPForUnity.Editor.Clients;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Dependencies;
 using MCPForUnity.Editor.Helpers;
@@ -29,7 +30,13 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static string WriteMcpConfiguration(string configPath, McpClient mcpClient = null) => WriteMcpConfiguration(configPath, mcpClient, null);
 
-        internal static string WriteMcpConfiguration(string configPath, McpClient mcpClient, Action beforeComparison)
+        internal static string WriteMcpConfiguration(
+            string configPath,
+            McpClient mcpClient,
+            Action beforeComparison,
+            GeneratedClientConfigOwnership.AutomaticRefresh automatic = null,
+            bool recordOwnership = false
+        )
         {
             // 0) Respect explicit lock (hidden pref or UI toggle)
             try
@@ -76,17 +83,36 @@ namespace MCPForUnity.Editor.Helpers
                 throw new FormatException("Existing configuration must be a JSON object without duplicate properties and was not changed.", e);
             }
 
+            if (automatic != null)
+            {
+                automatic.ValidateEntry(configPath, ConfigJsonBuilder.ExistingUnityNode(existingRoot, mcpClient)?.ToString(Formatting.None));
+            }
             bool useHttp = EditorConfigurationCache.Instance.UseHttpTransport && mcpClient?.SupportsHttpTransport != false;
             string uvxPath = useHttp ? null : MCPServiceLocator.Paths.GetUvxPath();
             if (!useHttp && string.IsNullOrEmpty(uvxPath))
                 return "uv package manager not found. Please install uv first.";
 
             existingRoot = ConfigJsonBuilder.ApplyUnityServerToExistingConfig(existingRoot, uvxPath, mcpClient);
+            if (automatic != null)
+            {
+                string property = string.IsNullOrEmpty(mcpClient?.HttpUrlProperty) ? "url" : mcpClient.HttpUrlProperty;
+                string endpoint = (string)ConfigJsonBuilder.ExistingUnityNode(existingRoot, mcpClient)?[property];
+                beforeComparison += () => automatic.ValidateProposal(endpoint);
+            }
 
             string mergedJson = JsonConvert.SerializeObject(existingRoot, jsonSettings);
 
             EnsureConfigDirectoryExists(configPath);
             WriteGuardedConfiguration(configPath, mergedJson, snapshot, beforeComparison);
+            if (recordOwnership)
+            {
+                var written = ConfigJsonBuilder.ExistingUnityNode(existingRoot, mcpClient);
+                GeneratedClientConfigOwnership.Record(
+                    "Json",
+                    configPath,
+                    JsonFileMcpConfigurator.IsGeneratedStdioEntry(written) ? written.ToString(Formatting.None) : null
+                );
+            }
 
             return "Configured successfully";
         }
@@ -96,7 +122,13 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static string ConfigureCodexClient(string configPath, McpClient mcpClient) => ConfigureCodexClient(configPath, mcpClient, null);
 
-        internal static string ConfigureCodexClient(string configPath, McpClient mcpClient, Action beforeComparison)
+        internal static string ConfigureCodexClient(
+            string configPath,
+            McpClient mcpClient,
+            Action beforeComparison,
+            GeneratedClientConfigOwnership.AutomaticRefresh automatic = null,
+            bool recordOwnership = false
+        )
         {
             try
             {
@@ -121,6 +153,10 @@ namespace MCPForUnity.Editor.Helpers
                 }
             }
 
+            if (automatic != null)
+            {
+                automatic.ValidateEntry(configPath, CodexMcpConfigurator.GeneratedStdioEntry(existingToml));
+            }
             bool useHttp = EditorConfigurationCache.Instance.UseHttpTransport;
             string uvxPath = useHttp ? null : MCPServiceLocator.Paths.GetUvxPath();
             if (!useHttp && string.IsNullOrEmpty(uvxPath))
@@ -129,9 +165,17 @@ namespace MCPForUnity.Editor.Helpers
             }
 
             string updatedToml = CodexConfigHelper.UpsertCodexServerBlock(existingToml, uvxPath);
+            if (automatic != null)
+            {
+                if (!CodexConfigHelper.TryParseCodexServer(updatedToml, out _, out _, out string endpoint))
+                    throw new ConfigurationConflictException();
+                beforeComparison += () => automatic.ValidateProposal(endpoint);
+            }
 
             EnsureConfigDirectoryExists(configPath);
             WriteGuardedConfiguration(configPath, updatedToml, snapshot, beforeComparison);
+            if (recordOwnership)
+                GeneratedClientConfigOwnership.Record("Codex", configPath, CodexMcpConfigurator.GeneratedStdioEntry(updatedToml));
 
             return "Configured successfully";
         }

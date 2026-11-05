@@ -2,6 +2,8 @@ using System;
 using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Models;
 using UnityEditor;
 
 namespace MCPForUnity.Editor.Clients
@@ -13,6 +15,72 @@ namespace MCPForUnity.Editor.Clients
 
         internal static bool CanAutomaticallyRefresh(string format, string path, string entry) =>
             EditorPrefs.GetBool(EditorPrefKeys.AutoRegisterEnabled, true) && Owns(format, path, entry);
+
+        // An automatic writer may update only the exact entry admitted by status.
+        // Recheck the same receipt and preferences at the final file/CLI boundary.
+        internal sealed class AutomaticRefresh
+        {
+            private readonly string format,
+                path,
+                entry;
+            private readonly bool followsTransportSelection;
+            internal ConfiguredTransport Transport { get; }
+
+            private AutomaticRefresh(string format, string path, string entry, ConfiguredTransport transport, bool followsTransportSelection)
+            {
+                this.format = format;
+                this.path = path;
+                this.entry = entry;
+                this.followsTransportSelection = followsTransportSelection;
+                Transport = transport;
+            }
+
+            internal static AutomaticRefresh Capture(
+                string format,
+                string path,
+                string entry,
+                bool stdioOnly,
+                bool supportsHttp = true,
+                ConfiguredTransport? selectedTransport = null
+            )
+            {
+                if (!CanAutomaticallyRefresh(format, path, entry))
+                    return null;
+                var selected = selectedTransport ?? HttpEndpointUtility.GetCurrentServerTransport();
+                if (stdioOnly && selected != ConfiguredTransport.Stdio)
+                    return null;
+                // A stdio-only client can refresh normally regardless of the HTTP
+                // preference. A version migration still requires global stdio selection.
+                return new AutomaticRefresh(format, path, entry, supportsHttp ? selected : ConfiguredTransport.Stdio, stdioOnly || supportsHttp);
+            }
+
+            internal void ValidateEntry(string identity, string current)
+            {
+                if (identity != path || current != entry)
+                    throw new McpConfigurationHelper.ConfigurationConflictException();
+                ValidateOwnership();
+            }
+
+            internal bool MatchesPriorReceipt(string identity) => identity == path && Owns(format, path, entry);
+
+            internal void ValidateOwnership()
+            {
+                if (
+                    !CanAutomaticallyRefresh(format, path, entry) || (followsTransportSelection && HttpEndpointUtility.GetCurrentServerTransport() != Transport)
+                )
+                    throw new McpConfigurationHelper.ConfigurationConflictException();
+            }
+
+            internal void ValidateProposal(string endpoint)
+            {
+                ValidateOwnership();
+                // Check what the writer actually built even if the preference changed
+                // during generation and returned to its original value before commit.
+                string expected = Transport == ConfiguredTransport.Stdio ? null : HttpEndpointUtility.GetMcpRpcUrl();
+                if (endpoint != expected)
+                    throw new McpConfigurationHelper.ConfigurationConflictException();
+            }
+        }
 
         internal static string Receipt(string format, string path) => EditorPrefs.HasKey(Key(format, path)) ? EditorPrefs.GetString(Key(format, path)) : null;
 

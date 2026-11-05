@@ -377,7 +377,7 @@ namespace MCPForUnity.Editor.Services
 
         // Unregister shares the same bounded reader and final guarded replacement as preview/apply.
         // The transformation runs on the snapshot; no writer may silently replace a later edit.
-        internal void MutateFile(string path, Func<string, string> transform, bool createIfMissing = false)
+        internal void MutateFile(string path, Func<string, string> transform, bool createIfMissing = false, Action beforeCommit = null)
         {
             if (readLock())
                 throw new ConfigurationLockedException();
@@ -387,7 +387,9 @@ namespace MCPForUnity.Editor.Services
             string document = Decode(original, out bool bom);
             string updated = transform(original == null ? null : document);
             if (updated != document)
-                Commit(path, updated, bom, original);
+                Commit(path, updated, bom, original, beforeCommit);
+            else
+                beforeCommit?.Invoke();
         }
 
         private static string OwnershipFormat(ClientConfigurationFileTarget target) =>

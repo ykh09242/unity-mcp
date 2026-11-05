@@ -72,10 +72,13 @@ namespace MCPForUnity.Editor.Migrations
 
                     // A source/version migration must preserve the stored transport. Normal
                     // status refresh may follow a selected transport, but migration never does.
-                    if (EditorConfigurationCache.Instance.UseHttpTransport || !configurator.CanAutomaticallyRefresh())
+                    if (EditorConfigurationCache.Instance.UseHttpTransport)
                         continue;
 
-                    if (configurator.CheckStatus(attemptAutoRewrite: true) == McpStatus.Configured)
+                    var status = configurator.RefreshForStdioMigration();
+                    if (!status.HasValue)
+                        continue;
+                    if (status == McpStatus.Configured)
                         touchedAny = true;
                     else
                         hadFailures = true;

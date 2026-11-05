@@ -57,7 +57,7 @@ namespace MCPForUnity.Editor.Helpers
             return root;
         }
 
-        private static JObject ExistingUnityNode(JObject root, McpClient client)
+        internal static JObject ExistingUnityNode(JObject root, McpClient client)
         {
             string key = GetContainerKey(client, client?.IsVsCodeLayout == true);
             JToken container = root[key];
