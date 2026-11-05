@@ -114,6 +114,61 @@ def test_unframed_legacy_greeting_retains_plain_ping(monkeypatch):
     assert peer.sent == [b"ping"]
 
 
+@pytest.mark.parametrize("framed", [True, False])
+@pytest.mark.parametrize("fragmented", [True, False])
+@pytest.mark.parametrize(
+    "reply, expected",
+    [
+        (b'{ "message" : "pong" }', True),
+        (b'{"status": "success", "result": {"message": "pong"}}', True),
+        (b'{"message":"pong"', False),
+        (b'{"message":"pong"} trailing', False),
+        (b'{"nested":{"message":"pong"}}', False),
+        (b'{"status":"error","result":{"message":"pong"}}', False),
+        (b'[ {"message":"pong"} ]', False),
+        (b'{"message":"not pong"}', False),
+    ],
+)
+def test_legacy_pong_is_parsed_as_bounded_json(monkeypatch, framed, fragmented, reply, expected):
+    greeting = b"WELCOME UNITY-MCP 1" + (b" FRAMING=1" if framed else b"") + b"\n"
+    body = struct.pack(">Q", len(reply)) + reply if framed else reply
+    chunks = [bytes([value]) for value in body] if fragmented else [body]
+    peer = ProbePeer([greeting, *chunks])
+    monkeypatch.setattr(discovery.socket, "create_connection", lambda *_: peer)
+    # An unframed stream is complete as soon as one whole JSON value arrives.
+    expected = expected or (not framed and fragmented and reply.endswith(b" trailing"))
+    assert discovery.PortDiscovery._try_probe_unity_mcp(6400) is expected
+    assert peer.closed
+
+
+@pytest.mark.parametrize("framed, limit", [(False, 512), (True, 10000)])
+def test_legacy_pong_cannot_exceed_original_size_limit(monkeypatch, framed, limit):
+    reply = b"{" + b" " * limit + b'"message":"pong"}'
+    greeting = b"WELCOME UNITY-MCP 1" + (b" FRAMING=1" if framed else b"") + b"\n"
+    peer = ProbePeer(
+        [greeting, struct.pack(">Q", len(reply)), reply] if framed else [greeting, reply]
+    )
+    monkeypatch.setattr(discovery.socket, "create_connection", lambda *_: peer)
+    assert discovery.PortDiscovery._try_probe_unity_mcp(6400) is False
+    assert peer.chunks, "Oversized replies must be rejected without draining the peer"
+
+
+def test_unframed_pong_fragments_share_the_greeting_deadline(monkeypatch):
+    clock = [0.0]
+    peer = ProbePeer([b"WELCOME UNITY-MCP 1\n", b'{"message":', b'"pong"}'])
+    original_recv = peer.recv
+
+    def delayed_receive(count):
+        if peer.sent:
+            clock[0] += 0.2
+        return original_recv(count)
+
+    peer.recv = delayed_receive
+    monkeypatch.setattr(discovery.socket, "create_connection", lambda *_: peer)
+    monkeypatch.setattr(discovery, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    assert discovery.PortDiscovery._try_probe_unity_mcp(6400) is False
+
+
 def test_fragmented_greeting_cannot_restart_discovery_deadline(monkeypatch):
     clock = [0.0]
     peer = ProbePeer([CURRENT])

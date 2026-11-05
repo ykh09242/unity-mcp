@@ -27,6 +27,16 @@ from models.models import UnityInstanceInfo
 logger = logging.getLogger("mcp-for-unity-server")
 
 
+def _is_pong_reply(reply: object) -> bool:
+    if not isinstance(reply, dict):
+        return False
+    if reply.get("status") == "success":
+        reply = reply.get("result")
+    elif "status" in reply:
+        return False
+    return isinstance(reply, dict) and reply.get("message") == "pong"
+
+
 class PortDiscovery:
     """Handles port discovery from Unity Bridge registry"""
 
@@ -110,7 +120,19 @@ class PortDiscovery:
                         return current[1]
                     if banner in ("WELCOME UNITY-MCP 1", "MCP/0.1"):
                         s.sendall(b"ping")
-                        return b'"message":"pong"' in receive(512)
+                        response = bytearray()
+                        while len(response) < 512:
+                            chunk = receive(512 - len(response))
+                            if not chunk:
+                                return False
+                            response.extend(chunk)
+                            try:
+                                reply = json.loads(response)
+                            except (json.JSONDecodeError, UnicodeDecodeError):
+                                # TCP may split a JSON value or a UTF-8 character.
+                                continue
+                            return _is_pong_reply(reply)
+                        return False
                     if banner not in ("WELCOME UNITY-MCP 1 FRAMING=1", "MCP/0.1 FRAMING=1"):
                         return False
 
@@ -142,7 +164,7 @@ class PortDiscovery:
                     response = _recv_exact(response_length)
                     if response is None:
                         return False
-                    return b'"message":"pong"' in response
+                    return _is_pong_reply(json.loads(response))
                 except Exception as e:
                     logger.debug(f"Port probe failed for {port}: {e}")
                     return False
