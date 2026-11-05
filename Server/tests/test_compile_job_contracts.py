@@ -1,6 +1,7 @@
 """Compilation tracking keeps request outcomes separate from readiness."""
 
 from types import SimpleNamespace
+from unittest.mock import ANY
 
 import pytest
 
@@ -39,7 +40,7 @@ async def test_refresh_returns_pre_dispatch_compile_identity_even_for_legacy_pee
     assert sent[0][1]["compile_id"] == compilation["compile_id"]
     assert compilation["outcome"] == "unknown"
     assert compilation["reason"] == "tracking_unsupported"
-    assert sent[0][2] == {"retry_on_reload": False}
+    assert sent[0][2] == {"retry_on_reload": False, "_deadline": ANY}
 
 
 @pytest.mark.asyncio

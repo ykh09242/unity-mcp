@@ -102,7 +102,7 @@ async def test_refresh_waits_for_canonical_asset_refresh(
         if command == "refresh_unity":
             refreshes += 1
             dispatched_compile_id = params.get("compile_id")
-            assert kwargs == {"retry_on_reload": False}
+            assert kwargs == {"retry_on_reload": False, "_deadline": 300.0}
             assert params["wait_for_ready"] is (compile_mode == "request")
             return {"success": True, "message": "Refresh requested"}
         if command == "get_project_info":
@@ -184,7 +184,7 @@ async def test_refresh_pending_scan_does_not_block_idle_editor_or_replay(monkeyp
         assert target == instance
         if command == "refresh_unity":
             refreshes += 1
-            assert kwargs == {"retry_on_reload": False}
+            assert kwargs == {"retry_on_reload": False, "_deadline": 1.0}
             assert params["wait_for_ready"] is False
             elapsed += 0.4
             return {

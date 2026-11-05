@@ -672,6 +672,10 @@ class UnityInstanceMiddleware(Middleware):
         from transport.unity_transport import _is_http_transport
 
         if not _is_http_transport() or not PluginHub.is_configured():
+            if name == "refresh_unity":
+                return await self._call_refresh_with_selection_budget(
+                    context, call_next, user_id, public_params, public_custom, receipt
+                )
             return await self._call_selected_tool(
                 context,
                 call_next,
@@ -731,6 +735,47 @@ class UnityInstanceMiddleware(Middleware):
             http_request_budget.reset(token)
             if wait_token is not None:
                 test_job_wait_deadline.reset(wait_token)
+
+    async def _call_refresh_with_selection_budget(
+        self, context, call_next, user_id, public_params, public_custom, receipt
+    ):
+        from services.tools.refresh_unity import (
+            REFRESH_READY_TIMEOUT_SECONDS,
+            refresh_request_deadline,
+            refresh_selection_timeout,
+        )
+
+        deadline = time.monotonic() + public_params.get(
+            "timeout_seconds", REFRESH_READY_TIMEOUT_SECONDS
+        )
+        token = refresh_request_deadline.set(deadline)
+        scope = asyncio.timeout_at(deadline)
+
+        async def selected(selected_context):
+            # The handler now owns this same absolute ceiling and classifies
+            # native dispatch uncertainty. Only selection is owned by this scope.
+            scope.reschedule(None)
+            return await call_next(selected_context)
+
+        try:
+            async with scope:
+                return await self._call_selected_tool(
+                    context,
+                    selected,
+                    user_id,
+                    public_name="refresh_unity",
+                    public_params=public_params,
+                    public_custom=public_custom,
+                    receipt=receipt,
+                )
+        except TimeoutError:
+            if not scope.expired():
+                raise
+            return ToolResult(
+                structured_content=refresh_selection_timeout().model_dump(), is_error=True
+            )
+        finally:
+            refresh_request_deadline.reset(token)
 
     async def _call_selected_tool(
         self,

@@ -2,7 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
@@ -25,7 +25,7 @@ async def test_readiness_timeout_keeps_latest_finished_compile(monkeypatch, outc
         assert instance == "Retest@1234567890abcdef"
         commands.append(command)
         if command == "refresh_unity":
-            assert options == {"retry_on_reload": False}
+            assert options == {"retry_on_reload": False, "_deadline": ANY}
             compile_id = params["compile_id"]
             job = native_job(compile_id, "unknown")
             job.update(state="running", collection_complete=False, finished_at_unix_ms=None)
@@ -245,7 +245,7 @@ def summary_peer(monkeypatch):
     async def send(_sender, _instance, command, params, **options):
         peer.commands.append(command)
         if command == "refresh_unity":
-            assert options == {"retry_on_reload": False}
+            assert options == {"retry_on_reload": False, "_deadline": ANY}
             peer.compile_id = params.get("compile_id")
             job = native_job(peer.compile_id, "unknown") if peer.compile_id else None
             if job is not None:

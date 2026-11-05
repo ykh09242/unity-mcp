@@ -7,6 +7,7 @@ import os
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context
@@ -30,6 +31,22 @@ from services.tools.get_compile_job import parse_compile_job, read_compile_job, 
 logger = logging.getLogger(__name__)
 
 REFRESH_READY_TIMEOUT_SECONDS = 300.0
+refresh_request_deadline: ContextVar[float | None] = ContextVar(
+    "refresh_request_deadline", default=None
+)
+
+
+def refresh_selection_timeout() -> MCPResponse:
+    return MCPResponse(
+        success=False,
+        error="Refresh observation budget expired before dispatch.",
+        hint="retry",
+        data={
+            "reason": "command_deadline_exceeded",
+            "phase": "selection",
+            "dispatch": "not_dispatched",
+        },
+    )
 
 
 class _ObservationUnavailable(Exception):
@@ -360,21 +377,29 @@ async def refresh_unity(
             success=False, error="timeout_seconds must be a finite number from 1 to 86400."
         )
     deadline = time.monotonic() + timeout_seconds
+    request_deadline = refresh_request_deadline.get()
+    if request_deadline is not None:
+        deadline = min(deadline, request_deadline)
     extend_http_request_deadline(timeout_seconds + 5.0)
-    unity_instance = await get_unity_instance_from_context(ctx)
-    dirty_instance = unity_instance or await editor_state.infer_single_instance_id(ctx)
+
+    async def select_instance():
+        selected = await get_unity_instance_from_context(ctx)
+        dirty = selected or await editor_state.infer_single_instance_id(ctx)
+        return selected, dirty
+
+    try:
+        unity_instance, dirty_instance = await asyncio.wait_for(
+            select_instance(), timeout=max(0.0, deadline - time.monotonic())
+        )
+    except TimeoutError:
+        return refresh_selection_timeout()
     dirty_snapshot = (
         external_changes_scanner.capture_dirty_state(dirty_instance) if dirty_instance else None
     )
 
     remaining = deadline - time.monotonic()
     if remaining <= 0:
-        return MCPResponse(
-            success=False,
-            error="Refresh observation budget expired before dispatch.",
-            hint="retry",
-            data={"reason": "command_deadline_exceeded", "phase": "selection"},
-        )
+        return refresh_selection_timeout()
     params: dict[str, Any] = {
         "mode": mode,
         "scope": scope,
@@ -490,6 +515,7 @@ async def refresh_unity(
                 "refresh_unity",
                 params,
                 retry_on_reload=False,
+                _deadline=deadline,
             ),
             timeout=max(0.0, deadline - time.monotonic()),
         )

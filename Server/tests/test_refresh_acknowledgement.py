@@ -2,6 +2,7 @@
 
 import json
 import os
+from unittest.mock import ANY
 
 from fastmcp import Client, FastMCP
 from fastmcp.server.middleware import Middleware
@@ -57,7 +58,7 @@ async def test_public_refresh_acknowledges_only_confirmed_snapshot(
             assert compile_mode == "request" and case == "lost_response"
             return {"success": False, "error": "Unknown command"}
         assert command == "refresh_unity"
-        assert kwargs == {"retry_on_reload": False}
+        assert kwargs == {"retry_on_reload": False, "_deadline": ANY}
         if case in ("rejected", "rejected_disconnect", "retry_rejected"):
             return {
                 "success": False,

@@ -38,7 +38,7 @@ async def test_refresh_spends_one_budget_without_replaying_mutation(
 
     async def send(_sender, instance, command, params, **options):
         assert instance == "Large@hash" and command == "refresh_unity"
-        assert options == {"retry_on_reload": False}
+        assert options == {"retry_on_reload": False, "_deadline": 900}
         params_seen.append(params)
         now[0] += dispatch_seconds
         return {"success": True, "message": "acknowledged"}
