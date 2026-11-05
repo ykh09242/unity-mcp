@@ -389,10 +389,10 @@ def test_workspace_upgrade_adds_retry_index_without_changing_work(workspace, mon
         assert [
             row[2] for row in connection.execute("PRAGMA index_info(graph_asset_failures_retry)")
         ] == ["retry_at", "guid"]
-        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 11
+        assert connection.execute("SELECT version FROM graph_workspace").fetchone()[0] == 12
 
 
-@pytest.mark.parametrize("version", [6, 7, 8, 9, 10, 11, 12])
+@pytest.mark.parametrize("version", [6, 7, 8, 9, 10, 11, 12, 13])
 def test_restart_accepts_supported_index_migration_and_rejects_future_schema(workspace, version):
     # Given an owned donor with the durable projection required for restart reuse.
     with workspace.store._connect(write=True) as connection:
@@ -403,4 +403,4 @@ def test_restart_accepts_supported_index_migration_and_rejects_future_schema(wor
         accepted = _attach_donor(connection, workspace.store.path)
 
     # Then additive index versions remain reusable, while unknown future versions fail closed.
-    assert accepted is (version <= 11)
+    assert accepted is (version <= 12)

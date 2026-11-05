@@ -48,7 +48,7 @@ class GraphWorkspace:
                 "CREATE TABLE IF NOT EXISTS graph_workspace(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_workspace").fetchone()
-            if version is not None and version[0] not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
+            if version is not None and version[0] not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12):
                 raise ValueError("Unsupported graph workspace version")
             if version is None:
                 for statement in (
@@ -126,27 +126,31 @@ class GraphWorkspace:
             if version is None or version[0] < 11:
                 document_delta.initialize(connection)
                 connection.execute("UPDATE graph_workspace SET version=11")
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS graph_asset_paths(guid TEXT PRIMARY KEY,path TEXT NOT NULL,seen TEXT NOT NULL)"
-            )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS graph_asset_paths_path ON graph_asset_paths(path,guid)"
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO graph_asset_paths SELECT guid,path,seen FROM graph_assets"
-            )
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS graph_blocked_keys(guid TEXT NOT NULL,scheme TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(guid,scheme,value))"
-            )
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS graph_external_paths(provider TEXT NOT NULL,owner TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(provider,owner))"
-            )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS graph_external_paths_owner ON graph_external_paths(owner)"
-            )
-            connection.execute(
-                "INSERT OR IGNORE INTO graph_external_paths SELECT provider,owner,path FROM graph_external"
-            )
+            if version is None or version[0] < 12:
+                # Older schemas may already have private path-only identities.
+                # Preserve them and backfill missing public inputs exactly once.
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS graph_asset_paths(guid TEXT PRIMARY KEY,path TEXT NOT NULL,seen TEXT NOT NULL)"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS graph_asset_paths_path ON graph_asset_paths(path,guid)"
+                )
+                connection.execute(
+                    "INSERT OR IGNORE INTO graph_asset_paths SELECT guid,path,seen FROM graph_assets"
+                )
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS graph_blocked_keys(guid TEXT NOT NULL,scheme TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(guid,scheme,value))"
+                )
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS graph_external_paths(provider TEXT NOT NULL,owner TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(provider,owner))"
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS graph_external_paths_owner ON graph_external_paths(owner)"
+                )
+                connection.execute(
+                    "INSERT OR IGNORE INTO graph_external_paths SELECT provider,owner,path FROM graph_external"
+                )
+                connection.execute("UPDATE graph_workspace SET version=12")
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_external_checkpoints(provider TEXT NOT NULL,owner TEXT NOT NULL,generation INTEGER NOT NULL,PRIMARY KEY(provider,owner))"
             )
