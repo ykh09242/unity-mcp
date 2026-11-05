@@ -107,7 +107,20 @@ async def manage_scene(
     ]
     | None = None,
     # --- Scene validation ---
-    auto_repair: Annotated[bool | str, "For validate: true to auto-fix missing scripts (undoable)."]
+    auto_repair: Annotated[
+        bool | str,
+        "For validate: remove missing scripts after a complete bounded scan. Not undoable; cancellation before commit only; an admitted commit finishes its plan.",
+    ]
+    | None = None,
+    max_milliseconds: Annotated[
+        int | str,
+        "validate: cooperative time budget 1-1000ms, default 25; native calls cannot be interrupted.",
+    ]
+    | None = None,
+    continuation: Annotated[
+        str,
+        "validate: opaque read-only continuation, valid for five minutes in the same unchanged Editor scene.",
+    ]
     | None = None,
     reference_scope: Annotated[
         Literal["active_scene", "loaded_scenes", "prefab", "scriptable_object"],
@@ -115,7 +128,8 @@ async def manage_scene(
     ]
     | None = None,
     max_objects: Annotated[
-        int | str, "validate_references: maximum 1-250000 owners/objects, default 1024."
+        int | str,
+        "validate: 1-10000 objects per slice, default 1000; validate_references: 1-250000, default 1024.",
     ]
     | None = None,
     max_work: Annotated[
@@ -161,6 +175,8 @@ async def manage_scene(
                     additive,
                     template,
                     auto_repair,
+                    max_milliseconds,
+                    continuation,
                 )
             ):
                 raise ValueError(
@@ -210,7 +226,6 @@ async def manage_scene(
         value is not None
         for value in (
             reference_scope,
-            max_objects,
             max_work,
             page_number,
             reference_revision,
@@ -223,6 +238,31 @@ async def manage_scene(
             "code": "invalid_reference_diagnostics",
             "message": "Reference options require validate_references.",
         }
+    validation_options: dict[str, int | str] = {}
+    try:
+        if action == "validate":
+            validation_options["maxObjects"] = page_integer(
+                max_objects, 1000, 1, 10000, "max_objects"
+            )
+            validation_options["maxMilliseconds"] = page_integer(
+                max_milliseconds, 25, 1, 1000, "max_milliseconds"
+            )
+            if continuation is not None:
+                if (
+                    not isinstance(continuation, str)
+                    or len(continuation) != 32
+                    or any(character not in "0123456789abcdef" for character in continuation)
+                ):
+                    raise ValueError(
+                        "continuation must be an opaque returned token; restart validation."
+                    )
+                if coerce_bool(auto_repair, default=False):
+                    raise ValueError("auto_repair requires a new complete scan; omit continuation.")
+                validation_options["continuation"] = continuation
+        elif any(value is not None for value in (max_objects, max_milliseconds, continuation)):
+            raise ValueError("Scene validation budgets and continuation require validate.")
+    except (ValueError, TypeError) as exc:
+        return {"success": False, "code": "invalid_scene_validation", "message": str(exc)[:512]}
     try:
         integer_options: dict[str, int | None] = {}
         for field, raw_value in (
@@ -282,7 +322,7 @@ async def manage_scene(
         if action == "move_to_scene" and (target is None or target == ""):
             return {"success": False, "message": "target is required for move_to_scene."}
 
-        params: dict[str, Any] = {"action": action}
+        params: dict[str, Any] = {"action": action, **validation_options}
         if name:
             params["name"] = name
         if path:

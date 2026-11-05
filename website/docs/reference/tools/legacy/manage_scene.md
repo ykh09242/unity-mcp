@@ -39,9 +39,11 @@ Performs CRUD operations on Unity scenes. Read-only validate_references pages br
 | `remove_scene` | `bool \| str \| None` | — | For close_scene: true to fully remove, false to just unload. |
 | `additive` | `bool \| str \| None` | — | For load: true to open scene additively (keeps current scene). |
 | `template` | `str \| None` | — | For create: scene template ('empty', 'default', '3d_basic', '2d_basic'). Omit for empty scene. |
-| `auto_repair` | `bool \| str \| None` | — | For validate: true to auto-fix missing scripts (undoable). |
+| `auto_repair` | `bool \| str \| None` | — | For validate: remove missing scripts after a complete bounded scan. Not undoable; cancellation before commit only; an admitted commit finishes its plan. |
+| `max_milliseconds` | `int \| str \| None` | — | validate: cooperative time budget 1-1000ms, default 25; native calls cannot be interrupted. |
+| `continuation` | `str \| None` | — | validate: opaque read-only continuation, valid for five minutes in the same unchanged Editor scene. |
 | `reference_scope` | `Literal['active_scene', 'loaded_scenes', 'prefab', 'scriptable_object'] \| None` | — | validate_references only; loaded scopes never open scenes. |
-| `max_objects` | `int \| str \| None` | — | validate_references: maximum 1-250000 owners/objects, default 1024. |
+| `max_objects` | `int \| str \| None` | — | validate: 1-10000 objects per slice, default 1000; validate_references: 1-250000, default 1024. |
 | `max_work` | `int \| str \| None` | — | validate_references: maximum 1-4000000 traversal/property steps, default 100000. |
 | `page_number` | `int \| str \| None` | — | validate_references: 1-based page, maximum page_size 100. |
 | `reference_revision` | `str \| None` | — | validate_references: refuse if the repeated observation has drifted. |

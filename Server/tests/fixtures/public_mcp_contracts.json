@@ -18319,6 +18319,17 @@
                 ],
                 "default": null
               },
+              "continuation": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "cursor": {
                 "anyOf": [
                   {
@@ -18362,6 +18373,20 @@
                 "default": null
               },
               "max_depth": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "max_milliseconds": {
                 "anyOf": [
                   {
                     "type": "integer"
@@ -23876,6 +23901,45 @@
                 "anyOf": [
                   {
                     "type": "boolean"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "continuation": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "max_milliseconds": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "max_objects": {
+                "anyOf": [
+                  {
+                    "type": "integer"
                   },
                   {
                     "type": "string"
@@ -43780,6 +43844,17 @@
                 ],
                 "default": null
               },
+              "continuation": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "cursor": {
                 "anyOf": [
                   {
@@ -43823,6 +43898,20 @@
                 "default": null
               },
               "max_depth": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "max_milliseconds": {
                 "anyOf": [
                   {
                     "type": "integer"
@@ -49337,6 +49426,45 @@
                 "anyOf": [
                   {
                     "type": "boolean"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "continuation": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "max_milliseconds": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "max_objects": {
+                "anyOf": [
+                  {
+                    "type": "integer"
                   },
                   {
                     "type": "string"

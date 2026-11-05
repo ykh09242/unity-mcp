@@ -271,7 +271,8 @@ scene_cases = [
      {'action': 'set_active_scene', 'sceneName': 'Same', 'scenePath': 'Assets/Second/Same.unity'}),
     ({'action': 'close_scene', 'name': 'Same', 'scene_name': None, 'scene_path': ''},
      {'action': 'close_scene', 'name': 'Same', 'scenePath': ''}),
-    ({'action': 'validate', 'auto_repair': False}, {'action': 'validate', 'autoRepair': False}),
+    ({'action': 'validate', 'auto_repair': False},
+     {'action': 'validate', 'autoRepair': False, 'maxObjects': 1000, 'maxMilliseconds': 25}),
 ]
 for action in ('get_active', 'get_build_settings', 'get_loaded_scenes'):
     scene_cases.append(({'action': action}, {'action': action}))

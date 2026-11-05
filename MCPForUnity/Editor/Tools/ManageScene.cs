@@ -265,8 +265,13 @@ namespace MCPForUnity.Editor.Tools
             if (NormalizeAction(@params?["action"]) == "validate_references")
                 return SerializedReferenceDiagnostics.Handle(@params);
             if (
+                NormalizeAction(@params?["action"]) != "validate"
+                && new[] { "maxMilliseconds", "max_milliseconds", "continuation", "max_objects" }.Any(option => @params?[option] != null)
+            )
+                return new ErrorResponse("invalid_scene_validation", new { reason = "Scene validation options require validate." });
+            if (
                 new[] { "referenceScope", "maxObjects", "maxWork", "pageNumber", "referenceRevision", "referenceSnapshot", "referenceCursor" }.Any(option =>
-                    @params?[option] != null
+                    @params?[option] != null && !(option == "maxObjects" && NormalizeAction(@params?["action"]) == "validate")
                 )
             )
                 return new ErrorResponse("invalid_reference_diagnostics", new { reason = "Reference options require validate_references." });
@@ -478,7 +483,7 @@ namespace MCPForUnity.Editor.Tools
 
                 // Scene validation
                 case ActionKind.Validate:
-                    return ValidateScene(cmd.autoRepair == true);
+                    return SceneValidation.Handle(@params, cancellationToken);
 
                 default:
                     return new ErrorResponse(
@@ -2269,93 +2274,6 @@ namespace MCPForUnity.Editor.Tools
         }
 
         // ── Scene validation ───────────────────────────────────────────────
-
-        private static object ValidateScene(bool autoRepair)
-        {
-            var activeScene = SceneManager.GetActiveScene();
-            var rootObjects = activeScene.GetRootGameObjects();
-
-            int missingScripts = 0;
-            int brokenPrefabs = 0;
-            int repaired = 0;
-            var issues = new List<object>();
-            const int maxIssues = 200;
-
-            foreach (var root in rootObjects)
-            {
-                var allTransforms = root.GetComponentsInChildren<Transform>(true);
-                foreach (var t in allTransforms)
-                {
-                    var go = t.gameObject;
-
-                    int missing = GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(go);
-                    if (missing > 0)
-                    {
-                        missingScripts += missing;
-                        if (issues.Count < maxIssues)
-                        {
-                            issues.Add(
-                                new
-                                {
-                                    type = "missing_script",
-                                    gameObject = go.name,
-                                    path = GetGameObjectPath(go),
-                                    count = missing,
-                                }
-                            );
-                        }
-
-                        if (autoRepair)
-                        {
-                            Undo.RegisterCompleteObjectUndo(go, "Remove Missing Scripts");
-                            repaired += GameObjectUtility.RemoveMonoBehavioursWithMissingScript(go);
-                        }
-                    }
-
-                    var prefabStatus = PrefabUtility.GetPrefabInstanceStatus(go);
-                    if (prefabStatus == PrefabInstanceStatus.MissingAsset)
-                    {
-                        brokenPrefabs++;
-                        if (issues.Count < maxIssues)
-                        {
-                            issues.Add(
-                                new
-                                {
-                                    type = "broken_prefab",
-                                    gameObject = go.name,
-                                    path = GetGameObjectPath(go),
-                                    status = prefabStatus.ToString(),
-                                }
-                            );
-                        }
-                    }
-                }
-            }
-
-            if (repaired > 0)
-                EditorSceneManager.MarkSceneDirty(activeScene);
-
-            int totalIssues = missingScripts + brokenPrefabs;
-            string message =
-                totalIssues == 0 ? $"Scene '{activeScene.name}' is clean — no issues found." : $"Scene '{activeScene.name}' has {totalIssues} issue(s).";
-            if (repaired > 0)
-                message += $" Auto-repaired {repaired} missing script(s). Use undo to revert.";
-
-            return new SuccessResponse(
-                message,
-                new
-                {
-                    sceneName = activeScene.name,
-                    totalIssues,
-                    missingScripts,
-                    brokenPrefabs,
-                    repaired,
-                    issues,
-                    truncated = issues.Count > maxIssues || (totalIssues > issues.Count),
-                    note = brokenPrefabs > 0 ? "Broken prefab references are not auto-repaired (too risky). Fix manually." : null,
-                }
-            );
-        }
 
         private static object GetActiveSceneInfo()
         {

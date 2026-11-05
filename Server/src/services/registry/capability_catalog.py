@@ -345,7 +345,12 @@ CAPABILITIES: tuple[Capability, ...] = (
         "scene_view_target parent page_size cursor max_nodes max_depth max_children_per_node include_transform",
     ),
     _feature(
-        "scene_validate", "manage_scene", "scene", "Validate Scenes", "validate", "auto_repair"
+        "scene_validate",
+        "manage_scene",
+        "scene",
+        "Validate Scenes",
+        "validate",
+        "auto_repair max_objects max_milliseconds continuation",
     ),
     _feature(
         "scene_reference_diagnostics",
