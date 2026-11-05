@@ -24,6 +24,7 @@ from services.reference_graph.store import (
     RevisionConflict,
     _hash,
     _json,
+    check_graph_work,
 )
 
 
@@ -991,35 +992,50 @@ class GraphWorkspace:
         connection.execute("DELETE FROM graph_issues WHERE owner=?", (owner,))
         connection.execute("DELETE FROM graph_dependencies WHERE owner=?", (owner,))
 
-    def _remove_assets(self, connection, owners: list[str]) -> None:
-        if not owners:
-            return
+    def _remove_assets(self, connection, owners: Callable[[], Iterable[str]]) -> bool:
+        """Reiterate bounded identity pages without retaining the full removal set."""
+        if next(iter(owners()), None) is None:
+            return False
         self._catalog_changed(
             connection,
             (
                 lookup
-                for owner in owners
+                for owner in owners()
                 for lookup in Catalog.changed_lookups(
                     self._prior_asset(connection, owner[6:]), None
                 )
             ),
-            (owner[6:] for owner in owners),
+            (owner[6:] for owner in owners()),
         )
-        self._invalidate(connection, owners)
-        for owner in owners:
+        self._invalidate(connection, owners())
+        for owner in owners():
+            check_graph_work()
             self._delete(connection, owner)
+        return True
 
     def finish_census(self, worker: str, seen: str, progress: dict) -> None:
         with self._write(worker) as connection:
             connection.execute("DELETE FROM graph_state WHERE key='change_page'")
-            removed = [
-                "asset:" + row[0]
-                for row in connection.execute(
-                    "SELECT guid FROM graph_assets WHERE seen<>? UNION SELECT guid FROM graph_asset_paths WHERE seen<>?",
-                    (seen, seen),
-                )
-            ]
-            self._remove_assets(connection, removed)
+
+            def owners():
+                after = ""
+                while True:
+                    check_graph_work()
+                    page = connection.execute(
+                        "SELECT guid FROM graph_assets WHERE seen<>? AND guid>? "
+                        "UNION SELECT guid FROM graph_asset_paths WHERE seen<>? AND guid>? "
+                        "ORDER BY guid LIMIT 256",
+                        (seen, after, seen, after),
+                    ).fetchall()
+                    if not page:
+                        return
+                    for row in page:
+                        check_graph_work()
+                        yield "asset:" + row[0]
+                    after = page[-1][0]
+
+            removed = self._remove_assets(connection, owners)
+            check_graph_work()
             connection.execute("DELETE FROM graph_assets WHERE seen<>?", (seen,))
             connection.execute("DELETE FROM graph_asset_paths WHERE seen<>?", (seen,))
             connection.execute(
@@ -1027,11 +1043,12 @@ class GraphWorkspace:
             )
             if removed:
                 self.store._bump(connection)
+            check_graph_work()
             self._set(connection, "progress", progress)
 
     def _remove_guids(self, connection, rows) -> None:
         if rows:
-            self._remove_assets(connection, ["asset:" + row[0] for row in rows])
+            self._remove_assets(connection, lambda: ("asset:" + row[0] for row in rows))
             for table in ("graph_assets", "graph_asset_paths", "graph_blocked_keys"):
                 connection.executemany("DELETE FROM " + table + " WHERE guid=?", rows)
             self.store._bump(connection)
@@ -1342,7 +1359,7 @@ class GraphWorkspace:
         connection.execute("CREATE TEMP TABLE IF NOT EXISTS graph_changed(id TEXT PRIMARY KEY)")
         connection.execute("DELETE FROM graph_changed")
         connection.executemany(
-            "INSERT OR IGNORE INTO graph_changed VALUES (?)", [(owner,) for owner in owners]
+            "INSERT OR IGNORE INTO graph_changed VALUES (?)", ((owner,) for owner in owners)
         )
         if connection.execute(
             "UPDATE observations SET generation=generation+1,state='pending',error=NULL WHERE provider='code' AND state<>'deleted' AND owner IN (WITH RECURSIVE affected(id) AS (SELECT id FROM graph_changed UNION SELECT d.owner FROM graph_dependencies d JOIN affected a ON d.dependency=a.id) SELECT id FROM affected)"

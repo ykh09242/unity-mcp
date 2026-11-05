@@ -645,7 +645,11 @@ class Reconciler:
             if following is None:
                 finished = {**progress, "census": None, "initialized": True, "phase": "changes"}
                 await drained_thread(
-                    self.workspace.finish_census, self.worker, census["seen"], finished
+                    self.workspace.finish_census,
+                    self.worker,
+                    census["seen"],
+                    finished,
+                    _cancel_event=self.stopped,
                 )
                 self.progress = finished
                 return
