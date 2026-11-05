@@ -211,10 +211,21 @@ class CatalogSubscriptions:
         try:
             yield
         finally:
+            from services.reference_graph.reconcile import drained_task
+
             with anyio.CancelScope(shield=True):
-                await self.close()
-                self._worker.cancel()
-                await asyncio.gather(self._worker, return_exceptions=True)
+                await drained_task(asyncio.create_task(self._shutdown(), context=Context()))
+
+    async def _shutdown(self) -> None:
+        try:
+            await self.close()
+        finally:
+            worker = self._worker
+            try:
+                if worker is not None:
+                    worker.cancel()
+                    await asyncio.gather(worker, return_exceptions=True)
+            finally:
                 self._worker = None
 
     async def discover(self, ctx: ServerRequestContext, params: RequestParams) -> DiscoverResult:
@@ -422,15 +433,17 @@ class CatalogSubscriptions:
         self._resource_dirty.clear()
         self._resource_stamps.clear()
         self._wake.set()
-        self.handler.close()
-        with anyio.move_on_after(grace_seconds):
-            while self._leases:
-                await self._changed.wait()
-        for lease in tuple(self._leases.values()):
-            lease.cancel.cancel()
-        # Give cooperative handlers a cleanup opportunity, without claiming that
-        # a noncooperative Python task can be forcibly terminated.
-        await anyio.lowlevel.checkpoint()
+        try:
+            self.handler.close()
+            with anyio.move_on_after(grace_seconds):
+                while self._leases:
+                    await self._changed.wait()
+        finally:
+            for lease in tuple(self._leases.values()):
+                lease.cancel.cancel()
+            # Give cooperative handlers a cleanup opportunity, without claiming that
+            # a noncooperative Python task can be forcibly terminated.
+            await anyio.lowlevel.checkpoint()
 
 
 def install_catalog_subscriptions(server: FastMCP, *, remote_hosted: bool) -> CatalogSubscriptions:

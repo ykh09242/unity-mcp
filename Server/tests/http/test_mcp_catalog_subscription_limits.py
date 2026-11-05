@@ -2,6 +2,7 @@
 
 from tests.timing import watchdog_timeout
 
+import asyncio
 import json
 import secrets
 import time
@@ -786,6 +787,98 @@ async def test_noncooperative_transport_keeps_charge_across_runtime_retirement(h
             stream.resume.set()
             await wait(stream.done)
         assert pool.active_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("already_cancelled", [False, True])
+async def test_native_cancellation_drains_shutdown_with_stalled_ack(
+    hosted_catalog, monkeypatch, already_cancelled
+):
+    app, runtime = hosted_catalog
+    pool = SubscriptionAdmission(total=1, principal=1, project=1)
+    runtime.admission = pool
+    entered = asyncio.Event()
+    stop = asyncio.Event()
+    original_close = runtime.close
+
+    async def short_close():
+        await original_close(grace_seconds=0.1)
+
+    monkeypatch.setattr(runtime, "close", short_close)
+
+    async def serve_lifespan():
+        async with app.router.lifespan_context(app):
+            await register_scopes()
+            entered.set()
+            await stop.wait()
+
+    owner = asyncio.create_task(serve_lifespan())
+    stream = ListenStream(app, "shutdown-ack", stall_ack=True)
+    listener = None
+    try:
+        await entered.wait()
+        listener = asyncio.create_task(stream.run())
+        await wait(stream.acknowledged)
+        if already_cancelled:
+            owner.cancel()
+        else:
+            stop.set()
+        while not runtime._closed:
+            await asyncio.sleep(0)
+        assert pool.active_count == 1
+        owner.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await owner
+        await wait(stream.done)
+        assert not runtime._leases
+        assert pool.active_count == 0
+        assert runtime._worker is None
+    finally:
+        stream.resume.set()
+        stream.disconnect.set()
+        if listener is not None:
+            await asyncio.gather(listener, return_exceptions=True)
+        if not owner.done():
+            owner.cancel()
+        await asyncio.gather(owner, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_joins_worker_when_close_fails(hosted_catalog, monkeypatch):
+    _, runtime = hosted_catalog
+
+    async def failed_close():
+        raise RuntimeError("close failed")
+
+    monkeypatch.setattr(runtime, "close", failed_close)
+    with pytest.raises(RuntimeError, match="close failed"):
+        async with runtime.lifespan():
+            worker = runtime._worker
+            assert worker is not None
+    assert worker.done()
+    assert runtime._worker is None
+
+
+@pytest.mark.asyncio
+async def test_close_requests_lease_cancellation_when_handler_close_fails(
+    hosted_catalog, monkeypatch
+):
+    from transport.catalog_subscriptions import _Lease
+
+    _, runtime = hosted_catalog
+    lease = _Lease()
+    token = object()
+
+    def failed_close():
+        raise RuntimeError("handler close failed")
+
+    monkeypatch.setattr(runtime.handler, "close", failed_close)
+    with pytest.raises(RuntimeError, match="handler close failed"):
+        async with runtime.lifespan():
+            runtime._leases[token] = lease
+    assert lease.cancel.cancel_called
+    assert runtime._worker is None
+    runtime._leases.pop(token)
 
 
 @pytest.mark.asyncio
