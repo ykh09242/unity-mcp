@@ -4,7 +4,7 @@ import importlib
 import json
 from unittest.mock import AsyncMock
 
-from fastmcp import Client, Context, FastMCP
+from fastmcp import Client, FastMCP
 from fastmcp.tools import ToolResult
 from mcp_types import CallToolResult, TextContent
 import pytest
@@ -157,14 +157,21 @@ async def test_custom_failure_uses_known_response_without_parsing_text(
         ),
     )
 
-    def build_handler(_self, _definition):
-        async def handler(ctx: Context) -> MCPResponse:
-            return service._normalize_response(FAILURE)
-
-        return handler
-
-    # Replace only external project routing; descriptor conversion and SDK run stay real.
-    monkeypatch.setattr(CustomToolService, "_build_global_tool_handler", build_handler)
+    # Keep the real generated handler, including rich payload/context separation.
+    # Replace external project routing and Unity I/O, so normalization, descriptor
+    # conversion and both SDK output modes retain their actual contracts.
+    custom = importlib.import_module("services.custom_tool_service")
+    monkeypatch.setattr(custom.config, "http_remote_hosted", False)
+    service._register_tool("fixture-project", definition)
+    monkeypatch.setattr(
+        custom, "get_unity_instance_from_context", AsyncMock(return_value="Fixture@hash")
+    )
+    monkeypatch.setattr(
+        custom, "resolve_project_id_for_unity_instance", lambda _: "fixture-project"
+    )
+    monkeypatch.setattr(custom, "get_user_id_from_context", AsyncMock(return_value=None))
+    dispatch = AsyncMock(return_value=FAILURE)
+    monkeypatch.setattr(custom, "send_with_unity_instance", dispatch)
     server.add_tool(service._prepare_global_tool(definition))
     # When a client calls this failure-producing custom tool once.
     async with Client(server, mode=mode, cache=False) as client:
@@ -173,6 +180,8 @@ async def test_custom_failure_uses_known_response_without_parsing_text(
     assert result.is_error is True
     content = json.loads(result.content[0].text)
     assert content["code"] == "fixture_refused"
+    dispatch.assert_awaited_once()
+    assert dispatch.await_args.args[3] == {}
 
 
 def test_absent_code_preserves_legacy_wire_shape():

@@ -385,6 +385,10 @@ async def test_hosted_catalog_wire_commits_route_and_relist_across_generations(
                     assert "error" not in result, result
                     resource = json.loads(result["result"]["contents"][0]["text"])
                     assert resource["success"] is True, resource
+                    assert resource["data"]["tool_count"] == len(resource["data"]["tools"])
+                    assert {"manage_scene", "read_console"}.isdisjoint(
+                        tool["name"] for tool in resource["data"]["tools"]
+                    )
                     return {tool["name"]: tool for tool in resource["data"]["tools"]}
 
                 async def settled_counts(expected):
@@ -454,7 +458,10 @@ async def test_hosted_catalog_wire_commits_route_and_relist_across_generations(
                     await wait(streams[0].changed)
                     await settled_counts([expected, 0, 0])
                     found = await descriptors()
-                    assert set(found) == {row["name"] for row in rows}
+                    assert set(found) == {row["name"] for row in rows} & {
+                        "tenant_live",
+                        "removed_tool",
+                    }
                     inventory = await listing()
                     assert {"manage_scene", "read_console"} & inventory.keys() == {
                         row["name"]

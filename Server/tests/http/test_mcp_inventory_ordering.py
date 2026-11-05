@@ -296,6 +296,7 @@ async def test_committed_catalog_order_and_scope_remain_current_between_credenti
 
                         decoded = json.loads(result["contents"][0]["text"])
                         assert decoded["success"] is True, decoded
+                        assert decoded["data"]["tool_count"] == len(decoded["data"]["tools"])
                         return {tool["name"]: tool for tool in decoded["data"]["tools"]}
                     names = [tool["name"] for tool in result["tools"]]
                     assert names == sorted(names)
@@ -331,7 +332,7 @@ async def test_committed_catalog_order_and_scope_remain_current_between_credenti
                     if rows:
                         assert "action" in listing["manage_scene"]["properties"]
                     descriptors = await current(resource=True)
-                    assert set(descriptors) == {row["name"] for row in rows}
+                    assert set(descriptors) == {row["name"] for row in rows} & {"alice_only"}
                     if rows:
                         assert descriptors["alice_only"]["parameters"][0]["name"] == (
                             "old" if index == 1 else "new"
@@ -339,13 +340,9 @@ async def test_committed_catalog_order_and_scope_remain_current_between_credenti
                     # Then: interleaved credentials/instance metadata retain their own inventory/schema.
                     assert await current(selector="Other@other") == before_other
                     assert await current("bob-key") == before_bob
-                    assert set(await current("bob-key", resource=True)) == {
-                        "bob_only",
-                        "read_console",
-                    }
+                    assert set(await current("bob-key", resource=True)) == {"bob_only"}
                     assert set(await current(selector="Other@other", resource=True)) == {
-                        "other_only",
-                        "run_tests",
+                        "other_only"
                     }
 
                 denied = ListenStream(app, "inventory-foreign", instance="Foreign@foreign")
@@ -361,7 +358,8 @@ async def test_committed_catalog_order_and_scope_remain_current_between_credenti
                 watch.changed = anyio.Event()
                 await replacement.catalog([{"name": "read_console"}])
                 await wait(watch.changed)
-                assert set(await current(resource=True)) == {"read_console"}
+                assert await current(resource=True) == {}
+                assert "read_console" in await current()
                 assert await current("bob-key") == before_bob
                 await replacement.close()
 
