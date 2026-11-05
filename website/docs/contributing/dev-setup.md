@@ -2,7 +2,7 @@
 
 [简体中文](https://github.com/ykh09242/unity-mcp/blob/beta/docs/development/README-DEV-zh.md)
 
-Branch from `beta` and open fork PRs against `beta`. It is a moving development branch, distinct from stable `1.0.0`. Do not change release tags, versions or the immutable server pin as a side effect of unrelated work; see [Migration](../getting-started/migrate.md#versions-and-updates) and [Releasing](./releases.md).
+Branch from `beta` and open fork PRs against `beta`. It is a moving development branch, distinct from the stable release selected in [Install And Connect](../getting-started/install.md). Do not change release tags, versions or the immutable server pin as a side effect of unrelated work; see [Migration](../getting-started/migrate.md#versions-and-updates) and [Releasing](./releases.md).
 
 ## Choose the smallest environment
 

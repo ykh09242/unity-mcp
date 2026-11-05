@@ -59,7 +59,9 @@ uv run --locked --extra dev pytest tests/test_http_security.py -q -W error
 The child uses four workers with complete files kept together. Each worker reuses
 prepared tool-schema templates, but each server receives deep copies and fresh
 session/authentication state. Schema changes invalidate the prepared entry. The
-wrapper's 180-second deadline and individual request deadlines remain unchanged.
+wrapper uses a 900-second suite watchdog, adjusted by the shared test-timeout
+multiplier in `Server/tests/timing.py`. This watchdog is separate from the
+individual request deadlines asserted by the tests.
 CI also runs the server and tooling suites on four workers and starts measured
 long-running files early. Keep the two suites in separate pytest processes because
 both contain a package named `tests`.
@@ -67,7 +69,7 @@ both contain a package named `tests`.
 From the repository root, using that prepared environment:
 
 ```bash
-uv run --directory Server --locked --extra dev pytest ../tools/tests/test_update_versions.py -v -W error
+uv run --directory Server --locked --extra dev pytest ../tools/tests/test_update_versions.py -v -W error -o asyncio_default_fixture_loop_scope=function
 ```
 
 Pylint checks all server sources and tests, repository tools and their tests, `mcp_source.py`, and `.github/scripts`. The shared policy in `Server/pyproject.toml` enables all error/fatal diagnostics plus selected correctness warnings, including mutable defaults, loop closures, unreachable code and invalid format strings. Formatting, naming and complexity rules are outside this check. Confirmed framework/platform inference limitations and intentional test fixtures have local, explained suppressions; do not globally disable error categories to make a change pass.
