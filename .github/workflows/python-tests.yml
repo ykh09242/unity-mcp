@@ -67,7 +67,8 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/beta' && github.repository != 'CoplayDev/unity-mcp'
         shell: bash
         run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-      - name: Verify checked candidate
+      - name: Record checked candidate
+        shell: bash
         env:
           CANDIDATE_REF: ${{ inputs.ref || github.sha }}
         run: |
