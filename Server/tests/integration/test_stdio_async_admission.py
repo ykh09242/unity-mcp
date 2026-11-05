@@ -12,6 +12,7 @@ import struct
 import threading
 import time
 import weakref
+from types import SimpleNamespace
 
 import pytest
 
@@ -294,6 +295,62 @@ async def test_cancelled_payload_sent_call_retains_unknown_outcome_without_repla
     assert outcomes[0].data["reason"] == "outcome_unknown"
     assert outcomes[0].hint == "inspect_state_before_retry"
     assert main.closed
+
+
+@pytest.mark.asyncio
+async def test_cancelled_after_progress_prelude_discards_pending_peer_association(
+    environment, monkeypatch
+):
+    pool, sockets = environment
+    main = sockets["Main@deadbeef"]
+    conn = pool._connections["Main@deadbeef"]
+    conn.authenticated_session = StdioAuthenticatedSession(
+        "transport", "session", frozenset({"command_progress_v1"})
+    )
+    conn.session_generation = conn.authenticated_session.session_generation
+    monkeypatch.setattr(uc, "get_unity_connection", lambda _: conn)
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    original_send, original_write = uc._send_command_with_retry, main.sendall
+    writes = []
+
+    def send(*args, **kwargs):
+        try:
+            return original_send(*args, **kwargs)
+        finally:
+            finished.set()
+
+    def write(payload):
+        writes.append(payload)
+        if len(payload) != 8 and json.loads(payload).get("type") == "command_progress_begin":
+            main.header_pending = True
+            entered.set()
+            assert release.wait(watchdog_timeout())
+            return
+        original_write(payload)
+
+    monkeypatch.setattr(uc, "_send_command_with_retry", send)
+    monkeypatch.setattr(main, "sendall", write)
+    sink = SimpleNamespace(bind=lambda _: True, close=lambda: None)
+    task = asyncio.create_task(
+        uc.async_send_command_with_retry(
+            "batch_execute",
+            {"commands": [{"tool": "manage_gameobject", "params": {"action": "delete"}}]},
+            instance_id=conn.instance_id,
+            _progress=sink,
+        )
+    )
+    try:
+        await wait_event(entered)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        release.set()
+        await wait_event(finished)
+        await asyncio.gather(task, return_exceptions=True)
+    assert len(writes) == 2, "Only the association prelude may have reached the peer"
+    assert main.tags == []
+    assert main.closed and conn.sock is None
 
 
 @pytest.mark.asyncio

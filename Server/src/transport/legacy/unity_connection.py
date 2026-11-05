@@ -1072,7 +1072,6 @@ class UnityConnection:
                             check_cancelled()
                             self.sock.sendall(prelude)
                             self._check_deadline(deadline)
-                            frame_started = False
                         check_cancelled()
                         if receipt is not None:
                             receipt.dispatch_started(
@@ -1198,8 +1197,8 @@ class UnityConnection:
                         raise Exception(err)
                     return resp.get("result", {})
                 except CommandResumeAbandoned:
-                    # A header (including a progress association) may already be
-                    # on the wire. Never reuse a socket with an incomplete frame.
+                    # An incomplete frame or a complete progress prelude may
+                    # still bind the peer's next read to this abandoned request.
                     if frame_started:
                         self.disconnect()
                     raise
