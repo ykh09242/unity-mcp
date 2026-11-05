@@ -223,7 +223,9 @@ def configure(monkeypatch, port, reconnect_failures=0):
 
     monkeypatch.setattr(config, "http_remote_hosted", False)
     monkeypatch.setattr(config, "transport_mode", "stdio")
-    monkeypatch.setattr(uc, "_unity_connection_pool", None)
+    pool = uc.UnityConnectionPool()
+    pool._connections[connection.instance_id] = connection
+    monkeypatch.setattr(uc, "_unity_connection_pool", pool)
     monkeypatch.setattr(uc, "get_unity_connection", select)
     monkeypatch.setattr(uc, "read_status_file", lambda *_: None)
     return connection

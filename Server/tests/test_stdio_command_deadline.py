@@ -235,10 +235,14 @@ if case == "heartbeat_limit":
     )
 
 
-def test_retry_receive_limit_does_not_shorten_writes(tmp_path):
+@pytest.mark.parametrize("failure", ["connect", "header_write"])
+def test_retry_preserves_response_policy_and_write_budget(failure, tmp_path):
     _run(
-        """
-# Given the first header write fails before payload dispatch; retry writes exceed the receive limit.
+        "failure = "
+        + repr(failure)
+        + "\n"
+        + """
+# Given a pre-dispatch failure, retry writes and response both take over one second.
 config.connection_timeout = 5.0
 class PreDispatchSocket(ClockedSocket):
     def sendall(self, data):
@@ -246,21 +250,73 @@ class PreDispatchSocket(ClockedSocket):
         raise ConnectionResetError("controlled reset before payload dispatch")
 first = PreDispatchSocket(clock, [], timeout=5.0)
 conn.sock = first
-retry = ClockedSocket(clock, [(0.0, b"WELCOME UNITY-MCP 1 FRAMING=1\\n"), (0.0, header), (0.0, payload)], [1.2, 0.0], timeout=5.0)
-module.socket.create_connection = lambda endpoint, timeout: retry
+retry = ClockedSocket(clock, [(0.0, b"WELCOME UNITY-MCP 1 FRAMING=1\\n"), (0.0, header), (1.2, payload)], [1.2, 0.0], timeout=5.0)
+connects = []
+def connect(endpoint, timeout):
+    connects.append(True)
+    if failure == "connect" and len(connects) == 1:
+        raise ConnectionRefusedError("controlled initial connection failure")
+    return retry
+if failure == "connect": conn.sock = None
+module.socket.create_connection = connect
 module.time.sleep = lambda seconds: clock.advance(seconds, None)
 module.random.uniform = lambda low, high: 1.0
 # When actual reconnect/backoff and framed send execute against one deadline.
 result = conn.send_command("fixture_query", {}, max_attempts=1, deadline=5.0)
-# Then only receive keeps its historical short retry limit.
+# Then response policy remains bounded by the remaining total command budget.
 assert result == {"ok": True} and clock.now < 5.0
 assert retry.timeout == 5.0 and not retry.closed
 expected_request = json.dumps({"type": "fixture_query", "params": {}, "server_info": RUNNING_SERVER.command_metadata()}).encode("utf-8")
-assert first.closed and first.send_attempts == [struct.pack(">Q", len(expected_request))]
+if failure == "header_write":
+    assert first.closed and first.send_attempts == [struct.pack(">Q", len(expected_request))]
+else: assert len(connects) == 2 and first.send_attempts == []
 assert retry.write_timeouts[0] > 1.2
-assert retry.read_timeouts[-2:] == [1.0, 1.0]
+assert retry.read_timeouts[-2:] == [3.55, 3.55]
 assert len(retry.send_attempts) == 2
 assert retry.send_attempts == [struct.pack(">Q", len(expected_request)), expected_request]
+""",
+        tmp_path,
+    )
+
+
+@pytest.mark.parametrize("max_retries,override,expected", [(0, None, 1), (1, None, 2), (0, 1, 2)])
+def test_configured_connection_retries_allow_zero(max_retries, override, expected, tmp_path):
+    _run(
+        f"""
+config.max_retries = {max_retries}
+config.retry_delay = 0.0
+attempts, waits = [], []
+conn.sock = None
+def connect(*args, **kwargs):
+    attempts.append(True)
+    return False
+conn.connect = connect
+module.time.sleep = waits.append
+try: conn.send_command("fixture_query", {{}}, max_attempts={override!r}, deadline=60.0)
+except ConnectionError: pass
+else: raise AssertionError("failed connection returned success")
+assert len(attempts) == {expected}, attempts
+assert len(waits) == {expected - 1}, waits
+""",
+        tmp_path,
+    )
+
+
+@pytest.mark.parametrize("delay", [0.0, 0.1, 0.8])
+def test_connection_retry_delay_drives_backoff(delay, tmp_path):
+    _run(
+        f"""
+config.max_retries = 1
+config.retry_delay = {delay}
+conn.sock = None
+conn.connect = lambda *args, **kwargs: False
+waits = []
+module.time.sleep = waits.append
+module.random.uniform = lambda low, high: 0.2
+try: conn.send_command("fixture_query", {{}}, deadline=60.0)
+except ConnectionError: pass
+else: raise AssertionError("failed connection returned success")
+assert waits == [{delay * 0.2!r}], waits
 """,
         tmp_path,
     )

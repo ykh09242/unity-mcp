@@ -105,6 +105,7 @@ class _ConnectionSelection:
         self.deadline = deadline
         self.cancelled = threading.Event()
         self._publication_lock = threading.Lock()
+        self.pool_epoch: tuple[UnityConnectionPool, int] | None = None
 
     def cancel(self) -> None:
         with self._publication_lock:
@@ -852,8 +853,8 @@ class UnityConnection:
             return MCPResponse(
                 success=False, error="MCP call received with no parameters (client placeholder?)"
             )
-        attempts = max(config.max_retries, 5) if max_attempts is None else max_attempts
-        base_backoff = max(0.5, config.retry_delay)
+        attempts = max(0, config.max_retries if max_attempts is None else max_attempts)
+        base_backoff = max(0.0, config.retry_delay)
         blender_timeout = (
             blender_command_timeout(params) if command_type == "blender_bridge" else None
         )
@@ -1101,9 +1102,7 @@ class UnityConnection:
                         )
 
                         recv_timeout = (
-                            blender_timeout
-                            if blender_timeout is not None
-                            else (1.0 if attempt > 0 else restore_timeout)
+                            blender_timeout if blender_timeout is not None else restore_timeout
                         )
                         if requested_timeout is not None and blender_timeout is None:
                             recv_timeout = max(
@@ -1300,7 +1299,7 @@ class UnityConnection:
                 else:
                     cap = 3.0
 
-                sleep_s = min(cap, jitter * (2**attempt))
+                sleep_s = min(cap, jitter * backoff)
                 sleep_s = self._cap_to_deadline(sleep_s, deadline, floor=0.0)
                 time.sleep(sleep_s)
                 continue
@@ -1328,6 +1327,9 @@ class UnityConnectionPool:
         self._scan_lock = threading.Lock()
         self._selection_owners: dict[str, threading.Event] = {}
         self._selection_epoch = 0
+        self._async_selection_groups = weakref.WeakKeyDictionary()
+        self._async_selection_lock = threading.Lock()
+        self._async_selection_owners: set[_SharedConnectionSelection] = set()
         self._default_instance_id: str | None = None
         self._last_used: dict[str, float] = {}
         self._missing_since: dict[str, float] = {}
@@ -1617,6 +1619,8 @@ class UnityConnectionPool:
         selection.check()
         with selection.lock(self._pool_lock):
             epoch = self._selection_epoch
+            if selection.pool_epoch is not None and selection.pool_epoch != (self, epoch):
+                raise ConnectionError("Unity connection pool generation was retired")
             self._check_selection_epoch(epoch)
         target = self.resolve_instance(instance_identifier)
         selection.check()
@@ -1731,17 +1735,19 @@ class UnityConnectionPool:
         """Own reconnect metadata in the selected pool's event-loop lifetime."""
         import asyncio  # noqa: ANYIO_OK -- transport task ownership uses the existing loop.
 
-        if self._retired or self._connections.get(connection.instance_id) is not connection:
-            return False
-        context = Context()
-        context.run(_resync_pool.set, self)
-        task = asyncio.create_task(
-            _resync_tools_after_reconnect(connection.instance_id), context=context
-        )
-        self._resync_tasks.add(task)
+        with self._async_selection_lock:
+            if self._retired or self._connections.get(connection.instance_id) is not connection:
+                return False
+            context = Context()
+            context.run(_resync_pool.set, self)
+            task = asyncio.create_task(
+                _resync_tools_after_reconnect(connection.instance_id), context=context
+            )
+            self._resync_tasks.add(task)
 
         def completed(future):
-            self._resync_tasks.discard(future)
+            with self._async_selection_lock:
+                self._resync_tasks.discard(future)
             _consume_async_exception(future)
 
         task.add_done_callback(completed)
@@ -1752,28 +1758,43 @@ class UnityConnectionPool:
         import asyncio  # noqa: ANYIO_OK -- retire the existing asyncio transport generation.
         from services.reference_graph.reconcile import drained_task
 
-        self._retired = True
+        with self._async_selection_lock:
+            self._retired = True
+            if self._close_task is None:
+                self._close_task = asyncio.create_task(self._close_generation(), context=Context())
+            close_task = self._close_task
         for connection in tuple(self._connections.values()):
             # Never wait on a threading lock in the loop. Final disposal seals
             # any publication that passed its final check before retirement.
             connection._retired = True
-        if self._close_task is None:
-            self._close_task = asyncio.create_task(self._close_generation(), context=Context())
-        await drained_task(self._close_task)
+        if close_task.get_loop() is asyncio.get_running_loop():
+            await drained_task(close_task)
+        else:
+            bridge = asyncio.create_task(_await_owned_future(close_task), context=Context())
+            await drained_task(bridge)
 
     async def _close_generation(self) -> None:
         """Keep one cleanup owner even when close waiters cancel or overlap."""
         import asyncio  # noqa: ANYIO_OK -- drain existing transport tasks and executor futures.
 
         global _unity_connection_pool
-        tasks = tuple(self._resync_tasks)
+        with self._async_selection_lock:
+            tasks = tuple(self._resync_tasks)
         for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+            _cancel_owned_future(task)
+        await asyncio.gather(*(_await_owned_future(task) for task in tasks), return_exceptions=True)
+        with self._async_selection_lock:
+            selections = tuple(self._async_selection_owners)
+        for selection in selections:
+            selection.abandon()
+        await asyncio.gather(
+            *(_await_owned_future(selection.task) for selection in selections),
+            return_exceptions=True,
+        )
         # A cancelled task may have left shielded executor I/O running. The
         # future remains owned until actual completion, including queued work.
         await asyncio.gather(
-            *(asyncio.shield(worker) for worker in tuple(self._resync_workers)),
+            *(_await_owned_future(worker) for worker in tuple(self._resync_workers)),
             return_exceptions=True,
         )
         await asyncio.to_thread(self.disconnect_all)
@@ -2336,31 +2357,199 @@ def _consume_async_exception(future: "asyncio.Future") -> None:
         future.exception()
 
 
+def _cancel_owned_future(future: "asyncio.Future") -> None:
+    """Request cancellation only on the event loop that owns the task/future."""
+    if not future.done():
+        future.get_loop().call_soon_threadsafe(future.cancel)
+
+
+async def _await_owned_future(future: "asyncio.Future"):
+    """Drain a foreign loop's actual owner through a thread-safe local proxy."""
+    import asyncio  # noqa: ANYIO_OK -- explicit bridge between existing transport loops.
+
+    async def settle():
+        return await asyncio.shield(future)
+
+    owner_loop = future.get_loop()
+    if owner_loop is asyncio.get_running_loop():
+        return await settle()
+    if future.done():
+        return future.result()
+    coroutine = settle()
+    try:
+        completion = asyncio.run_coroutine_threadsafe(coroutine, owner_loop)
+    except BaseException:
+        coroutine.close()
+        raise
+    return await asyncio.shield(asyncio.wrap_future(completion))
+
+
+class _AsyncSelectionGroup:
+    """Coalesce selectors before occupying a bounded number of executor slots."""
+
+    MAX_WORKERS = 4
+
+    def __init__(self):
+        import asyncio  # noqa: ANYIO_OK -- selection belongs to the existing transport loop.
+
+        self.gate = asyncio.Semaphore(self.MAX_WORKERS)
+        self.owners: dict[tuple[int, str | None], _SharedConnectionSelection] = {}
+
+
+class _SharedConnectionSelection:
+    """Keep one physical selection alive independently of its individual waiters."""
+
+    def __init__(self, group, pool, getter, key, deadline, instance_id):
+        import asyncio  # noqa: ANYIO_OK -- shield actual executor ownership through completion.
+        from services.registry.operation_context import capture_operation_worker
+
+        self.group = group
+        self.pool = pool
+        self.key = key
+        self.instance_id = instance_id
+        self.waiters = 0
+        self.worker = None
+        # Even calls without an explicit command budget have a finite physical
+        # selection lifetime. Joining callers cannot extend this owner's ceiling.
+        budget = max(0.05, config.command_total_timeout or config.connection_timeout)
+        self.ceiling = time.monotonic() + budget
+        self.selection = _ConnectionSelection(
+            min(deadline, self.ceiling) if deadline is not None else self.ceiling
+        )
+        self.selection.pool_epoch = (pool, key[0])
+        self.started_deadline = self.selection.deadline
+        context = Context()
+        operation_pin = capture_operation_worker(context)
+        receipt = execution_owner.get()
+        receipt_pin = None
+        coroutine = self.run(getter)
+        try:
+            if receipt is not None:
+                receipt_pin = receipt.acquire_worker()
+                context.run(execution_owner.set, receipt)
+            origin = queued_origin.get()
+            if origin is not None:
+                context.run(queued_origin.set, origin)
+            with pool._async_selection_lock:
+                pool._check_selection_epoch(key[0])
+                self.task = asyncio.create_task(coroutine, context=context)
+                pool._async_selection_owners.add(self)
+        except BaseException:
+            coroutine.close()
+            if operation_pin is not None:
+                operation_pin.close()
+            if receipt_pin is not None:
+                receipt_pin.close()
+            raise
+        if operation_pin is not None:
+            self.task.add_done_callback(lambda _: operation_pin.close())
+        if receipt_pin is not None:
+            self.task.add_done_callback(lambda _: receipt_pin.close())
+        self.task.add_done_callback(self.completed)
+
+    def join(self, deadline):
+        """Extend only physical selection; the caller still awaits its own deadline."""
+        self.waiters += 1
+        self.selection.deadline = max(
+            self.selection.deadline,
+            min(deadline, self.ceiling) if deadline is not None else self.ceiling,
+        )
+
+    def abandon(self):
+        """Signal running I/O, or cancel admission that has no executor owner yet."""
+        self.selection.cancel()
+        if self.worker is None:
+            # No physical work exists yet. Cancelling this loop-only admission
+            # removes its semaphore waiter without retaining an executor job.
+            _cancel_owned_future(self.task)
+
+    async def run(self, getter):
+        """Release submission capacity only after the actual blocking worker exits."""
+        import asyncio  # noqa: ANYIO_OK -- retain the actual worker's shielded lifetime.
+
+        async with self.group.gate:
+            self.selection.check()
+            self.pool._check_selection_epoch(self.key[0])
+            self.started_deadline = self.selection.deadline
+            self.worker = submit_owned_executor(
+                asyncio.get_running_loop(), None, self.selection.run, getter, self.instance_id
+            )
+            self.pool._resync_workers.add(self.worker)
+            self.worker.add_done_callback(self.pool._resync_workers.discard)
+            self.worker.add_done_callback(_consume_async_exception)
+            return await asyncio.shield(self.worker)
+
+    def completed(self, future):
+        """Retire only this completed owner, preserving any replacement generation."""
+        if self.group.owners.get(self.key) is self:
+            del self.group.owners[self.key]
+        with self.pool._async_selection_lock:
+            self.pool._async_selection_owners.discard(self)
+        _consume_async_exception(future)
+
+
 async def _select_connection(
     instance_id: str | None, deadline: float | None, owner_pool: UnityConnectionPool | None
 ) -> UnityConnection:
-    """Keep cancelled selectors owned until their actual blocking worker settles."""
+    """Share physical target selection while each waiter keeps its own deadline."""
     import asyncio  # noqa: ANYIO_OK -- preserve existing shielded executor ownership.
 
-    selection = _ConnectionSelection(deadline)
-    future = submit_owned_executor(
-        asyncio.get_running_loop(),
-        None,
-        selection.run,
-        owner_pool.get_connection if owner_pool is not None else get_unity_connection,
-        instance_id,
-    )
-    if owner_pool is not None:
-        owner_pool._resync_workers.add(future)
-        future.add_done_callback(owner_pool._resync_workers.discard)
-    future.add_done_callback(_consume_async_exception)
-    try:
-        async with asyncio.timeout_at(deadline):
-            return await asyncio.shield(future)
-    finally:
-        # A queued or running worker must observe abandonment itself. Cancelling
-        # its Future would lose the real ownership/drain boundary.
-        selection.cancel()
+    pool = owner_pool if owner_pool is not None else get_unity_connection_pool()
+    getter = owner_pool.get_connection if owner_pool is not None else get_unity_connection
+    loop = asyncio.get_running_loop()
+    with pool._async_selection_lock:
+        reference = pool._async_selection_groups.get(loop)
+        group = reference() if reference is not None else None
+        if group is None:
+            group = _AsyncSelectionGroup()
+            pool._async_selection_groups[loop] = weakref.ref(group)
+    async with asyncio.timeout_at(deadline):
+        while True:
+            pool._check_selection_epoch(pool._selection_epoch)
+            # Resolution already strips surrounding whitespace. Share only that
+            # guaranteed equivalence; cached aliases cannot prove uniqueness or
+            # share the fresh validation of a different submitted selector.
+            selector = instance_id.strip() if instance_id is not None else None
+            key = (pool._selection_epoch, selector)
+            owner = group.owners.get(key)
+            if owner is not None and owner.selection.cancelled.is_set():
+                # A running abandoned owner retains its slot until actual exit;
+                # a fresh caller must not accumulate replacement executor jobs.
+                if owner.task.done():
+                    owner.completed(owner.task)
+                    continue
+                try:
+                    await asyncio.shield(owner.task)
+                except (ConnectionError, TimeoutError):
+                    pass
+                except asyncio.CancelledError:
+                    if asyncio.current_task().cancelling() or not owner.task.cancelled():
+                        raise
+                continue
+            if owner is None:
+                if len(group.owners) >= pool.MAX_CONNECTIONS:
+                    raise ConnectionError("Unity connection selection capacity reached")
+                owner = _SharedConnectionSelection(group, pool, getter, key, deadline, instance_id)
+                group.owners[key] = owner
+            owner.join(deadline)
+            try:
+                return await asyncio.shield(owner.task)
+            except (ConnectionError, TimeoutError):
+                # A connect already in progress may have captured an earlier
+                # waiter's deadline before this caller joined. Retry selection
+                # after that worker settles, under this caller's unchanged budget.
+                caller_ceiling = (
+                    min(deadline, owner.ceiling) if deadline is not None else owner.ceiling
+                )
+                if not (
+                    owner.started_deadline < caller_ceiling
+                    and time.monotonic() >= owner.started_deadline
+                ):
+                    raise
+            finally:
+                owner.waiters -= 1
+                if owner.waiters == 0 and not owner.task.done():
+                    owner.abandon()
 
 
 async def async_send_command_with_retry(

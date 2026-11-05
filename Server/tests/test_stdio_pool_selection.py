@@ -3,7 +3,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from threading import Event
+from threading import Event, Thread
 import time
 from unittest.mock import Mock
 
@@ -521,3 +521,415 @@ def test_discovery_ttl_ignores_backward_wall_clock(monkeypatch, targeted):
     monotonic[0] += 1
     lookup()
     assert discover.call_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selector", ["Main@deadbeef", "Main", "deadbeef"])
+async def test_duplicate_async_selection_keeps_executor_available_for_other_target(
+    selection_pool, monkeypatch, selector
+):
+    pool, targets = selection_pool
+    pool._known_instances = targets.copy()
+    monkeypatch.setattr(
+        pool,
+        "resolve_instance",
+        lambda identity: pool._resolve_instance_id(identity, list(targets.values())),
+    )
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), Event()
+    submissions = []
+    real_submit = uc.submit_owned_executor
+
+    def connect(connection, **kwargs):
+        if connection.instance_id == "Main@deadbeef":
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(watchdog_timeout(5))
+        connection.sock = Mock()
+        return True
+
+    monkeypatch.setattr(uc.UnityConnection, "connect", connect)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+
+        def submit(current_loop, _, function, *args):
+            submissions.append(args[-1])
+            return real_submit(current_loop, executor, function, *args)
+
+        monkeypatch.setattr(uc, "submit_owned_executor", submit)
+        requests = [
+            asyncio.create_task(
+                uc._select_connection("Main@deadbeef" if index == 0 else selector, None, pool)
+            )
+            for index in range(64)
+        ]
+        await asyncio.wait_for(entered.wait(), watchdog_timeout(5))
+        other = asyncio.create_task(uc._select_connection("Other@cafebabe", None, pool))
+        try:
+            selected = await asyncio.wait_for(asyncio.shield(other), watchdog_timeout(0.5))
+            assert selected.instance_id == "Other@cafebabe"
+            for request in requests[1:]:
+                request.cancel()
+            await asyncio.gather(*requests[1:], return_exceptions=True)
+            assert not requests[0].done(), "Cancelling waiters cancelled the shared owner"
+            expected = ["Main@deadbeef"]
+            if selector != "Main@deadbeef":
+                expected.append(selector)
+            assert submissions == [*expected, "Other@cafebabe"]
+        finally:
+            release.set()
+            await asyncio.gather(*requests, other, return_exceptions=True)
+    assert (await requests[0]).instance_id == "Main@deadbeef"
+
+
+@pytest.mark.asyncio
+async def test_whitespace_equivalent_exact_selectors_leave_worker_for_other_target(
+    selection_pool, monkeypatch
+):
+    pool, targets = selection_pool
+    monkeypatch.setattr(
+        pool,
+        "resolve_instance",
+        lambda identity: pool._resolve_instance_id(identity, list(targets.values())),
+    )
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), Event()
+    real_submit = uc.submit_owned_executor
+    submitted = []
+    selectors = [" Main@deadbeef", "Main@deadbeef", "Main@deadbeef ", " Main@deadbeef "]
+
+    def connect(connection, **kwargs):
+        if connection.instance_id == "Main@deadbeef":
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(watchdog_timeout(5))
+        connection.sock = Mock()
+        return True
+
+    monkeypatch.setattr(uc.UnityConnection, "connect", connect)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+
+        def submit(current_loop, _, function, *args):
+            submitted.append(args[-1])
+            return real_submit(current_loop, executor, function, *args)
+
+        monkeypatch.setattr(uc, "submit_owned_executor", submit)
+        requests = [
+            asyncio.create_task(uc._select_connection(selector, None, pool))
+            for selector in selectors
+        ]
+        await asyncio.wait_for(entered.wait(), watchdog_timeout(5))
+        other = asyncio.create_task(uc._select_connection("Other@cafebabe", None, pool))
+        try:
+            selected = await asyncio.wait_for(asyncio.shield(other), watchdog_timeout(0.5))
+            assert selected.instance_id == "Other@cafebabe"
+            assert submitted == [selectors[0], "Other@cafebabe"]
+        finally:
+            release.set()
+            await asyncio.gather(*requests, other, return_exceptions=True)
+    selected = await asyncio.gather(*requests)
+    assert all(connection is selected[0] for connection in selected)
+
+
+@pytest.mark.asyncio
+async def test_stale_cached_alias_cannot_share_exact_id_validation(selection_pool, monkeypatch):
+    pool, targets = selection_pool
+    exact = "Main@deadbeef"
+    pool._known_instances = {exact: targets[exact]}
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), Event()
+    checked = []
+
+    def resolve(identity):
+        checked.append(identity)
+        if identity == "Main":
+            # Fresh discovery now contains two Editors named Main, while the
+            # previous cached inventory named only the exact target below.
+            raise ConnectionError("Multiple Unity instances match 'Main'")
+        return targets[identity]
+
+    def connect(connection, **kwargs):
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(watchdog_timeout(5))
+        connection.sock = Mock()
+        return True
+
+    monkeypatch.setattr(pool, "resolve_instance", resolve)
+    monkeypatch.setattr(uc.UnityConnection, "connect", connect)
+    first = asyncio.create_task(uc._select_connection(exact, None, pool))
+    await asyncio.wait_for(entered.wait(), watchdog_timeout(5))
+    alias = asyncio.create_task(uc._select_connection("Main", None, pool))
+    await asyncio.sleep(0)
+    release.set()
+    assert (await first).instance_id == exact
+    with pytest.raises(ConnectionError, match="Multiple Unity instances"):
+        await alias
+    assert checked == [exact, "Main"]
+
+
+@pytest.mark.asyncio
+async def test_shared_selection_waiters_keep_individual_deadlines(selection_pool, monkeypatch):
+    pool, _ = selection_pool
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), Event()
+    calls = []
+
+    def connect(connection, **kwargs):
+        calls.append(connection)
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(watchdog_timeout(5))
+        uc._connection_selection.get().check()
+        connection.sock = Mock()
+        return True
+
+    monkeypatch.setattr(uc.UnityConnection, "connect", connect)
+    deadline = time.monotonic() + 0.15
+    first = asyncio.create_task(uc._select_connection("Main@deadbeef", deadline, pool))
+    await asyncio.wait_for(entered.wait(), watchdog_timeout(5))
+    following = asyncio.create_task(
+        uc._select_connection("Main@deadbeef", time.monotonic() + 5, pool)
+    )
+    try:
+        with pytest.raises(TimeoutError):
+            await first
+        assert not following.done()
+    finally:
+        release.set()
+    assert await following is calls[0]
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_first_selection_waiter_can_cancel_without_abandoning_following_waiter(
+    selection_pool, monkeypatch
+):
+    pool, _ = selection_pool
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), Event()
+    connected = []
+
+    def connect(connection, **kwargs):
+        connected.append(connection)
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(watchdog_timeout(5))
+        uc._connection_selection.get().check()
+        connection.sock = Mock()
+        return True
+
+    monkeypatch.setattr(uc.UnityConnection, "connect", connect)
+    first = asyncio.create_task(uc._select_connection("Main@deadbeef", None, pool))
+    await asyncio.wait_for(entered.wait(), watchdog_timeout(5))
+    following = asyncio.create_task(uc._select_connection("Main@deadbeef", None, pool))
+    await asyncio.sleep(0)
+    try:
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert not following.done()
+    finally:
+        release.set()
+    assert await following is connected[0]
+    assert len(connected) == 1
+
+
+@pytest.mark.asyncio
+async def test_longer_waiter_retries_expired_physical_connect_budget(selection_pool, monkeypatch):
+    pool, _ = selection_pool
+    loop = asyncio.get_running_loop()
+    entered = asyncio.Event()
+    deadlines = []
+
+    def connect(connection, **kwargs):
+        deadline = kwargs["deadline"]
+        deadlines.append(deadline)
+        if len(deadlines) == 1:
+            loop.call_soon_threadsafe(entered.set)
+            # A blocking connect/handshake already captured the first caller's
+            # deadline before the later waiter extended the shared selection.
+            Event().wait(max(0.0, deadline - time.monotonic()) + 0.02)
+            return False
+        connection.sock = Mock()
+        return True
+
+    monkeypatch.setattr(uc.UnityConnection, "connect", connect)
+    first = asyncio.create_task(
+        uc._select_connection("Main@deadbeef", time.monotonic() + 0.15, pool)
+    )
+    await asyncio.wait_for(entered.wait(), watchdog_timeout(5))
+    following = asyncio.create_task(
+        uc._select_connection("Main@deadbeef", time.monotonic() + 5, pool)
+    )
+    with pytest.raises(TimeoutError):
+        await first
+    selected = await following
+    assert selected.instance_id == "Main@deadbeef"
+    assert len(deadlines) == 2 and deadlines[1] > deadlines[0]
+
+
+@pytest.mark.asyncio
+async def test_selection_capacity_rejects_excess_before_executor_submission(
+    selection_pool, monkeypatch
+):
+    pool, _ = selection_pool
+    pool.MAX_CONNECTIONS = 1
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), Event()
+    connected = []
+
+    def connect(connection, **kwargs):
+        connected.append(connection)
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(watchdog_timeout(5))
+        connection.sock = Mock()
+        return True
+
+    monkeypatch.setattr(uc.UnityConnection, "connect", connect)
+    first = asyncio.create_task(uc._select_connection("Main@deadbeef", None, pool))
+    await asyncio.wait_for(entered.wait(), watchdog_timeout(5))
+    try:
+        with pytest.raises(ConnectionError, match="selection capacity"):
+            await uc._select_connection("Other@cafebabe", None, pool)
+    finally:
+        release.set()
+        await first
+    assert len(connected) == 1
+
+
+@pytest.mark.asyncio
+async def test_executor_queued_selection_cannot_cross_pool_reset(selection_pool, monkeypatch):
+    pool, _ = selection_pool
+    loop = asyncio.get_running_loop()
+    entered, submitted, release = asyncio.Event(), asyncio.Event(), Event()
+    real_submit = uc.submit_owned_executor
+    connect = Mock(side_effect=AssertionError("Old selection connected after pool reset"))
+    monkeypatch.setattr(uc.UnityConnection, "connect", connect)
+
+    def occupy():
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(watchdog_timeout(5))
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        occupied = loop.run_in_executor(executor, occupy)
+        await asyncio.wait_for(entered.wait(), watchdog_timeout(5))
+
+        def submit(current_loop, _, function, *args):
+            future = real_submit(current_loop, executor, function, *args)
+            submitted.set()
+            return future
+
+        monkeypatch.setattr(uc, "submit_owned_executor", submit)
+        request = asyncio.create_task(uc._select_connection("Main@deadbeef", None, pool))
+        await asyncio.wait_for(submitted.wait(), watchdog_timeout(5))
+        pool.disconnect_all()
+        release.set()
+        await occupied
+        with pytest.raises(ConnectionError, match="generation.*retired"):
+            await request
+    connect.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_close", [False, True])
+async def test_pool_close_on_another_loop_drains_physical_selection(
+    selection_pool, monkeypatch, cancel_close
+):
+    pool, _ = selection_pool
+    owner_loop = asyncio.new_event_loop()
+    loop_thread = Thread(target=owner_loop.run_forever)
+    entered, release = Event(), Event()
+    retained_socket = Mock()
+    cached = uc.UnityConnection(port=6401, instance_id="Other@cafebabe", sock=retained_socket)
+    pool._connections[cached.instance_id] = cached
+
+    def connect(connection, **kwargs):
+        entered.set()
+        assert release.wait(watchdog_timeout(5))
+        connection.sock = Mock()
+        return True
+
+    monkeypatch.setattr(uc.UnityConnection, "connect", connect)
+    loop_thread.start()
+    selecting = asyncio.run_coroutine_threadsafe(
+        uc._select_connection("Main@deadbeef", None, pool), owner_loop
+    )
+    closing = None
+    second_close = None
+    try:
+        assert await asyncio.to_thread(entered.wait, watchdog_timeout(5))
+        closing = asyncio.create_task(pool.aclose())
+        for _ in range(8):
+            await asyncio.sleep(0)
+        assert not closing.done(), "Foreign-loop close abandoned a live physical selection"
+        retained_socket.close.assert_not_called()
+        second_close = asyncio.run_coroutine_threadsafe(pool.aclose(), owner_loop)
+        if cancel_close:
+            closing.cancel()
+            for _ in range(8):
+                await asyncio.sleep(0)
+            assert not closing.done(), "Close cancellation abandoned the foreign-loop worker"
+        release.set()
+        if cancel_close:
+            with pytest.raises(asyncio.CancelledError):
+                await closing
+        else:
+            await closing
+        await asyncio.wrap_future(second_close)
+        with pytest.raises(ConnectionError, match="cancelled|retired"):
+            await asyncio.wrap_future(selecting)
+        assert pool._connections == {}
+        retained_socket.close.assert_called_once()
+    finally:
+        release.set()
+        await asyncio.gather(asyncio.wrap_future(selecting), return_exceptions=True)
+        if closing is not None:
+            await asyncio.gather(closing, return_exceptions=True)
+        if second_close is not None:
+            await asyncio.gather(asyncio.wrap_future(second_close), return_exceptions=True)
+        owner_loop.call_soon_threadsafe(owner_loop.stop)
+        await asyncio.to_thread(loop_thread.join, watchdog_timeout(5))
+        assert not loop_thread.is_alive()
+        owner_loop.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_selection_fanout_retains_bounded_submitted_work(
+    selection_pool, monkeypatch
+):
+    pool, _ = selection_pool
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), Event()
+    submitted = []
+    real_submit = uc.submit_owned_executor
+
+    def select(identity):
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(watchdog_timeout(5))
+        uc._connection_selection.get().check()
+        pytest.fail("Abandoned selection reached connection creation")
+
+    monkeypatch.setattr(pool, "get_connection", select)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+
+        def submit(current_loop, _, function, *args):
+            future = real_submit(current_loop, executor, function, *args)
+            submitted.append(future)
+            return future
+
+        monkeypatch.setattr(uc, "submit_owned_executor", submit)
+        requests = [
+            asyncio.create_task(uc._select_connection(f"Editor-{index}@deadbeef", None, pool))
+            for index in range(64)
+        ]
+        await asyncio.wait_for(entered.wait(), watchdog_timeout(5))
+        try:
+            for request in requests:
+                request.cancel()
+            await asyncio.gather(*requests, return_exceptions=True)
+            assert len(submitted) <= 4, "Cancellation retained unbounded executor queue entries"
+            assert pool._resync_workers, "Running selection lost its physical owner"
+            closing = asyncio.create_task(pool.aclose())
+            await asyncio.sleep(0)
+            assert not closing.done(), "Pool retirement discarded a running selection"
+        finally:
+            release.set()
+            await asyncio.gather(*submitted, return_exceptions=True)
+            if "closing" in locals():
+                await closing
+    assert pool._resync_workers == set()

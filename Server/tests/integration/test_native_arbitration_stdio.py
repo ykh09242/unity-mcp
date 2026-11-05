@@ -111,7 +111,9 @@ async def peer(monkeypatch):
     )
     conn.session_generation = conn.authenticated_session.session_generation
     monkeypatch.setattr(config, "http_remote_hosted", False)
-    monkeypatch.setattr(uc, "_unity_connection_pool", None)
+    pool = uc.UnityConnectionPool()
+    pool._connections[conn.instance_id] = conn
+    monkeypatch.setattr(uc, "_unity_connection_pool", pool)
     monkeypatch.setattr(uc, "get_unity_connection", lambda _: conn)
     monkeypatch.setattr(uc, "read_status_file", lambda *_: None)
     return SimpleNamespace(socket=sock, connection=conn, rejected=rejected)
