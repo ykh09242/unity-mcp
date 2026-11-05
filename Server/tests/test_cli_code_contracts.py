@@ -54,18 +54,41 @@ def test_read_returns_requested_window_as_one_json_document(
     )
     # When: the actual CLI reads a requested window.
     result = CliRunner().invoke(cli, ["--format", "json", group, "read", r"Assets\Foo.cs", *bounds])
-    # Then: plain/encoded content agree and script forwards requested bounds.
+    # Then: plain/encoded content agree and both aliases forward requested bounds.
     assert result.exit_code == 0, result.output
     data = json.loads(result.stdout)["data"]
     assert data["contents"] == expected
     assert base64.b64decode(data["encodedContents"]).decode() == expected
     expected_params = {"action": "read", "name": "Foo", "path": "Assets"}
-    if group == "script":
-        if "-s" in bounds:
-            expected_params["start_line"] = int(bounds[bounds.index("-s") + 1])
-        if "-n" in bounds:
-            expected_params["line_count"] = int(bounds[bounds.index("-n") + 1])
+    if "-s" in bounds:
+        expected_params["start_line"] = int(bounds[bounds.index("-s") + 1])
+    if "-n" in bounds:
+        expected_params["line_count"] = int(bounds[bounds.index("-n") + 1])
     assert requests[0]["params"] == expected_params
+
+
+@pytest.mark.parametrize("group", ["code", "script"])
+@pytest.mark.parametrize("encoded_only", [False, True])
+def test_read_preserves_native_window_without_slicing_again(script_response, group, encoded_only):
+    response, requests = script_response
+    response["data"] = {
+        "lineWindowApplied": True,
+        "startLine": 20,
+        "lineCount": 1,
+        "contentsEncoded": True,
+        "encodedContents": base64.b64encode(b"twentieth\n").decode(),
+    }
+    if not encoded_only:
+        response["data"]["contents"] = "twentieth\n"
+    result = CliRunner().invoke(
+        cli, ["--format", "json", group, "read", "Assets/Foo.cs", "-s", "20", "-n", "1"]
+    )
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)["data"]
+    assert data["contents"] == "twentieth\n"
+    assert base64.b64decode(data["encodedContents"]) == b"twentieth\n"
+    assert requests[0]["params"]["start_line"] == 20
+    assert requests[0]["params"]["line_count"] == 1
 
 
 @pytest.mark.parametrize("group", ["code", "script"])

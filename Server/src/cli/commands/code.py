@@ -169,6 +169,10 @@ def read(path: str, start_line: Optional[int], line_count: Optional[int]):
         "path": directory,
     }
 
+    if start_line is not None:
+        params["start_line"] = start_line
+    if line_count is not None:
+        params["line_count"] = line_count
     result = _read_source(params, config)
     echo_script_read(result, config.format, start_line, line_count)
 
