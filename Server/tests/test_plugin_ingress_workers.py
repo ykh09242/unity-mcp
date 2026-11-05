@@ -155,8 +155,12 @@ async def test_ingress_pressure_rejects_before_decoder_submission(owned_hub, mon
 
 
 @pytest.mark.asyncio
-async def test_pending_replacement_during_ingress_cannot_receive_old_frame(owned_hub, monkeypatch):
+@pytest.mark.parametrize("malformed", [False, True])
+async def test_pending_replacement_during_ingress_cannot_receive_old_frame(
+    owned_hub, monkeypatch, malformed
+):
     hub, socket = owned_hub
+    socket.state.plugin_registered = True
     cls = type(hub)
     loop = asyncio.get_running_loop()
     original, replacement = loop.create_future(), loop.create_future()
@@ -172,11 +176,24 @@ async def test_pending_replacement_during_ingress_cannot_receive_old_frame(owned
         return native(*args, **kwargs)
 
     monkeypatch.setattr(hub_module, "bounded_json_text", held)
-    wire = json.dumps({"type": "command_result", "id": COMMAND_ID, "result": {"text": "x" * 96000}})
+    wire = json.dumps(
+        {
+            "type": "command_result",
+            "id": COMMAND_ID,
+            "result": None if malformed else {},
+            "padding": "x" * 96000,
+        }
+    )
     task = asyncio.create_task(hub.decode(socket, {"text": wire}))
     try:
         await await_signal(entered, "pending result decode", producers=(task,))
-        cls._pending[COMMAND_ID] = {"future": replacement, "session_id": "owned", "user_id": None}
+        cls._pending[COMMAND_ID] = {
+            "future": replacement,
+            "session_id": "owned",
+            "user_id": None,
+            "result_generation": "owned",
+            "result_socket": socket,
+        }
         release.set()
         decoded = await task
         await hub.on_receive(socket, decoded)

@@ -91,6 +91,11 @@ so downgrading a private store written by a newer binary fails closed.
 Intent is committed before returning the single execution capability. Restarted pending
 intent becomes UNKNOWN. Only proven pre-handler, pre-native rejection is not_dispatched.
 Cancellation, lost observations and CORE-01 outcome_unknown never become completed success.
+A schema-invalid command result from the owning plugin generation settles that
+pending dispatch as `outcome_unknown`. Its receipt records the dispatch without
+marking the attempt observed. This applies to ordinary and negotiated chunked
+replies, including gzip. A negotiated arbitration or resume reply must also pass
+its identity and disposition checks before the receipt records an observation.
 SDK exception formatting/masking stays outside the coordinator; unobserved formatted
 exceptions are not retained. Late results cannot upgrade a stopped wrapper or rebind it.
 

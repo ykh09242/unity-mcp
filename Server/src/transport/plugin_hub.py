@@ -208,10 +208,24 @@ class _ConnectionReadIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class _PendingResult:
+    entry_id: int
+    future: weakref.ReferenceType[asyncio.Future]
+
+    @classmethod
+    def capture(cls, entry):
+        return cls(id(entry), weakref.ref(entry["future"]))
+
+    def matches(self, entry) -> bool:
+        return entry is not None and id(entry) == self.entry_id and self.future() is entry["future"]
+
+
+@dataclass(frozen=True, slots=True)
 class _ResultWork:
     """Captured pending identity and capacity held through actual response work."""
 
     entry: dict[str, Any]  # The Hub's existing pending-entry boundary.
+    pending: _PendingResult
     generation: str | None
     lock: asyncio.Lock
     owner: ResponseOwner
@@ -241,7 +255,7 @@ class _IngressWork:
     raw_owner: ResponseOwner
     graph_owner: ResponseOwner
     max_retained_bytes: int
-    pending: dict[str, tuple[int, weakref.ReferenceType[asyncio.Future]]]
+    pending: dict[str, _PendingResult]
 
     def release(self) -> None:
         self.raw_owner.release()
@@ -736,7 +750,7 @@ class PluginHub(WebSocketEndpoint):
                 graph_owner,
                 graph_charge,
                 {
-                    command_id: (id(entry), weakref.ref(entry["future"]))
+                    command_id: _PendingResult.capture(entry)
                     for command_id, entry in cls._pending.items()
                     if entry["session_id"] == session_id
                 },
@@ -1084,6 +1098,16 @@ class PluginHub(WebSocketEndpoint):
             await websocket.send_json(msg.model_dump())
 
     async def on_receive(self, websocket: WebSocket, data: Any) -> None:
+        # A small frame can suspend in credential renewal before the result lock.
+        # Capture the pending identity without retaining a displaced result graph.
+        candidate = None
+        if isinstance(data, dict) and data.get("type") == "command_result":
+            command_id = data.get("id")
+            if type(command_id) is str and 0 < len(command_id) <= 36:
+                entry = type(self)._pending.get(command_id)
+                if entry is not None:
+                    candidate = _PendingResult.capture(entry)
+                del entry
         lease = type(self)._socket_lease(websocket)
         if lease is not None:
             await lease.check()
@@ -1117,7 +1141,16 @@ class PluginHub(WebSocketEndpoint):
             elif message_type == "command_progress":
                 await self._handle_command_progress(websocket, data)
             elif message_type == "command_result":
-                await self._handle_command_result(websocket, CommandResultMessage(**data))
+                if candidate is None:
+                    return
+                try:
+                    result = CommandResultMessage(**data)
+                except ValidationError:
+                    result = None
+                if result is None:
+                    await self._reject_invalid_result(websocket, data["id"], candidate)
+                else:
+                    await self._handle_command_result(websocket, result, _candidate=candidate)
             elif message_type == "result_start":
                 await self._handle_large_result(websocket, data)
             elif message_type == "editor_state":
@@ -2163,6 +2196,8 @@ class PluginHub(WebSocketEndpoint):
             )
             cls._pending[command_id] = {
                 "future": future,
+                "result_socket": websocket,
+                "result_generation": getattr(websocket.state, "plugin_generation", None),
                 "session_id": session_id,
                 "user_id": user_id,
                 "payload_bytes": _payload_bytes,
@@ -3168,10 +3203,13 @@ class PluginHub(WebSocketEndpoint):
     ) -> _ResultWork | None:
         """Claim one pending reply under the Hub lock, before any worker can queue."""
         entry = cls._pending.get(command_id)
+        generation = getattr(websocket.state, "plugin_generation", None)
         if (
             entry is None
             or entry["future"].done()
             or cls._connections.get(entry["session_id"]) is not websocket
+            or entry.get("result_socket", websocket) is not websocket
+            or entry.get("result_generation", generation) != generation
             or entry.get("result_work") is not None
             or cls._lock is None
         ):
@@ -3189,8 +3227,7 @@ class PluginHub(WebSocketEndpoint):
             if (
                 not cls._ingress_work_current(ingress)
                 or pending is None
-                or pending[0] != id(entry)
-                or pending[1]() is not entry["future"]
+                or not pending.matches(entry)
             ):
                 return None
             charge = ingress.max_retained_bytes
@@ -3213,7 +3250,8 @@ class PluginHub(WebSocketEndpoint):
             owner.entries.append((ledger, key))
         work = _ResultWork(
             entry,
-            getattr(websocket.state, "plugin_generation", None),
+            _PendingResult.capture(entry),
+            generation,
             cls._lock,
             owner,
             charge,
@@ -3227,7 +3265,7 @@ class PluginHub(WebSocketEndpoint):
     def _result_work_current(cls, websocket: WebSocket, command_id: str, work: _ResultWork) -> bool:
         return (
             cls._lock is work.lock
-            and cls._pending.get(command_id) is work.entry
+            and work.pending.matches(cls._pending.get(command_id))
             and work.entry.get("result_work") is work
             and not work.entry["future"].done()
             and cls._connections.get(work.entry["session_id"]) is websocket
@@ -3276,6 +3314,9 @@ class PluginHub(WebSocketEndpoint):
             return cls._decode_large_result(completed, max_retained_bytes)
         except LargeResultProtocolError as error:
             return _LargeResultFailure(error.reason, completed.command_id)
+        except ValidationError:
+            # The inner type and id matched the complete negotiated transfer.
+            return _LargeResultFailure("invalid_command_result", completed.command_id)
         except (ValueError, RecursionError):
             return _LargeResultFailure("invalid_result_envelope", completed.command_id)
 
@@ -3312,7 +3353,7 @@ class PluginHub(WebSocketEndpoint):
                         if deadline is not None
                         else None
                     )
-                    assembler.begin(
+                    admitted = assembler.begin(
                         generation,
                         start.id,
                         start.total_bytes,
@@ -3321,13 +3362,17 @@ class PluginHub(WebSocketEndpoint):
                         decoded_bytes=start.decoded_bytes,
                         timeout_seconds=remaining,
                     )
+                    if admitted:
+                        entry["transfer_pending"] = _PendingResult.capture(entry)
                     return
                 completed = assembler.feed(generation, data)
                 if completed is None:
                     return
                 command_id = completed.command_id
                 reservation = cls._raw_results.get((generation, command_id))
-                if reservation is None:
+                entry = cls._pending.get(command_id)
+                transfer = entry.get("transfer_pending") if entry is not None else None
+                if reservation is None or transfer is None or not transfer.matches(entry):
                     return
                 work = cls._claim_result_work(
                     websocket, command_id, large=True, raw_charge=reservation["bytes"]
@@ -3344,6 +3389,11 @@ class PluginHub(WebSocketEndpoint):
             )
             completed = None
             if isinstance(payload, _LargeResultFailure):
+                if payload.reason == "invalid_command_result":
+                    async with cls._authorized_socket_lock(websocket, lock):
+                        if cls._result_work_current(websocket, command_id, work):
+                            work.entry["future"].set_exception(RuntimeError(payload.reason))
+                    return
                 raise LargeResultProtocolError(payload.reason, payload.command_id)
             await self._handle_command_result(websocket, payload, _work=work)
         except LargeResultProtocolError as exc:
@@ -3426,18 +3476,42 @@ class PluginHub(WebSocketEndpoint):
         # notification. No SDK call, journal I/O or Future settlement under Hub lock.
         progress.offer(CommandProgressUpdate(message.completed, message.total, message.stage))
 
+    async def _reject_invalid_result(self, websocket, command_id, candidate) -> None:
+        cls = type(self)
+        lock = cls._lock
+        if lock is None:
+            return
+        async with cls._authorized_socket_lock(websocket, lock):
+            entry = cls._pending.get(command_id)
+            if cls._lock is not lock or not candidate.matches(entry):
+                return
+            work = cls._claim_result_work(websocket, command_id, large=False)
+            if work is None:
+                return
+            try:
+                if cls._result_work_current(websocket, command_id, work):
+                    # This settles the wait without recording an observed native
+                    # result or entering a disconnect/replay continuation.
+                    entry["future"].set_exception(RuntimeError("invalid_command_result"))
+            finally:
+                work.owner.release()
+                entry.pop("result_work")
+
     async def _handle_command_result(
         self,
         websocket: WebSocket,
         payload: CommandResultMessage,
         *,
         _work: _ResultWork | None = None,
+        _candidate: _PendingResult | None = None,
     ) -> None:
         cls = type(self)
         lock = cls._lock
         if lock is None:
             return
         async with cls._authorized_socket_lock(websocket, lock):
+            if _candidate is not None and not _candidate.matches(cls._pending.get(payload.id)):
+                return
             work = _work or cls._claim_result_work(
                 websocket, payload.id, large=needs_response_worker(payload.result)
             )
@@ -3465,50 +3539,50 @@ class PluginHub(WebSocketEndpoint):
             logger.warning("Command result missing id")
             return
 
-        # Capture only an already-owned receipt under the existing socket fence.
-        # Its journal I/O runs outside the Hub lock and outside the owner loop.
-        candidate = work.entry
-        if candidate.get("progress_owner") is not None:
-            async with cls._authorized_socket_lock(websocket, lock):
-                if cls._result_work_current(websocket, command_id, work):
-                    candidate["progress_owner"].close()
-        receipt = candidate.get("receipt_owner")
+        async with cls._authorized_socket_lock(websocket, lock):
+            if not cls._result_work_current(websocket, command_id, work):
+                return
+            entry = work.entry
+            future = entry["future"]
+            if entry.get("progress_owner") is not None:
+                entry["progress_owner"].close()
+            resume = entry.get("resume")
+            # Unwrapping changes resume state. Stage it until the nested
+            # arbitration proof has also validated and the owner is still current.
+            validated_resume = replace(resume) if resume is not None else None
+            try:
+                if validated_resume is not None:
+                    result = validated_resume.unwrap(result)
+                reply = decode_native_reply(result, entry.get("arbitration"))
+                if validated_resume is not None:
+                    validated_resume.validate_reply(reply)
+                    reply = validated_resume.normalize_reply(entry["command_type"], reply)
+            except ValueError:
+                future.set_exception(RuntimeError("invalid_native_arbitration_response"))
+                return
+            except RuntimeError as error:
+                future.set_exception(error.with_traceback(None))
+                return
+            receipt = entry.get("receipt_owner")
         if receipt is not None:
-            async with cls._authorized_socket_lock(websocket, lock):
-                if not cls._result_work_current(websocket, command_id, work):
-                    return
-                receipt_session = candidate["session_id"]
-                receipt_generation = getattr(websocket.state, "plugin_generation", None)
+            # A bound, validated native reply is an observation. Journal I/O
+            # stays outside the Hub lock and completion checks its original owner.
             await receipt.observe_async(
                 kind="http",
                 attempt_id=command_id,
-                session_id=receipt_session,
-                generation=receipt_generation,
+                session_id=entry["session_id"],
+                generation=work.generation,
                 dispatched=True,
                 observed=True,
                 cause="observed",
             )
         close_offender = False
-        async with cls._authorized_socket_lock(websocket, lock):
-            entry = work.entry
-            if not cls._result_work_current(websocket, command_id, work):
-                return
-            future = entry.get("future")
-            if future and not future.done():
-                try:
-                    resume = entry.get("resume")
-                    if resume is not None:
-                        result = resume.unwrap(result)
-                    reply = decode_native_reply(result, entry.get("arbitration"))
-                    if resume is not None:
-                        resume.validate_reply(reply)
-                        reply = resume.normalize_reply(entry["command_type"], reply)
-                except ValueError:
-                    future.set_exception(RuntimeError("invalid_native_arbitration_response"))
+        if receipt is not None or validated_resume is not None or reply.not_started:
+            async with cls._authorized_socket_lock(websocket, lock):
+                if not cls._result_work_current(websocket, command_id, work):
                     return
-                except RuntimeError as error:
-                    future.set_exception(error)
-                    return
+                if validated_resume is not None:
+                    resume.state, resume.action = validated_resume.state, validated_resume.action
                 if reply.not_started:
                     future.set_exception(
                         NativeNotStarted(
@@ -3518,7 +3592,7 @@ class PluginHub(WebSocketEndpoint):
                         )
                     )
                     return
-                result = reply.payload
+        result = reply.payload
         charge = await response_work(
             lambda: response_size(
                 result,
