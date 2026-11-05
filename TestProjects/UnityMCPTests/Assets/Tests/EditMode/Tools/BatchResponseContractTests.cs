@@ -188,7 +188,9 @@ namespace MCPForUnityTests.Editor.Tools
             };
             var before = source.DeepClone();
             var normalized = (JObject)
-                typeof(BatchExecute).GetMethod("NormalizeParameterKeys", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { source });
+                typeof(BatchExecute)
+                    .GetMethod("NormalizeParameterKeys", BindingFlags.NonPublic | BindingFlags.Static)
+                    .Invoke(null, new object[] { source, "manage_gameobject" });
             Assert.AreEqual("by_name", normalized.Value<string>("searchMethod"));
             Assert.IsNull(normalized["search_method"]);
             Assert.IsNotNull(normalized.SelectToken("value.m_PersistentCalls"));

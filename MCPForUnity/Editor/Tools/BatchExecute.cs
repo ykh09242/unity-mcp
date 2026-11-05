@@ -264,7 +264,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     try
                     {
-                        result = CommandRegistry.ValidateBatchAction(name, NormalizeParameterKeys(command["params"] as JObject ?? new JObject()));
+                        result = CommandRegistry.ValidateBatchAction(name, NormalizeParameterKeys(command["params"] as JObject ?? new JObject(), name));
                     }
                     catch (Exception)
                     {
@@ -413,7 +413,7 @@ namespace MCPForUnity.Editor.Tools
                     try
                     {
                         var rawParams = commandObj["params"] as JObject ?? new JObject();
-                        var commandParams = NormalizeParameterKeys(rawParams);
+                        var commandParams = NormalizeParameterKeys(rawParams, toolName);
                         // Preview verification and target hashing can yield even before child zero.
                         // Check parent consent after all preparation, with no Editor yield before dispatch.
                         if (RejectRevokedBatch(outcomes, index))
@@ -566,18 +566,36 @@ namespace MCPForUnity.Editor.Tools
             return true;
         }
 
-        internal static JObject NormalizeParameterKeys(JObject source)
+        internal static JObject NormalizeParameterKeys(JObject source, string toolName = null)
         {
             if (source == null)
             {
                 return new JObject();
             }
 
+            // Custom tools own their exact declared spelling, including open extra keys.
+            // A name prefix alone is not evidence that a tool uses a native reader contract.
+            if (MCPServiceLocator.ToolDiscovery.GetToolMetadata(toolName ?? "")?.IsBuiltIn != true)
+                return (JObject)source.DeepClone();
+
+            if (toolName == "manage_gameobject" || toolName?.StartsWith("gameobject_", StringComparison.Ordinal) == true)
+                return GameObjects.ManageGameObject.NormalizeParameterAliases(source);
+            if (toolName == "manage_scene_edits")
+            {
+                var parameters = (JObject)source.DeepClone();
+                GameObjects.ManageGameObject.ResolveParameterAlias(parameters, "preview_id", "previewId");
+                GameObjects.ManageGameObject.ResolveParameterAlias(parameters, "undo_name", "undoName");
+                return parameters;
+            }
+
+            // Preserve historical camelCase reader compatibility for the other legacy built-ins.
             var normalized = new JObject();
             foreach (var property in source.Properties())
             {
                 string normalizedName = ToCamelCase(property.Name);
-                normalized[normalizedName] = property.Value;
+                if (normalized.Property(normalizedName) != null && !JToken.DeepEquals(normalized[normalizedName], property.Value))
+                    throw new ArgumentException($"Conflicting aliases for '{normalizedName}'. Provide one value.");
+                normalized[normalizedName] = property.Value.DeepClone();
             }
             return normalized;
         }

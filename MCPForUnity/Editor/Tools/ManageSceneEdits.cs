@@ -67,6 +67,9 @@ namespace MCPForUnity.Editor.Tools
                 EnsureEditMode();
                 if (parameters == null)
                     throw new ArgumentException("Parameters are required.");
+                parameters = (JObject)parameters.DeepClone();
+                GameObjects.ManageGameObject.ResolveParameterAlias(parameters, "preview_id", "previewId");
+                GameObjects.ManageGameObject.ResolveParameterAlias(parameters, "undo_name", "undoName");
                 if (parameters.ToString(Newtonsoft.Json.Formatting.None).Length > 4 * 1024 * 1024)
                     throw new ArgumentException("Scene edit request exceeds 4 Mi characters.");
                 string action = RequiredString(parameters, "action");

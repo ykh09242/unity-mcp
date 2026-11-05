@@ -1,5 +1,6 @@
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -28,7 +29,7 @@ namespace MCPForUnityTests.Editor.Tools
         [SetUp]
         public void SetUp()
         {
-            scopedConsent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute");
+            scopedConsent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute", "manage_gameobject", "manage_scene_edits");
             testGo = new GameObject("BatchKeyTestGO");
         }
 
@@ -253,6 +254,252 @@ namespace MCPForUnityTests.Editor.Tools
             {
                 if (created != null)
                     Object.DestroyImmediate(created);
+            }
+        }
+
+        private static JObject SendGameObject(JObject parameters, bool batch)
+        {
+            if (!batch)
+                return JObject.FromObject(ManageGameObject.HandleCommand(parameters));
+            var response = JObject.FromObject(
+                BatchExecute
+                    .HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "manage_gameobject", ["params"] = parameters }) })
+                    .GetAwaiter()
+                    .GetResult()
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            return (JObject)response.SelectToken("data.results[0].result");
+        }
+
+        [TestCase("custom_contract_probe")]
+        [TestCase("gameobject_custom_contract_probe")]
+        public void UndeclaredToolPayload_PreservesExactKeysAndExplicitNull(string tool)
+        {
+            var source = JObject.Parse("{\"user_key\":null,\"userKey\":false,\"nested_value\":{\"m_Field\":1}}");
+            var method = typeof(BatchExecute).GetMethod(
+                "NormalizeParameterKeys",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic
+            );
+            var normalized = (JObject)method.Invoke(null, new object[] { source, tool });
+            Assert.IsTrue(JToken.DeepEquals(source, normalized), normalized.ToString());
+            Assert.AreNotSame(source, normalized);
+        }
+
+        [TestCase("false")]
+        [TestCase("null")]
+        public void EqualAliases_AreAcceptedAndPreserveExplicitValues(string value)
+        {
+            var request = new JObject
+            {
+                ["action"] = "modify",
+                ["target"] = testGo.GetInstanceIDCompat(),
+                ["world_position_stays"] = JToken.Parse(value),
+                ["worldPositionStays"] = JToken.Parse(value),
+            };
+            Assert.IsTrue(SendGameObject((JObject)request.DeepClone(), false).Value<bool>("success"));
+            Assert.IsTrue(SendGameObject((JObject)request.DeepClone(), true).Value<bool>("success"));
+            Assert.AreEqual(JToken.Parse(value).Type, request["world_position_stays"].Type, "Caller payloads must remain unchanged.");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ScenePreviewId_PreservesCanonicalTokenThroughBatch(bool batch)
+        {
+            var preview = JObject.FromObject(
+                ManageSceneEdits.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "preview",
+                        ["edits"] = new JArray(
+                            new JObject
+                            {
+                                ["target"] = testGo.GetInstanceIDCompat(),
+                                ["component_type"] = "Transform",
+                                ["property"] = "localPosition",
+                                ["value"] = new JArray(3, 2, 1),
+                            }
+                        ),
+                    }
+                )
+            );
+            Assert.IsTrue(preview.Value<bool>("success"), preview.ToString());
+            var request = new JObject { ["action"] = "apply", ["preview_id"] = preview.SelectToken("data.preview_id").DeepClone() };
+            var response = batch
+                ? JObject.FromObject(
+                    BatchExecute
+                        .HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "manage_scene_edits", ["params"] = request }) })
+                        .GetAwaiter()
+                        .GetResult()
+                )
+                : JObject.FromObject(ManageSceneEdits.HandleCommand(request));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(new Vector3(3, 2, 1), testGo.transform.localPosition);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ScenePreviewId_ContradictoryNullAliasDoesNotConsumePreview(bool batch)
+        {
+            var preview = JObject.FromObject(
+                ManageSceneEdits.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "preview",
+                        ["edits"] = new JArray(
+                            new JObject
+                            {
+                                ["target"] = testGo.GetInstanceIDCompat(),
+                                ["component_type"] = "Transform",
+                                ["property"] = "localPosition",
+                                ["value"] = new JArray(6, 5, 4),
+                            }
+                        ),
+                    }
+                )
+            );
+            Assert.IsTrue(preview.Value<bool>("success"), preview.ToString());
+            var token = preview.SelectToken("data.preview_id");
+            var request = new JObject
+            {
+                ["action"] = "apply",
+                ["preview_id"] = token.DeepClone(),
+                ["previewId"] = JValue.CreateNull(),
+            };
+            var response = batch
+                ? JObject.FromObject(
+                    BatchExecute
+                        .HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "manage_scene_edits", ["params"] = request }) })
+                        .GetAwaiter()
+                        .GetResult()
+                )
+                : JObject.FromObject(ManageSceneEdits.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(Vector3.zero, testGo.transform.localPosition);
+            var valid = JObject.FromObject(ManageSceneEdits.HandleCommand(new JObject { ["action"] = "apply", ["previewId"] = token.DeepClone() }));
+            Assert.IsTrue(valid.Value<bool>("success"), valid.ToString());
+            Assert.AreEqual(new Vector3(6, 5, 4), testGo.transform.localPosition);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CanonicalTransformOptions_PreserveFalseAndSiblingPlacement(bool batch)
+        {
+            var parent = new GameObject("ParityParent");
+            var sibling = new GameObject("ParitySibling");
+            try
+            {
+                parent.transform.position = new Vector3(10, 0, 0);
+                sibling.transform.SetParent(parent.transform, false);
+                testGo.transform.localPosition = new Vector3(2, 3, 4);
+                var response = SendGameObject(
+                    new JObject
+                    {
+                        ["action"] = "modify",
+                        ["target"] = testGo.GetInstanceIDCompat(),
+                        ["parent"] = parent.GetInstanceIDCompat(),
+                        ["world_position_stays"] = false,
+                        ["sibling_index"] = 0,
+                    },
+                    batch
+                );
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(new Vector3(2, 3, 4), testGo.transform.localPosition);
+                Assert.AreEqual(0, testGo.transform.GetSiblingIndex());
+                Assert.IsTrue(
+                    SendGameObject(
+                            new JObject
+                            {
+                                ["action"] = "modify",
+                                ["target"] = testGo.GetInstanceIDCompat(),
+                                ["parent"] = JValue.CreateNull(),
+                            },
+                            batch
+                        )
+                        .Value<bool>("success")
+                );
+                Assert.IsNull(testGo.transform.parent);
+            }
+            finally
+            {
+                testGo.transform.SetParent(null, false);
+                Object.DestroyImmediate(parent);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CanonicalDuplicateAndRelativeMove_HaveDirectBatchParity(bool batch)
+        {
+            GameObject duplicate = null;
+            string name = "ParityDuplicate_" + System.Guid.NewGuid().ToString("N");
+            try
+            {
+                var response = SendGameObject(
+                    new JObject
+                    {
+                        ["action"] = "duplicate",
+                        ["target"] = testGo.GetInstanceIDCompat(),
+                        ["new_name"] = name,
+                    },
+                    batch
+                );
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                duplicate = GameObject.Find(name);
+                Assert.IsNotNull(duplicate, response.ToString());
+                testGo.transform.position = new Vector3(4, 5, 6);
+                testGo.transform.rotation = Quaternion.Euler(0, 90, 0);
+                testGo.transform.localScale = new Vector3(2, 2, 2);
+                response = SendGameObject(
+                    new JObject
+                    {
+                        ["action"] = "move_relative",
+                        ["target"] = duplicate.GetInstanceIDCompat(),
+                        ["reference_object"] = testGo.GetInstanceIDCompat(),
+                        ["world_space"] = false,
+                        ["offset"] = new JArray(1, 0, 0),
+                    },
+                    batch
+                );
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.That(Vector3.Distance(testGo.transform.TransformPoint(Vector3.right), duplicate.transform.position), Is.LessThan(0.001f));
+            }
+            finally
+            {
+                if (duplicate != null)
+                    Object.DestroyImmediate(duplicate);
+                var leaked = GameObject.Find(testGo.name + "_Copy");
+                if (leaked != null)
+                    Object.DestroyImmediate(leaked);
+            }
+        }
+
+        [TestCase("world_position_stays", "worldPositionStays", "false", "true")]
+        [TestCase("new_name", "newName", "null", "\"conflict\"")]
+        [TestCase("sibling_index", "siblingIndex", "0", "1")]
+        [TestCase("reference_object", "referenceObject", "null", "42")]
+        [TestCase("world_space", "worldSpace", "false", "true")]
+        public void ContradictoryAliases_AreRejectedBeforeDirectOrBatchMutation(string canonical, string alias, string first, string second)
+        {
+            foreach (bool batch in new[] { false, true })
+            {
+                var request = new JObject
+                {
+                    ["action"] = "modify",
+                    ["target"] = testGo.GetInstanceIDCompat(),
+                    ["name"] = "must-not-rename",
+                    [canonical] = JToken.Parse(first),
+                    [alias] = JToken.Parse(second),
+                };
+                JObject response = batch
+                    ? JObject.FromObject(
+                        BatchExecute
+                            .HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "manage_gameobject", ["params"] = request }) })
+                            .GetAwaiter()
+                            .GetResult()
+                    )
+                    : JObject.FromObject(ManageGameObject.HandleCommand(request));
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual("BatchKeyTestGO", testGo.name);
             }
         }
     }

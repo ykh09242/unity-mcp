@@ -354,6 +354,7 @@ namespace MCPForUnityTests.Editor.Tools
                                 ["compile"] = "none",
                                 ["wait_for_ready"] = true,
                             },
+                            "refresh_unity",
                         }
                     );
             var task = RefreshUnity.HandleCommand(parameters);

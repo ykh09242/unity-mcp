@@ -64,6 +64,15 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 return new ErrorResponse("Parameters cannot be null.");
             }
 
+            try
+            {
+                @params = NormalizeParameterAliases(@params);
+            }
+            catch (ArgumentException error)
+            {
+                return new ErrorResponse(error.Message);
+            }
+
             string action = NormalizeAction(@params["action"]);
             if (string.IsNullOrEmpty(action))
             {
@@ -152,6 +161,54 @@ namespace MCPForUnity.Editor.Tools.GameObjects
                 McpLog.Error($"[ManageGameObject] Action '{action}' failed: {e}");
                 return new ErrorResponse($"Internal error processing action '{action}': {e.Message}");
             }
+        }
+
+        // Native reader spellings are the contract. Resolve aliases once for direct and batch
+        // dispatch without touching component property names or other nested user payloads.
+        internal static JObject NormalizeParameterAliases(JObject source)
+        {
+            var result = (JObject)source.DeepClone();
+            foreach (
+                string canonical in new[]
+                {
+                    "new_name",
+                    "world_position_stays",
+                    "sibling_index",
+                    "reference_object",
+                    "world_space",
+                    "look_at_target",
+                    "look_at_up",
+                    "placement_mode",
+                    "preview_token",
+                    "searchMethod",
+                    "primitiveType",
+                    "prefabPath",
+                    "saveAsPrefab",
+                    "setActive",
+                    "isStatic",
+                    "componentsToAdd",
+                    "componentsToRemove",
+                    "componentProperties",
+                }
+            )
+            {
+                string alias = canonical.Contains('_') ? StringCaseUtility.ToCamelCase(canonical) : StringCaseUtility.ToSnakeCase(canonical);
+                ResolveParameterAlias(result, canonical, alias);
+            }
+            return result;
+        }
+
+        internal static void ResolveParameterAlias(JObject parameters, string canonical, string alias)
+        {
+            JProperty first = parameters.Property(canonical);
+            JProperty second = parameters.Property(alias);
+            if (second == null || canonical == alias)
+                return;
+            if (first != null && !JToken.DeepEquals(first.Value, second.Value))
+                throw new ArgumentException($"Conflicting aliases '{canonical}' and '{alias}'. Provide one value.");
+            if (first == null)
+                parameters[canonical] = second.Value.DeepClone();
+            second.Remove();
         }
     }
 }

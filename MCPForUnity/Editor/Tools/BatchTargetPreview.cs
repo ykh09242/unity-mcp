@@ -404,7 +404,7 @@ namespace MCPForUnity.Editor.Tools
             string handler = CommandRegistry.GetBatchTargetIdentity(name);
             if (handler == null)
                 throw new Incomplete("unsupported_target_preview");
-            JObject parameters = BatchExecute.NormalizeParameterKeys(command["params"] as JObject ?? new JObject());
+            JObject parameters = BatchExecute.NormalizeParameterKeys(command["params"] as JObject ?? new JObject(), name);
             string action = parameters["action"]?.Type == JTokenType.String ? parameters.Value<string>("action").ToLowerInvariant() : null;
             JObject state;
             switch (name)
