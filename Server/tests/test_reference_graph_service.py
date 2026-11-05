@@ -234,6 +234,63 @@ async def external_fixture(service, sender, ctx, root, monkeypatch, files=1):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("pattern", ["private", "priv*", "**/private", "private/**"])
+async def test_directory_policy_hides_and_restores_external_declarations(
+    setup, tmp_path, monkeypatch, pattern
+):
+    service, sender, ctx = setup
+    root = tmp_path / "settings"
+    entry, target = await external_fixture(service, sender, ctx, root, monkeypatch)
+    (root / "private").mkdir()
+    (root / "0.json").rename(root / "private" / "item.json")
+    source = next(
+        source
+        for source in entry.workspace.store.sources()
+        if source["provider"] == "external:fixture"
+    )
+    entry.workspace.set_source(
+        "external:fixture",
+        {**source["config"], "include": ["**/*.json"]},
+        expected_version=source["version"],
+    )
+    assert await entry.engine.reconcile()
+    owner = entry.workspace.external_inputs("external:fixture")["private/item.json"]["owner"]
+    await service.execute(
+        ctx,
+        "declare",
+        {
+            "id": "retained",
+            "owner": owner,
+            "edge": {"target": target, "kind": "declared"},
+            "expected_version": 0,
+        },
+    )
+
+    async def providers(node, direction):
+        response = await service.execute(ctx, "query", {"node": node, "direction": direction})
+        return {edge["provider"] for edge in response["data"]["edges"]}
+
+    try:
+        assert await providers(owner, "outgoing") == {"manual", "external:fixture"}
+        for excluded in ([pattern], []):
+            await service.execute(
+                ctx,
+                "set_policy",
+                {
+                    "config": {"exclude": excluded},
+                    "expected_version": entry.workspace.policy()["version"],
+                },
+            )
+            assert await entry.engine.reconcile()
+            expected = set() if excluded else {"manual", "external:fixture"}
+            assert await providers(owner, "outgoing") == expected
+            assert await providers(target, "incoming") == expected
+            assert entry.workspace.store.declarations()[0]["id"] == "retained"
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("revoke_at", ["first", "continuation", "route", "replay"])
 async def test_path_rechecks_all_search_evidence_before_delivery(
     setup, tmp_path, monkeypatch, revoke_at

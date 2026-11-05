@@ -242,6 +242,30 @@ def test_directory_buffer_is_bounded_and_scan_order_is_deterministic(tmp_path):
         list(source.files())
 
 
+@pytest.mark.parametrize("pattern", ["private", "priv*", "**/private", "private/**"])
+@pytest.mark.parametrize("policy", [False, True])
+def test_directory_exclusion_is_shared_by_enumeration_and_direct_access(tmp_path, pattern, policy):
+    (tmp_path / "private" / "nested").mkdir(parents=True)
+    relative = "private/nested/item.json"
+    (tmp_path / relative).write_text("{}")
+    (tmp_path / "private-copy.json").write_text("{}")
+    source = ExternalSource(
+        {"root": str(tmp_path), "include": ["**/*.json"], "exclude": [] if policy else [pattern]},
+        exclude=[pattern] if policy else [],
+    )
+    assert relative not in source.files()
+    assert not source.admitted(relative)
+    assert not source.watch_filter(relative)
+    with pytest.raises(PermissionError):
+        source.read(relative)
+    with pytest.raises(PermissionError):
+        source.stamp(relative)
+    with pytest.raises(PermissionError):
+        source.directory_identity(tmp_path / "private" / "nested")
+    if pattern != "priv*":
+        assert source.admitted("private-copy.json")
+
+
 def test_allowlist_exclusion_and_links(tmp_path):
     root = tmp_path / "external"
     root.mkdir()

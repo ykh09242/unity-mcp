@@ -13,7 +13,7 @@ import threading
 
 from services.reference_graph.analysis import Analysis, Catalog, CatalogLookups
 from services.reference_graph import catalog_delta, document_delta, external_changes
-from services.reference_graph.external import _pattern
+from services.reference_graph.external import _excluded, _pattern
 from services.reference_graph.ignore import GitIgnoreRules
 from services.reference_graph.response_budget import PageBudget, bounded_rows
 from services.reference_graph.storage_budget import file_lock
@@ -378,9 +378,7 @@ class GraphWorkspace:
         _, rules, patterns = cache
         if exclusions_only:
             return bool(patterns or rules.has_exclusions())
-        return lambda path: (
-            not any(pattern.fullmatch(path) for pattern in patterns) and not rules.ignored(path)
-        )
+        return lambda path: not _excluded(path, patterns) and not rules.ignored(path)
 
     def admitted(self, path: str) -> bool:
         with self.store._connect() as connection:
@@ -519,7 +517,7 @@ class GraphWorkspace:
         excluded.extend(
             (owner, path)
             for owner, path in connection.execute("SELECT owner,path FROM graph_external_paths")
-            if owner not in excluded_ids and any(pattern.fullmatch(path) for pattern in patterns)
+            if owner not in excluded_ids and _excluded(path, patterns)
         )
         connection.executemany("INSERT INTO graph_excluded_nodes VALUES (?,?)", excluded)
         connection.execute(

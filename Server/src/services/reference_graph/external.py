@@ -126,6 +126,16 @@ def _pattern(value: str) -> _Pattern:
     return _Pattern(value)
 
 
+def _excluded(path: str, patterns: list[_Pattern]) -> bool:
+    """Apply traversal exclusions to a retained path and each of its ancestors."""
+    while True:
+        if any(pattern.fullmatch(path) or pattern.fullmatch(path + "/") for pattern in patterns):
+            return True
+        path, separator, _ = path.rpartition("/")
+        if not separator:
+            return False
+
+
 def validate_mappings(mappings: object) -> list[dict]:
     if not isinstance(mappings, list):
         raise ValueError("Mappings must be a list")
@@ -356,7 +366,7 @@ class ExternalSource:
         return (
             Path(relative).suffix.lower() in (".json", ".csv")
             and any(pattern.fullmatch(relative) for pattern in self.include)
-            and not any(pattern.fullmatch(relative) for pattern in self.exclude)
+            and not _excluded(relative, self.exclude)
         )
 
     def watch_filter(self, relative: str) -> bool:
@@ -378,7 +388,7 @@ class ExternalSource:
             _relative(relative)
             if (
                 not self._could_descend(relative)
-                or any(p.fullmatch(relative) or p.fullmatch(relative + "/") for p in self.exclude)
+                or _excluded(relative, self.exclude)
                 or self._ignored(relative, directory=True)
             ):
                 raise PermissionError("Directory is outside the external source policy")
@@ -567,10 +577,7 @@ class ExternalSource:
                     continue
                 path = Path(entry.path)
                 relative = path.relative_to(self.root).as_posix()
-                if any(
-                    pattern.fullmatch(relative) or pattern.fullmatch(relative + "/")
-                    for pattern in self.exclude
-                ):
+                if _excluded(relative, self.exclude):
                     continue
                 info = entry.stat(follow_symlinks=False)
                 if self._ignored(relative, directory=stat.S_ISDIR(info.st_mode)):
