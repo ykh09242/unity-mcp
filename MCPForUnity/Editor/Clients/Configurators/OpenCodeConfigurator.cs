@@ -107,6 +107,16 @@ namespace MCPForUnity.Editor.Clients.Configurators
                     return client.status;
                 }
 
+                if (
+                    HttpEndpointUtility.GetCurrentServerTransport() == ConfiguredTransport.Stdio
+                    && GeneratedStdioEntry(unityMcp) != null
+                    && JsonFileMcpConfigurator.GeneratedExecutableIssue((string)unityMcp["command"][0]) is string executableIssue
+                )
+                {
+                    client.SetStatus(McpStatus.IncorrectPath, executableIssue);
+                    return client.status;
+                }
+
                 var automatic = attemptAutoRewrite
                     ? GeneratedClientConfigOwnership.AutomaticRefresh.Capture("OpenCode", path, GeneratedStdioEntry(unityMcp), migrationOnly)
                     : null;

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using MCPForUnity.Editor.Clients;
+using MCPForUnity.Editor.Clients.Configurators;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
@@ -187,6 +188,62 @@ namespace MCPForUnityTests.Editor.Clients
             File.WriteAllText(configurator.GetConfigPath(), manual);
             Assert.AreEqual(McpStatus.VersionMismatch, configurator.CheckStatus(true));
             Assert.AreEqual(manual, File.ReadAllText(configurator.GetConfigPath()));
+        }
+
+        [TestCase("missing", McpStatus.IncorrectPath)]
+        [TestCase("override", McpStatus.IncorrectPath)]
+        [TestCase("valid", McpStatus.Configured)]
+        public void OpenCodeGeneratedStatusValidatesExecutableWithoutRunningOrRewriting(string condition, McpStatus expected)
+        {
+            // Given: an owned generated entry and inert launchers that cannot execute.
+            string source = "https://github.com/ykh09242/unity-mcp/archive/0000000000000000000000000000000000000000.zip#subdirectory=Server";
+            string executable = Path.Combine(directory, "uvx.exe");
+            File.WriteAllText(executable, "inert launcher fixture; never executed");
+            SavePath(EditorPrefKeys.GitUrlOverride, source);
+            SavePath(EditorPrefKeys.UvxPathOverride, executable);
+            var entry = new JObject
+            {
+                ["type"] = "local",
+                ["command"] = new JArray(executable, "--python", ">=3.11", "--from", source, "mcp-for-unity", "--transport", "stdio"),
+                ["enabled"] = true,
+            };
+            string path = Path.Combine(directory, "opencode.json");
+            string original = new JObject { ["mcp"] = new JObject { ["unityMCP"] = entry } }.ToString();
+            File.WriteAllText(path, original);
+            string generatedEntry = OpenCodeConfigurator.GeneratedStdioEntry(entry);
+            Assert.IsNotNull(generatedEntry, "The fixture must exercise generated-launcher validation rather than manual command status.");
+            GeneratedClientConfigOwnership.Record("OpenCode", path, generatedEntry);
+            if (condition == "missing")
+                File.Delete(executable);
+            else if (condition == "override")
+            {
+                string replacement = Path.Combine(directory, "selected-uvx.exe");
+                File.WriteAllText(replacement, "inert replacement; never executed");
+                EditorPrefs.SetString(EditorPrefKeys.UvxPathOverride, replacement);
+            }
+            var configurator = new SyntheticOpenCodeConfigurator(path);
+            try
+            {
+                // When: ordinary status inspection allows the existing automatic-refresh path.
+                Assert.AreEqual(expected, configurator.CheckStatus(true));
+                // Then: invalid launchers retain recovery details and the config is untouched.
+                if (expected == McpStatus.IncorrectPath)
+                    StringAssert.Contains(condition == "missing" ? "missing" : "selected override", configurator.Client.configStatus);
+                Assert.AreEqual(original, File.ReadAllText(path));
+            }
+            finally
+            {
+                EditorPrefs.DeleteKey(GeneratedClientConfigOwnership.Key("OpenCode", path));
+            }
+        }
+
+        private sealed class SyntheticOpenCodeConfigurator : OpenCodeConfigurator
+        {
+            private readonly string path;
+
+            public SyntheticOpenCodeConfigurator(string path) => this.path = path;
+
+            public override string GetConfigPath() => path;
         }
 
         private SyntheticConfigurator ConfigureOwnedGenerated()
