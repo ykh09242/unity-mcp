@@ -3,21 +3,140 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections.abc import Generator
+from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
+from uuid import uuid4
 
 import pytest
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--ci-timing-output", help="Write observational worker timing JSON")
+    parser.addoption("--ci-progress-dir", help="Persist bounded per-process pytest progress JSON")
 
 
 def pytest_configure(config: pytest.Config) -> None:
     if config.getoption("ci_timing_output"):
         config.pluginmanager.register(WorkerTimings(config), "ci-worker-timings")
+    if config.getoption("ci_progress_dir"):
+        config.pluginmanager.register(WorkerProgress(config), "ci-worker-progress")
+
+
+class WorkerProgress:
+    """Replace one snapshot per process; retain the last observation after abrupt death."""
+
+    def __init__(self, config: pytest.Config) -> None:
+        worker = getattr(config, "workerinput", None)
+        self.worker_id = worker["workerid"][:128] if worker else "main"
+        self.pid = os.getpid()
+        # A run token also separates nested pytest sessions and reused worker IDs/PIDs.
+        self.output = Path(config.getoption("ci_progress_dir")) / f"{self.pid}-{uuid4().hex}.json"
+        self.disabled = False
+        self.exitstatus: int | None = None
+        self.session_finished = False
+        self.write("configuration")
+
+    def write(self, phase: str, nodeid: str | None = None, *, complete: bool = False) -> None:
+        """Keep at most one bounded JSON and one staging file; diagnostics never warn."""
+        if self.disabled:
+            return
+        payload = {
+            "schema": 1,
+            "workerId": self.worker_id,
+            "pid": self.pid,
+            "nodeid": nodeid[:4096] if nodeid is not None else None,
+            "nodeidTruncated": nodeid is not None and len(nodeid) > 4096,
+            "phase": phase,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "complete": complete,
+            "exitstatus": self.exitstatus,
+        }
+        try:
+            self.output.parent.mkdir(parents=True, exist_ok=True)
+            staging = self.output.with_suffix(".tmp")
+            staging.write_text(json.dumps(payload, ensure_ascii=True) + "\n", encoding="utf-8")
+            staging.replace(self.output)
+        except (OSError, ValueError):
+            # Preserve the last good snapshot and avoid repeated failing I/O or -W error.
+            self.disabled = True
+
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
+    def pytest_sessionstart(self) -> Generator[None, None, None]:
+        self.write("session-start")
+        result = yield
+        self.write("waiting-for-collection")
+        return result
+
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
+    def pytest_collection(self) -> Generator[None, None, None]:
+        self.write("collection")
+        result = yield
+        self.write("waiting-for-tests")
+        return result
+
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
+    def pytest_runtestloop(self) -> Generator[None, bool | None, bool | None]:
+        self.write("runtest-loop")
+        result = yield
+        self.write("waiting-for-session-finish")
+        return result
+
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
+    def pytest_runtest_protocol(
+        self, item: pytest.Item
+    ) -> Generator[None, bool | None, bool | None]:
+        self.write("protocol", item.nodeid)
+        result = yield
+        self.write("between-tests")
+        return result
+
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
+    def pytest_runtest_setup(self, item: pytest.Item) -> Generator[None, None, None]:
+        self.write("setup", item.nodeid)
+        try:
+            return (yield)
+        finally:
+            self.write("report:setup", item.nodeid)
+
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
+    def pytest_runtest_call(self, item: pytest.Item) -> Generator[None, None, None]:
+        self.write("call", item.nodeid)
+        try:
+            return (yield)
+        finally:
+            self.write("report:call", item.nodeid)
+
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
+    def pytest_runtest_teardown(self, item: pytest.Item) -> Generator[None, None, None]:
+        self.write("teardown", item.nodeid)
+        try:
+            return (yield)
+        finally:
+            self.write("report:teardown", item.nodeid)
+
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
+    def pytest_sessionfinish(
+        self, session: pytest.Session, exitstatus: int
+    ) -> Generator[None, None, None]:
+        self.exitstatus = int(exitstatus)
+        self.write("session-finalization")
+        result = yield
+        self.exitstatus = int(session.exitstatus)
+        self.session_finished = True
+        self.write("session-finished")
+        return result
+
+    @pytest.hookimpl(wrapper=True, tryfirst=True)
+    def pytest_unconfigure(self) -> Generator[None, None, None]:
+        self.write("unconfigure")
+        result = yield
+        # Completion describes the observed lifecycle, independently of test success.
+        self.write("unconfigured", complete=self.session_finished)
+        return result
 
 
 class WorkerTimings:
