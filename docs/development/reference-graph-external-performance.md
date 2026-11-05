@@ -47,3 +47,30 @@ checkouts. The output directory must exist. The helper retains its synthetic
 fixture directories for inspection and never reads a configured external source.
 The workload sizes are experiment inputs, not production limits. No maximum
 project size, scan duration, file count or total memory cap was introduced.
+
+## Bounded sweeps and watch diagnostics
+
+Full sweeps now resolve prior metadata for at most 256 enumerated paths at a time,
+then keyset-page unseen paths. Final deletion also reads at most 256 owners at a
+time inside one transaction: cancellation rolls back the entire final cleanup.
+Already completed file publications survive a later enumeration failure. The
+[bounded-work experiment](reference-graph-bounded-work.md) distinguishes metadata
+memory from total scan memory and reports the remaining linear transaction cost.
+
+External provider status includes `watch.active`, a bounded `watch.reason`, cumulative
+`full_scans`, `delta_scans`, `fallback_full_scans`, `processed_files`, and the latest
+`last_processed_files`, `last_full_scan_at`, and `last_delta_scan_at`. Scan counters
+describe completed enumeration attempts, including attempts with per-file failures;
+processed counts describe admitted input files visited, not directory entries or
+removed files. An idle delta can process zero files. Interrupted enumeration retains
+the previous completed totals and timestamps, including across restart.
+
+Live watcher state is refreshed for delivery. Reasons include `active`,
+`not_registered`, `provider_limit`, `directory_limit`, `population_limit`,
+`notification_gap`, `watch_backend_failed`, `input_signature_changed`,
+`directory_identity_changed`, `rule_evidence_changed`, and
+`rule_evidence_unavailable`; a completed explicit full scan also records
+`explicit_full_scan` in its durable scan diagnostic. These fields contain no event
+names, excluded filenames, source roots, or backend exception messages. Fallback
+continues to perform complete sweeps and never establishes an incremental checkpoint
+from incomplete notification evidence.

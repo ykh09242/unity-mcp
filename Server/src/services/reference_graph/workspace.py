@@ -1683,7 +1683,13 @@ class GraphWorkspace:
             )
 
     def external_inputs(
-        self, provider: str, *, admission: bool = False, paths: tuple[str, ...] | None = None
+        self,
+        provider: str,
+        *,
+        admission: bool = False,
+        paths: tuple[str, ...] | None = None,
+        _after: str | None = None,
+        _unseen: str | None = None,
     ) -> dict[str, dict]:
         if paths == ():
             return {}
@@ -1693,6 +1699,10 @@ class GraphWorkspace:
             # The provider/owner primary key admits only the captured event identities.
             selection = "json_each(?) j CROSS JOIN graph_external_paths p ON p.owner=j.value"
             params = (_json([provider + ":" + _hash(path) for path in paths]), provider)
+        paging = ""
+        if _after is not None:
+            paging = " AND p.owner>? AND coalesce(e.seen,'')<>? ORDER BY p.owner LIMIT 256"
+            params = (*params, _after, _unseen)
         with self.store._connect() as connection:
             return {
                 row["path"]: dict(row)
@@ -1704,11 +1714,18 @@ class GraphWorkspace:
                     "LEFT JOIN evidence_context c USING(owner,provider) "
                     "LEFT JOIN graph_external_checkpoints v ON v.owner=p.owner AND v.provider=p.provider "
                     "AND v.generation=o.generation AND o.state='pending' WHERE p.provider=?"
+                    + paging
                     if admission
                     else "SELECT e.*,o.state,c.published AS provenance FROM graph_external e LEFT JOIN observations o USING(owner,provider) LEFT JOIN evidence_context c USING(owner,provider) WHERE e.provider=?",
                     params,
                 )
             }
+
+    def external_input_page(
+        self, provider: str, *, after: str = "", unseen: str
+    ) -> dict[str, dict]:
+        """Bound prior-path reconciliation independently of the source population."""
+        return self.external_inputs(provider, admission=True, _after=after, _unseen=unseen)
 
     def require_source(self, provider: str, version: int) -> None:
         with self.store._connect() as connection:
@@ -1996,20 +2013,30 @@ class GraphWorkspace:
             rows,
         )
 
-    def finish_external(self, worker: str, provider: str, seen: str) -> None:
+    def finish_external(
+        self, worker: str, provider: str, seen: str, *, check: Callable[[], None] = lambda: None
+    ) -> None:
         with self._write(worker) as connection:
             connection.execute(
                 "DELETE FROM graph_external_checkpoints WHERE provider=?", (provider,)
             )
-            removed = connection.execute(
-                "SELECT owner FROM graph_external WHERE provider=? AND seen<>?", (provider, seen)
-            ).fetchall()
-            for row in removed:
-                self._delete(connection, row[0])
+            after, changed = "", False
+            while True:
+                check()
+                removed = connection.execute(
+                    "SELECT owner FROM graph_external WHERE provider=? AND owner>? AND seen<>? ORDER BY owner LIMIT 256",
+                    (provider, after, seen),
+                ).fetchall()
+                if not removed:
+                    break
+                for row in removed:
+                    self._delete(connection, row[0])
+                changed, after = True, removed[-1][0]
+            check()
             connection.execute(
                 "DELETE FROM graph_external WHERE provider=? AND seen<>?", (provider, seen)
             )
-            if removed:
+            if changed:
                 self.store._bump(connection)
 
     def remove_external(self, worker: str, provider: str, owners: list[str]) -> None:

@@ -44,6 +44,19 @@ a diff can be comparing unchanged rows. `diff.compared` counts candidates inspec
 on the current page; unchanged large snapshots do not require a whole-graph scan
 for the first page.
 
+Direct queries, traversal adjacency pages and snapshot captures budget raw edge
+candidates before source/admission/exclusion filtering. An excluded manual edge
+therefore consumes work without appearing in the response. Such a page can be empty
+and still have `next_cursor`; continue until it is null. Rejected candidates advance
+the same revision-bound anchor as admitted evidence. Oversized admitted evidence
+still fails explicitly, while excluded evidence payloads are not materialized into
+Python. See the [bounded-work measurements](reference-graph-bounded-work.md).
+
+Cancellation signals the producer's SQLite progress callback and drains its physical
+thread before releasing ownership. The callback composes with storage accounting;
+rollback and commit recovery retain their existing transaction guarantees. SQLite
+lock acquisition can still wait for its configured busy timeout.
+
 Repeat the original options on continuation, except use `consistency='checked'`
 only on the first page and then omit it. Traversal and snapshot cursors require the
 same graph revision; changes cause an explicit restart error rather than a mixed

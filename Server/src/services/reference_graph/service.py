@@ -27,7 +27,12 @@ from services.operation_permissions import OperationPermissionError, authorize_o
 from services.reference_graph.analysis import ANALYSIS_VERSION, validate_rule
 from services.reference_graph.collection_protocol import integer, text
 from services.reference_graph.external import ExternalSource
-from services.reference_graph.reconcile import Reconciler, RequestedAssetChanged, drained_thread
+from services.reference_graph.reconcile import (
+    Reconciler,
+    RequestedAssetChanged,
+    cancellable_thread,
+    drained_thread,
+)
 from services.reference_graph.response_budget import require_response
 from services.reference_graph.store import (
     Edge,
@@ -1247,7 +1252,7 @@ class ReferenceGraphService:
                 fallback_policy_version,
                 opening,
                 known_ignore,
-            ) = await drained_thread(admission_snapshot)
+            ) = await cancellable_thread(admission_snapshot)
             if not admission_current:
                 await drained_thread(workspace.block_admission)
         external_changed = False
@@ -1352,7 +1357,7 @@ class ReferenceGraphService:
         exclusions_apply = catalog_pending = False
         if protected:
             if opening is None:
-                opening = await drained_thread(opening_snapshot)
+                opening = await cancellable_thread(opening_snapshot)
             if opening is None:
                 async with self.lock:
                     self.start(entry, wake=True)
@@ -1431,7 +1436,7 @@ class ReferenceGraphService:
             if prepared_page is not None:
                 data, local_query_page = prepared_page, page_state is not None
             else:
-                data = await drained_thread(
+                data = await cancellable_thread(
                     read_page,
                     partial_static=partial_static,
                     withhold_edges=catalog_pending or admission_pending and not partial_static,
@@ -1481,7 +1486,7 @@ class ReferenceGraphService:
                         created_queries.append((queries, result["query_id"]))
                     return result
 
-                data = await drained_thread(produce_page)
+                data = await cancellable_thread(produce_page)
             if action in {"explain", "impact", "path", "snapshot", "diff"}:
                 external_changed = await self._validate_exploration_page(workspace, data)
         elif action == "declarations":
@@ -1612,12 +1617,18 @@ class ReferenceGraphService:
             raise RevisionConflict(
                 "Provider verification changed before delivery; retry the checked query"
             )
-        for provider in external_providers.values():
+        for name, provider in external_providers.items():
             provider["current"] = (
                 consistency == "checked"
                 and provider["state"] == "verified_at_scan"
                 and not external_changed
             )
+            provider["watch"] = {
+                **provider.get(
+                    "watch", {"full_scans": 0, "delta_scans": 0, "fallback_full_scans": 0}
+                ),
+                **entry.engine.external_changes.status(name),
+            }
         current = (
             not data.get("historical", False)
             and not any(edge["provider"].startswith("runtime:") for edge in data.get("edges", []))

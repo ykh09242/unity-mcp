@@ -49,7 +49,14 @@ from services.reference_graph.collection_protocol import (
 from services.reference_graph.external import ExternalSource, document_coverage, document_events
 from services.reference_graph.external_changes import Batch, ExternalChanges, ScanPlan
 from services.reference_graph.ignore import rule_directory
-from services.reference_graph.store import Edge, Observation, RevisionConflict, _hash, _json
+from services.reference_graph.store import (
+    Edge,
+    Observation,
+    RevisionConflict,
+    _hash,
+    _json,
+    guard_graph_work,
+)
 from services.reference_graph.workspace import GraphWorkspace
 
 
@@ -82,10 +89,25 @@ async def drained_thread(function, *args, _cancel_event: threading.Event | None 
     # Retain the executor Future itself: shielded caller cancellation cannot mark
     # physical work complete before the underlying thread actually returns.
     context = contextvars.copy_context()
-    future = asyncio.get_running_loop().run_in_executor(
-        None, partial(context.run, function, *args, **kwargs)
-    )
+
+    def run():
+        if _cancel_event is None:
+            return function(*args, **kwargs)
+
+        def check():
+            if _cancel_event.is_set():
+                raise InterruptedError("Reference graph work cancelled")
+
+        with guard_graph_work(check):
+            return function(*args, **kwargs)
+
+    future = asyncio.get_running_loop().run_in_executor(None, partial(context.run, run))
     return await drained_task(future, _cancel_event=_cancel_event)
+
+
+async def cancellable_thread(function, *args, **kwargs):
+    """Signal SQL work, then physically drain it before delivering cancellation."""
+    return await drained_thread(function, *args, _cancel_event=threading.Event(), **kwargs)
 
 
 class SourceEncodingError(ValueError):
@@ -1347,6 +1369,7 @@ class Reconciler:
             if source["provider"].startswith("external:") and source["enabled"]
         ]
         active = {source["provider"] for source in sources} if external_mode == "tracked" else set()
+        self.external_changes.retain_status({source["provider"] for source in sources})
         for provider in self.external_changes.registrations.keys() - active:
             await drained_thread(self.external_changes.close, provider)
         if not sources:
@@ -1372,10 +1395,23 @@ class Reconciler:
                 "last_verified_at": previous.get(source["provider"], {}).get("last_verified_at"),
                 "catalog_revision": catalog_revision,
                 "rules_revision": rules,
+                # Entering a scan or recording its failure must not erase the
+                # last completed work/timestamps used to explain fallback costs.
+                "watch": {
+                    "full_scans": 0,
+                    "delta_scans": 0,
+                    "fallback_full_scans": 0,
+                    "last_full_scan_at": None,
+                    "last_delta_scan_at": None,
+                    "last_processed_files": 0,
+                    "processed_files": 0,
+                    **previous.get(source["provider"], {}).get("watch", {}),
+                    **self.external_changes.status(source["provider"]),
+                },
             }
             try:
                 await drained_thread(self.workspace.external_scan, self.worker, source, scan)
-                failures, repository, full = await drained_thread(
+                failures, repository, full, processed = await drained_thread(
                     self._external_source,
                     source,
                     catalog,
@@ -1392,6 +1428,26 @@ class Reconciler:
                     completed_at=time.time(),
                     repository=repository,
                 )
+                counts = previous.get(source["provider"], {}).get("watch", {})
+                watch_status = self.external_changes.status(source["provider"])
+                scan["watch"] = {
+                    **watch_status,
+                    "reason": watch_status["reason"]
+                    if external_mode == "tracked"
+                    else "explicit_full_scan",
+                    "full_scans": counts.get("full_scans", 0) + int(full),
+                    "delta_scans": counts.get("delta_scans", 0) + int(not full),
+                    "fallback_full_scans": counts.get("fallback_full_scans", 0)
+                    + int(full and external_mode == "tracked" and not watch_status["active"]),
+                    "last_full_scan_at": scan["completed_at"]
+                    if full
+                    else counts.get("last_full_scan_at"),
+                    "last_delta_scan_at": scan["completed_at"]
+                    if not full
+                    else counts.get("last_delta_scan_at"),
+                    "last_processed_files": processed,
+                    "processed_files": counts.get("processed_files", 0) + processed,
+                }
                 if not failures and full:
                     scan["last_verified_at"] = scan["completed_at"]
                 await drained_thread(self.workspace.external_scan, self.worker, source, scan)
@@ -1403,6 +1459,7 @@ class Reconciler:
             except RevisionConflict:
                 raise
             except CollectionBudgetExceeded as error:
+                scan["watch"].update(self.external_changes.status(source["provider"]))
                 scan.update(
                     state="failed",
                     error=type(error).__name__ + ": " + str(error),
@@ -1417,6 +1474,7 @@ class Reconciler:
                 )
                 raise
             except (OSError, ValueError, csv.Error, RecursionError) as error:
+                scan["watch"].update(self.external_changes.status(source["provider"]))
                 scan.update(
                     state="failed",
                     error=type(error).__name__ + ": " + str(error),
@@ -1437,7 +1495,7 @@ class Reconciler:
         scan_pass: dict,
         tracked: bool,
         previously_verified: bool,
-    ) -> tuple[int, dict, bool]:
+    ) -> tuple[int, dict, bool, int]:
         try:
             with self.workspace.source_guard(
                 source["provider"], source["version"]
@@ -1466,7 +1524,7 @@ class Reconciler:
         require_source: Callable[[], None],
         tracked: bool,
         previously_verified: bool,
-    ) -> tuple[int, dict, bool]:
+    ) -> tuple[int, dict, bool, int]:
         self._check_source(source, require_source)
         policy = self.workspace.policy()
         make_adapter = partial(
@@ -1518,13 +1576,13 @@ class Reconciler:
                 if plan.scope
                 else adapter.files(check=check)
             )
-            previous = self.workspace.external_inputs(provider, admission=True)
+            previous = None
         else:
             paths = plan.files
             previous = plan.previous
         hinted = adapter.hint_matcher(plan.batch.paths) if plan.batch and plan.batch.paths else None
         rehash_all = plan.batch is not None and plan.batch.rehash_all
-        failures = 0
+        failures = processed = 0
         pending = []
         resumed = []
         provenance_updates = []
@@ -1539,9 +1597,45 @@ class Reconciler:
             adapter.confirm_event_entry(path, current[:2])
             self._check_source(source, require_source)
 
-        for path in paths:
+        def previous_items():
+            if not plan.full:
+                for path in paths:
+                    yield path, previous.pop(path, None)
+                return
+            # Enumeration order is adapter-owned. Resolve just this bounded batch
+            # through the provider/owner primary key; never retain an all-row map.
+            iterator = iter(paths)
+            while True:
+                batch, enumeration_error = [], None
+                for _ in range(256):
+                    try:
+                        batch.append(next(iterator))
+                    except StopIteration:
+                        break
+                    except OSError as error:
+                        # Earlier yielded files still own valid evidence. Publish
+                        # those before reporting a later traversal failure; never
+                        # acknowledge deletion after an incomplete enumeration.
+                        enumeration_error = error
+                        break
+                if not batch:
+                    if enumeration_error is not None:
+                        raise enumeration_error
+                    return
+                check()
+                metadata = self.workspace.external_inputs(
+                    provider, admission=True, paths=tuple(batch)
+                )
+                for path in batch:
+                    yield path, metadata.get(path)
+                if enumeration_error is not None:
+                    raise enumeration_error
+                if len(batch) < 256:
+                    return
+
+        for path, old in previous_items():
             self._check_source(source, require_source)
-            old = previous.pop(path, None)
+            processed += 1
             owner = provider + ":" + _hash(path)
             fingerprint = (old or {}).get("fingerprint") or "unavailable"
             stamp = ""
@@ -1659,24 +1753,39 @@ class Reconciler:
             self.workspace.record_external_many(self.worker, pending, resume=resumed)
         if provenance_updates:
             self.workspace.refresh_external_provenance(self.worker, source, provenance_updates)
-        hidden = [
-            (row["owner"], path) for path, row in previous.items() if not adapter.admitted(path)
-        ]
-        if hidden:
-            self.workspace.hide_external(self.worker, hidden)
         if plan.full:
-            self.workspace.finish_external(self.worker, provider, seen)
-        elif previous:
-            self.workspace.remove_external(
-                self.worker, provider, [row["owner"] for row in previous.values()]
-            )
+            after = ""
+            while True:
+                check()
+                missing = self.workspace.external_input_page(provider, after=after, unseen=seen)
+                if not missing:
+                    break
+                hidden = [
+                    (row["owner"], path)
+                    for path, row in missing.items()
+                    if not adapter.admitted(path)
+                ]
+                if hidden:
+                    self.workspace.hide_external(self.worker, hidden)
+                after = next(reversed(missing.values()))["owner"]
+            self.workspace.finish_external(self.worker, provider, seen, check=check)
+        else:
+            hidden = [
+                (row["owner"], path) for path, row in previous.items() if not adapter.admitted(path)
+            ]
+            if hidden:
+                self.workspace.hide_external(self.worker, hidden)
+            if previous:
+                self.workspace.remove_external(
+                    self.worker, provider, [row["owner"] for row in previous.values()]
+                )
         if failures:
             self.external_changes.close(provider)
         elif tracked:
             self.external_changes.finish(plan, self.worker, provider, adapter, make_adapter, check)
         elif plan.batch:
             plan.batch.acknowledge(self.workspace, self.worker)
-        return failures, repository, plan.full
+        return failures, repository, plan.full, processed
 
     def _check_source(self, source: dict, require_source: Callable[[], None]) -> None:
         self._check_thread()

@@ -123,6 +123,104 @@ async def test_idle_delta_and_registration_gap(tracked, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_watch_diagnostics_count_full_delta_and_fallback_without_paths(tracked, monkeypatch):
+    from services.reference_graph import external_changes
+
+    engine, workspace, provider, root, _, _ = tracked
+    (root / "one.json").write_text("{}")
+    poll = partial(engine.reconcile, external_mode="tracked")
+    assert await poll() and await poll() and await poll()
+    status = workspace.provider_status()[provider]["watch"]
+    assert {
+        key: status[key]
+        for key in ("active", "reason", "full_scans", "delta_scans", "fallback_full_scans")
+    } == {
+        "active": True,
+        "reason": "active",
+        "full_scans": 2,
+        "delta_scans": 1,
+        "fallback_full_scans": 0,
+    }
+    assert status["last_full_scan_at"] <= status["last_delta_scan_at"]
+    assert status["last_processed_files"] == 0 and status["processed_files"] == 2
+    engine.external_changes.close()
+    monkeypatch.setattr(external_changes, "MAX_POPULATION", 0)
+    assert await poll()
+    status = workspace.provider_status()[provider]["watch"]
+    assert {
+        key: status[key]
+        for key in ("active", "reason", "full_scans", "delta_scans", "fallback_full_scans")
+    } == {
+        "active": False,
+        "reason": "population_limit",
+        "full_scans": 3,
+        "delta_scans": 1,
+        "fallback_full_scans": 1,
+    }
+    assert status["last_full_scan_at"] >= status["last_delta_scan_at"]
+    assert status["last_processed_files"] == 1 and status["processed_files"] == 3
+    assert root.name not in json.dumps(status) and "one.json" not in json.dumps(status)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "limit,reason",
+    [
+        ("MAX_PROVIDERS", "provider_limit"),
+        ("MAX_DIRECTORIES", "directory_limit"),
+        ("MAX_POPULATION", "population_limit"),
+        (None, "watch_backend_failed"),
+    ],
+)
+async def test_watch_fallback_reasons_preserve_full_sweep(tracked, monkeypatch, limit, reason):
+    from services.reference_graph import external_changes
+
+    engine, workspace, provider, root, producer, _ = tracked
+    (root / "one.json").write_text("{}")
+    if limit is not None:
+        monkeypatch.setattr(external_changes, limit, 0)
+    else:
+
+        def fail():
+            raise OSError("synthetic watcher failure containing " + str(root / "private.json"))
+
+        producer.before_ready = fail
+    assert await engine.reconcile(external_mode="tracked")
+    watch = workspace.provider_status()[provider]["watch"]
+    assert not watch["active"] and watch["reason"] == reason
+    assert watch["full_scans"] == watch["fallback_full_scans"] == 1
+    assert watch["processed_files"] == 1
+    assert set(workspace.external_inputs(provider)) == {"one.json"}
+    assert root.name not in json.dumps(watch) and "private.json" not in json.dumps(watch)
+
+
+@pytest.mark.asyncio
+async def test_failed_scan_preserves_diagnostic_totals_through_recovery(tracked, monkeypatch):
+    engine, workspace, provider, root, _, clock = tracked
+    (root / "one.json").write_text("{}")
+    poll = partial(engine.reconcile, external_mode="tracked")
+    assert await poll() and await poll() and await poll()
+    before = workspace.provider_status()[provider]["watch"]
+    clock[0] += 61
+
+    def fail(*_args, **_kwargs):
+        raise OSError("synthetic traversal failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ExternalSource, "files", fail)
+        assert not await poll()
+    failed = workspace.provider_status()[provider]["watch"]
+    assert failed["full_scans"] == before["full_scans"]
+    assert failed["processed_files"] == before["processed_files"]
+    assert failed["last_full_scan_at"] == before["last_full_scan_at"]
+    assert await poll()
+    recovered = workspace.provider_status()[provider]["watch"]
+    assert recovered["full_scans"] == before["full_scans"] + 1
+    assert recovered["delta_scans"] == before["delta_scans"]
+    assert recovered["processed_files"] == before["processed_files"] + 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("rule_first", [False, True])
 @pytest.mark.parametrize("interrupt", [False, True])
 async def test_policy_gap_rehashes_admitted_same_stamp_content(

@@ -51,11 +51,15 @@ class WatchScope:
     rules: dict[str, bytes | None] = field(default_factory=dict)
     population: int = 0
     available: bool = True
+    reason: str = "not_registered"
 
     def visit(self, directory: Path, entries: int) -> None:
         self.population += entries
         if self.population > MAX_POPULATION or len(self.directories) >= MAX_DIRECTORIES:
             self.available = False
+            self.reason = (
+                "population_limit" if self.population > MAX_POPULATION else "directory_limit"
+            )
         if self.available:
             info = check_owned_path(directory).stat()
             self.directories[str(directory)] = info.st_dev, info.st_ino
@@ -161,6 +165,7 @@ class Registration:
         self.key = (provider, self.token)
         self.ready, self.stop = threading.Event(), threading.Event()
         self.deadline = 0.0
+        self.reason = "notification_gap"
         self.thread = threading.Thread(
             target=contextvars.Context().run,
             args=(self._run,),
@@ -217,7 +222,7 @@ class Registration:
                         gap = RETIRED
         except Exception:
             # Any backend or database failure breaks continuity, including quota/IO errors.
-            pass
+            self.reason = "watch_backend_failed"
         finally:
             self.stop.set()
             self.ready.set()
@@ -316,6 +321,23 @@ class ExternalChanges:
         self.workspace, self.watch, self.clock = workspace, watch, clock
         self.registrations: dict[str, Registration] = {}
         self._lock = threading.Lock()
+        self._reasons: dict[str, str] = {}
+
+    def status(self, provider: str) -> dict:
+        """Expose continuity diagnostics without event names, paths, or exceptions."""
+        registration = self.registrations.get(provider)
+        active = registration is not None and not registration.stop.is_set()
+        return {
+            "active": active,
+            "reason": "active"
+            if active
+            else registration.reason
+            if registration
+            else self._reasons.get(provider, "not_registered"),
+        }
+
+    def retain_status(self, providers: set[str]) -> None:
+        self._reasons = {key: value for key, value in self._reasons.items() if key in providers}
 
     def close(self, provider=None):
         with self._lock:
@@ -358,6 +380,11 @@ class ExternalChanges:
                 # A directory, spelling, or admission change needs fresh traversal.
                 batch = None
         if registration and batch is None:
+            self._reasons[provider] = (
+                "input_signature_changed"
+                if signature != registration.signature
+                else "notification_gap"
+            )
             self.close(provider)
             registration = None
         return ScanPlan(
@@ -376,6 +403,7 @@ class ExternalChanges:
                     scope.rules[path] = adapter.watch_rule(Path(path))
                 except (OSError, ValueError, CollectionBudgetExceeded):
                     scope.available = False
+                    scope.reason = "rule_evidence_unavailable"
                     break
         if scope and (
             not registration
@@ -396,17 +424,21 @@ class ExternalChanges:
     def register(self, worker, provider, signature, adapter, scope, check: Callable[[], None]):
         self.close(provider)
         if not scope.available or len(self.registrations) >= MAX_PROVIDERS:
+            self._reasons[provider] = scope.reason if not scope.available else "provider_limit"
             return
         for literal, identity in scope.directories.items():
             check()
             path = Path(literal)
             try:
                 if adapter.directory_identity(path) != identity:
+                    self._reasons[provider] = "directory_identity_changed"
                     return
                 if adapter.watch_rule(path) != scope.rules[literal]:
+                    self._reasons[provider] = "rule_evidence_changed"
                     return
             except (OSError, ValueError, CollectionBudgetExceeded):
                 # A registration-only check can fail even after a successful sweep.
+                self._reasons[provider] = "rule_evidence_unavailable"
                 return
         registration = Registration(
             self.workspace,
@@ -423,6 +455,9 @@ class ExternalChanges:
                 registration.start(worker)
                 self.registrations[provider] = registration
             registration.wait_ready(check)
+            self._reasons[provider] = (
+                "notification_gap" if registration.stop.is_set() else "not_registered"
+            )
         except BaseException:
             self.close(provider)
             raise

@@ -28,6 +28,60 @@ from services.reference_graph.response_budget import PageBudget, bounded_rows
 _graph_edit_fence: ContextVar[Callable[[], None] | None] = ContextVar(
     "reference_graph_edit_fence", default=None
 )
+_graph_work_check: ContextVar[Callable[[], None] | None] = ContextVar(
+    "reference_graph_work_check", default=None
+)
+
+
+@contextmanager
+def guard_graph_work(check: Callable[[], None]):
+    """Cooperatively interrupt SQL owned by this context, including borrowed reads."""
+    check()
+    token = _graph_work_check.set(check)
+    try:
+        yield
+    except sqlite3.OperationalError as error:
+        if getattr(error, "sqlite_errorcode", 0) == sqlite3.SQLITE_INTERRUPT:
+            check()
+        raise
+    finally:
+        _graph_work_check.reset(token)
+
+
+def edge_candidates(connection, condition: str, parameters: tuple, limit: int, *, admission=None):
+    """Limit indexed candidates before filtering, retaining rejected anchors for progress."""
+    admission = admission or "(SELECT ready FROM graph_admission WHERE id=1)=1"
+    evidence = ",".join(
+        f"CASE WHEN admitted THEN {name} END AS {name}"
+        for name in (
+            "owner",
+            "provider",
+            "target",
+            "kind",
+            "payload",
+            "state",
+            "present",
+            "target_path",
+            "source_path",
+            "provenance",
+        )
+    )
+    return bounded_rows(
+        connection,
+        "WITH candidates AS (SELECT rowid AS cursor_row,* FROM edges WHERE "
+        + condition
+        + " ORDER BY id LIMIT ?), selected AS (SELECT e.*,o.state,n.present,n.path AS target_path,"
+        "src.path AS source_path,c.published AS provenance,"
+        f"(s.enabled=1 AND {admission} AND NOT EXISTS "
+        "(SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.owner) AND NOT EXISTS "
+        "(SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.target)) AS admitted "
+        "FROM candidates e LEFT JOIN sources s ON s.provider=e.provider "
+        "LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider "
+        "LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider "
+        "LEFT JOIN nodes n ON n.id=e.target LEFT JOIN nodes src ON src.id=e.owner) "
+        f"SELECT cursor_row,id,admitted,{evidence} FROM selected ORDER BY id",
+        (*parameters, limit),
+    )
 
 
 @contextmanager
@@ -243,6 +297,27 @@ class GraphStore:
             if write and budget is None:
                 raise RuntimeError("Graph writes require completed storage admission")
             with budget.writer(connection) if write else nullcontext() as meter:
+                work_error = []
+
+                def progress():
+                    # Keep the storage sampler installed semantically: SQLite
+                    # permits only one handler, so compose both owners here.
+                    if meter is not None and meter.sample():
+                        return 1
+                    check = _graph_work_check.get()
+                    if check is not None:
+                        try:
+                            check()
+                        except BaseException as error:
+                            work_error.append(error)
+                            return 1
+                    return 0
+
+                # Dynamic lookup also handles guards inside a borrowed snapshot;
+                # nested guards restore their ContextVar instead of SQLite state.
+                from services.reference_graph.storage_budget import PROGRESS_INSTRUCTIONS
+
+                connection.set_progress_handler(progress, PROGRESS_INSTRUCTIONS)
                 connection.execute("BEGIN IMMEDIATE" if write else "BEGIN")
                 schema = (
                     connection.execute("PRAGMA schema_version").fetchone()[0]
@@ -263,6 +338,12 @@ class GraphStore:
                     # A hosted edit can lose its socket or grants while waiting for this writer.
                     if public_edit and (check := _graph_edit_fence.get()) is not None:
                         check()
+                    # Once work has ended, cancellation cannot interrupt commit
+                    # recovery. The final storage guard above still owns admission.
+                    if _graph_work_check.get() is not None:
+                        connection.set_progress_handler(
+                            meter.sample if meter else None, PROGRESS_INSTRUCTIONS if meter else 0
+                        )
                     connection.commit()
                     if meter is not None and budget is not None:
                         # Commit can flush cached pages after the final guard.
@@ -287,6 +368,11 @@ class GraphStore:
                             raise StorageBudgetError(
                                 "Reference graph main-file budget reservation increased; retry the rolled-back operation"
                             ) from error
+                    if (
+                        work_error
+                        and getattr(error, "sqlite_errorcode", 0) == sqlite3.SQLITE_INTERRUPT
+                    ):
+                        raise work_error[0] from error
                     raise
         finally:
             connection.close()
@@ -712,16 +798,27 @@ class GraphStore:
                 if partial_static
                 else "(SELECT ready FROM graph_admission WHERE id=1)=1"
             )
-            rows = bounded_rows(
+            rows = edge_candidates(
                 connection,
-                f"SELECT e.rowid AS cursor_row,e.*,o.state,n.present,c.published AS provenance FROM edges e JOIN sources s ON s.provider=e.provider LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider LEFT JOIN nodes n ON n.id=e.target WHERE e.{column}=? AND e.id>? AND s.enabled=1 AND {admission_filter} AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.owner OR x.id=e.target) ORDER BY e.id LIMIT ?",
-                (node, last, limit + 1),
+                f"{column}=? AND id>?",
+                (node, last),
+                limit + 1,
+                admission=admission_filter,
             )
-            edges, page_budget, more, anchor = [], PageBudget(), False, None
+            edges, page_budget, more, anchor, examined = [], PageBudget(), False, None, 0
             for row in rows:
-                if len(edges) == limit or not page_budget.admit(row):
+                if examined == limit:
                     more = True
                     break
+                if row["admitted"] is None:
+                    page_budget.require(row)
+                if row["admitted"] and not page_budget.admit(row):
+                    more = True
+                    break
+                examined += 1
+                anchor = row
+                if not row["admitted"]:
+                    continue
                 edges.append(
                     {
                         **json.loads(row["payload"]),
@@ -733,7 +830,6 @@ class GraphStore:
                         "target_exists": None if row["present"] is None else bool(row["present"]),
                     }
                 )
-                anchor = row
             rows.close()
             next_cursor = (
                 base64.urlsafe_b64encode(

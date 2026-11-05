@@ -1069,7 +1069,7 @@ async def test_unwatched_policy_change_before_opening_fences_cached_query(setup,
             "source_format": "none",
         },
     ]
-    original = service_module.drained_thread
+    original = service_module.cancellable_thread
     query = entry.workspace.store.query
     transitioned = False
 
@@ -1104,7 +1104,7 @@ async def test_unwatched_policy_change_before_opening_fences_cached_query(setup,
             assert workspace.store.query(caller)["edges"]
         return result
 
-    monkeypatch.setattr(service_module, "drained_thread", race)
+    monkeypatch.setattr(service_module, "cancellable_thread", race)
     monkeypatch.setattr(entry.workspace.store, "query", introduce_nested_ignore)
     try:
         with pytest.raises(RevisionConflict, match="policy changed during admission"):

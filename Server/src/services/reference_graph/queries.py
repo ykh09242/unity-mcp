@@ -12,7 +12,13 @@ import time
 import uuid
 
 from models.response_limits import response_size
-from services.reference_graph.store import GraphStore, RevisionConflict, _hash, _json
+from services.reference_graph.store import (
+    GraphStore,
+    RevisionConflict,
+    _hash,
+    _json,
+    edge_candidates,
+)
 from services.reference_graph import path_proof, snapshot_storage
 from services.reference_graph.response_budget import (
     MAX_REPLAY_BYTES,
@@ -355,13 +361,21 @@ class GraphQueries:
                     continue
                 column = "owner" if direction == "outgoing" else "target"
                 count = min(limit - examined, max(1, budget), 256)
-                rows = bounded_rows(
+                rows = edge_candidates(
                     connection,
-                    _SELECT + f"e.{column}=? AND e.id>? ORDER BY e.id LIMIT ?",
-                    (queued["node"], queued["last"], count),
+                    f"{column}=? AND id>?",
+                    (queued["node"], queued["last"]),
+                    count,
                 )
                 processed, last_edge = 0, None
                 for row in rows:
+                    if row["admitted"] is None:
+                        PageBudget().require(row)
+                    if not row["admitted"]:
+                        examined += 1
+                        processed += 1
+                        last_edge = row["id"]
+                        continue
                     if target is None:
                         if not page_budget.admit(row):
                             full = True
@@ -498,14 +512,21 @@ class GraphQueries:
                         connection.execute("PRAGMA schema_version").fetchone()[0],
                     ),
                 )
-            rows = bounded_rows(
-                connection, _SELECT + "e.id>? ORDER BY e.id LIMIT ?", (job["last"], limit + 1)
-            )
-            edges, page_budget, more = [], PageBudget(), False
+            rows = edge_candidates(connection, "id>?", (job["last"],), limit + 1)
+            edges, page_budget, more, examined, last = [], PageBudget(), False, 0, job["last"]
             for row in rows:
-                if len(edges) == limit or not page_budget.admit(row):
+                if examined == limit:
                     more = True
                     break
+                if row["admitted"] is None:
+                    page_budget.require(row)
+                if row["admitted"] and not page_budget.admit(row):
+                    more = True
+                    break
+                examined += 1
+                last = row["id"]
+                if not row["admitted"]:
+                    continue
                 edges.append(self._evidence(row))
             rows.close()
             snapshot_storage.append(connection, job["id"], edges)
@@ -526,7 +547,7 @@ class GraphQueries:
                 job,
                 {"snapshot": snapshot, "edges": edges, "sources": snapshot["sources"]},
                 more,
-                edges[-1]["id"] if edges else job["last"],
+                last,
             )
 
     def _snapshot(self, connection, identity: str) -> dict:
