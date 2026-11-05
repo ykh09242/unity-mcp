@@ -479,7 +479,7 @@ class GraphWorkspace:
             connection, "catalog_revision", self._state(connection, "catalog_revision", 0) + 1
         )
         connection.execute(
-            "DELETE FROM graph_state WHERE key IN ('folder_scan','change_page') OR key LIKE 'external_scan:%'"
+            "DELETE FROM graph_state WHERE key IN ('folder_scan','change_page','retry_scan') OR key LIKE 'external_scan:%'"
         )
 
     def _refresh_admission(self, connection, *, runtime: bool = False) -> None:
@@ -1092,22 +1092,56 @@ class GraphWorkspace:
                 for row in connection.execute("SELECT payload FROM graph_assets ORDER BY guid")
             ]
 
+    def queue_due_assets(
+        self, worker: str, through: float, *, after: tuple[float, str] | None = None
+    ) -> list[tuple[float, str]]:
+        """Promote one deadline-ordered retry page under the collector's durable lease."""
+        with self._write(worker) as connection:
+            where, values = "retry_at<=?", [through]
+            if after is not None:
+                where += " AND (retry_at,guid)>(?,?)"
+                values.extend(after)
+            page = [
+                tuple(row)
+                for row in connection.execute(
+                    "SELECT retry_at,guid FROM graph_asset_failures "
+                    "INDEXED BY graph_asset_failures_retry WHERE "
+                    + where
+                    + " ORDER BY retry_at,guid LIMIT 256",
+                    values,
+                )
+            ]
+            # Keep failures until successful collection: attempts/backoff and
+            # unavailable evidence still belong to the existing retry lifecycle.
+            changed = connection.executemany(
+                "UPDATE graph_assets SET dirty=1 WHERE guid=? AND dirty<>1",
+                [(guid,) for _, guid in page],
+            ).rowcount
+            if changed:
+                connection.execute(
+                    "INSERT INTO graph_state VALUES ('summary_generation','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1"
+                )
+            self._set(
+                connection,
+                "retry_scan",
+                {"through": through, "after": page[-1]}
+                if page
+                else {"through": through, "ready": True},
+            )
+            return page
+
+    def finish_retry_scan(self, worker: str) -> None:
+        with self._write(worker) as connection:
+            connection.execute("DELETE FROM graph_state WHERE key='retry_scan'")
+
     def dirty_assets(self, limit: int = 100, *, after: str = "") -> list[dict]:
-        """Merge indexed dirty/retry pages before hydrating their deduplicated payloads."""
+        """Page the ready queue after this pass's due retries have been promoted."""
         with self.store._connect() as connection:
             return [
                 json.loads(row[0])
                 for row in connection.execute(
-                    "WITH candidates(guid) AS ("
-                    "SELECT guid FROM (SELECT guid FROM graph_assets "
-                    "WHERE dirty=1 AND guid>? ORDER BY guid LIMIT ?) "
-                    "UNION "
-                    "SELECT guid FROM (SELECT f.guid FROM graph_asset_failures f "
-                    "INDEXED BY graph_asset_failures_retry JOIN graph_assets a ON a.guid=f.guid "
-                    "WHERE f.retry_at<=? AND f.guid>? ORDER BY f.guid LIMIT ?)"
-                    "), page AS (SELECT guid FROM candidates ORDER BY guid LIMIT ?) "
-                    "SELECT a.payload FROM page JOIN graph_assets a USING(guid) ORDER BY a.guid",
-                    (after, limit, time.time(), after, limit, limit),
+                    "SELECT payload FROM graph_assets WHERE dirty=1 AND guid>? ORDER BY guid LIMIT ?",
+                    (after, limit),
                 )
             ]
 

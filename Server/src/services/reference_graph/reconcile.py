@@ -832,6 +832,26 @@ class Reconciler:
 
     async def _assets(self, ignore_snapshot: str | None) -> None:
         await self._phase("collecting")
+        # Discover due work once, in bounded index order, before draining the
+        # GUID-ordered ready queue. A retry becoming due later waits for the next
+        # pass instead of repeatedly sorting the entire due backlog per page.
+        retry_scan = await drained_thread(self.workspace.state, "retry_scan") or {
+            "through": time.time()
+        }
+        retry_after = retry_scan.get("after")
+        while not retry_scan.get("ready"):
+            await self.check()
+            self._budget.remaining()
+            retries = await drained_thread(
+                self.workspace.queue_due_assets,
+                self.worker,
+                retry_scan["through"],
+                after=retry_after,
+            )
+            if not retries:
+                break
+            self._budget.admit_items(len(retries))
+            retry_after = retries[-1]
         after = ""
         donor = (
             await drained_thread(self.workspace.state, "restart_from")
@@ -862,6 +882,7 @@ class Reconciler:
                         if promoted:
                             batch_guids.discard(promoted)
                 await self._collect_dirty_asset(asset, reused)
+        await drained_thread(self.workspace.finish_retry_scan, self.worker)
         self._requested_guids.clear()
 
     async def _promote_requested(self, regular: str, ignore_digest: str | None) -> str | None:
