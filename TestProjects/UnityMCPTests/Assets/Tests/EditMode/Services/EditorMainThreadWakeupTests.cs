@@ -194,6 +194,46 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void MissingNativeMembersExposeFallbackAndPublicUpdateStillDrainsOnce()
+        {
+            AssertFallback(typeof(MissingNativeMembers), "signal_tick_missing");
+        }
+
+        [Test]
+        public void ReflectionFailureExposesFallbackAndPublicUpdateStillDrainsOnce()
+        {
+            AssertFallback(typeof(ThrowingNativeMembers), "reflection_error");
+        }
+
+        private static void AssertFallback(Type nativeType, string expectedReason)
+        {
+            var resolve = typeof(EditorMainThreadWakeup).GetMethod("ResolveNativeWake", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(resolve, "Native binding must expose the reason for a safe fallback.");
+            object[] arguments = { nativeType, null, null };
+            Assert.AreEqual(expectedReason, resolve.Invoke(null, arguments));
+            Assert.IsNull(arguments[1]);
+            Assert.IsNull(arguments[2]);
+            int calls = 0;
+            using var scheduled = EditorMainThreadWakeup.Schedule(() => calls++);
+            Update.Invoke(null, null);
+            Update.Invoke(null, null);
+            Assert.AreEqual(1, calls);
+        }
+
+        private static class MissingNativeMembers { }
+
+        private static class ThrowingNativeMembers
+        {
+            private static void SignalTick() { }
+
+            private static event EditorApplication.CallbackFunction tick
+            {
+                add => throw new InvalidOperationException("Injected native binding failure");
+                remove { }
+            }
+        }
+
+        [Test]
         public void PublicUpdate_RemainsAOnceOnlyFallback()
         {
             int calls = 0;

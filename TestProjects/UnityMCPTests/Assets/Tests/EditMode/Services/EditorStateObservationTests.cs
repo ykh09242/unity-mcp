@@ -1,4 +1,6 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using MCPForUnity.Editor.Services;
@@ -6,13 +8,130 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using Unity.Profiling;
 using UnityEditor;
+using UnityEditor.Compilation;
 using UnityEditor.TestTools.TestRunner.Api;
+using UnityEngine;
+using UnityEngine.TestTools;
+using TestMode = UnityEditor.TestTools.TestRunner.Api.TestMode;
 
 namespace MCPForUnityTests.Editor.Services
 {
     // The nested JSON helper has no Unity dependency or outer-cache initialization.
     public class EditorStateObservationTests
     {
+        [Test]
+        public void FailedInitialObservationDoesNotRetainAnUnownedSubscription()
+        {
+            EditorStateCache.GetSnapshot();
+            const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Static;
+            var cache = typeof(EditorStateCache);
+            var cached = cache.GetField("_cached", flags);
+            var snapshot = cache.GetField("_observerSnapshot", flags);
+            var observers = (List<Action<EditorStateFrame>>)cache.GetField("Observers", flags).GetValue(null);
+            object previous = cached.GetValue(null);
+            object previousObservers = snapshot.GetValue(null);
+            int count = observers.Count;
+            int calls = 0;
+            Action<EditorStateFrame> observer = _ => calls++;
+            try
+            {
+                cached.SetValue(null, null);
+                Assert.Catch(() => EditorStateCache.Subscribe(observer));
+                Assert.IsFalse(
+                    observers.Contains(observer),
+                    "An initial observation failure must not retain a callback whose owner never received a subscription."
+                );
+                Assert.AreEqual(count, observers.Count);
+                Assert.AreEqual(0, calls);
+                cached.SetValue(null, previous);
+                using (EditorStateCache.Subscribe(observer))
+                    Assert.AreEqual(1, calls, "Observation can recover after a valid snapshot becomes available.");
+                Assert.AreEqual(count, observers.Count);
+            }
+            finally
+            {
+                cached.SetValue(null, previous);
+                observers.Remove(observer);
+                snapshot.SetValue(null, previousObservers);
+            }
+        }
+
+        [Test]
+        public void FailedInitialSnapshotRetainsExactlyOneOfEveryLifecycleCallback()
+        {
+            const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Static;
+            var cache = typeof(EditorStateCache);
+            var initialize = cache.GetMethod("Initialize", flags);
+            Assert.IsNotNull(initialize, "Snapshot failure must not bypass lifecycle registration.");
+            var cached = cache.GetField("_cached", flags);
+            var updatedAt = cache.GetField("_lastUpdateTimeSinceStartup", flags);
+            object previous = cached.GetValue(null);
+            object previousUpdate = updatedAt.GetValue(null);
+            try
+            {
+                cached.SetValue(null, null);
+                LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex("Failed to initialise: injected snapshot failure"));
+                Func<JObject> failOnce = () => throw new InvalidOperationException("injected snapshot failure");
+                initialize.Invoke(null, new object[] { failOnce });
+                Assert.IsNull(cached.GetValue(null));
+
+                initialize.Invoke(
+                    null,
+                    new object[] { (Func<JObject>)(() => (JObject)cache.GetMethod("BuildSnapshot", flags).Invoke(null, new object[] { "recovered" })) }
+                );
+                Assert.IsNotNull(cached.GetValue(null));
+                initialize.Invoke(null, new object[] { (Func<JObject>)(() => (JObject)cached.GetValue(null)) });
+
+                var update = EditorApplication.update.GetInvocationList().Where(callback => callback.Method.DeclaringType == cache).ToArray();
+                Assert.AreEqual(1, update.Length);
+                foreach (var owner in new[] { typeof(EditorApplication), typeof(CompilationPipeline), typeof(AssemblyReloadEvents) })
+                {
+                    string[] names =
+                        owner == typeof(EditorApplication) ? new[] { "playModeStateChanged" }
+                        : owner == typeof(CompilationPipeline) ? new[] { "compilationStarted", "compilationFinished", "assemblyCompilationFinished" }
+                        : new[] { "beforeAssemblyReload", "afterAssemblyReload" };
+                    foreach (string name in names)
+                    {
+                        Assert.AreEqual(1, RegisteredCallbacks(owner, name).Count(callback => callback.Method.DeclaringType == cache), name);
+                    }
+                }
+                cached.SetValue(null, null);
+                updatedAt.SetValue(null, 0.0); // Match the first-load state rather than a recently refreshed cache.
+                update[0].DynamicInvoke();
+                Assert.IsNotNull(cached.GetValue(null), "A later update must recover even when initial observation failed.");
+            }
+            finally
+            {
+                cached.SetValue(null, previous);
+                updatedAt.SetValue(null, previousUpdate);
+            }
+        }
+
+        private static Delegate[] RegisteredCallbacks(Type owner, string name)
+        {
+            const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static;
+            var field = owner.GetField(name, flags);
+            if (field != null)
+                return ((Delegate)field.GetValue(null))?.GetInvocationList() ?? Array.Empty<Delegate>();
+            // Unity 6 stores selected lifecycle events in a performance-tracked
+            // enumerable rather than a normal event backing delegate.
+            field = owner.GetField("m_" + char.ToUpperInvariant(name[0]) + name.Substring(1) + "Event", flags);
+            Assert.IsNotNull(field, "Unknown Unity event storage for " + name);
+            object callbacks = field.GetValue(null);
+            var iterator = (IEnumerator)callbacks.GetType().GetMethod("GetEnumerator").Invoke(callbacks, null);
+            var result = new List<Delegate>();
+            try
+            {
+                while (iterator.MoveNext())
+                    result.Add((Delegate)iterator.Current);
+            }
+            finally
+            {
+                (iterator as IDisposable)?.Dispose();
+            }
+            return result.ToArray();
+        }
+
         [Test]
         public void MissingCacheRebuildsBeforeObservingUnchangedState()
         {

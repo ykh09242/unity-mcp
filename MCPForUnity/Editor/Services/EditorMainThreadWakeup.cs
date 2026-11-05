@@ -19,32 +19,48 @@ namespace MCPForUnity.Editor.Services
         private static int _stopped;
         internal static event Action Pump;
         internal static bool NativeWakeAvailable => Signal != null;
+        internal static string WakeMode => NativeWakeAvailable ? "native_tick" : "editor_update";
+        internal static string NativeWakeFallbackReason { get; }
 
         static EditorMainThreadWakeup()
         {
+            NativeWakeFallbackReason = ResolveNativeWake(typeof(EditorApplication), out Signal, out RemoveTick);
+            if (NativeWakeFallbackReason != null)
+                McpLog.Warn("Native Editor wake-up is unavailable; using Editor update callbacks. Reason: " + NativeWakeFallbackReason);
+            EditorApplication.update += Drain;
+            AssemblyReloadEvents.beforeAssemblyReload += Stop;
+            EditorApplication.quitting += Stop;
+        }
+
+        private static string ResolveNativeWake(Type editorType, out Action signalWake, out Action removeTick)
+        {
+            signalWake = null;
+            removeTick = null;
             try
             {
                 // Unity 2021.3 and 6000.0 mark SignalTick [ThreadSafe]. QueuePlayerLoopUpdate
                 // is not thread-safe and does not deliver the separate native tick event.
                 const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
-                MethodInfo signal = typeof(EditorApplication).GetMethod("SignalTick", flags, null, Type.EmptyTypes, null);
-                EventInfo tick = typeof(EditorApplication).GetEvent("tick", flags);
-                if (signal != null && tick?.GetAddMethod(true) != null && tick.GetRemoveMethod(true) != null)
-                {
-                    Action boundSignal = (Action)Delegate.CreateDelegate(typeof(Action), signal);
-                    EditorApplication.CallbackFunction callback = NativeTick;
-                    tick.GetAddMethod(true).Invoke(null, new object[] { callback });
-                    RemoveTick = () => tick.GetRemoveMethod(true).Invoke(null, new object[] { callback });
-                    Signal = boundSignal;
-                }
+                MethodInfo signal = editorType.GetMethod("SignalTick", flags, null, Type.EmptyTypes, null);
+                if (signal == null)
+                    return "signal_tick_missing";
+                EventInfo tick = editorType.GetEvent("tick", flags);
+                if (tick == null)
+                    return "tick_event_missing";
+                if (tick.GetAddMethod(true) == null || tick.GetRemoveMethod(true) == null)
+                    return "tick_accessors_missing";
+                Action boundSignal = (Action)Delegate.CreateDelegate(typeof(Action), signal);
+                EditorApplication.CallbackFunction callback = NativeTick;
+                Action boundRemove = () => tick.GetRemoveMethod(true).Invoke(null, new object[] { callback });
+                tick.GetAddMethod(true).Invoke(null, new object[] { callback });
+                removeTick = boundRemove;
+                signalWake = boundSignal;
+                return null;
             }
-            catch (Exception exception)
+            catch (Exception)
             {
-                McpLog.Warn("Native Editor wake-up is unavailable; using Editor update callbacks. " + exception.GetType().Name);
+                return "reflection_error";
             }
-            EditorApplication.update += Drain;
-            AssemblyReloadEvents.beforeAssemblyReload += Stop;
-            EditorApplication.quitting += Stop;
         }
 
         internal static void Request()

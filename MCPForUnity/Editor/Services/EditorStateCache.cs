@@ -325,69 +325,86 @@ namespace MCPForUnity.Editor.Services
 
         static EditorStateCache()
         {
+            Initialize(() => BuildSnapshot("init"));
+        }
+
+        private static void Initialize(Func<JObject> initialSnapshot)
+        {
+            RegisterObservers();
             try
             {
-                _sequence = 0;
                 _observedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                _cached = BuildSnapshot("init");
-
-                EditorApplication.update += OnUpdate;
-                EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
-
-                // Tracks whether an assembly compilation is actually running, for
-                // GetActualIsCompiling. Statics reset on domain reload and this
-                // [InitializeOnLoad] ctor re-subscribes, so the flag is per-domain.
-                // The timestamps beside it are not per-domain — see the SessionState
-                // note on CompileStartedKey.
-                UnityEditor.Compilation.CompilationPipeline.compilationStarted += context =>
-                {
-                    _pipelineCompilationRunning = true;
-                    CompilationJobTracker.ObserveNativeCompletion();
-                    CompilationJobTracker.Reservation.Started(context);
-                    CompilationJobTracker.Ledger.Started(context);
-                    SetSessionUnixMs(CompileStartedKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                    SessionState.SetInt(CompileCountKey, SessionState.GetInt(CompileCountKey, 0) + 1);
-                    ForceUpdate("compilation_started", _pipelineCompilationRunning);
-                };
-                UnityEditor.Compilation.CompilationPipeline.compilationFinished += context =>
-                {
-                    _pipelineCompilationRunning = false;
-                    CompilationJobTracker.ObserveNativeCompletion();
-                    CompilationJobTracker.Reservation.Finished(context);
-                    CompilationJobTracker.Ledger.Finished(context);
-                    // Fires before the domain reload, which is what makes the finish
-                    // observable at all: the write lands while this domain is alive and
-                    // is read back by the next one.
-                    SetSessionUnixMs(CompileFinishedKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                    ForceUpdate("compilation_finished", _pipelineCompilationRunning);
-                };
-
-                UnityEditor.Compilation.CompilationPipeline.assemblyCompilationFinished += (assembly, messages) =>
-                {
-                    CompilationJobTracker.Ledger.Assembly(assembly, messages);
-                    ForceUpdate("assembly_compilation_finished", _pipelineCompilationRunning);
-                };
-
-                AssemblyReloadEvents.beforeAssemblyReload += () =>
-                {
-                    // A replacement compilation may reload before another update.
-                    // Save cancellation/failure evidence while its native task survives.
-                    CompilationJobTracker.ObserveNativeCompletion();
-                    _domainReloadPending = true;
-                    _domainReloadBeforeUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                    ForceUpdate("before_domain_reload");
-                };
-                AssemblyReloadEvents.afterAssemblyReload += () =>
-                {
-                    _domainReloadPending = false;
-                    _domainReloadAfterUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                    ForceUpdate("after_domain_reload");
-                };
+                _cached = initialSnapshot();
             }
             catch (Exception ex)
             {
                 McpLog.Error($"[EditorStateCache] Failed to initialise: {ex.Message}\n{ex.StackTrace}");
             }
+        }
+
+        private static void RegisterObservers()
+        {
+            // Registration survives a failed first snapshot and remains idempotent
+            // when initialization is retried. Never remove another service's callbacks.
+            EditorApplication.update -= OnUpdate;
+            EditorApplication.update += OnUpdate;
+            EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
+            EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            UnityEditor.Compilation.CompilationPipeline.compilationStarted -= OnCompilationStarted;
+            UnityEditor.Compilation.CompilationPipeline.compilationStarted += OnCompilationStarted;
+            UnityEditor.Compilation.CompilationPipeline.compilationFinished -= OnCompilationFinished;
+            UnityEditor.Compilation.CompilationPipeline.compilationFinished += OnCompilationFinished;
+            UnityEditor.Compilation.CompilationPipeline.assemblyCompilationFinished -= OnAssemblyCompilationFinished;
+            UnityEditor.Compilation.CompilationPipeline.assemblyCompilationFinished += OnAssemblyCompilationFinished;
+            AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload;
+            AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
+            AssemblyReloadEvents.afterAssemblyReload -= OnAfterAssemblyReload;
+            AssemblyReloadEvents.afterAssemblyReload += OnAfterAssemblyReload;
+        }
+
+        private static void OnCompilationStarted(object context)
+        {
+            // The running flag is per-domain; its timestamps survive reload in SessionState.
+            _pipelineCompilationRunning = true;
+            CompilationJobTracker.ObserveNativeCompletion();
+            CompilationJobTracker.Reservation.Started(context);
+            CompilationJobTracker.Ledger.Started(context);
+            SetSessionUnixMs(CompileStartedKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            SessionState.SetInt(CompileCountKey, SessionState.GetInt(CompileCountKey, 0) + 1);
+            ForceUpdate("compilation_started", _pipelineCompilationRunning);
+        }
+
+        private static void OnCompilationFinished(object context)
+        {
+            _pipelineCompilationRunning = false;
+            CompilationJobTracker.ObserveNativeCompletion();
+            CompilationJobTracker.Reservation.Finished(context);
+            CompilationJobTracker.Ledger.Finished(context);
+            // This edge precedes reload, so the next domain can observe the finish time.
+            SetSessionUnixMs(CompileFinishedKey, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            ForceUpdate("compilation_finished", _pipelineCompilationRunning);
+        }
+
+        private static void OnAssemblyCompilationFinished(string assembly, UnityEditor.Compilation.CompilerMessage[] messages)
+        {
+            CompilationJobTracker.Ledger.Assembly(assembly, messages);
+            ForceUpdate("assembly_compilation_finished", _pipelineCompilationRunning);
+        }
+
+        private static void OnBeforeAssemblyReload()
+        {
+            // Save cancellation/failure evidence while its native task survives.
+            CompilationJobTracker.ObserveNativeCompletion();
+            _domainReloadPending = true;
+            _domainReloadBeforeUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            ForceUpdate("before_domain_reload");
+        }
+
+        private static void OnAfterAssemblyReload()
+        {
+            _domainReloadPending = false;
+            _domainReloadAfterUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            ForceUpdate("after_domain_reload");
         }
 
         private static void OnUpdate() => ObserveState(false);
@@ -526,9 +543,11 @@ namespace MCPForUnity.Editor.Services
             EditorStateFrame initial;
             lock (LockObj)
             {
+                // A failed initial observation must not retain an owner that never
+                // receives the disposable subscription needed to release its callback.
+                initial = ObserveLocked();
                 Observers.Add(observer);
                 _observerSnapshot = Observers.ToArray();
-                initial = ObserveLocked();
             }
             try
             {

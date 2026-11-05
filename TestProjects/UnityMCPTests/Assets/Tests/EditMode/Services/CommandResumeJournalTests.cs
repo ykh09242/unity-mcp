@@ -263,6 +263,51 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void CompletedCapacityReportsRecoveryWithoutEvictingDuplicateFences()
+        {
+            for (int i = 0; i < CommandResumeJournal.MaxEntries; i++)
+            {
+                var accepted = journal.Admit(Request(id: i.ToString("x32"), deadline: 10000 + i), "test", new JObject());
+                Assert.IsTrue(journal.TryStart(accepted.Ticket));
+                journal.Complete(accepted.Ticket, new JObject { ["value"] = i });
+                journal.Release(accepted.Ticket);
+            }
+            var refused = journal.Admit(Request(id: new string('f', 32), deadline: 20000), "test", new JObject());
+            Assert.IsTrue(refused.NotStarted);
+            var capacity = refused.Payload["capacity"];
+            Assert.IsNotNull(capacity, "Capacity refusal must explain when safe admission can recover.");
+            Assert.AreEqual(128, (int)capacity["limit"]);
+            Assert.AreEqual(128, (int)capacity["occupied"]);
+            Assert.AreEqual(0, (int)capacity["active"]);
+            Assert.AreEqual(128, (int)capacity["terminal"]);
+            Assert.AreEqual(10000, (long)capacity["earliest_reclaim_unix_ms"]);
+            Assert.AreEqual(9000, (long)capacity["retry_after_ms"]);
+            var duplicate = journal.Admit(Request(id: 1.ToString("x32"), deadline: 10001), "test", new JObject());
+            Assert.IsNull(duplicate.Ticket, "Capacity diagnostics cannot evict an unexpired duplicate fence.");
+            Assert.AreEqual("completed", duplicate.State);
+            Assert.AreEqual(1, (int)duplicate.Payload["value"]);
+
+            now = 10000;
+            var recovered = journal.Admit(Request(id: new string('f', 32), deadline: 20000), "test", new JObject());
+            Assert.IsNotNull(recovered.Ticket);
+            Assert.AreEqual("expired", journal.Admit(Request(id: 0.ToString("x32"), deadline: 10000), "test", new JObject()).State);
+            Assert.IsNull(journal.Admit(Request(id: 1.ToString("x32"), deadline: 10001), "test", new JObject()).Ticket);
+        }
+
+        [Test]
+        public void ActiveCapacityDoesNotPromiseAReclaimBeforeOwnersRelease()
+        {
+            for (int i = 0; i < CommandResumeJournal.MaxEntries; i++)
+                journal.Admit(Request(id: i.ToString("x32")), "test", new JObject());
+            var capacity = journal.Admit(Request(id: new string('f', 32)), "test", new JObject()).Payload["capacity"];
+            Assert.IsNotNull(capacity);
+            Assert.AreEqual(128, (int)capacity["active"]);
+            Assert.AreEqual(0, (int)capacity["terminal"]);
+            Assert.AreEqual(JTokenType.Null, capacity["earliest_reclaim_unix_ms"].Type);
+            Assert.AreEqual(JTokenType.Null, capacity["retry_after_ms"].Type);
+        }
+
+        [Test]
         public void CorruptStoreAndCapacityFailClosedWithoutEvictingSafetyEntries()
         {
             for (int i = 0; i < CommandResumeJournal.MaxEntries; i++)

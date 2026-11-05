@@ -233,6 +233,7 @@ namespace MCPForUnity.Editor.Services.Transport
                                 ["status"] = "error",
                                 ["code"] = reason,
                                 ["error"] = "The Editor command resume journal is full. Retry after older command records expire.",
+                                ["capacity"] = CapacityDiagnostics(),
                             }
                         );
                         refusal.NotStarted = true;
@@ -289,6 +290,22 @@ namespace MCPForUnity.Editor.Services.Transport
                 accepted.Ticket = ticket;
                 return accepted;
             }
+        }
+
+        // Caller holds gate. An active owner must release before its record can be
+        // reclaimed, even after the original deadline; never promise that release time.
+        private JObject CapacityDiagnostics()
+        {
+            long? earliest = entries.Values.Where(entry => !active.ContainsKey(entry.id)).Select(entry => (long?)entry.deadline).Min();
+            return new JObject
+            {
+                ["limit"] = MaxEntries,
+                ["occupied"] = entries.Count,
+                ["active"] = active.Count,
+                ["terminal"] = entries.Values.Count(entry => entry.phase == "completed" || entry.phase == "canceled" || entry.phase == "unavailable"),
+                ["earliest_reclaim_unix_ms"] = earliest,
+                ["retry_after_ms"] = earliest.HasValue ? Math.Max(0, earliest.Value - clock()) : (long?)null,
+            };
         }
 
         internal bool TryStart(Ticket ticket)
