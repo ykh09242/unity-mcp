@@ -4,10 +4,18 @@ from importlib.resources import files
 from typing import Final, TypedDict
 
 from fastmcp import Context, FastMCP
+from fastmcp.apps import (
+    UI_EXTENSION_ID,
+    UI_MIME_TYPE,
+    AppConfig,
+    ResourceCSP,
+    ResourcePermissions,
+    app_config_to_meta_dict,
+)
 from fastmcp.resources import TextResource
 from fastmcp.server.extensions import ServerExtension
 from fastmcp.tools.base import Tool
-from mcp.server.apps import APP_MIME_TYPE, EXTENSION_ID, client_supports_apps
+from mcp.server.apps import client_supports_apps
 
 TEST_RESULTS_URI: Final = "ui://unity-mcp/test-results-v1"
 
@@ -19,14 +27,14 @@ class AppsSettings(TypedDict):
 class TestResultsExtension(ServerExtension):
     """Advertise only the static HTML MIME type; register no callable app tools."""
 
-    identifier = EXTENSION_ID
+    identifier = UI_EXTENSION_ID
 
     def settings(self) -> AppsSettings:
-        return {"mimeTypes": [APP_MIME_TYPE]}
+        return {"mimeTypes": [UI_MIME_TYPE]}
 
 
 def supports_test_results_app(ctx: Context | None) -> bool:
-    """Use SDK unified session capabilities for both legacy and modern clients."""
+    """Check the host's accepted HTML MIME type across both protocol generations."""
     if getattr(ctx, "request_context", None) is None:
         return False
     return client_supports_apps(ctx)
@@ -55,19 +63,21 @@ def install_test_results_app(server: FastMCP) -> None:
             uri=TEST_RESULTS_URI,
             name="test_results_view",
             description="Offline view of one completed test-result page.",
-            mime_type=APP_MIME_TYPE,
+            mime_type=UI_MIME_TYPE,
             text=html,
             meta={
-                "ui": {
-                    "csp": {
-                        "connectDomains": [],
-                        "resourceDomains": [],
-                        "frameDomains": [],
-                        "baseUriDomains": [],
-                    },
-                    "permissions": {},
-                    "prefersBorder": True,
-                }
+                "ui": app_config_to_meta_dict(
+                    AppConfig(
+                        csp=ResourceCSP(
+                            connect_domains=[],
+                            resource_domains=[],
+                            frame_domains=[],
+                            base_uri_domains=[],
+                        ),
+                        permissions=ResourcePermissions(),
+                        prefers_border=True,
+                    )
+                )
             },
         )
     )

@@ -4,6 +4,7 @@ import json
 from typing import Annotated
 
 from fastmcp import Context
+from fastmcp.apps import AppConfig, app_config_to_meta_dict
 from fastmcp.tools.base import ToolResult
 from mcp.types import TextContent, ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -61,7 +62,11 @@ def _result(response: MCPResponse) -> ToolResult:
         idempotentHint=True,
         openWorldHint=False,
     ),
-    meta={"ui": {"resourceUri": TEST_RESULTS_URI, "visibility": ["model"]}},
+    meta={
+        "ui": app_config_to_meta_dict(
+            AppConfig(resource_uri=TEST_RESULTS_URI, visibility=["model"])
+        )
+    },
 )
 async def view_test_results(
     ctx: Context,

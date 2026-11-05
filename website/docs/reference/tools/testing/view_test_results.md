@@ -30,6 +30,17 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+To open a local Unity test result, connect an MCP Apps host to the server and select the
+Editor that ran the test. Use the `job_id` returned by `run_tests` and wait for
+`get_test_job` to report completion. Then call `view_test_results` with that same ID.
+
+```json
+{"job_id": "<completed-job-id>"}
+```
+
+The host can render a card with a filter and expandable details for the returned page.
+Text-only clients receive the same result data. To preview with sample data in a local
+checkout, open `Server/tests/fixtures/test_results_host.html` in a browser, choose
+`Server/src/services/test_results_view.html`, and click **Run controlled lifecycle cases**.
 <!-- examples:end -->
 
