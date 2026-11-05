@@ -1,5 +1,6 @@
 """Worker timing validation and real serial/xdist outcome preservation."""
 
+import builtins
 import copy
 import json
 import os
@@ -317,14 +318,10 @@ def test_progress_is_bounded_unique_and_keeps_last_atomic_snapshot_on_io_failure
     assert record["nodeidTruncated"] is True
     assert len(original) < 26000
 
-    original_replace = Path.replace
+    def deny_replace(_source, _target):
+        raise PermissionError("owned read-only target")
 
-    def deny_replace(source, target):
-        if source == progress.output.with_suffix(".tmp"):
-            raise PermissionError("owned read-only target")
-        return original_replace(source, target)
-
-    monkeypatch.setattr(Path, "replace", deny_replace)
+    monkeypatch.setattr(progress, "_replace", deny_replace)
     progress.write("teardown", "test_owned.py::test_owned")
     assert progress.disabled
     assert progress.output.read_bytes() == original
@@ -333,6 +330,41 @@ def test_progress_is_bounded_unique_and_keeps_last_atomic_snapshot_on_io_failure
     progress.write("session-finalization")
     assert progress.output.with_suffix(".tmp").read_bytes() == staging
     assert len(list(tmp_path.iterdir())) == 3
+
+
+def test_progress_survives_global_json_io_patches_and_chdir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    progress = WorkerProgress(SimpleNamespace(getoption=lambda _name: "relative-progress"))
+    assert progress.output.is_absolute()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Observer entered an application test's patched dependency")
+
+    with monkeypatch.context() as patches:
+        patches.setattr(json, "dumps", forbidden)
+        patches.setattr(json._default_encoder, "encode", forbidden)
+        patches.setattr(json.JSONEncoder, "encode", forbidden)
+        patches.setattr(json.JSONEncoder, "iterencode", forbidden)
+        patches.setattr(json, "JSONEncoder", forbidden)
+        patches.setattr(Path, "open", forbidden)
+        patches.setattr(Path, "write_text", forbidden)
+        patches.setattr(Path, "replace", forbidden)
+        patches.setattr(Path, "mkdir", forbidden)
+        patches.setattr(os, "open", forbidden)
+        patches.setattr(os, "replace", forbidden)
+        patches.setattr(builtins, "open", forbidden)
+        progress.write("call", "test_owned.py::test_owned")
+
+    assert not progress.disabled
+    record = json.loads(progress.output.read_bytes())
+    assert record["phase"] == "call"
+    assert record["nodeid"] == "test_owned.py::test_owned"
+    assert not record["complete"]
+    assert len(list((tmp_path / "relative-progress").iterdir())) == 1
+    assert not list(elsewhere.iterdir())
 
 
 @pytest.mark.parametrize(

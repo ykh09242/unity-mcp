@@ -7,6 +7,8 @@ import os
 import sys
 from collections.abc import Generator
 from datetime import datetime, timezone
+from io import open as progress_open
+from os import replace as progress_replace
 from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
@@ -38,6 +40,21 @@ class WorkerProgress:
         self.disabled = False
         self.exitstatus: int | None = None
         self.session_finished = False
+        # Tests deliberately patch shared JSON and filesystem APIs. Keep this observer's
+        # encoder methods and built-in I/O independent of those application probes.
+        encoder = json.JSONEncoder(ensure_ascii=True)
+        # Shadow the class method before later class-level monkeypatches can replace it.
+        encoder.iterencode = encoder.iterencode
+        self._encode = encoder.encode
+        self._open = progress_open
+        self._replace = progress_replace
+        try:
+            self.output = self.output.resolve()
+            self._output_name = str(self.output)
+            self._staging_name = str(self.output.with_suffix(".tmp"))
+            self.output.parent.mkdir(parents=True, exist_ok=True)
+        except (OSError, ValueError):
+            self.disabled = True
         self.write("configuration")
 
     def write(self, phase: str, nodeid: str | None = None, *, complete: bool = False) -> None:
@@ -56,10 +73,9 @@ class WorkerProgress:
             "exitstatus": self.exitstatus,
         }
         try:
-            self.output.parent.mkdir(parents=True, exist_ok=True)
-            staging = self.output.with_suffix(".tmp")
-            staging.write_text(json.dumps(payload, ensure_ascii=True) + "\n", encoding="utf-8")
-            staging.replace(self.output)
+            with self._open(self._staging_name, "w", encoding="utf-8") as staging:
+                staging.write(self._encode(payload) + "\n")
+            self._replace(self._staging_name, self._output_name)
         except (OSError, ValueError):
             # Preserve the last good snapshot and avoid repeated failing I/O or -W error.
             self.disabled = True
