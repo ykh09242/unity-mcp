@@ -33,6 +33,12 @@ _graph_work_check: ContextVar[Callable[[], None] | None] = ContextVar(
 )
 
 
+def check_graph_work() -> None:
+    """Check the current worker's cancellation guard outside SQLite execution."""
+    if (check := _graph_work_check.get()) is not None:
+        check()
+
+
 @contextmanager
 def guard_graph_work(check: Callable[[], None]):
     """Cooperatively interrupt SQL owned by this context, including borrowed reads."""

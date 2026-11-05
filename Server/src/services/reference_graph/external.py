@@ -25,7 +25,12 @@ from collections.abc import Callable
 from typing import BinaryIO
 
 from services.reference_graph.analysis import Analysis, Catalog
-from services.reference_graph.store import Edge, RevisionConflict, check_owned_path
+from services.reference_graph.store import (
+    Edge,
+    RevisionConflict,
+    check_graph_work,
+    check_owned_path,
+)
 from services.reference_graph.ignore import GitIgnoreRules
 from services.reference_graph.collection_protocol import CollectionBudget, CollectionLimits
 
@@ -290,12 +295,41 @@ class ExternalSource:
         return self._ignore.ignored(relative, directory=directory)
 
     def _git_lines(self, relative: str) -> Iterator[str]:
-        """Read only explicitly opted-in, in-root Git identity metadata."""
+        """Charge in-root identity metadata and cap every record before decoding it."""
+        check_graph_work()
+        self.budget.remaining()
         path = check_owned_path(self.root / ".git" / relative)
         before = path.stat()
+        self.budget.check_source(before.st_size, 0)
         with _regular_descriptor(path, before) as descriptor:
-            with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as stream:
-                yield from stream
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                accumulated = 0
+                while True:
+                    check_graph_work()
+                    self.budget.remaining()
+                    size = min(
+                        65537,
+                        self.budget.limits.max_source_bytes - accumulated + 1,
+                        self.budget.limits.max_bytes - self.budget.decoded_bytes + 1,
+                    )
+                    line = stream.readline(size)
+                    self.budget.source(len(line), accumulated)
+                    check_graph_work()
+                    if not line:
+                        return
+                    accumulated += len(line)
+                    if len(line) > 65536:
+                        raise ValueError("Git metadata record exceeds 65536 bytes")
+                    yield line.decode("utf-8")
+
+    def _git_value(self, relative: str) -> str:
+        value = ""
+        for line in self._git_lines(relative):
+            if line.strip():
+                if value:
+                    raise ValueError("Git identity requires a single value")
+                value = line.strip()
+        return value
 
     def repository_revision(self) -> dict:
         if not self.git_revision:
@@ -304,7 +338,7 @@ class ExternalSource:
             self.check_access()
             if not stat.S_ISDIR(check_owned_path(self.root / ".git").stat().st_mode):
                 return {"state": "unavailable", "reason": "gitdir_outside_source_not_followed"}
-            head = "".join(self._git_lines("HEAD")).strip()
+            head = self._git_value("HEAD")
             commit = head
             if head.startswith("ref: "):
                 reference = head[5:]
@@ -315,18 +349,20 @@ class ExternalSource:
                 ):
                     return {"state": "unavailable", "reason": "invalid_ref"}
                 try:
-                    commit = "".join(self._git_lines(reference)).strip()
+                    commit = self._git_value(reference)
                 except FileNotFoundError:
                     commit = ""
                     for line in self._git_lines("packed-refs"):
                         fields = line.strip().split(" ")
                         if len(fields) == 2 and fields[1] == reference:
                             commit = fields[0]
-            if "".join(self._git_lines("HEAD")).strip() != head:
+            if self._git_value("HEAD") != head:
                 return {"state": "unavailable", "reason": "head_changed"}
             if re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", commit) is None:
                 return {"state": "unavailable", "reason": "missing_or_invalid_commit"}
             return {"state": "observed_head", "commit": commit.lower()}
+        except InterruptedError:
+            raise
         except (OSError, ValueError):
             return {"state": "unavailable", "reason": "metadata_inaccessible"}
 
