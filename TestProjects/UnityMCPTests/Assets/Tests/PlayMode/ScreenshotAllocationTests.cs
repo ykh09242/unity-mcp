@@ -24,14 +24,14 @@ namespace MCPForUnityTests.PlayMode
             camera.targetTexture = source;
             var before = new HashSet<int>();
             foreach (var texture in Resources.FindObjectsOfTypeAll<Texture2D>())
-                before.Add(texture.GetInstanceID());
+                before.Add(texture.GetInstanceIDCompat());
             var previews = new List<Texture2D>();
             try
             {
                 for (int i = 0; i < 4; i++)
                     previews.Add(ScreenshotUtility.RenderCameraToTexture(camera, 64));
                 foreach (var texture in Resources.FindObjectsOfTypeAll<Texture2D>())
-                    if (!before.Contains(texture.GetInstanceID()))
+                    if (!before.Contains(texture.GetInstanceIDCompat()))
                         Assert.IsFalse(texture.width == 512 && texture.height == 256, "A preview must never allocate a full-resolution CPU readback texture.");
                 Assert.AreEqual(4, previews.Count);
                 Assert.IsTrue(previews.TrueForAll(texture => texture.width == 64 && texture.height == 32));

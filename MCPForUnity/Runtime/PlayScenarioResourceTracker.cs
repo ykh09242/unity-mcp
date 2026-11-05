@@ -178,6 +178,8 @@ namespace MCPForUnity.Runtime
 #else
 #if UNITY_6000_6_OR_NEWER
             return UnityEngine.Resources.EntityIdToObject(EntityId.FromULong(id)) as ScriptableObject;
+#elif UNITY_6000_3_OR_NEWER
+            return UnityEngine.Resources.EntityIdToObject(unchecked((int)(uint)id)) as ScriptableObject;
 #else
             return UnityEngine.Resources.InstanceIDToObject(unchecked((int)(uint)id)) as ScriptableObject;
 #endif

@@ -1,4 +1,5 @@
 using System;
+using MCPForUnity.Runtime.Helpers;
 using NUnit.Framework;
 using UnityEngine;
 #if UNITY_EDITOR
@@ -65,8 +66,8 @@ namespace MCPForUnityTests.PlayMode
                 Assert.That(Application.IsPlaying(preview), Is.False);
 
                 string assetTarget = "{\"find\":\"" + prefabPath + "\"}";
-                string previewTarget = preview.GetInstanceID().ToString();
-                string liveTarget = live.GetInstanceID().ToString();
+                string previewTarget = preview.GetInstanceIDCompat().ToString();
+                string liveTarget = live.GetInstanceIDCompat().ToString();
                 foreach (string target in new[] { assetTarget, previewTarget })
                 {
                     Assert.That(
