@@ -538,9 +538,9 @@ jobs:
       # Inlined from .github/actions/publish-pypi to avoid nested composite action issue
       # with pypa/gh-action-pypi-publish (see https://github.com/pypa/gh-action-pypi-publish/issues/338)
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.5"
+          version: "0.13.7"
           enable-cache: true
           cache-dependency-glob: "Server/uv.lock"
 
@@ -573,7 +573,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "26.12.1"
+          node-version: "26.13.0"
           # This write-enabled publishing job does not need automatic npm caching.
           package-manager-cache: false
 

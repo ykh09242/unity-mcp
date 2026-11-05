@@ -66,9 +66,9 @@ jobs:
           fetch-depth: 0
 
       # ---------- Python env for MCP server (uv) ----------
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.5"
+          version: "0.13.7"
           python-version: "3.14"
           enable-cache: false
 
@@ -680,7 +680,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run Claude NL pass
-        uses: anthropics/claude-code-action@8041f1d17e0e7d2f2cfe35002962e9f26237c0bb # v1.0.263
+        uses: anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c # v1.0.268
         if: steps.detect.outputs.anthropic_ok == 'true' && steps.detect.outputs.unity_ok == 'true'
         continue-on-error: true
         env:
@@ -742,7 +742,7 @@ jobs:
 
       - name: Retry NL pass (Sonnet) if incomplete or failed
         if: steps.nl_cov.outputs.missing != '0' || steps.nl_cov.outputs.failed != '0'
-        uses: anthropics/claude-code-action@8041f1d17e0e7d2f2cfe35002962e9f26237c0bb # v1.0.263
+        uses: anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c # v1.0.268
         continue-on-error: true
         env:
           UNITY_MCP_DEFAULT_INSTANCE: ${{ env.UNITY_MCP_DEFAULT_INSTANCE }}
@@ -804,7 +804,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run Claude T pass A-J
-        uses: anthropics/claude-code-action@8041f1d17e0e7d2f2cfe35002962e9f26237c0bb # v1.0.263
+        uses: anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c # v1.0.268
         if: steps.detect.outputs.anthropic_ok == 'true' && steps.detect.outputs.unity_ok == 'true'
         continue-on-error: true
         env:
@@ -845,7 +845,7 @@ jobs:
 
       - name: Retry T pass (Sonnet) if incomplete
         if: steps.t_cov.outputs.missing != '0'
-        uses: anthropics/claude-code-action@8041f1d17e0e7d2f2cfe35002962e9f26237c0bb # v1.0.263
+        uses: anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c # v1.0.268
         env:
           GITHUB_STEP_SUMMARY: /dev/null
         with:
@@ -918,7 +918,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run Claude GO pass
-        uses: anthropics/claude-code-action@8041f1d17e0e7d2f2cfe35002962e9f26237c0bb # v1.0.263
+        uses: anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c # v1.0.268
         if: steps.detect.outputs.anthropic_ok == 'true' && steps.detect.outputs.unity_ok == 'true'
         continue-on-error: true
         env:
@@ -957,7 +957,7 @@ jobs:
 
       - name: Retry GO pass (Sonnet) if incomplete
         if: steps.go_cov.outputs.missing != '0'
-        uses: anthropics/claude-code-action@8041f1d17e0e7d2f2cfe35002962e9f26237c0bb # v1.0.263
+        uses: anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c # v1.0.268
         env:
           GITHUB_STEP_SUMMARY: /dev/null
         with:
@@ -1668,7 +1668,7 @@ jobs:
 
       - name: Publish JUnit report
         if: always()
-        uses: mikepenz/action-junit-report@6ef3fdcfcd5f0b5d14df3e659ef19b8c6820f93d # v6.6.1
+        uses: mikepenz/action-junit-report@4a26df3e2ae132254ba12a53f65a388d0961e786 # v6.7.0
         with:
           report_paths: "${{ env.JUNIT_OUT }}"
           include_passed: false

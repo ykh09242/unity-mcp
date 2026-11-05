@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-RUN pip install uv==0.13.5
+RUN pip install uv==0.13.7
 
 # Keep the source layout used by package-source/version resolution, while
 # excluding tests, Unity projects, tooling and all local checkout state.
