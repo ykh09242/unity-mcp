@@ -139,11 +139,8 @@ async def serve(args: argparse.Namespace, diagnostic: Trace | None) -> None:
         ):
             state.partial_received.set()
 
-    async def observe_result(hub, websocket, payload, *, _work=None) -> None:
-        if _work is None:
-            await original_result(hub, websocket, payload)
-        else:
-            await original_result(hub, websocket, payload, _work=_work)
+    async def observe_result(hub, websocket, payload, **ownership) -> None:
+        await original_result(hub, websocket, payload, **ownership)
         accounting.snapshot()
 
     PluginHub._handle_large_result = observe_large
@@ -519,7 +516,10 @@ async def main(args: argparse.Namespace) -> None:
         with ExitStack() as patches:
             if args.transport == "http":
                 result_parameters = ("self", "websocket", "payload")
-                if "_work" in inspect.signature(PluginHub._handle_command_result).parameters:
+                parameters = inspect.signature(PluginHub._handle_command_result).parameters
+                if "_candidate" in parameters:
+                    result_parameters += ("_work", "_candidate")
+                elif "_work" in parameters:
                     result_parameters += ("_work",)
                 patches.enter_context(
                     patch(
