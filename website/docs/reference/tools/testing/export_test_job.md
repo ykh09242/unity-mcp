@@ -23,7 +23,7 @@ Export completed Unity test evidence as JSON or JUnit. Returns one bounded UTF-8
 | `job_id` | `str` | yes | Completed job id from run_tests |
 | `format` | `Literal['json', 'junit']` | — | Export format |
 | `cursor` | `str \| None` | — | Opaque next_cursor from the previous export chunk |
-| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -25,7 +25,7 @@ Read or change asset labels with revision checks.
 | `labels` | `list[str] \| None` | — | Exact labels; set replaces, empty set clears. |
 | `label_targets` | `list[AssetLabelTarget] \| None` | — | Common-operation batch; each mutation row requires revision. |
 | `label_revision` | `str \| None` | — | Opaque revision from get_labels for a single-target mutation. |
-| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

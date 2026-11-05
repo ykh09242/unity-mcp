@@ -31,7 +31,7 @@ Move or orient a GameObject selected by target (or name). move_relative requires
 | `world_space` | `bool \| str \| None` | — | If True (default), use world space directions; if False, use reference object's local directions |
 | `look_at_target` | `list[float] \| str \| None` | — | World position [x,y,z] or GameObject name/path/ID to look at (for look_at action). |
 | `look_at_up` | `list[float] \| str \| None` | — | Optional up vector [x,y,z] for look_at. Defaults to [0,1,0]. |
-| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

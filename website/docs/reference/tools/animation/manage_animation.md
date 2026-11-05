@@ -27,7 +27,7 @@ Manage Unity animation: Animator control and AnimationClip creation. Action pref
 | `controller_path` | `str \| None` | — | Asset path for AnimatorController (e.g. 'Assets/Animators/Player.controller'). |
 | `properties` | `dict[str, Any] \| str \| None` | — | Action-specific parameters (dict or JSON object string). |
 | `runtime_only` | `bool \| None` | — | For animator_set_parameter or animator_set_enabled, require a playing scene instance. |
-| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

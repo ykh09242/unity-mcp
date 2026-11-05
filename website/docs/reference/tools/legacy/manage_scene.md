@@ -24,6 +24,7 @@ Performs CRUD operations on Unity scenes. Read-only validate_references pages br
 | `name` | `str \| None` | — | Scene name. |
 | `path` | `str \| None` | — | Scene path, under Assets/ or Packages/. A bare path is treated as relative to Assets/. |
 | `build_index` | `int \| str \| None` | — | Unity build index (quote as string, e.g., '0'). |
+| `allow_overwrite` | `bool \| str \| None` | — | Allow Save As to replace an existing scene. |
 | `scene_view_target` | `str \| int \| None` | — | GameObject reference for scene_view_frame (name, path, or instance ID). |
 | `parent` | `str \| int \| None` | — | Optional parent GameObject reference (name/path/instanceID) to list direct children. |
 | `page_size` | `int \| str \| None` | — | Page size for get_hierarchy paging. |
@@ -46,7 +47,7 @@ Performs CRUD operations on Unity scenes. Read-only validate_references pages br
 | `reference_revision` | `str \| None` | — | validate_references: refuse if the repeated observation has drifted. |
 | `reference_snapshot` | `bool \| None` | — | validate_references: capture stable paged evidence without rescanning later pages. |
 | `reference_cursor` | `str \| None` | — | validate_references: returned snapshot cursor; captured evidence, not a live revision recheck. |
-| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 
@@ -102,6 +103,17 @@ Returns up to `page_size` entries plus a `next_cursor` for the remainder. Always
 
 ```json
 { "action": "save" }
+```
+
+Save As to another existing scene requires explicit overwrite consent after reviewing
+that destination. See the [scene and prefab editing guide](../../../guides/scene-and-prefab-edits.md).
+
+```json
+{
+  "action": "save",
+  "path": "Assets/Scenes/Existing.unity",
+  "allow_overwrite": true
+}
 ```
 
 ### Create a scene from a template

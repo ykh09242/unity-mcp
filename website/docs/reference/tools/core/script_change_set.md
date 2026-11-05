@@ -24,7 +24,7 @@ Prepare, apply, inspect or recover 1–256 existing C# source replacements as on
 | `files` | `list[ScriptChangeFile] \| None` | — | prepare only: ordered final source buffers. |
 | `change_set_id` | `str \| None` | — | apply/status/recover: identifier returned by prepare. |
 | `validation` | `Literal['basic', 'standard', 'comprehensive', 'strict']` | — |  |
-| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

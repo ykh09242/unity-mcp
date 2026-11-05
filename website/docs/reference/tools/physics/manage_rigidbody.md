@@ -25,7 +25,7 @@ Inspect or configure a Rigidbody or Rigidbody2D.
 | `target` | `str \| None` | — | Target GameObject name or instance ID. |
 | `search_method` | `str \| None` | — | Search method for target resolution. |
 | `properties` | `dict[str, Any] \| None` | — | Direct property dict for joints or materials. |
-| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

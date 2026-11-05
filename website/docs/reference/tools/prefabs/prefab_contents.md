@@ -38,7 +38,7 @@ Edit prefab contents, inspect changes without saving with modify_contents previe
 | `component_properties` | `dict[str, dict[str, Any]] \| None` | — | Set properties on existing components in modify_contents. Keys are component type names, values are dicts of property name to value. Example: {"Rigidbody": {"mass": 5.0}, "MyScript": {"health": 100}}. Supports object references via {"guid": "..."}, {"path": "Assets/..."}, or {"instanceID": 123}. For Sprite sub-assets: {"guid": "...", "spriteName": "<name>"}. Single-sprite textures auto-resolve. |
 | `preview_id` | `str \| None` | — | One-attempt token from preview_modify_contents, valid 10 minutes. |
 | `preview_only` | `bool \| None` | — | modify_contents only: inspect changes without saving; includes load/edit side effects, not save callbacks. No apply token; inspect complete/truncated coverage in data.preview. |
-| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 
@@ -47,6 +47,31 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+See the [scene and prefab editing guide](../../../guides/scene-and-prefab-edits.md)
+for guarded previews and the broader `modify_contents` inspection path. Choose a
+verified existing prefab without nested instances or custom components:
+
+```json
+{
+  "action": "preview_modify_contents",
+  "prefab_path": "Assets/Prefabs/Crate.prefab",
+  "scale": [1.25, 1.25, 1.25]
+}
+```
+
+Review the returned impact, then replace `REPLACE_WITH_RETURNED_PREVIEW_ID` with the
+returned token. Apply accepts the token without the original path or edit fields:
+
+```json
+{
+  "action": "apply_preview",
+  "preview_id": "REPLACE_WITH_RETURNED_PREVIEW_ID"
+}
+```
+
+The token permits one attempt within ten minutes. Source/dependency drift requires
+a new preview. Asset saves do not promise Undo or callback rollback. In contrast,
+`modify_contents` with `preview_only: true` inspects broader changes without saving
+and returns no apply token; review unsupported fields and truncation explicitly.
 <!-- examples:end -->
 

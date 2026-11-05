@@ -24,7 +24,7 @@ Optional Project Auditor 1.0.1 integration. availability checks the installed pa
 | `audit_id` | `str \| None` | — | Editor-session audit identity. Omit on start to allocate once; required for status/issues. |
 | `page_size` | `int \| None` | — | issues only: row limit (default 50). |
 | `cursor` | `str \| None` | — | issues only: opaque cursor returned by the previous page. |
-| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

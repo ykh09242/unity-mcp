@@ -36,7 +36,7 @@ Inspect/create optional Timeline Assets/*.playable assets and explicitly add bui
 | `track_id` | `str \| None` | — | read: exact saved track fileID for a clip page; omit offset. |
 | `clip_offset` | `int \| None` | — | read: nonnegative clip offset in track_id; continuation requires expected_revision. |
 | `clip_page_size` | `int \| None` | — | read: clips per track1-32, default16. |
-| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

@@ -3864,11 +3864,12 @@ Open a scene additively (keeps current scene loaded). Examples: unity-mcp scene 
 
 ## `unity-mcp scene save`
 
-Save the current scene. Examples: unity-mcp scene save unity-mcp scene save --path "Assets/Scenes/NewScene.unity"
+Save the current scene. Examples: unity-mcp scene save unity-mcp scene save --path "Assets/Scenes/NewScene.unity" unity-mcp scene save --path "Assets/Scenes/Existing.unity" --allow-overwrite
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| --path | text | optional | nargs=1 | — | — | Path to save the scene to (for new scenes). |
+| --path | text | optional | nargs=1 | — | — | Path to save the scene to (Save As). |
+| --allow-overwrite | boolean | optional | nargs=1, flag | — | — | Allow Save As to replace another existing scene. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp scene set-active`

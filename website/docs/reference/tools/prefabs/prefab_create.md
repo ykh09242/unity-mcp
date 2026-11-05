@@ -25,9 +25,9 @@ Create a prefab asset from an existing GameObject.
 | `target` | `str \| int \| None` | — | For create_from_gameobject: instance ID (integer or numeric string), unique name, or full hierarchy path (e.g. 'Parent/Child' or '/Parent/Child') in the active scene/current prefab stage. Stage names/paths take precedence. Numeric targets are IDs; ambiguous names/paths fail. For modify_contents: saved prefab object name or child path; omit to target the root. Use returned rootObjectName/rootObjectPath, which may differ from the source instance name. IDs do not apply to isolated prefab contents. |
 | `allow_overwrite` | `bool \| None` | — | Allow replacing existing prefab. |
 | `search_inactive` | `bool \| None` | — | Include inactive GameObjects in search. |
-| `unlink_if_instance` | `bool \| None` | — | Unlink from existing prefab before creating new one. |
+| `unlink_if_instance` | `bool \| None` | — | Unpack the outermost prefab instance root before creating a new prefab; child targets are rejected. A failed save may leave the scene unpacked. |
 | `name` | `str \| None` | — | New name for the target object in modify_contents. |
-| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 
@@ -36,6 +36,26 @@ A `dict` containing the Unity response. The exact shape depends on the action.
 ## Examples
 
 <!-- examples:start -->
-*No examples yet. Add usage examples here — they will be preserved across regenerations.*
+See the [scene and prefab editing guide](../../../guides/scene-and-prefab-edits.md)
+and [returned-root targeting examples](../legacy/manage_prefabs.md#examples).
+Replace the target with a verified scene/stage object ID or unique hierarchy path,
+and choose a new asset path:
+
+```json
+{
+  "action": "create_from_gameobject",
+  "target": "Props/Crate",
+  "prefab_path": "Assets/Prefabs/Crate.prefab",
+  "allow_overwrite": false,
+  "unlink_if_instance": false
+}
+```
+
+Existing destinations require explicit `allow_overwrite: true`. For a prefab instance,
+review the unpack scope before setting `unlink_if_instance: true`: the target must be
+its outermost instance root, not a nested child. On failure, inspect the error and
+scene/destination state before retrying; unpacking can require Undo or manual restoration.
+Keep `rootObjectName`/`rootObjectPath` from the create result
+for subsequent asset edits; they can differ from the source instance name.
 <!-- examples:end -->
 

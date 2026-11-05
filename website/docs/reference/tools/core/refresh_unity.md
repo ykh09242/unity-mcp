@@ -25,7 +25,7 @@ Refresh assets and optionally request compilation. Reports no_op when nothing wa
 | `compile` | `Literal['none', 'request']` | — | Whether to request compilation |
 | `wait_for_ready` | `bool` | — | If true, wait until mcpforunity://editor/state reports data.advice.ready_for_tools true |
 | `timeout_seconds` | `float` | — | Total refresh/readiness observation budget in seconds; expiry does not undo native work |
-| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

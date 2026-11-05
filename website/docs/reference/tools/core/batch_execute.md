@@ -27,7 +27,7 @@ Execute multiple native MCP commands in one request. Batch independent operation
 | `validate_only` | `bool` | — | Validate action names without executing children; requires the peer preview capability |
 | `preview_scope` | `Literal['action_names', 'targets']` | — | With validate_only, inspect action names or supported concrete targets |
 | `preview` | `dict[str, Any] \| None` | — | Unmodified target-preview guard to recheck before supported mutations; no rollback or retry guarantee |
-| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer port is also supported over stdio. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
+| `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns
 

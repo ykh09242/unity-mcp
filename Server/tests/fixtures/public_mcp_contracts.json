@@ -18205,6 +18205,20 @@
                 ],
                 "default": null
               },
+              "allow_overwrite": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "auto_repair": {
                 "anyOf": [
                   {
@@ -23469,6 +23483,20 @@
                 "type": "string"
               },
               "additive": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "allow_overwrite": {
                 "anyOf": [
                   {
                     "type": "boolean"
@@ -43566,6 +43594,20 @@
                 ],
                 "default": null
               },
+              "allow_overwrite": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "auto_repair": {
                 "anyOf": [
                   {
@@ -48830,6 +48872,20 @@
                 "type": "string"
               },
               "additive": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "allow_overwrite": {
                 "anyOf": [
                   {
                     "type": "boolean"
