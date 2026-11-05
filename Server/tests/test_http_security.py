@@ -4,12 +4,90 @@ from tests.timing import watchdog_timeout
 
 import json
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
 
 _OUTPUT_TAIL_LIMIT = 4096
 _HTTP_WORKERS = 4
+
+
+def _windows_job():
+    """Create an initially empty job; the gated bootstrap cannot spawn before assignment."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    kernel.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel.TerminateJobObject.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    job = kernel.CreateJobObjectW(None, None)
+    if not job:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return kernel, job
+
+
+def _run_http_subprocess(args, *, timeout, **kwargs):
+    """Own the controller tree until its pipes have drained or cleanup finishes."""
+    capture_output = kwargs.pop("capture_output", False)
+    if capture_output:
+        kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    kernel = job = process = None
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            kernel, job = _windows_job()
+            # The bootstrap waits for assignment before spawning the actual controller.
+            bootstrap = (
+                "import subprocess,sys; sys.stdin.buffer.read(1); "
+                "p=subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL); sys.exit(p.wait())"
+            )
+            process = subprocess.Popen(
+                [sys._base_executable, "-c", bootstrap, *args], stdin=subprocess.PIPE, **kwargs
+            )
+            if not kernel.AssignProcessToJobObject(job, int(getattr(process, "_handle"))):
+                raise ctypes.WinError(ctypes.get_last_error())
+            release = "x" if kwargs.get("text") else b"x"
+        else:
+            process = subprocess.Popen(args, start_new_session=True, **kwargs)
+            release = None
+        stdout, stderr = process.communicate(input=release, timeout=timeout)
+        return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+    except BaseException as error:
+        try:
+            if job is not None:
+                if not kernel.TerminateJobObject(job, 1):
+                    raise ctypes.WinError(ctypes.get_last_error())
+            elif process is not None:
+                try:
+                    getattr(os, "killpg")(process.pid, getattr(signal, "SIGKILL"))
+                except ProcessLookupError:
+                    pass
+        except OSError as cleanup_error:
+            error.add_note(f"Owned HTTP process tree termination failed: {cleanup_error}")
+        try:
+            if process is not None:
+                # Assignment can fail before the bootstrap has joined the job.
+                if process.poll() is None:
+                    process.kill()
+                stdout, stderr = process.communicate(timeout=10)
+                if isinstance(error, subprocess.TimeoutExpired):
+                    if stdout is not None:
+                        error.output = stdout
+                    if stderr is not None:
+                        error.stderr = stderr
+        except (OSError, subprocess.TimeoutExpired) as cleanup_error:
+            error.add_note(f"Owned HTTP process cleanup failed: {cleanup_error}")
+        raise
+    finally:
+        if job is not None:
+            kernel.CloseHandle(job)
 
 
 def _output_tail(output: bytes | str | None) -> str:
@@ -70,7 +148,7 @@ def test_local_http_security_regressions(tmp_path, pytestconfig):
         report = Path(xmlpath).resolve()
         report_args = ["--junitxml", str(report.with_stem(f"{report.stem}-http"))]
     try:
-        result = subprocess.run(
+        result = _run_http_subprocess(
             [
                 sys.executable,
                 "-m",

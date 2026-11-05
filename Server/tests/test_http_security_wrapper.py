@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,125 @@ class _Config:
     def getoption(self, name, default=None):
         assert name == "xmlpath"
         return self.xmlpath if self.xmlpath is not None else default
+
+
+def test_owned_subprocess_preserves_exit_and_captured_text():
+    result = wrapper._run_http_subprocess(
+        [
+            sys._base_executable,
+            "-c",
+            "import sys; print('out'); print('err', file=sys.stderr); sys.exit(7)",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 7
+    assert result.stdout == "out\n"
+    assert result.stderr == "err\n"
+
+
+@pytest.mark.parametrize("controller_exits", [False, True])
+def test_owned_subprocess_timeout_preserves_both_output_streams(controller_exits):
+    child = (
+        "import subprocess,sys; "
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])"
+    )
+    tail = child if controller_exits else "import time; time.sleep(30)"
+    code = (
+        "import sys; print('stdout marker', flush=True); print('stderr marker', file=sys.stderr, flush=True); "
+        + tail
+    )
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        wrapper._run_http_subprocess(
+            [sys._base_executable, "-c", code], capture_output=True, text=True, timeout=2
+        )
+    assert "stdout marker" in wrapper._output_tail(raised.value.output)
+    assert "stderr marker" in wrapper._output_tail(raised.value.stderr)
+
+
+@pytest.mark.parametrize("controller_exits", [False, True])
+def test_timeout_terminates_owned_controller_worker_and_grandchild(tmp_path, controller_exits):
+    probe = tmp_path / "process_probe.py"
+    probe.write_text(
+        """import os, subprocess, sys, time
+from pathlib import Path
+stage, root, exits = sys.argv[1], Path(sys.argv[2]), sys.argv[3] == "1"
+if stage != "grandchild":
+    child = "worker" if stage == "controller" else "grandchild"
+    output = {} if exits else {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    subprocess.Popen([sys.executable, __file__, child, str(root), sys.argv[3]], **output)
+(root / stage).write_text(str(os.getpid()))
+if stage == "controller" and exits:
+    while not (root / "grandchild").exists():
+        time.sleep(0.01)
+    sys.exit(0)
+time.sleep(30)
+""",
+        encoding="utf-8",
+    )
+    args = [
+        sys._base_executable,
+        str(probe),
+        "controller",
+        str(tmp_path),
+        str(int(controller_exits)),
+    ]
+    pids = []
+    handles = {}
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            wrapper._run_http_subprocess(args, capture_output=True, timeout=3)
+        for stage in ("worker", "grandchild"):
+            pids.append(int((tmp_path / stage).read_text()))
+
+        def alive(pid):
+            if os.name == "nt":
+                import ctypes
+                from ctypes import wintypes
+
+                kernel = ctypes.windll.kernel32
+                kernel.OpenProcess.restype = wintypes.HANDLE
+                kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+                kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+                kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+                handle = handles.get(pid)
+                if handle is None:
+                    handle = kernel.OpenProcess(0x100001, False, pid)
+                    if handle:
+                        handles[pid] = handle
+                if not handle:
+                    return False
+                return kernel.WaitForSingleObject(handle, 0) == 0x102
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return False
+            return True
+
+        deadline = time.monotonic() + 2
+        while any(alive(pid) for pid in pids) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not any(alive(pid) for pid in pids), "owned descendants survived timeout"
+    finally:
+        # The probe owns these sleeping processes; clean them even on the red run.
+        if os.name == "nt":
+            import ctypes
+
+            kernel = ctypes.windll.kernel32
+            for handle in handles.values():
+                if kernel.WaitForSingleObject(handle, 0) == 0x102:
+                    kernel.TerminateProcess(handle, 1)
+                kernel.CloseHandle(handle)
+        else:
+            import signal
+
+            for pid in reversed(pids):
+                try:
+                    os.kill(pid, getattr(signal, "SIGKILL"))
+                except ProcessLookupError:
+                    pass
 
 
 @pytest.mark.parametrize(("scale", "expected_timeout"), [("1", 900), ("2", 1800)])
@@ -36,7 +156,7 @@ def test_wrapper_preserves_child_command_and_success(
         observed.update(args=args, kwargs=kwargs)
         return subprocess.CompletedProcess(args, 0, "passed", "")
 
-    monkeypatch.setattr(wrapper.subprocess, "run", completed)
+    monkeypatch.setattr(wrapper, "_run_http_subprocess", completed)
     report = tmp_path / "outer.xml"
     wrapper.test_local_http_security_regressions(tmp_path, _Config(report))
 
@@ -87,7 +207,7 @@ def test_wrapper_timeout_reports_bounded_child_progress(
             args, timeout=kwargs["timeout"], output=stdout, stderr=stderr
         )
 
-    monkeypatch.setattr(wrapper.subprocess, "run", timed_out)
+    monkeypatch.setattr(wrapper, "_run_http_subprocess", timed_out)
     with pytest.raises(AssertionError) as raised:
         wrapper.test_local_http_security_regressions(tmp_path, _Config())
 
@@ -110,7 +230,7 @@ def test_wrapper_nonzero_child_reports_exit_and_bounded_tail(tmp_path, monkeypat
             args, 7, "early marker" + "x" * 12000 + "last test", b"stderr: \xff"
         )
 
-    monkeypatch.setattr(wrapper.subprocess, "run", failed)
+    monkeypatch.setattr(wrapper, "_run_http_subprocess", failed)
     with pytest.raises(AssertionError) as raised:
         wrapper.test_local_http_security_regressions(tmp_path, _Config())
 
@@ -143,7 +263,7 @@ def test_timeout_keeps_earlier_worker_phase_after_later_output(tmp_path, monkeyp
         )
         raise subprocess.TimeoutExpired(args, kwargs["timeout"], output=stdout.encode())
 
-    monkeypatch.setattr(wrapper.subprocess, "run", timed_out)
+    monkeypatch.setattr(wrapper, "_run_http_subprocess", timed_out)
     with pytest.raises(AssertionError) as raised:
         wrapper.test_local_http_security_regressions(tmp_path, _Config())
     message = str(raised.value)
@@ -241,7 +361,7 @@ def test_bad_worker_record_preserves_original_timeout(tmp_path, monkeypatch, rec
         (progress / "gw0.json").write_bytes(record)
         raise subprocess.TimeoutExpired(args, kwargs["timeout"], output="latest progress")
 
-    monkeypatch.setattr(wrapper.subprocess, "run", timed_out)
+    monkeypatch.setattr(wrapper, "_run_http_subprocess", timed_out)
     with pytest.raises(AssertionError) as raised:
         wrapper.test_local_http_security_regressions(tmp_path, _Config())
     message = str(raised.value)
@@ -266,7 +386,7 @@ def test_worker_progress_and_both_output_tails_remain_bounded(tmp_path, monkeypa
             args, kwargs["timeout"], output="a" * 20000, stderr="b" * 20000
         )
 
-    monkeypatch.setattr(wrapper.subprocess, "run", timed_out)
+    monkeypatch.setattr(wrapper, "_run_http_subprocess", timed_out)
     with pytest.raises(AssertionError) as raised:
         wrapper.test_local_http_security_regressions(tmp_path, _Config())
     message = str(raised.value)
