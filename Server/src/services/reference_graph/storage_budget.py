@@ -6,16 +6,15 @@ commit flushes can overshoot between samples. Normal cache spilling stays enable
 """
 
 from collections.abc import Iterator
-from contextlib import closing, contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from dataclasses import dataclass
-import errno
 import os
 from pathlib import Path
 import sqlite3
 import stat
-import time
 from typing import Final
 
+from core.file_lock import FileLockError, file_lock as shared_file_lock
 from services.reference_graph.store import _hash, check_owned_path
 
 
@@ -90,42 +89,14 @@ def file_sizes(path: Path) -> dict[str, int]:
 
 @contextmanager
 def file_lock(path: Path, *, wait: bool = True) -> Iterator[None]:
-    """Keep a stable inode; removing lock files can split cross-process ownership."""
+    """Apply graph path policy while sharing stable cross-process ownership."""
     _regular(path)
-    descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
-    try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
-            raise ValueError("Reference graph lock must be an owned regular file")
-        deadline = time.monotonic() + 30
-        while True:
-            try:
-                if os.name == "nt":
-                    import msvcrt  # pylint: disable=import-error  # Windows-only standard library.
-
-                    msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl  # pylint: disable=import-error  # Unix-only standard library.
-
-                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError as error:
-                if not wait and error.errno in (errno.EACCES, errno.EAGAIN):
-                    raise BlockingIOError("Reference graph lock is busy") from error
-                if error.errno not in (errno.EACCES, errno.EAGAIN) or time.monotonic() >= deadline:
-                    raise StorageBudgetError(
-                        "Reference graph budget lock is busy; retry"
-                    ) from error
-                time.sleep(0.01)
+    with ExitStack() as stack:
         try:
-            yield
-        finally:
-            if os.name == "nt":
-                msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
-    finally:
-        os.close(descriptor)
+            stack.enter_context(shared_file_lock(path, wait=wait))
+        except FileLockError as error:
+            raise StorageBudgetError("Reference graph budget lock is busy; retry") from error
+        yield
 
 
 def _reservation(capacity: int) -> int:

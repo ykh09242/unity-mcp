@@ -10,6 +10,8 @@ from ipaddress import ip_address
 from pathlib import Path
 from typing import Final, Iterator
 
+from core.file_lock import file_lock
+
 LOCAL_AUTH_HEADER: Final = "X-Unity-MCP-Token"
 LOCAL_AUTH_TOKEN_ENV: Final = "UNITY_MCP_LOCAL_AUTH_TOKEN"
 LOCAL_AUTH_FILE_ENV: Final = "UNITY_MCP_LOCAL_AUTH_TOKEN_FILE"
@@ -63,24 +65,34 @@ def local_auth_token_path(port: int) -> Path:
 
 @contextmanager
 def local_auth_token(port: int) -> Iterator[str]:
-    """Publish a new 256-bit token atomically, and remove it on clean shutdown."""
+    """Own the token file for the launch lifetime before atomically publishing it."""
     path = local_auth_token_path(port)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    token = secrets.token_urlsafe(32)
-    fd, temporary_path = tempfile.mkstemp(prefix=".token-", dir=path.parent)
-    try:
-        # mkstemp creates mode 0600 on POSIX. Windows inherits the user's ACL.
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            stream.write(token)
-        os.replace(temporary_path, path)
+    # Normalize directory aliases without following an existing token-file symlink:
+    # publication replaces that directory entry, matching the discovery contract.
+    path = path.parent.resolve() / path.name
+    with ExitStack() as stack:
         try:
-            yield token
+            stack.enter_context(file_lock(path.with_name(path.name + ".lock"), wait=False))
+        except BlockingIOError as error:
+            raise BlockingIOError(
+                "Local authentication token file is already owned by another server"
+            ) from error
+        token = secrets.token_urlsafe(32)
+        fd, temporary_path = tempfile.mkstemp(prefix=".token-", dir=path.parent)
+        try:
+            # mkstemp creates mode 0600 on POSIX. Windows inherits the user's ACL.
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(token)
+            os.replace(temporary_path, path)
+            try:
+                yield token
+            finally:
+                # Preserve a file changed externally while this launch was running.
+                if path.exists() and path.read_text(encoding="utf-8").strip() == token:
+                    path.unlink()
         finally:
-            # A newer launch may have replaced this file. Never remove its token.
-            if path.exists() and path.read_text(encoding="utf-8").strip() == token:
-                path.unlink()
-    finally:
-        Path(temporary_path).unlink(missing_ok=True)
+            Path(temporary_path).unlink(missing_ok=True)
 
 
 def read_local_auth_token(host: str, port: int) -> str | None:

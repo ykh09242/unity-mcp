@@ -2,6 +2,9 @@
 
 import os
 import socket
+import multiprocessing
+from contextlib import ExitStack
+from itertools import count
 from pathlib import Path
 
 import httpcore
@@ -24,6 +27,15 @@ from core.local_auth import (
     local_http_sockets,
     read_local_auth_token,
 )
+
+
+@pytest.fixture(autouse=True)
+def synthetic_tokens(monkeypatch):
+    sequence = count()
+    monkeypatch.setattr(
+        "core.local_auth.secrets.token_urlsafe",
+        lambda _bytes: f"synthetic-test-token-{next(sequence)}".ljust(43, "x"),
+    )
 
 
 @pytest.fixture
@@ -51,6 +63,144 @@ def test_shutdown_does_not_remove_newer_launch_file(token_path):
     with local_auth_token(8080):
         token_path.write_text("newer-test-launch")
     assert token_path.read_text() == "newer-test-launch"
+
+
+@pytest.mark.parametrize("second_port", [8080, 8081])
+def test_live_token_file_cannot_be_replaced_even_across_ports(token_path, second_port):
+    with local_auth_token(8080) as owner:
+        with pytest.raises(BlockingIOError):
+            with local_auth_token(second_port):
+                pytest.fail("A competing launch published another token")
+        assert token_path.read_text() == owner
+    assert not token_path.exists()
+    with local_auth_token(second_port) as successor:
+        assert token_path.read_text() == successor
+
+
+@pytest.mark.parametrize("first_host,second_host", [("127.0.0.1", "::1"), ("::1", "127.0.0.1")])
+@pytest.mark.parametrize("owner_exits_first", [False, True])
+def test_distinct_loopback_listeners_cannot_replace_shared_token(
+    token_path, first_host, second_host, owner_exits_first
+):
+    with ExitStack() as owner:
+        try:
+            first = owner.enter_context(local_http_sockets(first_host, 0))
+        except OSError as error:
+            pytest.skip(f"Loopback family unavailable: {error}")
+        port = first[0].getsockname()[1]
+        token = owner.enter_context(local_auth_token(port))
+        with ExitStack() as contender:
+            try:
+                contender.enter_context(local_http_sockets(second_host, port))
+            except OSError as error:
+                pytest.skip(f"Separate loopback family unavailable: {error}")
+            with pytest.raises(BlockingIOError):
+                contender.enter_context(local_auth_token(port))
+            assert token_path.read_text() == token
+            if owner_exits_first:
+                owner.close()
+                assert not token_path.exists()
+                successor = contender.enter_context(local_auth_token(port))
+                assert token_path.read_text() == successor
+        if not owner_exits_first:
+            assert token_path.read_text() == token
+    assert not token_path.exists()
+    with local_http_sockets(second_host, port):
+        with local_auth_token(port) as successor:
+            assert token_path.read_text() == successor
+
+
+def test_distinct_explicit_files_can_be_owned_together(token_path, monkeypatch):
+    with local_auth_token(8080) as first:
+        other = token_path.with_name("other-token")
+        monkeypatch.setenv(LOCAL_AUTH_FILE_ENV, str(other))
+        with local_auth_token(8080) as second:
+            assert token_path.read_text() == first
+            assert other.read_text() == second
+        assert not other.exists()
+        assert token_path.read_text() == first
+
+
+def test_relative_token_path_alias_cannot_bypass_ownership(token_path, monkeypatch):
+    with local_auth_token(8080) as owner:
+        monkeypatch.chdir(token_path.parent.parent)
+        monkeypatch.setenv(LOCAL_AUTH_FILE_ENV, "auth/../auth/" + token_path.name)
+        with pytest.raises(BlockingIOError):
+            with local_auth_token(8081):
+                pytest.fail("Relative path aliases must share ownership")
+        assert token_path.read_text() == owner
+
+
+@pytest.mark.parametrize("failure", ["generate", "temporary", "publish", "body", "cleanup"])
+def test_exception_releases_token_file_ownership(token_path, monkeypatch, failure):
+    with monkeypatch.context() as patch:
+        if failure in {"generate", "temporary", "publish"}:
+
+            def fail_startup(*_args, **_kwargs):
+                raise OSError("synthetic startup failure")
+
+            seam = {
+                "generate": "core.local_auth.secrets.token_urlsafe",
+                "temporary": "core.local_auth.tempfile.mkstemp",
+                "publish": "core.local_auth.os.replace",
+            }[failure]
+            patch.setattr(seam, fail_startup)
+        elif failure == "cleanup":
+
+            def fail_read(*_args, **_kwargs):
+                raise OSError("synthetic cleanup failure")
+
+            patch.setattr(Path, "read_text", fail_read)
+        with pytest.raises(OSError):
+            with local_auth_token(8080):
+                if failure == "body":
+                    raise OSError("synthetic server failure")
+    assert not list(token_path.parent.glob(".token-*"))
+    with local_auth_token(8080) as successor:
+        assert token_path.read_text() == successor
+
+
+def _hold_token_file(path, connection):
+    os.environ[LOCAL_AUTH_FILE_ENV] = path
+    # Child processes bypass pytest fixtures; never generate real credentials here.
+    from core import local_auth
+
+    local_auth.secrets.token_urlsafe = lambda _bytes: "synthetic-child-token"
+    with local_auth_token(8080) as token:
+        connection.send(token)
+        connection.recv()
+    connection.close()
+
+
+@pytest.mark.parametrize("crash", [False, True])
+def test_token_file_process_contention_and_release(token_path, crash):
+    context = multiprocessing.get_context("spawn")
+    parent, child = context.Pipe()
+    process = context.Process(target=_hold_token_file, args=(str(token_path), child))
+    process.start()
+    child.close()
+    try:
+        assert parent.poll(15), "Child did not acquire token ownership"
+        owner = parent.recv()
+        with pytest.raises(BlockingIOError):
+            with local_auth_token(8081):
+                pytest.fail("Another process owns this token file")
+        assert token_path.read_text() == owner
+        if crash:
+            process.terminate()
+        else:
+            parent.send("stop")
+        process.join(15)
+        assert not process.is_alive()
+        assert token_path.exists() == crash
+        with local_auth_token(8081) as successor:
+            assert token_path.read_text() == successor
+    finally:
+        if process.is_alive():
+            process.terminate()
+        process.join(15)
+        parent.close()
+        process.close()
 
 
 def test_listener_is_owned_until_context_exit():
