@@ -45,24 +45,30 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         public PlayScenarioQueryCounts CaptureQueryCounts() => _queryCounts;
 
-        private AsyncOperation _loadOperation;
         private string _loadPath;
         private string _targetPath;
         private string _targetId;
         private string[] _targetSegments;
 
         public UnityPlayScenarioHost(PlayScenarioLogPolicy logPolicy = null, bool sceneSemantics = false)
+            : this(
+                logPolicy,
+                sceneSemantics,
+                new PlayScenarioSceneOperation(
+                    sceneSemantics,
+                    (path, mode) => EditorSceneManager.LoadSceneAsyncInPlayMode(RequireSceneAsset(path), new LoadSceneParameters(mode))
+                )
+            ) { }
+
+        internal UnityPlayScenarioHost(PlayScenarioLogPolicy logPolicy, bool sceneSemantics, PlayScenarioSceneOperation operation)
         {
             _logPolicy = logPolicy ?? new PlayScenarioLogPolicy();
             this.sceneSemantics = sceneSemantics;
-            sceneOperation = new PlayScenarioSceneOperation(
-                sceneSemantics,
-                (path, mode) => EditorSceneManager.LoadSceneAsyncInPlayMode(RequireSceneAsset(path), new LoadSceneParameters(mode))
-            );
+            sceneOperation = operation ?? throw new ArgumentNullException(nameof(operation));
         }
 
         public PlayScenarioMetricsSnapshot CaptureMetrics(int iteration, long now) =>
-            UnityPlayScenarioDiagnostics.CaptureMetrics(iteration, now, (_loadOperation == null ? 0 : 1) + sceneOperation.HandleCount);
+            UnityPlayScenarioDiagnostics.CaptureMetrics(iteration, now, sceneOperation.HandleCount);
 
         public static JObject Preflight(PlayScenarioDefinition definition) => PlayScenarioPreflight.Check(definition);
 
@@ -157,23 +163,15 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
         {
             if (firstPoll)
             {
-                Release();
-                string containedPath = RequireSceneAsset(scenePath);
-
-                _loadOperation = EditorSceneManager.LoadSceneAsyncInPlayMode(containedPath, new LoadSceneParameters(LoadSceneMode.Single));
-                if (_loadOperation == null)
-                    throw new InvalidOperationException("The scenario scene load did not return an operation.");
-                _loadPath = containedPath;
+                ReleaseBorrowedState();
+                _loadPath = RequireSceneAsset(scenePath);
+                sceneOperation.PollLegacyLoad(_loadPath, true);
                 return new PlayScenarioObservation(false, "Scene reload requested; waiting for its operation to finish.");
             }
             if (_loadPath == null)
                 throw new InvalidOperationException("The scenario scene load has not been started.");
-            if (_loadOperation != null)
-            {
-                if (!_loadOperation.isDone)
-                    return new PlayScenarioObservation(false, "Waiting for the scene load operation.");
-                _loadOperation = null;
-            }
+            if (!sceneOperation.PollLegacyLoad(_loadPath, false))
+                return new PlayScenarioObservation(false, "Waiting for the scene load operation.");
             return ObserveScene(_loadPath);
         }
 
@@ -287,12 +285,16 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         public void Release()
         {
+            ReleaseBorrowedState();
+            sceneOperation.Release();
+        }
+
+        private void ReleaseBorrowedState()
+        {
             targetQuery.Release();
             ReleaseInput();
-            sceneOperation.Release();
             sceneScope.Release();
             // Releasing a reference does not cancel Unity's scene load or destroy scene objects.
-            _loadOperation = null;
             _loadPath = null;
             _targetPath = null;
             _targetId = null;

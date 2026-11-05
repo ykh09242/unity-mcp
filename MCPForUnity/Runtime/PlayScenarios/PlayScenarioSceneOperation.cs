@@ -39,6 +39,33 @@ namespace MCPForUnity.Runtime.PlayScenarios
 
         public int HandleCount => operation == null ? 0 : 1;
 
+        // Legacy callers retain their own scene success checks, but share native ownership.
+        public bool PollLegacyLoad(string path, bool firstPoll)
+        {
+            if (released)
+                throw new InvalidOperationException("A released scene-operation waiter cannot dispatch.");
+            if (firstPoll)
+            {
+                operation = null;
+                dispatched = false;
+            }
+            if (!dispatched)
+            {
+                if (!TryAdmit(true))
+                    return false;
+                operation = load(path, LoadSceneMode.Single);
+                if (operation == null)
+                    throw new InvalidOperationException("The native scene adapter did not admit an operation.");
+                dispatched = true;
+                AsyncOperation owned = operation;
+                TrackCompletion(() => completionReader(owned));
+            }
+            if (!completionReader(operation))
+                return false;
+            TryAdmit(true);
+            return true;
+        }
+
         public static bool TryAdmit(bool enabled)
         {
             if (!enabled)

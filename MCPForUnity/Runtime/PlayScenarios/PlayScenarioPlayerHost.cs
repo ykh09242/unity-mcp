@@ -31,7 +31,6 @@ namespace MCPForUnity.Runtime.PlayScenarios
         private readonly bool sceneSemantics;
         private readonly PlayScenarioSceneOperation sceneOperation;
         private readonly PlayScenarioSceneScope sceneScope = new PlayScenarioSceneScope();
-        private AsyncOperation load;
         private PlayScenarioQueryCounts counts;
         private readonly PlayScenarioHierarchyQuery targetQuery = new();
         private string preparedTarget;
@@ -61,7 +60,7 @@ namespace MCPForUnity.Runtime.PlayScenarios
             {
                 Iteration = iteration,
                 TimestampUnixMs = now,
-                RunnerHandleCount = (load == null ? 0 : 1) + sceneOperation.HandleCount,
+                RunnerHandleCount = sceneOperation.HandleCount,
             };
             try
             {
@@ -131,17 +130,10 @@ namespace MCPForUnity.Runtime.PlayScenarios
             {
                 if (!scenes.Contains(step.Scene))
                     throw new ArgumentException("Scene is absent from the frozen Player bundle: " + step.Scene);
-                if (step.Action == "load_scene" && firstPoll)
-                {
-                    if (load != null && !load.isDone)
-                        throw new InvalidOperationException("Previous Player scene load is still pending.");
-                    load = SceneManager.LoadSceneAsync(step.Scene, LoadSceneMode.Single);
-                    if (load == null)
-                        throw new InvalidOperationException("Player scene load was not admitted.");
-                }
+                bool loaded = step.Action != "load_scene" || sceneOperation.PollLegacyLoad(step.Scene, firstPoll);
                 Scene scene = SceneManager.GetActiveScene();
                 return new PlayScenarioObservation(
-                    scene.IsValid() && scene.isLoaded && scene.path == step.Scene && (step.Action != "load_scene" || load?.isDone == true),
+                    scene.IsValid() && scene.isLoaded && scene.path == step.Scene && loaded,
                     "Active Player scene: " + scene.path + "; expected: " + step.Scene + "."
                 );
             }
@@ -281,7 +273,6 @@ namespace MCPForUnity.Runtime.PlayScenarios
             ReleaseInput();
             sceneOperation.Release();
             sceneScope.Release();
-            load = null;
             preparedTarget = null;
             preparedTargetId = null;
             preparedComponent = null;

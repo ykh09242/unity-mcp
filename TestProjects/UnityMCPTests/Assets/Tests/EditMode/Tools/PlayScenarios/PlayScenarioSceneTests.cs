@@ -414,6 +414,144 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         private static object Call(Type type, string name, params object[] args) => type.GetMethod(name, Flags).Invoke(null, args);
 
         [Test]
+        public void LegacyHostCancelCleanupAndNextRunRetainNativeLoadUntilCompletion()
+        {
+            Type control = Control();
+            bool done = false;
+            int dispatches = 0;
+            var native = new AsyncOperation();
+            ConstructorInfo operationConstructor = control.GetConstructor(
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                null,
+                new[] { typeof(bool), typeof(Func<string, LoadSceneMode, AsyncOperation>), typeof(Func<AsyncOperation, bool>) },
+                null
+            );
+            ConstructorInfo hostConstructor = typeof(UnityPlayScenarioHost).GetConstructor(
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                null,
+                new[] { typeof(PlayScenarioLogPolicy), typeof(bool), control },
+                null
+            );
+            UnityPlayScenarioHost CreateHost() =>
+                (UnityPlayScenarioHost)
+                    hostConstructor.Invoke(
+                        new object[]
+                        {
+                            null,
+                            false,
+                            operationConstructor.Invoke(
+                                new object[]
+                                {
+                                    false,
+                                    (Func<string, LoadSceneMode, AsyncOperation>)(
+                                        (path, mode) =>
+                                        {
+                                            dispatches++;
+                                            return native;
+                                        }
+                                    ),
+                                    (Func<AsyncOperation, bool>)(_ => done),
+                                }
+                            ),
+                        }
+                    );
+            PlayScenarioEngine engine = null;
+            UnityPlayScenarioHost next = null;
+            try
+            {
+                Call(control, "ResetForTests");
+                string path = SceneManager.GetActiveScene().path;
+                var definition = PlayScenarioDefinition.Parse(
+                    JObject.Parse(
+                        "{'name':'legacy-lease','poll_interval_ms':100,'cleanup_timeout_seconds':1,'steps':[{'name':'Load','action':'load_scene','scene':'"
+                            + path
+                            + "'}],'cleanup_steps':[{'name':'Cleanup','action':'load_scene','scene':'"
+                            + path
+                            + "','timeout_seconds':1}]}"
+                    )
+                );
+                Assert.That(typeof(PlayScenarioDefinition).GetProperty("UsesExplicitSceneSemantics").GetValue(definition), Is.False);
+                engine = new PlayScenarioEngine(PlayScenarioEngine.Create(definition, new string('f', 32), 1, 30, 1000), CreateHost());
+                engine.EnteredPlayMode();
+                engine.Tick(1000, true);
+                Assert.That(dispatches, Is.EqualTo(1));
+                engine.Cancel(1050);
+                engine.Tick(1100, true);
+                Assert.That(dispatches, Is.EqualTo(1), "Cleanup must wait for the cancelled load.");
+                engine.Tick(2200, true);
+                Assert.That(engine.Running, Is.False);
+                engine.Release();
+                next = CreateHost();
+                var step = new PlayScenarioStep
+                {
+                    Name = "Next",
+                    Action = "load_scene",
+                    Scene = path,
+                };
+                Assert.That(next.Evaluate(step, true).Ready, Is.False);
+                Assert.That(next.Evaluate(step, false).Ready, Is.False);
+                Assert.That(dispatches, Is.EqualTo(1), "A later run must not dispatch while the native load is pending.");
+                done = true;
+                Assert.That(next.Evaluate(step, false).Ready, Is.True);
+                Assert.That(dispatches, Is.EqualTo(2));
+            }
+            finally
+            {
+                engine?.Release();
+                next?.Release();
+                Call(control, "ResetForTests");
+            }
+        }
+
+        [Test]
+        public void LegacyLoadReloadUnknownBlocksBothLegacyAndExplicitOperations()
+        {
+            Type control = Control();
+            object operation = null;
+            try
+            {
+                Call(control, "ResetForTests");
+                var constructor = control.GetConstructor(
+                    BindingFlags.Instance | BindingFlags.NonPublic,
+                    null,
+                    new[] { typeof(bool), typeof(Func<string, LoadSceneMode, AsyncOperation>), typeof(Func<AsyncOperation, bool>) },
+                    null
+                );
+                operation = constructor.Invoke(
+                    new object[]
+                    {
+                        false,
+                        (Func<string, LoadSceneMode, AsyncOperation>)((path, mode) => new AsyncOperation()),
+                        (Func<AsyncOperation, bool>)(_ => false),
+                    }
+                );
+                Assert.That(control.GetMethod("PollLegacyLoad").Invoke(operation, new object[] { "Assets/A.unity", true }), Is.False);
+                control.GetMethod("Release").Invoke(operation, null);
+                Assert.That(Call(control, "CaptureReloadUnknown"), Is.True);
+                Call(control, "ResetForTests");
+                Call(control, "RestoreReloadUnknown", true);
+                var failure = Assert.Throws<TargetInvocationException>(() => Call(control, "TryAdmit", true));
+                Assert.That(failure.InnerException.Message, Does.Contain("scene_operation_state_unknown"));
+                object next = constructor.Invoke(
+                    new object[]
+                    {
+                        false,
+                        (Func<string, LoadSceneMode, AsyncOperation>)((path, mode) => throw new AssertionException("must not dispatch")),
+                        (Func<AsyncOperation, bool>)(_ => false),
+                    }
+                );
+                failure = Assert.Throws<TargetInvocationException>(() =>
+                    control.GetMethod("PollLegacyLoad").Invoke(next, new object[] { "Assets/A.unity", true })
+                );
+                Assert.That(failure.InnerException.Message, Does.Contain("scene_operation_state_unknown"));
+            }
+            finally
+            {
+                Call(control, "ResetForTests");
+            }
+        }
+
+        [Test]
         public void PendingLeaseWaitsWithoutDispatchThenKnownCompletionClears()
         {
             Type type = Control();
