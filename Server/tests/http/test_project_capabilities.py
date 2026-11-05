@@ -760,6 +760,7 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
     entered, finished = asyncio.Event(), asyncio.Event()
     sent = []
     deadlines = []
+    cancellations = []
     expired_clock = []
     scopes = []
     original_move_on_at = anyio.move_on_at
@@ -787,8 +788,9 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
     async def state(name):
         return "Fixture@hash" if name == "unity_instance" else None
 
-    def send(name, _params, max_attempts=None, deadline=None):
+    def send(name, _params, max_attempts=None, deadline=None, *, _cancelled=None):
         deadlines.append(deadline)
+        cancellations.append(_cancelled)
         loop.call_soon_threadsafe(entered.set)
         try:
             with connection._command_lock(deadline):
@@ -838,6 +840,7 @@ async def test_stdio_worker_cannot_dispatch_after_capability_deadline(monkeypatc
     # Then: the blocking transport shares the deadline and cannot send after return.
     assert sent == []
     assert data.partial is True
+    assert cancellations and all(event is not None and event.is_set() for event in cancellations)
 
 
 @pytest.mark.asyncio
