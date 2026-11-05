@@ -48,7 +48,7 @@ def test_unity7_compiles_bundled_ui_before_all_consumers_without_template_cache(
     assert result.returncode == 0, result.stdout + result.stderr
     # Then every platform compiles both UI assemblies and all nine previous assemblies.
     calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
-    assert len(calls) == 39
+    assert len(calls) == 45
     for platform in ("win", "osx", "linux"):
         for name in ("UnityEngine.UI", "UnityEditor.UI"):
             rsp = (harness.output / platform / f"{name}.rsp").read_text(encoding="utf-8")
@@ -121,6 +121,8 @@ def test_warning_policy_keeps_owned_warnings_fatal_and_vendor_exceptions_scoped(
             for code in line.removeprefix("-nowarn:").split(",")
         }
         expected = {"CS1701", "CS1702"}
+        if response.stem == "MCPForUnityTests.PlayMode":
+            expected.add("CS0649")
         if response.stem == "UnityEditor.TestRunner":
             expected |= {"CS0169", "CS0649"}
             if version == "6000.0.84f1":
@@ -137,7 +139,7 @@ def test_explicit_staged_project_compiles_fixture_and_editmode_all_platforms(
         (harness.output / platform).mkdir()
     result = harness.run("6000.7.0b2", "win osx linux", test_project=project, framework=framework)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 33
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 39
     for platform in ("win", "osx", "linux"):
         rsp = (harness.output / platform / "MCPForUnityTests.EditMode.rsp").read_text(
             encoding="utf-8"
@@ -245,6 +247,126 @@ def test_staged_project_missing_assembly_definition_fails_before_compiler(
     assert result.returncode != 0
     assert "assembly definition not found" in result.stderr
     assert not harness.calls.exists()
+
+
+@pytest.mark.parametrize("location", ["Assets/Tests/EditMode/Nested", "Assets/Scripts/Other"])
+def test_unknown_nested_test_assembly_fails_inventory_before_compiler(
+    harness: CompileHarness, staged_tests: tuple[Path, Path], location: str
+) -> None:
+    project, framework = staged_tests
+    unknown = project / location / "New.asmdef"
+    unknown.parent.mkdir(parents=True)
+    unknown.write_text('{"name":"New"}', encoding="utf-8")
+    result = harness.run("6000.7.0a6", test_project=project, framework=framework)
+    assert result.returncode != 0
+    assert "unclassified test assembly definition" in result.stderr
+    assert not harness.calls.exists()
+
+
+def test_fixture_assembly_inventory_matches_declared_graph() -> None:
+    root = ROOT / "TestProjects/UnityMCPTests/Assets/Scripts"
+    expected = {
+        "TestAsmdef/TestAsmdef.asmdef": ("TestAsmdef", set(), set()),
+        "ScenarioPlayerFixture/MCPForUnity.ScenarioPlayerFixture.asmdef": (
+            "MCPForUnity.ScenarioPlayerFixture",
+            {"MCPForUnity.Runtime", "UnityEngine.UI"},
+            {"MCP_INPUT_UGUI"},
+        ),
+        "ScenarioPlayerFixture/Editor/MCPForUnity.ScenarioPlayerFixture.Editor.asmdef": (
+            "MCPForUnity.ScenarioPlayerFixture.Editor",
+            {
+                "MCPForUnity.ScenarioPlayerFixture",
+                "MCPForUnity.Runtime",
+                "MCPForUnity.Editor",
+                "UnityEngine.UI",
+            },
+            {"MCP_INPUT_UGUI"},
+        ),
+    }
+    assert {path.relative_to(root).as_posix() for path in root.rglob("*.asmdef")} == set(expected)
+    for relative, (name, references, constraints) in expected.items():
+        definition = json.loads((root / relative).read_text(encoding="utf-8"))
+        assert definition["name"] == name
+        assert set(definition.get("references", [])) == references
+        assert set(definition.get("defineConstraints", [])) == constraints
+
+
+def test_test_assembly_inventory_matches_declared_graph() -> None:
+    root = ROOT / "TestProjects/UnityMCPTests/Assets/Tests"
+    expected = {
+        "EditMode/MCPForUnityTests.Editor.asmdef": (
+            "MCPForUnityTests.EditMode",
+            {
+                "MCPForUnity.Editor",
+                "MCPForUnity.Runtime",
+                "TestAsmdef",
+                "UnityEngine.TestRunner",
+                "UnityEditor.TestRunner",
+                "Unity.EditorCoroutines.Editor",
+            },
+            {"UNITY_INCLUDE_TESTS"},
+        ),
+        "PlayMode/MCPForUnityTests.PlayMode.asmdef": (
+            "MCPForUnityTests.PlayMode",
+            {"UnityEngine.TestRunner", "UnityEditor.TestRunner", "MCPForUnity.Runtime"},
+            {"UNITY_INCLUDE_TESTS"},
+        ),
+        "UI16CaretRuntime/MCPForUnityTests.UI16CaretRuntime.asmdef": (
+            "MCPForUnityTests.UI16CaretRuntime",
+            set(),
+            set(),
+        ),
+        "EditMode/Tools/PlayScenarios/Integration/Runtime/MCPForUnity.PlayScenarios.Integration.Runtime.asmdef": (
+            "MCPForUnity.PlayScenarios.Integration.Runtime",
+            {"UnityEngine.UI", "MCPForUnity.Runtime"},
+            {"UNITY_INCLUDE_TESTS", "MCP_INPUT_UGUI"},
+        ),
+        "EditMode/Tools/PlayScenarios/Integration/Editor/MCPForUnity.PlayScenarios.Integration.Tests.asmdef": (
+            "MCPForUnity.PlayScenarios.Integration.Tests",
+            {
+                "MCPForUnity.Editor",
+                "MCPForUnity.Runtime",
+                "MCPForUnity.PlayScenarios.Integration.Runtime",
+                "UnityEngine.UI",
+                "UnityEngine.TestRunner",
+                "UnityEditor.TestRunner",
+            },
+            {"UNITY_INCLUDE_TESTS", "MCP_INPUT_UGUI"},
+        ),
+        "EditMode/Tools/Input/UGUI/MCPForUnity.Input.UGUI.Tests.asmdef": (
+            "MCPForUnity.Input.UGUI.Tests",
+            {
+                "MCPForUnity.Editor",
+                "MCPForUnity.Runtime",
+                "MCPForUnity.Input.UGUI.Editor",
+                "MCPForUnity.Input.UGUI.Runtime",
+                "UnityEngine.UI",
+                "UnityEngine.TestRunner",
+                "UnityEditor.TestRunner",
+            },
+            {"UNITY_INCLUDE_TESTS", "MCP_INPUT_UGUI"},
+        ),
+        "EditMode/Tools/Input/InputSystem/MCPForUnity.Input.InputSystem.Tests.asmdef": (
+            "MCPForUnity.Input.InputSystem.Tests",
+            {
+                "MCPForUnity.Editor",
+                "MCPForUnity.Runtime",
+                "MCPForUnity.Input.InputSystem.Editor",
+                "MCPForUnity.Input.InputSystem.Runtime",
+                "Unity.InputSystem",
+                "Unity.InputSystem.TestFramework",
+                "UnityEngine.TestRunner",
+                "UnityEditor.TestRunner",
+            },
+            {"UNITY_INCLUDE_TESTS", "MCP_INPUT_SYSTEM"},
+        ),
+    }
+    assert {path.relative_to(root).as_posix() for path in root.rglob("*.asmdef")} == set(expected)
+    for relative, (name, references, constraints) in expected.items():
+        definition = json.loads((root / relative).read_text(encoding="utf-8"))
+        assert definition["name"] == name
+        assert set(definition.get("references", [])) == references
+        assert set(definition.get("defineConstraints", [])) == constraints
 
 
 def test_missing_owned_assembly_does_not_report_editmode_success(

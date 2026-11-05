@@ -43,6 +43,8 @@ OWNED_ASSEMBLIES = (
     *OPTIONAL_ASSEMBLIES,
     "TestAsmdef",
     "MCPForUnityTests.EditMode",
+    "MCPForUnityTests.PlayMode",
+    "MCPForUnityTests.UI16CaretRuntime",
 )
 
 
@@ -207,6 +209,8 @@ def staged_tests(harness: CompileHarness) -> tuple[Path, Path]:
     for relative, asmdef in (
         ("Assets/Scripts/TestAsmdef", "TestAsmdef.asmdef"),
         ("Assets/Tests/EditMode", "MCPForUnityTests.Editor.asmdef"),
+        ("Assets/Tests/PlayMode", "MCPForUnityTests.PlayMode.asmdef"),
+        ("Assets/Tests/UI16CaretRuntime", "MCPForUnityTests.UI16CaretRuntime.asmdef"),
     ):
         directory = project / relative
         directory.mkdir(parents=True)
@@ -252,6 +256,22 @@ def ugui_sources(harness: CompileHarness, staged_tests: tuple[Path, Path]) -> tu
         (harness.repo, "MCPForUnity/Runtime/PlayScenarios/UGUI", UGUI_ASSEMBLIES[0]),
         (harness.repo, "MCPForUnity/Editor/Tools/Input/UGUI", UGUI_ASSEMBLIES[1]),
         (project, "Assets/Tests/EditMode/Tools/Input/UGUI", UGUI_ASSEMBLIES[2]),
+        (project, "Assets/Scripts/ScenarioPlayerFixture", "MCPForUnity.ScenarioPlayerFixture"),
+        (
+            project,
+            "Assets/Scripts/ScenarioPlayerFixture/Editor",
+            "MCPForUnity.ScenarioPlayerFixture.Editor",
+        ),
+        (
+            project,
+            "Assets/Tests/EditMode/Tools/PlayScenarios/Integration/Runtime",
+            "MCPForUnity.PlayScenarios.Integration.Runtime",
+        ),
+        (
+            project,
+            "Assets/Tests/EditMode/Tools/PlayScenarios/Integration/Editor",
+            "MCPForUnity.PlayScenarios.Integration.Tests",
+        ),
     ):
         directory = root / relative
         directory.mkdir(parents=True)
@@ -265,7 +285,6 @@ def ugui_sources(harness: CompileHarness, staged_tests: tuple[Path, Path]) -> tu
     for root, relative in (
         (harness.repo, "MCPForUnity/Runtime/OtherOptional"),
         (harness.repo, "MCPForUnity/Editor/Tools/Input/InputSystem"),
-        (project, "Assets/Tests/EditMode/OtherOptional"),
     ):
         directory = root / relative
         directory.mkdir(parents=True)

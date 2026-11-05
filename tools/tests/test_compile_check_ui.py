@@ -40,6 +40,29 @@ def test_enabled_ugui_compiles_separate_assemblies_in_dependency_order(
     # Then the runtime adapter, Editor wrapper, and optional tests are distinct consumers.
     assert result.returncode == 0, result.stdout + result.stderr
     calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
+    integration_runtime = "MCPForUnity.PlayScenarios.Integration.Runtime"
+    integration_tests = "MCPForUnity.PlayScenarios.Integration.Tests"
+    assert calls.index("MCPForUnity.Runtime") < calls.index(integration_runtime)
+    assert calls.index(integration_runtime) < calls.index(integration_tests)
+    integration_rsp = (harness.output / "linux" / f"{integration_tests}.rsp").read_text(
+        encoding="utf-8"
+    )
+    assert f'/{integration_runtime}.dll"' in integration_rsp
+    fixture = "MCPForUnity.ScenarioPlayerFixture"
+    fixture_editor = "MCPForUnity.ScenarioPlayerFixture.Editor"
+    assert calls.index("MCPForUnity.Runtime") < calls.index(fixture) < calls.index(fixture_editor)
+    fixture_rsp = (harness.output / "linux" / f"{fixture_editor}.rsp").read_text(encoding="utf-8")
+    assert f'/{fixture}.dll"' in fixture_rsp
+    for profile in ("player", "player-scenarios"):
+        response = (harness.output / "linux" / profile / f"{fixture}.rsp").read_text(
+            encoding="utf-8"
+        )
+        assert f'/{profile}/MCPForUnity.Runtime.dll"' in response
+        assert "-define:UNITY_EDITOR" not in response
+        assert ("-define:MCP_FOR_UNITY_PLAY_SCENARIOS" in response) == (
+            profile == "player-scenarios"
+        )
+        assert ("CS0649" in response) == (profile == "player-scenarios")
     ordered = (
         "MCPForUnity.Runtime",
         UGUI_ASSEMBLIES[0],

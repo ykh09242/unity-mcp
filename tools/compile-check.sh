@@ -77,11 +77,20 @@ EDITOR_COROUTINES_SOURCE=$(winpath "$EDITOR_COROUTINES_SOURCE") || exit 2
 TEST_PROJECT=${TEST_PROJECT:-}
 if [ -n "$TEST_PROJECT" ]; then
   TEST_PROJECT=$(winpath "$TEST_PROJECT") || exit 2
-  for entry in Assets/Scripts/TestAsmdef/TestAsmdef.asmdef Assets/Tests/EditMode/MCPForUnityTests.Editor.asmdef; do
+  for entry in Assets/Scripts/TestAsmdef/TestAsmdef.asmdef Assets/Tests/EditMode/MCPForUnityTests.Editor.asmdef \
+    Assets/Tests/PlayMode/MCPForUnityTests.PlayMode.asmdef Assets/Tests/UI16CaretRuntime/MCPForUnityTests.UI16CaretRuntime.asmdef; do
     [ -f "$TEST_PROJECT/$entry" ] || die "test assembly definition not found: $entry"
     source_dir="$TEST_PROJECT/${entry%/*}"
     [ -n "$(find "$source_dir" -name '*.cs' -type f -print -quit)" ] || die "test assembly sources not found: $source_dir"
   done
+  # A nested asmdef owns its sources and cannot silently disappear from this inventory.
+  while IFS= read -r -d '' definition; do
+    entry=${definition#"$TEST_PROJECT/"}
+    case "$entry" in
+      Assets/Scripts/TestAsmdef/TestAsmdef.asmdef|Assets/Scripts/ScenarioPlayerFixture/MCPForUnity.ScenarioPlayerFixture.asmdef|Assets/Scripts/ScenarioPlayerFixture/Editor/MCPForUnity.ScenarioPlayerFixture.Editor.asmdef|Assets/Tests/EditMode/MCPForUnityTests.Editor.asmdef|Assets/Tests/PlayMode/MCPForUnityTests.PlayMode.asmdef|Assets/Tests/UI16CaretRuntime/MCPForUnityTests.UI16CaretRuntime.asmdef|Assets/Tests/EditMode/Tools/Input/UGUI/MCPForUnity.Input.UGUI.Tests.asmdef|Assets/Tests/EditMode/Tools/Input/InputSystem/MCPForUnity.Input.InputSystem.Tests.asmdef|Assets/Tests/EditMode/Tools/PlayScenarios/Integration/Runtime/MCPForUnity.PlayScenarios.Integration.Runtime.asmdef|Assets/Tests/EditMode/Tools/PlayScenarios/Integration/Editor/MCPForUnity.PlayScenarios.Integration.Tests.asmdef) ;;
+      *) die "unclassified test assembly definition: $entry" ;;
+    esac
+  done < <(find "$TEST_PROJECT/Assets" -name '*.asmdef' -type f -print0)
 fi
 COMPILE_INPUT_UGUI=${COMPILE_INPUT_UGUI:-0}
 case "$COMPILE_INPUT_UGUI" in 0|1) ;; *) die "COMPILE_INPUT_UGUI must be 0 or 1" ;; esac
@@ -94,6 +103,13 @@ if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
   if [ -n "$TEST_PROJECT" ]; then
     entry=Assets/Tests/EditMode/Tools/Input/UGUI/MCPForUnity.Input.UGUI.Tests.asmdef
     [ -f "$TEST_PROJECT/$entry" ] || die "optional uGUI test assembly definition not found: $entry"
+    for entry in \
+      Assets/Tests/EditMode/Tools/PlayScenarios/Integration/Runtime/MCPForUnity.PlayScenarios.Integration.Runtime.asmdef \
+      Assets/Tests/EditMode/Tools/PlayScenarios/Integration/Editor/MCPForUnity.PlayScenarios.Integration.Tests.asmdef \
+      Assets/Scripts/ScenarioPlayerFixture/MCPForUnity.ScenarioPlayerFixture.asmdef \
+      Assets/Scripts/ScenarioPlayerFixture/Editor/MCPForUnity.ScenarioPlayerFixture.Editor.asmdef; do
+      [ -f "$TEST_PROJECT/$entry" ] || die "optional integration assembly definition not found: $entry"
+    done
   fi
 fi
 COMPILE_INPUT_SYSTEM=${COMPILE_INPUT_SYSTEM:-0}
@@ -328,7 +344,7 @@ compile() {
   # Initial Unity 7 uses CoreCLR with the .NET Standard 2.1 scripting API surface,
   # including Editor assemblies. The bundled .NET 10 SDK does not widen that surface.
   case "$ver_major.$ver_minor:$name" in
-    7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:MCPForUnity.Input.InputSystem.Runtime|*:TestAsmdef) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
+    7000.0:*|*:MCPForUnity.Runtime|*:MCPForUnity.Input.UGUI.Runtime|*:MCPForUnity.Input.InputSystem.Runtime|*:MCPForUnity.PlayScenarios.Integration.Runtime|*:MCPForUnity.ScenarioPlayerFixture|*:MCPForUnityTests.UI16CaretRuntime|*:TestAsmdef) bcl="$REFS_ROOT/BCL/Runtime.txt" ;;
   esac
   [ -d "$srcdir" ] && load_assembly_sources "$srcdir" && [ -n "$assembly_source_list" ] || {
     echo "::error::assembly sources not found: $srcdir" >&2; return 1;
@@ -341,6 +357,14 @@ compile() {
     [ -f "$required" ] || { echo "::error::reference manifest not found: $required" >&2; return 1; }
   done
   local ignored_warnings=CS1701,CS1702 # benign netstandard facade version unification
+  if [ "$name" = MCPForUnityTests.PlayMode ]; then
+    # Json.NET populates the readiness DTO fields reflectively.
+    ignored_warnings+=,CS0649
+  fi
+  if [ "$name" = MCPForUnity.ScenarioPlayerFixture ] && [ "$compile_profile" != player ]; then
+    # Witness fields are assigned only in the ordinary Player branch.
+    ignored_warnings+=,CS0649
+  fi
   if [ "$name" = UnityEditor.TestRunner ]; then
     # Native Unity also disables these unused/unassigned field diagnostics for TestRunner.
     ignored_warnings+=,CS0169,CS0649
@@ -367,10 +391,10 @@ compile() {
     esac
     case "$name" in UnityEngine.TestRunner|UnityEditor.TestRunner) echo "-define:UNITY_TESTS_FRAMEWORK" ;; esac
     case "$name" in
-      MCPForUnity.Runtime|MCPForUnity.Editor|MCPForUnity.Input.UGUI.*|MCPForUnity.Input.InputSystem.*|MCPForUnity.CustomTools.Roslyn*|TestAsmdef|MCPForUnityTests.EditMode)
+      MCPForUnity.Runtime|MCPForUnity.Editor|MCPForUnity.Input.UGUI.*|MCPForUnity.Input.InputSystem.*|MCPForUnity.PlayScenarios.Integration.*|MCPForUnity.ScenarioPlayerFixture*|MCPForUnity.CustomTools.Roslyn*|TestAsmdef|MCPForUnityTests.EditMode|MCPForUnityTests.PlayMode|MCPForUnityTests.UI16CaretRuntime)
         echo "-warnaserror+" ;;
     esac
-    case "$name" in MCPForUnity.Input.UGUI.*) echo "-define:MCP_INPUT_UGUI" ;; esac
+    case "$name" in MCPForUnity.Input.UGUI.*|MCPForUnity.PlayScenarios.Integration.*|MCPForUnity.ScenarioPlayerFixture*) echo "-define:MCP_INPUT_UGUI" ;; esac
     case "$name" in MCPForUnity.Input.InputSystem.*) echo "-define:MCP_INPUT_SYSTEM"; echo "-define:ENABLE_INPUT_SYSTEM" ;; esac
     case "$name" in MCPForUnity.CustomTools.RoslynOn) echo "-define:USE_ROSLYN" ;; esac
     case "$name" in
@@ -544,12 +568,28 @@ for platform in $PLATFORMS; do
       "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
       "$OUT/$platform/MCPForUnity.Editor.dll" "$OUT/$platform/TestAsmdef.dll" \
       "$OUT/$platform/Unity.EditorCoroutines.Editor.dll" || { failed=1; continue; }
+    compile MCPForUnityTests.PlayMode "$TEST_PROJECT/Assets/Tests/PlayMode" "$platform" \
+      "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" || { failed=1; continue; }
+    compile MCPForUnityTests.UI16CaretRuntime "$TEST_PROJECT/Assets/Tests/UI16CaretRuntime" "$platform" \
+      "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }
     if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
+      compile MCPForUnity.ScenarioPlayerFixture "$TEST_PROJECT/Assets/Scripts/ScenarioPlayerFixture" "$platform" \
+        "$REFS_PROFILE/Runtime.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" || { failed=1; continue; }
+      compile MCPForUnity.ScenarioPlayerFixture.Editor "$TEST_PROJECT/Assets/Scripts/ScenarioPlayerFixture/Editor" "$platform" \
+        "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" "$OUT/$platform/MCPForUnity.Editor.dll" \
+        "$OUT/$platform/MCPForUnity.ScenarioPlayerFixture.dll" || { failed=1; continue; }
+      compile MCPForUnity.PlayScenarios.Integration.Runtime "$TEST_PROJECT/Assets/Tests/EditMode/Tools/PlayScenarios/Integration/Runtime" "$platform" \
+        "$REFS_PROFILE/Runtime.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" || { failed=1; continue; }
+      compile MCPForUnity.PlayScenarios.Integration.Tests "$TEST_PROJECT/Assets/Tests/EditMode/Tools/PlayScenarios/Integration/Editor" "$platform" \
+        "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" "$OUT/$platform/MCPForUnity.Editor.dll" \
+        "$OUT/$platform/MCPForUnity.PlayScenarios.Integration.Runtime.dll" || { failed=1; continue; }
       compile MCPForUnity.Input.UGUI.Tests "$TEST_PROJECT/Assets/Tests/EditMode/Tools/Input/UGUI" "$platform" \
         "$REFS_PROFILE/Editor.txt" "$OUT/$platform/MCPForUnity.Runtime.dll" \
         "$OUT/$platform/MCPForUnity.Editor.dll" "$OUT/$platform/MCPForUnity.Input.UGUI.Editor.dll" \
         "$OUT/$platform/MCPForUnity.Input.UGUI.Runtime.dll" \
         || failed=1
+    else
+      echo "Excluded uGUI, PlayScenarios integration, and scenario Player fixture assemblies: COMPILE_INPUT_UGUI=0 (package profile disabled)"
     fi
     if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
       compile MCPForUnity.Input.InputSystem.Tests "$TEST_PROJECT/Assets/Tests/EditMode/Tools/Input/InputSystem" "$platform" \
@@ -557,6 +597,8 @@ for platform in $PLATFORMS; do
         "$OUT/$platform/MCPForUnity.Input.InputSystem.Runtime.dll" "$OUT/$platform/MCPForUnity.Input.InputSystem.Editor.dll" \
         "$INPUT_SYSTEM_REFS/Unity.InputSystem.dll" "$INPUT_SYSTEM_REFS/Unity.InputSystem.TestFramework.dll" \
         || failed=1
+    else
+      echo "Excluded Input System test assembly: COMPILE_INPUT_SYSTEM=0 (package profile disabled)"
     fi
   fi
   for compile_profile in player player-scenarios; do
@@ -566,6 +608,10 @@ for platform in $PLATFORMS; do
     if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
       compile MCPForUnity.Input.UGUI.Runtime "$REPO/MCPForUnity/Runtime/PlayScenarios/UGUI" "$platform" \
         "$REFS_PROFILE/Runtime.txt" "$player_dir/MCPForUnity.Runtime.dll" || failed=1
+      if [ -n "$TEST_PROJECT" ]; then
+        compile MCPForUnity.ScenarioPlayerFixture "$TEST_PROJECT/Assets/Scripts/ScenarioPlayerFixture" "$platform" \
+          "$REFS_PROFILE/Runtime.txt" "$player_dir/MCPForUnity.Runtime.dll" || failed=1
+      fi
     fi
     if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
       compile MCPForUnity.Input.InputSystem.Runtime "$REPO/MCPForUnity/Runtime/PlayScenarios/InputSystem" "$platform" \
