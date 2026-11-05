@@ -1,7 +1,11 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
@@ -17,6 +21,251 @@ namespace MCPForUnityTests.Editor.Services
     public class WebSocketLifecycleIntentTests
     {
         private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
+
+        [Test]
+        public void SilentUpgradeDeadlineReleasesCandidateAndAllowsRetry()
+        {
+            const string timeoutKey = "UNITY_MCP_WEBSOCKET_CONTROL_TIMEOUT_SECONDS";
+            string previous = Environment.GetEnvironmentVariable(timeoutKey);
+            using var healthy = CreatePeer(out Uri endpoint);
+            using var peer = new SilentUpgradePeer(endpoint);
+            using var client = CreateClient(peer.Endpoint);
+            var context = new HeldContext();
+            Task<bool> start = null;
+            try
+            {
+                Environment.SetEnvironmentVariable(timeoutKey, "0.1");
+                UnityEngine.TestTools.LogAssert.Expect(
+                    UnityEngine.LogType.Error,
+                    new System.Text.RegularExpressions.Regex("\\[WebSocket\\] Connection failed\\.")
+                );
+                start = context.Start(client);
+                Wait(() => peer.Accepted.Task.IsCompleted, "silent upgrade accepted");
+                Wait(() => context.HasContinuation, "product connection deadline");
+                while (context.HasContinuation)
+                    context.RunNext();
+                Wait(() => start.IsCompleted || context.HasContinuation, "bounded startup cleanup");
+                while (context.HasContinuation)
+                    context.RunNext();
+                Assert.IsTrue(start.IsCompleted, "A silent upgrade must not strand initial startup.");
+                Assert.IsFalse(start.GetAwaiter().GetResult());
+                Assert.IsFalse(client.IsConnected);
+                Assert.IsNull(Get(client, "_socket"), "The failed candidate must release its socket.");
+                Assert.AreEqual(1, PendingAttempts(client), "A disposed public socket is not proof that Mono's physical attempt finished.");
+                for (int retry = 0; retry < 3; retry++)
+                {
+                    UnityEngine.TestTools.LogAssert.Expect(
+                        UnityEngine.LogType.Error,
+                        new System.Text.RegularExpressions.Regex("connection_establishment_unsettled")
+                    );
+                    start = context.Start(client);
+                    FinishStart(context, start);
+                    Assert.IsFalse(start.GetAwaiter().GetResult());
+                    Assert.AreEqual(1, PendingAttempts(client), "Repeated starts cannot create additional physical attempts to a still-pending candidate.");
+                }
+                // Mono can retain its internal upgrade read after ClientWebSocket is
+                // disposed. Release the owned peer so that actual operation also settles.
+                peer.Release();
+                Assert.IsTrue(peer.Closed.Task.Wait(5000), "The fixture must release its actual silent upgrade read.");
+                Wait(() => PendingAttempts(client) == 0, "actual retired connection completion");
+                Assert.IsFalse(client.IsConnected, "Late candidate completion cannot publish a connection.");
+
+                start = context.Start(client);
+                Wait(() => context.HasContinuation && client.State.SessionId == "owned-editor-session-1", "retry registration");
+                context.RunNext();
+                Assert.IsTrue(start.IsCompleted && start.GetAwaiter().GetResult(), "A failed upgrade must not prevent the next owned attempt.");
+            }
+            finally
+            {
+                try
+                {
+                    if (start != null)
+                        Cleanup(client, context, start);
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable(timeoutKey, previous);
+                }
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void StopDuringSilentUpgradeCannotPublishAStaleConnection(bool force)
+        {
+            using var peer = new SilentUpgradePeer();
+            using var client = CreateClient(peer.Endpoint);
+            var context = new HeldContext();
+            Task<bool> start = context.Start(client);
+            try
+            {
+                Wait(() => peer.Accepted.Task.IsCompleted, "silent upgrade accepted");
+                if (force)
+                    client.ForceStop();
+                else
+                    client.StopAsync().GetAwaiter().GetResult();
+                Wait(() => context.HasContinuation || start.IsCompleted, "stopped connection continuation");
+                while (context.HasContinuation)
+                    context.RunNext();
+                Wait(() => start.IsCompleted, "stopped startup completion");
+                Assert.IsFalse(client.IsConnected);
+                Assert.IsFalse(client.State.IsConnected);
+                Assert.IsNull(Get(client, "_socket"));
+                peer.Release();
+                Assert.IsTrue(peer.Closed.Task.Wait(5000));
+                Wait(() => PendingAttempts(client) == 0, "stopped physical connection completion");
+                Assert.IsTrue(start.IsCanceled || start.IsFaulted || !start.GetAwaiter().GetResult());
+            }
+            finally
+            {
+                Cleanup(client, context, start);
+            }
+        }
+
+        [Test]
+        public void DifferentSilentCandidatesShareABoundedPhysicalAttemptBudget()
+        {
+            const string timeoutKey = "UNITY_MCP_WEBSOCKET_CONTROL_TIMEOUT_SECONDS";
+            string previous = Environment.GetEnvironmentVariable(timeoutKey);
+            var peers = new[] { new SilentUpgradePeer(), new SilentUpgradePeer(), new SilentUpgradePeer(), new SilentUpgradePeer() };
+            using var client = CreateClient(peers[0].Endpoint);
+            using var lifecycle = new CancellationTokenSource();
+            var establish = typeof(WebSocketTransportClient).GetMethod("EstablishConnectionAsync", Private);
+            Set(client, "_lifecycleCts", lifecycle);
+            Set(client, "_useLocalAuth", true);
+            try
+            {
+                Environment.SetEnvironmentVariable(timeoutKey, "0.1");
+                for (int index = 0; index < peers.Length; index++)
+                {
+                    Set(client, "_endpointUri", peers[index].Endpoint);
+                    UnityEngine.TestTools.LogAssert.Expect(
+                        UnityEngine.LogType.Error,
+                        new System.Text.RegularExpressions.Regex(index < 3 ? "\\[WebSocket\\] Connection failed\\." : "connection_establishment_unsettled")
+                    );
+                    var attempt = (Task<CancellationToken?>)establish.Invoke(client, new object[] { lifecycle.Token });
+                    Wait(() => attempt.IsCompleted, "bounded candidate establishment");
+                    Assert.IsNull(attempt.GetAwaiter().GetResult());
+                    Assert.AreEqual(Math.Min(index + 1, 3), PendingAttempts(client));
+                    if (index < 3)
+                        Assert.IsTrue(peers[index].Accepted.Task.IsCompleted);
+                    else
+                        Assert.IsFalse(
+                            peers[index].Accepted.Task.IsCompleted,
+                            "A full physical-attempt budget must refuse before initiating another connection."
+                        );
+                }
+                foreach (var peer in peers)
+                    peer.Release();
+                Wait(() => PendingAttempts(client) == 0, "actual bounded candidate completion");
+            }
+            finally
+            {
+                try
+                {
+                    client.ForceStop();
+                    foreach (var peer in peers)
+                        peer.Dispose();
+                    Wait(() => ((Task)Get(client, "_forcedCommandSettlement")).IsCompleted, "bounded attempt cleanup");
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable(timeoutKey, previous);
+                }
+            }
+        }
+
+        private sealed class SilentUpgradePeer : IDisposable
+        {
+            private readonly TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+            private readonly CancellationTokenSource lifetime = new CancellationTokenSource();
+            private readonly Task operation;
+            private TcpClient socket;
+            internal readonly TaskCompletionSource<bool> Accepted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            internal readonly TaskCompletionSource<bool> Closed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            internal Uri Endpoint { get; }
+
+            internal SilentUpgradePeer(Uri retryUpstream = null)
+            {
+                listener.Start();
+                Endpoint = new Uri("ws://127.0.0.1:" + ((IPEndPoint)listener.LocalEndpoint).Port + "/owned-upgrade");
+                operation = Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var accepted = await listener.AcceptTcpClientAsync().ConfigureAwait(false);
+                        socket = accepted;
+                        var bytes = new byte[4096];
+                        string request = "";
+                        int count;
+                        while ((count = await accepted.GetStream().ReadAsync(bytes, 0, bytes.Length, lifetime.Token).ConfigureAwait(false)) != 0)
+                        {
+                            request += Encoding.ASCII.GetString(bytes, 0, count);
+                            if (request.Contains("\r\n\r\n"))
+                                Accepted.TrySetResult(true);
+                        }
+                        Closed.TrySetResult(true);
+                    }
+                    catch (Exception) when (lifetime.IsCancellationRequested) { }
+                    catch (Exception exception) when (exception is IOException || exception is SocketException || exception is ObjectDisposedException)
+                    {
+                        Closed.TrySetResult(true);
+                    }
+                    if (retryUpstream != null && !lifetime.IsCancellationRequested)
+                    {
+                        // After releasing the first silent connection, forward a retry
+                        // from the same endpoint to the existing owned RFC6455 peer.
+                        try
+                        {
+                            using var retry = await listener.AcceptTcpClientAsync().ConfigureAwait(false);
+                            socket = retry;
+                            using var upstream = new TcpClient();
+                            await upstream.ConnectAsync(retryUpstream.Host, retryUpstream.Port).ConfigureAwait(false);
+                            Task outbound = retry.GetStream().CopyToAsync(upstream.GetStream(), 8192, lifetime.Token);
+                            Task inbound = upstream.GetStream().CopyToAsync(retry.GetStream(), 8192, lifetime.Token);
+                            await Task.WhenAny(outbound, inbound).ConfigureAwait(false);
+                            retry.Dispose();
+                            upstream.Dispose();
+                            try
+                            {
+                                await Task.WhenAll(outbound, inbound).ConfigureAwait(false);
+                            }
+                            catch (Exception exception)
+                                when (exception is IOException || exception is ObjectDisposedException || exception is OperationCanceledException) { }
+                        }
+                        catch (Exception) when (lifetime.IsCancellationRequested) { }
+                    }
+                });
+            }
+
+            public void Dispose()
+            {
+                lifetime.Cancel();
+                listener.Stop();
+                socket?.Dispose();
+                Assert.IsTrue(operation.Wait(5000), "Owned silent peer cleanup");
+                lifetime.Dispose();
+            }
+
+            internal void Release() => socket?.Dispose();
+        }
+
+        private static int PendingAttempts(WebSocketTransportClient client)
+        {
+            lock (Get(client, "_ownershipLock"))
+                return ((System.Collections.IDictionary)Get(client, "_pendingConnectionAttempts")).Count;
+        }
+
+        private static void FinishStart(HeldContext context, Task start) =>
+            Wait(
+                () =>
+                {
+                    while (context.HasContinuation)
+                        context.RunNext();
+                    return start.IsCompleted;
+                },
+                "bounded startup completion"
+            );
 
         [TestCase(false)]
         [TestCase(true)]

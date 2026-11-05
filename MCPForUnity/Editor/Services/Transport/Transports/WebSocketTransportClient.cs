@@ -46,6 +46,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private readonly object _ownershipLock = new object();
         private long _startVersion;
         private readonly Dictionary<CancellationTokenSource, Task> _cancellations = new Dictionary<CancellationTokenSource, Task>();
+
+        // Mono can retain an upgrade read after public socket disposal. Keep physical
+        // admission until the actual task settles, including across Stop/Start reuse.
+        private const int MaxPendingConnectionAttempts = 3;
+        private readonly Dictionary<Uri, ClientWebSocket> _pendingConnectionAttempts = new Dictionary<Uri, ClientWebSocket>();
         private ClientWebSocket _socket;
         private CancellationTokenSource _lifecycleCts;
         private CancellationTokenSource _connectionCts;
@@ -728,23 +733,40 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
 
                 ClientWebSocket previousSocket;
+                bool attemptAdmitted = false;
                 lock (_ownershipLock)
                 {
                     ownsLifecycle =
                         ReferenceEquals(_connectionCts, connectionCts)
                         && !ReferenceEquals(_stoppingLifecycle, lifecycleCts)
                         && !connectionToken.IsCancellationRequested;
-                    previousSocket = ownsLifecycle ? _socket : null;
-                    if (ownsLifecycle)
+                    previousSocket = null;
+                    if (ownsLifecycle && _pendingConnectionAttempts.Count < MaxPendingConnectionAttempts && !_pendingConnectionAttempts.ContainsKey(candidate))
+                    {
+                        previousSocket = _socket;
                         _socket = socket;
+                        _pendingConnectionAttempts.Add(candidate, socket);
+                        attemptAdmitted = true;
+                    }
                 }
                 if (!ownsLifecycle)
                 {
                     socket.Dispose();
                     return null;
                 }
+                if (!attemptAdmitted)
+                {
+                    socket.Dispose();
+                    lastConnectError = new InvalidOperationException(
+                        "connection_establishment_unsettled: an earlier physical connection attempt is still settling. Retry after it finishes."
+                    );
+                    // Other address candidates can still use the remaining bounded slots.
+                    continue;
+                }
                 previousSocket?.Dispose();
 
+                bool connected = false;
+                Task connecting = null;
                 try
                 {
                     if (useLocalAuth)
@@ -756,8 +778,37 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         }
                         socket.Options.SetRequestHeader(AuthConstants.LocalTokenHeader, launchToken);
                     }
-                    await socket.ConnectAsync(candidate, connectionToken).ConfigureAwait(false);
-                    connectedEndpoint = candidate;
+                    // Establishment has its own budget: registration cannot time out an
+                    // accepted TCP connection whose peer never completes the upgrade.
+                    using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(connectionToken))
+                    {
+                        deadline.CancelAfter(ControlObservationTimeout);
+                        using var abort = deadline.Token.Register(socket.Abort);
+                        connecting = socket.ConnectAsync(candidate, deadline.Token);
+                        _ = connecting.ContinueWith(
+                            completed =>
+                            {
+                                _ = completed.Exception;
+                                lock (_ownershipLock)
+                                    if (_pendingConnectionAttempts.TryGetValue(candidate, out ClientWebSocket owner) && ReferenceEquals(owner, socket))
+                                        _pendingConnectionAttempts.Remove(candidate);
+                            },
+                            CancellationToken.None,
+                            TaskContinuationOptions.ExecuteSynchronously,
+                            TaskScheduler.Default
+                        );
+                        // Some Mono runtimes do not settle a silent upgrade read on
+                        // cancellation/Abort. Bound our observation independently.
+                        await ConnectionCommandWork.WaitAsync(connecting, deadline.Token).ConfigureAwait(false);
+                        deadline.Token.ThrowIfCancellationRequested();
+                    }
+                    lock (_ownershipLock)
+                    {
+                        if (!IsCurrentConnectionToken(connectionToken) || !ReferenceEquals(_socket, socket))
+                            return null;
+                        connectedEndpoint = candidate;
+                        connected = true;
+                    }
                     break;
                 }
                 catch (OperationCanceledException) when (connectionToken.IsCancellationRequested)
@@ -770,6 +821,32 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     McpLog.Debug(
                         $"[WebSocket] Connect failed for {HttpEndpointUtility.GetDisplayUrl(candidate.AbsoluteUri)}: {HttpEndpointUtility.RedactUrls(ex.Message)}"
                     );
+                }
+                finally
+                {
+                    if (!connected)
+                    {
+                        socket.Dispose();
+                        if (connecting == null)
+                            lock (_ownershipLock)
+                                if (_pendingConnectionAttempts.TryGetValue(candidate, out ClientWebSocket owner) && ReferenceEquals(owner, socket))
+                                    _pendingConnectionAttempts.Remove(candidate);
+                        if (connecting != null)
+                            _ = connecting.ContinueWith(
+                                completed =>
+                                {
+                                    _ = completed.Exception;
+                                    // A late runtime completion cannot revive the retired candidate.
+                                    socket.Dispose();
+                                },
+                                CancellationToken.None,
+                                TaskContinuationOptions.ExecuteSynchronously,
+                                TaskScheduler.Default
+                            );
+                        lock (_ownershipLock)
+                            if (ReferenceEquals(_socket, socket))
+                                _socket = null;
+                    }
                 }
             }
 
