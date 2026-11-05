@@ -148,6 +148,33 @@ and current-file access are checked again during collection and before returning
 cached external evidence, so a removed approval cannot authorize stale reads.
 Disable a source with `enabled:false` to revoke its graph grant independently.
 
+During automatic polling, the server can track changes in admitted directories
+with nonrecursive filesystem watches. It discovers those directories, registers
+them, and verifies the source with a complete sweep after registration. An idle
+poll skips traversal. For changed files, the next poll checks exact entry names
+in the affected directories and their admitted ancestors. An ambiguous spelling
+can trigger a full sweep that rehashes admitted files in the affected directory
+without recording the excluded filename. When a reported parent cannot be matched,
+the sweep rehashes the admitted source. Before reading changed content and publishing
+it, the server verifies the exact name, ancestor directories and current ignore files.
+A new event for the same path survives acknowledgment of an earlier edit.
+An explicit `sync` still schedules a full
+sweep, and `force:true` additionally rehashes files with unchanged stamps.
+`last_verified_at` records successful full sweeps.
+
+During active polling, a full sweep is due after 60 seconds to recover missed
+notifications. A restart, watcher failure, changed source or policy, directory
+change, or ignore-file change also triggers full verification. Parking, stopping
+a watch, credential retirement, and server shutdown close its handles. Checked
+delivery still verifies the current grant, admission and evidence.
+
+Each active scope can track up to eight sources. Each registration covers at
+most 128 admitted directories and 8,192 observed entries. Its coalesced journal
+holds at most 512 paths and 128 KiB of UTF-8 path names. Larger sources continue
+using complete sweeps. The filesystem backend can accumulate a batch before it
+yields to Python. These limits bound registrations and the durable queue, while
+the backend's pre-yield memory use during an event flood has no documented bound.
+
 Unresolved external mapping diagnostics retain field, line and reason while
 omitting the unknown value (`key_redacted:true`), including diagnostics stored by
 older versions. Resolved asset links retain their normal keys and provenance.

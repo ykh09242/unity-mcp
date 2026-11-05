@@ -12,7 +12,7 @@ import time
 import threading
 
 from services.reference_graph.analysis import Analysis, Catalog, CatalogLookups
-from services.reference_graph import catalog_delta
+from services.reference_graph import catalog_delta, external_changes
 from services.reference_graph.external import _pattern
 from services.reference_graph.ignore import GitIgnoreRules
 from services.reference_graph.response_budget import PageBudget, bounded_rows
@@ -146,6 +146,7 @@ class GraphWorkspace:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_external_checkpoints(provider TEXT NOT NULL,owner TEXT NOT NULL,generation INTEGER NOT NULL,PRIMARY KEY(provider,owner))"
             )
+            external_changes.initialize(connection)
             if connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_runtime_schema'"
             ).fetchone():
@@ -454,6 +455,8 @@ class GraphWorkspace:
             "graph_changed_inputs",
             "graph_external",
             "graph_external_checkpoints",
+            "graph_external_watch",
+            "graph_external_events",
             "graph_asset_failures",
             "graph_addressables",
             "graph_collected_versions",
@@ -742,6 +745,8 @@ class GraphWorkspace:
                 "graph_issues",
                 "graph_external",
                 "graph_external_checkpoints",
+                "graph_external_watch",
+                "graph_external_events",
             ):
                 connection.execute("DELETE FROM " + table + " WHERE provider=?", (provider,))
             connection.execute("DELETE FROM graph_external_paths WHERE provider=?", (provider,))
@@ -1593,21 +1598,31 @@ class GraphWorkspace:
                 generation=generation,
             )
 
-    def external_inputs(self, provider: str, *, admission: bool = False) -> dict[str, dict]:
+    def external_inputs(
+        self, provider: str, *, admission: bool = False, paths: tuple[str, ...] | None = None
+    ) -> dict[str, dict]:
+        if paths == ():
+            return {}
+        params = (provider,)
+        selection = "graph_external_paths p"
+        if paths is not None:
+            # The provider/owner primary key admits only the captured event identities.
+            selection = "json_each(?) j CROSS JOIN graph_external_paths p ON p.owner=j.value"
+            params = (_json([provider + ":" + _hash(path) for path in paths]), provider)
         with self.store._connect() as connection:
             return {
                 row["path"]: dict(row)
                 for row in connection.execute(
                     "SELECT p.provider,p.owner,p.path,e.fingerprint,e.stamp,e.analysis_key,e.seen,"
                     "o.state,c.published AS provenance,v.generation AS checkpoint "
-                    "FROM graph_external_paths p LEFT JOIN graph_external e USING(owner,provider) "
+                    f"FROM {selection} LEFT JOIN graph_external e USING(owner,provider) "
                     "LEFT JOIN observations o USING(owner,provider) "
                     "LEFT JOIN evidence_context c USING(owner,provider) "
                     "LEFT JOIN graph_external_checkpoints v ON v.owner=p.owner AND v.provider=p.provider "
                     "AND v.generation=o.generation AND o.state='pending' WHERE p.provider=?"
                     if admission
                     else "SELECT e.*,o.state,c.published AS provenance FROM graph_external e LEFT JOIN observations o USING(owner,provider) LEFT JOIN evidence_context c USING(owner,provider) WHERE e.provider=?",
-                    (provider,),
+                    params,
                 )
             }
 
@@ -1912,3 +1927,13 @@ class GraphWorkspace:
             )
             if removed:
                 self.store._bump(connection)
+
+    def remove_external(self, worker: str, provider: str, owners: list[str]) -> None:
+        with self._write(worker) as connection:
+            for owner in owners:
+                self._delete(connection, owner)
+                for table in ("graph_external", "graph_external_checkpoints"):
+                    connection.execute(
+                        f"DELETE FROM {table} WHERE provider=? AND owner=?", (provider, owner)
+                    )
+            self.store._bump(connection)

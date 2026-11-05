@@ -46,6 +46,7 @@ from services.reference_graph.collection_protocol import (
     text,
 )
 from services.reference_graph.external import ExternalSource, document_coverage, document_events
+from services.reference_graph.external_changes import Batch, ExternalChanges, ScanPlan
 from services.reference_graph.ignore import rule_directory
 from services.reference_graph.store import Edge, Observation, RevisionConflict, _hash, _json
 from services.reference_graph.workspace import GraphWorkspace
@@ -122,6 +123,7 @@ class Reconciler:
         self._catalog_cache: tuple[int, Catalog] | None = None
         self._analysis_cache = None
         self._analysis_used = 0.0
+        self.external_changes = ExternalChanges(workspace)
         self.partial_proof = None
         self._requested_guids: dict[str, None] = {}
 
@@ -252,7 +254,9 @@ class Reconciler:
             self.stopped.set()
             parent.cancel()
 
-    async def reconcile(self, *, force_external: bool = False, wait: bool = True) -> bool | None:
+    async def reconcile(
+        self, *, force_external: bool = False, wait: bool = True, external_mode: str = "full"
+    ) -> bool | None:
         # Serialize use of the durable worker identity. Foreground requests
         # must not wait while holding an Editor operation needed by the owner.
         if wait:
@@ -268,12 +272,12 @@ class Reconciler:
         try:
             self.partial_proof = None
             self._budget = CollectionBudget(self.limits)
-            return await self._reconcile(force_external=force_external)
+            return await self._reconcile(force_external=force_external, external_mode=external_mode)
         finally:
             self.partial_proof = None
             self._gate.release()
 
-    async def _reconcile(self, *, force_external: bool) -> bool:
+    async def _reconcile(self, *, force_external: bool, external_mode: str) -> bool:
         await self.check()
         self.stopped.clear()
         heartbeat = None
@@ -285,7 +289,9 @@ class Reconciler:
             deadline = asyncio.timeout(self._budget.remaining())
             try:
                 async with deadline:
-                    return await self._run_reconcile(force_external=force_external)
+                    return await self._run_reconcile(
+                        force_external=force_external, external_mode=external_mode
+                    )
             except TimeoutError as error:
                 if not deadline.expired():
                     raise
@@ -311,7 +317,7 @@ class Reconciler:
             # owner. Neither can interrupt heartbeat/thread/DB lease cleanup.
             await drained_task(asyncio.create_task(self._release(heartbeat)))
 
-    async def _run_reconcile(self, *, force_external: bool) -> bool:
+    async def _run_reconcile(self, *, force_external: bool, external_mode: str) -> bool:
         if self.workspace.restart_policy_pending:
             await drained_thread(self.workspace.require_restart_policy)
         status = await self.collect("status")
@@ -390,7 +396,7 @@ class Reconciler:
                 self.partial_proof = (partial_fence[1:], partial_status)
         await self._assets(ignore_snapshot)
         await self._analysis()
-        await self._external(force=force_external)
+        await self._external(force=force_external, external_mode=external_mode)
         if ignore_snapshot is not None:
             validated = False
             try:
@@ -1355,13 +1361,16 @@ class Reconciler:
         ):
             raise RevisionConflict("Analysis inputs changed before publication")
 
-    async def _external(self, *, force: bool) -> None:
+    async def _external(self, *, force: bool, external_mode: str = "full") -> None:
         self.progress["external_errors"] = {}
         sources = [
             source
             for source in await drained_thread(self.store.sources)
             if source["provider"].startswith("external:") and source["enabled"]
         ]
+        active = {source["provider"] for source in sources} if external_mode == "tracked" else set()
+        for provider in self.external_changes.registrations.keys() - active:
+            await drained_thread(self.external_changes.close, provider)
         if not sources:
             self._catalog_cache = None
             return
@@ -1388,13 +1397,15 @@ class Reconciler:
             }
             try:
                 await drained_thread(self.workspace.external_scan, self.worker, source, scan)
-                failures, repository = await drained_thread(
+                failures, repository, full = await drained_thread(
                     self._external_source,
                     source,
                     catalog,
                     rules,
                     catalog_revision,
                     scan_pass,
+                    external_mode == "tracked",
+                    previous.get(source["provider"], {}).get("state") == "verified_at_scan",
                     _cancel_event=self.stopped,
                 )
                 scan.update(
@@ -1403,7 +1414,7 @@ class Reconciler:
                     completed_at=time.time(),
                     repository=repository,
                 )
-                if not failures:
+                if not failures and full:
                     scan["last_verified_at"] = scan["completed_at"]
                 await drained_thread(self.workspace.external_scan, self.worker, source, scan)
                 if failures:
@@ -1440,12 +1451,32 @@ class Reconciler:
                 await self._phase("external")
 
     def _external_source(
-        self, source: dict, catalog: Catalog, rules: int, catalog_revision: int, scan_pass: dict
-    ) -> tuple[int, dict]:
-        with self.workspace.source_guard(source["provider"], source["version"]) as require_source:
-            return self._scan_external_source(
-                source, catalog, rules, catalog_revision, scan_pass, require_source
-            )
+        self,
+        source: dict,
+        catalog: Catalog,
+        rules: int,
+        catalog_revision: int,
+        scan_pass: dict,
+        tracked: bool,
+        previously_verified: bool,
+    ) -> tuple[int, dict, bool]:
+        try:
+            with self.workspace.source_guard(
+                source["provider"], source["version"]
+            ) as require_source:
+                return self._scan_external_source(
+                    source,
+                    catalog,
+                    rules,
+                    catalog_revision,
+                    scan_pass,
+                    require_source,
+                    tracked,
+                    previously_verified,
+                )
+        except BaseException:
+            self.external_changes.close(source["provider"])
+            raise
 
     def _scan_external_source(
         self,
@@ -1455,25 +1486,65 @@ class Reconciler:
         catalog_revision: int,
         scan_pass: dict,
         require_source: Callable[[], None],
-    ) -> tuple[int, dict]:
+        tracked: bool,
+        previously_verified: bool,
+    ) -> tuple[int, dict, bool]:
         self._check_source(source, require_source)
         policy = self.workspace.policy()
-        adapter = ExternalSource(
+        make_adapter = partial(
+            ExternalSource,
             source["config"],
             respect_gitignore=policy["respect_gitignore"],
             exclude=policy["exclude"],
             budget=self._budget,
         )
+        adapter = make_adapter()
         repository = adapter.repository_revision()
         provider = source["provider"]
         pass_prefix = scan_pass["id"] + ":"
         # Each enumeration needs its own marker to retire files removed since
         # the previous attempt, including files already verified in this pass.
         seen = pass_prefix + uuid.uuid4().hex
-        previous = self.workspace.external_inputs(provider, admission=True)
         analysis_key = _hash(
             (ANALYSIS_VERSION, source["version"], policy["version"], rules, catalog_revision)
         )
+        check = partial(self._check_source, source, require_source)
+        if tracked:
+            signature = _hash(
+                (
+                    analysis_key,
+                    str(adapter.root),
+                    adapter.directory_identity(adapter.root),
+                    repository,
+                )
+            )
+            plan = self.external_changes.plan(
+                provider,
+                signature,
+                adapter,
+                require_full=not previously_verified or scan_pass["force"],
+                check=check,
+            )
+        else:
+            plan = ScanPlan(batch=Batch.capture(self.workspace, provider))
+        if plan.full:
+            # A targeted spelling/identity check may have observed a directory
+            # while it was being replaced. A recovery sweep reads fresh rule files.
+            if tracked:
+                check()
+                adapter = make_adapter()
+            if plan.batch and plan.batch.paths:
+                adapter.guard_event_reads(plan.scope.directories if plan.scope else {}, check)
+            paths = (
+                adapter.files(check=check, on_directory=plan.scope.visit)
+                if plan.scope
+                else adapter.files(check=check)
+            )
+            previous = self.workspace.external_inputs(provider, admission=True)
+        else:
+            paths = plan.files
+            previous = plan.previous
+        hinted = adapter.hint_matcher(plan.batch.paths) if plan.batch and plan.batch.paths else None
         failures = 0
         pending = []
         resumed = []
@@ -1483,11 +1554,13 @@ class Reconciler:
             self._budget.admit_items(1)
 
         def verify_document(path: str, stamp: str) -> None:
-            if _json(adapter.stamp(path)) != stamp:
+            current = adapter.stamp(path)
+            if _json(current) != stamp:
                 raise RevisionConflict("External input changed during analysis")
+            adapter.confirm_event_entry(path, current[:2])
             self._check_source(source, require_source)
 
-        for path in adapter.files(check=partial(self._check_source, source, require_source)):
+        for path in paths:
             self._check_source(source, require_source)
             old = previous.pop(path, None)
             owner = provider + ":" + _hash(path)
@@ -1495,9 +1568,11 @@ class Reconciler:
             stamp = ""
             recorded = False
             try:
-                stamp = _json(adapter.stamp(path))
+                current_stamp = adapter.stamp(path)
+                stamp = _json(current_stamp)
                 if (
                     old is None
+                    or (hinted and hinted(path, current_stamp))
                     or (scan_pass["force"] and not (old["seen"] or "").startswith(pass_prefix))
                     or (old["state"] != "ready" and old["checkpoint"] is None)
                     or old["stamp"] != stamp
@@ -1547,6 +1622,7 @@ class Reconciler:
                 raise
             except (OSError, ValueError, csv.Error, RecursionError) as error:
                 self._check_source(source, require_source)
+                adapter.confirm_event_entry(path, None)
                 generation = self.workspace.observe_external(
                     self.worker,
                     Observation(
@@ -1595,8 +1671,19 @@ class Reconciler:
         ]
         if hidden:
             self.workspace.hide_external(self.worker, hidden)
-        self.workspace.finish_external(self.worker, provider, seen)
-        return failures, repository
+        if plan.full:
+            self.workspace.finish_external(self.worker, provider, seen)
+        elif previous:
+            self.workspace.remove_external(
+                self.worker, provider, [row["owner"] for row in previous.values()]
+            )
+        if failures:
+            self.external_changes.close(provider)
+        elif tracked:
+            self.external_changes.finish(plan, self.worker, provider, adapter, make_adapter, check)
+        elif plan.batch:
+            plan.batch.acknowledge(self.workspace, self.worker)
+        return failures, repository, plan.full
 
     def _check_source(self, source: dict, require_source: Callable[[], None]) -> None:
         self._check_thread()

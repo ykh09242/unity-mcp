@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import csv
 import hashlib
+from functools import lru_cache
 import io
 import json
 import os
@@ -24,7 +25,7 @@ from collections.abc import Callable
 from typing import BinaryIO
 
 from services.reference_graph.analysis import Analysis, Catalog
-from services.reference_graph.store import Edge, check_owned_path
+from services.reference_graph.store import Edge, RevisionConflict, check_owned_path
 from services.reference_graph.ignore import GitIgnoreRules
 from services.reference_graph.collection_protocol import CollectionBudget, CollectionLimits
 
@@ -213,7 +214,10 @@ class ExternalSource:
         self.exclude.extend(_pattern(pattern) for pattern in (exclude or []))
         self.respect_gitignore = respect_gitignore
         self._ignore = GitIgnoreRules([])
-        self._ignore_checked: set[str] = set()
+        self._ignore_checked: dict[str, bytes | None] = {}
+        self._changed_identities = {}
+        self._event_check = None
+        self._event_directories = {}
         self.mappings = validate_mappings(config.get("mappings", []))
         self.adapter = config.get("adapter", {"name": "json-csv", "version": 1})
         if (
@@ -230,19 +234,23 @@ class ExternalSource:
         """Read only rule files within this grant; cache missing candidates for this scan."""
         if not self.respect_gitignore or directory in self._ignore_checked:
             return
+        raw = self._read_ignore(directory)
+        self._ignore_checked[directory] = hashlib.sha256(raw).digest() if raw is not None else None
+        if raw is not None:
+            relative = (directory + "/" if directory else "") + ".gitignore"
+            self._ignore.add(relative, raw.decode("utf-8-sig"))
+
+    def _read_ignore(self, directory):
         relative = (directory + "/" if directory else "") + ".gitignore"
         path = check_owned_path(self.root.joinpath(*relative.split("/")))
         try:
             before = path.stat()
         except FileNotFoundError:
-            self._ignore_checked.add(directory)
-            return
+            return None
         self.budget.check_source(before.st_size, 0)
         with _regular_descriptor(path, before) as descriptor:
             with os.fdopen(descriptor, "rb", closefd=False) as stream:
-                raw = self._read_bytes(stream)
-        self._ignore.add(relative, raw.decode("utf-8-sig"))
-        self._ignore_checked.add(directory)
+                return self._read_bytes(stream)
 
     def _read_bytes(self, stream: BinaryIO) -> bytearray:
         """Bound each read, including the one-byte overflow probe, before retaining it."""
@@ -342,14 +350,192 @@ class ExternalSource:
 
     def admitted(self, relative: str) -> bool:
         _relative(relative)
+        return self._matches_file(relative) and not self._ignored(relative)
+
+    def _matches_file(self, relative: str) -> bool:
         return (
             Path(relative).suffix.lower() in (".json", ".csv")
             and any(pattern.fullmatch(relative) for pattern in self.include)
             and not any(pattern.fullmatch(relative) for pattern in self.exclude)
-            and not self._ignored(relative)
         )
 
-    def files(self, *, check: Callable[[], None] | None = None) -> Iterator[str]:
+    def watch_filter(self, relative: str) -> bool:
+        """Use the registration's rule snapshot without filesystem reads on its thread."""
+        _relative(relative)
+        return self._matches_file(relative) and not self._ignore.ignored(relative)
+
+    def watch_rule(self, directory: Path) -> bytes | None:
+        relative = directory.relative_to(self.root).as_posix()
+        key = "" if relative == "." else relative
+        self._ignore_directory(key)
+        return self._ignore_checked.get(key)
+
+    def directory_identity(self, directory: Path) -> tuple[int, int]:
+        """Revalidate each admitted ancestor before registering a directory handle."""
+        parts = directory.relative_to(self.root).parts
+        for end in range(1, len(parts) + 1):
+            relative = "/".join(parts[:end])
+            _relative(relative)
+            if (
+                not self._could_descend(relative)
+                or any(p.fullmatch(relative) or p.fullmatch(relative + "/") for p in self.exclude)
+                or self._ignored(relative, directory=True)
+            ):
+                raise PermissionError("Directory is outside the external source policy")
+        info = check_owned_path(directory).stat()
+        if not stat.S_ISDIR(info.st_mode):
+            raise NotADirectoryError(directory)
+        return info.st_dev, info.st_ino
+
+    def _entry_inodes(self, directory, wanted, check):
+        found = {}
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                check()
+                self.budget.admit_items(1)
+                if entry.name in wanted:
+                    found[entry.name] = entry.inode()
+                    if len(found) == len(wanted):
+                        break
+        return found
+
+    def changed_files(self, paths, directories, previous, check):
+        """Certify literal spellings by listing only affected admitted ancestor directories."""
+        wanted = {}
+        for relative in paths:
+            parts = _relative(relative)
+            if len(parts) > len(directories):
+                raise ValueError("External directory registration changed")
+            for depth, name in enumerate(parts):
+                wanted.setdefault(parts[:depth], set()).add(name)
+
+        observed = {}
+        for parent in sorted(wanted, key=len):
+            check()
+            directory = self.root.joinpath(*parent)
+            expected = directories.get(str(directory))
+            if expected is None or (
+                parent and observed[parent[:-1]].get(parent[-1]) != expected[1]
+            ):
+                raise ValueError("External directory spelling or identity changed")
+            if self.directory_identity(directory) != expected:
+                raise ValueError("External directory identity changed")
+            observed[parent] = self._entry_inodes(directory, wanted[parent], check)
+            if self.directory_identity(directory) != expected:
+                raise ValueError("External directory changed during enumeration")
+
+        files, identities = [], {}
+        for relative in paths:
+            check()
+            parts = _relative(relative)
+            path = self.root.joinpath(*parts)
+            if parts[-1] not in observed[parts[:-1]]:
+                # A tombstone can retire only an exact former publication. An
+                # unknown spelling, or a live alias, needs canonical full traversal.
+                if not (previous.get(relative) or {}).get("seen"):
+                    raise ValueError("Unverified external tombstone")
+                try:
+                    check_owned_path(path).lstat()
+                except FileNotFoundError:
+                    continue
+                raise ValueError("External filename spelling changed")
+            if self.admitted(relative):
+                info = check_owned_path(path).stat()
+                if stat.S_ISDIR(info.st_mode):
+                    raise IsADirectoryError(path)
+                inode = observed[parts[:-1]][parts[-1]]
+                if not inode or inode != info.st_ino:
+                    raise ValueError("External file identity changed during enumeration")
+                identities[relative] = (directories[str(path.parent)], (info.st_dev, inode))
+                files.append(relative)
+        self._changed_identities = identities
+        self.guard_event_reads(directories, check)
+        return files
+
+    def guard_event_reads(self, directories, check):
+        self._event_directories, self._event_check = directories, check
+
+    def confirm_event_entry(self, relative, identity):
+        """Bind an event-driven read/publication to current literal entries and rule bytes."""
+        if self._event_check is None:
+            return
+        parts = _relative(relative)
+        directory = self.root
+        try:
+            for depth, name in enumerate(parts):
+                self._event_check()
+                before = check_owned_path(directory).stat()
+                parent_id = (before.st_dev, before.st_ino)
+                if self._event_directories.get(str(directory), parent_id) != parent_id:
+                    raise RevisionConflict("External ancestor changed during admission")
+                if self.respect_gitignore:
+                    parent = "/".join(parts[:depth])
+                    raw = self._read_ignore(parent)
+                    digest = hashlib.sha256(raw).digest() if raw is not None else None
+                    if parent not in self._ignore_checked or self._ignore_checked[parent] != digest:
+                        raise RevisionConflict("External ignore rules changed during admission")
+                inode = self._entry_inodes(directory, {name}, self._event_check).get(name)
+                if not inode:
+                    raise RevisionConflict("External directory entry spelling changed")
+                after = check_owned_path(directory).stat()
+                directory = directory / name
+                child = check_owned_path(directory).stat()
+                if parent_id != (after.st_dev, after.st_ino) or child.st_ino != inode:
+                    raise RevisionConflict("External directory entry changed during admission")
+            if identity is not None and (child.st_dev, child.st_ino) != identity:
+                raise RevisionConflict("Opened external file differs from its directory entry")
+        except RevisionConflict:
+            raise
+        except (OSError, ValueError) as error:
+            raise RevisionConflict("External directory entry cannot be verified") from error
+
+    def hint_matcher(self, hints: tuple[str, ...]):
+        """Match alternate event spellings against files already admitted by traversal."""
+
+        exact = set(hints)
+        dirty_directories = {
+            "" if hint == ".//" else hint[:-2] for hint in exact if hint.endswith("//")
+        }
+        by_parent = {}
+        for hint in exact:
+            if not hint.endswith("/"):
+                parts = _relative(hint)
+                by_parent.setdefault("/".join(parts[:-1]), []).append(parts[-1])
+
+        @lru_cache(maxsize=512)
+        def identities(parent):
+            # A short name or other filesystem alias need not resemble the
+            # canonical filename. Probe only bounded hints in an admitted parent.
+            observed = set()
+            for name in by_parent[parent]:
+                try:
+                    info = check_owned_path(self.root / parent / name).lstat()
+                except FileNotFoundError:
+                    continue
+                except (OSError, ValueError):
+                    return None
+                if not info.st_ino:
+                    return None
+                observed.add((info.st_dev, info.st_ino))
+            return observed
+
+        def matches(relative, stamp):
+            parent = relative.rpartition("/")[0]
+            if relative in exact or parent in dirty_directories or ".///" in exact:
+                return True
+            if parent not in by_parent:
+                return False
+            observed = identities(parent)
+            return observed is None or not stamp[1] or stamp[:2] in observed
+
+        return matches
+
+    def files(
+        self,
+        *,
+        check: Callable[[], None] | None = None,
+        on_directory: Callable[[Path, int], None] | None = None,
+    ) -> Iterator[str]:
         def check_scan():
             self.budget.remaining()
             if check is not None:
@@ -372,6 +558,8 @@ class ExternalSource:
                     # Incremental heap ordering keeps cancellation checkpoints
                     # between bounded operations instead of one uninterruptible sort.
                     heapq.heappush(items, (entry.name, entry))
+            if on_directory is not None:
+                on_directory(directory, len(items))
             while items:
                 check_scan()
                 _, entry = heapq.heappop(items)
@@ -405,14 +593,28 @@ class ExternalSource:
     def _could_descend(self, relative: str) -> bool:
         return any(pattern.could_descend(relative) for pattern in self.include)
 
+    def _file_stat(self, relative):
+        path = check_owned_path(self.root.joinpath(*_relative(relative)))
+        info = path.stat()
+        known = self._changed_identities.get(relative)
+        if known:
+            parent = path.parent.stat()
+            if ((parent.st_dev, parent.st_ino), (info.st_dev, info.st_ino)) != known:
+                raise RevisionConflict(
+                    "External path changed since its directory entry was observed"
+                )
+        return path, info
+
     def read(self, relative: str) -> Document:
         if not self.admitted(relative):
             raise PermissionError("File is outside the source include/exclude policy")
         self.check_access()
-        path = check_owned_path(self.root.joinpath(*_relative(relative)))
-        before = path.stat()
+        path, before = self._file_stat(relative)
         self.budget.check_source(before.st_size, 0)
         with _regular_descriptor(path, before) as descriptor:
+            if self._event_check is not None:
+                opened = os.fstat(descriptor)
+                self.confirm_event_entry(relative, (opened.st_dev, opened.st_ino))
             with os.fdopen(descriptor, "rb", closefd=False) as stream:
                 raw = self._read_bytes(stream)
         return Document(raw.decode("utf-8-sig"), hashlib.sha256(raw).hexdigest())
@@ -422,8 +624,7 @@ class ExternalSource:
         if not self.admitted(relative):
             raise PermissionError("File is outside the source include/exclude policy")
         self.check_access()
-        path = check_owned_path(self.root.joinpath(*_relative(relative)))
-        before = path.stat()
+        path, before = self._file_stat(relative)
         with _regular_descriptor(path, before):
             pass
         return (

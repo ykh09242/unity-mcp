@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import ExitStack, asynccontextmanager, contextmanager, nullcontext
+from contextlib import AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
 import contextvars
 from dataclasses import dataclass, field
 import getpass
@@ -224,6 +224,7 @@ class Entry:
     task: asyncio.Task | None = None
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     force: bool = False
+    full_external: bool = False
     error: str | None = None
     leases: list[tuple[CredentialLease, float]] = field(default_factory=list, repr=False)
     last_used: float = field(default_factory=time.monotonic)
@@ -238,6 +239,12 @@ class Entry:
 
     def __post_init__(self):
         self.requests_drained.set()
+
+
+@dataclass
+class _WatchProgress:
+    failures: int = 0
+    caught_up: bool = False
 
 
 @dataclass
@@ -547,12 +554,15 @@ class ReferenceGraphService:
         )
         return entry
 
-    def start(self, entry: Entry, *, force: bool = False, wake: bool = True) -> None:
+    def start(
+        self, entry: Entry, *, force: bool = False, full_external: bool = False, wake: bool = True
+    ) -> None:
         if self.closed:
             raise RuntimeError("Reference graph service is stopping")
         if entry.retired or self.entries.get(entry.workspace.store.scope.key) is not entry:
             raise RevisionConflict("Reference graph request ownership changed; retry the request")
         entry.force |= force
+        entry.full_external |= full_external
         entry.watching = True
         if wake:
             entry.wake.set()
@@ -585,59 +595,103 @@ class ReferenceGraphService:
                 for lease, used in entry.leases
                 if lease is latest or now - used < self.IDLE_SECONDS
             ]
+        overloaded = False
         for lease, _ in reversed(entry.leases):
             try:
                 await lease.check()
                 authorize_operation(lease.permissions, "manage_reference_graph", {"action": "sync"})
                 return lease
-            except (CredentialLeaseError, OperationPermissionError):
+            except CredentialLeaseError as error:
+                overloaded |= error.overloaded
+            except OperationPermissionError:
                 continue
-        raise CredentialLeaseError()
+        raise CredentialLeaseError(overloaded=overloaded)
 
-    async def _attempt(self, entry: Entry, lease: CredentialLease | None, force: bool):
-        async with lease.owner_lifetime() if lease else nullcontext():
-            await entry.check()
-            return await entry.engine.reconcile(force_external=force)
+    async def _poll_delay(self, entry: Entry, failures: int) -> None:
+        delay = min(self.RETRY_SECONDS, self.POLL_SECONDS * 2 ** min(failures, 16))
+        try:
+            await asyncio.wait_for(entry.wake.wait(), delay)
+        except TimeoutError:
+            pass
+
+    async def _watch_owner(
+        self, entry: Entry, lease: CredentialLease | None, progress: _WatchProgress
+    ) -> bool:
+        """Keep native registrations and idle waits inside this exact owner's lifetime."""
+        async with AsyncExitStack() as ownership:
+            pinned = False
+            try:
+                while not self.closed and not entry.retired:
+                    if not entry.active_requests and (
+                        progress.failures >= self.PARK_FAILURES
+                        or progress.caught_up
+                        and self._now() - entry.last_used >= self.IDLE_SECONDS
+                    ):
+                        return True
+                    if lease and not pinned:
+                        await ownership.enter_async_context(lease.owner_lifetime())
+                        pinned = True
+                    entry.wake.clear()
+                    force, entry.force = entry.force, False
+                    full, entry.full_external = entry.full_external, False
+                    progress.caught_up = False
+                    try:
+                        await entry.check()
+                        progress.caught_up = await entry.engine.reconcile(
+                            force_external=force, external_mode="full" if full else "tracked"
+                        )
+                        progress.failures, entry.error = 0, None
+                    except (ScopeChanged, CredentialLeaseError):
+                        raise
+                    except (OSError, ValueError, RuntimeError) as error:
+                        entry.error = type(error).__name__ + ": " + str(error)
+                        progress.failures += 1
+                    finally:
+                        if not progress.caught_up:
+                            entry.full_external |= full
+                            entry.force |= force
+                    if pinned and not entry.engine.external_changes.registrations:
+                        # Preserve ordinary per-attempt capacity for scopes without handles.
+                        await ownership.aclose()
+                        pinned = False
+                    await self._poll_delay(entry, progress.failures)
+                    if lease is not None and await self._owner(entry) is not lease:
+                        return False
+                return True
+            finally:
+                await drained_thread(entry.engine.external_changes.close)
 
     async def _watch(self, entry: Entry) -> None:
-        failures, caught_up = 0, False
+        progress = _WatchProgress()
         while not self.closed and not entry.retired:
-            if not entry.active_requests and (
-                failures >= self.PARK_FAILURES
-                or caught_up
-                and self._now() - entry.last_used >= self.IDLE_SECONDS
-            ):
-                return
             entry.wake.clear()
-            force, entry.force = entry.force, False
             try:
                 lease = await self._owner(entry)
-            except CredentialLeaseError:
-                return
-            # Revocation cancels this attempt's owner, not the coordinating
-            # watcher. Its thread/lease cleanup finishes before another owner.
-            attempt = asyncio.create_task(self._attempt(entry, lease, force))
-            try:
-                caught_up = await asyncio.shield(attempt)
-                failures, entry.error = 0, None
-            except asyncio.CancelledError:
-                if asyncio.current_task().cancelling():
-                    if not attempt.cancelling():
-                        attempt.cancel()
-                    await self._join([attempt])
-                    raise
-                entry.error = "Reference reconciliation owner was cancelled"
-                failures += 1
+                attempt = asyncio.create_task(self._watch_owner(entry, lease, progress))
+                try:
+                    if await asyncio.shield(attempt):
+                        return
+                except asyncio.CancelledError:
+                    if asyncio.current_task().cancelling():
+                        if not attempt.cancelling():
+                            attempt.cancel()
+                        await self._join([attempt])
+                        raise
+                    entry.error = "Reference reconciliation owner was cancelled"
+                    progress.caught_up = False
             except ScopeChanged:
                 return
-            except (OSError, ValueError, RuntimeError) as error:
+            except CredentialLeaseError as error:
                 entry.error = type(error).__name__ + ": " + str(error)
-                failures += 1
-            delay = min(self.RETRY_SECONDS, self.POLL_SECONDS * 2 ** min(failures, 16))
-            try:
-                await asyncio.wait_for(entry.wake.wait(), delay)
-            except TimeoutError:
-                pass
+                if not error.overloaded:
+                    return
+                # Acquisition can be temporarily full even for a valid credential.
+                # The request flags survive until a charged attempt can consume them.
+                progress.caught_up = False
+                progress.failures += 1
+                if not entry.active_requests and progress.failures >= self.PARK_FAILURES:
+                    return
+                await self._poll_delay(entry, progress.failures)
 
     @staticmethod
     async def _join(tasks):
@@ -1474,6 +1528,7 @@ class ReferenceGraphService:
                     enabled=enabled,
                 )
             }
+            await drained_thread(entry.engine.external_changes.close, "external:" + options["id"])
         elif action == "rules":
             data = await drained_thread(store.rules_state, bounded=True)
         elif action == "set_rule":
@@ -1497,6 +1552,8 @@ class ReferenceGraphService:
                 expected_version=options["expected_version"],
             )
             data = {"version": version}
+            if policy_changed:
+                await drained_thread(entry.engine.external_changes.close)
         elif action == "rebuild":
             await drained_thread(workspace.rebuild)
             data = {"scheduled": True}
@@ -1593,9 +1650,7 @@ class ReferenceGraphService:
                     entry.engine.request_asset(options["node"])
                 self.start(
                     entry,
-                    # Cached validation detects stamps or repository identity.
-                    # The ordinary scan already handles both incrementally.
-                    # Rehash all inputs only for an explicit force/checked request.
+                    full_external=action == "sync" or external_changed,
                     force=options.get("force", False),
                     wake=catalog_pending
                     or analysis_pending
