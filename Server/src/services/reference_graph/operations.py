@@ -273,6 +273,14 @@ def cleanup(workspace, *, before, limit=100):
 
 def retry(workspace):
     with workspace.store._connect(write=True) as db:
-        # Failed assets are no longer dirty. Keep their retry eligibility and
-        # recovery marker so clean_asset also invalidates dependent analysis.
+        # Explicit retry must also join the ready queue, including while a
+        # collector resumes an older deadline cursor. Keep the failure records
+        # so clean_asset still invalidates dependent analysis after recovery.
         db.execute("UPDATE graph_asset_failures SET retry_at=0")
+        if db.execute(
+            "UPDATE graph_assets SET dirty=1 WHERE dirty<>1 "
+            "AND guid IN (SELECT guid FROM graph_asset_failures)"
+        ).rowcount:
+            db.execute(
+                "INSERT INTO graph_state VALUES ('summary_generation','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1"
+            )

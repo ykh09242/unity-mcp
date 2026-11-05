@@ -292,7 +292,11 @@ async def test_cleanup_preserves_active_jobs_and_authored_history(setup):
 
 
 @pytest.mark.asyncio
-async def test_retry_preserves_failure_eligibility_and_recovery_invalidation(setup):
+@pytest.mark.parametrize(
+    "retry_scan",
+    [None, {"through": 100, "after": [99, "z"]}, {"through": 100, "ready": True}],
+)
+async def test_retry_preserves_failure_eligibility_and_recovery_invalidation(setup, retry_scan):
     service, ctx = setup
     try:
         entry, _ = await service.resolve(ctx, "status")
@@ -306,15 +310,25 @@ async def test_retry_preserves_failure_eligibility_and_recovery_invalidation(set
             "source_format": "none",
             "keys": [],
         }
-        workspace.record_page("worker", [asset], {}, "scan")
+        healthy = {**asset, "guid": "b" * 32, "path": "Assets/Healthy.prefab"}
+        workspace.record_page("worker", [asset, healthy], {}, "scan")
+        workspace.clean_asset("worker", healthy["guid"])
         workspace.fail_asset("worker", asset, ValueError("temporary collection failure"))
         assert workspace.dirty_assets() == []
+        assert workspace.counts()["dirty_assets"] == 0
+        if retry_scan is not None:
+            with workspace.store._connect(write=True) as db:
+                workspace._set(db, "retry_scan", retry_scan)
 
         await service.execute(ctx, "retry", {})
         assert [item["guid"] for item in workspace.dirty_assets()] == [asset["guid"]]
+        assert workspace.counts()["dirty_assets"] == 1
         assert workspace.counts()["failed_assets"] == 1
+        assert workspace.state("retry_scan") == retry_scan
         with workspace.store._connect(write=True) as db:
-            assert db.execute("SELECT attempts FROM graph_asset_failures").fetchone()[0] == 1
+            assert tuple(
+                db.execute("SELECT attempts,retry_at FROM graph_asset_failures").fetchone()
+            ) == (1, 0)
             db.execute("DELETE FROM graph_changed_inputs")
         workspace.clean_asset("worker", asset["guid"])
         assert workspace.counts()["failed_assets"] == 0
