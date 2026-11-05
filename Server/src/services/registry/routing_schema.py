@@ -11,7 +11,7 @@ def with_unity_instance(schema: dict) -> dict:
                 "anyOf": [{"type": "string"}, {"type": "integer"}, {"type": "null"}],
                 "description": (
                     "Target Unity instance for this call: Name@hash or hash prefix; "
-                    "an integer port is also supported over stdio. "
+                    "an integer selects only that exact port over stdio and is rejected over HTTP. "
                     "Read mcpforunity://instances for available targets. "
                     "Omit to use the legacy active selection or the sole available instance."
                 ),

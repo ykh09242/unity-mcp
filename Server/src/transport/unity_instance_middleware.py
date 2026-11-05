@@ -81,8 +81,18 @@ def set_unity_instance_middleware(middleware: "UnityInstanceMiddleware") -> None
     _unity_instance_middleware = middleware
 
 
-def resolve_discovered_instance(value: str, instances: list, transport: str) -> str:
+def resolve_discovered_instance(value: str | int, instances: list, transport: str) -> str:
     """Resolve against the caller-visible catalog, retaining stdio port shorthand."""
+    if type(value) is int:
+        if transport == "http":
+            raise ValueError(
+                "Port-based targeting is not supported in HTTP transport mode. "
+                "Use Name@hash or a hash prefix."
+            )
+        for inst in instances:
+            if getattr(inst, "port", None) == value:
+                return inst.id
+        raise ValueError(f"No Unity instance found on port {value}.")
     complete_hash = full_hash(value)
     digits = value.lstrip("0") or "0"
     port = (
@@ -259,23 +269,29 @@ class UnityInstanceMiddleware(Middleware):
         return results
 
     async def _resolve_instance_value(
-        self, value: str, ctx, *, allow_reconnect: bool = False
+        self, value: str | int, ctx, *, allow_reconnect: bool = False
     ) -> str:
         """
-        Resolve a unity_instance string to a validated instance identifier.
+        Resolve a unity_instance selector to a validated instance identifier.
 
         Accepts:
-          - Bare port number like "6401" (stdio only) -> resolved Name@hash
+          - Integer port (stdio only, exact port match with no hash fallback)
+          - Bare string port like "6401" (legacy stdio shorthand)
           - "Name@hash" exact match
           - Hash prefix (unique prefix match against running instances)
 
         Raises ValueError with a user-friendly message on failure.
         """
+        transport = (config.transport_mode or "stdio").lower()
+        if type(value) is int:
+            # Refuse HTTP integers before discovery or any reconnect work.
+            instances = [] if transport == "http" else await self._discover_instances(ctx)
+            return resolve_discovered_instance(value, instances, transport)
+        if not isinstance(value, str):
+            raise ValueError("unity_instance must be a string identifier or an integer port")
         value = value.strip()
         if not value:
             raise ValueError("unity_instance value must not be empty.")
-
-        transport = (config.transport_mode or "stdio").lower()
 
         instances = None
         # Local stdio exact IDs need fresh target metadata, not unrelated port
@@ -469,11 +485,11 @@ class UnityInstanceMiddleware(Middleware):
         if isinstance(msg_args, dict) and "unity_instance" in msg_args:
             raw = msg_args.pop("unity_instance")
             if raw is not None:
-                raw_str = str(raw).strip()
-                if raw_str:
+                value = raw.strip() if isinstance(raw, str) else raw
+                if value != "":
                     # Raises ValueError with a user-friendly message on invalid input.
                     active_instance = await self._resolve_instance_value(
-                        raw_str, ctx, allow_reconnect=allow_reconnect
+                        value, ctx, allow_reconnect=allow_reconnect
                     )
                     logger.debug("Per-call unity_instance resolved to: %s", active_instance)
 
