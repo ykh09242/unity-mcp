@@ -1,14 +1,17 @@
 """Optional uGUI and Input System assembly compilation contracts."""
 
 import json
+import os
 
 from pathlib import Path
 
 import shlex
+import subprocess
 
 import shutil
 
 import pytest
+import yaml
 
 from .compile_check_helpers import (
     CompileHarness,
@@ -207,6 +210,75 @@ def test_license_free_ci_enables_separate_ugui_compile_passes() -> None:
     assert arguments.index("docker") < selected < arguments.index("$UNITY_IMAGE")
 
 
+@pytest.mark.parametrize("version,selected", [("6000.0.84f1", True), ("6000.3.25f1", False)])
+def test_workflow_prepares_profile_sources_and_passes_them_to_the_compiler(
+    harness: CompileHarness, version: str, selected: bool
+) -> None:
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/compile-check.yml").read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"]["compile"]["steps"]
+    preparation = next(step for step in steps if step.get("id") == "packages")
+    capture = harness.repo / "arguments.txt"
+    environment = {
+        **os.environ,
+        "UNITY_VERSION": version,
+        "UNITY_DATA": "verified/editor",
+        "CAPTURE": capture.as_posix(),
+    }
+    result = subprocess.run(
+        [
+            harness.bash,
+            "-c",
+            'python3() { printf \'%s\\n\' "$@" > "$CAPTURE"; };\n' + preparation["run"],
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (
+        "--include-input-system" in capture.read_text(encoding="utf-8").splitlines()
+    ) == selected
+    compiler = next(step for step in steps if step.get("name") == "Compile")
+    assert (
+        compiler["env"]["INPUT_SYSTEM_SOURCE"]
+        == "${{ steps.packages.outputs.input_system_source }}"
+    )
+    assert (
+        compiler["env"]["COMPILE_INPUT_SYSTEM"]
+        == "${{ startsWith(matrix.unity.version, '6000.0.') && '1' || '0' }}"
+    )
+    environment.update(
+        {
+            "INPUT_SYSTEM_SOURCE": "verified/input-package",
+            "COMPILE_INPUT_SYSTEM": "1" if selected else "0",
+            "UNITY_IMAGE": "verified/image",
+            "EXTRA_REFS": "verified/refs",
+            "TEST_FRAMEWORK_SOURCE": "verified/test-framework",
+            "EDITOR_COROUTINES_SOURCE": "verified/coroutines",
+            "TEST_PROJECT": "isolated/project",
+        }
+    )
+    result = subprocess.run(
+        [
+            harness.bash,
+            "-c",
+            'docker() { printf \'%s\\n\' "$@" > "$CAPTURE"; return 7; };\n' + compiler["run"],
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 7
+    arguments = capture.read_text(encoding="utf-8").splitlines()
+    assert f"COMPILE_INPUT_SYSTEM={1 if selected else 0}" in arguments
+    assert "INPUT_SYSTEM_SOURCE=/repo/verified/input-package" in arguments
+    assert arguments[-1] == "/repo/tools/compile-check.sh"
+
+
 @pytest.mark.parametrize("version", ["2021.3.45f2", "6000.0.69f1", "7000.0.0a7"])
 def test_selected_input_system_compiles_runtime_editor_and_tests_in_order(
     harness: CompileHarness, input_system_sources: tuple[Path, Path], version: str
@@ -299,3 +371,55 @@ def test_input_system_runtime_compile_failure_blocks_adapter_consumers(
     assert INPUT_SYSTEM_ASSEMBLIES[0] in calls
     assert INPUT_SYSTEM_ASSEMBLIES[1] not in calls
     assert INPUT_SYSTEM_ASSEMBLIES[2] not in calls
+
+
+@pytest.mark.parametrize("failure", [None, "Unity.InputSystem", "Unity.InputSystem.TestFramework"])
+def test_verified_package_sources_build_references_before_optional_consumers(
+    harness: CompileHarness, input_system_sources: tuple[Path, Path], failure: str | None
+) -> None:
+    project, framework = input_system_sources
+    package = harness.repo / "verified package"
+    for relative, name in (
+        ("InputSystem", "Unity.InputSystem"),
+        ("Tests/TestFixture", "Unity.InputSystem.TestFramework"),
+    ):
+        directory = package / relative
+        directory.mkdir(parents=True)
+        (directory / f"{name}.asmdef").write_text("{}", encoding="utf-8")
+        (directory / "PackageSource.cs").write_text("class PackageSource {}", encoding="utf-8")
+    nested = package / "InputSystem/Nested"
+    nested.mkdir()
+    (nested / "Separate.asmdef").write_text("{}", encoding="utf-8")
+    (nested / "Excluded.cs").write_text("#error Separate assembly", encoding="utf-8")
+    if failure:
+        compiler = harness.data / "NetCoreRuntime/dotnet"
+        compiler.write_text(
+            compiler.read_text(encoding="utf-8").replace(
+                ': > "$output"',
+                f'case "$output" in *{failure}.dll) exit 7 ;; *) : > "$output" ;; esac',
+            ),
+            encoding="utf-8",
+        )
+    result = harness.run(
+        "6000.0.69f1",
+        test_project=project,
+        framework=framework,
+        input_system=True,
+        input_system_source=package,
+    )
+    calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
+    if failure:
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert failure in calls
+        assert INPUT_SYSTEM_ASSEMBLIES[0] not in calls
+        return
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls.index("Unity.InputSystem") < calls.index("Unity.InputSystem.TestFramework")
+    assert calls.index("Unity.InputSystem.TestFramework") < calls.index(INPUT_SYSTEM_ASSEMBLIES[0])
+    response = (harness.output / "linux/Unity.InputSystem.rsp").read_text(encoding="utf-8")
+    assert "PackageSource.cs" in response and "Excluded.cs" not in response
+    assert "-unsafe+" in response
+    consumer = (harness.output / f"linux/{INPUT_SYSTEM_ASSEMBLIES[0]}.rsp").read_text(
+        encoding="utf-8"
+    )
+    assert f'-r:"{harness.output.as_posix()}/linux/Unity.InputSystem.dll"' in consumer

@@ -193,6 +193,43 @@ def add_optional_profile(environment: tuple[Path, Path, Path, Path]) -> None:
     profiles.write_text(json.dumps(config), encoding="utf-8")
 
 
+def test_input_system_compile_preparation_uses_only_matching_package_and_its_closure(environment):
+    add_optional_profile(environment)
+    repo, data, cache, profiles = environment
+    result = packages.prepare(
+        "6000.0.69f1",
+        data,
+        repo / ".unity-ci/input-compile",
+        repo=repo,
+        profiles_path=profiles,
+        registry_cache=cache,
+        include_input_system=True,
+    )
+    assert result.input_system_source.endswith("/packages/com.unity.inputsystem")
+    assert (repo / result.input_system_source / "package.json").is_file()
+    resolution = json.loads((repo / result.resolution_report).read_text(encoding="utf-8"))
+    names = {package["name"] for package in resolution["packages"]}
+    assert "com.unity.inputsystem" in names
+    assert "com.unity.modules.jsonserialize" in names
+    assert "com.unity.ai.navigation" not in names
+    assert "optionalProfile" not in resolution
+
+
+def test_input_system_compile_preparation_rejects_unprofiled_version(environment):
+    add_optional_profile(environment)
+    repo, data, cache, profiles = environment
+    with pytest.raises(packages.PreparationError, match="Input System profile"):
+        packages.prepare(
+            "6000.3.25f1",
+            data,
+            repo / ".unity-ci/input-compile",
+            repo=repo,
+            profiles_path=profiles,
+            registry_cache=cache,
+            include_input_system=True,
+        )
+
+
 TMP_ASSETS = (
     "Assets/TextMesh Pro/Resources/TMP Settings.asset",
     "Assets/TextMesh Pro/Fonts/LiberationSans.ttf",
@@ -2025,6 +2062,7 @@ def test_main_exports_all_outputs_only_after_success(
         "project_path": expected.project_path,
         "resolution_report": expected.resolution_report,
         "editor_coroutines_source": expected.editor_coroutines_source,
+        "input_system_source": expected.input_system_source,
     }
 
     def fail(*args, **kwargs):

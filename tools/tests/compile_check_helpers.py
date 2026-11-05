@@ -82,6 +82,7 @@ class CompileHarness:
         coroutines: Path | None = None,
         ugui: bool = False,
         input_system: bool = False,
+        input_system_source: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         env = dict(
             os.environ,
@@ -95,7 +96,8 @@ class CompileHarness:
             PLATFORMS=platforms,
             COMPILE_INPUT_UGUI="1" if ugui else "0",
             COMPILE_INPUT_SYSTEM="1" if input_system else "0",
-            INPUT_SYSTEM_REFS=self.extra.as_posix(),
+            INPUT_SYSTEM_REFS="" if input_system_source else self.extra.as_posix(),
+            INPUT_SYSTEM_SOURCE=input_system_source.as_posix() if input_system_source else "",
             OUT=self.output.as_posix(),
             FAKE_COMPILER_CALLS=self.calls.as_posix(),
         )

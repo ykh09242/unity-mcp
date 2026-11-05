@@ -203,9 +203,12 @@ jobs:
           UNITY_DATA: ${{ steps.sdk.outputs.unity_data }}
         run: |
           set -euo pipefail
+          input_system=()
+          # Reuse the compatible optional profile and its verified registry pin.
+          if [[ "$UNITY_VERSION" == 6000.0.* ]]; then input_system+=(--include-input-system); fi
           python3 tools/unity_ci_packages.py prepare \
             --unity-version "$UNITY_VERSION" --unity-data "$UNITY_DATA" \
-            --output ".unity-ci/$UNITY_VERSION"
+            --output ".unity-ci/$UNITY_VERSION" "${input_system[@]}"
 
       - name: Compile
         env:
@@ -216,6 +219,8 @@ jobs:
           TEST_FRAMEWORK_SOURCE: ${{ steps.packages.outputs.test_framework_source }}
           EDITOR_COROUTINES_SOURCE: ${{ steps.packages.outputs.editor_coroutines_source }}
           TEST_PROJECT: ${{ steps.packages.outputs.project_path }}
+          INPUT_SYSTEM_SOURCE: ${{ steps.packages.outputs.input_system_source }}
+          COMPILE_INPUT_SYSTEM: ${{ startsWith(matrix.unity.version, '6000.0.') && '1' || '0' }}
         run: |
           set -euo pipefail
           docker run --rm --entrypoint /bin/bash \
@@ -224,6 +229,8 @@ jobs:
             -e UNITY_DATA="/repo/$UNITY_DATA" \
             -e REPO=/repo \
             -e COMPILE_INPUT_UGUI=1 \
+            -e COMPILE_INPUT_SYSTEM="$COMPILE_INPUT_SYSTEM" \
+            -e INPUT_SYSTEM_SOURCE="/repo/$INPUT_SYSTEM_SOURCE" \
             -e EXTRA_REFS="/repo/$EXTRA_REFS" \
             -e TEST_FRAMEWORK_SOURCE="/repo/$TEST_FRAMEWORK_SOURCE" \
             -e EDITOR_COROUTINES_SOURCE="/repo/$EDITOR_COROUTINES_SOURCE" \
@@ -273,6 +280,9 @@ jobs:
               echo "\`${{ matrix.unity.version }}\` (${{ matrix.unity.channel }}) reference assemblies for **win, osx and linux**."
               echo "CustomTools Roslyn examples also compiled with USE_ROSLYN **off and on**, with warnings treated as errors."
               echo "Optional uGUI Runtime, Editor and test assemblies compiled separately with MCP_INPUT_UGUI enabled."
+              if [[ "${{ matrix.unity.version }}" == 6000.0.* ]]; then
+                echo "Input System Runtime, Editor and tests compiled with MCP_INPUT_SYSTEM against reference assemblies built from the registry-verified profile package."
+              fi
               if [ "${{ needs.matrix.outputs.optional_modules }}" = true ] && [[ "${{ matrix.unity.version }}" == 2021.3.* || "${{ matrix.unity.version }}" == 6000.6.* ]]; then
                 echo "Key Physics/Physics2D/Screen Capture absent combinations also compiled product assemblies for Linux symbols, with metadata and symbols removed."
               fi

@@ -80,6 +80,7 @@ class Preparation:
     project_path: str
     resolution_report: str
     editor_coroutines_source: str
+    input_system_source: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -620,6 +621,7 @@ def prepare(
     registry_cache: Path | None = None,
     registry_integrity: dict[str, str] | None = None,
     include_optional: bool = False,
+    include_input_system: bool = False,
 ) -> Preparation:
     major, minor, _ = unity_numbers(unity_version)
     config = read_json(profiles_path)
@@ -671,6 +673,13 @@ def prepare(
         raise PreparationError("Output path must not contain line breaks")
     original_package = read_json(package_root / "package.json")
     specs = dict(profile["packages"])
+    if include_input_system:
+        candidates = optional_matches(config, unity_version)
+        if len(candidates) != 1 or "com.unity.inputsystem" not in candidates[0][1]["packages"]:
+            raise PreparationError(
+                f"Exactly one Input System profile required for Unity {unity_version}"
+            )
+        specs["com.unity.inputsystem"] = candidates[0][1]["packages"]["com.unity.inputsystem"]
     if optional_profile is not None:
         specs.update(optional_profile["packages"])
     for name in config["requiredModules"]:
@@ -851,6 +860,7 @@ def prepare(
         f"{relative}/project",
         f"{relative}/resolved-packages.json",
         f"{relative}/packages/com.unity.editorcoroutines",
+        f"{relative}/packages/com.unity.inputsystem" if include_input_system else "",
     )
 
 
@@ -902,6 +912,7 @@ def main() -> int:
     preparation.add_argument("--github-output", type=Path, default=os.environ.get("GITHUB_OUTPUT"))
     preparation.add_argument("--profiles", type=Path, default=PROFILES)
     preparation.add_argument("--include-optional", action="store_true")
+    preparation.add_argument("--include-input-system", action="store_true")
     matrix = commands.add_parser(
         "optional-matrix", help="Emit compatible optional integration rows"
     )
@@ -925,6 +936,7 @@ def main() -> int:
                 registry_cache=args.registry_cache,
                 profiles_path=args.profiles,
                 include_optional=args.include_optional,
+                include_input_system=args.include_input_system,
             )
         if args.github_output:
             with args.github_output.open("a", encoding="utf-8") as output:

@@ -31,7 +31,8 @@
 #   TEST_PROJECT   isolated test project                 (optional; compiles fixture and EditMode tests)
 #   COMPILE_INPUT_UGUI  compile optional uGUI assemblies  (default 0; set 1 to enable)
 #   COMPILE_INPUT_SYSTEM compile optional Input System adapters (default 0)
-#   INPUT_SYSTEM_REFS directory with verified Unity.InputSystem DLLs (required when selected)
+#   INPUT_SYSTEM_REFS directory with verified Unity.InputSystem DLLs (or use source below)
+#   INPUT_SYSTEM_SOURCE verified pinned UPM package, compiled without Unity (6000.0 profile)
 #   DISABLED_UNITY_MODULES space-separated physics/physics2d/screencapture (default empty; removes metadata and symbols)
 #   PLATFORMS      editor platforms to compile           (default "win osx linux")
 #   OUT            scratch dir                           (default /tmp/mcp-compile-check)
@@ -95,10 +96,20 @@ fi
 COMPILE_INPUT_SYSTEM=${COMPILE_INPUT_SYSTEM:-0}
 case "$COMPILE_INPUT_SYSTEM" in 0|1) ;; *) die "COMPILE_INPUT_SYSTEM must be 0 or 1" ;; esac
 INPUT_SYSTEM_REFS=${INPUT_SYSTEM_REFS:-}
+INPUT_SYSTEM_SOURCE=${INPUT_SYSTEM_SOURCE:-}
 if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
-  [ -n "$INPUT_SYSTEM_REFS" ] || die "INPUT_SYSTEM_REFS must select verified Input System reference assemblies"
-  INPUT_SYSTEM_REFS=$(winpath "$INPUT_SYSTEM_REFS") || exit 2
-  [ -f "$INPUT_SYSTEM_REFS/Unity.InputSystem.dll" ] || die "Input System reference not found: Unity.InputSystem.dll"
+  if [ -n "$INPUT_SYSTEM_SOURCE" ]; then
+    [ -z "$INPUT_SYSTEM_REFS" ] || die "Select INPUT_SYSTEM_SOURCE or INPUT_SYSTEM_REFS, not both"
+    INPUT_SYSTEM_SOURCE=$(winpath "$INPUT_SYSTEM_SOURCE") || exit 2
+    for entry in InputSystem/Unity.InputSystem.asmdef Tests/TestFixture/Unity.InputSystem.TestFramework.asmdef; do
+      [ -f "$INPUT_SYSTEM_SOURCE/$entry" ] || die "Input System source assembly definition not found: $entry"
+    done
+    [ -n "$TEST_FRAMEWORK_SOURCE" ] || die "Input System source compilation requires TEST_FRAMEWORK_SOURCE"
+  else
+    [ -n "$INPUT_SYSTEM_REFS" ] || die "INPUT_SYSTEM_REFS must select verified Input System reference assemblies"
+    INPUT_SYSTEM_REFS=$(winpath "$INPUT_SYSTEM_REFS") || exit 2
+    [ -f "$INPUT_SYSTEM_REFS/Unity.InputSystem.dll" ] || die "Input System reference not found: Unity.InputSystem.dll"
+  fi
   for entry in \
     MCPForUnity/Runtime/PlayScenarios/InputSystem/MCPForUnity.Input.InputSystem.Runtime.asmdef \
     MCPForUnity/Editor/Tools/Input/InputSystem/MCPForUnity.Input.InputSystem.Editor.asmdef; do
@@ -107,7 +118,7 @@ if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
   if [ -n "$TEST_PROJECT" ]; then
     entry=Assets/Tests/EditMode/Tools/Input/InputSystem/MCPForUnity.Input.InputSystem.Tests.asmdef
     [ -f "$TEST_PROJECT/$entry" ] || die "optional Input System test assembly definition not found: $entry"
-    [ -f "$INPUT_SYSTEM_REFS/Unity.InputSystem.TestFramework.dll" ] || die "Input System reference not found: Unity.InputSystem.TestFramework.dll"
+    [ -n "$INPUT_SYSTEM_SOURCE" ] || [ -f "$INPUT_SYSTEM_REFS/Unity.InputSystem.TestFramework.dll" ] || die "Input System reference not found: Unity.InputSystem.TestFramework.dll"
   fi
 fi
 DISABLED_UNITY_MODULES=${DISABLED_UNITY_MODULES:-}
@@ -343,6 +354,13 @@ compile() {
     echo "-preferreduilang:en-US"
     echo "-nowarn:$ignored_warnings"
     echo "-out:\"$dir/$name.dll\""
+    case "$name" in Unity.InputSystem|Unity.InputSystem.TestFramework)
+      echo "-unsafe+"
+      printf '%s\n' -define:ENABLE_INPUT_SYSTEM -define:UNITY_TESTS_FRAMEWORK -define:UNITY_INPUT_SYSTEM_ENABLE_UI
+      # VersionDefines of the verified 1.20.1 profile on Unity 6000.0.
+      printf '%s\n' -define:UNITY_INPUT_SYSTEM_PLATFORM_SCROLL_DELTA -define:UNITY_INPUT_SYSTEM_INPUT_MODULE_SCROLL_DELTA -define:UNITY_INPUT_SYSTEM_SENDPOINTERHOVERTOPARENT
+      ;;
+    esac
     case "$name" in UnityEngine.TestRunner|UnityEditor.TestRunner) echo "-define:UNITY_TESTS_FRAMEWORK" ;; esac
     case "$name" in
       MCPForUnity.Runtime|MCPForUnity.Editor|MCPForUnity.Input.UGUI.*|MCPForUnity.Input.InputSystem.*|MCPForUnity.CustomTools.Roslyn*|TestAsmdef|MCPForUnityTests.EditMode)
@@ -455,6 +473,15 @@ for platform in $PLATFORMS; do
     compile UnityEditor.TestRunner "$TEST_FRAMEWORK_SOURCE/UnityEditor.TestRunner" "$platform" \
       "$REFS_PROFILE/Editor.txt" "$OUT/$platform/UnityEngine.TestRunner.dll" \
       "${cecil_refs[@]}" || { failed=1; continue; }
+  fi
+  if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ] && [ -n "$INPUT_SYSTEM_SOURCE" ]; then
+    # Build reference inputs from the registry-verified package. No Editor or license is used.
+    case "$UNITY_VERSION" in 6000.0.*) ;; *) die "Input System source profile requires Unity 6000.0" ;; esac
+    INPUT_SYSTEM_REFS="$OUT/$platform"
+    compile Unity.InputSystem "$INPUT_SYSTEM_SOURCE/InputSystem" "$platform" "$REFS_PROFILE/Editor.txt" \
+      || { failed=1; continue; }
+    compile Unity.InputSystem.TestFramework "$INPUT_SYSTEM_SOURCE/Tests/TestFixture" "$platform" "$REFS_PROFILE/Editor.txt" \
+      "$INPUT_SYSTEM_REFS/Unity.InputSystem.dll" || { failed=1; continue; }
   fi
   compile MCPForUnity.Runtime "$REPO/MCPForUnity/Runtime" "$platform" \
     "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }
