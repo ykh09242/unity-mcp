@@ -34,7 +34,7 @@ from services.reference_graph.store import Edge, _hash
 
 Expr = tuple[tuple[str, str], ...]
 UNKNOWN: Expr = (("unknown", ""),)
-ANALYSIS_VERSION = 10
+ANALYSIS_VERSION = 11
 # Limit both the semantic value and nonliteral representation before allocating
 # expanded storage. Source size alone cannot bound repeated constant expansion.
 MAX_EXPRESSION_CHARS = 65536
@@ -765,7 +765,12 @@ def parse_csharp(
             tokens[start].line,
             scopes[i],
             identity,
+            # A member chain can start at a call/index/parenthesized expression.
+            # Keep that receiver uncertainty when only its trailing identifiers
+            # fit the name grammar; Resources.Load must not become a static call.
             tokens[start].lambda_parameter
+            or start > 0
+            and tokens[start - 1].text in (".", "?.")
             or "." in name
             and receiver in (locals_ | set(parameters))
             and tokens[start].text != "global",

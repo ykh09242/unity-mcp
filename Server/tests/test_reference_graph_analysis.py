@@ -622,6 +622,33 @@ def test_shadowed_receivers_never_resolve_to_unity_or_static_wrapper_types():
         assert any(item["reason"] == "unresolved_receiver" for item in result.unresolved)
 
 
+@pytest.mark.parametrize(
+    "receiver",
+    ["GetGame()", "games[0]", "GetGame()?", "games[0]?", "(game)", "GetGame()!", "game"],
+)
+def test_expression_receiver_cannot_be_truncated_to_a_unity_type(receiver):
+    source = f"""
+using UnityEngine;
+class Loader {{ public object Load(string key) => null; }}
+class Game {{ public Loader Resources = new Loader(); }}
+class Use {{
+    Game game;
+    Game[] games;
+    Game GetGame() => game;
+    void Go() {{
+        {receiver}.Resources.Load("UI/Menu");
+        UnityEngine.Resources.Load("UI/Menu");
+        global::UnityEngine.Resources.Load("UI/Menu");
+    }}
+}}
+"""
+    facts = Facts.from_dict(asdict(parse_csharp("script", "Assets/Use.cs", source)))
+    result = AnalysisIndex([facts], catalog()).analyze("script")
+    assert len(result.edges) == 2
+    assert all(edge.kind == "resources_load" for edge in result.edges)
+    assert any(item["reason"] == "unresolved_receiver" for item in result.unresolved)
+
+
 def test_added_shadow_type_or_ambiguous_wrapper_invalidates_existing_callers():
     caller = parse_csharp(
         "caller",
