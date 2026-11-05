@@ -255,7 +255,7 @@ namespace MCPForUnity.Editor.Services
             }
             catch (Exception ex)
             {
-                McpLog.Warn($"[HTTP Auto-Start] Failed: {ex.Message}");
+                McpLog.Warn($"[HTTP Auto-Start] Failed: {HttpEndpointUtility.RedactUrls(ex.Message)}");
             }
             finally
             {
@@ -285,7 +285,7 @@ namespace MCPForUnity.Editor.Services
             }
             catch (Exception ex)
             {
-                McpLog.Warn($"[HTTP Auto-Start] Post-reload reconnect failed: {ex.Message}");
+                McpLog.Warn($"[HTTP Auto-Start] Post-reload reconnect failed: {HttpEndpointUtility.RedactUrls(ex.Message)}");
             }
             finally
             {
@@ -321,7 +321,7 @@ namespace MCPForUnity.Editor.Services
                 {
                     if (!IsLocalConnectContextCurrent(generation, url))
                         return;
-                    McpLog.Info($"Server ready on {url}");
+                    McpLog.Info($"Server ready on {HttpEndpointUtility.GetDisplayUrl(url)}");
                     bool started = await MCPServiceLocator.Bridge.StartAsync();
                     if (!IsLocalConnectContextCurrent(generation, url))
                         return;
@@ -385,9 +385,14 @@ namespace MCPForUnity.Editor.Services
         private static async Task ConnectBridgeAsync(int generation)
         {
             string url = HttpEndpointUtility.GetRemoteBaseUrl();
-            McpLog.Info($"Connecting to {url}…");
+            McpLog.Info($"Connecting to {HttpEndpointUtility.GetDisplayUrl(url)}…");
             if (!IsConnectContextCurrent(generation))
                 return;
+            if (!HttpEndpointUtility.IsRemoteUrlAllowed(url, out string error))
+            {
+                McpLog.Warn(error);
+                return;
+            }
             bool started = await MCPServiceLocator.Bridge.StartAsync();
             if (!IsConnectContextCurrent(generation))
                 return;

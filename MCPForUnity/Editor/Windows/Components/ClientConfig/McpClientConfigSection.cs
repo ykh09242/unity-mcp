@@ -863,7 +863,13 @@ namespace MCPForUnity.Editor.Windows.Components.ClientConfig
                     fromArgs = AssetPathUtility.GetBetaServerFromArgsList();
                     forceRefresh = AssetPathUtility.ShouldForceUvxRefresh();
                 }
-                string apiKey = context.UseHttp && context.Remote ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty) : null;
+                string apiKey =
+                    context.UseHttp
+                    && context.Remote
+                    && context.Headers != null
+                    && context.Headers.TryGetValue(AuthConstants.ApiKeyHeader, out string capturedApiKey)
+                        ? capturedApiKey
+                        : null;
                 string pathPrepend = null;
                 if (context.Platform == RuntimePlatform.OSXEditor)
                     pathPrepend = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";

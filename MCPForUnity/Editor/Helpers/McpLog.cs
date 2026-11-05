@@ -41,24 +41,24 @@ namespace MCPForUnity.Editor.Helpers
         {
             if (!IsDebugEnabled())
                 return;
-            UnityEngine.Debug.Log($"{DebugPrefix} {message}");
+            UnityEngine.Debug.Log($"{DebugPrefix} {HttpEndpointUtility.RedactUrls(message)}");
         }
 
         public static void Info(string message, bool always = true)
         {
             if (!always && !IsDebugEnabled())
                 return;
-            UnityEngine.Debug.Log($"{InfoPrefix} {message}");
+            UnityEngine.Debug.Log($"{InfoPrefix} {HttpEndpointUtility.RedactUrls(message)}");
         }
 
         public static void Warn(string message)
         {
-            UnityEngine.Debug.LogWarning($"{WarnPrefix} {message}");
+            UnityEngine.Debug.LogWarning($"{WarnPrefix} {HttpEndpointUtility.RedactUrls(message)}");
         }
 
         public static void Error(string message)
         {
-            UnityEngine.Debug.LogError($"{ErrorPrefix} {message}");
+            UnityEngine.Debug.LogError($"{ErrorPrefix} {HttpEndpointUtility.RedactUrls(message)}");
         }
     }
 }

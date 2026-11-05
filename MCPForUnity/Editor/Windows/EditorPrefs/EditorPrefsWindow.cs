@@ -183,6 +183,7 @@ namespace MCPForUnity.Editor.Windows
 
         internal static bool IsSensitiveKey(string key) =>
             key == EditorPrefKeys.ApiKey
+            || (key?.StartsWith(EditorPrefKeys.RemoteApiKeyPrefix, StringComparison.Ordinal) ?? false)
             || key == EditorPrefKeys.CustomerUuid
             || key == EditorPrefKeys.SessionId
             || key == EditorPrefKeys.LastLocalHttpServerInstanceToken;

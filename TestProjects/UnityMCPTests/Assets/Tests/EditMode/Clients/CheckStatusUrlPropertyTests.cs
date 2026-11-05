@@ -35,6 +35,7 @@ namespace MCPForUnityTests.Editor.Clients
                     EditorPrefKeys.HttpRemoteBaseUrl,
                     EditorPrefKeys.HttpBaseUrl,
                     EditorPrefKeys.ApiKey,
+                    EditorPrefKeys.RemoteApiKeyPrefix + "https://synthetic.example.test:443",
                     EditorPrefKeys.GitUrlOverride,
                 }
             )
@@ -89,7 +90,7 @@ namespace MCPForUnityTests.Editor.Clients
         {
             EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "remote");
             EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "https://synthetic.example.test/Team?project=TeamA");
-            EditorPrefs.SetString(EditorPrefKeys.ApiKey, "synthetic-current");
+            HttpEndpointUtility.SaveRemoteApiKey(HttpEndpointUtility.GetRemoteBaseUrl(), "synthetic-current");
             EditorConfigurationCache.Instance.Refresh();
             string path = Path.Combine(_tempDir, codex ? "endpoint.toml" : "endpoint.json");
             string text = codex
@@ -120,7 +121,7 @@ namespace MCPForUnityTests.Editor.Clients
         {
             EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "remote");
             EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "https://synthetic.example.test?project=Team%2FA");
-            EditorPrefs.SetString(EditorPrefKeys.ApiKey, "synthetic-current");
+            HttpEndpointUtility.SaveRemoteApiKey(HttpEndpointUtility.GetRemoteBaseUrl(), "synthetic-current");
             EditorConfigurationCache.Instance.Refresh();
             string endpoint = "https://synthetic.example.test/mcp?project=" + project;
             string path = Path.Combine(_tempDir, codex ? "escaped.toml" : "escaped.json");
@@ -162,7 +163,7 @@ namespace MCPForUnityTests.Editor.Clients
         {
             EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "remote");
             EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "https://synthetic.example.test");
-            EditorPrefs.SetString(EditorPrefKeys.ApiKey, "synthetic-current");
+            HttpEndpointUtility.SaveRemoteApiKey(HttpEndpointUtility.GetRemoteBaseUrl(), "synthetic-current");
             EditorConfigurationCache.Instance.Refresh();
             string path = Path.Combine(_tempDir, "disabled.json");
             string text = "{\"mcpServers\":{\"unityMCP\":{\"url\":\"https://synthetic.example.test/mcp\",\"disabled\":true}}}";
@@ -189,7 +190,7 @@ namespace MCPForUnityTests.Editor.Clients
         {
             EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "remote");
             EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "https://synthetic.example.test");
-            EditorPrefs.SetString(EditorPrefKeys.ApiKey, "synthetic-current");
+            HttpEndpointUtility.SaveRemoteApiKey(HttpEndpointUtility.GetRemoteBaseUrl(), "synthetic-current");
             EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, preferHttp);
             EditorConfigurationCache.Instance.Refresh();
             string text =
@@ -246,7 +247,7 @@ namespace MCPForUnityTests.Editor.Clients
         {
             EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "remote");
             EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "https://synthetic.example.test");
-            EditorPrefs.SetString(EditorPrefKeys.ApiKey, "synthetic-current");
+            HttpEndpointUtility.SaveRemoteApiKey(HttpEndpointUtility.GetRemoteBaseUrl(), "synthetic-current");
             EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, preferHttp);
             EditorConfigurationCache.Instance.Refresh();
             string text =

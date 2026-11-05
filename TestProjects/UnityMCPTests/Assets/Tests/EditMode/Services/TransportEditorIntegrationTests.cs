@@ -821,12 +821,14 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         /// <summary>Independent RFC6455 loopback peer; it owns only its listener and accepted sockets.</summary>
-        private sealed class OwnedWebSocketPeer : IDisposable
+        internal sealed class OwnedWebSocketPeer : IDisposable
         {
             private readonly TcpListener _listener = new TcpListener(IPAddress.Loopback, 0);
             private readonly object _sendGate = new object();
             private readonly object _connectionGate = new object();
             private readonly ConcurrentQueue<JObject> _messages = new ConcurrentQueue<JObject>();
+            private readonly ConcurrentQueue<Dictionary<string, string>> _authRequests = new ConcurrentQueue<Dictionary<string, string>>();
+            public Dictionary<string, string>[] AuthRequests => _authRequests.ToArray();
             private readonly List<JObject> _collected = new List<JObject>();
             private readonly string _token;
             private readonly bool _gzip;
@@ -906,6 +908,7 @@ namespace MCPForUnityTests.Editor.Services
                             StringComparer.OrdinalIgnoreCase
                         );
                     // Header spelling is defined by the production local-auth protocol.
+                    _authRequests.Enqueue(headers);
                     AllAuthHeadersMatch &= headers.TryGetValue("X-Unity-MCP-Token", out string suppliedToken) && suppliedToken == _token;
                     using var sha = SHA1.Create();
                     string accept = Convert.ToBase64String(

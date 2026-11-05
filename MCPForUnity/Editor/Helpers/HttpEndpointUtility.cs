@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Text.RegularExpressions;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Models;
 using MCPForUnity.Editor.Services;
@@ -23,6 +24,13 @@ namespace MCPForUnity.Editor.Helpers
         private const string RemotePrefKey = EditorPrefKeys.HttpRemoteBaseUrl;
         private const string DefaultLocalBaseUrl = "http://127.0.0.1:8080";
         private const string DefaultRemoteBaseUrl = "";
+        private static readonly Regex DiagnosticUrl = new Regex(
+            // Quotes and angle brackets can be URL data, including in credentials. Stopping
+            // at punctuation can expose the remainder of a query or user-info component.
+            @"\b(?:https?|wss?)://\S+",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+            TimeSpan.FromMilliseconds(100)
+        );
 
         /// <summary>
         /// Reads the current launch token on every connection, including reconnects.
@@ -75,19 +83,128 @@ namespace MCPForUnity.Editor.Helpers
             return Path.GetFullPath(path);
         }
 
-        /// <summary>Authentication headers for generated native MCP client configurations.</summary>
-        public static Dictionary<string, string> GetAuthHeaders()
+        /// <summary>An approved endpoint and its credential, captured together before asynchronous work.</summary>
+        internal sealed class ConnectionSettings
         {
-            bool remote = IsRemoteScope();
-            if (remote)
-                ValidateRemoteConfigurationUrl();
-            string token = remote ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty) : ReadLocalAuthToken(new Uri(GetLocalBaseUrl()));
-            var headers = new Dictionary<string, string>();
-            if (!string.IsNullOrEmpty(token))
+            internal readonly string BaseUrl;
+            internal readonly bool Remote;
+            internal readonly string ApiKey;
+
+            internal ConnectionSettings(string baseUrl, bool remote, string apiKey)
             {
-                headers[remote ? AuthConstants.ApiKeyHeader : AuthConstants.LocalTokenHeader] = token;
+                BaseUrl = baseUrl;
+                Remote = remote;
+                ApiKey = apiKey;
             }
-            return headers;
+
+            internal string McpRpcUrl => AppendPathSegment(BaseUrl, "mcp");
+
+            internal Dictionary<string, string> GetAuthHeaders()
+            {
+                string token = Remote ? ApiKey : ReadLocalAuthToken(new Uri(BaseUrl));
+                var headers = new Dictionary<string, string>();
+                if (!string.IsNullOrEmpty(token))
+                    headers[Remote ? AuthConstants.ApiKeyHeader : AuthConstants.LocalTokenHeader] = token;
+                return headers;
+            }
+        }
+
+        internal static ConnectionSettings CaptureConnectionSettings() => CaptureConnectionSettings(IsRemoteScope());
+
+        internal static ConnectionSettings CaptureConnectionSettings(bool remote)
+        {
+            string baseUrl = remote ? ValidateRemoteConfigurationUrl() : GetLocalBaseUrl();
+            return new ConnectionSettings(baseUrl, remote, remote ? GetRemoteApiKey(baseUrl) : string.Empty);
+        }
+
+        /// <summary>Authentication headers for generated native MCP client configurations.</summary>
+        public static Dictionary<string, string> GetAuthHeaders() => CaptureConnectionSettings().GetAuthHeaders();
+
+        // A legacy global key has no trustworthy destination. Reading it must never authorize reuse.
+        internal static bool HasLegacyApiKey => !string.IsNullOrEmpty(EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty));
+
+        internal static string GetRemoteOrigin(string baseUrl)
+        {
+            if (
+                !Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri)
+                || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+                || !string.IsNullOrEmpty(uri.UserInfo)
+                || !string.IsNullOrEmpty(uri.Fragment)
+            )
+                return null;
+            return $"{uri.Scheme.ToLowerInvariant()}://{uri.IdnHost.ToLowerInvariant()}:{uri.Port}";
+        }
+
+        internal static string GetRemoteApiKey(string baseUrl)
+        {
+            string origin = GetRemoteOrigin(baseUrl);
+            return origin == null ? string.Empty : EditorPrefs.GetString(EditorPrefKeys.RemoteApiKeyPrefix + origin, string.Empty);
+        }
+
+        internal static void SaveRemoteApiKey(string baseUrl, string apiKey)
+        {
+            if (!IsRemoteUrlAllowed(baseUrl, out string error))
+                throw new InvalidOperationException(error);
+            string pref = EditorPrefKeys.RemoteApiKeyPrefix + GetRemoteOrigin(baseUrl);
+            if (string.IsNullOrEmpty(apiKey))
+                EditorPrefs.DeleteKey(pref);
+            else
+                EditorPrefs.SetString(pref, apiKey);
+        }
+
+        internal static bool BindLegacyApiKey(string approvedOrigin)
+        {
+            string baseUrl = GetRemoteBaseUrl();
+            if (!IsRemoteScope() || approvedOrigin == null || approvedOrigin != GetRemoteOrigin(baseUrl) || !HasLegacyApiKey)
+                return false;
+            SaveRemoteApiKey(baseUrl, EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty));
+            EditorPrefs.DeleteKey(EditorPrefKeys.ApiKey);
+            return true;
+        }
+
+        /// <summary>For logs and status only. Invalid input is never echoed.</summary>
+        public static string GetDisplayUrl(string value)
+        {
+            if (
+                !Uri.TryCreate(value, UriKind.Absolute, out var uri)
+                || (uri.Scheme != "http" && uri.Scheme != "https" && uri.Scheme != "ws" && uri.Scheme != "wss")
+            )
+                return "[invalid URL]";
+            var builder = new UriBuilder(uri)
+            {
+                UserName = string.Empty,
+                Password = string.Empty,
+                Query = string.Empty,
+                Fragment = string.Empty,
+            };
+            return builder.Uri.GetLeftPart(UriPartial.Path);
+        }
+
+        public static string RedactUrls(string message)
+        {
+            if (string.IsNullOrEmpty(message))
+                return message;
+            try
+            {
+                return DiagnosticUrl.Replace(
+                    message,
+                    match =>
+                    {
+                        if (
+                            Uri.TryCreate(match.Value, UriKind.Absolute, out var uri)
+                            && string.IsNullOrEmpty(uri.UserInfo)
+                            && string.IsNullOrEmpty(uri.Query)
+                            && string.IsNullOrEmpty(uri.Fragment)
+                        )
+                            return match.Value;
+                        return GetDisplayUrl(match.Value);
+                    }
+                );
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                return "[Diagnostic omitted: URL redaction exceeded its time limit.]";
+            }
         }
 
         /// <summary>
@@ -300,7 +417,7 @@ namespace MCPForUnity.Editor.Helpers
 
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
             {
-                error = $"Invalid URL: {url}";
+                error = "Invalid HTTP Local URL. Check the configured address.";
                 return false;
             }
 
@@ -348,13 +465,21 @@ namespace MCPForUnity.Editor.Helpers
 
             if (!Uri.TryCreate(remoteBaseUrl, UriKind.Absolute, out var uri))
             {
-                error = $"Invalid HTTP Remote URL: {remoteBaseUrl}";
+                error = "Invalid HTTP Remote URL. Check the configured address.";
                 return false;
             }
 
             if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Fragment))
             {
                 error = "HTTP Remote URLs must not contain credentials or fragments.";
+                return false;
+            }
+
+            if (IsBindAllInterfacesHost(uri.Host))
+            {
+                // These addresses describe listeners, not credential destinations. The local
+                // transport may rewrite them to loopback, which would change a remote key's origin.
+                error = "HTTP Remote requires a destination host, not a bind-only address (0.0.0.0 or ::).";
                 return false;
             }
 

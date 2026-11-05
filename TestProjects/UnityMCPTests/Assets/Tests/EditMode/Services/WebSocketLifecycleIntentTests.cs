@@ -1,10 +1,15 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Constants;
+using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport.Transports;
 using NUnit.Framework;
+using UnityEditor;
 
 namespace MCPForUnityTests.Editor.Services
 {
@@ -12,6 +17,83 @@ namespace MCPForUnityTests.Editor.Services
     public class WebSocketLifecycleIntentTests
     {
         private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RemoteSettingsChangedDuringCleanupCannotRetargetTheCapturedCredential(bool changeScope)
+        {
+            using var peerA = new TransportEditorIntegrationTests.OwnedWebSocketPeer("unused-remote-test");
+            using var peerB = new TransportEditorIntegrationTests.OwnedWebSocketPeer("unused-remote-test");
+            string a = "http://127.0.0.1:" + peerA.Uri.Port + "/proxy?ticket=synthetic-private-query";
+            string b = "http://127.0.0.1:" + peerB.Uri.Port;
+            var saved = new Dictionary<string, string>();
+            foreach (
+                string key in new[]
+                {
+                    EditorPrefKeys.HttpTransportScope,
+                    EditorPrefKeys.HttpRemoteBaseUrl,
+                    EditorPrefKeys.HttpBaseUrl,
+                    EditorPrefKeys.SessionId + "_" + ProjectIdentityUtility.GetProjectHash(),
+                    EditorPrefKeys.RemoteApiKeyPrefix + HttpEndpointUtility.GetRemoteOrigin(a),
+                }
+            )
+                saved[key] = EditorPrefs.HasKey(key) ? EditorPrefs.GetString(key) : null;
+            bool hadInsecure = EditorPrefs.HasKey(EditorPrefKeys.AllowInsecureRemoteHttp);
+            bool insecure = EditorPrefs.GetBool(EditorPrefKeys.AllowInsecureRemoteHttp);
+            using var client = new WebSocketTransportClient();
+            using var lifecycle = new CancellationTokenSource();
+            var receive = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var context = new HeldContext();
+            Task<bool> start = null;
+            try
+            {
+                EditorPrefs.SetBool(EditorPrefKeys.AllowInsecureRemoteHttp, true);
+                EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "remote");
+                EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, a);
+                HttpEndpointUtility.SaveRemoteApiKey(a, "synthetic-origin-a-key");
+                EditorConfigurationCache.Instance.Refresh();
+                Set(client, "_lifecycleCts", lifecycle);
+                Set(client, "_receiveTask", receive.Task);
+                start = context.Start(client);
+                Assert.IsFalse(start.IsCompleted, "Startup must be waiting for the old drain.");
+                EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, b);
+                EditorPrefs.SetString(EditorPrefKeys.HttpBaseUrl, b);
+                if (changeScope)
+                    EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "local");
+                EditorConfigurationCache.Instance.Refresh();
+                receive.SetResult(true);
+                Wait(() => context.HasContinuation, "captured startup continuation");
+                context.RunNext();
+                Wait(() => context.HasContinuation && client.State.SessionId == "owned-editor-session-1", "captured origin registration");
+                context.RunNext();
+                Assert.IsTrue(start.IsCompleted && start.GetAwaiter().GetResult());
+                Assert.AreEqual("synthetic-origin-a-key", peerA.AuthRequests[0][AuthConstants.ApiKeyHeader]);
+                Assert.IsFalse(peerA.AuthRequests[0].ContainsKey(AuthConstants.LocalTokenHeader));
+                Assert.IsEmpty(peerB.AuthRequests, "No request may be redirected to B after cleanup.");
+                StringAssert.DoesNotContain("synthetic-private-query", client.State.Details);
+
+                peerA.DropConnection();
+                Wait(() => peerA.AuthRequests.Length >= 2 && client.State.SessionId == "owned-editor-session-2", "reconnect to captured origin");
+                Assert.AreEqual("synthetic-origin-a-key", peerA.AuthRequests[1][AuthConstants.ApiKeyHeader]);
+                Assert.IsEmpty(peerB.AuthRequests, "Reconnect must preserve the same approved endpoint and credential.");
+            }
+            finally
+            {
+                receive.TrySetResult(true);
+                if (start != null)
+                    Cleanup(client, context, start);
+                foreach (var pref in saved)
+                    if (pref.Value == null)
+                        EditorPrefs.DeleteKey(pref.Key);
+                    else
+                        EditorPrefs.SetString(pref.Key, pref.Value);
+                if (hadInsecure)
+                    EditorPrefs.SetBool(EditorPrefKeys.AllowInsecureRemoteHttp, insecure);
+                else
+                    EditorPrefs.DeleteKey(EditorPrefKeys.AllowInsecureRemoteHttp);
+                EditorConfigurationCache.Instance.Refresh();
+            }
+        }
 
         [TestCase(false)]
         [TestCase(true)]

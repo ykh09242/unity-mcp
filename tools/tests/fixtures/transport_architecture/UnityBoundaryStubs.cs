@@ -154,6 +154,20 @@ namespace MCPForUnity.Editor.Helpers
 
     public static class HttpEndpointUtility
     {
+        // This harness uses explicitly owned local connections; saved remote settings are not consulted.
+        internal sealed class ConnectionSettings
+        {
+            internal string BaseUrl => GetBaseUrl();
+            internal bool Remote => false;
+            internal string ApiKey => string.Empty;
+        }
+
+        internal static ConnectionSettings CaptureConnectionSettings() => new ConnectionSettings();
+
+        public static string GetDisplayUrl(string value) => new Uri(value).GetLeftPart(UriPartial.Path);
+
+        public static string RedactUrls(string value) => value;
+
         public static bool IsRemoteScope() => false;
 
         public static bool IsCurrentRemoteUrlAllowed(out string error)

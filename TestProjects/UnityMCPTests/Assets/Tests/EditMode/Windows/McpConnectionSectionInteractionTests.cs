@@ -456,12 +456,52 @@ namespace MCPForUnityTests.Editor.Windows
             foreach (string name in new[] { "httpUrlRow", "httpServerControlRow", "unitySocketPortRow", "statusIndicator" })
                 Set(section, name, new VisualElement());
             Set(section, "connectionStatusLabel", new Label());
-            foreach (string name in new[] { "unityPortField", "httpUrlField" })
+            foreach (string name in new[] { "unityPortField", "httpUrlField", "apiKeyField" })
                 Set(section, name, new TextField());
             Set(section, "connectionToggleButton", new Button());
             Set(section, "getApiKeyButton", new Button());
+            Set(section, "bindLegacyApiKeyButton", new Button());
             Invoke(section, "RegisterCallbacks");
             return section;
+        }
+
+        [Test]
+        public void LegacyKeyBindingNamesTheOriginAndUrlChangeDoesNotCopyTheOldField()
+        {
+            string a = "https://ui-" + Guid.NewGuid().ToString("N") + ".example.test";
+            string b = "https://ui-" + Guid.NewGuid().ToString("N") + ".example.test";
+            string prefA = EditorPrefKeys.RemoteApiKeyPrefix + HttpEndpointUtility.GetRemoteOrigin(a);
+            string prefB = EditorPrefKeys.RemoteApiKeyPrefix + HttpEndpointUtility.GetRemoteOrigin(b);
+            try
+            {
+                var section = CreateSection();
+                UseHttp("remote");
+                HttpEndpointUtility.SaveRemoteBaseUrl(a);
+                Invoke(section, "RefreshApiKeyUi");
+                var field = Get<TextField>(section, "apiKeyField");
+                var bind = Get<Button>(section, "bindLegacyApiKeyButton");
+                Assert.IsEmpty(field.value, "An unbound legacy key must not appear as approved for the current server.");
+                StringAssert.Contains(HttpEndpointUtility.GetRemoteOrigin(a), bind.text);
+                Assert.IsTrue(bind.enabledSelf);
+                Invoke(section, "BindLegacyApiKey");
+                Assert.AreEqual("memory-key", field.value);
+                Assert.AreEqual("memory-key", HttpEndpointUtility.GetRemoteApiKey(a));
+                Assert.IsFalse(HttpEndpointUtility.HasLegacyApiKey);
+
+                // A programmatic URL change can arrive before focus-out of the old API key field.
+                HttpEndpointUtility.SaveRemoteBaseUrl(b);
+                Invoke(section, "PersistApiKeyFromField");
+                Assert.IsEmpty(HttpEndpointUtility.GetRemoteApiKey(b));
+                Assert.IsEmpty(field.value);
+                HttpEndpointUtility.SaveRemoteBaseUrl(a);
+                Invoke(section, "RefreshApiKeyUi");
+                Assert.AreEqual("memory-key", field.value);
+            }
+            finally
+            {
+                EditorPrefs.DeleteKey(prefA);
+                EditorPrefs.DeleteKey(prefB);
+            }
         }
 
         private static T Get<T>(McpConnectionSection section, string name)

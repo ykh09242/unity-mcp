@@ -175,6 +175,34 @@ namespace MCPForUnityTests.Editor.Services
             return task;
         }
 
+        [TestCase("https://example.test/proxy?signature=synthetic-private-query", 1)]
+        [TestCase("https://synthetic-private-user:synthetic-private-pass@example.test/proxy?signature=synthetic-private-query", 0)]
+        [TestCase("https://[broken?signature=synthetic-private-query", 0)]
+        public void AutoConnectLogsDoNotDiscloseAcceptedOrRejectedUrlSecrets(string url, int expectedStarts)
+        {
+            var logs = new List<string>();
+            UnityEngine.Application.LogCallback capture = (message, stack, type) => logs.Add(message);
+            UnityEngine.Application.logMessageReceived += capture;
+            try
+            {
+                EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "remote");
+                EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, url);
+                EditorConfigurationCache.Instance.Refresh();
+                bridge.Pending = Task.FromResult(false);
+                Task pending = Reconnect();
+                Assert.IsTrue(pending.IsCompleted);
+                pending.GetAwaiter().GetResult();
+                Assert.AreEqual(expectedStarts, bridge.StartCalls);
+                Assert.IsNotEmpty(logs, "Exercise the real auto-start logging path.");
+                foreach (string log in logs)
+                    StringAssert.DoesNotContain("synthetic-private", log);
+            }
+            finally
+            {
+                UnityEngine.Application.logMessageReceived -= capture;
+            }
+        }
+
         private static IEnumerator Complete(Task task)
         {
             double deadline = EditorApplication.timeSinceStartup + 5;

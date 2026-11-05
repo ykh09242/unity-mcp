@@ -58,6 +58,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
         private TextField apiKeyField;
         private Button getApiKeyButton;
         private Button clearApiKeyButton;
+        private Button bindLegacyApiKeyButton;
+        private string displayedApiKeyOrigin;
         private string cachedLoginUrl;
         private string cachedLoginBaseUrl;
         private Func<string, Task<string>> loginUrlFetcher = FetchLoginUrlAsync;
@@ -134,6 +136,11 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             apiKeyField = Root.Q<TextField>("api-key-field");
             getApiKeyButton = Root.Q<Button>("get-api-key-button");
             clearApiKeyButton = Root.Q<Button>("clear-api-key-button");
+            if (apiKeyRow != null)
+            {
+                bindLegacyApiKeyButton = new Button(BindLegacyApiKey) { name = "bind-legacy-api-key-button" };
+                apiKeyRow.Add(bindLegacyApiKeyButton);
+            }
         }
 
         private void InitializeUI()
@@ -188,8 +195,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             // Initialize API key field
             if (apiKeyField != null)
             {
-                apiKeyField.value = EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty);
-                apiKeyField.tooltip = "API key for remote-hosted MCP server authentication";
+                apiKeyField.tooltip = "API key saved only for this server's scheme, host and port";
                 apiKeyField.isPasswordField = true;
                 apiKeyField.maskChar = '*';
             }
@@ -360,6 +366,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 cachedLoginUrl = null;
                 cachedLoginBaseUrl = null;
             }
+            RefreshApiKeyUi();
             OnManualConfigUpdateRequested?.Invoke();
             RefreshHttpUi();
         }
@@ -483,7 +490,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     connectionToggleButton.text = stdioSelected ? "Start Session" : "Connect";
 
                     bool httpRemoteSelected = transportDropdown != null && (TransportProtocol)transportDropdown.value == TransportProtocol.HTTPRemote;
-                    bool httpRemoteNeedsKey = httpRemoteSelected && string.IsNullOrEmpty(EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty));
+                    bool httpRemoteNeedsKey =
+                        httpRemoteSelected && string.IsNullOrEmpty(HttpEndpointUtility.GetRemoteApiKey(HttpEndpointUtility.GetRemoteBaseUrl()));
                     string remoteUrlError = null;
                     bool remoteUrlAllowed = !httpRemoteSelected || HttpEndpointUtility.IsCurrentRemoteUrlAllowed(out remoteUrlError);
 
@@ -498,7 +506,9 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
                     if (httpRemoteNeedsKey)
                     {
-                        connectionToggleButton.tooltip = "An API key is required for HTTP Remote. Enter a key in the connection settings.";
+                        connectionToggleButton.tooltip = HttpEndpointUtility.HasLegacyApiKey
+                            ? "The saved legacy API key has no approved server. Bind it to the displayed server, or enter a new key."
+                            : "An API key is required for this HTTP Remote server. Enter a key in the connection settings.";
                     }
                     else if (blockedByRemoteUrlPolicy)
                     {
@@ -751,6 +761,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
         private void RefreshHttpUi()
         {
+            RefreshApiKeyUi();
             UpdateStartHttpButtonState();
             UpdateHttpServerCommandDisplay();
         }
@@ -854,7 +865,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 {
                     if (!IsAutoStartContextCurrent(generation, url))
                         return;
-                    McpLog.Info($"Server ready on {url}");
+                    McpLog.Info($"Server ready on {HttpEndpointUtility.GetDisplayUrl(url)}");
                     bool started = await bridgeService.StartAsync();
                     if (!IsAutoStartContextCurrent(generation, url))
                         return;
@@ -996,7 +1007,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
                     if (httpRemoteSelected)
                     {
-                        McpLog.Info($"Connecting to {HttpEndpointUtility.GetRemoteBaseUrl()}…");
+                        McpLog.Info($"Connecting to {HttpEndpointUtility.GetDisplayUrl(HttpEndpointUtility.GetRemoteBaseUrl())}…");
                     }
 
                     // The user is taking over bridge lifecycle: drop any pending reload-resume
@@ -1033,7 +1044,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             }
             catch (Exception ex)
             {
-                McpLog.Error($"Connection toggle failed: {ex.Message}");
+                McpLog.Error($"Connection toggle failed: {HttpEndpointUtility.RedactUrls(ex.Message)}");
                 EditorUtility.DisplayDialog("Connection Error", $"Failed to toggle the MCP connection:\n\n{ex.Message}", "OK");
             }
             finally
@@ -1083,16 +1094,61 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 return;
             }
 
+            string baseUrl = HttpEndpointUtility.GetRemoteBaseUrl();
+            if (
+                !HttpEndpointUtility.IsRemoteScope()
+                || displayedApiKeyOrigin == null
+                || displayedApiKeyOrigin != HttpEndpointUtility.GetRemoteOrigin(baseUrl)
+                || !HttpEndpointUtility.IsRemoteUrlAllowed(baseUrl, out _)
+            )
+            {
+                RefreshApiKeyUi();
+                return;
+            }
             string apiKey = apiKeyField.text?.Trim() ?? string.Empty;
-            string existingKey = EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty);
+            string existingKey = HttpEndpointUtility.GetRemoteApiKey(baseUrl);
 
             if (apiKey != existingKey)
             {
-                EditorPrefs.SetString(EditorPrefKeys.ApiKey, apiKey);
+                HttpEndpointUtility.SaveRemoteApiKey(baseUrl, apiKey);
                 OnManualConfigUpdateRequested?.Invoke();
                 UpdateConnectionStatus();
                 McpLog.Info(string.IsNullOrEmpty(apiKey) ? "API key cleared" : "API key updated");
             }
+        }
+
+        private void RefreshApiKeyUi()
+        {
+            string baseUrl = HttpEndpointUtility.GetRemoteBaseUrl();
+            bool allowed = HttpEndpointUtility.IsRemoteScope() && HttpEndpointUtility.IsRemoteUrlAllowed(baseUrl, out _);
+            string origin = allowed ? HttpEndpointUtility.GetRemoteOrigin(baseUrl) : null;
+            if (displayedApiKeyOrigin != origin)
+            {
+                displayedApiKeyOrigin = origin;
+                apiKeyField?.SetValueWithoutNotify(origin == null ? string.Empty : HttpEndpointUtility.GetRemoteApiKey(baseUrl));
+            }
+            apiKeyField?.SetEnabled(allowed);
+            if (bindLegacyApiKeyButton != null)
+            {
+                bool show = HttpEndpointUtility.HasLegacyApiKey && string.IsNullOrEmpty(HttpEndpointUtility.GetRemoteApiKey(baseUrl));
+                bindLegacyApiKeyButton.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
+                bindLegacyApiKeyButton.SetEnabled(allowed);
+                bindLegacyApiKeyButton.text = allowed ? $"Use saved legacy key for {origin}" : "Set a valid remote URL to bind the saved legacy key";
+                bindLegacyApiKeyButton.tooltip = "Only click if this is the server that issued your saved key. The key will be sent only to this origin.";
+            }
+        }
+
+        private void BindLegacyApiKey()
+        {
+            if (!HttpEndpointUtility.BindLegacyApiKey(displayedApiKeyOrigin))
+            {
+                RefreshApiKeyUi();
+                return;
+            }
+            apiKeyField?.SetValueWithoutNotify(HttpEndpointUtility.GetRemoteApiKey(HttpEndpointUtility.GetRemoteBaseUrl()));
+            RefreshApiKeyUi();
+            OnManualConfigUpdateRequested?.Invoke();
+            UpdateConnectionStatus();
         }
 
         private async void OnGetApiKeyClicked()
@@ -1121,8 +1177,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             {
                 if (!IsLoginContextCurrent(baseUrl))
                     return;
-                McpLog.Error($"Failed to get login URL: {ex.Message}");
-                EditorUtility.DisplayDialog("Error", $"Failed to get API key login URL:\n\n{ex.Message}", "OK");
+                McpLog.Error($"Failed to get login URL: {HttpEndpointUtility.RedactUrls(ex.Message)}");
+                EditorUtility.DisplayDialog("Error", $"Failed to get API key login URL:\n\n{HttpEndpointUtility.RedactUrls(ex.Message)}", "OK");
             }
             finally
             {
@@ -1155,7 +1211,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             catch (Exception ex)
             {
                 if (IsLoginContextCurrent(baseUrl))
-                    McpLog.Debug($"Failed to fetch login URL from {baseUrl}: {ex.Message}");
+                    McpLog.Debug($"Failed to fetch login URL from {HttpEndpointUtility.GetDisplayUrl(baseUrl)}: {HttpEndpointUtility.RedactUrls(ex.Message)}");
                 return null;
             }
         }
@@ -1207,11 +1263,15 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
 
         private void OnClearApiKeyClicked()
         {
-            EditorPrefs.SetString(EditorPrefKeys.ApiKey, string.Empty);
+            string baseUrl = HttpEndpointUtility.GetRemoteBaseUrl();
+            if (HttpEndpointUtility.IsRemoteUrlAllowed(baseUrl, out _))
+                HttpEndpointUtility.SaveRemoteApiKey(baseUrl, string.Empty);
+            EditorPrefs.DeleteKey(EditorPrefKeys.ApiKey);
             if (apiKeyField != null)
             {
                 apiKeyField.SetValueWithoutNotify(string.Empty);
             }
+            RefreshApiKeyUi();
             OnManualConfigUpdateRequested?.Invoke();
             UpdateConnectionStatus();
             McpLog.Info("API key cleared");

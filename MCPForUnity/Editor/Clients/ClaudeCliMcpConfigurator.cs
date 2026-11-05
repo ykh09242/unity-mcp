@@ -591,8 +591,9 @@ namespace MCPForUnity.Editor.Clients
             {
                 // Use --scope local to register in the project-local config, avoiding conflicts with user-level config (#664)
                 bool remote = transport == ConfiguredTransport.HttpRemote;
-                string httpUrl = remote ? HttpEndpointUtility.GetRemoteMcpRpcUrl() : HttpEndpointUtility.GetLocalMcpRpcUrl();
-                string apiKey = remote ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty) : null;
+                var connection = HttpEndpointUtility.CaptureConnectionSettings(remote);
+                string httpUrl = connection.McpRpcUrl;
+                string apiKey = connection.ApiKey;
                 args = BuildHttpRegistrationArguments(projectDir, claudePath, httpUrl, remote, apiKey, out expectedEntry);
             }
             else
@@ -691,10 +692,11 @@ namespace MCPForUnity.Editor.Clients
 
             if (useHttpTransport)
             {
-                string httpUrl = HttpEndpointUtility.GetMcpRpcUrl();
-                bool remote = HttpEndpointUtility.IsRemoteScope();
+                var connection = HttpEndpointUtility.CaptureConnectionSettings();
+                string httpUrl = connection.McpRpcUrl;
+                bool remote = connection.Remote;
                 var entry = remote
-                    ? ClaudeHttpAuth.BuildRemoteEntry(httpUrl, EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty))
+                    ? ClaudeHttpAuth.BuildRemoteEntry(httpUrl, connection.ApiKey)
                     : ClaudeHttpAuth.BuildLocalEntry(httpUrl, MCPServiceLocator.Paths.GetClaudeCliPath());
                 return "# JSON argument for: claude mcp add-json --scope local UnityMCP <json>\n"
                     + entry.ToString(Formatting.Indented)

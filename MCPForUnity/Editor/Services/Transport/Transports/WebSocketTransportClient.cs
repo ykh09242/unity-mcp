@@ -188,13 +188,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             _projectName = _ownedConnection?.ProjectName ?? ProjectIdentityUtility.GetProjectName();
             _projectHash = _ownedConnection?.ProjectHash ?? ProjectIdentityUtility.GetProjectHash();
             _unityVersion = _ownedConnection?.UnityVersion ?? Application.unityVersion;
-            bool remote = _ownedConnection == null && HttpEndpointUtility.IsRemoteScope();
-            _useLocalAuth = !remote;
-            _apiKey = remote ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty) : string.Empty;
-
-            if (remote && !HttpEndpointUtility.IsCurrentRemoteUrlAllowed(out string remoteUrlError))
+            HttpEndpointUtility.ConnectionSettings settings;
+            Uri endpointUri;
+            try
             {
-                string message = remoteUrlError ?? "HTTP Remote URL is not allowed by current security settings.";
+                settings = _ownedConnection == null ? HttpEndpointUtility.CaptureConnectionSettings() : null;
+                endpointUri = _ownedConnection?.Endpoint ?? BuildWebSocketUri(settings.BaseUrl);
+            }
+            catch (Exception ex)
+            {
+                string message = HttpEndpointUtility.RedactUrls(ex.Message);
                 _state = TransportState.Disconnected(TransportDisplayName, message);
                 McpLog.Error($"[WebSocket] {message}");
                 return false;
@@ -238,12 +241,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     PublishUnsettledState();
                     return false;
                 }
-                Uri endpointUri = _ownedConnection?.Endpoint ?? BuildWebSocketUri(HttpEndpointUtility.GetBaseUrl());
                 lifecycleCts = new CancellationTokenSource();
                 lifecycleToken = lifecycleCts.Token;
                 _lifecycleCts = lifecycleCts;
                 _isReconnectingFlag = 0;
                 _endpointUri = endpointUri;
+                // Publish the endpoint and credential only when this lifecycle owns the connection.
+                // Pending starts must not change the credential used by an older reconnect worker.
+                _apiKey = settings?.ApiKey ?? string.Empty;
+                _useLocalAuth = settings == null || !settings.Remote;
                 _sessionId = null;
             }
 
@@ -586,7 +592,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                McpLog.Warn($"[WebSocket] Verify ping failed: {ex.Message}");
+                McpLog.Warn($"[WebSocket] Verify ping failed: {HttpEndpointUtility.RedactUrls(ex.Message)}");
             }
             finally
             {
@@ -630,6 +636,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             ConnectionLoops loops;
             Task forcedSettlement;
             CancellationTokenSource lifecycleCts;
+            Uri originalEndpoint;
+            string apiKey;
+            bool useLocalAuth;
             lock (_ownershipLock)
             {
                 lifecycleCts = _lifecycleCts;
@@ -646,6 +655,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 loops = CaptureConnectionLoops();
                 forcedSettlement = _forcedCommandSettlement;
+                originalEndpoint = _endpointUri;
+                apiKey = _apiKey;
+                useLocalAuth = _useLocalAuth;
             }
             // A manual restart may have no current loops after ForceStop, but its old handlers still own mutations.
             var settlement = Task.WhenAll(StopCapturedConnectionLoopsAsync(loops), forcedSettlement);
@@ -694,11 +706,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 return null;
             }
 
-            Uri originalEndpoint = _endpointUri;
             Uri connectedEndpoint = null;
             Exception lastConnectError = null;
 
-            foreach (Uri candidate in BuildConnectionCandidateUris(originalEndpoint))
+            // Remote credentials are bound to an exact origin; localhost aliases are different origins.
+            foreach (Uri candidate in useLocalAuth ? BuildConnectionCandidateUris(originalEndpoint) : new List<Uri> { originalEndpoint })
             {
                 connectionToken.ThrowIfCancellationRequested();
 
@@ -710,9 +722,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
 
                 // Add API key header if configured (for remote-hosted mode)
-                if (!string.IsNullOrEmpty(_apiKey))
+                if (!string.IsNullOrEmpty(apiKey))
                 {
-                    socket.Options.SetRequestHeader(AuthConstants.ApiKeyHeader, _apiKey);
+                    socket.Options.SetRequestHeader(AuthConstants.ApiKeyHeader, apiKey);
                 }
 
                 ClientWebSocket previousSocket;
@@ -735,7 +747,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                 try
                 {
-                    if (_useLocalAuth)
+                    if (useLocalAuth)
                     {
                         string launchToken = _ownedConnection?.LaunchToken ?? HttpEndpointUtility.ReadLocalAuthToken(candidate);
                         if (string.IsNullOrEmpty(launchToken))
@@ -755,14 +767,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 catch (Exception ex)
                 {
                     lastConnectError = ex;
-                    McpLog.Debug($"[WebSocket] Connect failed for {candidate}: {ex.Message}");
+                    McpLog.Debug(
+                        $"[WebSocket] Connect failed for {HttpEndpointUtility.GetDisplayUrl(candidate.AbsoluteUri)}: {HttpEndpointUtility.RedactUrls(ex.Message)}"
+                    );
                 }
             }
 
             if (connectedEndpoint == null)
             {
                 string errorMsg = "Connection failed. Check that the server URL is correct, the server is running, and your API key (if required) is valid.";
-                McpLog.Error($"[WebSocket] {errorMsg} (Detail: {lastConnectError?.Message ?? "Unknown error"})");
+                McpLog.Error($"[WebSocket] {errorMsg} (Detail: {HttpEndpointUtility.RedactUrls(lastConnectError?.Message) ?? "Unknown error"})");
                 lock (_ownershipLock)
                     if (ReferenceEquals(_connectionCts, connectionCts))
                         _state = TransportState.Disconnected(TransportDisplayName, errorMsg);
@@ -789,7 +803,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             catch (Exception ex)
             {
-                string regMsg = $"Registration with server failed: {ex.Message}";
+                string regMsg = $"Registration with server failed: {HttpEndpointUtility.RedactUrls(ex.Message)}";
                 McpLog.Error($"[WebSocket] {regMsg}");
                 lock (_ownershipLock)
                     if (ReferenceEquals(_connectionCts, connectionCts))
@@ -877,7 +891,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             if (!IsCurrentConnectionToken(token) || !RegistrationConfirmed)
                 return false;
-            _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
+            _state = TransportState.Connected(
+                TransportDisplayName,
+                sessionId: _sessionId,
+                details: HttpEndpointUtility.GetDisplayUrl(_endpointUri.AbsoluteUri)
+            );
             _isConnected = true;
             // A close observed after publication must be able to claim its own worker.
             if (releaseReconnectWorker)
@@ -1023,7 +1041,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 catch (Exception ex)
                 {
-                    McpLog.Warn($"[WebSocket] Unexpected receive error: {ex.Message}");
+                    McpLog.Warn($"[WebSocket] Unexpected receive error: {HttpEndpointUtility.RedactUrls(ex.Message)}");
                     await HandleSocketClosureAsync(ex.Message, token).ConfigureAwait(false);
                     break;
                 }
@@ -1039,7 +1057,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             catch (Exception ex)
             {
-                McpLog.Warn($"[WebSocket] Invalid JSON payload: {ex.Message}");
+                McpLog.Warn($"[WebSocket] Invalid JSON payload: {HttpEndpointUtility.RedactUrls(ex.Message)}");
                 return;
             }
 
@@ -1205,7 +1223,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _commandProgressNegotiated = _commandProgressOffered && HasCommandProgressCapability(payload);
                     _statePublisher?.Dispose();
                     _statePublisher = null;
-                    _state = TransportState.Connected(TransportDisplayName, sessionId: newSessionId, details: _endpointUri.ToString());
+                    _state = TransportState.Connected(
+                        TransportDisplayName,
+                        sessionId: newSessionId,
+                        details: HttpEndpointUtility.GetDisplayUrl(_endpointUri.AbsoluteUri)
+                    );
                     _registrationAck?.TrySetResult(true);
                 }
                 // Validate again when the deferred main-thread write actually executes.
@@ -1881,7 +1903,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 catch (Exception ex)
                 {
-                    McpLog.Warn($"[WebSocket] Keep-alive failed: {ex.Message}");
+                    McpLog.Warn($"[WebSocket] Keep-alive failed: {HttpEndpointUtility.RedactUrls(ex.Message)}");
                     await HandleSocketClosureAsync(ex.Message, token).ConfigureAwait(false);
                     break;
                 }
@@ -2004,6 +2026,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private Task HandleSocketClosureAsync(string reason, CancellationToken connectionToken)
         {
+            reason = HttpEndpointUtility.RedactUrls(reason);
             CancellationTokenSource lifecycleCts;
             CancellationToken lifecycleToken;
             lock (_ownershipLock)
@@ -2113,7 +2136,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var httpUri))
             {
-                throw new InvalidOperationException($"Invalid MCP base URL: {baseUrl}");
+                throw new InvalidOperationException("Invalid MCP base URL. Check the configured address.");
             }
 
             // Replace bind-only addresses for client connections

@@ -37,6 +37,7 @@ namespace MCPForUnityTests.EditMode.Windows
         }
 
         [TestCase(EditorPrefKeys.ApiKey)]
+        [TestCase(EditorPrefKeys.RemoteApiKeyPrefix + "https://example.test:443")]
         [TestCase(EditorPrefKeys.LastLocalHttpServerInstanceToken)]
         public void SecretPreferenceNeverCreatesAValueField(string key)
         {

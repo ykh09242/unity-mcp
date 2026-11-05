@@ -63,6 +63,7 @@ namespace MCPForUnityTests.Editor.Helpers
         {
             UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, url);
             UnityEditor.EditorPrefs.SetBool(EditorPrefKeys.AllowInsecureRemoteHttp, optIn);
+            SaveKey(url, "test-only-remote-key");
             var root = JObject.Parse(ConfigJsonBuilder.BuildManualConfigJson(null, new McpClient { name = "Cursor" }));
             Assert.AreEqual(url + "/mcp", (string)root.SelectToken("mcpServers.unityMCP.url"));
             Assert.AreEqual("test-only-remote-key", (string)root.SelectToken("mcpServers.unityMCP.headers.X-API-Key"));
@@ -153,7 +154,7 @@ namespace MCPForUnityTests.Editor.Helpers
         public void GeneratedJsonAndTomlRoundTripSyntheticHeaderValues(string value)
         {
             UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "https://remote.example.test");
-            UnityEditor.EditorPrefs.SetString(EditorPrefKeys.ApiKey, value);
+            SaveKey("https://remote.example.test", value);
             var json = JObject.Parse(ConfigJsonBuilder.BuildManualConfigJson(null, new McpClient()));
             Assert.AreEqual(value, (string)json.SelectToken("mcpServers.unityMCP.headers.X-API-Key"));
             using var reader = new System.IO.StringReader(CodexConfigHelper.BuildCodexServerBlock(null));
@@ -175,6 +176,155 @@ namespace MCPForUnityTests.Editor.Helpers
             Assert.IsTrue(JToken.DeepEquals(original, root));
             Assert.AreSame(sibling, root["mcpServers"]["other"]);
             Assert.AreEqual(input, UnityEditor.EditorPrefs.GetString(EditorPrefKeys.HttpRemoteBaseUrl));
+        }
+
+        private void SaveKey(string url, string value)
+        {
+            string pref = EditorPrefKeys.RemoteApiKeyPrefix + HttpEndpointUtility.GetRemoteOrigin(url);
+            if (!strings.ContainsKey(pref))
+                strings[pref] = UnityEditor.EditorPrefs.HasKey(pref) ? UnityEditor.EditorPrefs.GetString(pref) : null;
+            HttpEndpointUtility.SaveRemoteApiKey(url, value);
+        }
+
+        [TestCase("http://0.0.0.0:43210")]
+        [TestCase("https://0.0.0.0:43210")]
+        [TestCase("http://[::]:43210")]
+        [TestCase("https://[0:0:0:0:0:0:0:0]:43210")]
+        public void RemoteBindOnlyOriginCannotCaptureCredentialsOrGenerateConfiguration(string url)
+        {
+            UnityEditor.EditorPrefs.SetBool(EditorPrefKeys.AllowInsecureRemoteHttp, true);
+            UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, url);
+            string pref = EditorPrefKeys.RemoteApiKeyPrefix + HttpEndpointUtility.GetRemoteOrigin(url);
+            strings[pref] = UnityEditor.EditorPrefs.HasKey(pref) ? UnityEditor.EditorPrefs.GetString(pref) : null;
+            UnityEditor.EditorPrefs.SetString(pref, "synthetic-bind-only-key");
+            Assert.IsFalse(HttpEndpointUtility.IsRemoteUrlAllowed(url, out string error));
+            StringAssert.Contains("bind-only", error);
+            Assert.Throws<InvalidOperationException>(() => HttpEndpointUtility.CaptureConnectionSettings());
+            Assert.Throws<InvalidOperationException>(() => HttpEndpointUtility.GetAuthHeaders());
+            Assert.Throws<InvalidOperationException>(() => HttpEndpointUtility.GetMcpRpcUrl());
+            Assert.Throws<InvalidOperationException>(() => ConfigJsonBuilder.BuildManualConfigJson(null, new McpClient()));
+            Assert.Throws<InvalidOperationException>(() => CodexConfigHelper.BuildCodexServerBlock(null));
+        }
+
+        [TestCase("http://0.0.0.0:43210")]
+        [TestCase("http://[::]:43210")]
+        public void LocalBindOnlyCaptureKeepsExplicitLocalPolicyAndNeverUsesRemoteKeys(string url)
+        {
+            UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "local");
+            UnityEditor.EditorPrefs.SetBool(EditorPrefKeys.AllowLanHttpBind, true);
+            HttpEndpointUtility.SaveLocalBaseUrl(url);
+            EditorConfigurationCache.Instance.Refresh();
+            Assert.IsTrue(HttpEndpointUtility.IsHttpLocalUrlAllowedForLaunch(url, out _));
+            var captured = HttpEndpointUtility.CaptureConnectionSettings();
+            Assert.IsFalse(captured.Remote);
+            Assert.AreEqual(url, captured.BaseUrl);
+            Assert.IsEmpty(captured.ApiKey);
+        }
+
+        [Test]
+        public void LegacyKeyNeedsExplicitOriginApprovalAndCannotFollowChangedApproval()
+        {
+            string a = "https://legacy-" + Guid.NewGuid().ToString("N") + ".example.test";
+            string b = "https://other-" + Guid.NewGuid().ToString("N") + ".example.test";
+            UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, a);
+            SaveKey(a, string.Empty);
+            Assert.IsEmpty(HttpEndpointUtility.GetAuthHeaders());
+            StringAssert.DoesNotContain("test-only-remote-key", ConfigJsonBuilder.BuildManualConfigJson(null, new McpClient()));
+            string approvedOrigin = HttpEndpointUtility.GetRemoteOrigin(a);
+            UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, b);
+            Assert.IsFalse(HttpEndpointUtility.BindLegacyApiKey(approvedOrigin));
+            Assert.IsTrue(HttpEndpointUtility.HasLegacyApiKey);
+            Assert.IsEmpty(HttpEndpointUtility.GetAuthHeaders());
+            UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, a);
+            Assert.IsTrue(HttpEndpointUtility.BindLegacyApiKey(approvedOrigin));
+            Assert.IsFalse(HttpEndpointUtility.HasLegacyApiKey);
+            Assert.AreEqual("test-only-remote-key", HttpEndpointUtility.GetAuthHeaders()[AuthConstants.ApiKeyHeader]);
+        }
+
+        [Test]
+        public void OriginBoundKeyDoesNotFollowHostPortOrSchemeAndReturningToOriginRestoresIt()
+        {
+            string host = "origin-" + Guid.NewGuid().ToString("N") + ".example.test";
+            string a = "https://" + host;
+            UnityEditor.EditorPrefs.SetBool(EditorPrefKeys.AllowInsecureRemoteHttp, true);
+            SaveKey(a, "synthetic-only-origin-a");
+            foreach (string other in new[] { "https://other." + host, a + ":444", "http://" + host })
+            {
+                UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, other);
+                Assert.IsEmpty(HttpEndpointUtility.GetAuthHeaders());
+                StringAssert.DoesNotContain("synthetic-only-origin-a", ConfigJsonBuilder.BuildManualConfigJson(null, new McpClient()));
+                StringAssert.DoesNotContain("synthetic-only-origin-a", CodexConfigHelper.BuildCodexServerBlock(null));
+            }
+            UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "https://" + host.ToUpperInvariant() + ":443/proxy?q=synthetic-query");
+            Assert.AreEqual("synthetic-only-origin-a", HttpEndpointUtility.GetAuthHeaders()[AuthConstants.ApiKeyHeader]);
+        }
+
+        [Test]
+        public void CapturedSettingsKeepTheApprovedEndpointAndCredentialAcrossPreferenceChanges()
+        {
+            string a = "https://snapshot-" + Guid.NewGuid().ToString("N") + ".example.test/proxy?q=synthetic-query";
+            UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, a);
+            SaveKey(a, "synthetic-captured-key");
+            var captured = HttpEndpointUtility.CaptureConnectionSettings();
+            UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpRemoteBaseUrl, "https://other.example.test");
+            UnityEditor.EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, "local");
+            EditorConfigurationCache.Instance.Refresh();
+            Assert.AreEqual(a, captured.BaseUrl);
+            Assert.IsTrue(captured.Remote);
+            Assert.AreEqual(a.Replace("/proxy?", "/proxy/mcp?"), captured.McpRpcUrl);
+            Assert.AreEqual("synthetic-captured-key", captured.GetAuthHeaders()[AuthConstants.ApiKeyHeader]);
+        }
+
+        [TestCase("https://synthetic-user:synthetic-password@example.test/proxy?q=synthetic-query#synthetic-fragment")]
+        [TestCase("https://example.test/proxy?q=synthetic-query")]
+        [TestCase("https://[broken?synthetic-query")]
+        [TestCase("https://example.test/proxy?part='synthetic-private-query")]
+        [TestCase("https://synthetic'-private-user:synthetic-private-pass@example.test/proxy")]
+        [TestCase("https://example.test/proxy?part=\"synthetic-private-query")]
+        [TestCase("https://synthetic\"-private-user:synthetic-private-pass@example.test/proxy")]
+        [TestCase("https://example.test/proxy?part=<synthetic-private-query>")]
+        public void DisplayAndValidationNeverEchoSensitiveUrlComponents(string url)
+        {
+            StringAssert.DoesNotContain("synthetic", HttpEndpointUtility.GetDisplayUrl(url));
+            StringAssert.DoesNotContain("synthetic", HttpEndpointUtility.RedactUrls("Network failed for " + url));
+            if (!HttpEndpointUtility.IsRemoteUrlAllowed(url, out string error))
+                StringAssert.DoesNotContain("synthetic", error);
+        }
+
+        [TestCase("Connection failed: socket closed (1006).")]
+        [TestCase("Open https://example.test/proxy for setup; ws://127.0.0.1:8080 remains available.")]
+        public void DiagnosticRedactionPreservesUnrelatedTextAndOrdinaryUrls(string message)
+        {
+            Assert.AreEqual(message, HttpEndpointUtility.RedactUrls(message));
+        }
+
+        [TestCase("https://synthetic-user:synthetic-password@example.test/proxy?signature=synthetic-query#synthetic-fragment")]
+        [TestCase("https://example.test/proxy?part='synthetic-private-query")]
+        [TestCase("https://synthetic'-private-user:synthetic-private-pass@example.test/proxy")]
+        [TestCase("https://example.test/proxy?part=\"synthetic-private-query")]
+        [TestCase("https://example.test/proxy?part=<synthetic-private-query>")]
+        public void NativeConfigLogBoundaryRemovesUrlSecretsWithoutChangingTheActualEndpoint(string endpoint)
+        {
+            string original = new Uri(endpoint).AbsoluteUri;
+            var logs = new List<string>();
+            UnityEngine.Application.LogCallback capture = (message, stack, type) => logs.Add(message);
+            UnityEngine.Application.logMessageReceived += capture;
+            try
+            {
+                McpLog.Info("Client config endpoint: " + endpoint);
+                McpLog.Warn("Configuration failed for " + endpoint);
+                Assert.AreEqual(2, logs.Count);
+                foreach (string log in logs)
+                {
+                    StringAssert.DoesNotContain("synthetic", log);
+                    StringAssert.Contains("https://example.test/proxy", log);
+                }
+                Assert.AreEqual(original, new Uri(endpoint).AbsoluteUri);
+            }
+            finally
+            {
+                UnityEngine.Application.logMessageReceived -= capture;
+            }
         }
     }
 }
