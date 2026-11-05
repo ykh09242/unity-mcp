@@ -394,7 +394,8 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/tools
         run: |
           cd Server
-          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=tools/tests/test_bench_transport.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
+          # This sibling suite cannot inherit Server/tests/pytest.ini.
+          uv run --python "${{ matrix.python-version }}" python -m pytest "$GITHUB_WORKSPACE/tools/tests/" -o asyncio_default_fixture_loop_scope=function -n 4 --dist=loadfile --max-worker-restart=0 -p pytest_ci_schedule --no-loadscope-reorder --ci-first-file=tools/tests/test_bench_transport.py -p pytest_ci_timing --ci-timing-output=test-worker-timings.json -q -W error --tb=short --junitxml=test-results.xml --durations=20
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
