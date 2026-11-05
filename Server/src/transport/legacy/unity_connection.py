@@ -2458,10 +2458,16 @@ class _SharedConnectionSelection:
     def abandon(self):
         """Signal running I/O, or cancel admission that has no executor owner yet."""
         self.selection.cancel()
-        if self.worker is None:
-            # No physical work exists yet. Cancelling this loop-only admission
-            # removes its semaphore waiter without retaining an executor job.
-            _cancel_owned_future(self.task)
+        if self.worker is not None:
+            return
+
+        def cancel_unstarted():
+            # The executor can start before submission returns its Future. Inspect
+            # ownership on this task's loop, after that handoff has completed.
+            if self.worker is None:
+                self.task.cancel()
+
+        self.task.get_loop().call_soon_threadsafe(cancel_unstarted)
 
     async def run(self, getter):
         """Release submission capacity only after the actual blocking worker exits."""

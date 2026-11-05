@@ -827,24 +827,43 @@ async def test_executor_queued_selection_cannot_cross_pool_reset(selection_pool,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel_close", [False, True])
+@pytest.mark.parametrize("during_submission", [False, True])
 async def test_pool_close_on_another_loop_drains_physical_selection(
-    selection_pool, monkeypatch, cancel_close
+    selection_pool, monkeypatch, cancel_close, during_submission
 ):
     pool, _ = selection_pool
     owner_loop = asyncio.new_event_loop()
     loop_thread = Thread(target=owner_loop.run_forever)
     entered, release = Event(), Event()
+    submission_return, abandoned = Event(), Event()
     retained_socket = Mock()
+    unpublished_socket = Mock()
     cached = uc.UnityConnection(port=6401, instance_id="Other@cafebabe", sock=retained_socket)
     pool._connections[cached.instance_id] = cached
 
     def connect(connection, **kwargs):
         entered.set()
         assert release.wait(watchdog_timeout(5))
-        connection.sock = Mock()
+        connection.sock = unpublished_socket
         return True
 
+    real_submit = uc.submit_owned_executor
+    real_abandon = uc._SharedConnectionSelection.abandon
+
+    def submit(loop, executor, function, *args):
+        worker = real_submit(loop, executor, function, *args)
+        if during_submission:
+            # The physical worker can enter connect before its Future is published.
+            assert submission_return.wait(watchdog_timeout(5))
+        return worker
+
+    def abandon(owner):
+        real_abandon(owner)
+        abandoned.set()
+
     monkeypatch.setattr(uc.UnityConnection, "connect", connect)
+    monkeypatch.setattr(uc, "submit_owned_executor", submit)
+    monkeypatch.setattr(uc._SharedConnectionSelection, "abandon", abandon)
     loop_thread.start()
     selecting = asyncio.run_coroutine_threadsafe(
         uc._select_connection("Main@deadbeef", None, pool), owner_loop
@@ -854,8 +873,9 @@ async def test_pool_close_on_another_loop_drains_physical_selection(
     try:
         assert await asyncio.to_thread(entered.wait, watchdog_timeout(5))
         closing = asyncio.create_task(pool.aclose())
-        for _ in range(8):
-            await asyncio.sleep(0)
+        assert await asyncio.to_thread(abandoned.wait, watchdog_timeout(5))
+        submission_return.set()
+        await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(asyncio.sleep(0), owner_loop))
         assert not closing.done(), "Foreign-loop close abandoned a live physical selection"
         retained_socket.close.assert_not_called()
         second_close = asyncio.run_coroutine_threadsafe(pool.aclose(), owner_loop)
@@ -875,7 +895,9 @@ async def test_pool_close_on_another_loop_drains_physical_selection(
             await asyncio.wrap_future(selecting)
         assert pool._connections == {}
         retained_socket.close.assert_called_once()
+        unpublished_socket.close.assert_called_once()
     finally:
+        submission_return.set()
         release.set()
         await asyncio.gather(asyncio.wrap_future(selecting), return_exceptions=True)
         if closing is not None:
