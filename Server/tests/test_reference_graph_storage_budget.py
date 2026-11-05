@@ -20,6 +20,89 @@ from services.reference_graph.workspace import GraphWorkspace
 from services.reference_graph.storage_budget import StorageBudgetError
 from services.reference_graph.storage_budget import WriteMeter
 from services.reference_graph import storage_budget
+from tests.timing import watchdog_timeout
+
+
+@pytest.mark.parametrize("phase", ["claim", "release"])
+def test_cyclic_store_finalizer_can_reenter_directory_ownership(tmp_path, phase):
+    # A child contains a deadlock if GC re-enters the process-wide ownership guard.
+    script = """
+from contextlib import contextmanager
+import faulthandler
+import gc
+from pathlib import Path
+import sys
+import weakref
+from services.reference_graph import storage_budget
+from services.reference_graph.store import GraphScope, GraphStore
+
+faulthandler.dump_traceback_later(float(sys.argv[3]), exit=True)
+gc.disable()
+root, phase = Path(sys.argv[1]), sys.argv[2]
+scope = GraphScope('user', 'editor', 'project')
+previous = GraphStore.open(root / 'previous', scope)
+previous.cycle = previous
+reference, finalized = weakref.ref(previous), previous._directory_owner
+del previous
+original = storage_budget.file_lock
+collected = []
+
+def collect_previous():
+    gc.collect()
+    assert reference() is None and not finalized.alive
+    collected.append(True)
+
+@contextmanager
+def collecting_lock(path, *, wait=True):
+    live = path.name.startswith(storage_budget.LIVE_PREFIX)
+    if live and phase == 'claim':
+        collect_previous()
+    with original(path, wait=wait):
+        try:
+            yield
+        finally:
+            if live and phase == 'release':
+                collect_previous()
+
+storage_budget.file_lock = collecting_lock
+current = GraphStore.open(root / 'current', scope)
+if phase == 'release':
+    current_finalized = current._directory_owner
+    del current
+    assert not current_finalized.alive
+assert collected, 'The finalizer interleaving was not exercised'
+storage_budget.file_lock = original
+if phase == 'release':
+    current = GraphStore.open(root / 'current', scope)
+
+# Reentrant collection must preserve the other handle's live directory lock.
+second = GraphStore.open(root / 'current', scope)
+live_path, = (root / 'current').glob(storage_budget.LIVE_PREFIX + '*.lock')
+del current
+gc.collect()
+try:
+    with original(live_path, wait=False):
+        raise AssertionError('The remaining store lost maintenance exclusion')
+except BlockingIOError:
+    pass
+assert second.status()['backend'] == 'sqlite'
+del second
+gc.collect()
+with original(live_path, wait=False):
+    pass
+faulthandler.cancel_dump_traceback_later()
+print('finalization and shared directory lifetime verified')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), phase, str(watchdog_timeout(10))],
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=watchdog_timeout(20),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "finalization and shared directory lifetime verified" in result.stdout
 
 
 def test_crashed_reservation_and_concurrent_processes_cannot_bypass_scope_admission(

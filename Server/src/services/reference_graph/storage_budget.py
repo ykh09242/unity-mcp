@@ -30,7 +30,8 @@ ARCHIVE_PENDING: Final = ".archive-pending.json"
 LIVE_PREFIX: Final = ".graph-live-"
 _process_token = uuid.uuid4().hex
 _directory_owners: dict[tuple[str, int], list] = {}
-_directory_guard = threading.Lock()
+# Allocations under the guard can collect another store and re-enter its finalizer.
+_directory_guard = threading.RLock()
 
 
 class StorageBudgetError(ValueError):
