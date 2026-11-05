@@ -403,5 +403,65 @@ namespace MCPForUnityTests.Editor.Tools
 
             return prefabPath;
         }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ModifyContents_PreservesDirtyStageAndOnlyRejectsSameAsset(bool sameAsset)
+        {
+            string stagePath = CreateTestPrefab("DirtyStage");
+            string targetPath = sameAsset ? stagePath : CreateTestPrefab("OtherAsset");
+            AssertOpenPrefabStage(stagePath);
+            var stage = PrefabStageUtility.GetCurrentPrefabStage();
+            var autoSave = typeof(PrefabStage).GetProperty(
+                "autoSave",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+            );
+            Assert.IsNotNull(autoSave, "The native regression requires a controllable Auto Save setting.");
+            bool wasAutoSave = (bool)autoSave.GetValue(stage);
+            try
+            {
+                autoSave.SetValue(stage, false);
+                var unsaved = new GameObject("UnsavedChild");
+                unsaved.transform.SetParent(stage.prefabContentsRoot.transform, false);
+                EditorSceneManager.MarkSceneDirty(stage.scene);
+                Selection.activeGameObject = unsaved;
+                byte[] stageBytes = File.ReadAllBytes(stagePath);
+                byte[] targetBytes = File.ReadAllBytes(targetPath);
+                string stageGuid = AssetDatabase.AssetPathToGUID(stagePath);
+                string targetGuid = AssetDatabase.AssetPathToGUID(targetPath);
+                var selected = Selection.objects;
+                var response = JObject.FromObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "modify_contents",
+                            ["prefabPath"] = targetPath,
+                            ["position"] = new JArray(2, 3, 4),
+                        }
+                    )
+                );
+                Assert.AreEqual(!sameAsset, response.Value<bool>("success"), response.ToString());
+                Assert.AreSame(stage, PrefabStageUtility.GetCurrentPrefabStage());
+                Assert.IsTrue(stage.scene.isDirty);
+                Assert.IsFalse((bool)autoSave.GetValue(stage));
+                Assert.IsNotNull(stage.prefabContentsRoot.transform.Find("UnsavedChild"));
+                CollectionAssert.AreEqual(selected, Selection.objects);
+                CollectionAssert.AreEqual(stageBytes, File.ReadAllBytes(stagePath));
+                if (sameAsset)
+                    CollectionAssert.AreEqual(targetBytes, File.ReadAllBytes(targetPath));
+                Assert.AreEqual(stageGuid, AssetDatabase.AssetPathToGUID(stagePath));
+                Assert.AreEqual(targetGuid, AssetDatabase.AssetPathToGUID(targetPath));
+                var saved = JObject.FromObject(ManagePrefabs.HandleCommand(new JObject { ["action"] = "save_prefab_stage" }));
+                Assert.IsTrue(saved.Value<bool>("success"), saved.ToString());
+                Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<GameObject>(stagePath).transform.Find("UnsavedChild"));
+                Assert.AreEqual(Vector3.zero, AssetDatabase.LoadAssetAtPath<GameObject>(stagePath).transform.localPosition);
+                if (!sameAsset)
+                    Assert.AreEqual(new Vector3(2, 3, 4), AssetDatabase.LoadAssetAtPath<GameObject>(targetPath).transform.localPosition);
+            }
+            finally
+            {
+                autoSave.SetValue(stage, wasAutoSave);
+            }
+        }
     }
 }

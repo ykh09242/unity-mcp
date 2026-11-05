@@ -124,6 +124,64 @@ namespace MCPForUnityTests.Editor.Tools
             return go;
         }
 
+        [TestCase(false, "Transform")]
+        [TestCase(true, "Transform")]
+        [TestCase(false, "BoxCollider")]
+        [TestCase(true, "BoxCollider")]
+        [TestCase(false, "Collider")]
+        [TestCase(true, "Collider")]
+        public void RejectedComponentRemoval_PreservesPrefabBytesAndGuid(bool child, string component)
+        {
+            GameObject root = Source();
+            GameObject target = root;
+            if (child)
+            {
+                target = new GameObject("Child");
+                target.transform.SetParent(root.transform, false);
+            }
+            target.AddComponent<SafeEditRequiredComponent>();
+            string path = PathFor("RemovalGuard");
+            Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(root, path));
+            byte[] bytes = File.ReadAllBytes(path);
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            var response = Send(
+                "modify_contents",
+                new JObject
+                {
+                    ["prefabPath"] = path,
+                    ["target"] = child ? "Child" : null,
+                    ["position"] = new JArray(9, 8, 7),
+                    ["componentsToRemove"] = new JArray(component),
+                }
+            );
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+            Assert.IsNotNull(target.GetComponent(component));
+            Assert.AreEqual(Vector3.zero, target.transform.localPosition);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DuplicateDisallowedComponent_PreservesPrefabBytesAndGuid(bool createChild)
+        {
+            GameObject root = Source();
+            string path = PathFor("DuplicateGuard");
+            Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(root, path));
+            byte[] bytes = File.ReadAllBytes(path);
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            var request = new JObject { ["prefabPath"] = path, ["position"] = new JArray(9, 8, 7) };
+            var additions = new JArray("MCPForUnityTests.Editor.Tools.LifecycleSingleComponent", "MCPForUnityTests.Editor.Tools.LifecycleSingleComponent");
+            if (createChild)
+                request["create_child"] = new JObject { ["name"] = "Child", ["components_to_add"] = additions };
+            else
+                request["componentsToAdd"] = additions;
+            var response = Send("modify_contents", request);
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(path));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+        }
+
         private string PathFor(string name)
         {
             return assetRoot + "/" + name + ".prefab";
@@ -479,22 +537,23 @@ namespace MCPForUnityTests.Editor.Tools
         {
             string path = Seed(Source(), "Scalar");
             byte[] original = Bytes(path);
+            string guid = AssetDatabase.AssetPathToGUID(path);
             int previewScenes = EditorSceneManager.previewSceneCount;
-            LogAssert.Expect(LogType.Error, new Regex("\\[ManagePrefabs\\] Action 'modify_contents' failed:"));
 
-            Failure(
-                Send(
-                    "modify_contents",
-                    new JObject
-                    {
-                        ["prefabPath"] = path,
-                        ["name"] = "Changed",
-                        ["setActive"] = "not-a-bool",
-                    }
-                )
+            JObject response = Send(
+                "modify_contents",
+                new JObject
+                {
+                    ["prefabPath"] = path,
+                    ["name"] = "Changed",
+                    ["setActive"] = "not-a-bool",
+                }
             );
+            Failure(response);
+            StringAssert.Contains("Invalid parameter 'setActive': expected Boolean", response.Value<string>("error"));
 
             CollectionAssert.AreEqual(original, Bytes(path));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
             Assert.AreEqual(previewScenes, EditorSceneManager.previewSceneCount);
             LogAssert.NoUnexpectedReceived();
         }

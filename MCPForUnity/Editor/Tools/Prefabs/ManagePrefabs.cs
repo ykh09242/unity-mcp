@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
+using MCPForUnity.Editor.Tools.GameObjects;
 using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -870,6 +871,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// </summary>
         private static object ModifyContents(JObject @params)
         {
+            @params = NormalizeModificationAliases(@params);
             JToken previewToken = @params["previewOnly"] ?? @params["preview_only"];
             if (previewToken != null && previewToken.Type != JTokenType.Boolean)
                 return new ErrorResponse("preview_only must be a boolean.");
@@ -889,6 +891,12 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             string stringError = ValidateModificationStringTokens(@params);
             if (stringError != null)
                 return new ErrorResponse(stringError);
+
+            var openStage = PrefabStageUtility.GetCurrentPrefabStage();
+            if (openStage != null && openStage.scene.isDirty && string.Equals(openStage.assetPath, sanitizedPath, StringComparison.OrdinalIgnoreCase))
+                return new ErrorResponse(
+                    "The same prefab asset is open in a dirty Prefab Stage. Save or discard its pending edits before modifying isolated contents."
+                );
 
             PrefabContentsPreview.Snapshot baseline = null;
             if (previewOnly)
@@ -1069,6 +1077,9 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             string shapeError = ValidateModificationParameterShapes(@params);
             if (shapeError != null)
                 return (false, new ErrorResponse(shapeError));
+            string componentError = ValidatePrefabComponentPlan(targetGo, @params, true);
+            if (componentError != null)
+                return (false, new ErrorResponse(componentError));
             bool modified = false;
 
             // Name change
@@ -1190,7 +1201,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         {
                             return (false, new ErrorResponse($"Component type '{typeName}' not found: {error}"));
                         }
-                        targetGo.AddComponent(componentType);
+                        if (targetGo.AddComponent(componentType) == null)
+                            return (false, new ErrorResponse($"Unity did not add component '{typeName}' to '{targetGo.name}'. No changes saved."));
                         modified = true;
                     }
                 }
@@ -1212,6 +1224,8 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         if (comp != null)
                         {
                             UnityEngine.Object.DestroyImmediate(comp);
+                            if (comp != null)
+                                return (false, new ErrorResponse($"Unity did not remove component '{typeName}' from '{targetGo.name}'. No changes saved."));
                             modified = true;
                         }
                     }
@@ -1315,6 +1329,57 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             }
 
             return (modified, null);
+        }
+
+        private static JObject NormalizeModificationAliases(JObject source)
+        {
+            var result = (JObject)source.DeepClone();
+            foreach (
+                string canonical in new[]
+                {
+                    "prefabPath",
+                    "previewOnly",
+                    "setActive",
+                    "componentsToAdd",
+                    "componentsToRemove",
+                    "componentProperties",
+                    "createChild",
+                    "deleteChild",
+                }
+            )
+                ManageGameObject.ResolveParameterAlias(result, canonical, StringCaseUtility.ToSnakeCase(canonical));
+            JToken children = result["createChild"];
+            if (children != null)
+                foreach (JObject child in (children is JArray array ? (IEnumerable<JToken>)array : new[] { children }).OfType<JObject>())
+                foreach (string canonical in new[] { "sourcePrefabPath", "primitiveType", "componentsToAdd", "setActive" })
+                    ManageGameObject.ResolveParameterAlias(child, canonical, StringCaseUtility.ToSnakeCase(canonical));
+            return result;
+        }
+
+        private static string ValidatePrefabComponentPlan(GameObject target, JObject parameters, bool removals)
+        {
+            try
+            {
+                List<Type> planned = ManageGameObjectCommon.ValidateComponentParameters(parameters, removals, target);
+                if (removals && parameters["componentsToRemove"] is JArray removed)
+                    foreach (JToken token in removed)
+                    {
+                        string typeError = GameObjectComponentHelpers.ValidateComponentType(token.ToString(), true, out Type removedType);
+                        if (typeError != null)
+                            return typeError;
+                        Type actualRemovedType = target?.GetComponent(removedType)?.GetType() ?? removedType;
+                        foreach (Type remaining in planned)
+                        foreach (RequireComponent requirement in remaining.GetCustomAttributes(typeof(RequireComponent), true))
+                        foreach (Type required in new[] { requirement.m_Type0, requirement.m_Type1, requirement.m_Type2 })
+                            if (required != null && required.IsAssignableFrom(actualRemovedType) && !planned.Any(required.IsAssignableFrom))
+                                return $"Cannot remove component '{removedType.Name}': '{remaining.Name}' requires it.";
+                    }
+                return null;
+            }
+            catch (ArgumentException error)
+            {
+                return error.Message;
+            }
         }
 
         private static string ValidatePrefabStringToken(JToken token, string field)
@@ -1485,6 +1550,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return (false, new ErrorResponse("'source_prefab_path' and 'primitive_type' are mutually exclusive in create_child."));
             }
 
+            string componentError = ValidatePrefabComponentPlan(null, childParams, false);
+            if (componentError != null)
+                return (false, new ErrorResponse(componentError));
+
             if (!string.IsNullOrEmpty(sourcePrefabPath))
             {
                 string sanitizedSourcePath = AssetPathUtility.GetContainedAssetPath(sourcePrefabPath);
@@ -1503,6 +1572,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 {
                     return (false, new ErrorResponse($"Source prefab not found at path: '{sanitizedSourcePath}'."));
                 }
+
+                componentError = ValidatePrefabComponentPlan(sourcePrefabAsset, childParams, false);
+                if (componentError != null)
+                    return (false, new ErrorResponse(componentError));
 
                 newChild = PrefabUtility.InstantiatePrefab(sourcePrefabAsset, parentTransform) as GameObject;
                 if (newChild == null)
@@ -1555,6 +1628,12 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
             // Add components
             JArray componentsToAdd = childParams["componentsToAdd"] as JArray ?? childParams["components_to_add"] as JArray;
+            componentError = ValidatePrefabComponentPlan(newChild, childParams, false);
+            if (componentError != null)
+            {
+                UnityEngine.Object.DestroyImmediate(newChild);
+                return (false, new ErrorResponse(componentError));
+            }
             if (componentsToAdd != null)
             {
                 for (int i = 0; i < componentsToAdd.Count; i++)
@@ -1578,7 +1657,11 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         UnityEngine.Object.DestroyImmediate(newChild);
                         return (false, new ErrorResponse($"Component type '{typeName}' not found for create_child: {error}"));
                     }
-                    newChild.AddComponent(componentType);
+                    if (newChild.AddComponent(componentType) == null)
+                    {
+                        UnityEngine.Object.DestroyImmediate(newChild);
+                        return (false, new ErrorResponse($"Unity did not add component '{typeName}' to child '{childName}'. No changes saved."));
+                    }
                 }
             }
 
