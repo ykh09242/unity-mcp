@@ -101,7 +101,10 @@ async def manage_prefabs(
     | None = None,
     allow_overwrite: Annotated[bool, "Allow replacing existing prefab."] | None = None,
     search_inactive: Annotated[bool, "Include inactive GameObjects in search."] | None = None,
-    unlink_if_instance: Annotated[bool, "Unlink from existing prefab before creating new one."]
+    unlink_if_instance: Annotated[
+        bool,
+        "Unpack the outermost prefab instance root before creating a new prefab; child targets are rejected. A failed save may leave the scene unpacked.",
+    ]
     | None = None,
     # modify_contents parameters
     position: Annotated[

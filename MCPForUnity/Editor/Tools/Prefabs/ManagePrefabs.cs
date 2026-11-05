@@ -221,6 +221,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
 
             using var materials = new RuntimeMaterialTransaction();
             bool saveAttempted = false;
+            bool unpacked = false;
             try
             {
                 // Prepare and verify materials before the caller-authorized, nonreversible unpack.
@@ -233,12 +234,15 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                         if (rootToUnlink != null)
                         {
                             PrefabUtility.UnpackPrefabInstance(rootToUnlink, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
+                            unpacked = true;
                             McpLog.Info($"[ManagePrefabs] Unpacked prefab instance '{rootToUnlink.name}' before creating new prefab.");
                         }
                     }
                     catch (Exception e)
                     {
-                        return new ErrorResponse($"Failed to unlink prefab instance: {e.Message}");
+                        return new ErrorResponse(
+                            $"Failed to unlink prefab instance: {e.Message}. The scene may be partially modified; inspect the target and use Unity Undo if available or restore the scene manually."
+                        );
                     }
                 }
 
@@ -256,7 +260,14 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     )
                 )
                 {
-                    return new ErrorResponse($"Failed to create prefab asset at '{finalPath}'.");
+                    return new ErrorResponse(
+                        $"Failed to create prefab asset at '{finalPath}'."
+                            + (
+                                unpacked
+                                    ? " The target was unpacked before the save attempt; inspect the scene and destination, and use Unity Undo if available or restore the scene manually."
+                                    : ""
+                            )
+                    );
                 }
 
                 // 9. Select the newly created instance
@@ -285,7 +296,14 @@ namespace MCPForUnity.Editor.Tools.Prefabs
             catch (Exception e)
             {
                 McpLog.Error($"[ManagePrefabs] Error creating prefab at '{finalPath}': {e}");
-                return new ErrorResponse($"Error saving prefab asset: {e.Message}");
+                return new ErrorResponse(
+                    $"Error saving prefab asset: {e.Message}"
+                        + (
+                            unpacked
+                                ? " The target was unpacked before the save attempt; inspect the scene and destination, and use Unity Undo if available or restore the scene manually."
+                                : ""
+                        )
+                );
             }
             finally
             {
@@ -382,6 +400,10 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     );
                 }
 
+                // Unpacking the outermost root would mutate siblings of a selected child.
+                if (PrefabUtility.GetOutermostPrefabInstanceRoot(sourceObject) != sourceObject)
+                    return (false, "unlinkIfInstance requires the outermost prefab instance root as target; no objects were unpacked.", false, existingPath);
+
                 // Needs to be unlinked
                 return (true, null, true, existingPath);
             }
@@ -392,10 +414,16 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// <summary>
         /// Creates a prefab asset from a GameObject.
         /// </summary>
+        private static Func<GameObject, string, bool> SavePrefabForCreate = (source, path) =>
+        {
+            PrefabUtility.SaveAsPrefabAssetAndConnect(source, path, InteractionMode.AutomatedAction, out bool success);
+            return success;
+        };
+
         private static bool CreatePrefabAsset(GameObject sourceObject, string path, bool replaceExisting, Action onSaved)
         {
             path = AssetPathUtility.GetContainedAssetPath(path);
-            PrefabUtility.SaveAsPrefabAssetAndConnect(sourceObject, path, InteractionMode.AutomatedAction, out bool success);
+            bool success = SavePrefabForCreate(sourceObject, path);
             if (success)
                 onSaved();
 

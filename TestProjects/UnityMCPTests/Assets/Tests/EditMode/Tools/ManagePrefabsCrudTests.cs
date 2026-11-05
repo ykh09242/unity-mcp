@@ -44,6 +44,84 @@ namespace MCPForUnityTests.Editor.Tools
             CleanupEmptyParentFolders(TempDirectory);
         }
 
+        [Test]
+        public void CreateFromPrefabChild_DoesNotUnpackOuterInstanceOrSiblings()
+        {
+            string sourcePath = TempDirectory + "/Outer.prefab";
+            var nested = new GameObject("Nested");
+            new GameObject("Child").transform.SetParent(nested.transform);
+            var nestedAsset = PrefabUtility.SaveAsPrefabAsset(nested, TempDirectory + "/Nested.prefab");
+            UnityEngine.Object.DestroyImmediate(nested);
+            var root = new GameObject("Outer");
+            var nestedInstance = (GameObject)PrefabUtility.InstantiatePrefab(nestedAsset);
+            nestedInstance.transform.SetParent(root.transform);
+            new GameObject("Sibling").transform.SetParent(root.transform);
+            var asset = PrefabUtility.SaveAsPrefabAsset(root, sourcePath);
+            UnityEngine.Object.DestroyImmediate(root);
+            var instance = (GameObject)PrefabUtility.InstantiatePrefab(asset);
+            try
+            {
+                var child = instance.transform.Find("Nested/Child").gameObject;
+                var sibling = instance.transform.Find("Sibling").gameObject;
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_from_gameobject",
+                            ["target"] = child.GetInstanceIDCompat(),
+                            ["prefabPath"] = TempDirectory + "/New.prefab",
+                            ["unlinkIfInstance"] = true,
+                        }
+                    )
+                );
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.IsTrue(PrefabUtility.IsPartOfPrefabInstance(instance));
+                Assert.IsTrue(PrefabUtility.IsPartOfPrefabInstance(child));
+                Assert.IsTrue(PrefabUtility.IsPartOfPrefabInstance(sibling));
+                Assert.IsNull(AssetDatabase.LoadAssetAtPath<GameObject>(TempDirectory + "/New.prefab"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(instance);
+            }
+        }
+
+        [Test]
+        public void CreateFromPrefabRoot_SaveFailureReportsUnpackedState()
+        {
+            string sourcePath = TempDirectory + "/Source.prefab";
+            var root = new GameObject("Source");
+            var asset = PrefabUtility.SaveAsPrefabAsset(root, sourcePath);
+            UnityEngine.Object.DestroyImmediate(root);
+            var instance = (GameObject)PrefabUtility.InstantiatePrefab(asset);
+            var field = typeof(ManagePrefabs).GetField("SavePrefabForCreate", BindingFlags.Static | BindingFlags.NonPublic);
+            var original = field.GetValue(null);
+            try
+            {
+                field.SetValue(null, new Func<GameObject, string, bool>((_, __) => false));
+                var result = ToJObject(
+                    ManagePrefabs.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "create_from_gameobject",
+                            ["target"] = instance.GetInstanceIDCompat(),
+                            ["prefabPath"] = TempDirectory + "/Failed.prefab",
+                            ["unlinkIfInstance"] = true,
+                        }
+                    )
+                );
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.IsFalse(PrefabUtility.IsPartOfPrefabInstance(instance));
+                StringAssert.Contains("unpacked", result.Value<string>("error"));
+                Assert.IsNull(AssetDatabase.LoadAssetAtPath<GameObject>(TempDirectory + "/Failed.prefab"));
+            }
+            finally
+            {
+                field.SetValue(null, original);
+                UnityEngine.Object.DestroyImmediate(instance);
+            }
+        }
+
         #region CREATE Tests
 
         [TestCase("integer_id")]
