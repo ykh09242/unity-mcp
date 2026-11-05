@@ -134,7 +134,8 @@ def test_playmode_reload_rows_require_fresh_bodies_under_existing_license_policy
     assert matrix["domainReload"] == ["on", "off"]
     assert matrix["exclude"] == [{"testMode": "editmode", "domainReload": "off"}]
     runner = next(step for step in job["steps"] if step.get("id") == "tests")
-    assert "-testCategory playmode_evidence" in runner["with"]["customParameters"]
+    assert "-testCategory !manual_cancellation_probe" in runner["with"]["customParameters"]
+    assert "-testCategory playmode_evidence" not in runner["with"]["customParameters"]
     assert "--mcp-playmode-reload" in runner["with"]["customParameters"]
     assert "steps.playmode-session.outputs.session_id" in runner["with"]["customParameters"]
     gate = next(

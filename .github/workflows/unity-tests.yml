@@ -619,7 +619,9 @@ jobs:
           unityVersion: ${{ matrix.unity.version }}
           customImage: ${{ steps.editor.outputs.image }}
           testMode: ${{ matrix.testMode }}
-          customParameters: ${{ matrix.testMode == 'playmode' && format('-testCategory playmode_evidence --mcp-playmode-reload {0} --mcp-playmode-session {1}', matrix.domainReload, steps.playmode-session.outputs.session_id) || '' }}
+          # Run ordinary PlayMode regressions as well as the attributed evidence bodies.
+          # The separately coordinated cancellation workload remains manual and Explicit.
+          customParameters: ${{ matrix.testMode == 'playmode' && format('-testCategory !manual_cancellation_probe --mcp-playmode-reload {0} --mcp-playmode-session {1}', matrix.domainReload, steps.playmode-session.outputs.session_id) || '' }}
           cliVersion: v0.1.69
           githubToken: ""
           # Keep the preceding domain-reload XML out of the regular suite's result gate.

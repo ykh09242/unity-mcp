@@ -40,6 +40,29 @@ def test_accepts_required_bodies_with_exact_attribution(tmp_path, mode):
     assert check(path, "success", SESSION, mode, VERSION) == 0
 
 
+def test_ordinary_playmode_failure_blocks_even_when_evidence_bodies_pass(tmp_path):
+    path = results(tmp_path)
+    tree = ET.parse(path)
+    root = tree.getroot()
+    root.set("result", "Failed")
+    root.set("failed", "1")
+    root.set("total", "6")
+    ET.SubElement(root, "test-case", fullname="OrdinaryPhysicsRegression", result="Failed")
+    tree.write(path, encoding="utf-8")
+    assert check(path, "success", SESSION, "on", VERSION) == 1
+
+
+def test_environment_guarded_ordinary_case_can_skip_with_fresh_evidence(tmp_path):
+    path = results(tmp_path)
+    tree = ET.parse(path)
+    root = tree.getroot()
+    root.set("skipped", "1")
+    root.set("total", "6")
+    ET.SubElement(root, "test-case", fullname="OrdinaryGraphicsGuard", result="Skipped")
+    tree.write(path, encoding="utf-8")
+    assert check(path, "success", SESSION, "on", VERSION) == 0
+
+
 @pytest.mark.parametrize(
     "mutation", ["skip", "missing", "session", "reload", "version", "duplicate", "failed-runner"]
 )

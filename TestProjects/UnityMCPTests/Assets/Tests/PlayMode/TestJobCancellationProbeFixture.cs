@@ -10,6 +10,7 @@ using UnityEngine.TestTools;
 namespace MCPForUnityTests.PlayMode
 {
     /// <summary>Opt-in cooperative workload for an outside-runner disposable-Editor coordinator.</summary>
+    [Category("manual_cancellation_probe")]
     public sealed class TestJobCancellationProbeFixture
     {
         private static double deadline = double.NaN;
