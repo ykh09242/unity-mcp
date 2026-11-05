@@ -12,8 +12,8 @@ Receipts are disabled unless the operator sets a dedicated private
 `UNITY_MCP_EXECUTION_RECEIPTS_DIR` and `UNITY_MCP_EXECUTION_RECEIPTS_PRIVATE_ROOT=1`.
 The latter asserts the private inherited Windows ACL boundary. POSIX ownership and
 private modes are also checked. The directory has a stable store ID and OS single-writer
-lock; do not share it with another server, user or domain-job journal. Reviewed versions
-are FastMCP 4.1.3 and MCP/mcp_types 2.3.0. Explicit enablement refuses other versions.
+lock; do not share it with another server, user or domain-job journal. Explicit
+enablement checks the installed versions against the [reviewed SDK manifest](../Server/src/core/sdk_compatibility.json).
 
 `get_execution_receipt(action="describe")` reports authenticated availability and store
 identity without Unity. A protected ordinary MCP call supplies:
