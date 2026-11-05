@@ -29,7 +29,16 @@ def get_doc(class_name: str, member_name: str | None, version: str | None):
     from services.tools.unity_docs import _get_doc
 
     config = get_config()
-    result = asyncio.run(_get_doc(class_name, member_name, version))
+    try:
+        result = asyncio.run(
+            asyncio.wait_for(_get_doc(class_name, member_name, version), timeout=config.timeout)
+        )
+    except TimeoutError:
+        result = {
+            "success": False,
+            "message": f"Documentation request timed out after {config.timeout}s.",
+            "error_type": "TimeoutError",
+        }
     click.echo(format_output(result, config.format))
     if result.get("success") is False:
         raise click.exceptions.Exit(1)

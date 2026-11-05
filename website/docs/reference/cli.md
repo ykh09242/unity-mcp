@@ -25,7 +25,7 @@ They are **not aliases for one another**. Both are installed from the matching i
 |---|---|---|
 | `--host` | `127.0.0.1` | Local HTTP server host. |
 | `--port` | `8080` | HTTP port, 1-65535. |
-| `--timeout` | `30` | Positive timeout in seconds. |
+| `--timeout` | `300` | Positive timeout in seconds, including the whole `docs get` lookup. |
 | `--instance` | auto-select one local Editor | Explicit discovered Editor ID; no persistent session selection. |
 | `--format` | `text` | `text`, `json`, or `table`. |
 | `--verbose` | off | Print command requests and raw responses to stderr; these may contain private project data. |

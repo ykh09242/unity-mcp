@@ -198,7 +198,7 @@ Global options come **BEFORE** the command group:
 | `--host` | `-h` | MCP server host | `127.0.0.1` |
 | `--port` | `-p` | MCP server port | `8080` |
 | `--format` | `-f` | Output format: `text`, `json`, `table` | `text` |
-| `--timeout` | `-t` | Command timeout in seconds | `30` |
+| `--timeout` | `-t` | Command timeout in seconds (whole lookup for `docs get`) | `300` |
 | `--instance` | `-i` | Target Unity instance (hash or Name@hash) | auto |
 | `--verbose` | `-v` | Print each command sent to Unity and its raw response to stderr | `false` |
 
