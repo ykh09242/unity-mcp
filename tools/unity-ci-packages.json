@@ -45,7 +45,7 @@
         "com.unity.mathematics": {"source": "registry", "version": "1.3.3"},
         "com.unity.searcher": {"source": "registry", "version": "4.9.5"},
         "com.unity.nuget.mono-cecil": {"source": "registry", "version": "1.11.6"},
-        "com.unity.test-framework.performance": {"source": "registry", "version": "3.6.0"}
+        "com.unity.test-framework.performance": {"source": "registry", "version": "3.7.0"}
       },
       "testables": ["com.unity.inputsystem"],
       "essentialResources": ["textmeshpro"],
