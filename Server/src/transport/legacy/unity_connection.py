@@ -833,6 +833,7 @@ class UnityConnection:
         _operation_guard=None,
         _progress: ProgressSink | None = None,
         _resume: CommandResumeInvocation | None = None,
+        _cancelled: threading.Event | None = None,
     ) -> dict[str, Any]:
         """Send a command with retry/backoff and port rediscovery. Pings only when requested.
 
@@ -858,6 +859,12 @@ class UnityConnection:
         )
         requested_timeout = requested_command_timeout(params)
         command_sent = False
+
+        def check_cancelled():
+            if _cancelled is not None and _cancelled.is_set():
+                raise CommandResumeAbandoned()
+
+        check_cancelled()
         receipt_owner = execution_owner.get()
         if receipt_owner is not None:
             deadline = (
@@ -904,6 +911,7 @@ class UnityConnection:
             logger.debug(f"Preflight status check failed: {exc}")
 
         for attempt in range(attempts + 1):
+            check_cancelled()
             if deadline is not None and time.monotonic() >= deadline:
                 logger.warning(
                     "Command '%s' exceeded total deadline of %.1fs after %d attempt(s); giving up",
@@ -916,8 +924,10 @@ class UnityConnection:
                     f"{total_timeout:.1f}s (connection wedged or Unity unresponsive)"
                 )
             response_received = False
+            frame_started = False
             with self._command_lock(deadline):
                 try:
+                    check_cancelled()
                     # Discard stale sockets left over from a previous domain reload
                     # so we reconnect instead of writing to a dead connection.
                     self._ensure_live_connection()
@@ -1054,11 +1064,16 @@ class UnityConnection:
                             # Association is not native dispatch. Keep the business
                             # payload byte-identical and both writes in this lock.
                             self._set_socket_deadline(self.sock, deadline)
+                            check_cancelled()
+                            frame_started = True
                             self.sock.sendall(struct.pack(">Q", len(prelude)))
                             self._check_deadline(deadline)
                             self._set_socket_deadline(self.sock, deadline)
+                            check_cancelled()
                             self.sock.sendall(prelude)
                             self._check_deadline(deadline)
+                            frame_started = False
+                        check_cancelled()
                         if receipt is not None:
                             receipt.dispatch_started(
                                 kind="stdio",
@@ -1069,9 +1084,12 @@ class UnityConnection:
                         if self.use_framing:
                             header = struct.pack(">Q", len(payload))
                             self._set_socket_deadline(self.sock, deadline)
+                            check_cancelled()
+                            frame_started = True
                             self.sock.sendall(header)
                             self._check_deadline(deadline)
                         self._set_socket_deadline(self.sock, deadline)
+                        check_cancelled()
                         command_sent = True
                         if _resume is not None:
                             _resume.dispatch()
@@ -1179,6 +1197,12 @@ class UnityConnection:
                         err = resp.get("error") or resp.get("message", "Unknown Unity error")
                         raise Exception(err)
                     return resp.get("result", {})
+                except CommandResumeAbandoned:
+                    # A header (including a progress association) may already be
+                    # on the wire. Never reuse a socket with an incomplete frame.
+                    if frame_started:
+                        self.disconnect()
+                    raise
                 except CommandResumeInterrupted:
                     raise
                 except Exception as e:
@@ -2103,6 +2127,7 @@ def _send_command_with_retry(
     _operation_guard=None,
     _progress: ProgressSink | None = None,
     _resume_owner: CommandResumeOwner | None = None,
+    _cancelled: threading.Event | None = None,
 ) -> tuple[dict[str, Any] | MCPResponse, UnityConnection]:
     """Retain dispatch provenance for async completion without another lookup.
 
@@ -2139,6 +2164,8 @@ def _send_command_with_retry(
     )
     if _resume_owner is not None and _resume_owner.cancelled.is_set():
         raise CommandResumeAbandoned()
+    if _cancelled is None and _resume_owner is not None:
+        _cancelled = _resume_owner.cancelled
     if resume is not None:
         if _resume_owner.instance_id is None:
             _resume_owner.instance_id = conn.instance_id
@@ -2171,6 +2198,7 @@ def _send_command_with_retry(
         **({"_operation_guard": _operation_guard} if _operation_guard is not None else {}),
         **({"_progress": _progress} if _progress is not None else {}),
         **({"_resume": resume} if resume is not None else {}),
+        **({"_cancelled": _cancelled} if _cancelled is not None else {}),
     )
     retries = 0
     wait_started = None
@@ -2227,6 +2255,7 @@ def _send_command_with_retry(
             ),
             **({"_progress": _progress} if _progress is not None else {}),
             **({"_resume": resume} if resume is not None else {}),
+            **({"_cancelled": _cancelled} if _cancelled is not None else {}),
         )
 
     if wait_started is not None:
@@ -2283,6 +2312,7 @@ class _AsyncDispatchState:
         self._lock = threading.Lock()
         self._started = False
         self._aborted = False
+        self.cancelled = threading.Event()
 
     def start(self) -> bool:
         """Claim dispatch only if cancellation/deadline did not win the race."""
@@ -2699,6 +2729,7 @@ async def _async_send_command_attempt(
                     retry_on_reload=retry_on_reload,
                     _connection=conn,
                     _deadline=deadline,
+                    _cancelled=state.cancelled,
                     **({"_resume_owner": _resume_owner} if _resume_owner is not None else {}),
                     **(
                         {"_expected_generation": _expected_generation}
@@ -2751,6 +2782,7 @@ async def _async_send_command_attempt(
                     # a lost response's outcome_unknown. Do not replace it.
                     result, conn = await asyncio.shield(completion)
         except asyncio.CancelledError:
+            state.cancelled.set()
             state.abort_before_start()
             if _resume_owner is not None:
                 _resume_owner.cancel()

@@ -4,6 +4,7 @@ from tests.timing import watchdog_timeout
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import gc
 import json
 import socket
@@ -17,6 +18,7 @@ import pytest
 from core.config import config
 from models.models import UnityInstanceInfo
 import transport.legacy.unity_connection as uc
+from transport.legacy.stdio_auth import StdioAuthenticatedSession
 
 
 class ResponseSocket:
@@ -177,6 +179,121 @@ async def test_cancelled_admission_waiter_never_dispatches(environment, monkeypa
     await first
     await asyncio.to_thread(lambda: None)
     assert main.tags == ["first"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["preflight", "socket_lock", "header"])
+async def test_cancelled_before_business_payload_cannot_escape_worker_preflight(
+    environment, monkeypatch, phase
+):
+    pool, sockets = environment
+    main = sockets["Main@deadbeef"]
+    conn = pool._connections["Main@deadbeef"]
+    conn.authenticated_session = StdioAuthenticatedSession("transport", "session", frozenset())
+    conn.session_generation = conn.authenticated_session.session_generation
+    monkeypatch.setattr(uc, "get_unity_connection", lambda _: conn)
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    original_send = uc._send_command_with_retry
+    original_lock = conn._command_lock
+    original_write = main.sendall
+
+    def send(*args, **kwargs):
+        try:
+            return original_send(*args, **kwargs)
+        finally:
+            finished.set()
+
+    def status(*_):
+        entered.set()
+        assert release.wait(watchdog_timeout())
+        return None
+
+    @contextmanager
+    def command_lock(deadline):
+        entered.set()
+        with original_lock(deadline):
+            yield
+
+    def write(payload):
+        original_write(payload)
+        if len(payload) == 8:
+            entered.set()
+            assert release.wait(watchdog_timeout())
+
+    monkeypatch.setattr(uc, "_send_command_with_retry", send)
+    if phase == "preflight":
+        monkeypatch.setattr(uc, "read_status_file", status)
+    elif phase == "socket_lock":
+        conn._io_lock.acquire()
+        monkeypatch.setattr(conn, "_command_lock", command_lock)
+    else:
+        monkeypatch.setattr(main, "sendall", write)
+    main.release.set()
+    task = asyncio.create_task(
+        uc.async_send_command_with_retry(
+            "manage_gameobject",
+            {"action": "delete", "tag": "cancelled"},
+            instance_id=conn.instance_id,
+        )
+    )
+    try:
+        await wait_event(entered)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert main.tags == []
+    finally:
+        release.set()
+        if phase == "socket_lock":
+            conn._io_lock.release()
+        await wait_event(finished)
+        await asyncio.gather(task, return_exceptions=True)
+    assert main.tags == [], "A cancelled caller dispatched its first mutation payload"
+    assert main.header_pending is (phase != "header")
+    assert main.closed is (phase == "header")
+    assert (conn.sock is None) is (phase == "header")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_payload_sent_call_retains_unknown_outcome_without_replay(
+    environment, monkeypatch
+):
+    _, sockets = environment
+    main = sockets["Main@deadbeef"]
+    finished = threading.Event()
+    outcomes = []
+    original = uc._send_command_with_retry
+
+    def send(*args, **kwargs):
+        try:
+            outcome = original(*args, **kwargs)
+            outcomes.append(outcome[0])
+            return outcome
+        finally:
+            finished.set()
+
+    def receive(_count, flags=0):
+        if flags:
+            raise BlockingIOError()
+        assert main.release.wait(watchdog_timeout())
+        raise socket.timeout("response lost after cancellation")
+
+    monkeypatch.setattr(uc, "_send_command_with_retry", send)
+    monkeypatch.setattr(main, "recv", receive)
+    task = asyncio.create_task(request("already-sent"))
+    try:
+        await wait_event(main.sent)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        main.release.set()
+        await wait_event(finished)
+        await asyncio.gather(task, return_exceptions=True)
+    assert main.tags == ["already-sent"]
+    assert outcomes[0].data["reason"] == "outcome_unknown"
+    assert outcomes[0].hint == "inspect_state_before_retry"
+    assert main.closed
 
 
 @pytest.mark.asyncio
