@@ -87,6 +87,7 @@ namespace MCPForUnity.Editor.Tools
             public string name { get; set; } = string.Empty;
             public string path { get; set; } = string.Empty;
             public int? buildIndex { get; set; }
+            public bool? allowOverwrite { get; set; }
             public string fileName { get; set; } = string.Empty;
             public int? superSize { get; set; }
 
@@ -171,6 +172,7 @@ namespace MCPForUnity.Editor.Tools
                 name = p["name"]?.ToString() ?? string.Empty,
                 path = p["path"]?.ToString() ?? string.Empty,
                 buildIndex = ParamCoercion.CoerceIntNullable(p["buildIndex"] ?? p["build_index"]),
+                allowOverwrite = ParamCoercion.CoerceBoolNullable(p["allowOverwrite"] ?? p["allow_overwrite"]),
                 fileName = (p["fileName"] ?? p["filename"])?.ToString() ?? string.Empty,
                 superSize = ParamCoercion.CoerceIntNullable(p["superSize"] ?? p["super_size"] ?? p["supersize"]),
 
@@ -425,7 +427,7 @@ namespace MCPForUnity.Editor.Tools
                         return new ErrorResponse("Either 'name'/'path' or 'buildIndex' must be provided for 'load' action.");
                 case ActionKind.Save:
                     // Save current scene, optionally to a new path
-                    return SaveScene(fullPath, relativePath);
+                    return SaveScene(fullPath, relativePath, cmd.allowOverwrite ?? false);
                 case ActionKind.GetHierarchy:
                     try
                     {
@@ -702,7 +704,7 @@ namespace MCPForUnity.Editor.Tools
             return null;
         }
 
-        private static object SaveScene(string fullPath, string relativePath)
+        private static object SaveScene(string fullPath, string relativePath, bool allowOverwrite)
         {
             try
             {
@@ -716,12 +718,21 @@ namespace MCPForUnity.Editor.Tools
                 bool saved;
                 string finalPath = currentScene.path; // Path where it was last saved or will be saved
 
-                if (!string.IsNullOrEmpty(relativePath) && currentScene.path != relativePath)
+                if (
+                    !string.IsNullOrEmpty(relativePath)
+                    && !string.Equals(
+                        currentScene.path,
+                        relativePath,
+                        Application.platform == RuntimePlatform.WindowsEditor ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal
+                    )
+                )
                 {
                     // Save As...
                     // Ensure directory exists
                     relativePath = GetContainedScenePath(relativePath, true);
                     fullPath = AssetPathUtility.GetFullAssetPath(relativePath);
+                    if (File.Exists(fullPath) && !allowOverwrite)
+                        return new ErrorResponse($"Scene already exists at '{relativePath}'. Set allow_overwrite to true to replace it.");
                     folders.EnsureParentDirectory(relativePath);
 
                     AssetPathUtility.GetFullAssetPath(relativePath);

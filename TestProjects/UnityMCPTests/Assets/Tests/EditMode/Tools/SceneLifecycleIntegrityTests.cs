@@ -146,6 +146,24 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static int SceneIndex(Scene scene) => Array.IndexOf(LoadedScenes(), scene);
 
+        [Test]
+        public void SaveAsRequiresOptInForExistingDestination()
+        {
+            string destination = assetRoot + "/Destination.unity";
+            File.Copy(SystemPath(secondPath), SystemPath(destination));
+            AssetDatabase.ImportAsset(destination);
+            byte[] before = File.ReadAllBytes(SystemPath(destination));
+            var request = new JObject { ["action"] = "save", ["path"] = destination };
+            JObject refused = Call(request);
+            Assert.IsFalse(refused.Value<bool>("success"), refused.ToString());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(SystemPath(destination)));
+            Assert.AreEqual(firstPath, EditorSceneManager.GetActiveScene().path);
+            Success(Call(new JObject { ["action"] = "save", ["path"] = firstPath }));
+            request["allow_overwrite"] = true;
+            Success(Call(request));
+            Assert.AreEqual(destination, EditorSceneManager.GetActiveScene().path);
+        }
+
         [TestCase(false, false)]
         [TestCase(false, true)]
         [TestCase(true, false)]

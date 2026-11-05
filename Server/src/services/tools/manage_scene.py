@@ -60,6 +60,8 @@ async def manage_scene(
     | None = None,
     build_index: Annotated[int | str, "Unity build index (quote as string, e.g., '0')."]
     | None = None,
+    allow_overwrite: Annotated[bool | str, "Allow Save As to replace an existing scene."]
+    | None = None,
     # --- scene_view_frame params ---
     scene_view_target: Annotated[
         str | int, "GameObject reference for scene_view_frame (name, path, or instance ID)."
@@ -144,6 +146,7 @@ async def manage_scene(
                 for value in (
                     name,
                     build_index,
+                    allow_overwrite,
                     scene_view_target,
                     parent,
                     cursor,
@@ -236,6 +239,7 @@ async def manage_scene(
                 return {"success": False, "message": f"{field}: {exc}"}
         boolean_options: dict[str, bool | None] = {}
         for field, raw_value in (
+            ("allow_overwrite", allow_overwrite),
             ("additive", additive),
             ("remove_scene", remove_scene),
             ("auto_repair", auto_repair),
@@ -285,6 +289,8 @@ async def manage_scene(
             params["path"] = path
         if coerced_build_index is not None:
             params["buildIndex"] = coerced_build_index
+        if boolean_options["allow_overwrite"] is not None:
+            params["allowOverwrite"] = boolean_options["allow_overwrite"]
 
         # scene_view_frame params
         if scene_view_target is not None:

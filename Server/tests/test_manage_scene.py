@@ -179,3 +179,17 @@ def test_none_params_omitted(mock_unity):
     assert "additive" not in params
     assert "template" not in params
     assert "autoRepair" not in params
+
+
+@pytest.mark.parametrize("value, expected", [(True, True), (False, False), ("true", True)])
+def test_save_forwards_explicit_overwrite(mock_unity, value, expected):
+    result = asyncio.run(
+        manage_scene(SimpleNamespace(), action="save", name="Target", allow_overwrite=value)
+    )
+    assert result["success"] is True
+    assert mock_unity["params"]["allowOverwrite"] is expected
+
+
+def test_save_omits_unset_overwrite(mock_unity):
+    asyncio.run(manage_scene(SimpleNamespace(), action="save"))
+    assert "allowOverwrite" not in mock_unity["params"]

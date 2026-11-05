@@ -109,21 +109,27 @@ def load(scene: str, by_index: bool):
 
 
 @scene.command("save")
-@click.option("--path", default=None, help="Path to save the scene to (for new scenes).")
+@click.option("--path", default=None, help="Path to save the scene to (Save As).")
+@click.option(
+    "--allow-overwrite", is_flag=True, help="Allow Save As to replace another existing scene."
+)
 @handle_unity_errors
-def save(path: Optional[str]):
+def save(path: Optional[str], allow_overwrite: bool):
     """Save the current scene.
 
     \b
     Examples:
         unity-mcp scene save
         unity-mcp scene save --path "Assets/Scenes/NewScene.unity"
+        unity-mcp scene save --path "Assets/Scenes/Existing.unity" --allow-overwrite
     """
     config = get_config()
 
     params: dict[str, Any] = {"action": "save"}
     if path:
         params["path"] = path
+    if allow_overwrite:
+        params["allow_overwrite"] = True
 
     result = run_command("manage_scene", params, config)
     click.echo(format_output(result, config.format))

@@ -334,7 +334,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "core",
         "Open, Save & Organize Scenes",
         "create load save close_scene set_active_scene move_to_scene",
-        "name path build_index scene_name scene_path target remove_scene additive template",
+        "name path build_index allow_overwrite scene_name scene_path target remove_scene additive template",
     ),
     _feature(
         "scene_inspect",

@@ -180,3 +180,34 @@ def test_public_scene_reference_capability_exposes_snapshot_options():
             assert args[3]["referenceCursor"] == "mcp-ref-snapshot-v1_" + "a" * 32
         asyncio.run(scenario())
     """)
+
+
+def test_core_scene_save_exposes_and_forwards_overwrite():
+    run_sdk_regression("""
+        import asyncio, sys
+        from unittest.mock import AsyncMock, MagicMock
+        sys.path.insert(0, "src")
+        from fastmcp import FastMCP
+        from core.config import config
+        from services.registry import get_registered_tools
+        from services.tools import register_all_tools
+        from services.tools import manage_scene as scenes
+
+        async def scenario():
+            config.transport_mode = "http"
+            server = FastMCP("scene-save")
+            register_all_tools(server, project_scoped_tools=False)
+            server.enable(components={"tool"})
+            schema = next(tool.parameters for tool in await server.list_tools(run_middleware=False) if tool.name == "scene_lifecycle")
+            assert "allow_overwrite" in schema["properties"]
+            invoke = next(item["func"] for item in get_registered_tools() if item["name"] == "scene_lifecycle")
+            scenes.get_unity_instance_from_context = AsyncMock(return_value="owned")
+            scenes.preflight = AsyncMock(return_value=None)
+            scenes.send_with_unity_instance = AsyncMock(return_value={"success": True})
+            result = await invoke(MagicMock(), action="save", path="Assets/Existing.unity", allow_overwrite=True)
+            assert result["success"] is True
+            args = scenes.send_with_unity_instance.await_args.args
+            assert args[2] == "scene_lifecycle"
+            assert args[3]["allowOverwrite"] is True
+        asyncio.run(scenario())
+    """)
