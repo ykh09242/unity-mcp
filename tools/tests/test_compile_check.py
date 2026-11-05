@@ -61,7 +61,7 @@ def test_matrix_compiles_all_platforms_with_selected_explicit_profile(
         assert '/Managed/Selected.dll"' in coroutine_rsp
         assert f"-define:UNITY_EDITOR_{platform.upper()}" in coroutine_rsp
     assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == (
-        21 if version.startswith("7000.") else 15
+        27 if version.startswith("7000.") else 21
     )
 
 
@@ -85,6 +85,26 @@ def test_prerelease_and_future_minor_defines_remain_numeric(
     assert not any("0a" in flag or "0b" in flag for flag in defines)
 
 
+def test_player_profiles_exclude_editor_metadata_and_select_scenarios(
+    harness: CompileHarness,
+) -> None:
+    manifest = harness.repo / "tools/compile-refs/2021.3/Runtime.txt"
+    with manifest.open("a", encoding="utf-8") as stream:
+        stream.write("DATA/Managed/UnityEditor.CoreModule.dll\n")
+    (harness.data / "Managed/UnityEditor.CoreModule.dll").touch()
+    (harness.repo / "tools/compile-defines.txt").write_text(
+        "UNITY_EDITOR\nUNITY_EDITOR_64\nUNITY_INCLUDE_TESTS\n"
+    )
+    result = harness.run("2021.3.45f2")
+    assert result.returncode == 0, result.stdout + result.stderr
+    for profile in ("player", "player-scenarios"):
+        rsp = (harness.output / "linux" / profile / "MCPForUnity.Runtime.rsp").read_text()
+        assert "UnityEditor.CoreModule.dll" not in rsp
+        assert "-define:UNITY_EDITOR" not in rsp
+        assert "-define:UNITY_INCLUDE_TESTS" not in rsp
+        assert ("-define:MCP_FOR_UNITY_PLAY_SCENARIOS" in rsp) == (profile == "player-scenarios")
+
+
 @pytest.mark.skipif(
     os.name != "nt", reason="Git Bash on Windows resolves the dotnet.exe executable suffix"
 )
@@ -93,7 +113,7 @@ def test_windows_compiler_layout_uses_bundled_runtime(harness: CompileHarness) -
     shim.rename(shim.with_suffix(".exe"))
     result = harness.run("2021.3.45f2")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 5
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 7
 
 
 def test_missing_compiler_reports_distribution_candidates_without_selecting_them(
@@ -134,7 +154,7 @@ def test_modern_sdk_uses_one_coherent_bundled_toolchain(
     assert "Runtime       : " in result.stdout
     assert "Tools/Scripting/DotNetSdk/dotnet" in result.stdout
     assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == (
-        7 if version.startswith("7000.") else 5
+        9 if version.startswith("7000.") else 7
     )
 
 
@@ -179,7 +199,7 @@ def test_modern_sdk_supports_explicit_executable_suffix(harness: CompileHarness)
     (sdk / "dotnet").rename(sdk / "dotnet.exe")
     result = harness.run("6000.6.4f1")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 5
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 7
 
 
 def test_modern_sdk_rejects_external_symlinks(harness: CompileHarness) -> None:
@@ -319,9 +339,11 @@ def test_existing_reference_is_preserved_in_both_compilations(harness: CompileHa
         lines = response.read_text(encoding="utf-8").splitlines()
         sources = sum(line.startswith('"') for line in lines)
         references = sum(line.startswith("-r:") for line in lines)
-        assert f"--- {response.stem} [linux] : {sources} sources, {references} refs ---" in (
-            result.stdout
+        profile = response.parent.name if response.parent.name != "linux" else "editor"
+        expected = (
+            f"--- {response.stem} [linux/{profile}] : {sources} sources, {references} refs ---"
         )
+        assert expected in result.stdout
 
 
 @pytest.mark.parametrize("entry", ["UNKNOWN/Core.dll", "LIBCACHE/Missing after valid.dll"])
@@ -370,7 +392,7 @@ def test_caller_resolved_references_preserve_crlf_spaces_and_platform_outputs(
                     f'-r:"{harness.output.as_posix()}/{platform}/MCPForUnity.Runtime.dll"'
                     in response
                 )
-    assert len(harness.calls.read_text().splitlines()) == 15
+    assert len(harness.calls.read_text().splitlines()) == 21
 
 
 def test_source_inventory_is_refreshed_between_invocations_with_nested_ownership(
@@ -389,7 +411,7 @@ def test_source_inventory_is_refreshed_between_invocations_with_nested_ownership
     response = (harness.output / "linux/MCPForUnity.Runtime.rsp").read_text()
     assert f'"{source.as_posix()}/Added source.cs"' in response
     assert "Fixture.cs" not in response and "Excluded.cs" not in response
-    assert len(harness.calls.read_text().splitlines()) == 10
+    assert len(harness.calls.read_text().splitlines()) == 14
 
 
 @pytest.mark.parametrize("disappearing", ["reference", "source"])

@@ -37,6 +37,9 @@
 #   PLATFORMS      editor platforms to compile           (default "win osx linux")
 #   OUT            scratch dir                           (default /tmp/mcp-compile-check)
 #
+# Each selected platform compiles Editor code and separate Player runtime profiles
+# with scenario support disabled and enabled. These checks do not execute a Player.
+#
 # MAINTENANCE: tools/compile-refs/{Runtime,Editor}.txt and tools/compile-defines.txt are
 # captured from Unity's own generated .csproj files for the pinned defaultVersion. They are
 # NOT globs on purpose -- Editor/Data holds the entire .NET 4.8 BCL plus vendored libraries
@@ -252,9 +255,9 @@ version_defines() {
 
 platform_defines() {
   case "$1" in
-    win)   printf '%s\n' -define:UNITY_EDITOR_WIN -define:UNITY_STANDALONE_WIN -define:PLATFORM_STANDALONE_WIN ;;
-    osx)   printf '%s\n' -define:UNITY_EDITOR_OSX -define:UNITY_STANDALONE_OSX -define:PLATFORM_STANDALONE_OSX ;;
-    linux) printf '%s\n' -define:UNITY_EDITOR_LINUX -define:UNITY_STANDALONE_LINUX -define:PLATFORM_STANDALONE_LINUX ;;
+    win)   [ "$compile_profile" != editor ] || echo -define:UNITY_EDITOR_WIN; printf '%s\n' -define:UNITY_STANDALONE_WIN -define:PLATFORM_STANDALONE_WIN ;;
+    osx)   [ "$compile_profile" != editor ] || echo -define:UNITY_EDITOR_OSX; printf '%s\n' -define:UNITY_STANDALONE_OSX -define:PLATFORM_STANDALONE_OSX ;;
+    linux) [ "$compile_profile" != editor ] || echo -define:UNITY_EDITOR_LINUX; printf '%s\n' -define:UNITY_STANDALONE_LINUX -define:PLATFORM_STANDALONE_LINUX ;;
     *) die "unknown platform '$1' (expected win|osx|linux)" ;;
   esac
 }
@@ -317,6 +320,7 @@ load_assembly_sources() {
 compile() {
   local name="$1" srcdir="$2" platform="$3" manifest="$4"; shift 4
   local dir="$OUT/$platform"
+  [ "$compile_profile" = editor ] || dir="$dir/$compile_profile"
   [ -d "$dir" ] || mkdir -p "$dir" || return 1
   local rsp="$dir/$name.rsp"
   local missing=0 nrefs=0 nsrc=0 sources
@@ -384,11 +388,15 @@ compile() {
     # `find -name` match nothing, so the Editor build fails on TestRunner/UI types.
     while read -r d; do
       d=${d%$'\r'}
+      if [ "$compile_profile" != editor ]; then
+        case "$d" in UNITY_EDITOR|UNITY_EDITOR_64|UNITY_INCLUDE_TESTS) continue ;; esac
+      fi
       case "$ver_major.$ver_minor:$d" in
         7000.0:ENABLE_MONO|7000.0:PLATFORM_SUPPORTS_MONO|7000.0:NET_4_6|7000.0:NET_UNITY_4_8) continue ;;
       esac
       [ -n "$d" ] && echo "-define:$d"
     done < "$REPO/tools/compile-defines.txt"
+    [ "$compile_profile" != player-scenarios ] || echo -define:MCP_FOR_UNITY_PLAY_SCENARIOS
     if [ "$ver_major.$ver_minor" = 7000.0 ]; then
       printf '%s\n' -define:ENABLE_CORECLR -define:NET_STANDARD_2_1 -define:NET_STANDARD -define:NETSTANDARD2_1 -define:NETSTANDARD
     fi
@@ -401,6 +409,9 @@ compile() {
       while read -r entry; do
         entry=${entry%$'\r'}
         [ -n "$entry" ] || continue
+        if [ "$compile_profile" != editor ]; then
+          case "${entry##*/}" in UnityEditor*|Unity.Editor*) continue ;; esac
+        fi
         # Compile the pinned package itself without referencing the template's TestRunner.
         case "$name:$entry" in
           UnityEngine.TestRunner:LIBCACHE/*TestRunner.dll|UnityEditor.TestRunner:LIBCACHE/*TestRunner.dll|Unity.EditorCoroutines.Editor:LIBCACHE/*TestRunner.dll|UnityEngine.UI:LIBCACHE/*TestRunner.dll|UnityEditor.UI:LIBCACHE/*TestRunner.dll|UnityEngine.UI:COMPILED/*|UnityEditor.UI:COMPILED/*) continue ;;
@@ -424,7 +435,7 @@ compile() {
     return 1
   fi
 
-  echo "--- $name [$platform] : $nsrc sources, $nrefs refs ---"
+  echo "--- $name [$platform/$compile_profile] : $nsrc sources, $nrefs refs ---"
   # Filter the compiler stream with shell builtins; per-assembly grep/sed forks
   # are expensive on Windows. Keep the compiler's exit status.
   "$DOTNET" "$CSC" "@$rsp" 2>&1 | while IFS= read -r line || [ -n "$line" ]; do
@@ -438,11 +449,12 @@ compile() {
     echo "::error::$name failed to compile for $platform"
     return 1
   fi
-  echo "OK  $name [$platform]"
+  echo "OK  $name [$platform/$compile_profile]"
 }
 
 failed=0
 for platform in $PLATFORMS; do
+  compile_profile=editor
   if [ "$ver_major.$ver_minor" = 7000.0 ]; then
     ugui="$UNITY_DATA/Resources/PackageManager/BuiltInPackages/com.unity.ugui"
     compile UnityEngine.UI "$ugui/Runtime/UGUI" "$platform" "$REFS_PROFILE/Runtime.txt" \
@@ -547,6 +559,19 @@ for platform in $PLATFORMS; do
         || failed=1
     fi
   fi
+  for compile_profile in player player-scenarios; do
+    player_dir="$OUT/$platform/$compile_profile"
+    compile MCPForUnity.Runtime "$REPO/MCPForUnity/Runtime" "$platform" \
+      "$REFS_PROFILE/Runtime.txt" || { failed=1; continue; }
+    if [ "$COMPILE_INPUT_UGUI" -eq 1 ]; then
+      compile MCPForUnity.Input.UGUI.Runtime "$REPO/MCPForUnity/Runtime/PlayScenarios/UGUI" "$platform" \
+        "$REFS_PROFILE/Runtime.txt" "$player_dir/MCPForUnity.Runtime.dll" || failed=1
+    fi
+    if [ "$COMPILE_INPUT_SYSTEM" -eq 1 ]; then
+      compile MCPForUnity.Input.InputSystem.Runtime "$REPO/MCPForUnity/Runtime/PlayScenarios/InputSystem" "$platform" \
+        "$REFS_PROFILE/Runtime.txt" "$player_dir/MCPForUnity.Runtime.dll" "$INPUT_SYSTEM_REFS/Unity.InputSystem.dll" || failed=1
+    fi
+  done
 done
 
 [ "$failed" -eq 0 ] || { echo "::error::compile check FAILED"; exit 1; }

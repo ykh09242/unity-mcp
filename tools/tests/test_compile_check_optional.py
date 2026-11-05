@@ -52,7 +52,7 @@ def test_optional_examples_complete_matrix_preserves_sources_defines_and_referen
     ui = ("UnityEngine.UI", "UnityEditor.UI") if version.startswith("7000.") else ()
     expected = (*ui, *core, *OPTIONAL_ASSEMBLIES, "TestAsmdef", "MCPForUnityTests.EditMode")
     calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
-    assert calls == list(expected) * 3
+    assert calls == [*expected, "MCPForUnity.Runtime", "MCPForUnity.Runtime"] * 3
     for platform in ("win", "osx", "linux"):
         responses = {
             name: (harness.output / platform / f"{name}.rsp")

@@ -48,7 +48,7 @@ def test_unity7_compiles_bundled_ui_before_all_consumers_without_template_cache(
     assert result.returncode == 0, result.stdout + result.stderr
     # Then every platform compiles both UI assemblies and all nine previous assemblies.
     calls = [Path(line).stem for line in harness.calls.read_text(encoding="utf-8").splitlines()]
-    assert len(calls) == 33
+    assert len(calls) == 39
     for platform in ("win", "osx", "linux"):
         for name in ("UnityEngine.UI", "UnityEditor.UI"):
             rsp = (harness.output / platform / f"{name}.rsp").read_text(encoding="utf-8")
@@ -137,7 +137,7 @@ def test_explicit_staged_project_compiles_fixture_and_editmode_all_platforms(
         (harness.output / platform).mkdir()
     result = harness.run("6000.7.0b2", "win osx linux", test_project=project, framework=framework)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 27
+    assert len(harness.calls.read_text(encoding="utf-8").splitlines()) == 33
     for platform in ("win", "osx", "linux"):
         rsp = (harness.output / platform / "MCPForUnityTests.EditMode.rsp").read_text(
             encoding="utf-8"
