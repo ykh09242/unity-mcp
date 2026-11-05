@@ -1,14 +1,16 @@
 """Bounded version-one custom schemas using the installed JSON Schema validator."""
 
 from collections import OrderedDict
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from itertools import islice
 import json
 import math
 from threading import RLock
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError as ModelValidationError
 
 DIALECT = "https://json-schema.org/draft/2020-12/schema"
 MAX_SCHEMA_BYTES = 64 * 1024
@@ -43,6 +45,72 @@ _KEYWORDS = _ANNOTATIONS | {
 
 class SchemaContractError(ValueError):
     """A declaration or JSON value violates the supported bounded contract."""
+
+    def __init__(self, message: str, details: dict[str, JsonValue] | None = None):
+        super().__init__(message)
+        self.details = details
+
+
+def validation_details(
+    issues: Iterable[tuple[Sequence[str | int], str]], declared_names: set[str]
+) -> dict[str, JsonValue]:
+    """Expose bounded declared locations and fixed categories, never rejected values or keys."""
+    rows: list[JsonValue] = []
+    seen = set()
+    truncated = False
+    categories = _KEYWORDS | {"reserved", "limits", "invalid"}
+    # Bound examination separately: many dynamic keys can collapse to one
+    # redacted location without consuming the returned-detail budget.
+    for index, (path, category) in enumerate(islice(issues, 257)):
+        if index == 256:
+            truncated = True
+            break
+        segments = []
+        for part in path[:8]:
+            match part:
+                case int():
+                    segments.append(str(part)[:16])
+                case str() if part in declared_names and len(part) <= 64:
+                    segments.append(part.replace("~", "~0").replace("/", "~1"))
+                case _:
+                    segments.append("*")
+        pointer = "/" + "/".join(segments) if segments else ""
+        if len(path) > 8 or len(pointer.encode("utf-8")) > 256:
+            truncated = True
+            pointer = pointer.encode("utf-8")[:256].decode("utf-8", errors="ignore")
+        category = category if category in categories else "invalid"
+        identity = (pointer, category)
+        if identity in seen:
+            continue
+        if len(rows) == 16:
+            truncated = True
+            break
+        seen.add(identity)
+        rows.append({"path": pointer, "category": category})
+    return {"validation_errors": rows, "truncated": truncated}
+
+
+def scalar_validation_details(
+    error: ModelValidationError, declared_names: set[str]
+) -> dict[str, JsonValue]:
+    """Project scalar errors through the same safe contract as rich JSON schemas."""
+    categories = {
+        "missing": "required",
+        "int_type": "type",
+        "float_type": "type",
+        "bool_type": "type",
+        "string_type": "type",
+        "list_type": "type",
+        "dict_type": "type",
+        "finite_number": "type",
+    }
+    return validation_details(
+        (
+            (item["loc"], categories.get(item["type"], "invalid"))
+            for item in error.errors(include_url=False, include_input=False, include_context=False)
+        ),
+        declared_names,
+    )
 
 
 def _encode_json(
@@ -249,6 +317,13 @@ class PreparedSchema:
         if not isinstance(arguments, dict):
             raise SchemaContractError("Custom input must be an object")
         bounded_json(arguments, max_bytes=256 * 1024, max_nodes=4096)
+        # Routing is outside the native payload. Open schemas must not turn it
+        # into an alternate selector on direct execute_custom_tool calls.
+        if "unity_instance" in arguments:
+            raise SchemaContractError(
+                "Reserved custom tool parameter",
+                validation_details([(("unity_instance",), "reserved")], {"unity_instance"}),
+            )
         schema = self.input_validator.schema
         applied = dict(arguments)
         for name, child in schema.get("properties", {}).items():
@@ -259,8 +334,42 @@ class PreparedSchema:
             ):
                 applied[name] = json.loads(json.dumps(child["default"], allow_nan=False))
         bounded_json(applied, max_bytes=256 * 1024, max_nodes=4096)
-        if not self.input_validator.is_valid(applied):
-            raise SchemaContractError("Invalid custom tool input")
+        errors = self.input_validator.iter_errors(applied)
+        first = next(errors, None)
+        if first is not None:
+            names = set()
+            work = [schema]
+            while work:
+                item = work.pop()
+                properties = item.get("properties", {})
+                names.update(properties)
+                work.extend(properties.values())
+                work.extend(item.get("$defs", {}).values())
+                work.extend(item.get("anyOf", ()))
+                for keyword in ("items", "additionalProperties"):
+                    match item.get(keyword):
+                        case dict() as child:
+                            work.append(child)
+
+            def issues():
+                from itertools import chain
+
+                required_paths = set()
+                for error in chain((first,), errors):
+                    if error.validator == "required":
+                        parent = tuple(error.absolute_path)
+                        if parent in required_paths:
+                            continue
+                        required_paths.add(parent)
+                        for name in error.validator_value:
+                            if name not in error.instance:
+                                yield (*error.absolute_path, name), "required"
+                    else:
+                        yield tuple(error.absolute_path), error.validator
+
+            raise SchemaContractError(
+                "Invalid custom tool input", validation_details(issues(), names)
+            )
         return applied
 
     def validate_output(self, value: JsonValue) -> None:

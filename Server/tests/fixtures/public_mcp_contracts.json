@@ -8549,6 +8549,78 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "set_property"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "property": {
+                          "pattern": "\\S",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "property",
+                        "value"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "properties": {
+                          "anyOf": [
+                            {
+                              "minProperties": 1,
+                              "type": "object"
+                            },
+                            {
+                              "pattern": "^\\s*\\{\\s*\"",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "properties"
+                      ]
+                    }
+                  ],
+                  "if": {
+                    "properties": {
+                      "property": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "property"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "property": {
+                        "pattern": "\\S",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "property",
+                      "value"
+                    ]
+                  }
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "enum": [
@@ -33938,6 +34010,78 @@
           },
           "inputSchema": {
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "action": {
+                      "const": "set_property"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                },
+                "then": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "property": {
+                          "pattern": "\\S",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "property",
+                        "value"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "properties": {
+                          "anyOf": [
+                            {
+                              "minProperties": 1,
+                              "type": "object"
+                            },
+                            {
+                              "pattern": "^\\s*\\{\\s*\"",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "properties"
+                      ]
+                    }
+                  ],
+                  "if": {
+                    "properties": {
+                      "property": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "property"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "property": {
+                        "pattern": "\\S",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "property",
+                      "value"
+                    ]
+                  }
+                }
+              }
+            ],
             "properties": {
               "action": {
                 "enum": [

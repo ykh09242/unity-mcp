@@ -163,6 +163,9 @@ async def manage_components(
             "message": f"value received invalid input: '{value}'. Expected an actual value.",
         }
 
+    if action == "set_property" and property is not None and property and not property.strip():
+        return {"success": False, "message": "property must be a nonblank property name."}
+
     # Bare Python calls receive FieldInfo; SDK calls receive the factory marker.
     if (
         action == "set_property"

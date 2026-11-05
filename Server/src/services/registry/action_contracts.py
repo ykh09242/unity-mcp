@@ -42,6 +42,11 @@ _PREVIEW_FORBIDDEN = tuple(
 )
 
 ACTION_RULES: dict[str, tuple[ActionRule, ...]] = {
+    "manage_components": (
+        ActionRule("add"),
+        ActionRule("remove"),
+        ActionRule("set_property"),
+    ),
     "gameobject_positioning": (
         ActionRule(
             "move_relative",
@@ -129,6 +134,46 @@ def action_input_schema(name: str, schema: dict) -> dict:
     rules = ACTION_RULES.get(name, ())
     if not rules:
         return schema
+    if name == "manage_components":
+        # Preserve the SDK's nullable value type: only presence is required for
+        # a single write, so JSON null continues to clear object references.
+        single = {
+            "required": ["property", "value"],
+            "properties": {"property": {"type": "string", "pattern": r"\S"}},
+        }
+        multiple = {
+            "required": ["properties"],
+            "properties": {
+                "properties": {
+                    "anyOf": [
+                        {"type": "object", "minProperties": 1},
+                        {"type": "string", "pattern": r'^\s*\{\s*"'},
+                    ]
+                }
+            },
+        }
+        return {
+            **schema,
+            "allOf": [
+                *schema.get("allOf", ()),
+                {
+                    "if": {
+                        "properties": {"action": {"const": "set_property"}},
+                        "required": ["action"],
+                    },
+                    "then": {
+                        "anyOf": [single, multiple],
+                        # If a property name is supplied it always owns a single
+                        # write, even when a multiple-property update is also given.
+                        "if": {
+                            "required": ["property"],
+                            "properties": {"property": {"type": "string", "minLength": 1}},
+                        },
+                        "then": single,
+                    },
+                },
+            ],
+        }
     if name == "asset_edit":
         # Typed action alternatives render as concrete objects in clients which
         # cannot express if/then schema intersections. Runtime rules stay shared.

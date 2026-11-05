@@ -8,10 +8,11 @@ from fastmcp.exceptions import ValidationError
 from fastmcp.server.dependencies import get_context
 from fastmcp.server.middleware.dereference import DereferenceRefsMiddleware
 from fastmcp.tools import Tool, ToolResult
+from fastmcp.tools.function_tool import FunctionTool
 from mcp.types import TextContent
-from pydantic import JsonValue, PrivateAttr
+from pydantic import JsonValue, PrivateAttr, ValidationError as ModelValidationError
 
-from models.custom_tool_schema import SchemaContractError, prepare_schema
+from models.custom_tool_schema import SchemaContractError, prepare_schema, scalar_validation_details
 from models.models import MCPResponse, ToolDefinitionModel
 
 
@@ -54,16 +55,35 @@ def require_schema_listing_policy(server) -> None:
         raise ValueError("Rich custom schemas require the supported SDK listing policy")
 
 
+class ScalarTool(FunctionTool):
+    """Keep SDK scalar execution while sanitizing its argument-validation boundary."""
+
+    async def run(self, arguments: dict[str, JsonValue]) -> ToolResult:
+        try:
+            return await super().run(arguments)
+        except ValidationError as exc:
+            if not isinstance(exc.__cause__, ModelValidationError):
+                raise
+            details = scalar_validation_details(
+                exc.__cause__, set(self.parameters.get("properties", {}))
+            )
+            raise ValidationError(
+                json.dumps({"code": "invalid_custom_tool_parameters", **details})
+            ) from None
+
+
 class SchemaTool(Tool):
     """SDK owns execution framing; the installed validator owns schema semantics."""
 
-    _handler: Callable[..., Awaitable[MCPResponse]] = PrivateAttr()
+    _handler: Callable[[Context, dict[str, JsonValue]], Awaitable[MCPResponse]] = PrivateAttr()
     _input_json: str = PrivateAttr()
     _output_json: str | None = PrivateAttr()
     _structured: bool = PrivateAttr()
 
     def __init__(
-        self, definition: ToolDefinitionModel, handler: Callable[..., Awaitable[MCPResponse]]
+        self,
+        definition: ToolDefinitionModel,
+        handler: Callable[[Context, dict[str, JsonValue]], Awaitable[MCPResponse]],
     ):
         prepared = prepare_schema(definition.input_schema, definition.output_data_schema)
         output = MCPResponse.model_json_schema() if definition.structured_output else None
@@ -98,9 +118,15 @@ class SchemaTool(Tool):
             )
             parameters = prepared.validate_input(arguments)
         except SchemaContractError as exc:
-            raise ValidationError("Invalid custom tool parameters") from exc
+            details = exc.details or {
+                "validation_errors": [{"path": "", "category": "limits"}],
+                "truncated": False,
+            }
+            raise ValidationError(
+                json.dumps({"code": "invalid_custom_tool_parameters", **details})
+            ) from exc
         context: Context = get_context()
-        response = await self._handler(context, **parameters)
+        response = await self._handler(context, parameters)
         if not self._structured:
             return ToolResult(
                 content=[TextContent(type="text", text=response.model_dump_json())],

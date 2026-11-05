@@ -297,13 +297,17 @@ class CustomToolService:
         project_id: str,
         user_id: str | None = None,
     ) -> list[ToolDefinitionModel]:
+        from services.operation_permissions import _NATIVE_COMMANDS
+
+        reserved = self._get_builtin_tool_names() | _BACKEND_ONLY_TOOL_NAMES | _NATIVE_COMMANDS
+        reserved = {name.casefold() for name in reserved}
         if config.http_remote_hosted:
             if not user_id:
                 return []
             return [
                 tool
                 for tool in await PluginHub.get_tools_for_project(project_id, user_id=user_id)
-                if tool.name not in _BACKEND_ONLY_TOOL_NAMES
+                if tool.name.strip().casefold() not in reserved
             ]
         definitions = dict(self._project_tools.get(project_id, {}))
         transport_project = self._transport_project_id(project_id)
@@ -316,7 +320,9 @@ class CustomToolService:
         )
         for tool in hub_tools:
             definitions.setdefault(tool.name, tool)
-        return [tool for tool in definitions.values() if tool.name not in _BACKEND_ONLY_TOOL_NAMES]
+        return [
+            tool for tool in definitions.values() if tool.name.strip().casefold() not in reserved
+        ]
 
     async def get_tool_definition(
         self,
@@ -439,9 +445,23 @@ class CustomToolService:
                     for name, value in validated.model_dump(by_alias=True).items()
                     if value is not None or (not omit_nulls and name in supplied_names)
                 }
-        except (ValidationError, ValueError):
+        except (ValidationError, ValueError) as exc:
+            from models.custom_tool_schema import scalar_validation_details
+
+            details = None
+            if isinstance(exc, SchemaContractError):
+                details = exc.details
+            elif isinstance(exc, ValidationError):
+                details = scalar_validation_details(
+                    exc,
+                    {parameter.name for parameter in definition.parameters},
+                )
             return MCPResponse(
-                success=False, message=f"Invalid parameters for custom tool '{tool_name}'"
+                success=False,
+                code="invalid_custom_tool_parameters",
+                message=f"Invalid parameters for custom tool '{tool_name}'",
+                data=details
+                or {"validation_errors": [{"path": "", "category": "limits"}], "truncated": False},
             )
 
         if not definition.requires_polling:
@@ -1374,7 +1394,9 @@ class CustomToolService:
             require_schema_listing_policy(self._mcp)
             registered = SchemaTool(definition, wrapped)
         else:
-            registered = Tool.from_function(
+            from services.custom_tool_schema_tool import ScalarTool
+
+            registered = ScalarTool.from_function(
                 wrapped,
                 name=definition.name,
                 description=definition.description,
@@ -1388,7 +1410,7 @@ class CustomToolService:
     def _build_global_tool_handler(self, definition: ToolDefinitionModel):
         expected_contract = self._wire_contract(definition)
 
-        async def _handler(ctx: Context, **kwargs) -> MCPResponse:
+        async def invoke(ctx: Context, params: dict) -> MCPResponse:
             unity_instance = await get_unity_instance_from_context(ctx)
             if not unity_instance:
                 return MCPResponse(
@@ -1406,7 +1428,6 @@ class CustomToolService:
                 )
 
             # Keep explicit nulls until descriptor validation so they suppress defaults.
-            params = dict(kwargs)
             user_id = await get_user_id_from_context(ctx)
             service = CustomToolService.get_instance()
             return await service.execute_tool(
@@ -1418,6 +1439,17 @@ class CustomToolService:
                 omit_nulls=True,
                 _expected_contract=expected_contract,
             )
+
+        async def _handler(ctx: Context, **kwargs) -> MCPResponse:
+            return await invoke(ctx, kwargs)
+
+        if definition.schema_version == 1:
+            # Rich schemas can accept keys that are Python runtime argument names.
+            # Keep their payload in a separate mapping all the way to validation.
+            async def schema_handler(context: Context, parameters: dict) -> MCPResponse:
+                return await invoke(context, parameters)
+
+            _handler = schema_handler
 
         _handler.__name__ = f"custom_tool_{definition.name}"
         _handler.__doc__ = definition.description or ""
