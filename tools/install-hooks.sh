@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the repo's git hooks into .git/hooks/.
+# Installs the repo's git hooks into Git's effective hooks directory.
 #
 # Usage:
 #   tools/install-hooks.sh           # install missing hooks (preserves existing ones)
@@ -10,12 +10,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_DIR="${REPO_ROOT}/tools/hooks"
-DST_DIR="${REPO_ROOT}/.git/hooks"
-
-if [[ ! -d "$DST_DIR" ]]; then
-  echo "error: $DST_DIR not found — is this a git checkout?" >&2
-  exit 2
-fi
+DST_DIR="$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-path hooks)" || exit 2
 if [[ ! -d "$SRC_DIR" ]]; then
   echo "error: $SRC_DIR missing" >&2
   exit 2
@@ -34,6 +29,10 @@ for arg in "$@"; do
   esac
 done
 
+if [[ $UNINSTALL -eq 0 ]]; then
+  mkdir -p "$DST_DIR"
+fi
+
 installed=0
 skipped=0
 removed=0
@@ -42,6 +41,13 @@ for src in "$SRC_DIR"/*; do
   [[ -e "$src" ]] || continue
   name="$(basename "$src")"
   dst="$DST_DIR/$name"
+
+  # Never follow a foreign symlink, including a dangling one or under --force.
+  if [[ -L "$dst" ]]; then
+    echo "  skipped $dst (foreign symlink)"
+    skipped=$((skipped + 1))
+    continue
+  fi
 
   if [[ $UNINSTALL -eq 1 ]]; then
     if [[ -e "$dst" ]] && cmp -s "$src" "$dst"; then

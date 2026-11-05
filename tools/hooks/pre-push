@@ -3,43 +3,72 @@
 # Installed by tools/install-hooks.sh; opt-in (devs without the hook see no behavior change).
 # To bypass for a single push: git push --no-verify
 
-set -e
+set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
 SCRIPT="${REPO_ROOT}/tools/check-unity-versions.sh"
+HEAD_SHA="$(git rev-parse --verify HEAD)"
+# Include checker, package and project configuration consumed by compilation.
+inputs=(MCPForUnity TestProjects/UnityMCPTests/Assets TestProjects/UnityMCPTests/Packages
+  TestProjects/UnityMCPTests/ProjectSettings tools/check-unity-versions.sh
+  tools/unity-versions.json tools/hooks/pre-push .github/workflows/unity-tests.yml)
 
-if [[ ! -x "$SCRIPT" ]]; then
-  echo "pre-push: $SCRIPT missing or not executable; skipping Unity-version check." >&2
-  exit 0
-fi
+refuse() {
+  echo "pre-push: $*" >&2
+  exit 1
+}
 
-# Skip if the push touches nothing relevant. We approximate "relevant" with the same path filters
-# the CI workflow uses, so the hook fires for the same scope of changes.
-relevant_paths='^(MCPForUnity/(Editor|Runtime)/|TestProjects/UnityMCPTests/|tools/unity-versions\.json$|\.github/workflows/unity-tests\.yml$)'
-
-# Git's empty-tree SHA — fallback that always exists. Used when we can't find a sensible merge
-# base (shallow clone, fresh fork with no origin/beta or origin/main, etc.) so the hook still
-# runs the check instead of silently skipping it.
-EMPTY_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+clean_inputs() {
+  local dirty flags entry ignored
+  flags="$(git ls-files -v -- "${inputs[@]}")" || refuse "cannot inspect input index flags."
+  while IFS= read -r entry; do
+    case "$entry" in
+      [a-zS]' '*) refuse "relevant inputs may be dirty: assume-unchanged or skip-worktree hides source; clear those flags before validating $HEAD_SHA." ;;
+    esac
+  done <<< "$flags"
+  # Git ignore rules do not stop Unity importing local compilation inputs.
+  # Only this generated resolution result is exempt; the tracked manifest stays clean.
+  # Dependency-environment reproducibility is outside this local source-SHA check.
+  ignored="$(git ls-files --others --ignored --exclude-standard -- "${inputs[@]}" \
+    ':(top,exclude,literal)TestProjects/UnityMCPTests/Packages/packages-lock.json')" \
+    || refuse "cannot inspect ignored compilation inputs."
+  [[ -z "$ignored" ]] || refuse "ignored relevant files are present; preserve them outside compilation inputs before validating $HEAD_SHA."
+  # Avoid refreshing/writing the index; include staged, unstaged and untracked inputs.
+  dirty="$(git --no-optional-locks status --porcelain --untracked-files=all -- "${inputs[@]}")" \
+    || refuse "cannot inspect relevant inputs."
+  [[ -z "$dirty" ]] || refuse "relevant inputs are dirty; commit or preserve them elsewhere before validating $HEAD_SHA."
+  [[ "$(git rev-parse --verify HEAD)" == "$HEAD_SHA" ]] || refuse "HEAD changed during validation."
+}
 
 # stdin format from git: <local-ref> <local-sha> <remote-ref> <remote-sha> (one line per ref being pushed)
 relevant=0
 while read -r local_ref local_sha remote_ref remote_sha; do
-  [[ -z "$local_sha" || "$local_sha" == "0000000000000000000000000000000000000000" ]] && continue
+  [[ -n "$local_sha" && -n "$remote_sha" ]] || refuse "invalid pre-push ref record."
+  [[ "$local_sha" =~ ^0+$ ]] && continue
+  git cat-file -e "${local_sha}^{commit}" 2>/dev/null || refuse "cannot inspect pushed commit $local_sha."
 
-  if [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]]; then
-    # New branch on remote — diff against the default branch, or the empty tree as a guaranteed-valid fallback.
+  if [[ "$remote_sha" =~ ^0+$ ]]; then
+    # Without a known base inspect the entire immutable input tree.
     base=$(git merge-base "$local_sha" origin/beta 2>/dev/null \
         || git merge-base "$local_sha" origin/main 2>/dev/null \
-        || echo "$EMPTY_TREE")
+        || true)
+    if [[ -z "$base" ]]; then
+      names="$(git ls-tree -r --name-only "$local_sha" -- "${inputs[@]}")" \
+        || refuse "cannot inspect new ref $local_ref."
+      [[ -n "$names" ]] || continue
+    else
+      if git diff --quiet "$base" "$local_sha" -- "${inputs[@]}"; then continue
+      else result=$?; [[ $result -eq 1 ]] || refuse "cannot inspect $local_ref."; fi
+    fi
   else
-    base="$remote_sha"
+    if git diff --quiet "$remote_sha" "$local_sha" -- "${inputs[@]}"; then continue
+    else result=$?; [[ $result -eq 1 ]] || refuse "cannot inspect remote base for $local_ref."; fi
   fi
 
-  if git diff --name-only "$base..$local_sha" 2>/dev/null | grep -qE "$relevant_paths"; then
-    relevant=1
-    break
-  fi
+  [[ "$local_sha" == "$HEAD_SHA" ]] \
+    || refuse "$local_ref pushes $local_sha but checkout HEAD is $HEAD_SHA; check out the pushed commit first."
+  relevant=1
 done
 
 if [[ $relevant -eq 0 ]]; then
@@ -47,4 +76,9 @@ if [[ $relevant -eq 0 ]]; then
   exit 0
 fi
 
-exec "$SCRIPT" --pre-push
+clean_inputs
+[[ -x "$SCRIPT" ]] || refuse "checker missing or not executable: $SCRIPT."
+echo "pre-push: checking pushed SHA $HEAD_SHA (local compile-only; unavailable Unity versions may skip)."
+"$SCRIPT" --pre-push
+clean_inputs
+echo "pre-push: checker completed for pushed SHA $HEAD_SHA."
