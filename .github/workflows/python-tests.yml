@@ -50,6 +50,40 @@ env:
   UV_HTTP_TIMEOUT: "60"
 
 jobs:
+  container:
+    name: Candidate container (no publication)
+    if: inputs.validation_profile != 'tools-only'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+      - name: Verify beta push commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/beta' && github.repository != 'CoplayDev/unity-mcp'
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Verify checked candidate
+        env:
+          CANDIDATE_REF: ${{ inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+          actual=$(git rev-parse HEAD)
+          if [[ "$CANDIDATE_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            test "$actual" = "$CANDIDATE_REF"
+          fi
+          printf 'Container candidate: `%s`\n' "$actual" >> "$GITHUB_STEP_SUMMARY"
+      - name: Select actual container inputs
+        id: scope
+        run: python3 tools/check_container.py scope
+      - name: Build and smoke installed candidate and rejection controls
+        if: steps.scope.outputs.required == 'true'
+        run: python3 tools/check_container.py validate --negative-controls
+
   windows_hermetic:
     name: Windows hermetic process and Player file contracts
     runs-on: windows-latest
