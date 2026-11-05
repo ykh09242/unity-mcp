@@ -16,9 +16,15 @@ Remove the overrides when Docusaurus's dependency ranges select these supported 
 
 The lockfile uses the official npm `braces` release shared by Docusaurus's glob consumers. There is no direct `braces` dependency, fork override or website-local remote-archive exception. `scripts/braces-contracts.test.mjs` checks registry provenance, shared resolution and ordinary glob behavior.
 
-As of 2026-10-20, npm still reports [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) for `braces` 3.0.3 and its dependents; an official fixed release is not available. The audit's proposed downgrade of the search plugin does not fix every glob consumer. Do not use `npm audit fix --force`, suppress the advisory or describe the installed package as patched.
+GitHub withdrew the advisory for `braces` 3.0.3 on 2026-10-23. The November 5 npm audit reflects that withdrawal. [GitHub advisory record](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
 
-Treat configured glob patterns and build plugins as trusted build inputs. The library's optional `maxLength` check is covered as an API contract, but Docusaurus does not install it as a global input limit. The static deployed website does not execute this build-time glob parser. Reassess the advisory when an upstream fix is released, and preserve compatibility with Docusaurus's glob-based watchers.
+Treat configured glob patterns and build plugins as trusted build inputs. The library's optional `maxLength` check is covered as an API contract. Docusaurus's glob-based watchers use their ordinary defaults.
+
+## November 2026 refresh
+
+On November 5, npm reported one low-severity advisory in `deepmerge` and counted four dependents in Docusaurus's SVG build chain. The installed version is 4.3.1. The advisory lists no patched release. Recheck the upstream package and SVGR resolution at the next refresh. [deepmerge advisory](https://github.com/advisories/GHSA-gcqx-w48m-w2h4)
+
+The minimum `postcss-selector-parser` override is 7.1.7, which preserves trailing whitespace in lossless parsing. Local search and development hot reload were exercised with the refreshed webpack and Markdown packages. [Selector parser changelog](https://github.com/postcss/postcss-selector-parser/blob/v7.1.7/CHANGELOG.md)
 
 ## October 2026 refresh
 

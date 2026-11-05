@@ -46,14 +46,8 @@ Two transitive overrides bridge Docusaurus 3's older dependency ranges:
   PostCSS plugins. See the
   [selector parsing advisory](https://github.com/advisories/GHSA-rj75-hqrm-r3gf).
 
-`braces` uses the official npm release selected by its parent packages and
-recorded in `package-lock.json`, without a direct dependency or fork override.
-The contracts check registry provenance and ordinary glob behavior, not the
-removed fork's custom depth limits. `npm audit` still reports the upstream
-[braces advisory](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm), including
-affected parent packages. Keep that output visible; this is a scoped risk
-assessment, not a claim that npm has cleared the advisory. Do not apply the
-audit's suggested Docusaurus downgrade blindly.
+`braces` uses the official npm release selected by its parent packages. The contracts
+check registry provenance and ordinary glob behavior. See the [current npm audit and dependency overrides](DEPENDENCIES.md).
 
 ### Braces decision (2026-10-06)
 
@@ -77,14 +71,7 @@ path has been identified; build/watch inputs are a different
 trust boundary from an online service accepting arbitrary patterns. This npm
 dependency is not part of the Python MCP server or Unity package.
 
-The [advisory correction proposal](https://github.com/github/advisory-database/pull/10132)
-was still open and unmerged on the review date; the published advisory still
-listed no patched npm release. Neither the maintainer's disagreement nor the
-fork's tests establishes an official withdrawal. Reassess when the advisory
-receives an authoritative resolution, a supported upstream release lands, or a
-parent package removes the dependency. Any future service accepting external
-glob patterns needs its own input limits, exception handling and resource
-isolation review; this build-tool decision must not be reused as that approval.
+GitHub subsequently withdrew the advisory on October 23. [Published advisory history](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
 
 ## GitHub Pages deployment
 

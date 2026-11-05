@@ -2,7 +2,7 @@
   "name": "mcp-for-unity-docs",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "npm@12.2.1",
+  "packageManager": "npm@12.2.2",
   "allowScripts": {
     "core-js": false
   },
@@ -48,7 +48,7 @@
     },
     "copy-webpack-plugin": "^14.0.0",
     "css-minimizer-webpack-plugin": "^8.0.0",
-    "postcss-selector-parser": "^7.1.6",
+    "postcss-selector-parser": "^7.1.7",
     "tinypool": "^2.2.0",
     "update-notifier": "^7.3.1",
     "webpack-dev-server": "^6.1.0"
@@ -67,6 +67,6 @@
   },
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0",
-    "npm": ">=12.2.1"
+    "npm": ">=12.2.2"
   }
 }
