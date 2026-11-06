@@ -391,7 +391,9 @@ class PluginHub(WebSocketEndpoint):
     _ordinary_state_flights: ClassVar[weakref.WeakKeyDictionary[asyncio.Task, _CommandBudget]] = (
         weakref.WeakKeyDictionary()
     )
-    _NON_MUTATING_COMMANDS = frozenset({"ping", "get_editor_state", "get_test_job"})
+    _NON_MUTATING_COMMANDS = frozenset(
+        {"ping", "get_editor_state", "get_test_job", "get_compile_job"}
+    )
     _large_results: ClassVar[LargeResultAssembler | None] = None
     _raw_results: ClassVar[ChargeLedger] = ChargeLedger()
 

@@ -370,6 +370,25 @@ async def test_replaced_socket_between_capture_and_admission_never_receives_old_
 
 
 @pytest.mark.asyncio
+async def test_compile_status_between_probe_and_tool_dispatch_preserves_readiness(peer):
+    # Given: a console reader is waiting for an in-flight readiness probe.
+    caller = asyncio.create_task(read(peer))
+    probe = await peer.next_command()
+    status = asyncio.create_task(read(peer, "get_compile_job"))
+    command = await peer.next_command()
+    assert command["name"] == "get_compile_job"
+    # When: the observational compile-status call finishes before the old probe.
+    await peer.reply(command)
+    assert (await status)["success"]
+    await peer.reply(probe)
+    await yield_callers()
+    # Then: the existing readiness is still valid for the console dispatch.
+    assert peer.counts() == {"ping": 1, "get_compile_job": 1, "read_console": 1}
+    await peer.reply(await peer.next_command())
+    assert (await caller)["success"]
+
+
+@pytest.mark.asyncio
 async def test_mutation_between_probe_and_tool_dispatch_refuses_old_readiness(peer):
     # Given: a reader is waiting for a ping started before mutation admission.
     caller = asyncio.create_task(read(peer))
