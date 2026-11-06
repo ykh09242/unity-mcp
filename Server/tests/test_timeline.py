@@ -61,6 +61,39 @@ def test_timeline_exact_identity_and_zero_timing_survive_transport(wire):
     assert sender.call_args.args[3] == values
 
 
+@pytest.mark.parametrize("handle", [2**31, 2**63 - 1, 2**64 - 1, -(2**31) - 1])
+def test_director_scene_handles_preserve_opaque_native_integer_identity(wire, handle):
+    module, sender = wire()
+    values = {"action": "read_director", "target": 17, "scene_handle": handle}
+
+    result = asyncio.run(module.manage_timeline(SimpleNamespace(), **values))
+
+    assert result["success"] is True
+    assert sender.call_args.args[3] == values
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"target": 2**31},
+        {"target": -(2**31) - 1},
+        {"target": 0},
+        {"scene_handle": 0},
+        {"scene_handle": True},
+        {"scene_handle": "2147483648"},
+        {"scene_handle": 2147483648.0},
+    ],
+)
+def test_director_object_ids_remain_bounded_and_scene_handles_are_not_coerced(wire, changes):
+    module, sender = wire()
+    values = {"action": "read_director", "target": 17, "scene_handle": 22, **changes}
+
+    result = asyncio.run(module.manage_timeline(SimpleNamespace(), **values))
+
+    assert result["success"] is False
+    sender.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "paging",
     [
@@ -186,6 +219,7 @@ async def test_registered_timeline_sdk_rejects_identity_coercion_and_preserves_p
             {"action": "preview_stop", "preview_id": "session"},
             {"action": "seek", "preview_id": "session", "time": 0.5},
             {"action": "read_director", "target": 17, "scene_handle": 22},
+            {"action": "read_director", "target": 17, "scene_handle": 2**64 - 1},
             {"action": "create", "path": "Assets/New.playable", "properties": {"name": "New"}},
             {"action": "read", "path": "Assets/New.playable", "page_size": 1},
             {

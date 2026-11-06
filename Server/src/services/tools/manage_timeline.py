@@ -66,10 +66,13 @@ def _error(action: str, values: dict[str, Any]) -> str | None:
             return "seek requires finite time between 0 and 86400 seconds."
         return None
     if action in _DIRECTOR:
-        for field in ("target", "scene_handle"):
-            value = values.get(field)
-            if type(value) is not int or not -(2**31) <= value < 2**31 or value == 0:
-                return f"{field} requires an exact nonzero scene/component integer ID."
+        target = values.get("target")
+        if type(target) is not int or not -(2**31) <= target < 2**31 or target == 0:
+            return "target requires an exact nonzero 32-bit component instance ID."
+        # Newer Editors expose an opaque wider handle; native resolution compares it exactly.
+        scene_handle = values.get("scene_handle")
+        if type(scene_handle) is not int or scene_handle == 0:
+            return "scene_handle requires an exact nonzero integer from the loaded scene."
         revision = values.get("expected_director_revision")
         if action != "read_director" and (
             type(revision) is not str or not 1 <= len(revision) <= 1024
