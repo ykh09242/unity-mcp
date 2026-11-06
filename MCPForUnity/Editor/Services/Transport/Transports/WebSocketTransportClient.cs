@@ -67,7 +67,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private CancellationTokenSource _stoppingLifecycle;
         private static TimeSpan ControlObservationTimeout =>
             TimeSpan.FromSeconds(OperationTimeouts.EnvironmentSeconds("UNITY_MCP_WEBSOCKET_CONTROL_TIMEOUT_SECONDS", 10));
-        private IDisposable _statePublisher;
+        private EditorStatePublisher _statePublisher;
+        private Task _statePublisherCompletion = Task.CompletedTask;
         private bool _largeResultNegotiated;
         private readonly SemaphoreSlim _sendLock = new(1, 1);
 
@@ -948,6 +949,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         private sealed class ConnectionLoops
         {
+            public ClientWebSocket Socket;
             public CancellationTokenSource Cts;
             public CommandAdmission Admission;
             public Task Receive;
@@ -955,13 +957,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             public Task Registration;
             public ToolSettingsRegistration ToolSettings;
             public ConnectionCommandWork Commands;
-            public IDisposable Publisher;
+            public EditorStatePublisher Publisher;
+            public Task PublisherCompletion = Task.CompletedTask;
         }
 
         // Caller holds _ownershipLock; cancellation callbacks run only after capture.
         private ConnectionLoops CaptureConnectionLoops() =>
             new ConnectionLoops
             {
+                Socket = _socket,
                 Cts = _connectionCts,
                 Admission = _commandAdmission,
                 Receive = _receiveTask,
@@ -970,6 +974,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 ToolSettings = _toolSettingsRegistration,
                 Commands = _commandWork,
                 Publisher = _statePublisher,
+                PublisherCompletion = _statePublisherCompletion,
             };
 
         // Callers hold _ownershipLock when checking and publishing connection state.
@@ -1026,8 +1031,31 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             // Keep the captured owners across awaits; a replacement may change fields.
             await CancelOwnedAsync(loops.Cts).ConfigureAwait(false);
+            lock (_ownershipLock)
+            {
+                // Registration may have adopted its publisher after the initial capture.
+                // Cancellation is now settled, so no later adoption can start a send.
+                if (loops.Cts != null && ReferenceEquals(_connectionCts, loops.Cts))
+                {
+                    loops.Publisher ??= _statePublisher;
+                    loops.PublisherCompletion = _statePublisherCompletion;
+                }
+            }
             loops.Publisher?.Dispose();
             loops.ToolSettings?.Dispose();
+            if (!loops.PublisherCompletion.IsCompleted)
+            {
+                // A socket send may need Abort to settle despite token cancellation.
+                // Close/Dispose normally follows this drain, so release the captured I/O
+                // now without touching a newer connection's socket.
+                try
+                {
+                    loops.Socket?.Abort();
+                }
+                catch { }
+            }
+            await loops.PublisherCompletion.ConfigureAwait(false);
+            _ = Interlocked.CompareExchange(ref _statePublisherCompletion, Task.CompletedTask, loops.PublisherCompletion);
             if (loops.ToolSettings != null)
             {
                 await loops.ToolSettings.Completion.ConfigureAwait(false);
@@ -1354,19 +1382,36 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 await SendRegisterToolsAsync(token).ConfigureAwait(false);
                 if (HasCapability(payload, EditorStatePublisher.Capability))
                 {
-                    var publisher = await TransportCommandDispatcher
-                        .RunOnMainThreadAsync(() => EditorStatePublisher.Start((state, sendToken) => SendStateAsync(state, token, sendToken), token), token)
+                    await TransportCommandDispatcher
+                        .RunOnMainThreadAsync(
+                            () =>
+                                EditorStatePublisher.Start(
+                                    (state, sendToken) => SendStateAsync(state, token, sendToken),
+                                    token,
+                                    publisher =>
+                                    {
+                                        EditorStatePublisher previous;
+                                        lock (_ownershipLock)
+                                        {
+                                            if (IsCurrentConnectionToken(token))
+                                            {
+                                                previous = _statePublisher;
+                                                _statePublisher = publisher;
+                                                // Repeated registration may replace a sender before its
+                                                // canceled send settles. Retain every connection-owned send.
+                                                _statePublisherCompletion = _statePublisherCompletion.IsCompletedSuccessfully
+                                                    ? publisher.Completion
+                                                    : Task.WhenAll(_statePublisherCompletion, publisher.Completion);
+                                            }
+                                            else
+                                                previous = publisher;
+                                        }
+                                        previous?.Dispose();
+                                    }
+                                ),
+                            token
+                        )
                         .ConfigureAwait(false);
-                    lock (_ownershipLock)
-                    {
-                        if (IsCurrentConnectionToken(token))
-                        {
-                            _statePublisher?.Dispose();
-                            _statePublisher = publisher;
-                        }
-                        else
-                            publisher.Dispose();
-                    }
                 }
             }
             catch (OperationCanceledException) { }

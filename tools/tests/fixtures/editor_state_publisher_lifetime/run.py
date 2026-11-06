@@ -1,7 +1,8 @@
-"""Run actual publisher and dispatcher method with a synchronous observation boundary."""
+"""Run actual publisher, dispatcher, and transport drain with controlled boundaries."""
 
 import argparse
 import hashlib
+import re
 import subprocess
 from pathlib import Path
 
@@ -9,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[4]
 PUBLISHER = "MCPForUnity/Editor/Services/EditorStatePublisher.cs"
 FRAME = "MCPForUnity/Editor/Services/EditorStateFrame.cs"
 DISPATCHER = "MCPForUnity/Editor/Services/Transport/TransportCommandDispatcher.cs"
+TRANSPORT = "MCPForUnity/Editor/Services/Transport/Transports/WebSocketTransportClient.cs"
 
 
 def main():
@@ -22,7 +24,11 @@ def main():
         parser.error("--output must be inside repository .tmp")
     output.mkdir(parents=True, exist_ok=True)
     legacy_publisher = False
-    for path, target in ((PUBLISHER, "Publisher.cs"), (DISPATCHER, "Dispatcher.cs")):
+    for path, target in (
+        (PUBLISHER, "Publisher.cs"),
+        (DISPATCHER, "Dispatcher.cs"),
+        (TRANSPORT, "Transport.cs"),
+    ):
         source = (
             subprocess.check_output(["git", "show", f"{args.baseline}:{path}"], cwd=ROOT).decode()
             if args.baseline
@@ -43,6 +49,7 @@ def main():
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Helpers;
 using UnityEditor;
 namespace MCPForUnity.Editor.Services.Transport;
 internal static class TransportCommandDispatcher
@@ -68,6 +75,40 @@ internal static class TransportCommandDispatcher
                 + method
                 + "\n}\n"
             )
+        if path == TRANSPORT:
+            sections = []
+            for first, following in (
+                ("private sealed class ConnectionLoops", "// Callers hold _ownershipLock"),
+                ("private Task CancelOwnedAsync", "public Task<bool> VerifyAsync"),
+                ("private bool IsCurrentConnectionToken", "// Caller holds _ownershipLock."),
+                (
+                    "private async Task CompleteRegistrationAsync",
+                    "private void PersistSessionIdIfCurrent",
+                ),
+                (
+                    "private Task StopCapturedConnectionLoopsAsync",
+                    "private void StartBackgroundLoops",
+                ),
+            ):
+                start = source.index(first)
+                sections.append(source[start : source.index(following, start)].strip())
+            publisher_field = re.search(r"private \w+ _statePublisher;", source).group()
+            source = (
+                """using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using MCPForUnity.Editor.Services;
+using MCPForUnity.Editor.Services.Transport;
+using Newtonsoft.Json.Linq;
+internal partial class TransportLifetimeBoundary
+{
+"""
+                + publisher_field
+                + "\n"
+                + "\n".join(sections)
+                + "\n}\n"
+            )
         (output / target).write_text(source, encoding="utf-8")
     (output / "Frame.cs").write_text((ROOT / FRAME).read_text(encoding="utf-8"), encoding="utf-8")
     for name in ("Program.cs", "Boundary.cs"):
@@ -80,7 +121,7 @@ internal static class TransportCommandDispatcher
     (output / "Harness.csproj").write_text(
         f"""<Project Sdk="Microsoft.NET.Sdk">
 <PropertyGroup><DefineConstants>{"LEGACY_EDITOR_STATE" if legacy_publisher else ""}</DefineConstants><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><Nullable>disable</Nullable><ImplicitUsings>disable</ImplicitUsings><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
-<ItemGroup><Compile Include="Frame.cs"/><Compile Include="Publisher.cs"/><Compile Include="Dispatcher.cs"/><Compile Include="Program.cs"/><Compile Include="Boundary.cs"/><Reference Include="Newtonsoft.Json"><HintPath>{dll}</HintPath></Reference></ItemGroup>
+<ItemGroup><Compile Include="Frame.cs"/><Compile Include="Publisher.cs"/><Compile Include="Dispatcher.cs"/><Compile Include="Transport.cs"/><Compile Include="Program.cs"/><Compile Include="Boundary.cs"/><Reference Include="Newtonsoft.Json"><HintPath>{dll}</HintPath></Reference></ItemGroup>
 </Project>
 """,
         encoding="utf-8",

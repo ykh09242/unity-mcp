@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
 #if LEGACY_EDITOR_STATE
@@ -16,8 +19,109 @@ namespace UnityEditor
     }
 }
 
+// Only I/O and unrelated loop boundaries are replaced. Capture, cancellation, and
+// drain orchestration are extracted verbatim from WebSocketTransportClient.
+internal partial class TransportLifetimeBoundary
+{
+    private readonly object _ownershipLock = new();
+    private readonly Dictionary<CancellationTokenSource, Task> _cancellations = new();
+    private ClientWebSocket _socket;
+    private CancellationTokenSource _connectionCts;
+    private CommandAdmission _commandAdmission;
+    private Task _receiveTask;
+    private Task _keepAliveTask;
+    private Task _registrationTask;
+    private ToolSettingsRegistration _toolSettingsRegistration;
+    private ConnectionCommandWork _commandWork;
+    private Task _statePublisherCompletion = Task.CompletedTask;
+    internal Func<Observation, CancellationToken, Task> Send;
+
+    internal TransportLifetimeBoundary(EditorStatePublisher publisher, ClientWebSocket socket, CancellationTokenSource cts)
+    {
+        _statePublisher = publisher;
+        _statePublisherCompletion = PublisherCompletion(publisher);
+        _socket = socket;
+        _connectionCts = cts;
+    }
+
+    internal IDisposable Publisher => _statePublisher;
+    internal Task PublisherSettlement => _statePublisherCompletion;
+
+    private static Task PublisherCompletion(EditorStatePublisher publisher)
+    {
+        var completion = typeof(EditorStatePublisher).GetProperty("Completion", BindingFlags.Instance | BindingFlags.NonPublic);
+        return publisher == null ? Task.CompletedTask : (Task)completion?.GetValue(publisher) ?? Task.CompletedTask;
+    }
+
+    internal Task StartRegistration()
+    {
+        _registrationTask = CompleteRegistrationAsync(new JObject(), _connectionCts.Token);
+        return _registrationTask;
+    }
+
+    private static bool HasCapability(JObject payload, string capability) => true;
+
+    private Task SendRegisterToolsAsync(CancellationToken token) => Task.CompletedTask;
+
+    private Task SendStateAsync(Observation state, CancellationToken ownerToken, CancellationToken token) => Send(state, token);
+
+    private Task HandleSocketClosureAsync(string reason, CancellationToken token) => Task.FromException(new Exception(reason));
+
+    internal Func<Task> CaptureDrain()
+    {
+        var loops = CaptureConnectionLoops();
+        return () => StopCapturedConnectionLoopsAsync(loops);
+    }
+
+    internal void Replace(EditorStatePublisher publisher, ClientWebSocket socket, CancellationTokenSource cts)
+    {
+        _statePublisher = publisher;
+        _statePublisherCompletion = PublisherCompletion(publisher);
+        _socket = socket;
+        _connectionCts = cts;
+    }
+
+    internal sealed class ClientWebSocket
+    {
+        internal Action OnAbort;
+        internal bool Aborted;
+
+        public void Abort()
+        {
+            Aborted = true;
+            OnAbort?.Invoke();
+        }
+    }
+
+    private sealed class CommandAdmission : IDisposable
+    {
+        internal CancellationToken Token => CancellationToken.None;
+
+        internal void Retire() { }
+
+        public void Dispose() { }
+    }
+
+    private sealed class ToolSettingsRegistration : IDisposable
+    {
+        internal Task Completion => Task.CompletedTask;
+
+        public void Dispose() { }
+    }
+
+    private sealed class ConnectionCommandWork
+    {
+        internal Task DrainAsync() => Task.CompletedTask;
+    }
+}
+
 namespace MCPForUnity.Editor.Helpers
 {
+    internal static class EditorMainThreadWakeup
+    {
+        internal static void Request(bool immediate = false) { }
+    }
+
     internal static class McpLog
     {
         internal static void Warn(string message) { }

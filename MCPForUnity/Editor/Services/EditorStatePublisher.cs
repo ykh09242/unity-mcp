@@ -15,11 +15,18 @@ namespace MCPForUnity.Editor.Services
         private readonly object _gate = new object();
         private readonly Func<EditorStateFrame, CancellationToken, Task> _send;
         private readonly CancellationTokenSource _lifetime;
+        private readonly TaskCompletionSource<bool> _completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         private IDisposable _subscription;
         private CancellationTokenRegistration _connectionCancellation;
         private EditorStateFrame _pending;
         private bool _sending;
         private bool _disposed;
+        private bool _starting = true;
+        private bool _disposeFinished;
+
+        // Disposal requests cancellation; completion additionally observes the actual
+        // last send and any subscription still being adopted by Start.
+        internal Task Completion => _completion.Task;
 
         private EditorStatePublisher(Func<EditorStateFrame, CancellationToken, Task> send, CancellationToken token)
         {
@@ -28,7 +35,11 @@ namespace MCPForUnity.Editor.Services
         }
 
         /// <summary>Call on Unity's main thread after capability negotiation and registration.</summary>
-        internal static EditorStatePublisher Start(Func<EditorStateFrame, CancellationToken, Task> send, CancellationToken connectionToken)
+        internal static EditorStatePublisher Start(
+            Func<EditorStateFrame, CancellationToken, Task> send,
+            CancellationToken connectionToken,
+            Action<EditorStatePublisher> takeOwnership = null
+        )
         {
             connectionToken.ThrowIfCancellationRequested();
             var publisher = new EditorStatePublisher(send, connectionToken);
@@ -47,6 +58,9 @@ namespace MCPForUnity.Editor.Services
                 if (!keepRegistration)
                     registration.Dispose();
 
+                // Retain completion before Subscribe can launch the first send. A
+                // cancellable dispatcher may discard the eventual return value.
+                takeOwnership?.Invoke(publisher);
                 var subscription = EditorStateCache.Subscribe(publisher.Observe);
                 bool keepSubscription;
                 lock (publisher._gate)
@@ -63,6 +77,14 @@ namespace MCPForUnity.Editor.Services
             {
                 publisher.Dispose();
                 throw;
+            }
+            finally
+            {
+                lock (publisher._gate)
+                {
+                    publisher._starting = false;
+                    publisher.CompleteIfStopped();
+                }
             }
         }
 
@@ -115,7 +137,7 @@ namespace MCPForUnity.Editor.Services
                 {
                     _sending = false;
                     if (_disposed)
-                        _lifetime.Dispose();
+                        CompleteIfStopped();
                     else if (_pending != null)
                     {
                         // An observation may have arrived between the last empty
@@ -141,19 +163,45 @@ namespace MCPForUnity.Editor.Services
                 _subscription = null;
                 registration = _connectionCancellation;
                 _connectionCancellation = default;
-                _lifetime.Cancel();
-                if (!_sending)
-                    _lifetime.Dispose();
             }
             try
             {
-                subscription?.Dispose();
+                // Send cancellation callbacks may acquire other locks or call Observe.
+                // Never invoke them while holding the publisher gate.
+                _lifetime.Cancel();
             }
             finally
             {
-                // Dispose may wait for cancellation's callback, which also takes _gate.
-                registration.Dispose();
+                try
+                {
+                    subscription?.Dispose();
+                }
+                finally
+                {
+                    try
+                    {
+                        // Dispose may wait for cancellation's callback, which also takes _gate.
+                        registration.Dispose();
+                    }
+                    finally
+                    {
+                        lock (_gate)
+                        {
+                            _disposeFinished = true;
+                            CompleteIfStopped();
+                        }
+                    }
+                }
             }
+        }
+
+        // Caller holds _gate. No worker can be scheduled after disposal.
+        private void CompleteIfStopped()
+        {
+            if (!_disposed || !_disposeFinished || _starting || _sending || _completion.Task.IsCompleted)
+                return;
+            _lifetime.Dispose();
+            _completion.TrySetResult(true);
         }
     }
 }
