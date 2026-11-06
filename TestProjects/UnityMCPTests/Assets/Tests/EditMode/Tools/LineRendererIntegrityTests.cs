@@ -20,6 +20,7 @@ namespace MCPForUnityTests.Editor.Tools
         private UnityEngine.Object[] previousSelection;
         private UnityEngine.Object previousActiveObject;
         private readonly Vector3[] originalPositions = { new Vector3(1, 2, 3), new Vector3(4, 5, 6) };
+        private const int PointLimit = 65536;
 
         [OneTimeSetUp]
         public void OneTimeSetUp() => sceneFixture.PrepareRunnerBootstrap();
@@ -160,6 +161,121 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsFalse(response.Value<bool>("success"));
             Assert.AreSame(material, line.sharedMaterial);
             CollectionAssert.AreEqual(originalPositions, Positions(line));
+        }
+
+        [TestCase("line_create_circle", "segments", PointLimit + 1)]
+        [TestCase("line_create_circle", "segments", int.MaxValue)]
+        [TestCase("line_create_circle", "segments", int.MaxValue - 1)]
+        [TestCase("line_create_arc", "segments", PointLimit)]
+        [TestCase("line_create_arc", "segments", int.MaxValue)]
+        [TestCase("line_create_arc", "segments", int.MaxValue - 1)]
+        [TestCase("line_create_bezier", "segments", PointLimit)]
+        [TestCase("line_create_bezier", "segments", int.MaxValue)]
+        [TestCase("line_create_bezier", "segments", int.MaxValue - 1)]
+        [TestCase("line_set_properties", "positionCount", PointLimit + 1)]
+        [TestCase("line_set_properties", "positionCount", int.MaxValue)]
+        [TestCase("line_set_properties", "positionCount", int.MaxValue - 1)]
+        public void ExcessivePointWorkPreservesRendererAndScene(string action, string key, int count)
+        {
+            AssertRejectedPointWork(action, new JObject { [key] = count, ["loop"] = true });
+        }
+
+        [TestCase("line_set_positions", false)]
+        [TestCase("line_set_positions", true)]
+        [TestCase("line_set_properties", false)]
+        [TestCase("line_set_properties", true)]
+        public void OversizedPositionsAreRejectedBeforeParsingOrAssigningMaterial(string action, bool existingMaterial)
+        {
+            if (existingMaterial)
+                AssignUsableMaterial();
+            // Null entries also prove the budget is checked before traversing vectors.
+            var positions = new JArray();
+            for (int i = 0; i <= PointLimit; i++)
+                positions.Add(JValue.CreateNull());
+            AssertRejectedPointWork(action, new JObject { ["positions"] = positions, ["loop"] = true });
+        }
+
+        [TestCase("line_create_circle", PointLimit)]
+        [TestCase("line_create_arc", PointLimit - 1)]
+        [TestCase("line_create_bezier", PointLimit - 1)]
+        [TestCase("line_set_properties", PointLimit)]
+        public void PointBudgetAcceptsBoundary(string action, int count)
+        {
+            AssignUsableMaterial();
+            string key = action == "line_set_properties" ? "positionCount" : "segments";
+            JObject response = Call(action, new JObject { [key] = count });
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(PointLimit, line.positionCount);
+            Assert.AreSame(material, line.sharedMaterial);
+        }
+
+        [TestCase("line_set_positions")]
+        [TestCase("line_set_properties")]
+        public void BulkPositionsAcceptBoundary(string action)
+        {
+            AssignUsableMaterial();
+            var positions = new JArray();
+            for (int i = 0; i < PointLimit; i++)
+                positions.Add(new JArray(i, 0, 0));
+            JObject response = Call(action, new JObject { ["positions"] = positions });
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(PointLimit, line.positionCount);
+            Assert.AreEqual(new Vector3(PointLimit - 1, 0, 0), line.GetPosition(PointLimit - 1));
+            Assert.AreSame(material, line.sharedMaterial);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void AddAtPointBudgetPreservesRendererAndScene(bool existingMaterial)
+        {
+            if (existingMaterial)
+                AssignUsableMaterial();
+            line.positionCount = PointLimit;
+            AssertRejectedPointWork("line_add_position", new JObject { ["position"] = new JArray(1, 2, 3) });
+        }
+
+        [Test]
+        public void AddAcceptsPointBudgetBoundary()
+        {
+            AssignUsableMaterial();
+            line.positionCount = PointLimit - 1;
+            Assert.IsTrue(Call("line_add_position", new JObject { ["position"] = new JArray(9, 8, 7) }).Value<bool>("success"));
+            Assert.AreEqual(PointLimit, line.positionCount);
+            Assert.AreEqual(new Vector3(9, 8, 7), line.GetPosition(PointLimit - 1));
+            Assert.AreSame(material, line.sharedMaterial);
+        }
+
+        [TestCase("LineCreate", "CreateCircle", "segments")]
+        [TestCase("LineCreate", "CreateArc", "segments")]
+        [TestCase("LineCreate", "CreateBezier", "segments")]
+        [TestCase("LineWrite", "SetProperties", "positionCount")]
+        public void NativeBoundaryRejectsExcessiveCountsWithoutPublicValidation(string typeName, string methodName, string key)
+        {
+            var properties = new JObject
+            {
+                ["target"] = root.GetInstanceIDCompat(),
+                ["searchMethod"] = "by_id",
+                [key] = int.MaxValue - 1,
+            };
+            Type type = typeof(ManageVFX).Assembly.GetType("MCPForUnity.Editor.Tools.Vfx." + typeName);
+            var method = type.GetMethod(methodName, System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public);
+            AssertRejectedPointWork(null, properties, () => JObject.FromObject(method.Invoke(null, new object[] { properties })));
+        }
+
+        private void AssertRejectedPointWork(string action, JObject properties, Func<JObject> invoke = null)
+        {
+            Vector3[] before = Positions(line);
+            Material beforeMaterial = line.sharedMaterial;
+            sceneFixture.ClearDirtiness();
+            int dirtyCount = EditorUtility.GetDirtyCount(line);
+            JObject response = invoke != null ? invoke() : Call(action, properties);
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("65536", response.Value<string>("message"));
+            CollectionAssert.AreEqual(before, Positions(line));
+            Assert.AreSame(beforeMaterial, line.sharedMaterial);
+            Assert.IsFalse(line.loop);
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(line));
+            Assert.IsFalse(SceneManager.GetActiveScene().isDirty);
         }
 
         [TestCase("line_set_positions")]

@@ -43,6 +43,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
             int segments = @params["segments"]?.ReadScalar<int?>() ?? 32;
             if (segments < 1)
                 return new { success = false, message = "segments must be positive" };
+            if (!LinePointBudget.TryValidate(segments, out var error))
+                return new { success = false, message = error };
             Vector3 normal = @params["normal"] != null ? ManageVfxCommon.ParseVector3(@params["normal"]).normalized : Vector3.up;
 
             Vector3 right = Vector3.Cross(normal, Vector3.forward);
@@ -93,8 +95,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
             float startAngle = (@params["startAngle"]?.ReadScalar<float?>() ?? 0f) * Mathf.Deg2Rad;
             float endAngle = (@params["endAngle"]?.ReadScalar<float?>() ?? 180f) * Mathf.Deg2Rad;
             int segments = @params["segments"]?.ReadScalar<int?>() ?? 16;
-            if (segments < 1 || segments == int.MaxValue)
-                return new { success = false, message = "segments must be positive and leave room for the final position" };
+            if (segments < 1)
+                return new { success = false, message = "segments must be positive" };
+            if (!LinePointBudget.TryValidate((long)segments + 1, out var error))
+                return new { success = false, message = error };
             Vector3 normal = @params["normal"] != null ? ManageVfxCommon.ParseVector3(@params["normal"]).normalized : Vector3.up;
 
             Vector3 right = Vector3.Cross(normal, Vector3.forward);
@@ -149,8 +153,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     ? ManageVfxCommon.ParseVector3(@params["controlPoint2"] ?? @params["control2"])
                     : cp1;
             int segments = @params["segments"]?.ReadScalar<int?>() ?? 32;
-            if (segments < 1 || segments == int.MaxValue)
-                return new { success = false, message = "segments must be positive and leave room for the final position" };
+            if (segments < 1)
+                return new { success = false, message = "segments must be positive" };
+            if (!LinePointBudget.TryValidate((long)segments + 1, out var error))
+                return new { success = false, message = error };
             bool isQuadratic = @params["controlPoint2"] == null && @params["control2"] == null;
             var applyAppearance = PrepareAppearance(@params, lr);
 

@@ -37,10 +37,13 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (!TryParsePosition(@params["position"], allowDefault: true, out var pos))
                 return new { success = false, message = "Invalid position: expected [x, y, z] or {x, y, z}" };
 
+            int idx = lr.positionCount;
+            if (!LinePointBudget.TryValidate((long)idx + 1, out var error))
+                return new { success = false, message = error };
+
             RendererHelpers.EnsureMaterial(lr);
 
             Undo.RecordObject(lr, "Add Line Position");
-            int idx = lr.positionCount;
             lr.positionCount = idx + 1;
             lr.SetPosition(idx, pos);
             EditorUtility.SetDirty(lr);
@@ -168,8 +171,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
             else if (@params["positionCount"] != null)
             {
                 positionCount = @params["positionCount"].ReadScalar<int>();
-                if (positionCount < 0)
-                    return new { success = false, message = "positionCount must be non-negative" };
+                if (!LinePointBudget.TryValidate(positionCount.Value, out var error))
+                    return new { success = false, message = error };
             }
 
             var rendererChanges = new List<string>();
@@ -235,6 +238,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
             error = "Positions array required";
             if (!(token is JArray array))
                 return false;
+            if (!LinePointBudget.TryValidate(array.Count, out error))
+                return false;
 
             positions = new Vector3[array.Count];
             for (int i = 0; i < array.Count; i++)
@@ -273,6 +278,22 @@ namespace MCPForUnity.Editor.Tools.Vfx
             EditorUtility.SetDirty(lr);
 
             return new { success = true, message = $"Cleared {count} positions" };
+        }
+    }
+
+    /// <summary>
+    /// Bounds line generation, parsing and native resizing to 65,536 points per operation.
+    /// A maximum-sized Vector3 buffer uses 768 KiB; the same cap bounds generated-point work.
+    /// Open shapes include their final endpoint in this total.
+    /// </summary>
+    internal static class LinePointBudget
+    {
+        internal const int MaxPoints = 65536;
+
+        internal static bool TryValidate(long pointCount, out string error)
+        {
+            error = pointCount >= 0 && pointCount <= MaxPoints ? null : $"Line position count must be between 0 and {MaxPoints}.";
+            return error == null;
         }
     }
 }
