@@ -41,12 +41,14 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
 
     internal sealed class BundlePlan
     {
+        internal string AssetsRoot;
         internal string SourceRoot;
         internal readonly List<BundleEntry> Entries = new();
         internal readonly Dictionary<string, BundleEntry> EntriesByPath = new(StringComparer.Ordinal);
         internal readonly Dictionary<string, string> PortablePaths = new(StringComparer.OrdinalIgnoreCase);
         internal readonly Dictionary<string, string> PortableDirectories = new(StringComparer.OrdinalIgnoreCase);
         internal BundleLimits Limits;
+        internal CancellationToken CancellationToken;
         internal long Bytes;
         internal long EmbeddedBytes;
         internal int References;
@@ -122,12 +124,24 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             "decal",
         };
 
-        internal static BundlePlan Plan(string sourceAbsolutePath, BundleLimits limits = null)
+        internal static BundlePlan Plan(
+            string sourceAbsolutePath,
+            BundleLimits limits = null,
+            CancellationToken cancellationToken = default,
+            string assetsRoot = null
+        )
         {
-            var plan = new BundlePlan { Limits = limits ?? new BundleLimits() };
+            var plan = new BundlePlan { Limits = limits ?? new BundleLimits(), CancellationToken = cancellationToken };
             try
             {
-                string source = AssetGenPaths.ToAbsolute(sourceAbsolutePath);
+                cancellationToken.ThrowIfCancellationRequested();
+                // Worker callers capture Application.dataPath on the Editor thread.
+                assetsRoot ??= Application.dataPath;
+                plan.AssetsRoot = assetsRoot;
+                string absolute = Path.IsPathRooted(sourceAbsolutePath)
+                    ? sourceAbsolutePath
+                    : Path.Combine(Path.GetDirectoryName(assetsRoot), sourceAbsolutePath);
+                string source = SafePathUtility.ResolveWithinRoot(assetsRoot, absolute);
                 plan.SourceRoot = Path.GetDirectoryName(source);
                 BundleEntry main = AddFile(plan, Path.GetFileName(source));
                 string extension = Path.GetExtension(source).ToLowerInvariant();
@@ -145,15 +159,23 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     throw Error(plan, "unsupported_dependency_form", "Dependency inspection supports local OBJ, glTF and core GLB resources only.");
                 var imageAdmission = new ImageAdmission();
                 foreach (BundleEntry entry in plan.Entries)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (ImageAdmission.IsImage(Path.GetExtension(entry.RelativePath)))
                     {
                         using var imageStream = new FileStream(entry.AbsolutePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-                        imageAdmission.Inspect(imageStream, imageStream.Length, Path.GetExtension(entry.RelativePath));
+                        imageAdmission.Inspect(imageStream, imageStream.Length, Path.GetExtension(entry.RelativePath), token: cancellationToken);
                         imageStream.Position = 0;
                         entry.MetadataHash = HashBounded(plan, imageStream, entry);
                     }
-                ModelMetadataAdmission.File(source, imageAdmission, externalImagesAlreadyAdmitted: true);
+                }
+                ModelMetadataAdmission.File(source, imageAdmission, externalImagesAlreadyAdmitted: true, cancellationToken: cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
                 return plan;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (BundleImportException)
             {
@@ -179,6 +201,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
 
         private static BundleEntry AddFile(BundlePlan plan, string relative)
         {
+            plan.CancellationToken.ThrowIfCancellationRequested();
             ValidatePath(plan, relative);
             for (int separator = relative.IndexOf('/'); separator >= 0; separator = relative.IndexOf('/', separator + 1))
             {
@@ -217,11 +240,11 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             return entry;
         }
 
-        private static string ResolveSource(BundlePlan plan, string relative)
+        internal static string ResolveSource(BundlePlan plan, string relative)
         {
             try
             {
-                return AssetGenPaths.ToAbsolute(SafePathUtility.ResolveWithinRoot(plan.SourceRoot, relative));
+                return SafePathUtility.ResolveWithinRoot(plan.AssetsRoot, SafePathUtility.ResolveWithinRoot(plan.SourceRoot, relative));
             }
             catch (Exception e)
             {
@@ -229,7 +252,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             }
         }
 
-        private static void ValidatePath(BundlePlan plan, string relative)
+        internal static void ValidatePath(BundlePlan plan, string relative)
         {
             if (string.IsNullOrEmpty(relative))
                 throw Error(plan, "unsafe_dependency_path", "Dependency path must not be empty.", relative);
@@ -306,6 +329,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
 
         private static void Reference(BundlePlan plan)
         {
+            plan.CancellationToken.ThrowIfCancellationRequested();
             if (++plan.References > plan.Limits.MaxReferences)
                 throw Error(plan, "dependency_limit_exceeded", "Dependency reference count exceeds the local bundle limit.");
         }
@@ -344,18 +368,23 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 int offset = 0;
                 while (offset < json.Length)
                 {
-                    int count = stream.Read(json, offset, json.Length - offset);
+                    plan.CancellationToken.ThrowIfCancellationRequested();
+                    int count = stream.Read(json, offset, Math.Min(81920, json.Length - offset));
                     if (count == 0)
                         throw Error(plan, "dependency_source_changed", "Model metadata changed while being inspected.");
                     offset += count;
                 }
+                plan.CancellationToken.ThrowIfCancellationRequested();
                 document = BoundedJson.ParseObject(Utf8.GetString(json), BoundedJson.ModelLimits(plan.Limits.MaxJsonDepth));
+                plan.CancellationToken.ThrowIfCancellationRequested();
                 stream.Position = 0;
                 main.MetadataHash = HashBounded(plan, stream, main);
             }
 
             bool opaque = false;
             foreach (JToken token in document.Descendants())
+            {
+                plan.CancellationToken.ThrowIfCancellationRequested();
                 if (
                     token is JProperty property
                     && (property.Name == "extensions" || property.Name == "extensionsUsed" || property.Name == "extensionsRequired")
@@ -363,6 +392,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                     && (property.Value.HasValues || !(property.Value is JContainer))
                 )
                     opaque = true;
+            }
             if (opaque && !glb)
                 throw Error(
                     plan,
@@ -383,6 +413,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 throw Error(plan, "unsupported_dependency_form", "glTF " + role + " resources must be an array.");
             foreach (JToken resource in array)
             {
+                plan.CancellationToken.ThrowIfCancellationRequested();
                 if (!(resource is JObject item))
                     throw Error(plan, "unsupported_dependency_form", "glTF resource must be an object.");
                 JToken uri = item["uri"];
@@ -440,6 +471,8 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 : 0;
             for (int i = comma + 1; i < uri.Length - padding; i++)
             {
+                if ((i & 4095) == 0)
+                    plan.CancellationToken.ThrowIfCancellationRequested();
                 char c = uri[i];
                 if (!(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '+' || c == '/'))
                     throw Error(plan, "unsupported_dependency_form", "Malformed base64 data URI.");
@@ -475,8 +508,13 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             char[] buffer = new char[4096];
             int number = 1;
             int count;
-            while ((count = reader.Read(buffer, 0, buffer.Length)) != 0)
+            while (true)
             {
+                plan.CancellationToken.ThrowIfCancellationRequested();
+                count = reader.Read(buffer, 0, buffer.Length);
+                plan.CancellationToken.ThrowIfCancellationRequested();
+                if (count == 0)
+                    break;
                 if (input.Position > entry.Length)
                     throw Error(plan, "dependency_source_changed", "Model/material grew beyond its inspected byte budget.", entry.RelativePath);
                 for (int i = 0; i < count; i++)
@@ -707,8 +745,13 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
             byte[] buffer = new byte[81920];
             long total = 0;
             int count;
-            while ((count = stream.Read(buffer, 0, buffer.Length)) != 0)
+            while (true)
             {
+                plan.CancellationToken.ThrowIfCancellationRequested();
+                count = stream.Read(buffer, 0, buffer.Length);
+                plan.CancellationToken.ThrowIfCancellationRequested();
+                if (count == 0)
+                    break;
                 if (count > entry.Length - total)
                     throw Error(plan, "dependency_source_changed", "Model grew beyond its inspected byte budget.", entry.RelativePath);
                 hash.TransformBlock(buffer, 0, count, buffer, 0);

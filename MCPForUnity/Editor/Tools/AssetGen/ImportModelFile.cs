@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services.AssetGen;
@@ -25,13 +26,18 @@ namespace MCPForUnity.Editor.Tools.AssetGen
     {
         private static readonly string[] SupportedExt = { ".fbx", ".obj", ".glb", ".gltf", ".zip" };
 
-        public static object HandleCommand(JObject @params)
+        public static object HandleCommand(JObject @params) => Handle(@params, CancellationToken.None, false).GetAwaiter().GetResult();
+
+        public static Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken) => Handle(@params, cancellationToken, true);
+
+        private static async Task<object> Handle(JObject @params, CancellationToken cancellationToken, bool asynchronous)
         {
             if (@params == null)
                 return new ErrorResponse("Parameters cannot be null.");
             var p = new ToolParams(@params);
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 string archiveModelPath = ModelArchiveSelection.ReadSelector(p.GetRaw("archiveModelPath"));
                 string source = p.Get("sourcePath");
                 if (string.IsNullOrWhiteSpace(source))
@@ -58,31 +64,21 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                     AnimationType = p.Get("animationType"),
                     ArchiveModelPath = archiveModelPath,
                 };
-                string destRel;
-                string bundleRoot = null;
-                JObject dependencyEvidence;
-                if (ext == ".obj" || ext == ".gltf" || ext == ".glb")
-                {
-                    BundlePlan plan = ModelDependencyBundle.Plan(srcAbs);
-                    BundleStageResult staged = ModelDependencyBundle.Stage(plan, p.Get("outputFolder"), baseName);
-                    destRel = staged.MainAssetPath;
-                    bundleRoot = staged.BundleRoot;
-                    dependencyEvidence = staged.Evidence;
-                }
-                else
-                {
-                    destRel = StageUnderAssets(srcAbs, baseName, ext, p.Get("outputFolder"));
-                    dependencyEvidence = new JObject
-                    {
-                        ["inspection"] = ext == ".zip" ? "archive_managed" : "not_scanned",
-                        ["stage"] = "staged",
-                        ["main_asset_path"] = destRel,
-                        ["planned_file_count"] = 1,
-                        ["staged_file_count"] = 1,
-                        ["staged_bytes"] = new FileInfo(AssetGenPaths.ToAbsolute(destRel)).Length,
-                    };
-                }
-                AssetGenJob result = ImportStaged(job, destRel, bundleRoot);
+                string assetsRoot = Application.dataPath;
+                string outputFolder = AssetGenPaths.ResolveOutputFolder(p.Get("outputFolder"), "Imported");
+                // Await the actual worker, never a cancellation race: it owns files and disk
+                // credit until all reads/writes have stopped. Unity's captured context returns
+                // this continuation to the Editor thread for publication and native import.
+                using LocalModelPreparation prepared = asynchronous
+                    ? await LocalModelPreparation.PrepareAsync(srcAbs, assetsRoot, cancellationToken)
+                    : LocalModelPreparation.Prepare(srcAbs, assetsRoot, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                BundleStageResult staged = prepared.Publish(outputFolder, baseName);
+                JObject dependencyEvidence = staged.Evidence;
+                prepared.Commit();
+                AssetGenJob result = ImportStaged(job, staged.MainAssetPath, staged.BundleRoot, cancellationToken);
+                if (result?.State == AssetGenJobState.Canceled)
+                    cancellationToken.ThrowIfCancellationRequested();
 
                 if (result == null || result.State == AssetGenJobState.Failed)
                     return new ErrorResponse(
@@ -110,6 +106,10 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                     }
                 );
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (ArchiveSelectionException e)
             {
                 return new ErrorResponse(SecretRedactor.Scrub(e.Message), new { model_import_error_code = e.ErrorCode });
@@ -124,16 +124,21 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             }
         }
 
-        private static AssetGenJob ImportStaged(AssetGenJob job, string mainPath, string bundleRoot)
+        private static AssetGenJob ImportStaged(AssetGenJob job, string mainPath, string bundleRoot, CancellationToken cancellationToken)
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (bundleRoot != null)
                     AssetDatabase.ImportAsset(
                         bundleRoot,
                         ImportAssetOptions.ImportRecursive | ImportAssetOptions.ForceUpdate | ImportAssetOptions.ForceSynchronousImport
                     );
-                return ModelImportPipeline.ImportInto(job, mainPath);
+                return ModelImportPipeline.ImportInto(job, mainPath, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception e)
             {

@@ -138,6 +138,25 @@ input bytes. Admitted model metadata still materializes in memory.
 
 ### Local model copies and recovery
 
+`import_model_file` uses a cooperative asynchronous command handler. Dependency
+planning, bounded metadata scans and local byte copies run on a bounded worker
+queue, using captured project paths rather than Unity APIs. The worker prepares
+an owned snapshot under the project's `Temp/MCPForUnity/LocalModels` directory.
+Destination identity checks, same-volume publication moves and Unity import run
+on the Editor thread after that worker finishes. Existing synchronous C# entry
+points remain available for callers that explicitly require them.
+
+Request cancellation is checked between file reads, dependency entries and
+publication steps. It prevents publication when observed before publication,
+and propagates as cancellation rather than a dependency or import success.
+A blocking filesystem read and an already-running native Unity import cannot be
+preempted. Cancellation waits for the preparation worker to stop before removing
+its files or releasing its disk reservation. Failed cleanup retains credit for
+surviving owned files. Cancellation before commit rolls back only owned staged
+files and empty created folders; after commit, the existing import pipeline can
+retain published assets for repair. Archive extraction and native import retain
+their existing synchronous pipeline behavior after publication.
+
 Local FBX/ZIP copies enforce the 8 GiB artifact limit and use the same per-project,
 per-Editor-process transient disk ledger and free-space headroom as downloads.
 OBJ/glTF bundles reserve planned copy bytes in that ledger. Defaults are 32 GiB
