@@ -1857,27 +1857,31 @@ class GraphWorkspace:
     def catalog_snapshot(self, known_revision: int | None = None) -> tuple[int, list[dict] | None]:
         with self.store._connect() as connection:
             revision = self._state(connection, "catalog_revision", 0)
-            rows = None if revision == known_revision else self._catalog_rows(connection)
+            rows = None if revision == known_revision else list(self._catalog_rows(connection))
             return revision, rows
 
     @staticmethod
-    def _catalog_rows(connection) -> list[dict]:
-        rows = [
-            json.loads(row[0])
-            for row in connection.execute("SELECT payload FROM graph_assets ORDER BY guid")
-        ]
+    def _catalog_rows(connection) -> Iterable[dict]:
+        # Consume inside the caller's read snapshot; no decoded catalog backlog.
+        for row in connection.execute("SELECT payload FROM graph_assets ORDER BY guid"):
+            check_graph_work()
+            yield json.loads(row[0])
         blocked = {}
-        for guid, path in connection.execute(
-            "SELECT guid,path FROM graph_asset_paths WHERE 'asset:'||guid IN (SELECT id FROM graph_excluded_nodes)"
+        for guid, path, scheme, value in connection.execute(
+            "SELECT p.guid,p.path,k.scheme,k.value FROM graph_asset_paths p "
+            "JOIN graph_excluded_nodes n ON n.id='asset:'||p.guid "
+            "LEFT JOIN graph_blocked_keys k ON k.guid=p.guid ORDER BY p.guid,k.scheme,k.value"
         ):
-            blocked[guid] = {"guid": guid, "path": path, "_excluded": True, "keys": []}
-        for guid, scheme, value in connection.execute(
-            "SELECT guid,scheme,value FROM graph_blocked_keys"
-        ):
-            if guid in blocked:
-                blocked[guid]["keys"].append({"scheme": scheme, "value": value})
-        rows.extend(blocked.values())
-        return rows
+            check_graph_work()
+            if blocked.get("guid") != guid:
+                if blocked:
+                    yield blocked
+                blocked = {"guid": guid, "path": path, "_excluded": True, "keys": []}
+            if scheme is not None:
+                blocked["keys"].append({"scheme": scheme, "value": value})
+        check_graph_work()
+        if blocked:
+            yield blocked
 
     def key_admission(self):
         """Reuse a minimal key admission catalog across runtime pages."""
