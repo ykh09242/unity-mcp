@@ -346,7 +346,7 @@ async def test_cleanup_failure_still_releases_every_independent_owner(
     monkeypatch.setattr(ApiKeyService, "get_instance", lambda: validator)
     monkeypatch.setattr(main, "_unity_connection_pool", pool)
     shutdown = AsyncMock()
-    monkeypatch.setattr(PluginHub, "shutdown", shutdown)
+    monkeypatch.setattr(PluginHub, "begin_shutdown", lambda: shutdown)
     with pytest.raises(RuntimeError, match=failure + " cleanup"):
         async with main.server_lifespan(server):
             pass
@@ -359,6 +359,61 @@ async def test_cleanup_failure_still_releases_every_independent_owner(
     validator.aclose.assert_awaited_once()
     lifecycle_state.return_value.cancel.assert_called_once()
     assert main._plugin_registry is None and main._unity_connection_pool is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retire_early", [False, True])
+async def test_server_cleanup_reserves_hub_before_unrelated_owner_suspends(
+    lifecycle_state, monkeypatch, retire_early
+):
+    entered, release = asyncio.Event(), asyncio.Event()
+    server = FastMCP("retiring-server")
+
+    async def close_graph():
+        entered.set()
+        await release.wait()
+
+    server._reference_graph_service = SimpleNamespace(aclose=close_graph)
+    hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
+    old_socket, new_socket = socket_stub(), socket_stub()
+
+    async def run():
+        async with main.server_lifespan(server):
+            await hub._handle_register(old_socket, RegisterMessage(project_hash="old"))
+
+    shutdown = asyncio.create_task(run())
+    try:
+        await await_signal(entered, "prior graph cleanup", producers=(shutdown,))
+        old_registry = PluginHub._registry
+        new_registry = PluginRegistry()
+        with pytest.raises(RuntimeError, match="still shutting down"):
+            PluginHub.configure(new_registry)
+        assert PluginHub._registry is old_registry
+        assert PluginHub.is_configured()
+        if retire_early:
+            await PluginHub.shutdown()
+        else:
+            release.set()
+            await asyncio.wait_for(shutdown, timeout=watchdog_timeout())
+        PluginHub.configure(new_registry)
+        monkeypatch.setattr(main, "_plugin_registry", new_registry)
+        await hub._handle_register(new_socket, RegisterMessage(project_hash="new"))
+        session_id = next(sid for sid, ws in PluginHub._connections.items() if ws is new_socket)
+        ping_task = PluginHub._ping_tasks[session_id]
+        release.set()
+        await asyncio.wait_for(shutdown, timeout=watchdog_timeout())
+        assert PluginHub._registry is new_registry
+        assert main._plugin_registry is new_registry
+        assert PluginHub._connections[session_id] is new_socket
+        assert await new_registry.get_session(session_id) is not None
+        assert not ping_task.done()
+        new_socket.close.assert_not_awaited()
+        old_socket.close.assert_awaited_once()
+        assert await old_registry.list_sessions() == {}
+    finally:
+        release.set()
+        await asyncio.gather(shutdown, return_exceptions=True)
+        await PluginHub.shutdown()
 
 
 @pytest.mark.asyncio
@@ -375,7 +430,7 @@ async def test_repeated_shutdown_cancellation_cannot_abandon_independent_cleanup
     server._reference_graph_service = SimpleNamespace(aclose=close_graph)
     server._scene_load_inputs = SimpleNamespace(close=Mock())
     shutdown = AsyncMock()
-    monkeypatch.setattr(PluginHub, "shutdown", shutdown)
+    monkeypatch.setattr(PluginHub, "begin_shutdown", lambda: shutdown)
 
     async def run():
         async with main.server_lifespan(server):
@@ -411,7 +466,7 @@ async def test_level_cancelled_server_lifespan_finishes_owned_cleanup(lifecycle_
 
     server._reference_graph_service = SimpleNamespace(aclose=close_graph)
     shutdown = AsyncMock()
-    monkeypatch.setattr(PluginHub, "shutdown", shutdown)
+    monkeypatch.setattr(PluginHub, "begin_shutdown", lambda: shutdown)
     with anyio.fail_after(watchdog_timeout()):
         with anyio.CancelScope() as scope:
             async with main.server_lifespan(server):
@@ -437,7 +492,7 @@ async def test_unsettled_graph_diagnostic_does_not_skip_server_cleanup(
     )
     server._reference_graph_service = graph
     shutdown = AsyncMock()
-    monkeypatch.setattr(PluginHub, "shutdown", shutdown)
+    monkeypatch.setattr(PluginHub, "begin_shutdown", lambda: shutdown)
     async with main.server_lifespan(server):
         pass
     assert "owned work is still draining" in caplog.text

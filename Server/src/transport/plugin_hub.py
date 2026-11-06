@@ -345,6 +345,8 @@ class _ControlReservation:
 class PluginHub(WebSocketEndpoint):
     """Manages persistent WebSocket connections to Unity plugins."""
 
+    _shutdown_reservation: object | None = None
+
     # configure() creates the lock and entry points guard its lifecycle. Pylint
     # only infers the class attribute's initial None value in async-with blocks.
     # pylint: disable=not-async-context-manager
@@ -967,6 +969,8 @@ class PluginHub(WebSocketEndpoint):
         loop: asyncio.AbstractEventLoop | None = None,
         mcp: FastMCP | None = None,
     ) -> None:
+        if cls._shutdown_reservation is not None:
+            raise RuntimeError("PluginHub server resources are still shutting down")
         cls._fence_plugin_owners()
         cls._catalog_notifications.reset()
         # A closing generation can still be draining this notifier. New deliveries
@@ -1024,6 +1028,26 @@ class PluginHub(WebSocketEndpoint):
             logger.debug("Failed to close plugin WebSocket", exc_info=True)
 
     @classmethod
+    def begin_shutdown(cls) -> Callable[[], Coroutine[Any, Any, None]]:
+        """Reserve this generation while preceding server owners drain.
+
+        Reconfiguration must wait until its pool and other catalog publishers
+        finish. Direct shutdown can retire it earlier; the captured identity
+        then prevents this callback from shutting down any later replacement.
+        """
+        registry, lock = cls._registry, cls._lock
+        reservation = object()
+        cls._shutdown_reservation = reservation
+
+        async def close() -> None:
+            if cls._shutdown_reservation is reservation:
+                cls._shutdown_reservation = None
+            if cls._registry is registry and cls._lock is lock:
+                await cls.shutdown()
+
+        return close
+
+    @classmethod
     async def shutdown(cls) -> None:
         """Detach this generation before suspension; a later configure may proceed.
 
@@ -1032,6 +1056,7 @@ class PluginHub(WebSocketEndpoint):
         even while waiting for an old hub lock.
         Result charges remain process-wide until their actual workers release them.
         """
+        cls._shutdown_reservation = None
         cls._fence_plugin_owners()
         lock = cls._lock
         registry = cls._registry

@@ -495,7 +495,7 @@ async def _shutdown_server_resources(
         cleanup.push_async_callback(owned_to_thread, begin_telemetry_shutdown(telemetry_owner))
         if api_key_service is not None:
             cleanup.push_async_callback(api_key_service.aclose)
-        cleanup.push_async_callback(PluginHub.shutdown)
+        cleanup.push_async_callback(PluginHub.begin_shutdown())
         for timer in telemetry_timers:
             cleanup.callback(timer.cancel)
         for attribute, method in (
