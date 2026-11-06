@@ -98,6 +98,8 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
                     texture_schema = next(tool for tool in await client.list_tools() if tool.name == "manage_texture").input_schema
                     importer_description = texture_schema["properties"]["import_settings"].get("description", "")
                     check("platform_settings" in importer_description and "explicit null" in importer_description, "published platform/null importer description")
+                    for octaves in (17, 536870912):
+                        await invalid(client, "manage_texture", {"action": "apply_noise", "path": "Assets/Fixture.png", "width": 1, "height": 1, "octaves": octaves}, mode + " noise octave limit " + str(octaves))
                     for i, args in enumerate(invalid_texture):
                         await invalid(client, "manage_texture", {"action": "create", "path": "Assets/Fixture.png", **args}, mode + " texture " + str(i))
                     for i, args in enumerate(({"position": [1, 2]}, {"create_child": {"name": "Child", "scale": [1, 2]}})):
@@ -115,6 +117,8 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
                         {"action": "create", "path": "Assets/Fixture.png", "as_sprite": {"pivot": [0, 0], "pixels_per_unit": 100}},
                         {"action": "create", "path": "Assets/Fixture.png", "as_sprite": False},
                         {"action": "create", "path": "Assets/Fixture.png", "as_sprite": {"pixelsPerUnit": None}},
+                        {"action": "apply_noise", "path": "Assets/Fixture.png", "width": 1, "height": 1, "octaves": 16},
+                        {"action": "apply_noise", "path": "Assets/Fixture.png", "width": 8192, "height": 8192, "octaves": 8},
                     ]
                     for i, payload in enumerate(texture_controls):
                         for key in counts: counts[key] = 0
@@ -128,6 +132,7 @@ def test_prefab_texture_validation_and_wire_at_real_sdk_boundary():
                         if i == 3: check(wire["spriteSettings"] == {"pivot": [0.0,0.0],"pixelsPerUnit": 100.0}, "sprite numeric controls")
                         if i == 4: check("spriteSettings" not in wire, "false leaves sprite mode disabled")
                         if i == 5: check(wire["spriteSettings"] == {}, "null optional sprite number omitted")
+                        if i >= 6: check(wire["width"] == payload["width"] and wire["height"] == payload["height"] and wire["octaves"] == payload["octaves"], "valid noise limits preserve supported work")
                     for alias in ("platform_settings", "platformSettings"):
                         for key in counts: counts[key] = 0
                         platforms = {"Standalone": {"overridden": False,"maxTextureSize": 64,"format": "RGBA32"}, "FutureConsole": {"futureField": None}}

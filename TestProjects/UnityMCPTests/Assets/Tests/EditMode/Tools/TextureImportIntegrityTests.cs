@@ -1,6 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
@@ -288,9 +292,11 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("apply_gradient", int.MaxValue, int.MaxValue, 1)]
         [TestCase("apply_noise", 8192, 8192, 9)]
         [TestCase("apply_noise", 1, 1, int.MaxValue)]
+        [TestCase("apply_noise", 1, 1, 17)]
         public void OverBudgetGenerationDoesNotReplaceExistingTexture(string action, int width, int height, int octaves)
         {
             byte[] before = File.ReadAllBytes(Absolute(_path));
+            int texturesBefore = Resources.FindObjectsOfTypeAll<Texture2D>().Length;
             var response = Send(
                 action,
                 new JObject
@@ -302,6 +308,158 @@ namespace MCPForUnityTests.EditMode.Tools
             );
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             CollectionAssert.AreEqual(before, File.ReadAllBytes(Absolute(_path)));
+            Assert.AreEqual(texturesBefore, Resources.FindObjectsOfTypeAll<Texture2D>().Length);
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        // A manually pumped synchronization context runs real native generation slices on
+        // this Editor thread while allowing deterministic cancellation between callbacks.
+        private sealed class TextureSliceContext : SynchronizationContext, IDisposable
+        {
+            private readonly SynchronizationContext previous = Current;
+            private readonly Queue<(SendOrPostCallback callback, object state)> pending = new();
+            internal int Callbacks { get; private set; }
+            internal double MaximumMilliseconds { get; private set; }
+
+            internal TextureSliceContext() => SetSynchronizationContext(this);
+
+            public override void Post(SendOrPostCallback callback, object state) => pending.Enqueue((callback, state));
+
+            internal void RunNext()
+            {
+                Assert.IsNotEmpty(pending, "An incomplete generation must have a queued continuation.");
+                var next = pending.Dequeue();
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                next.callback(next.state);
+                MaximumMilliseconds = Math.Max(MaximumMilliseconds, watch.Elapsed.TotalMilliseconds);
+                Callbacks++;
+            }
+
+            internal void Drain(Task task)
+            {
+                for (int remaining = 100000; !task.IsCompleted && remaining > 0; remaining--)
+                    RunNext();
+                Assert.IsTrue(task.IsCompleted, "Generation did not finish within the controlled callback budget.");
+            }
+
+            public void Dispose() => SetSynchronizationContext(previous);
+        }
+
+        [TestCase(false, 512)]
+        [TestCase(true, 2048)]
+        public void NoiseCancellationAfterMultipleSlicesPreservesDestinationAndReleasesTemporaryTexture(bool newDestination, int size)
+        {
+            // Given an existing asset, or a not-yet-created nested destination, and real
+            // work large enough to require several independent Editor callbacks.
+            string destination = newDestination ? _root + "/Unpublished/Nested/Noise.png" : _path;
+            byte[] before = File.ReadAllBytes(Absolute(_path));
+            byte[] metadata = File.ReadAllBytes(Absolute(_path) + ".meta");
+            string[] filesBefore = Directory.GetFiles(Absolute(_root + "/"), "*", SearchOption.AllDirectories);
+            int assetId = AssetDatabase.LoadMainAssetAtPath(_path).GetInstanceID();
+            var originals = new HashSet<int>(Resources.FindObjectsOfTypeAll<Texture2D>().Select(texture => texture.GetInstanceID()));
+            using var cancellation = new CancellationTokenSource();
+            using var context = new TextureSliceContext();
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            Task<object> task = ManageTexture.HandleCommand(
+                new JObject
+                {
+                    ["action"] = "apply_noise_checked",
+                    ["path"] = destination,
+                    ["width"] = size,
+                    ["height"] = size,
+                    ["octaves"] = 8,
+                    ["spriteSettings"] = new JObject(),
+                },
+                cancellation.Token
+            );
+            double firstSliceMilliseconds = watch.Elapsed.TotalMilliseconds;
+            Assert.IsFalse(task.IsCompleted);
+            var temporary = Resources.FindObjectsOfTypeAll<Texture2D>().Single(texture => !originals.Contains(texture.GetInstanceID()));
+            int firstFilled = temporary.GetPixelData<Color32>(0).Count(pixel => pixel.a == 255);
+            Assert.Greater(firstFilled, 0);
+
+            // When the second real slice has filled more pixels, cancellation runs before
+            // the third slice, encoding, publication, folder creation or importer changes.
+            context.RunNext();
+            int secondFilled = temporary.GetPixelData<Color32>(0).Count(pixel => pixel.a == 255);
+            Assert.Greater(secondFilled, firstFilled);
+            Assert.Less(secondFilled, size * size);
+            cancellation.Cancel();
+            context.Drain(task);
+
+            // Then bytes, importer identity and metadata remain intact and the native
+            // temporary texture is destroyed. New destinations leave no parent directories.
+            Assert.Catch<OperationCanceledException>(() => task.GetAwaiter().GetResult());
+            Assert.IsTrue(temporary == null);
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(Absolute(_path)));
+            CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Absolute(_path) + ".meta"));
+            CollectionAssert.AreEquivalent(filesBefore, Directory.GetFiles(Absolute(_root + "/"), "*", SearchOption.AllDirectories));
+            Assert.AreEqual(assetId, AssetDatabase.LoadMainAssetAtPath(_path).GetInstanceID());
+            if (newDestination)
+            {
+                Assert.IsFalse(Directory.Exists(Absolute(_root + "/Unpublished")));
+                Assert.IsFalse(File.Exists(Absolute(_root + "/Unpublished") + ".meta"));
+                Assert.IsFalse(File.Exists(Absolute(destination)));
+            }
+            TestContext.WriteLine(
+                $"F07 cancellation size={size} callbacks={context.Callbacks} first_slice_ms={firstSliceMilliseconds:F3} max_callback_ms={context.MaximumMilliseconds:F3} pixels_before_cancel={secondFilled}"
+            );
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [TestCase(1)]
+        [TestCase(4)]
+        [TestCase(16)]
+        public void StagedNoisePublicHandlerMatchesFrozenSeededPngDespiteInterleavedRandomUse(int octaves)
+        {
+            // Given a byte-for-byte baseline produced with the original algorithm.
+            var random = UnityEngine.Random.state;
+            var baseline = new Texture2D(257, 129, TextureFormat.RGBA32, false);
+            try
+            {
+                UnityEngine.Random.InitState(104729);
+                FrozenTextureGeneration.ApplyPerlinNoise(baseline, new List<Color32> { new(0, 0, 0, 255), new(255, 255, 255, 255) }, 0.1f, octaves);
+                baseline.Apply();
+                byte[] expected = baseline.EncodeToPNG();
+                UnityEngine.Random.InitState(104729);
+                using var context = new TextureSliceContext();
+
+                // When the public cooperative handler runs, unrelated callbacks consume
+                // Random between slices, as they may in a real interactive Editor.
+                Task<object> task = ManageTexture.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "apply_noise",
+                        ["path"] = _path,
+                        ["width"] = 257,
+                        ["height"] = 129,
+                        ["octaves"] = octaves,
+                    },
+                    CancellationToken.None
+                );
+                Assert.IsFalse(task.IsCompleted);
+                while (!task.IsCompleted)
+                {
+                    UnityEngine.Random.Range(0f, 1000f);
+                    context.RunNext();
+                }
+
+                // Then the published PNG and legacy success payload remain equivalent.
+                JObject response = JObject.FromObject(task.GetAwaiter().GetResult());
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.AreEqual(octaves, response["data"].Value<int>("octaves"));
+                Assert.IsTrue(response["data"].Value<bool>("source_saved"));
+                CollectionAssert.AreEqual(expected, File.ReadAllBytes(Absolute(_path)));
+                Assert.Greater(context.Callbacks, 0);
+                TestContext.WriteLine(
+                    $"F07 equivalence octaves={octaves} callbacks={context.Callbacks} max_callback_ms={context.MaximumMilliseconds:F3} (includes final native encode/import)"
+                );
+            }
+            finally
+            {
+                UnityEngine.Random.state = random;
+                UnityEngine.Object.DestroyImmediate(baseline);
+            }
             LogAssert.NoUnexpectedReceived();
         }
 

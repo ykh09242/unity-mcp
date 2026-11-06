@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -21,6 +23,9 @@ namespace MCPForUnity.Editor.Tools
         private const int MaxTextureDimension = 8192;
         private const int MaxTexturePixels = 8192 * 8192;
         private const int MaxNoiseWork = 512 * 1024 * 1024;
+        private const int MaxNoiseOctaves = 16;
+        private const int NoiseSliceSamples = 16384;
+        private const double NoiseSliceMilliseconds = 5;
 
         // An incompressible 8K RGBA image needs about 256 MiB before format overhead.
         private const int MaxEncodedImageBytes = 512 * 1024 * 1024;
@@ -239,8 +244,15 @@ namespace MCPForUnity.Editor.Tools
             return null;
         }
 
-        public static object HandleCommand(JObject @params)
+        public static object HandleCommand(JObject @params) => Handle(@params, CancellationToken.None, false).GetAwaiter().GetResult();
+
+        // CommandRegistry prefers this cooperative signature. All continuations retain the
+        // Editor synchronization context; native texture APIs never run on a worker thread.
+        public static Task<object> HandleCommand(JObject @params, CancellationToken cancellationToken) => Handle(@params, cancellationToken, true);
+
+        private static async Task<object> Handle(JObject @params, CancellationToken cancellationToken, bool staged)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string action = @params["action"]?.ToString()?.ToLowerInvariant();
             if (string.IsNullOrEmpty(action))
             {
@@ -275,12 +287,16 @@ namespace MCPForUnity.Editor.Tools
                     case "apply_gradient":
                         return ApplyGradient(@params);
                     case "apply_noise":
-                        return ApplyNoise(@params);
+                        return await ApplyNoise(@params, cancellationToken, staged);
                     case "set_import_settings":
                         return SetImportSettings(@params);
                     default:
                         return new ErrorResponse($"Unknown action: '{action}'");
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception e)
             {
@@ -774,7 +790,7 @@ namespace MCPForUnity.Editor.Tools
             }
         }
 
-        private static object ApplyNoise(JObject @params)
+        private static async Task<object> ApplyNoise(JObject @params, CancellationToken cancellationToken, bool staged)
         {
             string path = @params["path"]?.ToString();
             if (string.IsNullOrEmpty(path))
@@ -790,6 +806,8 @@ namespace MCPForUnity.Editor.Tools
             int octaves = @params["octaves"]?.ReadScalar<int?>() ?? 1;
             if (octaves <= 0)
                 return new ErrorResponse("octaves must be greater than 0.");
+            if (octaves > MaxNoiseOctaves)
+                return new ErrorResponse($"octaves must not exceed {MaxNoiseOctaves}.");
             long totalPixels = (long)width * height;
             if (octaves > MaxNoiseWork / totalPixels)
                 return new ErrorResponse($"Noise workload exceeds max {MaxNoiseWork} (got {width}x{height}x{octaves}).");
@@ -817,17 +835,24 @@ namespace MCPForUnity.Editor.Tools
                 var applySettings = spriteSettingsToken != null ? PrepareSpriteSettings(spriteSettingsToken) : null;
                 string expectedDigest = PrepareImageOutput(fullPath);
                 using var folders = new AssetFolderScope();
-                folders.EnsureParentDirectory(fullPath);
+                cancellationToken.ThrowIfCancellationRequested();
                 texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
-                ApplyPerlinNoise(texture, palette, scale, octaves);
+                await ApplyPerlinNoiseAsync(texture, palette, scale, octaves, cancellationToken, staged);
 
+                cancellationToken.ThrowIfCancellationRequested();
+                // Allocation, Apply, encoding and import are indivisible native steps. Check
+                // cancellation between them; publication + import completes without yielding.
                 texture.Apply();
 
+                cancellationToken.ThrowIfCancellationRequested();
                 byte[] imageData = TextureOps.EncodeTexture(texture, fullPath);
                 if (imageData == null || imageData.Length == 0)
                 {
                     return new ErrorResponse($"Failed to encode texture for '{fullPath}'");
                 }
+                cancellationToken.ThrowIfCancellationRequested();
+                folders.EnsureParentDirectory(fullPath);
+                cancellationToken.ThrowIfCancellationRequested();
                 JObject importReport = null;
                 var publicationError = PublishImageAndContinue(
                     fullPath,
@@ -866,6 +891,10 @@ namespace MCPForUnity.Editor.Tools
                 );
                 folders.Complete();
                 return response;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception e)
             {
@@ -1031,38 +1060,85 @@ namespace MCPForUnity.Editor.Tools
 
         private static void ApplyPerlinNoise(Texture2D texture, List<Color32> palette, float scale, int octaves)
         {
-            int width = texture.width;
-            int height = texture.height;
-            var pixels = texture.GetPixelData<Color32>(0);
+            ApplyPerlinNoiseAsync(texture, palette, scale, octaves, CancellationToken.None, false).GetAwaiter().GetResult();
+        }
 
-            // Random offset to ensure different patterns
+        private static async Task ApplyPerlinNoiseAsync(
+            Texture2D texture,
+            List<Color32> palette,
+            float scale,
+            int octaves,
+            CancellationToken cancellationToken,
+            bool staged
+        )
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            // Consume Random exactly once before yielding. Other Editor callbacks can use
+            // Random between slices without changing this generation's pixel output.
             float offsetX = UnityEngine.Random.Range(0f, 1000f);
             float offsetY = UnityEngine.Random.Range(0f, 1000f);
-
-            for (int y = 0; y < height; y++)
+            int count = texture.width * texture.height;
+            int next = 0;
+            int slicePixels = Math.Max(1, NoiseSliceSamples / octaves);
+            while (next < count)
             {
-                for (int x = 0; x < width; x++)
-                {
-                    float noiseValue = 0f;
-                    float amplitude = 1f;
-                    float frequency = 1f;
-                    float maxValue = 0f;
-
-                    for (int o = 0; o < octaves; o++)
-                    {
-                        float sampleX = (x + offsetX) * scale * frequency;
-                        float sampleY = (y + offsetY) * scale * frequency;
-                        noiseValue += Mathf.PerlinNoise(sampleX, sampleY) * amplitude;
-                        maxValue += amplitude;
-                        amplitude *= 0.5f;
-                        frequency *= 2f;
-                    }
-
-                    float t = Mathf.Clamp01(noiseValue / maxValue);
-                    Color32 color = LerpPalette(palette, t);
-                    pixels[y * width + x] = color;
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                int end = staged ? Math.Min(count, next + slicePixels) : count;
+                next = ApplyPerlinNoiseSlice(texture, palette, scale, octaves, offsetX, offsetY, next, end, staged);
+                if (staged && next < count)
+                    await Task.Yield();
             }
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        // The pixel view is released before the caller yields, applies, encodes or destroys.
+        private static int ApplyPerlinNoiseSlice(
+            Texture2D texture,
+            List<Color32> palette,
+            float scale,
+            int octaves,
+            float offsetX,
+            float offsetY,
+            int start,
+            int end,
+            bool timed
+        )
+        {
+            int width = texture.width;
+            var pixels = texture.GetPixelData<Color32>(0);
+            long began = System.Diagnostics.Stopwatch.GetTimestamp();
+            for (int index = start; index < end; index++)
+            {
+                int x = index % width;
+                int y = index / width;
+                float noiseValue = 0f;
+                float amplitude = 1f;
+                float frequency = 1f;
+                float maxValue = 0f;
+
+                for (int o = 0; o < octaves; o++)
+                {
+                    float sampleX = (x + offsetX) * scale * frequency;
+                    float sampleY = (y + offsetY) * scale * frequency;
+                    noiseValue += Mathf.PerlinNoise(sampleX, sampleY) * amplitude;
+                    maxValue += amplitude;
+                    amplitude *= 0.5f;
+                    frequency *= 2f;
+                }
+
+                float t = Mathf.Clamp01(noiseValue / maxValue);
+                Color32 color = LerpPalette(palette, t);
+                pixels[index] = color;
+                // Limit elapsed work as well as sample count. A single Perlin/pixel call
+                // cannot be interrupted, and elapsed checks occur every 64 pixels.
+                if (
+                    timed
+                    && (index - start + 1) % 64 == 0
+                    && (System.Diagnostics.Stopwatch.GetTimestamp() - began) * 1000d / System.Diagnostics.Stopwatch.Frequency >= NoiseSliceMilliseconds
+                )
+                    return index + 1;
+            }
+            return end;
         }
 
         private static bool HasImportSettingsParams(JObject @params)

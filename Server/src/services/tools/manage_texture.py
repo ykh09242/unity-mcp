@@ -30,6 +30,7 @@ from services.tools.preflight import preflight
 MAX_TEXTURE_DIMENSION = 8192
 MAX_TEXTURE_PIXELS = 8192 * 8192
 MAX_NOISE_WORK = 512 * 1024 * 1024
+MAX_NOISE_OCTAVES = 16
 
 
 def _validate_dimensions(width: int, height: int) -> str | None:
@@ -634,7 +635,7 @@ async def manage_texture(
     noise_scale: Annotated[float, "Noise scale/frequency (default: 0.1)"] | None = None,
     octaves: Annotated[
         int,
-        "Number of noise octaves (default: 1); width * height * octaves must not exceed 33,554,432 samples.",
+        "Number of noise octaves (1-16, default: 1); width * height * octaves must not exceed 536,870,912 samples. Noise generation yields between cancellable Editor slices; native allocation, encoding and import remain indivisible.",
     ]
     | None = None,
     # Modify action
@@ -735,6 +736,8 @@ async def manage_texture(
         octaves, octaves_error = _normalize_positive_int(octaves, "octaves")
         if octaves_error:
             return {"success": False, "message": octaves_error}
+        if action_lower == "apply_noise" and (octaves or 1) > MAX_NOISE_OCTAVES:
+            return {"success": False, "message": f"octaves must not exceed {MAX_NOISE_OCTAVES}."}
         if action_lower == "apply_noise" and (octaves or 1) > MAX_NOISE_WORK // (width * height):
             return {
                 "success": False,
