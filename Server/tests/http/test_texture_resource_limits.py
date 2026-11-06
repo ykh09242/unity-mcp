@@ -56,6 +56,8 @@ async def texture_sdk(monkeypatch, texture_server):
         {"width": 1, "height": 8193},
         {"width": 2147483647, "height": 2147483647},
         {"action": "apply_noise", "width": 8192, "height": 8192, "octaves": 9},
+        {"action": "apply_noise", "width": 1, "height": 1, "octaves": 17},
+        {"action": "apply_noise", "width": 1, "height": 1, "octaves": 536870912},
         {"action": "apply_noise", "width": 1, "height": 1, "octaves": 536870913},
         {"action": "apply_noise", "width": 1, "height": 1, "octaves": 2147483647},
         {"action": "modify", "set_pixels": {"width": 8193, "height": 1, "color": [0, 0, 0, 0]}},
@@ -89,7 +91,7 @@ async def test_reject_before_preflight_or_unity_send(texture_sdk, options):
         {"width": 8192, "height": 8192},
         {"action": "apply_noise", "width": 8192, "height": 8192, "octaves": 8},
         {"action": "apply_noise", "width": 2048, "height": 2048, "octaves": 8},
-        {"action": "apply_noise", "width": 1, "height": 1, "octaves": 536870912},
+        {"action": "apply_noise", "width": 1, "height": 1, "octaves": 16},
         {"action": "apply_noise", "width": 4096, "height": 4096, "octaves": 2},
         {"action": "apply_gradient", "width": 2, "height": 2},
         {
@@ -107,5 +109,7 @@ async def test_allowed_boundaries_preserve_dispatch(texture_sdk, options):
     )
     assert result.structured_content["success"] is True
     assert [name for name, _ in calls] == ["preflight", "send"]
+    if options.get("action") == "apply_noise":
+        assert calls[-1][1]["octaves"] == options["octaves"]
     if "import_settings" in options:
         assert calls[-1][1]["importSettings"]["maxTextureSize"] == 16384
