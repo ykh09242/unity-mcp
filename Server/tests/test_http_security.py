@@ -7,10 +7,54 @@ import os
 import signal
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 _OUTPUT_TAIL_LIMIT = 4096
 _HTTP_WORKERS = 4
+
+
+@contextmanager
+def _http_coverage(pytestconfig, directory: Path):
+    """Join only this child's data into its owning parent coverage worker."""
+    if not pytestconfig.pluginmanager.hasplugin("_cov"):
+        yield [], {}
+        return
+
+    # Normal focused tests must also work without coverage or pytest-cov installed.
+    from coverage import Coverage, CoverageData
+
+    parent = Coverage.current()
+    if parent is None or pytestconfig.getoption("no_cov", default=False):
+        yield [], {}
+        return
+
+    directory.mkdir()
+    data_file = directory / ".coverage"
+    sources = parent.get_option("run:source")
+    args = [f"--cov={source}" for source in sources] if sources else ["--cov="]
+    args.extend(
+        [
+            "--cov-config",
+            pytestconfig.getoption("cov_config", default=".coveragerc"),
+            "--cov-report=",
+            "--cov-fail-under=0",
+        ]
+    )
+    if parent.get_option("run:branch"):
+        args.append("--cov-branch")
+    if context := pytestconfig.getoption("cov_context", default=None):
+        args.append(f"--cov-context={context}")
+    try:
+        yield args, {"COVERAGE_FILE": str(data_file)}
+    finally:
+        # The nested controller combines its own xdist files. Update this worker's
+        # in-memory data rather than combining/erasing the outer workers' files.
+        # A killed or failed child may not have produced data; retain its diagnostics.
+        if data_file.is_file():
+            child = CoverageData(basename=str(data_file))
+            child.read()
+            parent.get_data().update(child)
 
 
 def _windows_job():
@@ -148,41 +192,46 @@ def test_local_http_security_regressions(tmp_path, pytestconfig):
         report = Path(xmlpath).resolve()
         report_args = ["--junitxml", str(report.with_stem(f"{report.stem}-http"))]
     try:
-        result = _run_http_subprocess(
-            [
-                sys.executable,
-                "-m",
-                "pytest",
-                "tests/http",
-                "-n",
-                str(_HTTP_WORKERS),
-                "--dist=loadfile",
-                "--max-worker-restart=0",
-                "-p",
-                "pytest_ci_schedule",
-                "--no-loadscope-reorder",
-                "--ci-first-file=http/test_client_assurance_wire.py",
-                "-vv",
-                "--tb=short",
-                "-W",
-                "error",
-                "--durations=20",
-                "--basetemp",
-                str(tmp_path / "http-tmp"),
-                "-o",
-                f"cache_dir={tmp_path / 'http-cache'}",
-                *report_args,
-            ],
-            cwd=server_root,
-            env=env,
-            capture_output=True,
-            text=True,
-            # Start the expensive real-client file before short, highly parametrized files.
-            # Keep whole files and their fixture lifetimes on the same four workers.
-            # The suite watchdog is distinct from the request deadlines asserted inside.
-            # Operators can increase the shared multiplier for slow/oversubscribed hosts.
-            timeout=watchdog_timeout(900),
-        )
+        with _http_coverage(pytestconfig, tmp_path / "http-coverage") as (
+            coverage_args,
+            coverage_env,
+        ):
+            result = _run_http_subprocess(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "tests/http",
+                    "-n",
+                    str(_HTTP_WORKERS),
+                    "--dist=loadfile",
+                    "--max-worker-restart=0",
+                    "-p",
+                    "pytest_ci_schedule",
+                    "--no-loadscope-reorder",
+                    "--ci-first-file=http/test_client_assurance_wire.py",
+                    "-vv",
+                    "--tb=short",
+                    "-W",
+                    "error",
+                    "--durations=20",
+                    "--basetemp",
+                    str(tmp_path / "http-tmp"),
+                    "-o",
+                    f"cache_dir={tmp_path / 'http-cache'}",
+                    *report_args,
+                    *coverage_args,
+                ],
+                cwd=server_root,
+                env={**env, **coverage_env},
+                capture_output=True,
+                text=True,
+                # Start the expensive real-client file before short, highly parametrized files.
+                # Keep whole files and their fixture lifetimes on the same four workers.
+                # The suite watchdog is distinct from the request deadlines asserted inside.
+                # Operators can increase the shared multiplier for slow/oversubscribed hosts.
+                timeout=watchdog_timeout(900),
+            )
     except subprocess.TimeoutExpired as error:
         raise AssertionError(
             _failure_message(

@@ -1,6 +1,7 @@
 """Diagnostics for the isolated HTTP test subprocess wrapper."""
 
 import json
+import builtins
 import os
 import subprocess
 import sys
@@ -15,10 +16,33 @@ from tests import test_http_security as wrapper
 class _Config:
     def __init__(self, xmlpath=None):
         self.xmlpath = xmlpath
+        self.pluginmanager = self
+
+    def hasplugin(self, name):
+        assert name == "_cov"
+        return False
 
     def getoption(self, name, default=None):
         assert name == "xmlpath"
         return self.xmlpath if self.xmlpath is not None else default
+
+
+def test_focused_wrapper_runs_without_importing_coverage(tmp_path, monkeypatch):
+    original_import = builtins.__import__
+
+    def import_without_coverage(name, *args, **kwargs):
+        if name == "coverage" or name.startswith(("coverage.", "pytest_cov")):
+            raise AssertionError("Focused HTTP wrapper must not require coverage")
+        return original_import(name, *args, **kwargs)
+
+    def completed(args, **kwargs):
+        assert not any(arg.startswith("--cov") for arg in args)
+        return subprocess.CompletedProcess(args, 0, "passed", "")
+
+    monkeypatch.setattr(builtins, "__import__", import_without_coverage)
+    monkeypatch.setattr(wrapper, "_run_http_subprocess", completed)
+    wrapper.test_local_http_security_regressions(tmp_path, _Config())
+    assert not (tmp_path / "http-coverage").exists()
 
 
 def test_owned_subprocess_preserves_exit_and_captured_text():
