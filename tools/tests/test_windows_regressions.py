@@ -28,7 +28,15 @@ def test_windows_selection_includes_proactor_cleanup_and_replacement_retry_bound
         ]
         == 3
     )
-    assert sum(CASES.values()) == 68
+    assert sum(CASES.values()) == 69
+
+
+def test_windows_selection_executes_bundled_compiler_runtime():
+    # Given: the compiler layout case skips on Linux and needs Git Bash on Windows.
+    node = "tools/tests/test_compile_check.py::test_windows_compiler_layout_uses_bundled_runtime"
+    # When: the no-skips Windows gate selects its mandatory execution inventory.
+    # Then: the real executable-resolution regression must run exactly once.
+    assert CASES.get(node) == 1
 
 
 def test_windows_selection_executes_focus_scripts_shell_roundtrip_and_open_snapshot():

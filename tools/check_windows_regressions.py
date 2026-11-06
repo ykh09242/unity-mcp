@@ -42,6 +42,7 @@ CASES: Final = {
     "tools/tests/test_generate_mcpb_windows.py::test_cmd_fixture_has_an_observable_injection_negative_control": 1,
     "tools/tests/test_generate_mcpb_windows.py::test_cmd_shim_rejects_impossible_path_characters": 3,
     "tools/tests/test_generate_mcpb_windows.py::test_cmd_shim_failure_preserves_exit_code_and_existing_bundle": 1,
+    "tools/tests/test_compile_check.py::test_windows_compiler_layout_uses_bundled_runtime": 1,
 }
 
 

@@ -8,7 +8,7 @@ import shutil
 
 import pytest
 
-from .compile_check_helpers import (
+from tools.tests.compile_check_helpers import (
     COROUTINES_ASSEMBLY,
     CompileHarness,
     harness,
