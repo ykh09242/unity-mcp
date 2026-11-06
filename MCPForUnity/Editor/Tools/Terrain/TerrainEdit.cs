@@ -55,14 +55,13 @@ namespace MCPForUnity.Editor.Tools.Terrain
             if (fresh.Data != before.Data || fresh.Terrain != before.Terrain)
                 TerrainState.Refuse("stale_terrain_revision", "Target identity changed before the mutation.");
             token.ThrowIfCancellationRequested();
+            Undo.IncrementCurrentGroup();
             int group = Undo.GetCurrentGroup();
             bool attempted = false;
             JToken ownedAfter = null;
             var verifiedTrees = new HashSet<int>();
             try
             {
-                Undo.IncrementCurrentGroup();
-                group = Undo.GetCurrentGroup();
                 Undo.SetCurrentGroupName("Edit Terrain region or indices");
                 var undoObjects = new List<UnityEngine.Object> { before.Data };
                 if (before.Channel == "alphamaps")
@@ -113,7 +112,6 @@ namespace MCPForUnity.Editor.Tools.Terrain
                 if (result.Revision != after.Revision)
                     throw new InvalidOperationException("External state changed after native write verification.");
                 EditorUtility.SetDirty(before.Data);
-                Undo.CollapseUndoOperations(group);
                 return Bounded(new SuccessResponse("Terrain edit applied", result.Observation(!JToken.DeepEquals(before.Values, result.Values), true)));
             }
             catch (Exception error)
@@ -126,7 +124,6 @@ namespace MCPForUnity.Editor.Tools.Terrain
                         ["conflicted_cells"] = 0,
                         ["state"] = "not_started",
                     };
-                Undo.CollapseUndoOperations(group);
                 string code = error is OperationCanceledException ? "terrain_cancelled" : "terrain_edit_failed";
                 return new ErrorResponse(
                     code,
@@ -138,6 +135,15 @@ namespace MCPForUnity.Editor.Tools.Terrain
                         ["neighbors_untouched"] = true,
                     }
                 );
+            }
+            finally
+            {
+                // A reentrant writer may have opened its own group; do not absorb or close that writer's Undo.
+                if (Undo.GetCurrentGroup() == group)
+                {
+                    Undo.CollapseUndoOperations(group);
+                    Undo.IncrementCurrentGroup();
+                }
             }
         }
 

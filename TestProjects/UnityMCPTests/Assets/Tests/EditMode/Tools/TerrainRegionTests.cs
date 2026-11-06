@@ -293,6 +293,113 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreSame(second, data.terrainLayers[1]);
         }
 
+        [TestCase("success")]
+        [TestCase("failure")]
+        [TestCase("cancelled")]
+        public void TerrainAndFollowingComponentEditHaveSeparateNativeUndo(string outcome)
+        {
+            var collider = neighbor.gameObject.AddComponent<BoxCollider>();
+            Vector3 originalSize = collider.size;
+            float[,] before = data.GetHeights(0, 0, 33, 33);
+            var patch = Guard("get_region", Region("heights"));
+            patch["values"] = Grid(.4f);
+            using (var cancelled = new CancellationTokenSource())
+            {
+                if (outcome != "success")
+                    Stage(value =>
+                    {
+                        // A conflicting native cell survives compensation, so both Undo steps have observable work.
+                        value.SetHeights(
+                            2,
+                            2,
+                            new[,]
+                            {
+                                { .8f },
+                            }
+                        );
+                        if (outcome == "cancelled")
+                            cancelled.Cancel();
+                        else
+                            throw new InvalidOperationException("Owned fixture fails after a conflicting native write.");
+                    });
+                JObject result = Call("set_region", patch, cancelled.Token);
+                Assert.AreEqual(outcome == "success", result.Value<bool>("success"), result.ToString());
+                if (outcome != "success")
+                    Assert.AreEqual(outcome == "cancelled" ? "terrain_cancelled" : "terrain_edit_failed", result.Value<string>("code"));
+                float[,] terrainAfter = data.GetHeights(0, 0, 33, 33);
+                Assert.AreEqual(outcome == "success" ? .4f : .8f, terrainAfter[2, 2], .00002f);
+
+                // Keep both commands in one synchronous Editor turn: no event boundary advances the group for us.
+                SetColliderSize(collider);
+                Undo.FlushUndoRecordObjects();
+                Undo.PerformUndo();
+                Assert.AreEqual(originalSize, collider.size, "The first Undo must restore only the following component edit.");
+                CollectionAssert.AreEqual(terrainAfter, data.GetHeights(0, 0, 33, 33), "The first Undo must preserve the Terrain result.");
+                Undo.PerformUndo();
+                CollectionAssert.AreEqual(before, data.GetHeights(0, 0, 33, 33), "The second Undo must restore Terrain independently.");
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void TerrainDoesNotCollapseAGroupOpenedByAnotherWriter(bool fail)
+        {
+            var collider = neighbor.gameObject.AddComponent<BoxCollider>();
+            Vector3 originalSize = collider.size;
+            float[,] before = data.GetHeights(0, 0, 33, 33);
+            var patch = Guard("get_region", Region("heights"));
+            patch["values"] = Grid(.4f);
+            int foreignGroup = -1;
+            Stage(value =>
+            {
+                Undo.IncrementCurrentGroup();
+                foreignGroup = Undo.GetCurrentGroup();
+                SetColliderSize(collider);
+                if (fail)
+                {
+                    value.SetHeights(
+                        2,
+                        2,
+                        new[,]
+                        {
+                            { .8f },
+                        }
+                    );
+                    throw new InvalidOperationException("Owned fixture opens a separate writer group before failing.");
+                }
+            });
+            JObject result = Call("set_region", patch);
+            Assert.AreEqual(!fail, result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(foreignGroup, Undo.GetCurrentGroup(), "Terrain must leave another writer's current group intact.");
+            float[,] terrainAfter = data.GetHeights(0, 0, 33, 33);
+            Assert.AreEqual(fail ? .8f : .4f, terrainAfter[2, 2], .00002f);
+            Undo.FlushUndoRecordObjects();
+            Undo.PerformUndo();
+            Assert.AreEqual(originalSize, collider.size);
+            CollectionAssert.AreEqual(terrainAfter, data.GetHeights(0, 0, 33, 33), "Another writer's Undo must not include Terrain.");
+            Undo.PerformUndo();
+            CollectionAssert.AreEqual(before, data.GetHeights(0, 0, 33, 33));
+        }
+
+        private static void SetColliderSize(BoxCollider collider)
+        {
+            JObject response = JObject.FromObject(
+                MCPForUnity.Editor.Tools.ManageComponents.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "set_property",
+                        ["target"] = collider.gameObject.GetInstanceIDCompat().ToString(),
+                        ["search_method"] = "by_id",
+                        ["component_type"] = "BoxCollider",
+                        ["property"] = "size",
+                        ["value"] = new JArray(2f, 3f, 4f),
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual(new Vector3(2, 3, 4), collider.size);
+        }
+
         [Test]
         public void IndexedTreeAndLayerEditsPreserveOtherInstancesAndSplatWeights()
         {
