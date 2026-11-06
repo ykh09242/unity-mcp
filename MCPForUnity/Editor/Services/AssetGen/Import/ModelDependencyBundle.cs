@@ -604,6 +604,9 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
         {
             var result = new BundleStageResult { Evidence = (JObject)plan.Evidence.DeepClone() };
             LocalAssetCopy copying = null;
+            // Observe file cleanup before removing its parent directories: a missing
+            // ancestor intentionally makes FileIsGone inconclusive.
+            using var folders = new AssetFolderScope();
             try
             {
                 string root = AssetGenPaths.ResolveOutputFolder(outputFolder, "Imported").TrimEnd('/');
@@ -640,7 +643,6 @@ namespace MCPForUnity.Editor.Services.AssetGen.Import
                 // Validate all destination paths before creating even the output folder.
                 foreach (BundleEntry entry in plan.Entries)
                     AssetGenPaths.ToAbsolute(bundle ? selected + "/" + entry.RelativePath : selected);
-                using var folders = new AssetFolderScope();
                 using var copyScope = new LocalAssetCopy(Path.GetDirectoryName(Application.dataPath), plan.Bytes, cancellationToken);
                 copying = copyScope;
                 folders.EnsureFolder(root);
