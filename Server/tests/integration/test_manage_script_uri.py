@@ -39,11 +39,23 @@ async def test_split_uri_unity_path(monkeypatch):
 @pytest.mark.parametrize(
     "uri, expected_name, expected_path",
     [
-        ("file:///Users/alex/Project/Assets/Scripts/Foo%20Bar.cs", "Foo Bar", "Assets/Scripts"),
-        ("file://localhost/Users/alex/Project/Assets/Hello.cs", "Hello", "Assets"),
-        ("file:///C:/Users/Alex/Proj/Assets/Scripts/Hello.cs", "Hello", "Assets/Scripts"),
-        # outside Assets → fall back to normalized dir
-        ("file:///tmp/Other.cs", "Other", "tmp"),
+        (
+            "file:///Users/alex/Project/Assets/Scripts/Foo%20Bar.cs",
+            "Foo Bar",
+            "/Users/alex/Project/Assets/Scripts",
+        ),
+        (
+            "file://localhost/Users/alex/Project/Assets/Hello.cs",
+            "Hello",
+            "/Users/alex/Project/Assets",
+        ),
+        (
+            "file:///C:/Users/Alex/Proj/Assets/Scripts/Hello.cs",
+            "Hello",
+            "C:/Users/Alex/Proj/Assets/Scripts",
+        ),
+        # The selected Editor rejects paths outside its own Assets root.
+        ("file:///tmp/Other.cs", "Other", "/tmp"),
     ],
 )
 async def test_split_uri_file_urls(monkeypatch, uri, expected_name, expected_path):

@@ -8,6 +8,7 @@ using System.Threading;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -87,6 +88,12 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 string rel = string.IsNullOrWhiteSpace(relDir) ? "Scripts" : relDir.Trim().TrimEnd('/', '\\');
+                if (Path.IsPathRooted(rel))
+                {
+                    string assetsRoot = Path.GetFullPath(Application.dataPath).TrimEnd('/', '\\');
+                    string contained = SafePathUtility.ResolveWithinRoot(assetsRoot, rel);
+                    rel = "Assets" + contained.Substring(assetsRoot.Length).Replace('\\', '/');
+                }
                 relPathSafe = AssetPathUtility.GetContainedAssetPath(rel);
                 fullPathDir = AssetPathUtility.GetFullAssetPath(relPathSafe);
                 return true;

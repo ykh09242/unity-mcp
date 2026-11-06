@@ -1,6 +1,7 @@
 import base64
 import logging
 import os
+import posixpath
 import re
 from typing import Annotated, Any, Literal
 from urllib.parse import urlparse, unquote
@@ -168,21 +169,14 @@ def _lsp_position_to_line_col(lines: list[str], position: dict[str, int]) -> tup
 
 
 def _split_uri(uri: str) -> tuple[str, str]:
-    """Split an incoming URI or path into (name, directory) suitable for Unity.
-
-    Rules:
-    - mcpforunity://path/Assets/... → keep as Assets-relative (after decode/normalize)
-    - file://... → percent-decode, normalize, strip host and leading slashes,
-        then, if any 'Assets' segment exists, return path relative to that 'Assets' root.
-        Otherwise, fall back to original name/dir behavior.
-    - plain paths → decode/normalize separators; if they contain an 'Assets' segment,
-        return relative to 'Assets'.
-    """
+    """Preserve file identity until the selected Editor checks its Assets root."""
     raw_path: str
     if uri.startswith("mcpforunity://path/"):
         raw_path = uri[len("mcpforunity://path/") :]
     elif uri.startswith("file://"):
         parsed = urlparse(uri)
+        if parsed.query or parsed.fragment:
+            raise ValueError("Script file URIs must not contain a query or fragment.")
         host = (parsed.netloc or "").strip()
         p = parsed.path or ""
         # UNC: file://server/share/... -> //server/share/...
@@ -196,26 +190,25 @@ def _split_uri(uri: str) -> tuple[str, str]:
     # Decode once so escaped percent sequences remain literal path characters.
     raw_path = unquote(raw_path).replace("\\", "/")
     # Strip leading slash only for Windows drive-letter forms like "/C:/..."
-    if os.name == "nt" and len(raw_path) >= 3 and raw_path[0] == "/" and raw_path[2] == ":":
+    if re.match(r"^/[A-Za-z]:/", raw_path):
         raw_path = raw_path[1:]
-
-    # Normalize path (collapse ../, ./)
-    norm = os.path.normpath(raw_path).replace("\\", "/")
-
-    # If an 'Assets' segment exists, compute path relative to it (case-insensitive)
-    parts = [p for p in norm.split("/") if p not in ("", ".")]
-    idx = next((i for i, seg in enumerate(parts) if seg.lower() == "assets"), None)
-    assets_rel = "/".join(parts[idx:]) if idx is not None else None
-
-    effective_path = assets_rel if assets_rel else norm
-    # For POSIX absolute paths outside Assets, drop the leading '/'
-    # to return a clean relative-like directory (e.g., '/tmp' -> 'tmp').
-    if effective_path.startswith("/"):
-        effective_path = effective_path[1:]
-
-    name = os.path.splitext(os.path.basename(effective_path))[0]
-    directory = os.path.dirname(effective_path)
+    # Use wire separators independently of the server host's operating system.
+    # Never truncate at an Assets segment: it may belong to another project.
+    norm = posixpath.normpath(raw_path)
+    name, extension = posixpath.splitext(posixpath.basename(norm))
+    if extension and extension.lower() != ".cs":
+        raise ValueError("Script paths must use a .cs suffix or be extensionless.")
+    directory = posixpath.dirname(norm)
     return name, directory
+
+
+def _is_script_directory(directory: str) -> bool:
+    """Absolute directories require authoritative containment in the Editor."""
+    return bool(directory) and (
+        directory.split("/")[0].lower() == "assets"
+        or directory.startswith("/")
+        or re.match(r"^[A-Za-z]:/", directory) is not None
+    )
 
 
 @mcp_for_unity_tool(
@@ -276,7 +269,10 @@ async def apply_text_edits(
     except ValueError as exc:
         return {"success": False, "code": "missing_field", "message": str(exc)}
     logger.info("Processing apply_text_edits")
-    name, directory = _split_uri(uri)
+    try:
+        name, directory = _split_uri(uri)
+    except ValueError as exc:
+        return {"success": False, "code": "invalid_uri", "message": str(exc)}
     name_error = _validate_script_name(name)
     if name_error:
         return {"success": False, "code": "bad_name", "message": name_error}
@@ -724,8 +720,11 @@ async def delete_script(
 ) -> dict[str, Any]:
     """Delete a C# script by URI."""
     logger.info("Processing delete_script")
-    name, directory = _split_uri(uri)
-    if not directory or directory.split("/")[0].lower() != "assets":
+    try:
+        name, directory = _split_uri(uri)
+    except ValueError as exc:
+        return {"success": False, "code": "invalid_uri", "message": str(exc)}
+    if not _is_script_directory(directory):
         return {
             "success": False,
             "code": "path_outside_assets",
@@ -778,8 +777,11 @@ async def validate_script(
     include_diagnostics: Annotated[bool, "Include full diagnostics and summary"] = False,
 ) -> dict[str, Any]:
     logger.info("Processing validate_script")
-    name, directory = _split_uri(uri)
-    if not directory or directory.split("/")[0].lower() != "assets":
+    try:
+        name, directory = _split_uri(uri)
+    except ValueError as exc:
+        return {"success": False, "code": "invalid_uri", "message": str(exc)}
+    if not _is_script_directory(directory):
         return {
             "success": False,
             "code": "path_outside_assets",

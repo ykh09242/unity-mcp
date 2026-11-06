@@ -50,7 +50,7 @@ async def main():
             ("Assets/Foo.cs", "Assets"),
             ("Assets/Foo.CS", "Assets"),
             ("Assets/Foo", "Assets"),
-            ("file:///C:/Owned/Assets/Version.1/Foo.cs", "Assets/Version.1"),
+            ("file:///C:/Owned/Assets/Version.1/Foo.cs", "C:/Owned/Assets/Version.1"),
             ("mcpforunity://path/Assets/Literal%2520/Foo.cs", "Assets/Literal%20"),
         ]
         unsupported = ["Assets/Foo.json", "Assets/Foo.shader", "Assets/Foo.cs.meta",

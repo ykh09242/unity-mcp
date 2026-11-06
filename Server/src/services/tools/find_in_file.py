@@ -2,10 +2,8 @@ import base64
 from contextvars import copy_context
 from functools import partial
 import logging
-import os
 import re
 from typing import Annotated, Any
-from urllib.parse import unquote, urlparse
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -13,67 +11,12 @@ from mcp.types import ToolAnnotations
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools import bounded_regex
-from services.tools.manage_script import _validate_script_name
+from services.tools.manage_script import _split_uri, _validate_script_name
 from services.tools.utils import coerce_bool, coerce_int
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
 logger = logging.getLogger("mcp-for-unity-server")
-
-
-def _split_uri(uri: str) -> tuple[str, str]:
-    """Split an incoming URI or path into (name, directory) suitable for Unity.
-
-    Rules:
-    - mcpforunity://path/Assets/... → keep as Assets-relative (after decode/normalize)
-    - file://... → percent-decode, normalize, strip host and leading slashes,
-        then, if any 'Assets' segment exists, return path relative to that 'Assets' root.
-        Otherwise, fall back to original name/dir behavior.
-    - plain paths → decode/normalize separators; if they contain an 'Assets' segment,
-        return relative to 'Assets'.
-    """
-    raw_path: str
-    if uri.startswith("mcpforunity://path/"):
-        raw_path = uri[len("mcpforunity://path/") :]
-    elif uri.startswith("file://"):
-        parsed = urlparse(uri)
-        host = (parsed.netloc or "").strip()
-        p = parsed.path or ""
-        # UNC: file://server/share/... -> //server/share/...
-        if host and host.lower() != "localhost":
-            p = f"//{host}{p}"
-        # Preserve leading slashes until the common decoding step.
-        raw_path = p
-    else:
-        raw_path = uri
-
-    # Decode once so escaped percent sequences remain literal path characters.
-    raw_path = unquote(raw_path).replace("\\", "/")
-    # Strip leading slash only for Windows drive-letter forms like "/C:/..."
-    if os.name == "nt" and len(raw_path) >= 3 and raw_path[0] == "/" and raw_path[2] == ":":
-        raw_path = raw_path[1:]
-
-    # Normalize path (collapse ../, ./)
-    norm = os.path.normpath(raw_path).replace("\\", "/")
-
-    # If an 'Assets' segment exists, compute path relative to it (case-insensitive)
-    parts = [p for p in norm.split("/") if p not in ("", ".")]
-    idx = next((i for i, seg in enumerate(parts) if seg.lower() == "assets"), None)
-    assets_rel = "/".join(parts[idx:]) if idx is not None else None
-
-    effective_path = assets_rel if assets_rel else norm
-    # For POSIX absolute paths outside Assets, drop the leading '/'
-    # to return a clean relative-like directory (e.g., '/tmp' -> 'tmp').
-    if effective_path.startswith("/"):
-        effective_path = effective_path[1:]
-
-    name, extension = os.path.splitext(os.path.basename(effective_path))
-    if extension and extension.lower() != ".cs":
-        raise ValueError(
-            "find_in_file supports C# scripts (.cs) or extensionless script paths only."
-        )
-    directory = os.path.dirname(effective_path)
-    return name, directory
 
 
 @mcp_for_unity_tool(

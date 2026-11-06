@@ -89,6 +89,21 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [Test]
+        public void AbsoluteScriptDirectoryIsBoundToTheSelectedProject()
+        {
+            var resolve = typeof(ManageScript).GetMethod("TryResolveUnderAssets", BindingFlags.Static | BindingFlags.NonPublic);
+            string nested = Path.Combine(Application.dataPath, "Nested", "Assets", "Scripts");
+            object[] valid = { nested, null, null };
+            Assert.IsTrue((bool)resolve.Invoke(null, valid));
+            Assert.AreEqual(Path.GetFullPath(nested), valid[1]);
+            Assert.AreEqual("Assets/Nested/Assets/Scripts", valid[2]);
+
+            string outside = Path.Combine(Path.GetDirectoryName(Application.dataPath), "OtherProject", "Assets", "Scripts");
+            object[] invalid = { outside, null, null };
+            Assert.IsFalse((bool)resolve.Invoke(null, invalid));
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void WriterPreservesUnrelatedSidecarsAndExactUtf8(bool overwrite)

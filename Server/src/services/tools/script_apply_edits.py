@@ -824,7 +824,7 @@ def _normalize_script_locator(name: str, path: str) -> tuple[str, str]:
     - name or path using uri prefixes: mcpforunity://path/..., file://...
     - accidental duplicates like "Assets/.../SmartReach.cs/SmartReach.cs"
 
-    Returns (name_without_extension, directory_path_under_Assets).
+    Returns (name_without_extension, directory_for_editor_containment).
     """
     n = (name or "").strip().replace("\\", "/")
     p = (path or "").strip().replace("\\", "/")
@@ -836,12 +836,10 @@ def _normalize_script_locator(name: str, path: str) -> tuple[str, str]:
         candidate = f"{p.rstrip('/') or 'Assets'}/{n}"
 
     # Retain tolerance for an accidentally repeated file name, then use the
-    # same URI decoding and Assets-relative locator as the other script tools.
+    # same URI decoding and identity-preserving locator as the other script tools.
     parts = candidate.split("/")
     if len(parts) >= 2 and parts[-1] == parts[-2]:
         candidate = "/".join(parts[:-1])
-    if not candidate.lower().endswith(".cs"):
-        candidate += ".cs"
     return _split_uri(candidate)
 
 
@@ -1354,7 +1352,10 @@ async def script_apply_edits(
         return {"success": False, "message": "At most 256 edits are permitted per request"}
 
     # Normalize locator first so downstream calls target the correct script file.
-    name, path = _normalize_script_locator(name, path)
+    try:
+        name, path = _normalize_script_locator(name, path)
+    except ValueError as exc:
+        return _err("invalid_uri", str(exc))
     name_error = _validate_script_name(name)
     if name_error:
         return _err("bad_name", name_error)

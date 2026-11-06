@@ -35,7 +35,11 @@ async def test_advertised_payload_limit_matches_editor_contract():
         ("Foo.CS", "Assets/Scripts", ("Foo", "Assets/Scripts")),
         ("Assets/Scripts/Foo.cs", "Assets/Other", ("Foo", "Assets/Scripts")),
         ("", "Assets/Scripts/Foo.cs", ("Foo", "Assets/Scripts")),
-        ("file:///C:/Project/Assets/Scripts/Foo%20Bar.cs", "", ("Foo Bar", "Assets/Scripts")),
+        (
+            "file:///C:/Project/Assets/Scripts/Foo%20Bar.cs",
+            "",
+            ("Foo Bar", "C:/Project/Assets/Scripts"),
+        ),
         ("Foo.cs", r"Assets\Scripts", ("Foo", "Assets/Scripts")),
     ],
 )

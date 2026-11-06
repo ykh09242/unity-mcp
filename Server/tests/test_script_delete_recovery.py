@@ -13,8 +13,8 @@ recovery = importlib.import_module("services.tools.refresh_unity")
 @pytest.mark.parametrize(
     "encoded_directory,expected_directory",
     [
-        ("%252e%252e/Assets", "Assets/%2e%2e/Assets"),
-        ("Scripts%252fNested", "Assets/Scripts%2fNested"),
+        ("%252e%252e/Assets", "C:/Project/Assets/%2e%2e/Assets"),
+        ("Scripts%252fNested", "C:/Project/Assets/Scripts%2fNested"),
     ],
 )
 async def test_delete_file_uri_decodes_percent_escapes_once(
