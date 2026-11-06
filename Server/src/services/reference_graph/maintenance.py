@@ -1,4 +1,4 @@
-"""Explicit offline archival. Run with ``python -m services.reference_graph.maintenance``."""
+"""Offline graph archival and native spools. Run with ``python -m services.reference_graph.maintenance``."""
 
 import argparse
 from contextlib import ExitStack, closing, contextmanager
@@ -546,19 +546,51 @@ class _Parser(argparse.ArgumentParser):
 
 def main(argv: list[str] | None = None) -> int:
     parser = _Parser(description=__doc__)
-    parser.add_argument("action", choices=("list", "inspect", "archive"))
+    parser.add_argument(
+        "action",
+        choices=(
+            "list",
+            "inspect",
+            "archive",
+            "native-list",
+            "native-inspect",
+            "native-export",
+            "native-reclaim",
+        ),
+    )
     parser.add_argument("--directory", required=True, type=Path)
     parser.add_argument("--scope")
     parser.add_argument("--destination", type=Path)
     parser.add_argument("--all-servers-stopped", action="store_true")
+    parser.add_argument("--editor", help="Exact native Editor instance ID (32 lowercase hex)")
+    parser.add_argument("--capture", help="Exact native capture ID (64 lowercase hex)")
     parser.add_argument(
-        "--apply", action="store_true", help="Commit the selected archival; default is dry-run"
+        "--all-editors-stopped",
+        action="store_true",
+        help="Required for legacy export without a producer lease",
+    )
+    parser.add_argument(
+        "--fingerprint",
+        default="",
+        help="Fresh native inspection fingerprint required for reclamation",
+    )
+    parser.add_argument(
+        "--inspected-at", type=int, default=0, help="Fresh native inspection Unix timestamp"
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the selected archive, export or reclamation; default is preview",
     )
     parser.add_argument("--after", default="")
     parser.add_argument("--limit", type=int, default=50)
     try:
         args = parser.parse_args(argv)
-        if args.action == "list":
+        if args.action.startswith("native-"):
+            from services.reference_graph.native_spools import run_command
+
+            result = run_command(args)
+        elif args.action == "list":
             if args.apply:
                 raise ValueError("--apply is only valid for archive")
             result = list_scopes(

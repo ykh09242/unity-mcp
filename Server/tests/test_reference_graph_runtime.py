@@ -67,6 +67,47 @@ def test_runtime_replay_is_idempotent_and_tokens_never_leave_status(capture):
     assert result["edges"][0]["provider"] == "runtime:" + identity
 
 
+def test_native_storage_stop_reason_and_limits_survive_without_credentials(capture):
+    workspace, runtime, identity = capture
+    token = runtime.native(identity)["token"]
+    observed = page([event()], state="storage_limit")
+    limits = {
+        "stop_reason": "max_capture_bytes",
+        "max_capture_bytes": 64 * 1024 * 1024,
+        "max_total_bytes": 512 * 1024 * 1024,
+        "max_record_bytes": 1024 * 1024,
+        "max_capture_count": 256,
+        "pending_count": 0,
+        "pending_bytes": 0,
+        "storage_waiting": False,
+        "unwritten_count": 17,
+    }
+    observed.update(limits, capture_id=token, token=token)
+    runtime.ingest(identity, 0, observed)
+    restored = RuntimeObservations(GraphWorkspace(workspace.store)).status(identity)
+    assert restored["state"] == "storage_limit"
+    assert all(restored["metadata"][key] == value for key, value in limits.items())
+    assert token not in json.dumps(restored)
+
+
+def test_native_pending_backpressure_metrics_remain_visible_and_private(capture):
+    _, runtime, identity = capture
+    token = runtime.native(identity)["token"]
+    observed = page([], offset=0)
+    metrics = {
+        "pending_count": 2,
+        "pending_bytes": 501,
+        "storage_waiting": True,
+        "unwritten_count": 0,
+    }
+    observed.update(metrics, capture_id=token, token=token)
+    runtime.ingest(identity, 0, observed)
+    status = runtime.status(identity)
+    assert status["state"] == "active"
+    assert all(status["metadata"][key] == value for key, value in metrics.items())
+    assert token not in json.dumps(status)
+
+
 def test_runtime_handles_keep_pairing_and_unmatched_release(capture):
     _, runtime, identity = capture
     runtime.ingest(

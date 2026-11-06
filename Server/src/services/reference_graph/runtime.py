@@ -147,7 +147,22 @@ class RuntimeObservations:
             raise ValueError("Invalid native runtime page")
         metadata = {
             key: page[key]
-            for key in ("build", "runtime_session", "playing", "error", "count")
+            for key in (
+                "build",
+                "runtime_session",
+                "playing",
+                "error",
+                "count",
+                "stop_reason",
+                "max_capture_bytes",
+                "max_total_bytes",
+                "max_record_bytes",
+                "max_capture_count",
+                "pending_count",
+                "pending_bytes",
+                "storage_waiting",
+                "unwritten_count",
+            )
             if key in page
         }
         with self.store._connect(write=True) as connection:
