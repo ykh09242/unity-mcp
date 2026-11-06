@@ -7,7 +7,9 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
@@ -1441,6 +1443,168 @@ namespace MCPForUnityTests.Editor.Tools
             var result = ToJObject(ManageAnimation.HandleCommand(paramsObj));
             Assert.IsFalse(result.Value<bool>("success"));
             Assert.That(result["message"].ToString(), Does.Contain("already exists"));
+        }
+    }
+
+    [Parallelizable(ParallelScope.None)]
+    public class AnimatorPrefabOverrideTests
+    {
+        private string assetRoot;
+        private string folderGuid;
+        private string prefabPath;
+        private string scenePath;
+        private string controllerPath;
+        private string originalControllerPath;
+        private Scene originalActiveScene;
+        private Scene ownerScene;
+        private Scene unrelatedScene;
+        private GameObject instance;
+        private bool ownsFolder;
+
+        [SetUp]
+        public void SetUp()
+        {
+            Assert.IsFalse(Application.isPlaying);
+            ownsFolder = false;
+            instance = null;
+            ownerScene = unrelatedScene = default;
+            originalActiveScene = SceneManager.GetActiveScene();
+            assetRoot = "Assets/__McpAnimatorOverrides_" + Guid.NewGuid().ToString("N");
+            Assert.IsFalse(AssetDatabase.IsValidFolder(assetRoot));
+            Assert.IsFalse(Directory.Exists(FullPath(assetRoot)));
+            folderGuid = AssetDatabase.CreateFolder("Assets", Path.GetFileName(assetRoot));
+            Assert.AreEqual(assetRoot, AssetDatabase.GUIDToAssetPath(folderGuid));
+            ownsFolder = true;
+            originalControllerPath = assetRoot + "/Original.controller";
+            controllerPath = assetRoot + "/Replacement.controller";
+            var originalController = AnimatorController.CreateAnimatorControllerAtPath(originalControllerPath);
+            Assert.IsNotNull(originalController);
+            Assert.IsNotNull(AnimatorController.CreateAnimatorControllerAtPath(controllerPath));
+            ownerScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            unrelatedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            prefabPath = assetRoot + "/Rig.prefab";
+            var source = new GameObject("AnimatorOverride_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                SceneManager.MoveGameObjectToScene(source, ownerScene);
+                source.AddComponent<Animator>().runtimeAnimatorController = originalController;
+                Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(source, prefabPath));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+            instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, ownerScene);
+            Assert.IsNotNull(instance);
+            Assert.IsNotNull(instance.GetComponent<Animator>());
+            scenePath = assetRoot + "/Owner.unity";
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownerScene, scenePath));
+            Assert.IsTrue(EditorSceneManager.SaveScene(unrelatedScene, assetRoot + "/Unrelated.unity"));
+            Assert.IsTrue(SceneManager.SetActiveScene(unrelatedScene));
+            Assert.IsFalse(ownerScene.isDirty);
+            Assert.IsFalse(unrelatedScene.isDirty);
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            if (instance != null)
+            {
+                Undo.ClearUndo(instance.GetComponent<Animator>());
+                Undo.ClearUndo(instance);
+            }
+            if (originalActiveScene.IsValid() && originalActiveScene.isLoaded)
+                SceneManager.SetActiveScene(originalActiveScene);
+            if (ownerScene.IsValid() && ownerScene.isLoaded)
+                Assert.IsTrue(EditorSceneManager.CloseScene(ownerScene, true));
+            if (unrelatedScene.IsValid() && unrelatedScene.isLoaded)
+                Assert.IsTrue(EditorSceneManager.CloseScene(unrelatedScene, true));
+            if (ownsFolder)
+            {
+                Assert.AreEqual(assetRoot, AssetDatabase.GUIDToAssetPath(folderGuid));
+                Assert.IsTrue(AssetDatabase.DeleteAsset(assetRoot));
+                ownsFolder = false;
+            }
+        }
+
+        [TestCase("controller_assign")]
+        [TestCase("animator_set_enabled")]
+        public void PrefabAnimatorEditsPersistAfterSceneReopen(string action)
+        {
+            byte[] prefabBytes = File.ReadAllBytes(FullPath(prefabPath));
+            ApplyEdit(action);
+            Assert.IsTrue(ownerScene.isDirty, "The changed Animator's owning scene must be dirty.");
+            Assert.IsFalse(unrelatedScene.isDirty, "The active scene does not own this Animator.");
+            AssertEditedState(action, true);
+            var sourceAnimator = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath).GetComponent<Animator>();
+            string propertyPath = action == "controller_assign" ? "m_Controller" : "m_Enabled";
+            Assert.IsTrue(
+                (PrefabUtility.GetPropertyModifications(instance) ?? Array.Empty<PropertyModification>()).Any(modification =>
+                    modification.target == sourceAnimator && modification.propertyPath == propertyPath
+                ),
+                "The changed Animator property must be recorded on the prefab instance."
+            );
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownerScene));
+            Assert.IsTrue(EditorSceneManager.CloseScene(ownerScene, true));
+            ownerScene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Additive);
+            instance = ownerScene.GetRootGameObjects().Single();
+            Assert.IsTrue(PrefabUtility.IsPartOfPrefabInstance(instance));
+            AssertEditedState(action, true);
+            CollectionAssert.AreEqual(prefabBytes, File.ReadAllBytes(FullPath(prefabPath)));
+            Assert.AreEqual(originalControllerPath, AssetDatabase.GetAssetPath(sourceAnimator.runtimeAnimatorController));
+            Assert.IsTrue(sourceAnimator.enabled);
+            Assert.IsFalse(unrelatedScene.isDirty);
+        }
+
+        [TestCase("controller_assign")]
+        [TestCase("animator_set_enabled")]
+        public void PrefabAnimatorEditsPreserveUndo(string action)
+        {
+            Undo.IncrementCurrentGroup();
+            int undoGroup = Undo.GetCurrentGroup();
+            ApplyEdit(action);
+            Undo.FlushUndoRecordObjects();
+            Undo.CollapseUndoOperations(undoGroup);
+            AssertEditedState(action, true);
+            Undo.PerformUndo();
+            AssertEditedState(action, false);
+            Undo.PerformRedo();
+            AssertEditedState(action, true);
+            Assert.IsFalse(unrelatedScene.isDirty);
+        }
+
+        private void ApplyEdit(string action)
+        {
+            var result = ToJObject(
+                ManageAnimation.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = action,
+                        ["target"] = instance.name,
+                        ["controllerPath"] = controllerPath,
+                        ["enabled"] = false,
+                    }
+                )
+            );
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+        }
+
+        private void AssertEditedState(string action, bool edited)
+        {
+            var animator = instance.GetComponent<Animator>();
+            Assert.IsNotNull(animator);
+            Assert.AreEqual(
+                action == "controller_assign" && edited ? controllerPath : originalControllerPath,
+                AssetDatabase.GetAssetPath(animator.runtimeAnimatorController)
+            );
+            Assert.AreEqual(action != "animator_set_enabled" || !edited, animator.enabled);
+        }
+
+        private string FullPath(string path)
+        {
+            Assert.IsTrue(path == assetRoot || path.StartsWith(assetRoot + "/", StringComparison.Ordinal));
+            return Path.Combine(Application.dataPath, path.Substring(7).Replace('/', Path.DirectorySeparatorChar));
         }
     }
 }

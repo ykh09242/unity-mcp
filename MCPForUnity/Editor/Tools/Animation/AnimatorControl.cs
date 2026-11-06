@@ -3,6 +3,7 @@ using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Animations;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 
 namespace MCPForUnity.Editor.Tools.Animation
@@ -31,6 +32,19 @@ namespace MCPForUnity.Editor.Tools.Animation
         private static bool IsRuntimeTarget(Animator animator)
         {
             return !EditorUtility.IsPersistent(animator) && !EditorUtility.IsPersistent(animator.gameObject) && Application.IsPlaying(animator.gameObject);
+        }
+
+        internal static void RecordEditModeModification(Animator animator)
+        {
+            if (Application.isPlaying)
+                return;
+
+            if (PrefabUtility.IsPartOfPrefabInstance(animator))
+                PrefabUtility.RecordPrefabInstancePropertyModifications(animator);
+            EditorUtility.SetDirty(animator);
+            var scene = animator.gameObject.scene;
+            if (scene.IsValid() && scene.isLoaded)
+                EditorSceneManager.MarkSceneDirty(scene);
         }
 
         public static object Play(JObject @params)
@@ -294,6 +308,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             Undo.RecordObject(animator, "Set Animator Enabled");
             animator.enabled = enabled;
+            RecordEditModeModification(animator);
 
             return new { success = true, message = $"Animator {(enabled ? "enabled" : "disabled")} on {AnimatorResolver.Describe(go, animator)}" };
         }

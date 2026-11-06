@@ -522,6 +522,7 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             Undo.RecordObject(animator, "Assign AnimatorController");
             animator.runtimeAnimatorController = controller;
+            AnimatorControl.RecordEditModeModification(animator);
             EditorUtility.SetDirty(go);
             AssetDatabase.SaveAssetIfDirty(go);
 
