@@ -1885,6 +1885,12 @@ class GraphWorkspace:
             self._key_cache = self.refresh_catalog(self._key_cache)
             return self._key_cache[1]
 
+    def clear_caches(self) -> None:
+        """Release derived admission data without changing durable evidence."""
+        with self._key_cache_lock:
+            self._key_cache = None
+            self._admission_cache = None
+
     def refresh_catalog(self, cache: tuple[int, Catalog] | None) -> tuple[int, Catalog]:
         """Update only journaled GUIDs; a gap, reset or cold open rebuilds safely."""
         with self.store._connect() as connection:

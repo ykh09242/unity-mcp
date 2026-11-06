@@ -186,6 +186,7 @@ class Reconciler:
         self._catalog_cache = None
         self._analysis_cache = None
         self.store.clear_summaries()
+        self.workspace.clear_caches()
 
     @staticmethod
     def matches_ignore_proof(status: dict, known: dict) -> bool:
@@ -562,7 +563,7 @@ class Reconciler:
             {"epoch": identity[0], "ignore_revision": identity[1], "snapshot": snapshot},
         )
         if changed:
-            self.clear_caches()
+            await drained_thread(self.clear_caches)
         self.progress = await drained_thread(self.workspace.progress)
         self.progress.update(ignore_epoch=identity[0], ignore_revision=identity[1])
         return snapshot

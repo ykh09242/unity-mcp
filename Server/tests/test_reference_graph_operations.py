@@ -4,9 +4,11 @@ from tests.lifecycle import FixtureProgress
 from tests.timing import await_signal, watchdog_timeout
 from types import SimpleNamespace
 import asyncio
+import gc
 import json
 import threading
 import time
+import weakref
 
 import pytest
 import pytest_asyncio
@@ -232,6 +234,42 @@ async def test_config_pages_cas_reauthorization_and_isolation(setup, tmp_path, m
         assert (await service.execute(ctx, "export_config", {"kind": "rule"}))["data"][
             "items"
         ] == []
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_releases_runtime_catalog_and_preserves_durable_keys(setup):
+    service, ctx = setup
+    try:
+        entry, _ = await service.resolve(ctx, "status")
+        assert await entry.engine.reconcile()
+        workspace = entry.workspace
+        assert workspace.acquire("catalog-fixture")
+        try:
+            workspace.record_page(
+                "catalog-fixture",
+                [
+                    {"guid": f"{index:032x}", "path": f"Assets/{index}.prefab"}
+                    for index in range(128)
+                ],
+                {},
+                "catalog-fixture",
+            )
+        finally:
+            workspace.release("catalog-fixture")
+        retained = weakref.ref(workspace.key_admission())
+        assert retained() is not None
+
+        result = (await service.execute(ctx, "cleanup", {"before": time.time() + 1, "limit": 1}))[
+            "data"
+        ]
+        assert result["memory_caches_cleared"] is True
+        gc.collect()
+        assert retained() is None
+        assert workspace.key_admission().resolve("path", "Assets/127.prefab")[0] == {
+            "asset:" + f"{127:032x}"
+        }
     finally:
         await service.aclose()
 

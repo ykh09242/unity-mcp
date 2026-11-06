@@ -1401,7 +1401,7 @@ class ReferenceGraphService:
                 data["memory_caches_cleared"] = False
                 if not entry.engine._gate.locked():
                     async with entry.engine._gate:
-                        entry.engine.clear_caches()
+                        await drained_thread(entry.engine.clear_caches)
                         data["memory_caches_cleared"] = True
         elif action.startswith("runtime_"):
             from services.reference_graph.runtime_service import execute as execute_runtime

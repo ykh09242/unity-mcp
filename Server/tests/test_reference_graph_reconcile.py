@@ -1,6 +1,6 @@
 """Exercise durable reconciliation against the native paging protocol."""
 
-from tests.timing import watchdog_timeout
+from tests.timing import await_signal, watchdog_timeout
 from tests.test_reference_graph_service import setup as service_setup
 
 import asyncio
@@ -18,6 +18,55 @@ from services.reference_graph.reconcile import Reconciler, drained_thread
 from services.reference_graph.analysis import ANALYSIS_VERSION
 from services.reference_graph.store import GraphScope, GraphStore, RevisionConflict, _hash
 from services.reference_graph.workspace import GraphWorkspace
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_ignore_rule_cache_clear_keeps_loop_responsive_and_drains_owner(
+    setup, monkeypatch, cancel
+):
+    _, workspace, editor, engine = setup
+    assert workspace.acquire(engine.worker)
+    reader_entered = threading.Event()
+    release_reader = threading.Event()
+    reader_expired = threading.Event()
+    clear_entered = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    original_clear = workspace.clear_caches
+
+    def hold_catalog_reader():
+        with workspace._key_cache_lock:
+            reader_entered.set()
+            if not release_reader.wait(watchdog_timeout(5)):
+                reader_expired.set()
+
+    def observe_clear():
+        loop.call_soon_threadsafe(clear_entered.set)
+        original_clear()
+
+    monkeypatch.setattr(workspace, "clear_caches", observe_clear)
+    reader = asyncio.create_task(drained_thread(hold_catalog_reader))
+    clearing = None
+    try:
+        assert await asyncio.to_thread(reader_entered.wait, watchdog_timeout())
+        clearing = asyncio.create_task(engine._ignore_rules(await editor("status")))
+        await await_signal(clear_entered, "ignore cache clear", producers=(clearing,))
+        assert not reader_expired.is_set(), "cache lock blocked the event loop"
+        if cancel:
+            clearing.cancel()
+            await asyncio.sleep(0)
+            assert not clearing.done(), "cancelled cleanup must retain its blocked worker"
+        release_reader.set()
+        await reader
+        if cancel:
+            with pytest.raises(asyncio.CancelledError):
+                await clearing
+        else:
+            assert await clearing == "ignore-0"
+    finally:
+        release_reader.set()
+        await asyncio.gather(reader, *([clearing] if clearing else []), return_exceptions=True)
+        workspace.release(engine.worker)
 
 
 @pytest.mark.asyncio
