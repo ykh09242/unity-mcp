@@ -64,7 +64,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: compile-check-${{ github.head_ref || github.ref }}
+  group: compile-check-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -26,6 +26,56 @@ def workflow(name):
     return yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))
 
 
+@pytest.mark.parametrize("name", ["compile-check.yml", "unity-tests.yml"])
+@pytest.mark.parametrize(
+    "first,second,same_group",
+    [
+        (
+            {"head_ref": "fix", "ref": "refs/pull/101/merge", "event.pull_request.number": 101},
+            {"head_ref": "fix", "ref": "refs/pull/102/merge", "event.pull_request.number": 102},
+            False,
+        ),
+        (
+            {
+                "head_ref": "fix",
+                "ref": "refs/pull/101/merge",
+                "event.pull_request.number": 101,
+                "sha": "old-commit",
+            },
+            {
+                "head_ref": "fix",
+                "ref": "refs/pull/101/merge",
+                "event.pull_request.number": 101,
+                "sha": "new-commit",
+            },
+            True,
+        ),
+        (
+            {"head_ref": "", "ref": "refs/heads/beta", "event.pull_request.number": None},
+            {"head_ref": "", "ref": "refs/heads/main", "event.pull_request.number": None},
+            False,
+        ),
+    ],
+    ids=["fork-prs-sharing-branch", "new-commit-on-same-pr", "distinct-push-refs"],
+)
+def test_unity_concurrency_isolates_prs_and_coalesces_updates(name, first, second, same_group):
+    concurrency = workflow(name)["concurrency"]
+
+    def group(context):
+        # Evaluate the workflow's simple GitHub-context fallback expression against events.
+        def fallback(match):
+            for operand in match[1].split("||"):
+                value = context.get(operand.strip().removeprefix("github."))
+                if value:
+                    return str(value)
+            return ""
+
+        return re.sub(r"\$\{\{\s*(.*?)\s*\}\}", fallback, concurrency["group"])
+
+    assert (group(first) == group(second)) is same_group
+    assert concurrency["cancel-in-progress"] is True
+
+
 @pytest.mark.parametrize(
     "name,job_name,command_text",
     [
