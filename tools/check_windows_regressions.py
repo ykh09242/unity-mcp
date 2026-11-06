@@ -20,6 +20,15 @@ CASES: Final = {
     "Server/tests/test_cli_doctor.py::test_live_server_releases_accepted_socket_when_windows_shutdown_resets": 1,
     "Server/tests/test_play_scenario_player_assurance.py::test_snapshot_reader_retries_only_bounded_replacement_errors": 4,
     "Server/tests/test_play_scenario_player_assurance.py::test_snapshot_retry_stops_at_elapsed_deadline": 3,
+    "Server/tests/test_focus_nudge.py::TestWindowsFocusScripts::test_capture_has_no_native_return_value_in_stdout": 4,
+    "Server/tests/test_focus_nudge.py::TestWindowsFocusScripts::test_no_foreground_window": 1,
+    "Server/tests/test_focus_nudge.py::TestWindowsFocusScripts::test_restores_by_handle_after_title_changes": 3,
+    "Server/tests/test_focus_nudge.py::TestWindowsFocusScripts::test_reports_closed_window_or_denied_activation": 2,
+    "Server/tests/test_focus_nudge.py::TestWindowsFocusScripts::test_rejects_title_only_activation": 2,
+    "Server/tests/test_focus_nudge.py::TestWindowsFocusScripts::test_exact_project_activation_still_works": 2,
+    "Server/tests/test_focus_nudge.py::TestWindowsFocusScripts::test_rejects_successful_native_call_that_did_not_change_foreground": 1,
+    "Server/tests/test_cli_followup_context.py::test_platform_shell_preserves_apostrophes_metacharacters_and_spaced_arguments": 1,
+    "Server/tests/test_http_security_wrapper.py::test_worker_progress_updates_while_windows_reader_holds_current_snapshot": 1,
     "tools/tests/test_native_preference_process.py::test_controller_process_contract": 22,
     "tools/tests/test_process_observation.py::test_owned_windows_sampler_captures_and_closes_on_every_path": 4,
     "tools/tests/test_play_scenario_player_e2e.py::test_actual_owned_timeout_reaps_process": 1,
@@ -41,7 +50,7 @@ def check_report(path: Path) -> int:
     ):
         raise ValueError("Windows regressions must execute without skips, failures or errors")
     counts = Counter(case.attrib["name"].split("[", 1)[0] for case in cases)
-    expected = {node.split("::")[1]: count for node, count in CASES.items()}
+    expected = {node.rsplit("::", 1)[-1]: count for node, count in CASES.items()}
     if counts != expected:
         raise ValueError(
             f"Windows regression execution count mismatch: {dict(counts)} != {expected}"
@@ -72,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
             sys.executable,
             "-m",
             "pytest",
+            "-o",
+            "asyncio_default_fixture_loop_scope=function",
             "--import-mode=importlib",
             *CASES,
             "-q",

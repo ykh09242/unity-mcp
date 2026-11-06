@@ -28,7 +28,36 @@ def test_windows_selection_includes_proactor_cleanup_and_replacement_retry_bound
         ]
         == 3
     )
-    assert sum(CASES.values()) == 46
+    assert sum(CASES.values()) == 63
+
+
+def test_windows_selection_executes_focus_scripts_shell_roundtrip_and_open_snapshot():
+    focus = {
+        node.rsplit("::", 1)[-1]: count
+        for node, count in CASES.items()
+        if "::TestWindowsFocusScripts::" in node
+    }
+    assert focus == {
+        "test_capture_has_no_native_return_value_in_stdout": 4,
+        "test_no_foreground_window": 1,
+        "test_restores_by_handle_after_title_changes": 3,
+        "test_reports_closed_window_or_denied_activation": 2,
+        "test_rejects_title_only_activation": 2,
+        "test_exact_project_activation_still_works": 2,
+        "test_rejects_successful_native_call_that_did_not_change_foreground": 1,
+    }
+    assert (
+        CASES[
+            "Server/tests/test_cli_followup_context.py::test_platform_shell_preserves_apostrophes_metacharacters_and_spaced_arguments"
+        ]
+        == 1
+    )
+    assert (
+        CASES[
+            "Server/tests/test_http_security_wrapper.py::test_worker_progress_updates_while_windows_reader_holds_current_snapshot"
+        ]
+        == 1
+    )
 
 
 @pytest.mark.parametrize(
@@ -52,7 +81,7 @@ def test_report_requires_every_selected_case_to_execute(tmp_path):
     suite = ElementTree.Element("testsuite")
     for node, count in CASES.items():
         for index in range(count):
-            ElementTree.SubElement(suite, "testcase", name=f"{node.split('::')[1]}[{index}]")
+            ElementTree.SubElement(suite, "testcase", name=f"{node.rsplit('::', 1)[-1]}[{index}]")
     report = tmp_path / "results.xml"
     tree = ElementTree.ElementTree(suite)
     tree.write(report)
