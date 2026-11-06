@@ -14,6 +14,21 @@ from transport.mcp_version_middleware import _mismatched_modern_id
 from transport.mcp_version_middleware import McpVersionMiddleware
 from transport.models import SessionDetails, SessionList
 from transport.plugin_hub import PluginHub
+from transport.request_body_limit_middleware import RequestBodyLimitMiddleware
+
+
+def _large_metadata_body(version):
+    body = _body(
+        "initialize",
+        {
+            "protocolVersion": LEGACY_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "metadata-progress-test", "version": "1"},
+        },
+        version=version,
+    )
+    raw = json.dumps(body).encode()[:-1] + b',"irrelevant":[' + b'{"unused":[]},' * 100_000
+    return raw[:-1] + b"]}"
 
 
 @pytest.mark.asyncio
@@ -56,12 +71,13 @@ async def test_sdk_limit_precedes_metadata_inspection(
 
 
 @pytest.mark.parametrize("element", [b"{}", b"[]", b'{"unused": []}'])
-def test_wide_irrelevant_containers_do_not_expand_into_object_graph(element):
+@pytest.mark.asyncio
+async def test_wide_irrelevant_containers_do_not_expand_into_object_graph(element):
     prefix = json.dumps(_body("server/discover")).encode()[:-1]
     raw = bytearray(prefix + b',"irrelevant":[' + b",".join([element] * 100_000) + b"]}")
     tracemalloc.start()
     try:
-        assert _mismatched_modern_id(raw) == "wire-request"
+        assert await _mismatched_modern_id(raw) == "wire-request"
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
@@ -118,7 +134,8 @@ async def test_configured_sdk_ceiling_does_not_reduce_local_api_allowance(public
 
 @pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16", "utf-32"])
 @pytest.mark.parametrize("request_id", [0, -17, True, False, 1.5, None, [], {}, "요청😀", "\ud800"])
-def test_selected_metadata_preserves_scalar_and_encoding_semantics(encoding, request_id):
+@pytest.mark.asyncio
+async def test_selected_metadata_preserves_scalar_and_encoding_semantics(encoding, request_id):
     body = {**_body("server/discover"), "id": request_id}
     raw = bytearray(json.dumps(body).encode(encoding))
     expected = (
@@ -126,7 +143,7 @@ def test_selected_metadata_preserves_scalar_and_encoding_semantics(encoding, req
         if isinstance(request_id, (str, int)) and not isinstance(request_id, bool)
         else None
     )
-    actual = _mismatched_modern_id(raw)
+    actual = await _mismatched_modern_id(raw)
     assert actual == expected
     assert type(actual) is type(expected)
 
@@ -155,13 +172,15 @@ def test_selected_metadata_preserves_scalar_and_encoding_semantics(encoding, req
         ('"extra":"\\q"', None),
     ],
 )
-def test_duplicate_keys_and_irrelevant_syntax_follow_json_semantics(suffix, expected):
+@pytest.mark.asyncio
+async def test_duplicate_keys_and_irrelevant_syntax_follow_json_semantics(suffix, expected):
     raw = bytearray((json.dumps(_body("server/discover"))[:-1] + "," + suffix + "}").encode())
-    assert _mismatched_modern_id(raw) == expected
+    assert await _mismatched_modern_id(raw) == expected
 
 
 @pytest.mark.parametrize("depth", [1, 64, 512])
-def test_deep_unrelated_containers_remain_legal(depth):
+@pytest.mark.asyncio
+async def test_deep_unrelated_containers_remain_legal(depth):
     raw = bytearray(
         json.dumps(_body("server/discover")).encode()[:-1]
         + b',"other":'
@@ -171,10 +190,11 @@ def test_deep_unrelated_containers_remain_legal(depth):
         + b"}"
     )
     assert json.loads(raw)["id"] == "wire-request"
-    assert _mismatched_modern_id(raw) == "wire-request"
+    assert await _mismatched_modern_id(raw) == "wire-request"
 
 
-def test_deep_irrelevant_syntax_uses_compact_bookkeeping():
+@pytest.mark.asyncio
+async def test_deep_irrelevant_syntax_uses_compact_bookkeeping():
     depth = 100_000
     raw = bytearray(
         json.dumps(_body("server/discover")).encode()[:-1]
@@ -186,7 +206,7 @@ def test_deep_irrelevant_syntax_uses_compact_bookkeeping():
     )
     tracemalloc.start()
     try:
-        assert _mismatched_modern_id(raw) == "wire-request"
+        assert await _mismatched_modern_id(raw) == "wire-request"
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
@@ -218,3 +238,150 @@ async def test_cancelled_partial_collection_does_not_inspect_or_dispatch(monkeyp
         await McpVersionMiddleware(downstream, "/mcp")(
             scope_for([(b"mcp-protocol-version", LEGACY_VERSION.encode())], "/mcp"), receive, send
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version, status", [(LEGACY_VERSION, 200), (MODERN_VERSION, 400)])
+async def test_large_metadata_scan_allows_concurrent_progress(public_app, version, status):
+    app, headers, _ = public_app
+    raw = _large_metadata_body(version)
+    for middleware in app.user_middleware:
+        if middleware.cls.__name__ == "RequestBodyLimitMiddleware":
+            middleware.kwargs["max_body_size"] = len(raw)
+    headers = [*headers, (b"mcp-protocol-version", LEGACY_VERSION.encode())]
+    collected = anyio.Event()
+    finished = anyio.Event()
+    sent = []
+
+    async def receive():
+        collected.set()
+        return {"type": "http.request", "body": raw}
+
+    async def send(message):
+        sent.append(message)
+
+    async def upload():
+        try:
+            await app(scope_for(headers, "/mcp"), receive, send)
+        finally:
+            finished.set()
+
+    ticks = 0
+    async with app.router.lifespan_context(app):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(upload)
+            await collected.wait()
+            while not finished.is_set():
+                ticks += 1
+                await anyio.lowlevel.checkpoint()
+    assert sent[0]["status"] == status
+    assert ticks >= 5, "Metadata scanning excluded concurrent event-loop work"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version, status", [(LEGACY_VERSION, 200), (MODERN_VERSION, 400)])
+async def test_metadata_scanner_itself_yields_before_downstream_work(version, status):
+    raw = _large_metadata_body(version)
+    collected = anyio.Event()
+    finished = anyio.Event()
+    sent = []
+
+    async def receive():
+        collected.set()
+        return {"type": "http.request", "body": raw}
+
+    async def send(message):
+        sent.append(message)
+
+    async def downstream(scope, receive, send):
+        assert (await receive())["body"] == raw
+        await send({"type": "http.response.start", "status": 200})
+
+    async def upload():
+        try:
+            await McpVersionMiddleware(downstream, "/mcp")(
+                scope_for([(b"mcp-protocol-version", LEGACY_VERSION.encode())], "/mcp"),
+                receive,
+                send,
+            )
+        finally:
+            finished.set()
+
+    ticks = 0
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(upload)
+        await collected.wait()
+        while not finished.is_set():
+            ticks += 1
+            await anyio.lowlevel.checkpoint()
+    assert sent[0]["status"] == status
+    assert ticks >= 5, "Metadata scanning excluded concurrent event-loop work"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_metadata_scan_releases_its_input_and_ingress_capacity(monkeypatch):
+    raw = _large_metadata_body(MODERN_VERSION)
+    collected = anyio.Event()
+    finished = anyio.Event()
+    scan_exited = anyio.Event()
+    cancellation = []
+    inputs = []
+    sent = []
+    dispatched = []
+
+    async def inspect(raw):
+        inputs.append(raw)
+        try:
+            return await _mismatched_modern_id(raw)
+        finally:
+            scan_exited.set()
+
+    monkeypatch.setattr("transport.mcp_version_middleware._mismatched_modern_id", inspect)
+
+    async def receive():
+        collected.set()
+        return {"type": "http.request", "body": raw}
+
+    async def send(message):
+        sent.append(message)
+
+    async def downstream(scope, receive, send):
+        dispatched.append((await receive())["body"])
+        await send({"type": "http.response.start", "status": 200})
+
+    app = RequestBodyLimitMiddleware(
+        McpVersionMiddleware(downstream, "/mcp"),
+        max_body_size=len(raw),
+        max_ingress_bytes=len(raw),
+    )
+    scope = scope_for([(b"mcp-protocol-version", LEGACY_VERSION.encode())], "/mcp")
+
+    async def upload():
+        with anyio.CancelScope() as cancel_scope:
+            cancellation.append(cancel_scope)
+            try:
+                await app(scope, receive, send)
+            finally:
+                finished.set()
+
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(upload)
+        await collected.wait()
+        for _ in range(3):
+            await anyio.lowlevel.checkpoint()
+        assert not finished.is_set(), "Metadata scanning finished before cancellation could run"
+        assert not scan_exited.is_set()
+        assert inputs[0] == raw
+        assert app.retained_bytes == len(raw)
+        rejected, _ = await invoke(app, scope, [{"type": "http.request", "body": b"{}"}])
+        assert rejected[0]["status"] == 503
+        assert app.retained_bytes == len(raw)
+        cancellation[0].cancel()
+        await finished.wait()
+    assert app.retained_bytes == 0
+    assert scan_exited.is_set()
+    assert inputs[0] == bytearray()
+    assert not dispatched and not sent
+    accepted, _ = await invoke(app, scope, [{"type": "http.request", "body": b"{}"}])
+    assert accepted[0]["status"] == 200
+    assert dispatched == [b"{}"]

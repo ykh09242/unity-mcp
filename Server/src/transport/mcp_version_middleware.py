@@ -4,7 +4,9 @@ import json
 from array import array
 from collections.abc import Callable
 from json.decoder import WHITESPACE
+from typing import Final
 
+from anyio.lowlevel import checkpoint
 from fastmcp.server.auth.middleware import RequireAuthMiddleware
 from fastmcp.server.http import StreamableHTTPASGIApp
 from mcp.server.transport_security import DEFAULT_MAX_REQUEST_BODY_SIZE
@@ -49,15 +51,19 @@ _METADATA_PATHS = frozenset(
         ("params", "_meta", "io.modelcontextprotocol/clientCapabilities"),
     }
 )
+_METADATA_SCAN_STEPS: Final = 1024
 
 
-def _metadata(raw: bytearray) -> JSONValue:
+async def _metadata(raw: bytearray) -> JSONValue:
     """Validate JSON iteratively, retaining only the fixed envelope field paths.
 
     The stdlib still owns scalar/escape/encoding semantics. Unknown object keys
     and array items are discarded as they are scanned, without a key memo or a
     container graph. Duplicate selected keys overwrite previous values normally.
+    Container traversal stays in its owning request task and yields after bounded
+    work, so cancellation exits the scan before the ingress reservation is freed.
     """
+    await checkpoint()
     text = raw.decode(json.detect_encoding(raw), "surrogatepass")
     decoder = json.JSONDecoder()
     # Each unselected container costs one byte, even for deeply nested input.
@@ -84,7 +90,12 @@ def _metadata(raw: bytearray) -> JSONValue:
         return result
 
     result = value(())
+    steps = 0
     while stack:
+        if steps == _METADATA_SCAN_STEPS:
+            await checkpoint()
+            steps = 0
+        steps += 1
         state = stack[-1]
         is_object = state < 3
         index = WHITESPACE.match(text, index).end()
@@ -122,10 +133,10 @@ def _metadata(raw: bytearray) -> JSONValue:
     return result
 
 
-def _mismatched_modern_id(raw: bytearray) -> str | int | None:
+async def _mismatched_modern_id(raw: bytearray) -> str | int | None:
     """Inspect only a well-formed request; leave invalid envelopes to the SDK."""
     try:
-        body = _metadata(raw)
+        body = await _metadata(raw)
     except (ValueError, UnicodeError, RecursionError):
         return None
     match body:
@@ -191,7 +202,7 @@ class McpVersionMiddleware:
                 del message
                 if complete:
                     break
-            request_id = _mismatched_modern_id(body) if complete else None
+            request_id = await _mismatched_modern_id(body) if complete else None
             if request_id is not None:
                 # Release the rejected body before potentially slow error delivery.
                 body.clear()
