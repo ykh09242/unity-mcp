@@ -13,6 +13,7 @@ from cli.utils.connection import (
     handle_unity_errors,
     UnityCommandError,
     UnityConnectionError,
+    PUBLIC_CONNECTION_ERROR,
 )
 
 
@@ -103,7 +104,11 @@ def create(
         response = (
             error.response
             if isinstance(error, UnityCommandError)
-            else {"success": False, "error": str(error)}
+            else {
+                "success": False,
+                "code": "connection_error",
+                "error": PUBLIC_CONNECTION_ERROR if config.format == "json" else str(error),
+            }
         )
         failure_data = response.get("data")
         outcome_unknown = (

@@ -3,10 +3,13 @@
 import json
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from click.testing import CliRunner
 
 from cli.commands.lighting import lighting
+from cli.main import cli
+from cli.utils import connection
 from cli.utils.config import CLIConfig
 from cli.utils.connection import UnityConnectionError
 
@@ -84,6 +87,87 @@ def test_failed_light_creation_stops_before_component_writes():
 STEPS = ["create_gameobject", "add_light_component", "set_type", "set_color", "set_intensity"]
 
 
+@pytest.mark.parametrize("stage", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize("failure", ["http_error", "refused", "timeout", "read_error"])
+@pytest.mark.parametrize("verbose", [False, True])
+def test_transport_failure_sanitizes_json_and_preserves_light_creation_progress(
+    monkeypatch, stage, failure, verbose
+):
+    # Given transport diagnostics contain credentials at any creation/configuration step.
+    credential = "synthetic-lighting-credential-must-not-escape"
+    created = {"instanceID": 1234, "name": "Owned", "enabled": False}
+    client_type = httpx.AsyncClient
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        if len(requests) == stage:
+            match failure:
+                case "http_error":
+                    return httpx.Response(503, text=f"Authorization: Bearer {credential}")
+                case "refused":
+                    raise httpx.ConnectError(f"refused X-API-Key: {credential}")
+                case "timeout":
+                    raise httpx.ReadTimeout(f"deadline X-API-Key: {credential}")
+                case "read_error":
+                    raise httpx.ReadError(f"failed read Authorization: Bearer {credential}")
+                case _:
+                    pytest.fail("Unexpected transport failure fixture")
+        return httpx.Response(
+            200,
+            json={"success": True, "data": created} if len(requests) == 1 else {"success": True},
+        )
+
+    monkeypatch.setattr(connection, "read_local_auth_token", lambda *_: credential)
+    monkeypatch.setattr(
+        connection.httpx,
+        "AsyncClient",
+        lambda **_options: client_type(transport=httpx.MockTransport(respond)),
+    )
+
+    # When the full CLI receives a transport failure, including with verbose diagnostics.
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            *(["--verbose"] if verbose else []),
+            "lighting",
+            "create",
+            "Owned",
+            "--color",
+            "0",
+            "0",
+            "0",
+            "--intensity",
+            "0",
+        ],
+    )
+
+    # Then output is one sanitized failure document and no uncertain work is replayed.
+    assert result.exit_code == 1, result.output
+    assert credential not in result.output
+    payload = json.loads(result.stdout)
+    assert payload["success"] is False
+    assert payload["code"] == "connection_error"
+    assert payload["error"]
+    assert len(requests) == stage
+    if not verbose:
+        assert result.stderr == ""
+    if stage == 1:
+        assert "lightingCreation" not in payload
+    else:
+        progress = payload["lightingCreation"]
+        assert progress["partialExecution"] is True
+        assert progress["createdObject"] == created
+        assert progress["requestedName"] == "Owned"
+        assert progress["completedSteps"] == STEPS[: stage - 1]
+        assert progress["failedStep"] == STEPS[stage - 1]
+        assert progress["failedStepOutcome"] == "unknown"
+        assert "retry" in progress["hint"].lower()
+        assert all(request["params"]["target"] == 1234 for request in requests[1:])
+
+
 @pytest.mark.parametrize("stage", [2, 3, 4, 5])
 @pytest.mark.parametrize("failure", ["native", "connection"])
 @pytest.mark.parametrize("output_format", ["json", "text", "table"])
@@ -126,7 +210,9 @@ def test_light_configuration_failure_retains_identity_and_confirmed_progress(
         if failure == "native":
             assert {key: payload[key] for key in native_error} == native_error
         else:
-            assert payload["error"] == "Connection timed out"
+            assert payload["code"] == "connection_error"
+            assert payload["error"]
+            assert "Connection timed out" not in payload["error"]
         progress = payload["lightingCreation"]
         assert progress["partialExecution"] is True
         assert progress["createdObject"] == created
