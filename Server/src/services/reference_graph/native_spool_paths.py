@@ -53,7 +53,7 @@ def _windows_owner(path: Path) -> None:
         if not security.OpenProcessToken(kernel.GetCurrentProcess(), 8, ctypes.byref(token)):
             raise ctypes.WinError(ctypes.get_last_error())
         try:
-            size = wintypes.DWORD()
+            size = wintypes.DWORD(0)
             security.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))
             buffer = ctypes.create_string_buffer(size.value)
             if not security.GetTokenInformation(token, 1, buffer, size, ctypes.byref(size)):
@@ -101,7 +101,7 @@ def lease(path: Path):
             raise ValueError("Native spool lease path changed; preserve it")
         try:
             if os.name == "nt":
-                import msvcrt
+                import msvcrt  # pylint: disable=import-error  # Windows-only standard library.
 
                 msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
             else:

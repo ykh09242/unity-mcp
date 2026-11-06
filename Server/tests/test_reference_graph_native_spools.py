@@ -1,6 +1,8 @@
 """Native capture fixtures never touch retained captures in the real user profile."""
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
+import ctypes
+from ctypes import wintypes
 import json
 import os
 from pathlib import Path
@@ -8,6 +10,7 @@ import struct
 import subprocess
 import sys
 import time
+from unittest.mock import Mock
 
 import pytest
 
@@ -18,6 +21,100 @@ from services.reference_graph import native_spool_paths as paths
 EDITOR_A = "a" * 32
 EDITOR_B = "b" * 32
 CAPTURE = "c" * 64
+
+
+def windows_token_api():
+    security = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = wintypes.HANDLE
+    pointer = ctypes.c_void_p
+    signatures = {
+        "OpenProcessToken": [handle, wintypes.DWORD, ctypes.POINTER(handle)],
+        "OpenThreadToken": [handle, wintypes.DWORD, wintypes.BOOL, ctypes.POINTER(handle)],
+        "DuplicateTokenEx": [
+            handle,
+            wintypes.DWORD,
+            pointer,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.POINTER(handle),
+        ],
+        "GetTokenInformation": [
+            handle,
+            ctypes.c_int,
+            pointer,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ],
+        "SetTokenInformation": [handle, ctypes.c_int, pointer, wintypes.DWORD],
+        "SetThreadToken": [ctypes.POINTER(handle), handle],
+        "EqualSid": [pointer, pointer],
+    }
+    for name, arguments in signatures.items():
+        function = getattr(security, name)
+        function.argtypes = arguments
+        function.restype = wintypes.BOOL
+    kernel.GetCurrentProcess.restype = handle
+    kernel.GetCurrentThread.restype = handle
+    kernel.CloseHandle.argtypes = [handle]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    return security, kernel
+
+
+def token_information(security, token, kind):
+    size = wintypes.DWORD(0)
+    security.GetTokenInformation(token, kind, None, 0, ctypes.byref(size))
+    buffer = ctypes.create_string_buffer(size.value)
+    if not security.GetTokenInformation(token, kind, buffer, size, ctypes.byref(size)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return buffer
+
+
+@contextmanager
+def windows_user_owner():
+    """Give only this thread's new fixtures a user owner, even on elevated CI."""
+    security, kernel = windows_token_api()
+    with ExitStack() as handles:
+        primary = wintypes.HANDLE()
+        # Query/duplicate the primary token; never request ADJUST_DEFAULT on it.
+        if not security.OpenProcessToken(kernel.GetCurrentProcess(), 0xA, ctypes.byref(primary)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        handles.callback(kernel.CloseHandle, primary)
+        previous = wintypes.HANDLE()
+        if security.OpenThreadToken(kernel.GetCurrentThread(), 0xC, True, ctypes.byref(previous)):
+            handles.callback(kernel.CloseHandle, previous)
+        elif ctypes.get_last_error() != 1008:  # ERROR_NO_TOKEN
+            raise ctypes.WinError(ctypes.get_last_error())
+        duplicate = wintypes.HANDLE()
+        # QUERY | IMPERSONATE | ADJUST_DEFAULT; SecurityImpersonation, TokenImpersonation.
+        if not security.DuplicateTokenEx(primary, 0x8C, None, 2, 2, ctypes.byref(duplicate)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        handles.callback(kernel.CloseHandle, duplicate)
+        user = token_information(security, primary, 1)  # TokenUser
+        owner = ctypes.c_void_p.from_buffer(user)
+        if not security.SetTokenInformation(
+            duplicate, 4, ctypes.byref(owner), ctypes.sizeof(owner)
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not security.SetThreadToken(None, duplicate):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            yield
+        finally:
+            if not security.SetThreadToken(None, previous):
+                raise ctypes.WinError(ctypes.get_last_error())
+
+
+@pytest.fixture(autouse=True)
+def user_owned_fixtures():
+    # Runs before tmp_path: export destinations also require a user-owned parent.
+    # The primary token and other threads remain untouched. Group-owned retained
+    # spools still fail the real production check; this is only fixture creation.
+    if os.name == "nt":
+        with windows_user_owner():
+            yield
+    else:
+        yield
 
 
 def seed(root: Path, editor: str = EDITOR_A, *, legacy: bool = False) -> Path:
@@ -343,3 +440,146 @@ def test_reclaim_hashing_does_not_hold_the_global_producer_fence(tmp_path, monke
         )["outcome"]
         == "reclaimed"
     )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Actual Windows token and file ownership")
+def test_fixture_owner_is_user_and_nested_scope_restores_existing_token(tmp_path):
+    security, kernel = windows_token_api()
+    primary, thread = wintypes.HANDLE(), wintypes.HANDLE()
+    assert security.OpenProcessToken(kernel.GetCurrentProcess(), 8, ctypes.byref(primary))
+    try:
+        assert security.OpenThreadToken(kernel.GetCurrentThread(), 8, True, ctypes.byref(thread))
+        try:
+            primary_before = token_information(security, primary, 4)
+            thread_before = token_information(security, thread, 10)  # TokenStatistics includes ID.
+            with pytest.raises(RuntimeError, match="fixture body failed"):
+                with windows_user_owner():
+                    created = tmp_path / "owned"
+                    created.write_bytes(b"fixture")
+                    paths._windows_owner(
+                        created
+                    )  # Real GetNamedSecurityInfoW/TokenUser comparison.
+                    raise RuntimeError("fixture body failed")
+            current = wintypes.HANDLE()
+            assert security.OpenThreadToken(
+                kernel.GetCurrentThread(), 8, True, ctypes.byref(current)
+            )
+            try:
+                assert token_information(security, current, 10).raw[:8] == thread_before.raw[:8]
+            finally:
+                kernel.CloseHandle(current)
+            primary_after = token_information(security, primary, 4)
+            assert security.EqualSid(
+                ctypes.c_void_p.from_buffer(primary_before),
+                ctypes.c_void_p.from_buffer(primary_after),
+            )
+        finally:
+            kernel.CloseHandle(thread)
+    finally:
+        kernel.CloseHandle(primary)
+
+
+@pytest.mark.parametrize(
+    "owner", [0x111, 0x222, 0x333], ids=["user", "default-group", "other-user"]
+)
+def test_windows_owner_requires_token_user_not_default_owner(tmp_path, monkeypatch, owner):
+    security, kernel = Mock(), Mock()
+
+    def get_owner(_path, _kind, _flags, owner_out, *_unused):
+        owner_out._obj.value = owner
+        _unused[-1]._obj.value = 0x999
+        return 0
+
+    def open_token(_process, _access, token_out):
+        token_out._obj.value = 0x777
+        return True
+
+    def get_information(_token, kind, buffer, _size, size_out):
+        # Even if TokenOwner matches a default group, it is not individual ownership.
+        size_out._obj.value = ctypes.sizeof(ctypes.c_void_p)
+        if buffer is None:
+            return False
+        ctypes.c_void_p.from_buffer(buffer).value = 0x111 if kind == 1 else 0x222
+        return True
+
+    security.GetNamedSecurityInfoW.side_effect = get_owner
+    security.OpenProcessToken.side_effect = open_token
+    security.GetTokenInformation.side_effect = get_information
+    security.EqualSid.side_effect = lambda left, right: left.value == right.value
+    monkeypatch.setattr(
+        ctypes,
+        "WinDLL",
+        lambda name, **_kwargs: security if name == "advapi32" else kernel,
+        raising=False,
+    )
+    evidence = tmp_path / "evidence"
+    evidence.write_bytes(b"retained")
+    if owner == 0x111:
+        paths._windows_owner(evidence)
+    else:
+        with pytest.raises(ValueError, match="current OS user"):
+            paths._windows_owner(evidence)
+    assert evidence.read_bytes() == b"retained"
+    assert all(call.args[1] == 1 for call in security.GetTokenInformation.call_args_list)
+    assert kernel.CloseHandle.call_args.args[0].value == 0x777
+    assert kernel.LocalFree.call_args.args[0].value == 0x999
+
+
+@pytest.mark.parametrize(
+    "previous", [None, 0x333], ids=["no-thread-token", "existing-thread-token"]
+)
+@pytest.mark.parametrize("failure", [None, "duplicate", "set-owner", "set-thread", "body"])
+def test_fixture_token_cleanup_on_setup_and_body_failures(monkeypatch, previous, failure):
+    security, kernel = Mock(), Mock()
+    error = [1008]  # ERROR_NO_TOKEN when no prior impersonation exists.
+
+    def open_handle(value, output):
+        if value is None:
+            return False
+        output._obj.value = value
+        return True
+
+    def duplicate(*arguments):
+        error[0] = 5
+        return False if failure == "duplicate" else open_handle(0x222, arguments[-1])
+
+    security.OpenProcessToken.side_effect = lambda *args: open_handle(0x111, args[-1])
+    security.OpenThreadToken.side_effect = lambda *args: open_handle(previous, args[-1])
+    security.DuplicateTokenEx.side_effect = duplicate
+    security.SetTokenInformation.return_value = failure != "set-owner"
+    security.SetThreadToken.side_effect = lambda _thread, token: (
+        failure != "set-thread" or token.value != 0x222
+    )
+    buffer = ctypes.create_string_buffer(ctypes.sizeof(ctypes.c_void_p))
+    ctypes.c_void_p.from_buffer(buffer).value = 0x444
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "windows_token_api", lambda: (security, kernel))
+    monkeypatch.setattr(module, "token_information", lambda *_args: buffer)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: error[0], raising=False)
+    monkeypatch.setattr(
+        ctypes, "WinError", lambda code: OSError(code, "fixture failure"), raising=False
+    )
+
+    def exercise():
+        with windows_user_owner():
+            if failure == "body":
+                raise RuntimeError("fixture body failed")
+
+    if failure in {"duplicate", "set-owner", "set-thread"}:
+        with pytest.raises(OSError, match="fixture failure"):
+            exercise()
+    elif failure == "body":
+        with pytest.raises(RuntimeError, match="fixture body failed"):
+            exercise()
+    else:
+        exercise()
+    expected_closed = {0x111}
+    if previous:
+        expected_closed.add(previous)
+    if failure != "duplicate":
+        expected_closed.add(0x222)
+    assert {call.args[0].value for call in kernel.CloseHandle.call_args_list} == expected_closed
+    if failure in {None, "body"}:
+        assert security.SetThreadToken.call_args.args[1].value == previous
+    for call in security.SetTokenInformation.call_args_list:
+        assert call.args[0].value == 0x222  # Only the duplicate token may be adjusted.

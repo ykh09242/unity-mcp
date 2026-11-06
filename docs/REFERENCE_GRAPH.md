@@ -456,6 +456,9 @@ partial destination for inspection; retry with a new destination.
 Reclamation requires an idle upgraded capture, verified filesystem identity and
 ownership, explicit `--apply`, and the fingerprint and timestamp from a preview no
 older than 300 seconds. Changed files or active capture leases are refused.
+On Windows, the filesystem owner must match the current user's SID. Group-owned
+files, including files created with an elevated Administrators default owner,
+remain refused; maintenance never adopts them or rewrites their ownership.
 Reclamation does not imply export. Legacy files are labeled `legacy_unverified`:
 inspection/export additionally requires `--all-editors-stopped`, and legacy
 reclamation is unsupported. That flag asserts that all Editors are stopped; it
