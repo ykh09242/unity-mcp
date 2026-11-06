@@ -100,6 +100,8 @@ namespace MCPForUnity.Editor.Services
             containsToken = false;
             if (pid <= 1 || string.IsNullOrWhiteSpace(instanceToken))
                 return false;
+            var ownedPids = _pidFileManager as PidFileManager;
+            DateTime? creationBefore = ownedPids?.GetProcessCreationUtc(pid);
             if (!_processDetector.TryGetProcessCommandLine(pid, out string args))
                 return false;
             string expected = NormalizeForMatch("--unity-instance-token " + instanceToken);
@@ -114,6 +116,22 @@ namespace MCPForUnity.Editor.Services
                     || normalized[end] == '"'
                     || normalized[end] == '\''
                 );
+            DateTime? creationAfter = creationBefore.HasValue ? ownedPids.GetProcessCreationUtc(pid) : null;
+            if (creationBefore.HasValue && creationAfter != creationBefore)
+            {
+                containsToken = false;
+                return false;
+            }
+            if (
+                containsToken
+                && creationBefore.HasValue
+                && TryGetLocalHttpServerHandshake(out string pidFile, out string launchToken)
+                && launchToken == instanceToken
+                && TryReadPidFromPidFile(pidFile, out int recordedPid)
+                && recordedPid == pid
+                && TryGetPortFromPidFilePath(pidFile, out int port)
+            )
+                ownedPids.RememberOwnedServerCreation(pid, port, instanceToken, creationBefore.Value);
             return true;
         }
 
@@ -364,7 +382,7 @@ namespace MCPForUnity.Editor.Services
                     // its redirection shim with uv. The launch PID covers the
                     // dependency/bootstrap period before Python writes its PID.
                     if (_pidFileManager is PidFileManager ownedPids)
-                        ownedPids.StoreOwnedLaunchProcess(_lastLaunchedProcess.Id, portForPid, instanceToken);
+                        ownedPids.StoreOwnedLaunchProcess(_lastLaunchedProcess, portForPid, instanceToken);
                 }
                 return true;
             }
@@ -403,7 +421,7 @@ namespace MCPForUnity.Editor.Services
                 }
 
                 bool serverPidKnown = TryReadPidFromPidFile(previousPidFile, out int serverPid) && serverPid > 1;
-                if (serverPidKnown && _processDetector.ProcessExists(serverPid))
+                if (serverPidKnown && IsTrackedProcessPossiblyAlive(serverPid, previousPort, previousToken, launcher: false))
                 {
                     error = "The previous managed server process is still running. Wait for startup or shutdown to finish before starting again.";
                     return false;
@@ -411,7 +429,7 @@ namespace MCPForUnity.Editor.Services
                 int launcherPid = 0;
                 bool launcherPidKnown =
                     _pidFileManager is PidFileManager ownedPids && ownedPids.TryGetOwnedLaunchProcess(previousPort, previousToken, out launcherPid);
-                if (launcherPidKnown && _processDetector.ProcessExists(launcherPid))
+                if (launcherPidKnown && IsTrackedProcessPossiblyAlive(launcherPid, previousPort, previousToken, launcher: true))
                 {
                     error = "The previous managed launcher is still running. Wait for startup or shutdown to finish before starting again.";
                     return false;
@@ -449,7 +467,7 @@ namespace MCPForUnity.Editor.Services
                     && _pidFileManager is PidFileManager ownedPids
                     && ownedPids.TryGetOwnedLaunchProcess(port, instanceToken, out int launcherPid)
                 )
-                    return !_processDetector.ProcessExists(launcherPid);
+                    return !IsTrackedProcessPossiblyAlive(launcherPid, port, instanceToken, launcher: true);
                 return true;
             }
             catch
@@ -457,6 +475,10 @@ namespace MCPForUnity.Editor.Services
                 return false;
             }
         }
+
+        private bool IsTrackedProcessPossiblyAlive(int pid, int port, string instanceToken, bool launcher) =>
+            _processDetector.ProcessExists(pid)
+            && !(_pidFileManager is PidFileManager ownedPids && ownedPids.HasProcessCreationMismatch(pid, port, instanceToken, launcher));
 
         /// <summary>
         /// Stop only this project's managed, idle HTTP server after identity verification.
@@ -518,6 +540,10 @@ namespace MCPForUnity.Editor.Services
                     var pidsNow = GetListeningProcessIdsForPort(port);
                     if (pidsNow.Contains(pidFromFile))
                     {
+                        // The PID file alone does not establish a creation identity after reload.
+                        // A verified launch token and stable creation reads can preserve one for recovery.
+                        if (_pidFileManager is PidFileManager ownedPids && !ownedPids.HasOwnedServerCreation(pidFromFile, port, instanceToken))
+                            TryProcessCommandLineContainsInstanceToken(pidFromFile, instanceToken, out _);
                         return true;
                     }
                 }
@@ -703,7 +729,7 @@ namespace MCPForUnity.Editor.Services
                     return RefuseStop("The PID file identifies the Unity Editor; refusing to terminate it.", quiet);
                 if (!GetListeningProcessIdsForPort(port).Contains(pid))
                 {
-                    if (!_processDetector.ProcessExists(pid))
+                    if (!IsTrackedProcessPossiblyAlive(pid, port, instanceToken, launcher: false))
                     {
                         if (IsOwnedLauncherExitConfirmed(pidFilePath, instanceToken))
                         {
@@ -714,6 +740,8 @@ namespace MCPForUnity.Editor.Services
                     }
                     return RefuseStop("The managed PID is no longer the listener. The port may have been reused; stop its owner manually.", quiet);
                 }
+                if (_pidFileManager is PidFileManager ownedPids && ownedPids.HasProcessCreationMismatch(pid, port, instanceToken, launcher: false))
+                    return RefuseStop("The listener no longer matches the managed process creation identity. Refusing to stop a reused PID.", quiet);
                 if (!TryProcessCommandLineContainsInstanceToken(pid, instanceToken, out bool tokenMatches))
                     return RefuseStop("The server command line could not be inspected. Check OS process-query permissions and retry.", quiet);
                 if (!tokenMatches)
@@ -737,7 +765,7 @@ namespace MCPForUnity.Editor.Services
                 // runner has exited. Retain ownership while it still holds the port.
                 if (
                     !GetListeningProcessIdsForPort(port).Contains(pid)
-                    && !_processDetector.ProcessExists(pid)
+                    && !IsTrackedProcessPossiblyAlive(pid, port, instanceToken, launcher: false)
                     && IsOwnedLauncherExitConfirmed(pidFilePath, instanceToken)
                 )
                 {

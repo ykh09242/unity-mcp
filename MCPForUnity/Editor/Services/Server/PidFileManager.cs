@@ -18,15 +18,20 @@ namespace MCPForUnity.Editor.Services.Server
     {
         private readonly string _projectRoot;
         private readonly string _projectIdentityHash;
+        private readonly Func<int, DateTime?> _processCreationReader;
 
         public PidFileManager()
             : this(GetProjectRootPath()) { }
 
         internal PidFileManager(string projectRoot)
+            : this(projectRoot, ReadProcessCreationUtc) { }
+
+        internal PidFileManager(string projectRoot, Func<int, DateTime?> processCreationReader)
         {
             _projectRoot = Path.GetFullPath(projectRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             string identity = Application.platform == RuntimePlatform.WindowsEditor ? _projectRoot.ToUpperInvariant() : _projectRoot;
             _projectIdentityHash = ComputeShortHash(identity);
+            _processCreationReader = processCreationReader ?? ReadProcessCreationUtc;
         }
 
         internal string PreferenceKey(string key) => key + ".Project." + _projectIdentityHash;
@@ -206,11 +211,119 @@ namespace MCPForUnity.Editor.Services.Server
             catch { }
         }
 
-        internal void StoreOwnedLaunchProcess(int pid, int port, string instanceToken)
+        internal void StoreOwnedLaunchProcess(System.Diagnostics.Process process, int port, string instanceToken)
+        {
+            if (process != null)
+                StoreOwnedLaunchProcess(process.Id, port, instanceToken, ReadProcessCreationUtc(process));
+        }
+
+        internal void StoreOwnedLaunchProcess(int pid, int port, string instanceToken, DateTime? creationUtc = null)
         {
             if (pid > 1 && !string.IsNullOrEmpty(instanceToken))
+            {
                 StoreTracking(pid, port, ComputeShortHash("managed-launch:" + instanceToken));
+                StoreProcessCreation(EditorPrefKeys.LastLocalHttpServerLauncherCreation, pid, port, instanceToken, creationUtc);
+            }
         }
+
+        internal DateTime? GetProcessCreationUtc(int pid)
+        {
+            try
+            {
+                return _processCreationReader(pid)?.ToUniversalTime();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static DateTime? ReadProcessCreationUtc(int pid)
+        {
+            try
+            {
+                using var process = System.Diagnostics.Process.GetProcessById(pid);
+                return ReadProcessCreationUtc(process);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static DateTime? ReadProcessCreationUtc(System.Diagnostics.Process process)
+        {
+            try
+            {
+                return process.StartTime.ToUniversalTime();
+            }
+            catch
+            {
+                // Missing access or a fast exit cannot establish a different process identity.
+                return null;
+            }
+        }
+
+        internal void RememberOwnedServerCreation(int pid, int port, string instanceToken, DateTime creationUtc)
+        {
+            // Once observed, an identity must not be replaced by a later process at this PID.
+            if (!TryGetProcessCreation(EditorPrefKeys.LastLocalHttpServerCreation, pid, port, instanceToken, out _))
+                StoreProcessCreation(EditorPrefKeys.LastLocalHttpServerCreation, pid, port, instanceToken, creationUtc);
+        }
+
+        internal bool HasOwnedServerCreation(int pid, int port, string instanceToken) =>
+            TryGetProcessCreation(EditorPrefKeys.LastLocalHttpServerCreation, pid, port, instanceToken, out _);
+
+        internal bool HasProcessCreationMismatch(int pid, int port, string instanceToken, bool launcher)
+        {
+            string key = launcher ? EditorPrefKeys.LastLocalHttpServerLauncherCreation : EditorPrefKeys.LastLocalHttpServerCreation;
+            return TryGetProcessCreation(key, pid, port, instanceToken, out long ticks)
+                && GetProcessCreationUtc(pid) is DateTime current
+                && current.Ticks != ticks;
+        }
+
+        private void StoreProcessCreation(string key, int pid, int port, string instanceToken, DateTime? creationUtc)
+        {
+            try
+            {
+                if (!creationUtc.HasValue)
+                    EditorPrefs.DeleteKey(PreferenceKey(key));
+                else
+                    EditorPrefs.SetString(
+                        PreferenceKey(key),
+                        ProcessCreationPrefix(pid, port, instanceToken) + creationUtc.Value.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture)
+                    );
+            }
+            catch { }
+        }
+
+        private bool TryGetProcessCreation(string key, int pid, int port, string instanceToken, out long ticks)
+        {
+            ticks = 0;
+            if (pid <= 1 || port <= 0 || string.IsNullOrEmpty(instanceToken))
+                return false;
+            try
+            {
+                string value = EditorPrefs.GetString(PreferenceKey(key), string.Empty);
+                string prefix = ProcessCreationPrefix(pid, port, instanceToken);
+                return value.StartsWith(prefix, StringComparison.Ordinal)
+                    && long.TryParse(value.Substring(prefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out ticks)
+                    && ticks > DateTime.MinValue.Ticks
+                    && ticks <= DateTime.MaxValue.Ticks;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private string ProcessCreationPrefix(int pid, int port, string instanceToken) =>
+            pid.ToString(CultureInfo.InvariantCulture)
+            + ":"
+            + port.ToString(CultureInfo.InvariantCulture)
+            + ":"
+            + ComputeShortHash("managed-launch:" + instanceToken)
+            + ":";
 
         internal bool TryGetOwnedLaunchProcess(int expectedPort, string instanceToken, out int pid)
         {
@@ -294,6 +407,12 @@ namespace MCPForUnity.Editor.Services.Server
         /// <inheritdoc/>
         public void ClearTracking()
         {
+            try
+            {
+                EditorPrefs.DeleteKey(PreferenceKey(EditorPrefKeys.LastLocalHttpServerLauncherCreation));
+                EditorPrefs.DeleteKey(PreferenceKey(EditorPrefKeys.LastLocalHttpServerCreation));
+            }
+            catch { }
             try
             {
                 EditorPrefs.DeleteKey(PreferenceKey(EditorPrefKeys.LastLocalHttpServerPid));

@@ -486,6 +486,133 @@ namespace MCPForUnityTests.Editor.Services
             return launcher;
         }
 
+        [TestCase(true, "reused")]
+        [TestCase(false, "reused")]
+        [TestCase(true, "current")]
+        [TestCase(false, "current")]
+        [TestCase(true, "unknown")]
+        [TestCase(false, "unknown")]
+        [TestCase(true, "inaccessible")]
+        [TestCase(false, "inaccessible")]
+        [TestCase(true, "legacy")]
+        [TestCase(false, "legacy")]
+        public void Start_PersistedCreationIdentityOnlyRetiresProvenReusedProcess(bool launcherRecord, string identity)
+        {
+            DateTime original = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
+            _pids = new PidFileManager(
+                _root,
+                _ =>
+                    identity == "inaccessible" ? throw new UnauthorizedAccessException()
+                    : identity == "unknown" ? null
+                    : identity == "reused" ? original.AddMinutes(1)
+                    : original
+            );
+            _detector.Listening = false;
+            _detector.ExistsOverride = true;
+            if (launcherRecord)
+            {
+                File.Delete(_pidPath);
+                _pids.StoreOwnedLaunchProcess(LauncherPid, Port, InstanceToken, identity == "legacy" ? null : original);
+            }
+            else if (identity != "legacy")
+                _pids.RememberOwnedServerCreation(ServerPid, Port, InstanceToken, original);
+            var launcher = BuildStartService();
+
+            Assert.IsFalse(_service.StartLocalHttpServer(quiet: true));
+
+            Assert.AreEqual(identity == "reused" ? 1 : 0, launcher.Calls, "Only a proved different creation may release the old launch guard.");
+            Assert.AreEqual(identity != "reused", _pids.TryGetHandshake(out _, out _));
+            Assert.AreEqual(0, _terminator.Calls);
+            Assert.AreEqual(0, _requests);
+        }
+
+        [Test]
+        public void Stop_ReusedServerAndLauncherPidsRetireStaleOwnershipWithoutTouchingForeignProcesses()
+        {
+            DateTime original = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
+            _pids = new PidFileManager(_root, _ => original.AddMinutes(1));
+            _pids.StoreOwnedLaunchProcess(LauncherPid, Port, InstanceToken, original);
+            _pids.RememberOwnedServerCreation(ServerPid, Port, InstanceToken, original);
+            _detector.Listening = false;
+            _detector.ExistsOverride = true;
+            _service = new ServerManagementService(
+                _detector,
+                _pids,
+                _terminator,
+                shutdownRequester: (_, _) =>
+                {
+                    _requests++;
+                    return (true, null);
+                }
+            );
+
+            Assert.IsTrue(_service.StopLocalHttpServer());
+
+            Assert.IsFalse(_pids.TryGetHandshake(out _, out _));
+            Assert.IsFalse(File.Exists(_pidPath));
+            Assert.AreEqual(0, _requests, "A foreign reused PID must receive no shutdown request.");
+            Assert.AreEqual(0, _terminator.Calls);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Stop_ReusedListenerOrCreationRaceNeverReceivesShutdownRequest(bool creationRace)
+        {
+            DateTime original = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
+            int reads = 0;
+            _pids = new PidFileManager(_root, _ => creationRace && ++reads == 1 ? original : original.AddMinutes(1));
+            if (!creationRace)
+                _pids.RememberOwnedServerCreation(ServerPid, Port, InstanceToken, original);
+            _service = new ServerManagementService(
+                _detector,
+                _pids,
+                _terminator,
+                shutdownRequester: (_, _) =>
+                {
+                    _requests++;
+                    return (true, null);
+                }
+            );
+
+            Assert.IsFalse(_service.StopLocalHttpServer());
+
+            AssertOriginalOwnership();
+            Assert.AreEqual(0, _requests);
+            Assert.AreEqual(0, _terminator.Calls);
+        }
+
+        [TestCase("verified")]
+        [TestCase("other_token")]
+        [TestCase("inaccessible")]
+        [TestCase("creation_race")]
+        public void Status_LearnsServerCreationOnlyFromStableTokenVerifiedProcess(string observation)
+        {
+            DateTime original = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
+            DateTime current = original;
+            int reads = 0;
+            _pids = new PidFileManager(
+                _root,
+                _ =>
+                    observation == "inaccessible" ? null
+                    : observation == "creation_race" && ++reads > 1 ? original.AddMinutes(1)
+                    : current
+            );
+            if (observation == "other_token")
+                _detector.CommandLine = "python --unity-instance-token another-token";
+            _service = new ServerManagementService(_detector, _pids, _terminator);
+
+            Assert.IsTrue(_service.IsLocalHttpServerRunning());
+            current = original.AddMinutes(2);
+            _detector.Listening = false;
+            _detector.ExistsOverride = true;
+            var launcher = BuildStartService();
+            Assert.IsFalse(_service.StartLocalHttpServer(quiet: true));
+
+            Assert.AreEqual(observation == "verified" ? 1 : 0, launcher.Calls);
+            Assert.AreEqual(observation != "verified", _pids.TryGetHandshake(out _, out _));
+            Assert.AreEqual(0, _terminator.Calls);
+        }
+
         private void AssertOriginalOwnership()
         {
             Assert.IsTrue(_pids.TryGetHandshake(out var path, out var token));

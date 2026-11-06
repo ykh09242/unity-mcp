@@ -352,6 +352,45 @@ namespace MCPForUnityTests.Editor.Services.Server
         #region Tracking Tests
 
         [Test]
+        public void OwnedLauncherCreation_UsesHeldProcessAndBindsPidPortAndTokenAcrossReload()
+        {
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            System.DateTime actual = process.StartTime.ToUniversalTime();
+            _manager.StoreOwnedLaunchProcess(process, 8080, "owned-token");
+            var reloaded = new PidFileManager(_testRoot, _ => actual.AddMinutes(1));
+
+            Assert.IsTrue(reloaded.HasProcessCreationMismatch(process.Id, 8080, "owned-token", launcher: true));
+            Assert.IsFalse(reloaded.HasProcessCreationMismatch(process.Id + 1, 8080, "owned-token", launcher: true));
+            Assert.IsFalse(reloaded.HasProcessCreationMismatch(process.Id, 8081, "owned-token", launcher: true));
+            Assert.IsFalse(reloaded.HasProcessCreationMismatch(process.Id, 8080, "other-token", launcher: true));
+            Assert.IsFalse(reloaded.HasProcessCreationMismatch(process.Id, 8080, "owned-token", launcher: false));
+
+            reloaded.ClearTracking();
+            Assert.IsFalse(reloaded.HasProcessCreationMismatch(process.Id, 8080, "owned-token", launcher: true));
+        }
+
+        [Test]
+        public void OwnedServerCreation_DoesNotAdoptALaterProcessAndLegacyLauncherDoesNotReuseOldStamp()
+        {
+            System.DateTime original = new System.DateTime(2026, 11, 1, 0, 0, 0, System.DateTimeKind.Utc);
+            _manager = new PidFileManager(_testRoot, _ => original.AddMinutes(1));
+            _manager.RememberOwnedServerCreation(12345, 8080, "owned-token", original);
+            _manager.RememberOwnedServerCreation(12345, 8080, "owned-token", original.AddMinutes(1));
+            Assert.IsTrue(_manager.HasProcessCreationMismatch(12345, 8080, "owned-token", launcher: false));
+            _manager.StoreOwnedLaunchProcess(12345, 8080, "owned-token", original);
+            Assert.IsTrue(_manager.HasProcessCreationMismatch(12345, 8080, "owned-token", launcher: true));
+
+            _manager.StoreOwnedLaunchProcess(12345, 8080, "owned-token");
+
+            Assert.IsFalse(
+                _manager.HasProcessCreationMismatch(12345, 8080, "owned-token", launcher: true),
+                "A legacy/unknown creation cannot inherit an earlier stamp."
+            );
+            _manager.ClearTracking();
+            Assert.IsFalse(_manager.HasProcessCreationMismatch(12345, 8080, "owned-token", launcher: false));
+        }
+
+        [Test]
         public void StoreTracking_ValidData_CanBeRetrieved()
         {
             // Arrange
