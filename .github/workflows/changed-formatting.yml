@@ -1,0 +1,64 @@
+name: Changed Authored Formatting
+
+on:
+  pull_request:
+    branches: [main, beta]
+    paths: &inputs
+      - '**.py'
+      - '**.pyi'
+      - '**.cs'
+      - '**.csx'
+      - ruff.toml
+      - .editorconfig
+      - .config/dotnet-tools.json
+      - Server/pyproject.toml
+      - Server/uv.lock
+      - docs/FORMATTING.md
+      - .github/workflows/changed-formatting.yml
+  push:
+    branches: [beta]
+    paths: *inputs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: changed-formatting-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  formatting:
+    name: Supported authored formatting (check only)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Check the exact PR head, rather than treating its synthetic merge as the range head.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+          python-version: "3.14"
+          enable-cache: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 9.0.x
+      - name: Restore pinned formatters
+        run: |
+          uv sync --directory Server --locked --extra dev
+          dotnet tool restore
+      - name: Verify formatting selection contracts
+        run: >-
+          uv run --project Server --locked --extra dev python -m pytest
+          tools/tests/test_changed_formatting.py -o asyncio_default_fixture_loop_scope=function
+          -q -W error -p no:cacheprovider
+      - name: Check explicit event range without modifying sources
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          uv run --project Server --locked --extra dev python tools/check_changed_formatting.py
+          --base "$BASE_SHA" --head "$HEAD_SHA"

@@ -139,3 +139,25 @@ Regenerate tool references using `tools/generate_docs_reference.py`; do not hand
 `website/docs/reference/`. Review formatter diffs for literal-content changes. Run relevant
 tests after source changes and `tools/lint_python.py` when correctness lint is needed.
 Do not launch Unity or install optional Unity packages just to validate formatting.
+
+## CI checks
+
+`changed-formatting.yml` checks supported Python and C# files on PRs to main/beta and
+pushes to beta. It compares the exact PR base/head commits or the complete push
+before/after range, checks out that head, and fails if the range cannot be verified.
+Deleted files are omitted; added and renamed destinations use the same authored scope
+and generated/vendor/link exclusions as the local runner. Checks never write sources.
+
+Changes to `ruff.toml` check all eligible Python files. Changes to `.editorconfig` or
+`.config/dotnet-tools.json` check all eligible C# files. Changes to the formatting runner
+or CI selection helper check both supported languages. These broader checks expose
+existing drift affected by changed settings; they do not authorize repository-wide
+formatting. Manual-only languages remain outside formatter certification.
+
+To inspect or reproduce a CI selection locally, use full commit SHAs with the head
+checked out:
+
+```sh
+python tools/check_changed_formatting.py --base BASE_SHA --head HEAD_SHA --list
+python tools/check_changed_formatting.py --base BASE_SHA --head HEAD_SHA
+```
