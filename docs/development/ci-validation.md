@@ -54,14 +54,15 @@ so tool tests do not wait for the longer server suite.
 - Pylint runs once, in the Python 3.15 tools job. Its two independent source groups run
   concurrently with isolated import roots and complete, ordered diagnostics. Each group
   retains `--jobs=1` on 3.15 until dill supports the interpreter's code-object changes.
-- Server and tool jobs use two pytest-xdist workers with `--dist=loadfile`. Each file stays in one
+- Server and tool jobs use four pytest-xdist workers with `--dist=loadfile`. Each file stays in one
   worker so module fixtures remain together. Worker crashes fail without automatic restarts;
   the job has a 20-minute limit. Mutable fixtures remain isolated per test.
 - Server jobs start the measured long HTTP wrapper first with `pytest_ci_schedule` and
   `--no-loadscope-reorder --ci-first-file=test_http_security.py`. Other file groups retain
   xdist's stable descending case-count order; order within each file is unchanged.
   The plugin is opt-in, requires active `loadfile` workers, and rejects a missing exact
-  file selection. Tool jobs keep their default ordering.
+  file selection. Tool jobs use the same scheduler with
+  `--ci-first-file=tools/tests/test_bench_transport.py`.
 - Workers select separate rotating-log directories before importing the application. Child
   processes inherit that worker directory unless their fixture supplies its own directory.
 - The complete Python 3.14 server suite collects coverage. Other versions run the same tests
@@ -84,15 +85,16 @@ To inspect local test durations, run from `Server/`:
 ```sh
 uv run --python 3.14 --locked --extra dev pytest tests/ -q -W error --tb=short --durations=20
 uv run --python 3.14 --locked --extra dev pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --durations=20
-uv run --python 3.14 --locked --extra dev python -m pytest ../tools/tests/ -q -W error --tb=short --durations=20
-uv run --python 3.14 --locked --extra dev python -m pytest ../tools/tests/ -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --durations=20
+uv run --python 3.14 --locked --extra dev python -m pytest ../tools/tests/ -o asyncio_default_fixture_loop_scope=function -q -W error --tb=short --durations=20
+uv run --python 3.14 --locked --extra dev python -m pytest ../tools/tests/ -o asyncio_default_fixture_loop_scope=function -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --durations=20
 ```
 
 Keep test-node selection and failure behavior intact when optimizing. Deadline tests can use a
 controlled clock at the tested module's boundary while preserving the configured budget and
 refusal assertions. Do not shorten production timeouts to accelerate tests. Local runs remain
 serial unless workers are explicitly requested; avoid `-n auto` for these subprocess-heavy
-tests. The HTTP subprocess runs serially to avoid nested worker pools.
+tests. The isolated HTTP subprocess uses four workers; the outer wrapper file occupies one
+server-suite worker while the child suite runs.
 
 ### Conservative fork-beta selection
 
