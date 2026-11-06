@@ -28,7 +28,7 @@ def test_windows_selection_includes_proactor_cleanup_and_replacement_retry_bound
         ]
         == 3
     )
-    assert sum(CASES.values()) == 63
+    assert sum(CASES.values()) == 68
 
 
 def test_windows_selection_executes_focus_scripts_shell_roundtrip_and_open_snapshot():
@@ -58,6 +58,22 @@ def test_windows_selection_executes_focus_scripts_shell_roundtrip_and_open_snaps
         ]
         == 1
     )
+
+
+@pytest.mark.parametrize(
+    "name,count",
+    [
+        ("test_owned_subprocess_preserves_exit_and_captured_text", 1),
+        ("test_owned_subprocess_timeout_preserves_both_output_streams", 2),
+        ("test_timeout_terminates_owned_controller_worker_and_grandchild", 2),
+    ],
+)
+def test_windows_selection_requires_owned_http_subprocess_boundaries(name, count):
+    # Given the HTTP wrapper's real owned-process cases and all output modes.
+    node = f"Server/tests/test_http_security_wrapper.py::{name}"
+    # When the Windows gate selects mandatory execution.
+    # Then each case must run, including both parametrized timeout variants.
+    assert CASES.get(node) == count
 
 
 @pytest.mark.parametrize(

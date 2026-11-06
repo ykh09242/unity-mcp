@@ -375,6 +375,14 @@ are disabled consistently across local and CI hosts. Python correctness lint rem
 The existing configuration adds only the verified Ubuntu runner label missing from this
 actionlint release. See [actionlint usage](https://github.com/rhysd/actionlint/blob/v1.7.12/docs/usage.md).
 
+### Windows hermetic regressions
+
+The required Windows hermetic gate executes 68 cases with no skips, including the HTTP
+wrapper's owned subprocess exit/output checks, timeout output modes and controller,
+worker and grandchild termination. It uses synthetic processes without Unity or a license.
+Run it locally with `python tools/check_windows_regressions.py --output .tmp/windows-hermetic`.
+Its JUnit inventory rejects missing, skipped, failed or errored cases.
+
 ### Credential store assurance
 
 `credential-assurance.yml` runs when a pull request to `main` or `beta`, or a
