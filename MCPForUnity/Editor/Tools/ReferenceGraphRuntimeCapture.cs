@@ -208,6 +208,7 @@ namespace MCPForUnity.Editor.Tools
             private readonly string location;
             private readonly JObject metadata;
             private BinaryWriter writer;
+            private FileStream eventStream;
             private IDisposable subscription;
             private FileStream lease;
             private long sequence;
@@ -244,16 +245,16 @@ namespace MCPForUnity.Editor.Tools
                 lease = ReferenceGraphRuntimeSpool.Lock(SafeFile(location, ".lease"));
                 try
                 {
-                    writer = new BinaryWriter(
-                        new FileStream(SafeFile(location, ".events"), FileMode.CreateNew, FileAccess.Write, FileShare.Read, 65536),
-                        Encoding.UTF8
-                    );
+                    eventStream = new FileStream(SafeFile(location, ".events"), FileMode.CreateNew, FileAccess.Write, FileShare.Read, 65536);
+                    writer = new BinaryWriter(eventStream, Encoding.UTF8);
                     Save();
                     subscription = ReferenceGraphRuntime.Observe(Record);
                 }
                 catch
                 {
                     writer?.Dispose();
+                    eventStream?.Dispose();
+                    eventStream = null;
                     writer = null;
                     // An uncertain creation/save never authorizes deleting an
                     // existing event file. Preserve all evidence for recovery.
@@ -278,6 +279,9 @@ namespace MCPForUnity.Editor.Tools
                             (long)observation.Scheme.Length + observation.Key.Length + observation.OwnerPath.Length + (observation.Handle?.Length ?? 0);
                         if (inputCharacters > ReferenceGraphRuntimeSpool.RecordBytes)
                         {
+                            DrainPending(1);
+                            if (writer == null)
+                                return;
                             metadata["stop_reason"] = "max_record_bytes";
                             Finish("storage_limit", 1);
                             return;
@@ -314,10 +318,14 @@ namespace MCPForUnity.Editor.Tools
                         };
                         byte[] bytes = Encoding.UTF8.GetBytes(row.ToString(Formatting.None));
                         string pressure = bytes.Length > ReferenceGraphRuntimeSpool.RecordBytes ? "max_record_bytes" : null;
-                        if (writer.BaseStream.Position + pendingBytes + 4 + bytes.Length > ReferenceGraphRuntimeSpool.CaptureBytes)
+                        // BinaryWriter.BaseStream flushes; quota admission must not flush each observation.
+                        if (eventStream.Position + pendingBytes + 4 + bytes.Length > ReferenceGraphRuntimeSpool.CaptureBytes)
                             pressure = "max_capture_bytes";
                         if (pressure != null)
                         {
+                            DrainPending(1);
+                            if (writer == null)
+                                return;
                             metadata["stop_reason"] = pressure;
                             Finish("storage_limit", 1);
                             return;
@@ -347,7 +355,12 @@ namespace MCPForUnity.Editor.Tools
                         pending.Enqueue(bytes);
                         accepted = true;
                         pendingBytes += 4 + bytes.Length;
-                        if (!attemptedDrain)
+                        // Small bursts share the next Editor update. A full batch is
+                        // the bounded fallback so ordinary Close still fits one drain.
+                        if (
+                            !attemptedDrain
+                            && (pending.Count >= ReferenceGraphRuntimeSpool.DrainRecords || pendingBytes >= ReferenceGraphRuntimeSpool.DrainBytes)
+                        )
                             DrainPending();
                     }
                     catch (Exception error)
@@ -416,13 +429,18 @@ namespace MCPForUnity.Editor.Tools
                             Finish("storage_limit", additionalUnwritten);
                             return;
                         }
-                        for (int i = 0; i < count; i++)
+                        int written = 0;
+                        foreach (byte[] record in pending)
                         {
-                            byte[] record = pending.Peek();
+                            if (written++ == count)
+                                break;
                             writer.Write(record.Length);
                             writer.Write(record);
-                            writer.Flush();
-                            pending.Dequeue();
+                        }
+                        writer.Flush();
+                        for (int i = 0; i < count; i++)
+                        {
+                            byte[] record = pending.Dequeue();
                             pendingBytes -= 4 + record.Length;
                             metadata["count"] = ++sequence;
                         }
@@ -487,6 +505,7 @@ namespace MCPForUnity.Editor.Tools
                     metadata["error"] = error.GetType().Name;
                 }
                 writer = null;
+                eventStream = null;
                 metadata["unwritten_count"] = pending.Count + additionalUnwritten;
                 pending.Clear();
                 pendingBytes = 0;

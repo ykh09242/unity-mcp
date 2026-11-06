@@ -1,6 +1,8 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Text;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Runtime;
 using Newtonsoft.Json.Linq;
@@ -49,6 +51,161 @@ namespace MCPForUnityTests.EditMode.Tools
         private JObject Read() =>
             (JObject)captureType.GetMethod("Read", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(capture, new object[] { 0L, 128 });
 
+        private void Drain() => captureType.GetMethod("Drain", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(capture, null);
+
+        private sealed class CountingWriter : BinaryWriter
+        {
+            internal int Flushes;
+            internal bool FailFlush;
+
+            internal CountingWriter(Stream stream)
+                : base(stream, Encoding.UTF8) { }
+
+            public override void Flush()
+            {
+                Flushes++;
+                if (FailFlush)
+                    throw new IOException("Injected batch flush failure.");
+                base.Flush();
+            }
+        }
+
+        private CountingWriter CountFlushes()
+        {
+            FieldInfo field = captureType.GetField("writer", BindingFlags.Instance | BindingFlags.NonPublic);
+            var original = (BinaryWriter)field.GetValue(capture);
+            original.Flush();
+            var counted = new CountingWriter(original.BaseStream);
+            field.SetValue(capture, counted);
+            return counted;
+        }
+
+        [Test]
+        public void SmallObserverBurstWaitsForOneUpdateBatch()
+        {
+            CountingWriter counted = CountFlushes();
+            for (int i = 0; i < 17; i++)
+                ReferenceGraphRuntime.Load("custom", "queued/" + i);
+            Assert.AreEqual(0, counted.Flushes, "Ordinary small observations must share a later census/flush.");
+            Assert.AreEqual(17, Status().Value<int>("pending_count"));
+            Assert.AreEqual(0, Events().Length);
+            Drain();
+            Assert.AreEqual(1, counted.Flushes, "One update batch must flush once, not once per event.");
+            Assert.AreEqual(17, Status().Value<long>("count"));
+            Assert.AreEqual(0, Status().Value<int>("pending_count"));
+            JObject read = Read();
+            for (int i = 0; i < 17; i++)
+            {
+                Assert.AreEqual("queued/" + i, read["events"][i].Value<string>("key"));
+                Assert.AreEqual(i + 1, read["events"][i].Value<long>("sequence"));
+            }
+        }
+
+        [Test]
+        public void SustainedObserverBurstUsesBoundedFallbackBatchesAndStopKeepsTheRemainder()
+        {
+            CountingWriter counted = CountFlushes();
+            for (int i = 0; i < 97; i++)
+                ReferenceGraphRuntime.Load("custom", "burst/" + i);
+            Assert.AreEqual(3, counted.Flushes, "Uncontended sustained bursts must census/flush once per 32 observations.");
+            Assert.AreEqual(96, Status().Value<long>("count"));
+            Assert.AreEqual(1, Status().Value<int>("pending_count"));
+            captureType.GetMethod("Close", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(capture, new object[] { "stopped" });
+            JObject stopped = Metadata();
+            Assert.AreEqual("stopped", stopped.Value<string>("state"));
+            Assert.AreEqual(97, stopped.Value<long>("count"));
+            Assert.AreEqual(0, stopped.Value<long>("unwritten_count"));
+            Assert.IsFalse(ReferenceGraphRuntime.Enabled);
+            JObject read = Read();
+            for (int i = 0; i < 97; i++)
+            {
+                Assert.AreEqual("burst/" + i, read["events"][i].Value<string>("key"));
+                Assert.AreEqual(i + 1, read["events"][i].Value<long>("sequence"));
+            }
+            byte[] closed = Events();
+            ReferenceGraphRuntime.Load("custom", "after-stop");
+            Drain();
+            CollectionAssert.AreEqual(closed, Events(), "Retired captures must not retain observer/update work.");
+        }
+
+        [Test]
+        public void FailedBatchFlushRetiresObserverAndReportsEveryUnconfirmedObservation()
+        {
+            CountingWriter counted = CountFlushes();
+            for (int i = 0; i < 17; i++)
+                ReferenceGraphRuntime.Load("custom", "unconfirmed/" + i);
+            counted.FailFlush = true;
+            Drain();
+            JObject stopped = Metadata();
+            Assert.AreEqual("observer_failed", stopped.Value<string>("state"));
+            Assert.AreEqual("IOException", stopped.Value<string>("error"));
+            Assert.AreEqual(0, stopped.Value<long>("count"));
+            Assert.AreEqual(17, stopped.Value<long>("unwritten_count"));
+            Assert.AreEqual(0, stopped.Value<int>("pending_count"));
+            Assert.IsFalse(ReferenceGraphRuntime.Enabled);
+            Drain();
+            Assert.AreEqual(17, Metadata().Value<long>("unwritten_count"));
+        }
+
+        [TestCase("domain_reload")]
+        [TestCase("editor_quit")]
+        [TestCase("play_transition")]
+        public void LifecycleCloseFlushesThePendingBatchAndRetiresObserver(string reason)
+        {
+            for (int i = 0; i < 17; i++)
+                ReferenceGraphRuntime.Load("custom", "closing/" + i);
+            captureType.GetMethod("Close", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(capture, new object[] { reason });
+            Assert.AreEqual(reason, Metadata().Value<string>("state"));
+            Assert.AreEqual(17, Metadata().Value<long>("count"));
+            Assert.AreEqual(0, Metadata().Value<long>("unwritten_count"));
+            Assert.IsFalse(ReferenceGraphRuntime.Enabled);
+            byte[] closed = Events();
+            ReferenceGraphRuntime.Load("custom", "late");
+            Drain();
+            CollectionAssert.AreEqual(closed, Events());
+        }
+
+        [Test]
+        public void ByteThresholdFallbackPreservesLargePendingEventsAtImmediateStop()
+        {
+            CountingWriter counted = CountFlushes();
+            string payload = new string('x', 600 * 1024);
+            ReferenceGraphRuntime.Load("custom", payload);
+            Assert.AreEqual(0, counted.Flushes);
+            ReferenceGraphRuntime.Load("custom", payload);
+            Assert.AreEqual(1, counted.Flushes);
+            Assert.AreEqual(1, Status().Value<long>("count"));
+            Assert.AreEqual(1, Status().Value<int>("pending_count"));
+            captureType.GetMethod("Close", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(capture, new object[] { "stopped" });
+            Assert.AreEqual(2, Metadata().Value<long>("count"));
+            Assert.AreEqual(0, Metadata().Value<long>("unwritten_count"));
+        }
+
+        [Test, Explicit("Controlled retained-spool timing; reports measured observer and drain cost without a frame-time claim.")]
+        public void RetainedSpoolObserverAndDrainMeasurements()
+        {
+            for (int i = 0; i < 200; i++)
+            {
+                string token = i.ToString("x64");
+                File.WriteAllText(Path.Combine(Path.GetDirectoryName(location), token + ".json"), "{}");
+                File.WriteAllBytes(Path.Combine(Path.GetDirectoryName(location), token + ".events"), new byte[4096]);
+            }
+            CountingWriter counted = CountFlushes();
+            var observer = Stopwatch.StartNew();
+            for (int i = 0; i < 97; i++)
+                ReferenceGraphRuntime.Load("custom", "measured/" + i);
+            observer.Stop();
+            int observerFlushes = counted.Flushes;
+            var drain = Stopwatch.StartNew();
+            Drain();
+            drain.Stop();
+            Console.WriteLine(
+                $"R11 retained_captures=200 observations=97 observer_flushes={observerFlushes} observer_ms={observer.Elapsed.TotalMilliseconds:F3} update_flushes={counted.Flushes - observerFlushes} update_ms={drain.Elapsed.TotalMilliseconds:F3}"
+            );
+            Assert.AreEqual(97, Status().Value<long>("count"));
+            Assert.AreEqual(0, Status().Value<int>("pending_count"));
+        }
+
         private byte[] Events()
         {
             using (var stream = new FileStream(location + ".events", FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
@@ -70,13 +227,12 @@ namespace MCPForUnityTests.EditMode.Tools
         public void OversizedEventStopsWithReasonAndPreservesPreviousRecord()
         {
             ReferenceGraphRuntime.Load("custom", "retained");
-            byte[] before = Events();
             ReferenceGraphRuntime.Load("custom", new string('x', 1024 * 1024));
             JObject metadata = Metadata();
             Assert.AreEqual("storage_limit", metadata.Value<string>("state"));
             Assert.AreEqual("max_record_bytes", metadata.Value<string>("stop_reason"));
             Assert.AreEqual(1, metadata.Value<long>("count"));
-            CollectionAssert.AreEqual(before, Events());
+            Assert.AreEqual("retained", Read()["events"][0].Value<string>("key"));
             Assert.IsFalse(ReferenceGraphRuntime.Enabled);
         }
 
@@ -101,6 +257,7 @@ namespace MCPForUnityTests.EditMode.Tools
             using (var stream = new FileStream(retained, FileMode.CreateNew, FileAccess.Write))
                 stream.SetLength(total);
             ReferenceGraphRuntime.Load("custom", "refused");
+            Drain();
             Assert.AreEqual("max_total_bytes", Metadata().Value<string>("stop_reason"));
             Assert.AreEqual(total, new FileInfo(retained).Length);
             Assert.AreEqual(0, new FileInfo(location + ".events").Length);
@@ -181,6 +338,7 @@ namespace MCPForUnityTests.EditMode.Tools
             {
                 ReferenceGraphRuntime.Load("custom", "first");
                 ReferenceGraphRuntime.Load("custom", "second");
+                Drain();
                 JObject waiting = Status();
                 Assert.AreEqual("active", waiting.Value<string>("state"));
                 Assert.IsTrue(waiting.Value<bool>("storage_waiting"));
