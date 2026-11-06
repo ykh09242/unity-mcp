@@ -11,6 +11,7 @@ from transport.unity_instance_middleware import (
 )
 from services.api_key_service import ApiKeyService
 from core.endpoint_logging import endpoint_for_log
+from core.windows_event_loop import run_with_wakeup_guard
 from transport.legacy.unity_connection import get_unity_connection_pool, UnityConnectionPool
 from services.tools import register_all_tools
 from core.telemetry import (
@@ -625,7 +626,10 @@ class UnityMCP(FastMCP):
             return super().run(transport, show_banner=show_banner, **transport_kwargs)
         # Preserve the IPv4 workaround (#853) without changing global loop policy.
         anyio.run(
-            partial(self.run_async, transport, show_banner=show_banner, **transport_kwargs),
+            partial(
+                run_with_wakeup_guard,
+                partial(self.run_async, transport, show_banner=show_banner, **transport_kwargs),
+            ),
             backend_options={"loop_factory": asyncio.SelectorEventLoop},
         )
 
