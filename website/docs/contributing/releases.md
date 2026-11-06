@@ -100,6 +100,21 @@ The execution log must contain actual compiler-stage output, Python/pytest invoc
 
 The index points to existing results; it is not a second result database. No dedicated CI, application or publication workflow is introduced. See the repository's [CI validation policy](https://github.com/ykh09242/unity-mcp/blob/beta/docs/development/ci-validation.md) for execution and skip boundaries.
 
+### Retain a portable evidence directory
+
+After saving the actual run/job objects, full job logs and required reports in the index format above, export the prepared evidence to a **new** local directory:
+
+```sh
+python tools/export_release_evidence.py export --repo . --package-commit FULL_P --notes PATH_TO_PREPARED_BODY --evidence-index PATH_TO_LOCAL_INDEX --destination PATH_TO_NEW_BUNDLE
+python tools/export_release_evidence.py verify --repo . --bundle PATH_TO_NEW_BUNDLE
+```
+
+The exporter validates with `check_release_evidence.py`, then copies the original notes and exactly the referenced saved records. It preserves the existing index format in `evidence.json`, changing only its file paths to content-addressed copies; identical checkout/log bytes share one copy. `bundle.json` records the exact selected package, server and skill commits and SHA256 hashes for the notes, index and saved records. Retain the whole directory together. The original index and files can then move independently; verification of the exported directory detects missing, modified or unlisted files and rechecks the original evidence contract.
+
+Both commands are offline. Verification still requires an explicit local repository with the selected Git objects; the directory is an evidence archive, not a source-history archive. Missing history fails without fetching. Hashes detect file changes relative to the manifest; they do not authenticate its author. Review and retain the manifest through the same trusted process as the records.
+
+The destination's parent must already exist. Existing destinations, parent traversal, symbolic links and Windows reparse points are rejected; no files are overwritten. If writing fails, the incomplete directory remains for inspection and the success manifest is absent. Choose a new destination for another attempt. Export does not retrieve provider records, execute checks, upload evidence, publish a release, or create credential files. Public evidence retention and any publication remain separate maintainer actions.
+
 ## Publish a fork GitHub release
 
 1. Select the fork version and whether it is a prerelease or stable release. Complete the relevant checks for the prepared Git version and validate its prepared release evidence block.
