@@ -50,10 +50,15 @@ class ResponseSocket:
             self.header_pending = False
             return
         self.header_pending = True
-        tag = json.loads(payload)["params"]["tag"]
+        tag = "ping" if payload == b"ping" else json.loads(payload)["params"]["tag"]
         self.tags.append(tag)
         response = json.dumps(
-            {"status": "success", "result": {"success": True, "tag": tag}}
+            {
+                "status": "success",
+                "result": {"message": "pong"}
+                if payload == b"ping"
+                else {"success": True, "tag": tag},
+            }
         ).encode()
         self.buffer = struct.pack(">Q", len(response)) + response
         self.delay_pending = True
@@ -124,6 +129,93 @@ async def request(tag, selector="Main@deadbeef"):
     return await uc.async_send_command_with_retry(
         "manage_scene", {"action": "get_active", "tag": tag}, instance_id=selector
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command,params,custom,allowed",
+    [
+        ("ping", {}, False, True),
+        ("manage_build", {"action": "status"}, False, True),
+        ("ping", {}, True, False),
+        ("execute_custom_tool", {"action": "status"}, False, False),
+    ],
+)
+async def test_direct_stdio_recovery_uses_only_reviewed_control_reserve(
+    environment, monkeypatch, command, params, custom, allowed
+):
+    from services.registry import operation_invocation
+    from services.registry.operation_scheduler import (
+        OperationAdmission,
+        OperationScheduler,
+        OperationScope,
+    )
+
+    _, sockets = environment
+    sockets["Main@deadbeef"].release.set()
+    scheduler = OperationScheduler(max_participants=1)
+    monkeypatch.setattr(operation_invocation, "scheduler", lambda: scheduler)
+    ordinary = OperationAdmission(OperationScope("local", "busy", "g1"), "exclusive", lambda: True)
+    async with scheduler.session(ordinary):
+        result = await uc.async_send_command_with_retry(
+            command,
+            {**params, "tag": "control"},
+            instance_id="Main@deadbeef",
+            _catalog_guard=object() if custom else None,
+        )
+        if allowed:
+            expected = (
+                {"message": "pong"} if command == "ping" else {"success": True, "tag": "control"}
+            )
+            assert result == expected
+        else:
+            assert result.success is False
+            assert result.error == "operation_capacity"
+        assert sockets["Main@deadbeef"].tags == (
+            ["ping" if command == "ping" else "control"] if allowed else []
+        )
+    assert scheduler.snapshot()["retained_bytes"] == 0
+    assert scheduler._controls == {}
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stdio_recovery_retains_reserve_until_socket_worker_settles(
+    environment, monkeypatch
+):
+    from services.registry import operation_invocation
+    from services.registry.operation_scheduler import OperationScheduler
+
+    _, sockets = environment
+    main = sockets["Main@deadbeef"]
+    scheduler = OperationScheduler(max_participants=0, max_control_per_instance=1)
+    monkeypatch.setattr(operation_invocation, "scheduler", lambda: scheduler)
+    caller = asyncio.create_task(
+        uc.async_send_command_with_retry("ping", {"tag": "first"}, instance_id="Main@deadbeef")
+    )
+    try:
+        await wait_event(main.sent)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        result = await uc.async_send_command_with_retry(
+            "ping", {"tag": "blocked"}, instance_id="Main@deadbeef"
+        )
+        assert result.success is False
+        assert result.error == "operation_capacity"
+        assert main.tags == ["ping"]
+        assert len(scheduler._controls) == 1
+    finally:
+        main.release.set()
+        caller.cancel()
+        await asyncio.gather(caller, return_exceptions=True)
+    async with asyncio.timeout(watchdog_timeout()):
+        while scheduler._controls:
+            await asyncio.sleep(0)
+    result = await uc.async_send_command_with_retry(
+        "ping", {"tag": "following"}, instance_id="Main@deadbeef"
+    )
+    assert result == {"message": "pong"}
+    assert scheduler.snapshot()["retained_bytes"] == 0
 
 
 @pytest.mark.asyncio

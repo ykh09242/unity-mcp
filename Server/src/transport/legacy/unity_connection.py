@@ -2609,6 +2609,7 @@ async def _async_send_command_response(
 ) -> dict[str, Any] | MCPResponse:
     """Own one selected instance while exact pre-handler refusals wait off-wire."""
     import asyncio  # noqa: ANYIO_OK -- existing connection admission uses asyncio.
+    from services.control_capacity import reserved_control
     from services.operation_policy import resolve_operation_policy
     from services.registry.operation_invocation import (
         admission_for,
@@ -2657,6 +2658,9 @@ async def _async_send_command_response(
                 observational_continuation=_catalog_guard is None
                 and is_observational_continuation(command_type, params),
                 retained_bytes=charge,
+                control_reserve=reserved_control(
+                    command_type, params, native=True, trusted_builtin=_catalog_guard is None
+                ),
             )
         ):
             while True:
