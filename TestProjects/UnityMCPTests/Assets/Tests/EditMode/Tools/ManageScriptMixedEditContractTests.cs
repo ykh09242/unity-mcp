@@ -361,6 +361,41 @@ namespace MCPForUnityTests.Editor.Tools
             });
         }
 
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        public void ExternalWriteAfterComparisonRetainsRecoveryBytes(bool bom, bool failObservation)
+        {
+            WithProbe(
+                probe =>
+                {
+                    var preview = probe.Stage(probe.Snapshot(), Original, Replacement(), true);
+                    byte[] external = Bytes(Original + "// saved after comparison\n", bom);
+                    probe.CommitStage = stage =>
+                    {
+                        if (stage == "before_replace")
+                            File.WriteAllBytes(probe.FullPath, external);
+                        if (stage == "after_replace" && failObservation)
+                            throw new IOException("Owned observation failure before backup verification");
+                    };
+                    var result = probe.Apply(preview);
+                    Assert.IsTrue(result["data"].Value<bool>("applied"), result.ToString());
+                    if (!failObservation)
+                    {
+                        Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                        Assert.AreEqual("conflict", result["data"].Value<string>("outcome"));
+                    }
+                    string recovery = result["data"].Value<string>("recovery_backup");
+                    Assert.IsNotNull(recovery, result.ToString());
+                    CollectionAssert.AreEqual(external, File.ReadAllBytes(recovery));
+                    CollectionAssert.AreEqual(Bytes(preview["data"].Value<string>("new_contents"), bom), File.ReadAllBytes(probe.FullPath));
+                    Assert.AreEqual(1, probe.ReplaceCount);
+                    Assert.AreEqual(0, probe.RefreshCount);
+                },
+                bom
+            );
+        }
+
         [TestCase(false, true)]
         [TestCase(true, false)]
         public void PublicPolicyGatesRefuseWithoutReadingPreferences(bool consent, bool enabled)

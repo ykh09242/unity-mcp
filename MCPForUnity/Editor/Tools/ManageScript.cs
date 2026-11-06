@@ -1256,6 +1256,7 @@ namespace MCPForUnity.Editor.Tools
             bool ownsTemp = false;
             bool attempted = false;
             bool committed = false;
+            bool backupVerified = false;
             string candidateSha = null;
             string expectedRaw = null;
             bool bom = false;
@@ -1311,6 +1312,29 @@ namespace MCPForUnity.Editor.Tools
                 File.Replace(tempPath, fullPath, backupPath);
                 committed = true;
                 _preparedCommitStageForTests?.Invoke("after_replace");
+                // The final comparison cannot fence an external writer. Verify the bytes
+                // actually displaced by replacement before allowing their recovery copy to be removed.
+                if (ReadOrderedSnapshot(relativePath + "." + attempt + ".prepared.bak").RawSha != originalSha)
+                    return new
+                    {
+                        success = false,
+                        code = "external_writer",
+                        error = "Replacement displaced an external edit; recovery bytes were retained. Inspect both versions before continuing.",
+                        data = new
+                        {
+                            applied = true,
+                            outcome = "conflict",
+                            confirmation = "displaced_bytes_changed",
+                            sha256 = candidateSha,
+                            bytes_sha256 = expectedRaw,
+                            bom,
+                            scheduledRefresh = false,
+                            refresh_status = "not_requested",
+                            recovery_backup = backupPath,
+                            retry_safe = false,
+                        },
+                    };
+                backupVerified = true;
                 if (ReadOrderedSnapshot(relativePath).RawSha != expectedRaw)
                     return new SuccessResponse(
                         "Commit completed but later bytes differ; refresh was not requested.",
@@ -1385,6 +1409,7 @@ namespace MCPForUnity.Editor.Tools
                             scheduledRefresh = false,
                             refresh_status = "not_requested",
                             confirmation = "postcommit_observation_failed",
+                            recovery_backup = backupVerified ? null : backupPath,
                         }
                     );
                 return OrderedRefusal("atomic_replace_unsupported", ex.Message);
@@ -1404,6 +1429,7 @@ namespace MCPForUnity.Editor.Tools
                             scheduledRefresh = false,
                             refresh_status = "not_requested",
                             confirmation = "postcommit_observation_failed",
+                            recovery_backup = backupVerified ? null : backupPath,
                         }
                     );
                 if (attempted)
@@ -1432,7 +1458,7 @@ namespace MCPForUnity.Editor.Tools
                             File.Delete(tempPath);
                     }
                     catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is System.Security.SecurityException) { }
-                if (committed && backupPath != null)
+                if (backupVerified && backupPath != null)
                     try
                     {
                         if (File.Exists(backupPath))
