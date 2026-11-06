@@ -39,7 +39,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 body[profile.TextureField] = req.Texture;
             if (req.Mode == "image")
             {
-                string image = !string.IsNullOrEmpty(req.ImageUrl) ? req.ImageUrl : LocalImage.ToDataUri(req.ImagePath);
+                string image = !string.IsNullOrEmpty(req.ImageUrl) ? req.ImageUrl : LocalImage.ToDataUri(req.ImagePath, req.AllowImageUpload);
                 body[profile.ImageInputField] = profile.ImageInputIsArray ? (JToken)new JArray(image) : image;
             }
             return FalAdapter.SubmitQueueAsync(body, profile.Id, apiKey, http, ct);

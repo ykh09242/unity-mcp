@@ -336,11 +336,12 @@ def test_recovery_status_evidence_through_registered_sdk(protocol, state):
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("provider", ["tripo", "meshy", "fal"])
 @pytest.mark.parametrize("consent", [False, None, "true"])
-def test_tripo_upload_requires_literal_true_mapping(consent):
+def test_local_image_upload_requires_literal_true_mapping(provider, consent):
     _, sent = _call_tool(
         action="generate",
-        provider="tripo",
+        provider=provider,
         mode="image",
         image_path="Assets/reference.png",
         allow_image_upload=consent,
@@ -348,17 +349,18 @@ def test_tripo_upload_requires_literal_true_mapping(consent):
     assert "allowImageUpload" not in _sent_params(sent)
 
 
-def test_tripo_upload_acknowledgement_maps_without_image_bytes():
+@pytest.mark.parametrize("provider", ["tripo", "meshy", "fal"])
+def test_local_image_upload_acknowledgement_maps_without_image_bytes(provider):
     _, sent = _call_tool(
         action="generate",
-        provider="tripo",
+        provider=provider,
         mode="image",
         image_path="Assets/reference.png",
         allow_image_upload=True,
     )
     assert _sent_params(sent) == {
         "action": "generate",
-        "provider": "tripo",
+        "provider": provider,
         "mode": "image",
         "imagePath": "Assets/reference.png",
         "allowImageUpload": True,

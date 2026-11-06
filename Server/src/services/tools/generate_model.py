@@ -27,8 +27,8 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "- generate: Submit a generation job (text->3D or image->3D). Returns { job_id } "
         "immediately; poll with the status action. Params: provider, mode (text|image), "
         "prompt, image_path|image_url, format (glb|fbx|obj|usdz), target_size, texture, "
-        "tier, model, name, output_folder, allow_image_upload. Tripo local PNG/JPEG input "
-        "requires allow_image_upload=true to upload original bytes including metadata and start potentially billable generation. "
+        "tier, model, name, output_folder, allow_image_upload. Every provider requires "
+        "allow_image_upload=true to transmit local image original bytes including metadata for potentially billable generation. "
         "Hosted image_url takes precedence and does not upload the local file. Tripo supports GLB generation only; omit tier. "
         "Tripo texture=false requires v3.0-20250812, v3.1-20260211, or P1-20260311. "
         "Other formats require a separate conversion workflow, which this tool does not submit. "
@@ -64,7 +64,7 @@ async def generate_model(
     image_url: Annotated[str, "URL of a source image for image->3D."] | None = None,
     allow_image_upload: Annotated[
         bool,
-        "Consent to send a selected local PNG/JPEG including metadata to Tripo for potentially billable generation; false by default. Hosted URLs take precedence.",
+        "Consent to send the selected local image's original bytes, including metadata, to the selected provider (Tripo, Meshy or fal) for potentially billable generation; false by default. Hosted URLs take precedence.",
     ] = False,
     format: Annotated[
         str,

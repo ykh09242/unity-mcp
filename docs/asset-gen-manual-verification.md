@@ -272,15 +272,15 @@ These paths are covered by unit tests at the request-shaping layer only — conf
 
 - [ ] **Meshy text→3D textures:** `generate_model(provider=meshy, mode=text, prompt="...", texture=true)`
       → confirm the result is **textured** (Meshy runs a preview then a refine task internally).
-- [ ] **Local image→3D (Meshy):** `generate_model(provider=meshy, mode=image, image_path=Assets/refs/x.png)`
+- [ ] **Local image→3D (Meshy):** `generate_model(provider=meshy, mode=image, image_path=Assets/refs/x.png, allow_image_upload=true)`
       → confirm it imports a model derived from the local image.
-- [ ] **Local image→image (fal):** `generate_image(provider=fal, mode=image, image_path=Assets/refs/x.png, prompt="make it night")`
+- [ ] **Local image→image (fal):** `generate_image(provider=fal, mode=image, image_path=Assets/refs/x.png, prompt="make it night", allow_image_upload=true)`
       → confirm fal's `/edit` endpoint accepts the request and returns an edited image.
-- [ ] **Local image→image (OpenRouter):** `generate_image(provider=openrouter, mode=image, image_path=..., prompt="...")`
+- [ ] **Local image→image (OpenRouter):** `generate_image(provider=openrouter, mode=image, image_path=..., prompt="...", allow_image_upload=true)`
       → confirm the reference image influences the result.
 - [ ] **fal output size:** `generate_image(provider=fal, width=512, height=512, prompt="...")`
       → confirm the returned image is 512×512.
-- [ ] **Tripo local upload consent:** `generate_model(provider=tripo, mode=image, image_path=...)`
+- [ ] **Local image transmission consent:** repeat local image requests for Tripo, Meshy and fal models, and fal/OpenRouter images without consent.
       → confirm omission of `allow_image_upload=true` refuses before any upload or generation POST.
 - [ ] **Sketchfab search filters/paging:** `import_model(action=search, query="chair", categories=furniture-home, count=12, cursor=<from prior cursors.next>)`
       → confirm filtering works and `cursors.next` advances the page.

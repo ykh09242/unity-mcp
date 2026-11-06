@@ -39,7 +39,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         public string Prompt;
         public string ImagePath;
         public string ImageUrl;
-        public bool AllowImageUpload; // Tripo-only consent; session intent only, never the disk checkpoint.
+        public bool AllowImageUpload; // Local-image transmission consent; session intent only, never the disk checkpoint.
         public string Format = "glb";
         public float TargetSize = 1f;
         public bool Texture = true;
@@ -58,6 +58,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         public string Prompt;
         public string ImagePath;
         public string ImageUrl;
+        public bool AllowImageUpload; // Local-image transmission consent; session intent only, never the disk checkpoint.
         public string Model;
         public bool Transparent;
         public bool AsSprite = true; // import as Sprite (2D/UI) vs Default texture

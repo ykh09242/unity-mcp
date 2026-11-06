@@ -603,6 +603,7 @@ Generate a 2D image with an AI provider. Examples: unity-mcp asset-gen generate-
 | --prompt | text | optional | nargs=1 | — | — | Text prompt for text-&gt;image. |
 | --image-path | text | optional | nargs=1 | — | — | Source image path for image-&gt;image. |
 | --image-url | text | optional | nargs=1 | — | — | Source image URL for image-&gt;image. |
+| --allow-image-upload | boolean | optional | nargs=1, flag | false | — | Consent to send the local image's original bytes, including metadata, to the selected provider for potentially billable generation. |
 | --model | text | optional | nargs=1 | — | — | Provider model id/slug. |
 | --transparent / --no-transparent | boolean | optional | nargs=1, flag | — | — | Request transparency. |
 | --width | integer | optional | nargs=1 | — | — | Output width in pixels. |
@@ -613,7 +614,7 @@ Generate a 2D image with an AI provider. Examples: unity-mcp asset-gen generate-
 
 ## `unity-mcp asset-gen generate-model`
 
-Generate a 3D model with an AI provider. Examples: unity-mcp asset-gen generate-model --provider tripo --mode text --prompt "a red chair" unity-mcp asset-gen generate-model --provider meshy --mode image --image-path Assets/ref.png
+Generate a 3D model with an AI provider. Examples: unity-mcp asset-gen generate-model --provider tripo --mode text --prompt "a red chair" unity-mcp asset-gen generate-model --provider meshy --mode image --image-path Assets/ref.png --allow-image-upload
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -622,7 +623,7 @@ Generate a 3D model with an AI provider. Examples: unity-mcp asset-gen generate-
 | --prompt | text | optional | nargs=1 | — | — | Text prompt for text-&gt;3D. |
 | --image-path | text | optional | nargs=1 | — | — | Source image path for image-&gt;3D. |
 | --image-url | text | optional | nargs=1 | — | — | Source image URL for image-&gt;3D. |
-| --allow-image-upload | boolean | optional | nargs=1, flag | false | — | Consent to upload a local PNG/JPEG including metadata to Tripo for potentially billable generation. |
+| --allow-image-upload | boolean | optional | nargs=1, flag | false | — | Consent to send the local image's original bytes, including metadata, to the selected provider for potentially billable generation. |
 | --format | text | optional | nargs=1 | — | — | Output format: glb, fbx, obj, usdz. |
 | --target-size | float | optional | nargs=1 | — | — | Normalize largest dimension (meters). |
 | --texture / --no-texture | boolean | optional | nargs=1, flag | — | — | Generate textures. |
@@ -1303,6 +1304,8 @@ Set multiple properties on a component at once. Examples: unity-mcp component mo
 | --properties / -p | text | required | nargs=1 | — | — | Properties to set as JSON (e.g., '&#123;"mass": 5.0, "useGravity": false&#125;'). Accepts @file or -/@- stdin. |
 | --search-method | choice: by_id, by_name, by_path | optional | nargs=1 | — | — | How to find the target GameObject. |
 | --component-index / -i | integer | optional | nargs=1 | — | — | Zero-based index when multiple components of the same type exist. |
+| --strict-selection | boolean | optional | nargs=1, flag | — | — | Require a unique target and component unless an index or component ID selects it. |
+| --component-instance-id | integer range: [-2147483648..2147483647] | optional | nargs=1 | — | — | Nonzero live component instance ID; cannot be combined with --component-index. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp component remove`
@@ -1316,6 +1319,8 @@ Remove a component from a GameObject. Examples: unity-mcp component remove "Play
 | --search-method | choice: by_id, by_name, by_path | optional | nargs=1 | — | — | How to find the target GameObject. |
 | --force / -f | boolean | optional | nargs=1, flag | — | — | Skip confirmation prompt. |
 | --component-index / -i | integer | optional | nargs=1 | — | — | Zero-based index when multiple components of the same type exist. |
+| --strict-selection | boolean | optional | nargs=1, flag | — | — | Require a unique target and component unless an index or component ID selects it. |
+| --component-instance-id | integer range: [-2147483648..2147483647] | optional | nargs=1 | — | — | Nonzero live component instance ID; cannot be combined with --component-index. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp component set`
@@ -1330,6 +1335,8 @@ Set a single property on a component. Examples: unity-mcp component set "Player"
 | value | text | required | nargs=1 | — | — |  |
 | --search-method | choice: by_id, by_name, by_path | optional | nargs=1 | — | — | How to find the target GameObject. |
 | --component-index / -i | integer | optional | nargs=1 | — | — | Zero-based index when multiple components of the same type exist. |
+| --strict-selection | boolean | optional | nargs=1, flag | — | — | Require a unique target and component unless an index or component ID selects it. |
+| --component-instance-id | integer range: [-2147483648..2147483647] | optional | nargs=1 | — | — | Nonzero live component instance ID; cannot be combined with --component-index. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp custom_tool`
@@ -2280,6 +2287,7 @@ Set a renderer's material color directly. Examples: unity-mcp material set-rende
 | g | float | required | nargs=1 | — | — |  |
 | b | float | required | nargs=1 | — | — |  |
 | a | float | optional | nargs=1 | 1.0 | — |  |
+| --slot | integer range: [0..None] | optional | nargs=1 | 0 | — | Material slot index (default: 0). |
 | --search-method | choice: by_id, by_name, by_path, by_tag, by_layer, by_component | optional | nargs=1 | — | — | How to find the target GameObject. |
 | --mode / -m | choice: shared, instance, property_block, create_unique | optional | nargs=1 | "property_block" | — | Modification mode (default: property_block — use create_unique for persistent per-object material). |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |

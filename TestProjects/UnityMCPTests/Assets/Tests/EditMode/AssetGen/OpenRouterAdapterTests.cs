@@ -103,6 +103,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                     Mode = "image",
                     Prompt = "watercolor",
                     ImagePath = rel,
+                    AllowImageUpload = true,
                 };
 
                 adapter.SubmitAsync(req, "orkey", fake, CancellationToken.None).GetAwaiter().GetResult();

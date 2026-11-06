@@ -44,10 +44,25 @@ Provider API requests also disable automatic redirects. They remain on their exi
 UnityWebRequest transport. This policy covers artifact downloads, not remote resources
 that an independently installed model importer might choose to fetch.
 
-Tripo uses fixed v3 API routes for file upload, generation and task polling. Uploading a
-local image requires `allow_image_upload=true` for that invocation (CLI
-`--allow-image-upload`); omission does not grant consent. The original PNG/JPEG bytes,
-including embedded metadata, leave the project and may be used for billable generation.
+## Local image transmission consent
+
+Both `generate_model` and `generate_image` require explicit `allow_image_upload=true`
+for the invocation before inspecting or reading a local image input (CLI
+`--allow-image-upload`). Omission, false and nonboolean values do not grant consent.
+This covers Tripo, Meshy and fal model generation, and fal and OpenRouter image
+generation. The selected image's original bytes, including embedded metadata, leave
+the project for potentially billable generation. OpenRouter may route them to its
+selected model provider. Inline base64 JSON is a transmission just like a multipart
+upload; neither removes metadata. Consent is also checked at the adapter boundary.
+
+Text-only requests do not require this flag. A supplied image URL takes precedence
+over the local path, so that path is not read or uploaded. Consent is retained only
+in the current Editor session's submission intent, not a durable disk checkpoint.
+Existing input validation and size limits still apply: inline local inputs support
+PNG/JPEG/WebP/GIF up to 32 MiB, with a 48 MiB serialized request limit.
+
+Tripo uses fixed v3 API routes for file upload, generation and task polling.
+It accepts a narrower local PNG/JPEG input contract, described below.
 The multipart part uses a constant filename and MIME type, never the source path or name.
 Only existing, regular PNG/JPEG files inside `Assets` are accepted, up to 20,000,000 raw
 bytes. URI paths, traversal, links, control characters and paths longer than 2,048

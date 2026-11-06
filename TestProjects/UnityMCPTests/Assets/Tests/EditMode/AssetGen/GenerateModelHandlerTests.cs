@@ -127,8 +127,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         [Test]
         public void Generate_ImageMode_MissingFile_ReturnsError()
         {
-            // Use a provider that supports local images (Meshy) so we exercise the file-existence
-            // check; Tripo short-circuits on any local path (covered separately).
+            // Consent explicitly so this test exercises file-existence validation for Meshy.
             _store.Set("meshy", "k");
             JObject resp = Call(
                 new JObject
@@ -137,6 +136,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                     ["provider"] = "meshy",
                     ["mode"] = "image",
                     ["imagePath"] = "Assets/does_not_exist_zzz.png",
+                    ["allowImageUpload"] = true,
                 }
             );
             Assert.AreEqual(false, (bool)resp["success"]);
@@ -158,6 +158,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                         ["provider"] = "meshy",
                         ["mode"] = "image",
                         ["imagePath"] = tmp,
+                        ["allowImageUpload"] = true,
                     }
                 );
                 Assert.AreEqual(false, (bool)resp["success"]);
@@ -186,6 +187,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                     ["provider"] = "meshy",
                     ["mode"] = "image",
                     ["imagePath"] = rel,
+                    ["allowImageUpload"] = true,
                 }
             );
 
@@ -193,7 +195,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         }
 
         [Test]
-        public void Generate_ImageMode_Tripo_LocalPath_ReturnsErrorSynchronously()
+        public void Generate_ImageMode_Tripo_LocalPathWithoutConsent_ReturnsErrorSynchronously()
         {
             _store.Set("tripo", "k");
             string tmp = Path.Combine(Path.GetTempPath(), "mcp_tripoimg_" + Guid.NewGuid().ToString("N") + ".png");
@@ -210,7 +212,8 @@ namespace MCPForUnityTests.Editor.AssetGen
                     }
                 );
                 Assert.AreEqual(false, (bool)resp["success"]); // synchronous error, not a fake 'pending'
-                StringAssert.Contains("Tripo", (string)resp["error"]);
+                StringAssert.Contains("allow_image_upload=true", (string)resp["error"]);
+                Assert.AreEqual(0, AssetGenJobManager.RecentJobs().Count);
             }
             finally
             {

@@ -8,12 +8,13 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
     /// <summary>
     /// Helpers for feeding a LOCAL on-disk image to a provider: resolve+verify the path, and encode
     /// it as a base64 <c>data:</c> URI — the inline form fal, Meshy, and OpenRouter accept for image
-    /// input (no hosting/upload needed). Tripo does NOT accept data URIs and is handled separately.
+    /// input (the original bytes still leave the project). Tripo does NOT accept data URIs and is handled separately.
     /// </summary>
     internal static class LocalImage
     {
         internal const int MaxImageBytes = 32 * 1024 * 1024;
         internal const int MaxDataUriBytes = 48 * 1024 * 1024 - 1024;
+        internal const string ConsentError = "Sending a local image to the selected provider requires explicit allow_image_upload=true consent.";
         private const string SizeError = "Source image exceeds the 32 MiB local image input limit.";
 
         // Extensions that can be inlined as a data URI for provider image input.
@@ -72,8 +73,10 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
         /// Read a local image and return a "data:image/&lt;mime&gt;;base64,..." URI. Throws
         /// <see cref="NotSupportedException"/> for an unsupported extension.
         /// </summary>
-        public static string ToDataUri(string absPath)
+        public static string ToDataUri(string absPath, bool allowImageUpload)
         {
+            if (!allowImageUpload)
+                throw new InvalidOperationException(ConsentError);
             if (!AssetGenPaths.TryGetAssetsRelativePath(absPath, out string rel))
                 throw new UnauthorizedAccessException("image_path must point to a file under the project's Assets folder.");
             absPath = AssetGenPaths.ToAbsolute(rel);

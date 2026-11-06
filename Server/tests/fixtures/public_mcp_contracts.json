@@ -4741,6 +4741,10 @@
                 ],
                 "type": "string"
               },
+              "allow_image_upload": {
+                "default": false,
+                "type": "boolean"
+              },
               "height": {
                 "anyOf": [
                   {
@@ -30269,6 +30273,10 @@
                   "refresh_models"
                 ],
                 "type": "string"
+              },
+              "allow_image_upload": {
+                "default": false,
+                "type": "boolean"
               },
               "height": {
                 "anyOf": [

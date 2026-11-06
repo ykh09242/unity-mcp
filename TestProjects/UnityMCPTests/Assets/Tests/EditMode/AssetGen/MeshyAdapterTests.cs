@@ -224,6 +224,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                     Provider = "meshy",
                     Mode = "image",
                     ImagePath = rel,
+                    AllowImageUpload = true,
                     Format = "glb",
                 };
 

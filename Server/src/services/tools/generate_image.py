@@ -26,8 +26,9 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "ACTIONS:\n"
         "- generate: Submit an image job (text->image or image->image). Returns { job_id }; "
         "poll with the status action. Params: "
-        "provider, mode (text|image), prompt, image_path|image_url, model, transparent, "
-        "width, height, name, output_folder.\n"
+        "provider, mode (text|image), prompt, image_path|image_url, allow_image_upload, model, transparent, "
+        "width, height, name, output_folder. Local image input requires explicit allow_image_upload=true "
+        "to send original bytes including metadata to fal or OpenRouter and its model provider for potentially billable generation.\n"
         "- status: Poll an async job by job_id; includes recovery_state, recovery_code, provider_task_id and provider_phase. "
         "Recorded provider tasks can reconnect after a domain reload within the same Editor session and original two-hour budget. "
         "Unknown submission/import outcomes are not replayed; inspect retained output before retrying. "
@@ -64,6 +65,10 @@ async def generate_image(
     prompt: Annotated[str, "Text prompt for text->image."] | None = None,
     image_path: Annotated[str, "Path to a source image for image->image mode."] | None = None,
     image_url: Annotated[str, "URL of a source image for image->image."] | None = None,
+    allow_image_upload: Annotated[
+        bool,
+        "Consent to send the selected local image's original bytes, including metadata, to the selected provider (fal or OpenRouter and its model provider) for potentially billable generation; false by default. Hosted URLs take precedence.",
+    ] = False,
     model: Annotated[
         str, "Provider model id/slug returned by list_models; omit for the GUI-selected default."
     ]
@@ -117,6 +122,9 @@ async def generate_image(
         "limit": limit,
         "offset": offset,
     }
+
+    if allow_image_upload is True:
+        params_dict["allowImageUpload"] = True
 
     # Remove None values
     params_dict = {k: v for k, v in params_dict.items() if v is not None}

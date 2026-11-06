@@ -29,6 +29,7 @@ ALLOWED_KEYS = {
     "prompt",
     "imagePath",
     "imageUrl",
+    "allowImageUpload",
     "model",
     "transparent",
     "width",
@@ -271,6 +272,97 @@ def test_sdk_discovery_excludes_background_removal_and_validation_prevents_dispa
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "image capability discovery and SDK rejection passed" in result.stdout
+
+
+@pytest.mark.parametrize("provider", ["fal", "openrouter"])
+@pytest.mark.parametrize("consent", [False, None, "true", True])
+def test_local_image_consent_maps_only_literal_true_without_image_bytes(provider, consent):
+    _, sent = _call_tool(
+        action="generate",
+        provider=provider,
+        mode="image",
+        image_path="Assets/reference.png",
+        allow_image_upload=consent,
+    )
+    params = _sent_params(sent)
+    assert ("allowImageUpload" in params) == (consent is True)
+    assert params["imagePath"] == "Assets/reference.png"
+    assert set(params).issubset(ALLOWED_KEYS)
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_cli_local_image_consent_flag(cli_runner, consent):
+    args = [
+        "generate-image",
+        "--provider",
+        "fal",
+        "--mode",
+        "image",
+        "--image-path",
+        "Assets/ref.png",
+    ]
+    if consent:
+        args.append("--allow-image-upload")
+    result, send = cli_runner(args)
+    assert result.exit_code == 0, result.output
+    assert ("allowImageUpload" in send.call_args.args[1]) == consent
+
+
+@pytest.mark.parametrize("protocol", ["2026-07-28", "legacy"])
+def test_registered_sdk_local_image_consent_schema_and_mapping(protocol):
+    from fastmcp import Client, FastMCP
+
+    async def exercise():
+        entry = next(tool for tool in get_registered_tools() if tool["name"] == COMMAND)
+        server = FastMCP("image-local-consent")
+        server.tool(name=COMMAND, description=entry["description"], **entry["kwargs"])(
+            entry["func"]
+        )
+        with (
+            patch.object(
+                generate_image_module,
+                "get_unity_instance_from_context",
+                new=AsyncMock(return_value="owned"),
+            ),
+            patch.object(
+                generate_image_module,
+                "send_with_unity_instance",
+                new=AsyncMock(return_value={"success": True}),
+            ) as send,
+        ):
+            async with Client(server, mode=protocol) as client:
+                tool = next(tool for tool in await client.list_tools() if tool.name == COMMAND)
+                field = tool.input_schema["properties"]["allow_image_upload"]
+                assert field["type"] == "boolean" and field["default"] is False
+                assert "metadata" in field["description"]
+                for provider in ("fal", "openrouter"):
+                    for consent in (False, True):
+                        result = await client.call_tool(
+                            COMMAND,
+                            {
+                                "action": "generate",
+                                "provider": provider,
+                                "mode": "image",
+                                "image_path": "Assets/reference.png",
+                                "allow_image_upload": consent,
+                            },
+                        )
+                        assert result.structured_content["success"] is True
+                        assert ("allowImageUpload" in send.call_args.args[3]) == consent
+                for invalid in ("true", 1, None):
+                    before = send.await_count
+                    result = await client.call_tool(
+                        COMMAND,
+                        {
+                            "action": "generate",
+                            "allow_image_upload": invalid,
+                        },
+                        raise_on_error=False,
+                    )
+                    assert result.is_error
+                    assert send.await_count == before
+
+    asyncio.run(exercise())
 
 
 class TestGenerateImageCLI:

@@ -134,7 +134,7 @@ namespace MCPForUnityTests.Editor.Helpers
                 Assert.Catch<Exception>(() => UnityAssetPath.Resolve(relative + "/Probe.png", allowPackages: true, allowBuiltIn: true));
                 Assert.IsFalse(AssetGenPaths.TryGetAssetsRelativePath(relative + "/Probe.png", out _));
                 Assert.IsFalse(LocalImage.ResolveExisting(relative + "/Probe.png", out _, out _));
-                Assert.Throws<UnauthorizedAccessException>(() => LocalImage.ToDataUri(relative + "/Probe.png"));
+                Assert.Throws<UnauthorizedAccessException>(() => LocalImage.ToDataUri(relative + "/Probe.png", allowImageUpload: true));
                 foreach (string action in new[] { "read", "get_sha", "update", "delete", "apply_text_edits", "validate", "edit" })
                 {
                     var result = JObject.FromObject(

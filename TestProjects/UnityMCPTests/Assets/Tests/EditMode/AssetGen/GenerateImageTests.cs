@@ -298,6 +298,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                     ["provider"] = "fal",
                     ["mode"] = "image",
                     ["imagePath"] = "Assets/does_not_exist_zzz.png",
+                    ["allowImageUpload"] = true,
                 }
             );
             Assert.AreEqual(false, (bool)resp["success"]);
@@ -319,6 +320,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                         ["provider"] = "fal",
                         ["mode"] = "image",
                         ["imagePath"] = tmp,
+                        ["allowImageUpload"] = true,
                         ["prompt"] = "edit it",
                     }
                 );
@@ -348,6 +350,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                     ["provider"] = "fal",
                     ["mode"] = "image",
                     ["imagePath"] = rel,
+                    ["allowImageUpload"] = true,
                     ["prompt"] = "edit it",
                 }
             );
@@ -368,6 +371,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                     ["provider"] = "fal",
                     ["mode"] = "image",
                     ["imagePath"] = rel,
+                    ["allowImageUpload"] = true,
                     ["prompt"] = "x",
                 }
             );

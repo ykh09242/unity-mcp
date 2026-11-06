@@ -97,7 +97,7 @@ def list_models(
     "--allow-image-upload",
     is_flag=True,
     default=False,
-    help="Consent to upload a local PNG/JPEG including metadata to Tripo for potentially billable generation.",
+    help="Consent to send the local image's original bytes, including metadata, to the selected provider for potentially billable generation.",
 )
 @click.option("--format", "fmt", default=None, help="Output format: glb, fbx, obj, usdz.")
 @click.option(
@@ -131,7 +131,7 @@ def generate_model(
     \b
     Examples:
         unity-mcp asset-gen generate-model --provider tripo --mode text --prompt "a red chair"
-        unity-mcp asset-gen generate-model --provider meshy --mode image --image-path Assets/ref.png
+        unity-mcp asset-gen generate-model --provider meshy --mode image --image-path Assets/ref.png --allow-image-upload
     """
     config = get_config()
 
@@ -251,6 +251,12 @@ def import_model_file(
 @click.option("--prompt", default=None, help="Text prompt for text->image.")
 @click.option("--image-path", default=None, help="Source image path for image->image.")
 @click.option("--image-url", default=None, help="Source image URL for image->image.")
+@click.option(
+    "--allow-image-upload",
+    is_flag=True,
+    default=False,
+    help="Consent to send the local image's original bytes, including metadata, to the selected provider for potentially billable generation.",
+)
 @click.option("--model", default=None, help="Provider model id/slug.")
 @click.option(
     "--transparent/--no-transparent", "transparent", default=None, help="Request transparency."
@@ -266,6 +272,7 @@ def generate_image(
     prompt: Optional[str],
     image_path: Optional[str],
     image_url: Optional[str],
+    allow_image_upload: bool,
     model: Optional[str],
     transparent: Optional[bool],
     width: Optional[int],
@@ -297,6 +304,9 @@ def generate_image(
         "outputFolder": output_folder,
     }
     params.update({k: v for k, v in optional.items() if v is not None})
+
+    if allow_image_upload:
+        params["allowImageUpload"] = True
 
     result = run_command("generate_image", params, config)
     _emit(result, config, "Generation", "image")

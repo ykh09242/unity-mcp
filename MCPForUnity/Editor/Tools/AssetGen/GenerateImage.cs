@@ -27,7 +27,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 switch (action)
                 {
                     case "generate":
-                        return Generate(p);
+                        return Generate(p, p.GetRaw("allowImageUpload"));
                     case "remove_background":
                         return new ErrorResponse(
                             "Background removal is unsupported in this version. 'transparent' only sets the Unity texture import flag and does not remove backgrounds.",
@@ -66,7 +66,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             }
         }
 
-        private static object Generate(ToolParams p)
+        private static object Generate(ToolParams p, JToken uploadConsent)
         {
             string provider = (p.Get("provider", "fal") ?? "fal").ToLowerInvariant();
             AssetGenProviders.Image(provider); // throws NotSupportedException for unknown providers
@@ -85,6 +85,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 Prompt = p.Get("prompt"),
                 ImagePath = p.Get("imagePath"),
                 ImageUrl = p.Get("imageUrl"),
+                AllowImageUpload = uploadConsent?.Type == JTokenType.Boolean && uploadConsent.Value<bool>(),
                 Model = model,
                 Transparent = p.GetBool("transparent", false),
                 AsSprite = p.GetBool("asSprite", true),
@@ -106,6 +107,8 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             {
                 if (string.IsNullOrWhiteSpace(req.ImagePath))
                     return new ErrorResponse("image mode requires 'image_url' or 'image_path'.");
+                if (!req.AllowImageUpload)
+                    return new ErrorResponse(LocalImage.ConsentError);
                 if (!LocalImage.ResolveExisting(req.ImagePath, out string absImg, out string imgErr))
                     return new ErrorResponse(imgErr);
                 req.ImagePath = absImg;

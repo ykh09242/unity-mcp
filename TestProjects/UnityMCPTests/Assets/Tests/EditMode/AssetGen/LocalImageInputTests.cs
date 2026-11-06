@@ -69,14 +69,46 @@ namespace MCPForUnityTests.Editor.AssetGen
                 },
             };
 
-        private static Task Submit(string provider, string path, FakeHttpTransport http, string extra = "edit")
+        private static Task Submit(string provider, string path, FakeHttpTransport http, string extra = "edit", bool consent = true)
         {
+            if (provider == "tripo")
+                return new TripoAdapter().SubmitAsync(
+                    new ModelGenRequest
+                    {
+                        Mode = "image",
+                        ImagePath = path,
+                        AllowImageUpload = consent,
+                    },
+                    "fixture-only",
+                    http,
+                    CancellationToken.None
+                );
+            if (provider == "fal_model")
+                return new FalModelAdapter().SubmitAsync(
+                    new ModelGenRequest
+                    {
+                        Mode = "image",
+                        ImagePath = path,
+                        AllowImageUpload = consent,
+                        CatalogEntry = new ModelEntry
+                        {
+                            Id = "fal-ai/fixture/image-to-3d",
+                            VerifiedAt = "fixture",
+                            ImageInputField = "image_url",
+                            ImageInputIsArray = false,
+                        },
+                    },
+                    "fixture-only",
+                    http,
+                    CancellationToken.None
+                );
             if (provider == "meshy")
                 return new MeshyAdapter().SubmitAsync(
                     new ModelGenRequest
                     {
                         Mode = "image",
                         ImagePath = path,
+                        AllowImageUpload = consent,
                         Model = extra,
                     },
                     "fixture-only",
@@ -87,6 +119,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             {
                 Mode = "image",
                 ImagePath = path,
+                AllowImageUpload = consent,
                 Prompt = extra,
             };
             return provider == "fal"
@@ -102,6 +135,7 @@ namespace MCPForUnityTests.Editor.AssetGen
                 ["provider"] = provider,
                 ["mode"] = "ImAgE",
                 ["image_path"] = path,
+                ["allow_image_upload"] = true,
                 ["prompt"] = "edit",
             };
             return JObject.FromObject(provider == "meshy" ? GenerateModel.HandleCommand(p) : GenerateImage.HandleCommand(p));
@@ -124,6 +158,7 @@ namespace MCPForUnityTests.Editor.AssetGen
         [TestCase("fal")]
         [TestCase("openrouter")]
         [TestCase("meshy")]
+        [TestCase("fal_model")]
         public void OversizedFile_DirectAdapterRejectsBeforeRequest(string provider)
         {
             var http = Transport();
@@ -132,6 +167,8 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.AreEqual(0, http.RecordedRequests.Count);
         }
 
+        [TestCase("fal_model", 4)]
+        [TestCase("fal_model", 64 * 1024)]
         [TestCase("fal", 4)]
         [TestCase("openrouter", 4)]
         [TestCase("meshy", 4)]
@@ -141,9 +178,12 @@ namespace MCPForUnityTests.Editor.AssetGen
         public async Task NormalFiles_HandlerAndAdapterAccept(string provider, int length)
         {
             string path = WriteSized("accepted.PnG", length);
-            JObject result = Handle(provider, path);
-            Assert.AreEqual(true, (bool)result["success"]);
-            Assert.AreEqual(1, AssetGenJobManager.RecentJobs().Count);
+            if (provider != "fal_model")
+            {
+                JObject result = Handle(provider, path);
+                Assert.AreEqual(true, (bool)result["success"]);
+                Assert.AreEqual(1, AssetGenJobManager.RecentJobs().Count);
+            }
             var http = Transport();
             await Submit(provider, path, http);
             Assert.AreEqual(1, http.RecordedRequests.Count);
@@ -151,10 +191,94 @@ namespace MCPForUnityTests.Editor.AssetGen
             var body = JObject.Parse(Encoding.UTF8.GetString(http.RecordedRequests[0].Body));
             string uri =
                 provider == "fal" ? (string)body["image_urls"][0]
-                : provider == "meshy" ? (string)body["image_url"]
+                : provider == "meshy" || provider == "fal_model" ? (string)body["image_url"]
                 : (string)body["messages"][0]["content"][1]["image_url"]["url"];
             StringAssert.StartsWith("data:image/png;base64,", uri);
-            Assert.AreEqual(length, Convert.FromBase64String(uri.Substring(uri.IndexOf(',') + 1)).Length);
+            byte[] decoded = Convert.FromBase64String(uri.Substring(uri.IndexOf(',') + 1));
+            Assert.AreEqual(length, decoded.Length);
+            CollectionAssert.AreEqual(File.ReadAllBytes(AssetGenPaths.ToAbsolute(path)), decoded);
+        }
+
+        [TestCase("fal")]
+        [TestCase("openrouter")]
+        [TestCase("meshy")]
+        [TestCase("fal_model")]
+        [TestCase("tripo")]
+        public void NoConsent_DirectAdapterRejectsBeforeFileReadOrRequest(string provider)
+        {
+            var http = Transport();
+            const string unreadable = "Assets/private-missing-reference.png";
+            var error = Assert.ThrowsAsync<InvalidOperationException>(async () => await Submit(provider, unreadable, http, consent: false));
+            StringAssert.Contains("allow_image_upload=true", error.Message);
+            StringAssert.DoesNotContain(unreadable, error.Message);
+            Assert.AreEqual(0, http.RecordedRequests.Count);
+        }
+
+        [TestCase("fal", false)]
+        [TestCase("openrouter", false)]
+        [TestCase("meshy", true)]
+        [TestCase("fal", true)]
+        [TestCase("tripo", true)]
+        public void Handler_RequiresLiteralBooleanConsentBeforeFileResolution(string provider, bool model)
+        {
+            foreach (JToken consent in new JToken[] { null, new JValue(false), new JValue("true"), new JValue(1) })
+            {
+                var http = Transport();
+                AssetGenJobManager.TransportOverrideForTests = http;
+                const string path = "Assets/private-missing-reference.png";
+                var parameters = new JObject
+                {
+                    ["action"] = "generate",
+                    ["provider"] = provider,
+                    ["mode"] = "image",
+                    ["imagePath"] = path,
+                };
+                if (consent != null)
+                    parameters["allowImageUpload"] = consent;
+                var result = JObject.FromObject(model ? GenerateModel.HandleCommand(parameters) : GenerateImage.HandleCommand(parameters));
+                Assert.AreEqual(false, (bool)result["success"]);
+                StringAssert.Contains("allow_image_upload=true", (string)result["error"]);
+                StringAssert.DoesNotContain(path, (string)result["error"]);
+                Assert.AreEqual(0, AssetGenJobManager.RecentJobs().Count);
+                Assert.AreEqual(0, http.RecordedRequests.Count);
+            }
+        }
+
+        [TestCase("fal", false)]
+        [TestCase("openrouter", false)]
+        [TestCase("meshy", true)]
+        [TestCase("fal", true)]
+        [TestCase("tripo", true)]
+        public void Manager_RejectsNoConsentBeforeReadingOrCatalogVerification(string provider, bool model)
+        {
+            var http = Transport();
+            AssetGenJobManager.TransportOverrideForTests = http;
+            const string path = "Assets/private-missing-reference.png";
+            var error = Assert.Throws<InvalidOperationException>(() =>
+            {
+                if (model)
+                    AssetGenJobManager.StartModelGeneration(
+                        new ModelGenRequest
+                        {
+                            Provider = provider,
+                            Mode = "image",
+                            ImagePath = path,
+                        }
+                    );
+                else
+                    AssetGenJobManager.StartImageGeneration(
+                        new ImageGenRequest
+                        {
+                            Provider = provider,
+                            Mode = "image",
+                            ImagePath = path,
+                        }
+                    );
+            });
+            StringAssert.Contains("allow_image_upload=true", error.Message);
+            StringAssert.DoesNotContain(path, error.Message);
+            Assert.AreEqual(0, AssetGenJobManager.RecentJobs().Count);
+            Assert.AreEqual(0, http.RecordedRequests.Count);
         }
 
         [TestCase(".PNG", "image/png")]
@@ -225,28 +349,38 @@ namespace MCPForUnityTests.Editor.AssetGen
         [TestCase("fal", "image")]
         [TestCase("openrouter", "image")]
         [TestCase("meshy", "image")]
+        [TestCase("fal_model", "text")]
+        [TestCase("fal_model", "image")]
         public async Task TextAndHostedImage_NormalRequestsPreserved(string provider, string mode)
         {
             var http = Transport();
             const string hosted = "https://fixture.invalid/ref.png";
-            if (provider == "meshy")
-                await new MeshyAdapter().SubmitAsync(
-                    new ModelGenRequest
+            if (provider == "meshy" || provider == "fal_model")
+            {
+                var request = new ModelGenRequest
+                {
+                    Mode = mode,
+                    ImageUrl = hosted,
+                    ImagePath = "Assets/private-missing-reference.png",
+                    Prompt = "\uD55C\uAE00😀",
+                    CatalogEntry = new ModelEntry
                     {
-                        Mode = mode,
-                        ImageUrl = hosted,
-                        Prompt = "\uD55C\uAE00😀",
+                        Id = "fal-ai/fixture/model",
+                        VerifiedAt = "fixture",
+                        ImageInputField = "image_url",
+                        ImageInputIsArray = false,
                     },
-                    "fixture-only",
-                    http,
-                    CancellationToken.None
-                );
+                };
+                IModelProviderAdapter adapter = provider == "meshy" ? (IModelProviderAdapter)new MeshyAdapter() : new FalModelAdapter();
+                await adapter.SubmitAsync(request, "fixture-only", http, CancellationToken.None);
+            }
             else
             {
                 var request = new ImageGenRequest
                 {
                     Mode = mode,
                     ImageUrl = hosted,
+                    ImagePath = "Assets/private-missing-reference.png",
                     Prompt = "\uD55C\uAE00😀",
                 };
                 if (provider == "fal")

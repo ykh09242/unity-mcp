@@ -454,6 +454,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             if (req == null)
                 throw new ArgumentNullException(nameof(req));
+            if (string.Equals(req.Mode, "image", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(req.ImageUrl) && !req.AllowImageUpload)
+                throw new InvalidOperationException(LocalImage.ConsentError);
             EnsureCapacity();
             req = AssetGenSubmissionIntent.Copy(req);
             req.OutputFolder = AssetGenPaths.ResolveOutputFolder(req.OutputFolder, "Models");
@@ -509,6 +511,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             if (req == null)
                 throw new ArgumentNullException(nameof(req));
+            if (string.Equals(req.Mode, "image", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(req.ImageUrl) && !req.AllowImageUpload)
+                throw new InvalidOperationException(LocalImage.ConsentError);
             EnsureCapacity();
             req = AssetGenSubmissionIntent.Copy(req);
             req.OutputFolder = AssetGenPaths.ResolveOutputFolder(req.OutputFolder, "Images");

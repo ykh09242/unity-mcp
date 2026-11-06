@@ -50,7 +50,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 string.Equals(req.Mode, "image", StringComparison.OrdinalIgnoreCase)
                 && (!string.IsNullOrEmpty(req.ImageUrl) || !string.IsNullOrEmpty(req.ImagePath));
             // image_url.url accepts a hosted URL or an inline base64 data URI (for a local image_path).
-            string imageRef = image ? (!string.IsNullOrEmpty(req.ImageUrl) ? req.ImageUrl : LocalImage.ToDataUri(req.ImagePath)) : null;
+            string imageRef = image ? (!string.IsNullOrEmpty(req.ImageUrl) ? req.ImageUrl : LocalImage.ToDataUri(req.ImagePath, req.AllowImageUpload)) : null;
             JToken content = image
                 ? new JArray(
                     new JObject { ["type"] = "text", ["text"] = req.Prompt ?? string.Empty },

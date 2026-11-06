@@ -17,7 +17,7 @@ description: "Generate 2D images with AI providers (fal.ai, OpenRouter) and impo
 Generate 2D images with AI providers (fal.ai, OpenRouter) and import them as textures/sprites into the Unity project. Bring-your-own-key: provider keys live in the editor's secure store and never cross the bridge.
 
 ACTIONS:
-- generate: Submit an image job (text->image or image->image). Returns { job_id }; poll with the status action. Params: provider, mode (text|image), prompt, image_path|image_url, model, transparent, width, height, name, output_folder.
+- generate: Submit an image job (text->image or image->image). Returns { job_id }; poll with the status action. Params: provider, mode (text|image), prompt, image_path|image_url, allow_image_upload, model, transparent, width, height, name, output_folder. Local image input requires explicit allow_image_upload=true to send original bytes including metadata to fal or OpenRouter and its model provider for potentially billable generation.
 - status: Poll an async job by job_id; includes recovery_state, recovery_code, provider_task_id and provider_phase. Recorded provider tasks can reconnect after a domain reload within the same Editor session and original two-hour budget. Unknown submission/import outcomes are not replayed; inspect retained output before retrying. Saved local output can resume without a provider key when its recorded file/metadata identity still matches. OpenRouter responses not yet saved locally cannot reconnect.
 - cancel: Stop local job continuation by job_id; this does not guarantee provider-side cancellation or a refund.
 - list_providers: List configured image providers and capabilities (no key values).
@@ -36,6 +36,7 @@ Background removal is unsupported. Legacy direct remove_background requests retu
 | `prompt` | `str \| None` | — | Text prompt for text->image. |
 | `image_path` | `str \| None` | — | Path to a source image for image->image mode. |
 | `image_url` | `str \| None` | — | URL of a source image for image->image. |
+| `allow_image_upload` | `bool` | — | Consent to send the selected local image's original bytes, including metadata, to the selected provider (fal or OpenRouter and its model provider) for potentially billable generation; false by default. Hosted URLs take precedence. |
 | `model` | `str \| None` | — | Provider model id/slug returned by list_models; omit for the GUI-selected default. |
 | `transparent` | `bool \| None` | — | Mark the imported texture as alpha-is-transparency. NOTE: fal/FLUX and OpenRouter have no generation-time transparency, so this only sets the Unity import flag — it does not make the model render a transparent background. |
 | `width` | `int \| None` | — | Output width in pixels. |

@@ -54,7 +54,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 if (entry?.FromRefresh == true && string.IsNullOrEmpty(entry.EditModelId))
                     throw new Exception($"Model '{model}' has no verified image editing endpoint.");
                 url = QueueBase + (entry?.EditModelId ?? model + "/edit");
-                string imageRef = !string.IsNullOrEmpty(req.ImageUrl) ? req.ImageUrl : LocalImage.ToDataUri(req.ImagePath);
+                string imageRef = !string.IsNullOrEmpty(req.ImageUrl) ? req.ImageUrl : LocalImage.ToDataUri(req.ImagePath, req.AllowImageUpload);
                 body[entry?.ImageInputField ?? "image_urls"] = entry?.ImageInputIsArray != false ? (JToken)new JArray(imageRef) : (JToken)imageRef;
             }
             else

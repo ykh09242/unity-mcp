@@ -81,7 +81,7 @@ namespace MCPForUnity.Editor.Services.AssetGen.Providers
                 // image→3D textures in a single call (no separate refine task). image_url accepts a
                 // hosted URL or an inline base64 data URI (for a local image_path).
                 url = ImageEndpoint;
-                string imageRef = !string.IsNullOrEmpty(req.ImageUrl) ? req.ImageUrl : LocalImage.ToDataUri(req.ImagePath);
+                string imageRef = !string.IsNullOrEmpty(req.ImageUrl) ? req.ImageUrl : LocalImage.ToDataUri(req.ImagePath, req.AllowImageUpload);
                 body = new JObject
                 {
                     ["image_url"] = imageRef,

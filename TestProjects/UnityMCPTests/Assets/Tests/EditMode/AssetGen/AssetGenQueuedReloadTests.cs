@@ -329,6 +329,7 @@ namespace MCPForUnityTests.Editor.AssetGen
             ModelGenRequest request = Request("meshy");
             request.Mode = "image";
             request.ImagePath = path;
+            request.AllowImageUpload = true;
             AssetGenJob job = AssetGenJobManager.StartModelGeneration(request);
             if (changed)
             {

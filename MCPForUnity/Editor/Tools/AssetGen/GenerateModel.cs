@@ -28,7 +28,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 switch (action)
                 {
                     case "generate":
-                        return Generate(p, @params["allowImageUpload"]);
+                        return Generate(p, p.GetRaw("allowImageUpload"));
                     case "status":
                         return AssetGenToolHelpers.Status(p, "3D model", 3.0);
                     case "cancel":
@@ -100,10 +100,10 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             {
                 if (string.IsNullOrWhiteSpace(req.ImagePath))
                     return new ErrorResponse("image mode requires 'image_url' or 'image_path'.");
+                if (!req.AllowImageUpload)
+                    return new ErrorResponse(LocalImage.ConsentError);
                 if (provider == "tripo")
                 {
-                    if (!req.AllowImageUpload)
-                        return new ErrorResponse("Tripo local image upload requires explicit allow_image_upload=true consent.");
                     req.ImagePath = TripoLocalImageUpload.RequirePath(req.ImagePath);
                 }
                 else
