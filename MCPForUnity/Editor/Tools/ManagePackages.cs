@@ -79,6 +79,7 @@ namespace MCPForUnity.Editor.Tools
         }
 
         internal static Action ResolveInvoker = () => Client.Resolve();
+        private static Func<string> _registryDataPathForTests = null;
         internal static Func<JArray> ResolveSnapshotReader = ReadRegisteredResolveSnapshot;
         internal static Func<JObject> ResolveReadinessReader = () =>
             new JObject { ["is_compiling"] = EditorApplication.isCompiling, ["is_updating"] = EditorApplication.isUpdating };
@@ -651,15 +652,13 @@ namespace MCPForUnity.Editor.Tools
                 registries.Add(newRegistry);
 
                 McpConfigurationHelper.WriteAtomicFile(manifestPath, manifest.ToString(Formatting.Indented));
-                Client.Resolve();
-
-                return new SuccessResponse(
+                return RegistryPublicationResult(
                     $"Added scoped registry '{nameResult.Value}'.",
-                    new
+                    new JObject
                     {
-                        name = nameResult.Value,
-                        url = urlResult.Value,
-                        scopes,
+                        ["name"] = nameResult.Value,
+                        ["url"] = urlResult.Value,
+                        ["scopes"] = new JArray(scopes),
                     }
                 );
             }
@@ -717,14 +716,43 @@ namespace MCPForUnity.Editor.Tools
                     manifest.Remove("scopedRegistries");
 
                 McpConfigurationHelper.WriteAtomicFile(manifestPath, manifest.ToString(Formatting.Indented));
-                Client.Resolve();
-
-                return new SuccessResponse($"Removed scoped registry '{removedName}'.");
+                return RegistryPublicationResult($"Removed scoped registry '{removedName}'.", new JObject { ["name"] = removedName });
             }
             catch (Exception e)
             {
                 return new ErrorResponse($"Failed to remove registry: {e.Message}");
             }
+        }
+
+        private static object RegistryPublicationResult(string message, JObject data)
+        {
+            data["manifest_saved"] = true;
+            data["manifest_path"] = "Packages/manifest.json";
+            JObject resolution;
+            try
+            {
+                resolution = JObject.FromObject(ResolvePackages());
+            }
+            catch
+            {
+                // Publication already completed. An unexpected receipt/observation failure
+                // cannot turn it into a failed manifest mutation or authorize replay.
+                resolution = JObject.FromObject(
+                    new ErrorResponse("Resolution observation failed; native completion is unknown.", new { reason = "resolution_observation_failed" })
+                );
+            }
+            data["resolution"] = resolution;
+            string jobId = resolution["data"]?.Value<string>("job_id");
+            data["recovery"] = new JObject
+            {
+                ["action"] = jobId == null ? "resolve_packages" : "status",
+                ["job_id"] = jobId,
+                ["guidance"] =
+                    jobId == null
+                        ? "Do not replay the registry mutation. Inspect native package activity and resolve receipts before explicitly requesting resolution only."
+                        : "Do not replay the registry mutation or blindly repeat resolution. Query this resolve receipt and inspect native package activity; completion remains unknown.",
+            };
+            return new SuccessResponse(message + " Manifest saved; inspect the independent resolution result.", data);
         }
 
         // === embed_package ===
@@ -1043,7 +1071,7 @@ namespace MCPForUnity.Editor.Tools
 
         private static string GetManifestPath()
         {
-            return GetContainedManifestPath(Application.dataPath);
+            return GetContainedManifestPath(_registryDataPathForTests?.Invoke() ?? Application.dataPath);
         }
 
         private static string GetContainedManifestPath(string dataPath)

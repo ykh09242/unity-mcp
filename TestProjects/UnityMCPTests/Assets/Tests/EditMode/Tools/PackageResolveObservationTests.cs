@@ -31,7 +31,17 @@ namespace MCPForUnityTests.Editor.Tools
             captured = false;
             originals.Clear();
             // Validate every seam before changing anything; the old product fails here safely.
-            foreach (string name in new[] { "ResolveInvoker", "ResolveSnapshotReader", "ResolveReadinessReader", "ResolveClock", "ResolveHasPendingRequests" })
+            foreach (
+                string name in new[]
+                {
+                    "ResolveInvoker",
+                    "ResolveSnapshotReader",
+                    "ResolveReadinessReader",
+                    "ResolveClock",
+                    "ResolveHasPendingRequests",
+                    "_registryDataPathForTests",
+                }
+            )
                 Capture(typeof(ManagePackages), name);
             Capture(typeof(PackageJobManager), "SessionReader");
             Capture(typeof(PackageJobManager), "SessionWriter");
@@ -151,6 +161,131 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(JTokenType.Null, Evidence(result)["triggered"].Type);
             Assert.IsFalse(result.ToString().Contains("private-url-token-canary"));
             Assert.AreEqual(1, invocations);
+        }
+
+        [TestCase("add_registry", "throw")]
+        [TestCase("remove_registry", "throw")]
+        [TestCase("add_registry", "pending")]
+        [TestCase("remove_registry", "pending")]
+        [TestCase("add_registry", "persistence")]
+        [TestCase("remove_registry", "persistence")]
+        [TestCase("add_registry", "triggered")]
+        [TestCase("remove_registry", "triggered")]
+        public void RegistryPublication_RetainsManifestAndIndependentResolutionReceipt(string action, string resolution)
+        {
+            string root = Path.Combine(Path.GetTempPath(), "McpRegistryPublication_" + Guid.NewGuid().ToString("N"));
+            string assets = Path.Combine(root, "Assets"),
+                packages = Path.Combine(root, "Packages");
+            string path = Path.Combine(packages, "manifest.json");
+            Assert.IsFalse(Directory.Exists(root));
+            Directory.CreateDirectory(assets);
+            Directory.CreateDirectory(packages);
+            var keep = new JObject
+            {
+                ["name"] = "Keep",
+                ["url"] = "https://keep.example.test",
+                ["scopes"] = new JArray("com.keep"),
+                ["custom"] = false,
+            };
+            var target = new JObject
+            {
+                ["name"] = "Fixture",
+                ["url"] = "https://fixture.example.test",
+                ["scopes"] = new JArray("com.fixture"),
+            };
+            var manifest = new JObject
+            {
+                ["dependencies"] = new JObject { ["com.keep"] = "1.2.3" },
+                ["zero"] = 0,
+                ["enabled"] = false,
+                ["scopedRegistries"] = new JArray(keep),
+            };
+            if (action == "remove_registry")
+                ((JArray)manifest["scopedRegistries"]).Add(target);
+            try
+            {
+                File.WriteAllText(path, manifest.ToString());
+                Set(typeof(ManagePackages), "_registryDataPathForTests", (Func<string>)(() => assets));
+                Set(
+                    typeof(ManagePackages),
+                    "ResolveInvoker",
+                    (Action)(
+                        () =>
+                        {
+                            invocations++;
+                            var saved = JObject.Parse(File.ReadAllText(path));
+                            Assert.AreEqual(
+                                action == "add_registry" ? 2 : 1,
+                                ((JArray)saved["scopedRegistries"]).Count,
+                                "Publication must precede resolve invocation."
+                            );
+                            if (resolution == "throw")
+                                throw new IOException("private-url-token-canary");
+                        }
+                    )
+                );
+                if (resolution == "pending")
+                    Set(typeof(ManagePackages), "ResolveHasPendingRequests", (Func<bool>)(() => true));
+                if (resolution == "persistence")
+                    Set(typeof(PackageJobManager), "SessionWriter", (Action<string>)(_ => throw new IOException("private-store-canary")));
+                var request = (JObject)target.DeepClone();
+                request["action"] = action;
+                var result = JObject.FromObject(ManagePackages.HandleCommand(request));
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                var data = result["data"];
+                Assert.IsTrue(data.Value<bool>("manifest_saved"), result.ToString());
+                var savedManifest = JObject.Parse(File.ReadAllText(path));
+                var expected = (JObject)manifest.DeepClone();
+                if (action == "add_registry")
+                    ((JArray)expected["scopedRegistries"]).Add(target);
+                else
+                    ((JArray)expected["scopedRegistries"])[1].Remove();
+                Assert.IsTrue(JToken.DeepEquals(expected, savedManifest), "Unrelated manifest fields and registries must survive publication.");
+                var resolve = (JObject)data["resolution"];
+                Assert.AreEqual(resolution == "triggered", resolve.Value<bool>("success"), result.ToString());
+                Assert.IsFalse(result.ToString().Contains("canary"));
+                byte[] savedBytes = File.ReadAllBytes(path);
+                DateTime savedTime = File.GetLastWriteTimeUtc(path);
+                string jobId = resolve["data"]?.Value<string>("job_id");
+                using (File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    var repeated = JObject.FromObject(ManagePackages.HandleCommand(request));
+                    Assert.IsFalse(repeated.Value<bool>("success"), "A repeated mutation must not be presented as recovery.");
+                    if (jobId != null)
+                    {
+                        Assert.AreEqual("status", data["recovery"].Value<string>("action"));
+                        Assert.AreEqual(jobId, data["recovery"].Value<string>("job_id"));
+                        Assert.IsTrue(session.Contains(jobId), "Resolve intent must remain persisted after invocation failure.");
+                        var status = Call("status", jobId);
+                        Assert.AreEqual("unknown", Evidence(status).Value<string>("completion"));
+                        Assert.AreEqual(resolution == "throw" ? "failed" : "unknown", status["data"].Value<string>("status"));
+                        Assert.AreEqual(1, invocations, "Receipt queries must not invoke Resolve again.");
+                    }
+                    else
+                    {
+                        Assert.AreEqual(0, invocations);
+                        Assert.AreEqual("resolve_packages", data["recovery"].Value<string>("action"));
+                        Assert.AreEqual(
+                            resolution == "pending" ? "known_client_operation_pending" : "persistence_failed",
+                            resolve["data"].Value<string>("reason")
+                        );
+                        Set(typeof(ManagePackages), "ResolveHasPendingRequests", (Func<bool>)(() => false));
+                        Set(typeof(PackageJobManager), "SessionWriter", (Action<string>)(value => session = value));
+                        Assert.IsTrue(Call("resolve_packages").Value<bool>("success"));
+                        Assert.AreEqual(1, invocations, "Recovery invokes only resolution, without republishing the manifest.");
+                    }
+                }
+                CollectionAssert.AreEqual(savedBytes, File.ReadAllBytes(path));
+                Assert.AreEqual(savedTime, File.GetLastWriteTimeUtc(path));
+            }
+            finally
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+                Directory.Delete(packages);
+                Directory.Delete(assets);
+                Directory.Delete(root);
+            }
         }
 
         [TestCase("registering")]
