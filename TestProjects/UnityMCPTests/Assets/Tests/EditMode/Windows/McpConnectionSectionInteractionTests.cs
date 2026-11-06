@@ -395,6 +395,85 @@ namespace MCPForUnityTests.Editor.Windows
             Assert.AreEqual(1, Get<int>(section, "autoStartGeneration"));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ApplyingHttpDestination_RetiresOldSessionBeforeDisplayingNewSettings(bool scopeChange)
+        {
+            var section = CreateSection();
+            UseHttp("local");
+            var dropdown = Get<EnumField>(section, "transportDropdown");
+            Type protocol = typeof(McpConnectionSection).GetNestedType("TransportProtocol", BindingFlags.NonPublic);
+            dropdown.SetValueWithoutNotify((Enum)Enum.Parse(protocol, "HTTPLocal"));
+            var client = new RetiringHttpClient();
+            var manager = MCPServiceLocator.TransportManager;
+            manager.Configure(() => client, () => client);
+            MCPServiceLocator.Register<IBridgeControlService>(new BridgeControlService());
+            try
+            {
+                Assert.IsTrue(manager.StartAsync(TransportMode.Http).Result);
+                section.UpdateConnectionStatus();
+                StringAssert.StartsWith("Session Active", Get<Label>(section, "connectionStatusLabel").text);
+                if (scopeChange)
+                {
+                    var window = ScriptableObject.CreateInstance<InputWindow>();
+                    try
+                    {
+                        window.ShowUtility();
+                        window.rootVisualElement.Add(dropdown);
+                        dropdown.value = (Enum)Enum.Parse(protocol, "HTTPRemote");
+                    }
+                    finally
+                    {
+                        dropdown.RemoveFromHierarchy();
+                        window.Close();
+                    }
+                }
+                else
+                {
+                    Get<TextField>(section, "httpUrlField").SetValueWithoutNotify("http://127.0.0.1:9090");
+                    Invoke(section, "PersistHttpUrlFromField");
+                }
+                Assert.IsFalse(manager.HasConnectionIntent(TransportMode.Http));
+                Assert.AreEqual(1, client.StopCalls);
+                Assert.IsTrue(client.IsConnected, "Physical teardown is still held by the test gate.");
+                Assert.AreEqual("No Session", Get<Label>(section, "connectionStatusLabel").text);
+                Assert.AreEqual(1, client.StartCalls, "New settings require an explicit reconnect.");
+            }
+            finally
+            {
+                client.StopGate.TrySetResult(true);
+                manager.StopAsync().GetAwaiter().GetResult();
+            }
+        }
+
+        private sealed class RetiringHttpClient : IMcpTransportClient
+        {
+            public readonly TaskCompletionSource<bool> StopGate = new();
+            public int StartCalls;
+            public int StopCalls;
+            public bool IsConnected => State.IsConnected;
+            public string TransportName => "controlled-http";
+            public TransportState State { get; private set; } = TransportState.Disconnected("controlled-http");
+
+            public Task<bool> StartAsync()
+            {
+                StartCalls++;
+                State = TransportState.Connected(TransportName, sessionId: "old-endpoint");
+                return Task.FromResult(true);
+            }
+
+            public async Task StopAsync()
+            {
+                StopCalls++;
+                await StopGate.Task;
+                State = TransportState.Disconnected(TransportName);
+            }
+
+            public Task<bool> VerifyAsync() => Task.FromResult(IsConnected);
+
+            public Task ReregisterToolsAsync() => Task.CompletedTask;
+        }
+
         private static void UseHttp(string scope)
         {
             EditorConfigurationCache.Instance.SetUseHttpTransport(true);

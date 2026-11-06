@@ -171,7 +171,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                     scope = MCPServiceLocator.Server.IsLocalUrl() ? "local" : "remote";
                     try
                     {
-                        EditorPrefs.SetString(EditorPrefKeys.HttpTransportScope, scope);
+                        EditorConfigurationCache.Instance.SetHttpTransportScope(scope);
                     }
                     catch
                     {
@@ -220,7 +220,6 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             transportDropdown.RegisterValueChangedCallback(evt =>
             {
                 autoStartGeneration++;
-                var previous = (TransportProtocol)evt.previousValue;
                 var selected = (TransportProtocol)evt.newValue;
                 bool useHttp = selected != TransportProtocol.Stdio;
                 EditorConfigurationCache.Instance.SetUseHttpTransport(useHttp);
@@ -249,37 +248,8 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
                 OnTransportChanged?.Invoke();
                 McpLog.Info($"Transport changed to: {evt.newValue}");
 
-                // Best-effort: stop the deselected transport to avoid leaving duplicated sessions running.
-                // (Switching between HttpLocal/HttpRemote does not require stopping.)
-                bool prevWasHttp = previous != TransportProtocol.Stdio;
-                bool nextIsHttp = selected != TransportProtocol.Stdio;
-                if (prevWasHttp != nextIsHttp)
-                {
-                    var stopMode = nextIsHttp ? TransportMode.Stdio : TransportMode.Http;
-                    try
-                    {
-                        var stopTask = MCPServiceLocator.TransportManager.StopAsync(stopMode);
-                        stopTask.ContinueWith(
-                            t =>
-                            {
-                                try
-                                {
-                                    if (t.IsFaulted)
-                                    {
-                                        var msg = t.Exception?.GetBaseException()?.Message ?? "Unknown error";
-                                        McpLog.Warn($"Async stop of {stopMode} transport failed: {msg}");
-                                    }
-                                }
-                                catch { }
-                            },
-                            TaskScheduler.Default
-                        );
-                    }
-                    catch (Exception ex)
-                    {
-                        McpLog.Warn($"Failed to stop previous transport ({stopMode}) after selection change: {ex.Message}");
-                    }
-                }
+                // Shared configuration notifications retire the previous connection,
+                // including Local/Remote scope changes and callers outside this window.
             });
 
             // Don't normalize/overwrite the URL on every keystroke (it fights the user and can duplicate schemes).
@@ -369,6 +339,7 @@ namespace MCPForUnity.Editor.Windows.Components.Connection
             RefreshApiKeyUi();
             OnManualConfigUpdateRequested?.Invoke();
             RefreshHttpUi();
+            UpdateConnectionStatus();
         }
 
         // Consecutive failed reachability polls (0.75s cadence) required before an active

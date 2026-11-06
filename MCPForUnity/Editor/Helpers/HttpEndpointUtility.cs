@@ -246,7 +246,10 @@ namespace MCPForUnity.Editor.Helpers
         public static void SaveLocalBaseUrl(string userValue)
         {
             string normalized = NormalizeBaseUrl(userValue, DefaultLocalBaseUrl, remoteScope: false);
+            bool changed = !string.Equals(EditorPrefs.GetString(LocalPrefKey, DefaultLocalBaseUrl), normalized, StringComparison.Ordinal);
             EditorPrefs.SetString(LocalPrefKey, normalized);
+            if (changed)
+                EditorConfigurationCache.Instance.InvalidateKey(nameof(EditorConfigurationCache.HttpBaseUrl));
         }
 
         /// <summary>
@@ -268,13 +271,13 @@ namespace MCPForUnity.Editor.Helpers
         /// </summary>
         public static void SaveRemoteBaseUrl(string userValue)
         {
-            if (string.IsNullOrWhiteSpace(userValue))
-            {
-                EditorPrefs.SetString(RemotePrefKey, DefaultRemoteBaseUrl);
-                return;
-            }
-            string normalized = NormalizeBaseUrl(userValue, DefaultRemoteBaseUrl, remoteScope: true);
+            string normalized = string.IsNullOrWhiteSpace(userValue)
+                ? DefaultRemoteBaseUrl
+                : NormalizeBaseUrl(userValue, DefaultRemoteBaseUrl, remoteScope: true);
+            bool changed = !string.Equals(EditorPrefs.GetString(RemotePrefKey, DefaultRemoteBaseUrl), normalized, StringComparison.Ordinal);
             EditorPrefs.SetString(RemotePrefKey, normalized);
+            if (changed)
+                EditorConfigurationCache.Instance.InvalidateKey(nameof(EditorConfigurationCache.HttpRemoteBaseUrl));
         }
 
         /// <summary>

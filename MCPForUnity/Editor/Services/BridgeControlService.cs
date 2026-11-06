@@ -15,6 +15,7 @@ namespace MCPForUnity.Editor.Services
     {
         private readonly TransportManager _transportManager;
         private TransportMode _preferredMode = TransportMode.Http;
+        private long _transitionGeneration;
 
         public BridgeControlService()
         {
@@ -85,6 +86,15 @@ namespace MCPForUnity.Editor.Services
         {
             StdioBridgeReloadHandler.CancelPendingResume();
             var mode = ResolvePreferredMode();
+            long generation = ++_transitionGeneration;
+            var configuration = EditorConfigurationCache.Instance;
+            void InvalidateTransition(string key)
+            {
+                if (key == nameof(EditorConfigurationCache.UseHttpTransport) || TransportManager.IsHttpConnectionConfiguration(key))
+                    ++_transitionGeneration;
+            }
+            bool IsCurrentTransition() => generation == _transitionGeneration && mode == ResolvePreferredMode();
+            configuration.OnConfigurationChanged += InvalidateTransition;
             try
             {
                 // Treat transports as mutually exclusive for user-driven session starts:
@@ -96,8 +106,12 @@ namespace MCPForUnity.Editor.Services
                 }
                 catch (Exception ex)
                 {
-                    McpLog.Warn($"Error stopping other transport ({otherMode}) before start: {ex.Message}");
+                    if (IsCurrentTransition())
+                        McpLog.Warn($"Error stopping other transport ({otherMode}) before start: {HttpEndpointUtility.RedactUrls(ex.Message)}");
                 }
+
+                if (!IsCurrentTransition())
+                    return false;
 
                 // Legacy safety: stdio may have been started outside TransportManager state.
                 if (otherMode == TransportMode.Stdio)
@@ -110,21 +124,30 @@ namespace MCPForUnity.Editor.Services
                 }
 
                 bool started = await _transportManager.StartAsync(mode);
+                if (!IsCurrentTransition())
+                    return false;
                 if (!started)
                 {
-                    McpLog.Warn($"Failed to start MCP transport: {mode}");
+                    string reason = _transportManager.GetState(mode)?.Error ?? "No transport error detail";
+                    McpLog.Warn($"Failed to start MCP transport {mode}: {HttpEndpointUtility.RedactUrls(reason)}");
                 }
                 return started;
             }
             catch (Exception ex)
             {
-                McpLog.Error($"Error starting MCP transport {mode}: {ex.Message}");
+                if (IsCurrentTransition())
+                    McpLog.Error($"Error starting MCP transport {mode}: {HttpEndpointUtility.RedactUrls(ex.Message)}");
                 return false;
+            }
+            finally
+            {
+                configuration.OnConfigurationChanged -= InvalidateTransition;
             }
         }
 
         public async Task StopAsync()
         {
+            ++_transitionGeneration;
             StdioBridgeReloadHandler.CancelPendingResume();
             try
             {

@@ -26,6 +26,7 @@ namespace MCPForUnityTests.Editor.Services
             public readonly List<TaskCompletionSource<bool>> Starts = new List<TaskCompletionSource<bool>>();
             public int StopCalls;
             public TaskCompletionSource<bool> PendingStop;
+            public bool ClearStateOnStop;
             public TransportState State { get; set; } = TransportState.Disconnected("controlled");
             public bool IsConnected => State.IsConnected;
             public string TransportName => "controlled";
@@ -40,12 +41,79 @@ namespace MCPForUnityTests.Editor.Services
             public Task StopAsync()
             {
                 StopCalls++;
+                if (ClearStateOnStop)
+                    State = TransportState.Disconnected(TransportName);
                 return PendingStop?.Task ?? Task.CompletedTask;
             }
 
             public Task<bool> VerifyAsync() => Task.FromResult(IsConnected);
 
             public Task ReregisterToolsAsync() => Task.CompletedTask;
+        }
+
+        [TestCase(TransportMode.Http, false)]
+        [TestCase(TransportMode.Http, true)]
+        [TestCase(TransportMode.Stdio, false)]
+        [TestCase(TransportMode.Stdio, true)]
+        public void FailedStart_CleanupCannotEraseFailureReason(TransportMode mode, bool throws)
+        {
+            const string reason = "Registration acknowledgement timed out";
+            var client = new ControlledClient { ClearStateOnStop = true };
+            var manager = new TransportManager();
+            manager.Configure(() => client, () => client);
+            Task<bool> start = manager.StartAsync(mode);
+            client.State = TransportState.Disconnected(client.TransportName, reason);
+            if (throws)
+                client.Starts[0].SetException(new InvalidOperationException("outer start failure"));
+            else
+                client.Starts[0].SetResult(false);
+            Assert.IsTrue(start.IsCompleted);
+            if (throws)
+                Assert.Throws<InvalidOperationException>(() => start.GetAwaiter().GetResult());
+            else
+                Assert.IsFalse(start.Result);
+            Assert.IsNull(client.State.Error);
+            Assert.AreEqual(reason, manager.GetState(mode).Error);
+            Assert.IsFalse(manager.VerifyAsync(mode).Result);
+            Assert.AreEqual(reason, manager.GetState(mode).Error);
+            manager.StopAsync(mode).GetAwaiter().GetResult();
+            Assert.IsNull(manager.GetState(mode).Error);
+        }
+
+        [Test]
+        public void FailedStartCleanup_ReplacementDoesNotPublishOldFailure()
+        {
+            var client = new ControlledClient { PendingStop = new TaskCompletionSource<bool>() };
+            var manager = new TransportManager();
+            manager.Configure(() => client, () => client);
+            Task<bool> old = manager.StartAsync(TransportMode.Http);
+            client.State = TransportState.Disconnected(client.TransportName, "old failure");
+            client.Starts[0].SetResult(false);
+            Task<bool> replacement = manager.StartAsync(TransportMode.Http);
+            client.State = TransportState.Connected(client.TransportName, sessionId: "replacement");
+            client.Starts[1].SetResult(true);
+            client.PendingStop.SetResult(true);
+            Assert.IsFalse(old.Result);
+            Assert.IsTrue(replacement.Result);
+            Assert.IsNull(manager.GetState(TransportMode.Http).Error);
+            Assert.AreEqual("replacement", manager.GetState(TransportMode.Http).SessionId);
+        }
+
+        [Test]
+        public void FailedStart_RedactsCredentialBearingDiagnosticUrls()
+        {
+            var client = new ControlledClient { ClearStateOnStop = true };
+            var manager = new TransportManager();
+            manager.Configure(() => client, () => client);
+            Task<bool> start = manager.StartAsync(TransportMode.Http);
+            client.State = TransportState.Disconnected(
+                "controlled",
+                "Registration failed for https://synthetic-private:synthetic-private@example.invalid/?token=synthetic-private"
+            );
+            client.Starts[0].SetResult(false);
+            Assert.IsFalse(start.Result);
+            StringAssert.Contains("Registration failed", manager.GetState(TransportMode.Http).Error);
+            StringAssert.DoesNotContain("synthetic-private", manager.GetState(TransportMode.Http).Error);
         }
 
         [TestCase(TransportMode.Http, false)]

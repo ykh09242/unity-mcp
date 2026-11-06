@@ -23,6 +23,39 @@ namespace MCPForUnity.Editor.Services.Transport
         private bool _httpConnectionIntent;
         private bool _stdioConnectionIntent;
 
+        static TransportManager()
+        {
+            // Observe configuration once per domain, without retaining replaced/test managers.
+            EditorConfigurationCache.Instance.OnConfigurationChanged += OnConfigurationChanged;
+        }
+
+        internal static bool IsHttpConnectionConfiguration(string key)
+        {
+            var configuration = EditorConfigurationCache.Instance;
+            bool remote = string.Equals(configuration.HttpTransportScope, "remote", StringComparison.OrdinalIgnoreCase);
+            return key == nameof(EditorConfigurationCache.HttpTransportScope)
+                || key == (remote ? nameof(EditorConfigurationCache.HttpRemoteBaseUrl) : nameof(EditorConfigurationCache.HttpBaseUrl));
+        }
+
+        private static void OnConfigurationChanged(string key)
+        {
+            bool selectionChanged = key == nameof(EditorConfigurationCache.UseHttpTransport);
+            if (!selectionChanged && !IsHttpConnectionConfiguration(key))
+                return;
+
+            // A changed destination needs a new, explicit connection and credential snapshot.
+            // Do not let a pending reload/auto-start reconnect using the newly displayed settings.
+            HttpBridgeReloadHandler.CancelPendingResume();
+            HttpAutoStartHandler.CancelPendingReconnect();
+            if (selectionChanged)
+                StdioBridgeReloadHandler.CancelPendingResume();
+            var manager = MCPServiceLocator.ExistingTransportManager;
+            if (manager == null)
+                return;
+            TransportMode retire = selectionChanged && EditorConfigurationCache.Instance.UseHttpTransport ? TransportMode.Stdio : TransportMode.Http;
+            _ = manager.StopAsync(retire);
+        }
+
         public TransportManager()
         {
             Configure(() => new WebSocketTransportClient(MCPServiceLocator.ToolDiscovery), () => new StdioTransportClient());
@@ -80,10 +113,13 @@ namespace MCPForUnity.Editor.Services.Transport
             {
                 client = GetOrCreateClient(mode);
             }
-            catch
+            catch (Exception ex)
             {
                 if (IsCurrent(mode, generation))
+                {
                     EndIntent(mode);
+                    UpdateState(mode, TransportState.Disconnected(mode.ToString().ToLowerInvariant(), HttpEndpointUtility.RedactUrls(ex.Message)));
+                }
                 throw;
             }
             bool started;
@@ -91,21 +127,24 @@ namespace MCPForUnity.Editor.Services.Transport
             {
                 started = await client.StartAsync();
             }
-            catch
+            catch (Exception error)
             {
                 if (IsCurrent(mode, generation))
                 {
+                    string reason = HttpEndpointUtility.RedactUrls(client.State?.Error ?? error.Message);
                     long cleanupGeneration = EndIntent(mode);
+                    UpdateState(mode, TransportState.Disconnected(client.TransportName, reason));
                     try
                     {
                         await client.StopAsync();
                     }
                     catch (Exception ex)
                     {
-                        McpLog.Warn($"Error while stopping transport {client.TransportName}: {ex.Message}");
+                        if (IsCurrent(mode, cleanupGeneration))
+                            McpLog.Warn($"Error while stopping transport {client.TransportName}: {HttpEndpointUtility.RedactUrls(ex.Message)}");
                     }
                     if (IsCurrent(mode, cleanupGeneration))
-                        UpdateState(mode, TransportState.Disconnected(client.TransportName, "Failed to start"));
+                        UpdateState(mode, TransportState.Disconnected(client.TransportName, reason));
                 }
                 throw;
             }
@@ -113,17 +152,20 @@ namespace MCPForUnity.Editor.Services.Transport
                 return false;
             if (!started)
             {
+                string reason = HttpEndpointUtility.RedactUrls(client.State?.Error ?? "Failed to start");
                 long cleanupGeneration = EndIntent(mode);
+                UpdateState(mode, TransportState.Disconnected(client.TransportName, reason));
                 try
                 {
                     await client.StopAsync();
                 }
                 catch (Exception ex)
                 {
-                    McpLog.Warn($"Error while stopping transport {client.TransportName}: {ex.Message}");
+                    if (IsCurrent(mode, cleanupGeneration))
+                        McpLog.Warn($"Error while stopping transport {client.TransportName}: {HttpEndpointUtility.RedactUrls(ex.Message)}");
                 }
                 if (IsCurrent(mode, cleanupGeneration))
-                    UpdateState(mode, TransportState.Disconnected(client.TransportName, client.State?.Error ?? "Failed to start"));
+                    UpdateState(mode, TransportState.Disconnected(client.TransportName, reason));
                 return false;
             }
 
@@ -163,6 +205,8 @@ namespace MCPForUnity.Editor.Services.Transport
             {
                 long httpGeneration = EndIntent(TransportMode.Http);
                 long stdioGeneration = EndIntent(TransportMode.Stdio);
+                UpdateState(TransportMode.Http, TransportState.Disconnected(_httpClient?.TransportName ?? "http"));
+                UpdateState(TransportMode.Stdio, TransportState.Disconnected(_stdioClient?.TransportName ?? "stdio"));
                 Task httpStop = StopClient(_httpClient, TransportMode.Http, httpGeneration);
                 Task stdioStop = StopClient(_stdioClient, TransportMode.Stdio, stdioGeneration);
                 await Task.WhenAll(httpStop, stdioStop);
@@ -172,17 +216,23 @@ namespace MCPForUnity.Editor.Services.Transport
             if (mode == TransportMode.Http)
             {
                 long generation = EndIntent(TransportMode.Http);
+                UpdateState(TransportMode.Http, TransportState.Disconnected(_httpClient?.TransportName ?? "http"));
                 await StopClient(_httpClient, TransportMode.Http, generation);
             }
             else
             {
                 long generation = EndIntent(TransportMode.Stdio);
+                UpdateState(TransportMode.Stdio, TransportState.Disconnected(_stdioClient?.TransportName ?? "stdio"));
                 await StopClient(_stdioClient, TransportMode.Stdio, generation);
             }
         }
 
         public async Task<bool> VerifyAsync(TransportMode mode)
         {
+            // Failed-start cleanup can erase the client's state. Preserve the owned failure
+            // until an explicit start/stop, while still recognizing externally started stdio.
+            if (!HasConnectionIntent(mode) && !GetState(mode).IsConnected)
+                return false;
             IMcpTransportClient client = GetClient(mode);
             if (client == null)
             {
@@ -199,7 +249,7 @@ namespace MCPForUnity.Editor.Services.Transport
         {
             return mode switch
             {
-                TransportMode.Http => _httpClient?.State ?? _httpState,
+                TransportMode.Http => _httpConnectionIntent ? _httpClient?.State ?? _httpState : _httpState,
                 TransportMode.Stdio => ReconciledStdioState(),
                 _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported transport mode"),
             };
@@ -240,6 +290,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
         private long BeginIntent(TransportMode mode)
         {
+            UpdateState(mode, TransportState.Disconnected(mode.ToString().ToLowerInvariant()));
             if (mode == TransportMode.Http)
             {
                 _httpConnectionIntent = true;

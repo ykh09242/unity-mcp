@@ -20,6 +20,30 @@ namespace MCPForUnityTests.Editor.Services
     [TestFixture]
     public class WebSocketTransportClientTests
     {
+        [Test]
+        public async Task FailedInitialConnection_PreservesReasonThroughCleanupUntilExplicitStop()
+        {
+            var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            listener.Start();
+            int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+            listener.Stop();
+            var options = new WebSocketTransportClient.OwnedConnectionOptions(
+                new Uri($"ws://127.0.0.1:{port}/hub/plugin"),
+                "synthetic-launch-token",
+                "FailureFixture",
+                "failure-fixture",
+                "FailureFixture/Project",
+                "6000.0.0f1"
+            );
+            using var client = new WebSocketTransportClient(null, options);
+            UnityEngine.TestTools.LogAssert.Expect(UnityEngine.LogType.Error, new System.Text.RegularExpressions.Regex(@"\[WebSocket\] Connection failed\."));
+            Assert.IsFalse(await client.StartAsync());
+            Assert.IsFalse(client.IsConnected);
+            StringAssert.Contains("Connection failed", client.State.Error);
+            await client.StopAsync();
+            Assert.IsNull(client.State.Error, "An explicit stop clears the previous failed-start diagnostic.");
+        }
+
         [TestCase(true)]
         [TestCase(false)]
         public async Task PhaseDiagnostics_RealPeerNegotiationPreservesImportAndResult(bool negotiated)

@@ -261,7 +261,14 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             var registeredConnection = await EstablishConnectionAsync(lifecycleToken);
             if (!registeredConnection.HasValue)
             {
-                await StopOwnedAsync(lifecycleCts);
+                TransportState failure;
+                lock (_ownershipLock)
+                {
+                    if (startVersion != _startVersion || !ReferenceEquals(_lifecycleCts, lifecycleCts))
+                        return false;
+                    failure = TransportState.Disconnected(TransportDisplayName, HttpEndpointUtility.RedactUrls(_state.Error ?? "Failed to start"));
+                }
+                await StopOwnedAsync(lifecycleCts, preservedFailure: failure, expectedStartVersion: startVersion);
                 return false;
             }
 
@@ -276,14 +283,25 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         public Task StopAsync() => StopOwnedAsync(null, invalidateStart: true);
 
-        private async Task StopOwnedAsync(CancellationTokenSource expectedLifecycle, bool invalidateStart = false)
+        private async Task StopOwnedAsync(
+            CancellationTokenSource expectedLifecycle,
+            bool invalidateStart = false,
+            TransportState preservedFailure = null,
+            long? expectedStartVersion = null
+        )
         {
             CancellationTokenSource lifecycleCts;
             Task observation;
             lock (_ownershipLock)
             {
+                if (expectedStartVersion.HasValue && expectedStartVersion.Value != _startVersion)
+                    return;
                 if (invalidateStart)
+                {
                     ++_startVersion;
+                    if (_lifecycleCts == null && _stopSettlement.IsCompletedSuccessfully && _forcedCommandSettlement.IsCompletedSuccessfully)
+                        _state = TransportState.Disconnected(TransportDisplayName);
+                }
                 lifecycleCts = _lifecycleCts;
                 if (expectedLifecycle != null && !ReferenceEquals(lifecycleCts, expectedLifecycle))
                     return;
@@ -297,10 +315,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _stoppingLifecycle = lifecycleCts;
                     _stopSettlement = completion.Task;
                     _isConnected = false;
-                    _state = TransportState.Disconnected(TransportDisplayName);
+                    _state = preservedFailure ?? TransportState.Disconnected(TransportDisplayName);
                     // Publish ownership before cancellation can reenter Start/Stop.
                     // User cancellation callbacks must not block the Editor thread.
-                    _ = Task.Run(() => CompleteOwnedStopAsync(previous, lifecycleCts, loops, socket, completion));
+                    long stopVersion = _startVersion;
+                    _ = Task.Run(() => CompleteOwnedStopAsync(previous, lifecycleCts, loops, socket, completion, preservedFailure, stopVersion));
                 }
                 observation = Task.WhenAll(_stopSettlement, _forcedCommandSettlement);
             }
@@ -312,7 +331,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             CancellationTokenSource lifecycleCts,
             ConnectionLoops loops,
             ClientWebSocket socket,
-            TaskCompletionSource<bool> completion
+            TaskCompletionSource<bool> completion,
+            TransportState preservedFailure,
+            long stopVersion
         )
         {
             try
@@ -349,7 +370,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     {
                         _lifecycleCts = null;
                         _isConnected = false;
-                        _state = TransportState.Disconnected(TransportDisplayName);
+                        _state =
+                            stopVersion == _startVersion && preservedFailure != null ? preservedFailure : TransportState.Disconnected(TransportDisplayName);
                     }
                     if (ReferenceEquals(_stopSettlement, completion.Task))
                     {
@@ -853,10 +875,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             if (connectedEndpoint == null)
             {
                 string errorMsg = "Connection failed. Check that the server URL is correct, the server is running, and your API key (if required) is valid.";
-                McpLog.Error($"[WebSocket] {errorMsg} (Detail: {HttpEndpointUtility.RedactUrls(lastConnectError?.Message) ?? "Unknown error"})");
                 lock (_ownershipLock)
-                    if (ReferenceEquals(_connectionCts, connectionCts))
+                    if (IsCurrentConnectionToken(connectionToken) && !ReferenceEquals(_stoppingLifecycle, lifecycleCts))
+                    {
                         _state = TransportState.Disconnected(TransportDisplayName, errorMsg);
+                        McpLog.Error($"[WebSocket] {errorMsg} (Detail: {HttpEndpointUtility.RedactUrls(lastConnectError?.Message) ?? "Unknown error"})");
+                    }
                 return null;
             }
 
@@ -881,13 +905,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             catch (Exception ex)
             {
                 string regMsg = $"Registration with server failed: {HttpEndpointUtility.RedactUrls(ex.Message)}";
-                McpLog.Error($"[WebSocket] {regMsg}");
                 lock (_ownershipLock)
-                    if (ReferenceEquals(_connectionCts, connectionCts))
+                    if (IsCurrentConnectionToken(connectionToken) && !ReferenceEquals(_stoppingLifecycle, lifecycleCts))
                     {
                         registrationAck.TrySetResult(false);
                         admission.Retire();
                         _state = TransportState.Disconnected(TransportDisplayName, regMsg);
+                        McpLog.Error($"[WebSocket] {regMsg}");
                     }
                 return null;
             }
