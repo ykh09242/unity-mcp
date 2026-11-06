@@ -80,6 +80,15 @@ so tool tests do not wait for the longer server suite.
   instrumentation while its inherited runtime-checkable protocol is incompatible with
   warnings-as-errors. Application validation and the warning policy remain enabled.
 
+The installed-candidate archive job retains Python 3.11 checks on Windows, Linux and macOS
+and adds one Linux Python 3.15 check. Each installs the checked commit's server archive with
+an independent, unlocked dependency resolution, then runs the public HTTP/CLI behavior and
+registration probes. The behavior report records the actual Python and dependency versions
+and import origins. Isolated mode and the source-origin gate reject checkout imports; both
+probes explicitly use `-W error`, since isolated mode ignores `PYTHONWARNINGS`. The 3.15
+archive job uses the same optional beartype setting as the locked suites. These small probes
+complement the complete locked test suites without repeating them.
+
 To inspect local server test durations, run from `Server/`:
 
 ```sh

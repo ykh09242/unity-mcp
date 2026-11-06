@@ -277,14 +277,21 @@ jobs:
           Write-Output 'Cold and offline bootstrap and registration passed without Git checkout or a server listener.'
 
   installed_archive:
-    name: Installed candidate archive (${{ matrix.os }})
+    name: Installed candidate archive (${{ matrix.os }}, Python ${{ matrix.python-version }})
     if: inputs.validation_profile != 'tools-only'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    env:
+      # Match the 3.15 suite policy for py-key-value-aio's optional instrumentation.
+      PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python-version == '3.15' && 'true' || 'false' }}
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-26.04, macos-26-intel]
+        python-version: ["3.11"]
+        include:
+          - os: ubuntu-26.04
+            python-version: "3.15"
     defaults:
       run:
         shell: pwsh
@@ -311,11 +318,12 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.13.7"
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           enable-cache: false
       - name: Install candidate archive without runtime lock
         env:
           UV_CACHE_DIR: ${{ runner.temp }}/candidate-archive-cache
+          ARCHIVE_PYTHON_VERSION: ${{ matrix.python-version }}
         run: |
           $ErrorActionPreference = 'Stop'
           $archive = Join-Path $env:RUNNER_TEMP 'candidate.zip'
@@ -324,7 +332,7 @@ jobs:
           git archive --format=zip --output=$archive "${revision}:Server"
           if ($LASTEXITCODE -ne 0) { throw 'Candidate archive failed' }
           $environment = Join-Path $env:RUNNER_TEMP 'candidate-environment'
-          uv venv --no-config --python 3.11 $environment
+          uv venv --no-config --python $env:ARCHIVE_PYTHON_VERSION $environment
           if ($LASTEXITCODE -ne 0) { throw 'Archive environment failed' }
           $python = if ($IsWindows) { Join-Path $environment 'Scripts/python.exe' } else { Join-Path $environment 'bin/python' }
           $source = 'ykh09242-unity-mcp-server @ ' + ([System.Uri]::new($archive)).AbsoluteUri
@@ -335,9 +343,9 @@ jobs:
       - name: Exercise installed HTTP and CLI behavior
         run: |
           $ErrorActionPreference = 'Stop'
-          & $env:ARCHIVE_PYTHON -I "$env:GITHUB_WORKSPACE/tools/check_server_archive.py" --forbid-source $env:GITHUB_WORKSPACE --candidate-sha $env:ARCHIVE_CANDIDATE_SHA
+          & $env:ARCHIVE_PYTHON -I -W error "$env:GITHUB_WORKSPACE/tools/check_server_archive.py" --forbid-source $env:GITHUB_WORKSPACE --candidate-sha $env:ARCHIVE_CANDIDATE_SHA
           if ($LASTEXITCODE -ne 0) { throw 'Installed public behavior failed' }
-          & $env:ARCHIVE_PYTHON -I "$env:GITHUB_WORKSPACE/tools/check_server_startup.py"
+          & $env:ARCHIVE_PYTHON -I -W error "$env:GITHUB_WORKSPACE/tools/check_server_startup.py"
           if ($LASTEXITCODE -ne 0) { throw 'Installed archive registration failed' }
 
   test:
