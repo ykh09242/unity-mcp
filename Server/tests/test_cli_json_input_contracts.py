@@ -174,3 +174,53 @@ def test_raw_object_parameters_preserve_wire_values(command_requests, payload):
             "unity_instance": "Owned@fixture",
         }
     ]
+
+
+@pytest.mark.parametrize("consumer", ["raw", "property", "component", "batch"])
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e999", "-1e999"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_nonfinite_inline_input_is_an_input_error_before_network(
+    command_requests, consumer, number, nested
+):
+    value = '{"nested":[' + number + "]}" if nested else number
+    payload = '{"value":' + value + "}"
+    command = {
+        "raw": ["raw", "owned_tool", payload],
+        "property": ["component", "set", "Owned", "OwnedComponent", "value", "--", value],
+        "component": ["component", "modify", "Owned", "OwnedComponent", "--properties", payload],
+        "batch": ["batch", "inline", '[{"tool":"owned_tool","params":' + payload + "}]"],
+    }[consumer]
+    result = CliRunner().invoke(cli, ["--format", "json", *command])
+
+    assert result.exit_code == 1, result.output
+    assert result.stdout == ""
+    assert "finite" in result.stderr.lower()
+    assert "connection" not in result.output.lower()
+    assert command_requests == []
+
+
+@pytest.mark.parametrize("payload", ["nan", "inf", "+Infinity", "+1e999"])
+def test_nonfinite_float_fallback_is_an_input_error(command_requests, payload):
+    result = CliRunner().invoke(
+        cli,
+        ["--format", "json", "component", "set", "Owned", "OwnedComponent", "value", payload],
+    )
+    assert result.exit_code == 1, result.output
+    assert result.stdout == ""
+    assert "finite" in result.stderr.lower()
+    assert command_requests == []
+
+
+@pytest.mark.parametrize(
+    "payload,expected",
+    [('"NaN"', "NaN"), ("ordinary text", "ordinary text"), ("1,2,3", "1,2,3"), ("3.14", 3.14)],
+)
+def test_property_fallback_preserves_strings_and_finite_numbers(
+    command_requests, payload, expected
+):
+    result = CliRunner().invoke(
+        cli,
+        ["--format", "json", "component", "set", "Owned", "OwnedComponent", "value", payload],
+    )
+    assert result.exit_code == 0, result.output
+    assert command_requests[0]["params"]["value"] == expected

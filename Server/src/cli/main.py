@@ -4,7 +4,7 @@ import sys
 from importlib import import_module
 
 import click
-from cli.utils.parsers import admit_raw_json_args
+from cli.utils.parsers import admit_raw_json_args, load_finite_json
 from cli import __version__
 from cli.utils.config import (
     HTTP_PORT_TYPE,
@@ -292,8 +292,6 @@ def raw_command(ctx: Context, command_type: str, params: tuple):
 
     JSON input also accepts @file or -/@- stdin.
     """
-    import json
-
     config = ctx.config or get_config()
 
     # Join all remaining args into one string (Windows .exe entry points
@@ -301,8 +299,8 @@ def raw_command(ctx: Context, command_type: str, params: tuple):
     params_str = admit_raw_json_args(params)
 
     try:
-        params_dict = json.loads(params_str)
-    except json.JSONDecodeError as e:
+        params_dict = load_finite_json(params_str)
+    except (ValueError, RecursionError) as e:
         print_error(f"Invalid JSON params: {e}")
         sys.exit(1)
 

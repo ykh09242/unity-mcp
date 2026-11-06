@@ -110,7 +110,7 @@ def _normalize_color(value: Any, context: str) -> list[int]:
     if isinstance(value, str):
         if value.startswith("#"):
             return _parse_hex_color(value)
-        value = try_parse_json(value, context)
+        value = try_parse_json(value, context, raise_nonfinite=True)
 
     # Handle dict with r/g/b keys (e.g., {"r": 1, "g": 0, "b": 0} or {"r": 1, "g": 0, "b": 0, "a": 1})
     if isinstance(value, dict):
@@ -147,7 +147,7 @@ def _normalize_palette(value: Any, context: str) -> list[list[int]]:
     if value is None:
         return []
     if isinstance(value, str):
-        value = try_parse_json(value, context)
+        value = try_parse_json(value, context, raise_nonfinite=True)
     if not isinstance(value, list):
         raise ValueError(f"{context} must be a list of colors")
     return [_normalize_color(color, f"{context} item") for color in value]
@@ -161,7 +161,7 @@ def _normalize_pixels(value: Any, width: int, height: int, context: str) -> list
             return value
         trimmed = value.strip()
         if trimmed.startswith("[") and trimmed.endswith("]"):
-            value = try_parse_json(trimmed, context)
+            value = try_parse_json(trimmed, context, raise_nonfinite=True)
         else:
             return f"base64:{value}"
     if isinstance(value, list):
@@ -217,7 +217,7 @@ def _normalize_set_pixels(value: Any) -> dict[str, Any]:
     if value is None:
         raise ValueError("set-pixels is required")
     if isinstance(value, str):
-        value = try_parse_json(value, "set-pixels")
+        value = try_parse_json(value, "set-pixels", raise_nonfinite=True)
     if not isinstance(value, dict):
         raise ValueError("set-pixels must be a JSON object")
 
@@ -273,7 +273,7 @@ def _normalize_import_settings(value: Any) -> dict[str, Any]:
     if value is None:
         return {}
     if isinstance(value, str):
-        value = try_parse_json(value, "import_settings")
+        value = try_parse_json(value, "import_settings", raise_nonfinite=True)
     if not isinstance(value, dict):
         raise ValueError("import_settings must be a JSON object")
 

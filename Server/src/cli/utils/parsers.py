@@ -45,15 +45,46 @@ def _read_bounded_json(stream: BinaryIO) -> bytes:
     return bytes(content)
 
 
+class NonFiniteJsonError(ValueError):
+    """A JSON number cannot be encoded for dispatch, optionally with its field path."""
+
+    def __init__(self, path: str = "$"):
+        super().__init__(f"Non-finite JSON number at {path}")
+
+
 def _reject_json_constant(_value: str) -> None:
-    raise ValueError("Non-finite JSON number")
+    raise NonFiniteJsonError()
 
 
 def _finite_json_float(value: str) -> float:
     number = float(value)
     if not math.isfinite(number):
-        raise ValueError("Non-finite JSON number")
+        raise NonFiniteJsonError()
     return number
+
+
+def load_finite_json(value: str) -> Any:
+    """Parse JSON while rejecting non-finite numbers at every nesting level."""
+    try:
+        return json.loads(
+            value, parse_constant=_reject_json_constant, parse_float=_finite_json_float
+        )
+    except NonFiniteJsonError as error:
+        # Only failed input needs a second pass to locate the field for domain diagnostics.
+        # The strict first pass also rejects non-finite values hidden by duplicate keys.
+        try:
+            pending = [("$", json.loads(value))]
+        except (ValueError, RecursionError):
+            raise error
+        while pending:
+            path, item = pending.pop()
+            if isinstance(item, float) and not math.isfinite(item):
+                raise NonFiniteJsonError(path) from error
+            if isinstance(item, dict):
+                pending.extend((f"{path}.{key}", child) for key, child in item.items())
+            elif isinstance(item, list):
+                pending.extend((f"{path}[{index}]", child) for index, child in enumerate(item))
+        raise
 
 
 def admit_json_inputs(**values: str | None) -> dict[str, str | None]:
@@ -87,7 +118,7 @@ def admit_json_inputs(**values: str | None) -> dict[str, str | None]:
         except UnicodeError:
             _json_input_error(f"JSON input for {name} must be UTF-8 (one leading BOM is allowed).")
         try:
-            json.loads(text, parse_constant=_reject_json_constant, parse_float=_finite_json_float)
+            load_finite_json(text)
         except json.JSONDecodeError as error:
             _json_input_error(
                 f"Invalid JSON input for {name} at line {error.lineno}, column {error.colno}."
@@ -132,7 +163,7 @@ def parse_value_safe(value: str) -> Any:
     """Parse a value, trying JSON → float → string fallback.
 
     This is used for property values that could be JSON objects/arrays,
-    numbers, or strings. Never raises an exception.
+    numbers, or strings. Non-finite numbers exit with an input error.
 
     Args:
         value: The string value to parse
@@ -149,17 +180,24 @@ def parse_value_safe(value: str) -> Any:
         'hello'
     """
     try:
-        return json.loads(value)
+        return load_finite_json(value)
     except json.JSONDecodeError:
         # Try to parse as number
         try:
-            return float(value)
+            number = float(value)
         except ValueError:
             # Keep as string
             return value
+        if not math.isfinite(number):
+            _json_input_error("Invalid value: non-finite number.")
+        return number
+    except (ValueError, RecursionError):
+        _json_input_error("Invalid JSON value: non-finite number or excessive nesting.")
 
 
-def parse_json_or_exit(value: str, context: str = "parameter") -> Any:
+def parse_json_or_exit(
+    value: str, context: str = "parameter", *, raise_nonfinite: bool = False
+) -> Any:
     """Parse JSON string, trying to fix common issues, or exit with error.
 
     Attempts to parse JSON with automatic fixes for:
@@ -169,6 +207,7 @@ def parse_json_or_exit(value: str, context: str = "parameter") -> Any:
     Args:
         value: The JSON string to parse
         context: Description of what's being parsed (for error messages)
+        raise_nonfinite: Let domain validators adapt non-finite errors to their parameter contract
 
     Returns:
         Parsed JSON object
@@ -177,17 +216,27 @@ def parse_json_or_exit(value: str, context: str = "parameter") -> Any:
         Calls sys.exit(1) if JSON is invalid after attempting fixes
     """
     try:
-        return json.loads(value)
+        return load_finite_json(value)
     except json.JSONDecodeError:
         # Try to fix common shell quoting issues (single quotes, Python bools)
         try:
             fixed = _JSON_COMPAT_TOKENS.sub(_repair_json_token, value)
-            return json.loads(fixed)
+            return load_finite_json(fixed)
         except json.JSONDecodeError as e:
             print_error(f"Invalid JSON for {context}: {e}")
             print_info('Example: --params \'{"key":"value"}\'', err=True)
             print_info("Tip: wrap JSON in single quotes to avoid shell escaping issues.", err=True)
             sys.exit(1)
+        except (ValueError, RecursionError) as error:
+            if raise_nonfinite and isinstance(error, NonFiniteJsonError):
+                raise
+            _json_input_error(
+                f"Invalid JSON for {context}: non-finite number or excessive nesting."
+            )
+    except (ValueError, RecursionError) as error:
+        if raise_nonfinite and isinstance(error, NonFiniteJsonError):
+            raise
+        _json_input_error(f"Invalid JSON for {context}: non-finite number or excessive nesting.")
 
 
 def parse_json_dict_or_exit(value: str, context: str = "parameter") -> dict[str, Any]:
