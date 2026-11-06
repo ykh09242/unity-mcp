@@ -15,6 +15,15 @@ import logging
 import threading
 from typing import Literal, TypedDict
 
+from services.control_capacity import (
+    CONTROL_BYTES,
+    CONTROL_BYTES_PER_INSTANCE,
+    CONTROL_BYTES_PER_PRINCIPAL,
+    CONTROL_PARTICIPANTS,
+    CONTROL_PER_INSTANCE,
+    CONTROL_PER_PRINCIPAL,
+)
+
 OperationMode = Literal["control", "shared_read", "exclusive"]
 _LOGGER = logging.getLogger("mcp-for-unity-server")
 
@@ -49,6 +58,7 @@ class OperationAdmission:
     expires_at: float | None = None
     retained_bytes: int = 0
     observational_continuation: bool = False
+    control_reserve: bool = False
 
 
 class SchedulerSnapshot(TypedDict):
@@ -80,10 +90,16 @@ class _WorkerPin:
 class OperationLease:
     """Mutable invocation ownership retained until its real workers settle."""
 
-    def __init__(self, scheduler: OperationScheduler, request: OperationAdmission) -> None:
+    def __init__(
+        self,
+        scheduler: OperationScheduler,
+        request: OperationAdmission,
+        reserve: object | None = None,
+    ) -> None:
         self._scheduler = scheduler
         self._loop = asyncio.get_running_loop()
         self._request = request
+        self._reserve = reserve
         self._references = 1
         self._reference_lock = threading.Lock()
         self.closed = False
@@ -129,6 +145,7 @@ class _Ticket:
 
     request: OperationAdmission
     future: asyncio.Future[OperationLease]
+    reserve: object | None = None
 
 
 @dataclass(slots=True)
@@ -150,6 +167,12 @@ class OperationScheduler:
         max_retained_bytes: int = 1024 * 1024 * 1024,
         max_retained_bytes_per_principal: int = 512 * 1024 * 1024,
         max_per_instance: int = 256,
+        max_control_participants: int = CONTROL_PARTICIPANTS,
+        max_control_per_principal: int = CONTROL_PER_PRINCIPAL,
+        max_control_per_instance: int = CONTROL_PER_INSTANCE,
+        max_control_bytes: int = CONTROL_BYTES,
+        max_control_bytes_per_principal: int = CONTROL_BYTES_PER_PRINCIPAL,
+        max_control_bytes_per_instance: int = CONTROL_BYTES_PER_INSTANCE,
     ) -> None:
         self._states: dict[tuple[str, str], _Instance] = {}
         self._participants = 0
@@ -160,6 +183,17 @@ class OperationScheduler:
         self._max_retained_bytes = max_retained_bytes
         self._max_retained_bytes_per_principal = max_retained_bytes_per_principal
         self._max_per_instance = max_per_instance
+        # At most max_control_participants records; ownership follows the actual
+        # worker pins even after its public invocation has been cancelled.
+        self._controls: dict[object, OperationAdmission] = {}
+        self._control_limits = (
+            max_control_participants,
+            max_control_per_principal,
+            max_control_per_instance,
+            max_control_bytes,
+            max_control_bytes_per_principal,
+            max_control_bytes_per_instance,
+        )
 
     def snapshot(self) -> SchedulerSnapshot:
         return {
@@ -169,19 +203,61 @@ class OperationScheduler:
             "retained_bytes": self._retained_bytes,
         }
 
-    def _check_capacity(self, request: OperationAdmission) -> None:
+    def _control_usage(self, request: OperationAdmission) -> tuple[int, int, int, int, int, int]:
+        records = tuple(self._controls.values())
+        principal = tuple(r for r in records if r.scope.principal == request.scope.principal)
+        instance = tuple(r for r in records if r.scope.key == request.scope.key)
+        return (
+            len(records),
+            len(principal),
+            len(instance),
+            sum(r.retained_bytes for r in records),
+            sum(r.retained_bytes for r in principal),
+            sum(r.retained_bytes for r in instance),
+        )
+
+    def _check_control_capacity(
+        self, request: OperationAdmission, delta: int, *, new: bool
+    ) -> None:
+        usage = self._control_usage(request)
+        increments = (int(new),) * 3 + (delta,) * 3
+        if any(
+            value + extra > limit
+            for value, extra, limit in zip(usage, increments, self._control_limits)
+        ):
+            raise OperationCapacityError()
+
+    def _check_capacity(self, request: OperationAdmission) -> bool:
         state = self._states.get(request.scope.key)
         if (
             request.mode not in {"control", "shared_read", "exclusive"}
-            or state is not None
-            and len(state.active) + len(state.waiting) >= self._max_per_instance
             or request.retained_bytes < 0
-            or self._participants >= self._max_participants
-            or request.scope.key not in self._states
-            and len(self._states) >= self._max_instances
         ):
             raise OperationCapacityError()
-        self._check_retained_capacity(request.scope.principal, request.retained_bytes)
+        controls = self._control_usage(request)
+        ordinary_states = sum(
+            any(owner._reserve is None for owner in item.active)
+            or any(ticket.reserve is None for ticket in item.waiting)
+            for item in self._states.values()
+        )
+        ordinary_here = (
+            len(state.active) + len(state.waiting) - controls[2] if state is not None else 0
+        )
+        try:
+            if (
+                ordinary_here >= self._max_per_instance
+                or self._participants - controls[0] >= self._max_participants
+                or not ordinary_here
+                and ordinary_states >= self._max_instances
+            ):
+                raise OperationCapacityError()
+            self._check_retained_capacity(request.scope.principal, request.retained_bytes)
+            return False
+        except OperationCapacityError:
+            if request.mode != "control" or request.control_reserve is not True:
+                raise
+            self._check_control_capacity(request, request.retained_bytes, new=True)
+            return True
 
     def _check_retained_capacity(self, principal: str, delta: int) -> None:
         # OperationScope's local sentinel represents the single local authority.
@@ -192,8 +268,14 @@ class OperationScheduler:
             else self._max_retained_bytes_per_principal
         )
         if (
-            self._retained_bytes + delta > self._max_retained_bytes
-            or self._principal_bytes.get(principal, 0) + delta > principal_limit
+            self._retained_bytes - sum(r.retained_bytes for r in self._controls.values()) + delta
+            > self._max_retained_bytes
+            or self._principal_bytes.get(principal, 0)
+            - sum(
+                r.retained_bytes for r in self._controls.values() if r.scope.principal == principal
+            )
+            + delta
+            > principal_limit
         ):
             raise OperationCapacityError()
 
@@ -206,12 +288,21 @@ class OperationScheduler:
             self._principal_bytes.pop(principal, None)
 
     def _replace_request(self, owner: OperationLease, request: OperationAdmission) -> None:
-        if owner.closed or request.scope.key != owner.request.scope.key:
+        if (
+            owner.closed
+            or request.scope.key != owner.request.scope.key
+            or request.mode != owner.request.mode
+            or request.control_reserve != owner.request.control_reserve
+        ):
             raise OperationScopeChanged()
         if request.retained_bytes < 0:
             raise OperationCapacityError()
         delta = request.retained_bytes - owner.request.retained_bytes
-        self._check_retained_capacity(request.scope.principal, delta)
+        if owner._reserve is None:
+            self._check_retained_capacity(request.scope.principal, delta)
+        else:
+            self._check_control_capacity(request, delta, new=False)
+            self._controls[owner._reserve] = request
         self._charge(request.scope.principal, delta)
         owner._request = request
 
@@ -222,7 +313,7 @@ class OperationScheduler:
             and request.expires_at <= asyncio.get_running_loop().time()
         ):
             ticket.future.set_exception(TimeoutError("Operation deadline expired before admission"))
-            self._forget(request)
+            self._forget(request, ticket.reserve)
             return
         try:
             current = request.is_current()
@@ -230,9 +321,9 @@ class OperationScheduler:
             current = False
         if not current:
             ticket.future.set_exception(OperationScopeChanged())
-            self._forget(request)
+            self._forget(request, ticket.reserve)
             return
-        owner = OperationLease(self, request)
+        owner = OperationLease(self, request, ticket.reserve)
         state.active.add(owner)
         ticket.future.set_result(owner)
         _LOGGER.debug(
@@ -255,7 +346,9 @@ class OperationScheduler:
                 break
         self._prune(key, state)
 
-    def _forget(self, request: OperationAdmission) -> None:
+    def _forget(self, request: OperationAdmission, reserve: object | None = None) -> None:
+        if reserve is not None:
+            self._controls.pop(reserve)
         self._participants -= 1
         self._charge(request.scope.principal, -request.retained_bytes)
 
@@ -267,7 +360,7 @@ class OperationScheduler:
         key = owner.request.scope.key
         state = self._states[key]
         state.active.remove(owner)
-        self._forget(owner.request)
+        self._forget(owner.request, owner._reserve)
         self._wake(key, state)
 
     async def _acquire(self, request: OperationAdmission) -> OperationLease:
@@ -276,10 +369,12 @@ class OperationScheduler:
             raise TimeoutError("Operation deadline expired before admission")
         if not request.is_current():
             raise OperationScopeChanged()
-        self._check_capacity(request)
+        reserve = object() if self._check_capacity(request) else None
         key = request.scope.key
         state = self._states.setdefault(key, _Instance())
-        ticket = _Ticket(request, loop.create_future())
+        ticket = _Ticket(request, loop.create_future(), reserve)
+        if reserve is not None:
+            self._controls[reserve] = request
         self._participants += 1
         self._charge(request.scope.principal, request.retained_bytes)
         if request.mode == "control":
@@ -305,7 +400,7 @@ class OperationScheduler:
             else:
                 state.waiting.remove(ticket)
                 ticket.future.cancel()
-                self._forget(request)
+                self._forget(request, reserve)
                 self._wake(key, state)
             raise
 

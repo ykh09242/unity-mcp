@@ -591,7 +591,8 @@ async def test_send_failure_releases_quota_for_the_next_command(admission_hub):
 
 
 @pytest.mark.asyncio
-async def test_readiness_probe_propagates_capacity_without_retry_wait(admission_hub):
+async def test_readiness_probe_propagates_capacity_without_retry_wait(admission_hub, monkeypatch):
+    monkeypatch.setattr(PluginHub, "MAX_CONTROL_PER_SESSION", 0)
     socket = await register_socket(admission_hub, "a", "alice")
     first = await start_command("a")
     try:

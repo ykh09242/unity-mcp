@@ -118,6 +118,252 @@ def accounting():
     )
 
 
+async def next_execute(hub, count):
+    with anyio.fail_after(watchdog_timeout()):
+        while len([message for message in hub.sent if message["type"] == "execute"]) < count:
+            await anyio.sleep(0)
+    return [message for message in hub.sent if message["type"] == "execute"][-1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ceiling",
+    [
+        "MAX_PENDING_COMMANDS",
+        "MAX_PENDING_PER_USER",
+        "MAX_PENDING_PER_SESSION",
+        "MAX_PENDING_PAYLOAD_BYTES",
+        "MAX_PENDING_PAYLOAD_BYTES_PER_USER",
+        "MAX_PENDING_PAYLOAD_BYTES_PER_SESSION",
+    ],
+)
+async def test_reviewed_control_survives_ordinary_saturation_and_flood_is_refused(
+    command_hub, monkeypatch, ceiling
+):
+    limit = PluginHub._command_payload_size(*retained_command(0)) if "BYTES" in ceiling else 1
+    monkeypatch.setattr(PluginHub, ceiling, limit)
+    async with pending_commands(command_hub, count=1):
+        before = accounting()
+        control = asyncio.create_task(PluginHub.send_command("session", "get_compile_job", {}))
+        try:
+            message = await next_execute(command_hub, 2)
+            assert message["name"] == "get_compile_job"
+            entry = PluginHub._pending[message["id"]]
+            assert entry["control_reserve"] is True and entry["payload_bytes"] > 0
+            for name, params in (
+                ("get_compile_job", {}),
+                (
+                    "unknown_custom_tool",
+                    {"action": "status", "mode": "control", "control_reserve": True},
+                ),
+                ("export_test_job", {}),
+            ):
+                refused = await PluginHub.send_command("session", name, params)
+                assert refused["data"]["reason"] == "command_capacity"
+            assert len(command_hub.sent) == 2
+        finally:
+            control.cancel()
+            await asyncio.gather(control, return_exceptions=True)
+        assert accounting() == before
+    assert accounting() == ({}, 0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_reserved_control_response_uses_small_bound_and_delivery_ownership(
+    command_hub, monkeypatch
+):
+    from models.response_limits import ResponseOwner, response_owner
+
+    monkeypatch.setattr(PluginHub, "MAX_PENDING_COMMANDS", 0)
+    monkeypatch.setattr(PluginHub, "MAX_CONTROL_RESULT_BYTES", 4096)
+    owner = ResponseOwner()
+    token = response_owner.set(owner)
+    try:
+        assert (await PluginHub.send_command("session", "get_compile_job", {}))["success"]
+    finally:
+        response_owner.reset(token)
+    assert PluginHub._pending == {} and PluginHub._retained_results.total_bytes > 0
+    assert PluginHub._retained_results.total_bytes <= 4096
+    assert PluginHub._pending_capacity_error("session", None, control=True) is not None
+    copied = owner.reserve_copy()
+    assert copied is not None
+    owner.release()
+    assert PluginHub._control_reservations
+    assert PluginHub._pending_capacity_error("session", None, control=True) is not None
+    copied.release()
+    assert accounting() == ({}, 0, 0, 0)
+    assert PluginHub._control_reservations == {}
+
+    async def oversized(message):
+        if message["type"] == "execute":
+            await command_hub.endpoint._handle_command_result(
+                command_hub.websocket,
+                CommandResultMessage(id=message["id"], result={"data": "x" * 8192}),
+            )
+
+    command_hub.websocket.send_json = oversized
+    result = await PluginHub.send_command("session", "get_compile_job", {})
+    assert result["data"]["reason"] == "result_capacity"
+    assert accounting() == ({}, 0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_reserved_response_cannot_borrow_exhausted_global_result_budget(
+    command_hub, monkeypatch
+):
+    monkeypatch.setattr(PluginHub, "MAX_PENDING_COMMANDS", 0)
+    monkeypatch.setattr(PluginHub, "MAX_RETAINED_RESULT_BYTES", 1)
+    result = await PluginHub.send_command("session", "get_compile_job", {})
+    assert result["data"]["reason"] == "result_capacity"
+    assert accounting() == ({}, 0, 0, 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scheduler_reserve", [False, True])
+async def test_cancelled_reserved_control_keeps_actual_response_worker_accounted(
+    command_hub, monkeypatch, scheduler_reserve
+):
+    import threading
+    import transport.plugin_hub as hub_module
+    from services.registry import operation_invocation
+    from services.registry.operation_scheduler import OperationScheduler
+
+    scheduler = OperationScheduler(max_participants=0 if scheduler_reserve else 1024)
+    monkeypatch.setattr(operation_invocation, "scheduler", lambda: scheduler)
+    monkeypatch.setattr(PluginHub, "MAX_PENDING_COMMANDS", 0)
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    entered, release = asyncio.Event(), threading.Event()
+    original = hub_module.response_size
+
+    def measure(value, **kwargs):
+        if isinstance(value, dict) and value.get("control_worker") is True:
+            assert threading.get_ident() != loop_thread
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(watchdog_timeout())
+        return original(value, **kwargs)
+
+    monkeypatch.setattr(hub_module, "response_size", measure)
+
+    async def reply(message):
+        if message["type"] == "execute":
+            await command_hub.endpoint._handle_command_result(
+                command_hub.websocket,
+                CommandResultMessage(
+                    id=message["id"],
+                    result={"success": True, "data": "x" * 70_000, "control_worker": True},
+                ),
+            )
+
+    command_hub.websocket.send_json = reply
+    caller = asyncio.create_task(PluginHub.send_command("session", "get_compile_job", {}))
+    try:
+        with anyio.fail_after(watchdog_timeout()):
+            await entered.wait()
+        caller.cancel()
+        caller.cancel()
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert bool(scheduler._controls) is scheduler_reserve
+        assert scheduler.snapshot()["retained_bytes"] > 0
+        assert 0 < PluginHub._retained_results.total_bytes <= PluginHub.MAX_CONTROL_RESULT_BYTES
+        assert PluginHub._pending_capacity_error("session", None, control=True) is not None
+    finally:
+        release.set()
+        await asyncio.gather(caller, return_exceptions=True)
+    assert scheduler.snapshot()["retained_bytes"] == 0 and scheduler._controls == {}
+    assert accounting() == ({}, 0, 0, 0)
+    assert PluginHub._control_reservations == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ceiling",
+    [
+        "MAX_CONTROL_COMMANDS",
+        "MAX_CONTROL_PER_USER",
+        "MAX_CONTROL_PER_SESSION",
+        "MAX_CONTROL_PAYLOAD_BYTES",
+        "MAX_CONTROL_PAYLOAD_BYTES_PER_USER",
+        "MAX_CONTROL_PAYLOAD_BYTES_PER_SESSION",
+    ],
+)
+async def test_transport_control_reserve_has_independent_count_and_byte_limits(
+    command_hub, monkeypatch, ceiling
+):
+    monkeypatch.setattr(PluginHub, "MAX_PENDING_COMMANDS", 0)
+    for name in ("MAX_CONTROL_COMMANDS", "MAX_CONTROL_PER_USER", "MAX_CONTROL_PER_SESSION"):
+        monkeypatch.setattr(PluginHub, name, 8)
+    charge = PluginHub._command_payload_size("get_compile_job", {})
+    monkeypatch.setattr(PluginHub, ceiling, 2 * charge - 1 if "BYTES" in ceiling else 1)
+
+    async def hold(message):
+        command_hub.sent.append(message)
+
+    command_hub.websocket.send_json = hold
+    control = asyncio.create_task(PluginHub.send_command("session", "get_compile_job", {}))
+    try:
+        await next_execute(command_hub, 1)
+        refused = await PluginHub.send_command("session", "get_compile_job", {})
+        assert refused["data"]["reason"] == "command_capacity"
+        assert len(command_hub.sent) == 1
+        assert sum(e["payload_bytes"] for e in PluginHub._pending.values()) == charge
+    finally:
+        control.cancel()
+        await asyncio.gather(control, return_exceptions=True)
+    assert accounting() == ({}, 0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_control_retains_reserve_while_raw_ingress_worker_runs(
+    command_hub, monkeypatch
+):
+    import threading
+
+    monkeypatch.setattr(PluginHub, "MAX_PENDING_COMMANDS", 0)
+    entered, release = asyncio.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+    original = PluginHub._decode_json_message
+
+    def decode(raw, max_nodes):
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(watchdog_timeout())
+        return original(raw, max_nodes)
+
+    monkeypatch.setattr(PluginHub, "_decode_json_message", staticmethod(decode))
+
+    async def hold(message):
+        command_hub.sent.append(message)
+
+    command_hub.websocket.send_json = hold
+    caller = asyncio.create_task(PluginHub.send_command("session", "get_compile_job", {}))
+    decoder = None
+    try:
+        message = await next_execute(command_hub, 1)
+        raw = json.dumps(
+            {"type": "command_result", "id": message["id"], "result": {"data": "x" * 70_000}}
+        )
+        decoder = asyncio.create_task(
+            command_hub.endpoint._decode_ingress(command_hub.websocket, raw)
+        )
+        with anyio.fail_after(watchdog_timeout()):
+            await entered.wait()
+        caller.cancel()
+        await asyncio.gather(caller, return_exceptions=True)
+        decoder.cancel()
+        assert PluginHub._pending == {}
+        assert PluginHub._pending_capacity_error("session", None, control=True) is not None
+        assert PluginHub._retained_results.total_bytes > 0
+    finally:
+        release.set()
+        caller.cancel()
+        await asyncio.gather(
+            caller, *([decoder] if decoder is not None else []), return_exceptions=True
+        )
+    assert PluginHub._control_reservations == {}
+    assert accounting() == ({}, 0, 0, 0)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "ceiling",
@@ -183,11 +429,23 @@ async def test_repeated_reads_ignore_ready_cache_and_preserve_admitted_send_orde
                 assert all(item["partial"] is True for item in observations)
                 assert accounting() == before
                 assert command_hub.sent == sends
-            refused = await PluginHub.send_command_for_instance(
-                "Fixture@hash", "get_editor_state", {}
+            control = asyncio.create_task(
+                PluginHub.send_command_for_instance("Fixture@hash", "get_editor_state", {})
             )
-            assert refused["data"]["reason"] == "command_capacity"
-            assert command_hub.sent == sends
+            try:
+                with anyio.fail_after(watchdog_timeout()):
+                    while len(command_hub.sent) < 3:
+                        await anyio.sleep(0)
+                control_message = command_hub.sent[-1]
+                assert PluginHub._pending[control_message["id"]]["control_reserve"] is True
+                await command_hub.endpoint._handle_command_result(
+                    command_hub.websocket,
+                    CommandResultMessage(id=control_message["id"], result={"success": True}),
+                )
+                assert (await control)["success"] is True
+            finally:
+                control.cancel()
+                await asyncio.gather(control, return_exceptions=True)
             # Observe completion in a controlled order; status reads never touch either owner.
             for index in (1, 0):
                 await command_hub.endpoint._handle_command_result(
@@ -205,7 +463,7 @@ async def test_repeated_reads_ignore_ready_cache_and_preserve_admitted_send_orde
                     CommandResultMessage(id=message["id"], result={"success": True}),
                 )
                 assert (await recovered[0])["success"] is True
-            assert [message["type"] for message in command_hub.sent] == ["execute"] * 3
+            assert [message["type"] for message in command_hub.sent] == ["execute"] * 4
 
 
 @pytest.mark.asyncio
@@ -313,6 +571,65 @@ async def tenant_socket(hub, session, user, auth, project_hash="hash"):
     await auth.attach_socket(socket, f"plugin:{user}")
     PluginHub._connections[session] = socket
     return SimpleNamespace(websocket=socket, sent=hub.sent)
+
+
+@pytest.mark.asyncio
+async def test_control_reserve_is_scoped_to_authenticated_principal_and_instance(
+    command_hub, monkeypatch
+):
+    async with remote_credentials(
+        {
+            "requester:alice": "alice",
+            "plugin:alice": "alice",
+            "requester:bob": "bob",
+            "plugin:bob": "bob",
+        }
+    ) as auth:
+        monkeypatch.setattr(config, "http_remote_hosted", True)
+        monkeypatch.setattr(PluginHub, "MAX_PENDING_COMMANDS", 0)
+        sockets = {}
+        for session, user in (("a1", "alice"), ("a2", "alice"), ("a3", "alice"), ("b1", "bob")):
+            sockets[session] = await tenant_socket(command_hub, session, user, auth, session)
+
+            async def hold(message):
+                command_hub.sent.append(message)
+
+            sockets[session].websocket.send_json = hold
+        callers = []
+        try:
+            for session, user in (("a1", "alice"), ("a2", "alice"), ("b1", "bob")):
+                callers.append(
+                    asyncio.create_task(
+                        auth.call(
+                            f"requester:{user}",
+                            PluginHub.send_command,
+                            session,
+                            "get_compile_job",
+                            {},
+                        )
+                    )
+                )
+                await next_execute(command_hub, len(callers))
+            assert len(PluginHub._pending) == 3
+            assert {entry["user_id"] for entry in PluginHub._pending.values()} == {"alice", "bob"}
+            refused = await auth.call(
+                "requester:alice",
+                PluginHub.send_command,
+                "a3",
+                "get_compile_job",
+                {"user_id": "bob"},
+            )
+            assert refused["data"]["reason"] == "command_capacity"
+            cross_tenant = await auth.call(
+                "requester:alice", PluginHub.send_command, "b1", "get_compile_job", {}
+            )
+            assert cross_tenant["success"] is False and cross_tenant["error"] == "auth_required"
+            assert len(PluginHub._pending) == 3
+        finally:
+            for caller in callers:
+                caller.cancel()
+            await asyncio.gather(*callers, return_exceptions=True)
+    assert accounting() == ({}, 0, 0, 0)
 
 
 @pytest.mark.asyncio

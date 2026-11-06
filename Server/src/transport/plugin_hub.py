@@ -90,6 +90,16 @@ from transport.command_budget import (
     extend_http_request_deadline as extend_http_request_deadline,
 )
 from services.api_key_service import ApiKeyService
+from services.control_capacity import (
+    CONTROL_BYTES,
+    CONTROL_BYTES_PER_INSTANCE,
+    CONTROL_BYTES_PER_PRINCIPAL,
+    CONTROL_PARTICIPANTS,
+    CONTROL_PER_INSTANCE,
+    CONTROL_PER_PRINCIPAL,
+    CONTROL_RESULT_BYTES,
+    reserved_control,
+)
 from services.operation_permissions import (
     JsonValue,
     OperationPermissionError,
@@ -300,6 +310,38 @@ class InstanceSelectionRequiredError(RuntimeError):
         super().__init__(text)
 
 
+class _ControlReservation:
+    """One scalar reserve charge pinned by real work and response delivery owners."""
+
+    def __init__(self, ledger, key, record):
+        self._ledger, self._key = ledger, key
+        self._references = 1
+        self._closed = False
+        ledger[key] = record
+
+    def _release(self):
+        self._references -= 1
+        if self._references == 0:
+            self._ledger.pop(self._key, None)
+
+    def retain(self):
+        self._references += 1
+        released = False
+
+        def release():
+            nonlocal released
+            if not released:
+                released = True
+                self._release()
+
+        return release
+
+    def close(self):
+        if not self._closed:
+            self._closed = True
+            self._release()
+
+
 class PluginHub(WebSocketEndpoint):
     """Manages persistent WebSocket connections to Unity plugins."""
 
@@ -330,6 +372,9 @@ class PluginHub(WebSocketEndpoint):
     _connections: dict[str, WebSocket] = {}
     # command_id -> {"future": Future, "session_id": str}
     _pending: dict[str, dict[str, Any]] = {}
+    # Unlike routing entries, these survive cancellation while actual workers or
+    # response delivery still own the command. Records contain only scalar charges.
+    _control_reservations: ClassVar[dict[str, dict[str, Any]]] = {}
     _lock: asyncio.Lock | None = None
     _loop: asyncio.AbstractEventLoop | None = None
     # session_id -> last pong timestamp (monotonic)
@@ -349,6 +394,13 @@ class PluginHub(WebSocketEndpoint):
     MAX_PENDING_PAYLOAD_BYTES = 1024 * 1024 * 1024
     MAX_PENDING_PAYLOAD_BYTES_PER_USER = 512 * 1024 * 1024
     MAX_PENDING_PAYLOAD_BYTES_PER_SESSION = 256 * 1024 * 1024
+    MAX_CONTROL_COMMANDS = CONTROL_PARTICIPANTS
+    MAX_CONTROL_PER_USER = CONTROL_PER_PRINCIPAL
+    MAX_CONTROL_PER_SESSION = CONTROL_PER_INSTANCE
+    MAX_CONTROL_PAYLOAD_BYTES = CONTROL_BYTES
+    MAX_CONTROL_PAYLOAD_BYTES_PER_USER = CONTROL_BYTES_PER_PRINCIPAL
+    MAX_CONTROL_PAYLOAD_BYTES_PER_SESSION = CONTROL_BYTES_PER_INSTANCE
+    MAX_CONTROL_RESULT_BYTES = CONTROL_RESULT_BYTES
     MAX_COMMAND_PAYLOAD_BYTES = 32 * 1024 * 1024
     MAX_COMMAND_PAYLOAD_NODES = 1_000_000
     MAX_COMMAND_RETAINED_BYTES = 256 * 1024 * 1024
@@ -427,10 +479,15 @@ class PluginHub(WebSocketEndpoint):
         session_total = cls._retained_results.session_bytes(
             session_id
         ) + cls._raw_results.session_bytes(session_id)
-        return min(
+        available = min(
             cls.MAX_RETAINED_RESULT_BYTES - total,
             cls.MAX_RETAINED_RESULT_BYTES_PER_USER - user_total,
             cls.MAX_RETAINED_RESULT_BYTES_PER_SESSION - session_total,
+        )
+        return (
+            min(available, cls.MAX_CONTROL_RESULT_BYTES)
+            if entry.get("control_reserve") is True
+            else available
         )
 
     @classmethod
@@ -742,6 +799,11 @@ class PluginHub(WebSocketEndpoint):
                 key = "ingress:" + str(uuid.uuid4())
                 owner.entries.append((ledger, key))
                 ledger[key] = {**identity, "bytes": charge}
+            # The command id is untrusted until decoding finishes. Pin the bounded
+            # controls belonging to this socket while its raw frame is in use.
+            for entry in cls._pending.values():
+                if entry["session_id"] == session_id and entry.get("control_owner") is not None:
+                    raw_owner.on_release.append(entry["control_owner"].retain())
             return _IngressWork(
                 websocket,
                 session_id,
@@ -844,9 +906,13 @@ class PluginHub(WebSocketEndpoint):
         ).model_dump()
 
     @classmethod
-    def _pending_usage(cls, session_id, user_id):
-        user_count = session_count = total_bytes = user_bytes = session_bytes = 0
-        for entry in cls._pending.values():
+    def _pending_usage(cls, session_id, user_id, *, reserve=None):
+        count = user_count = session_count = total_bytes = user_bytes = session_bytes = 0
+        records = cls._control_reservations.values() if reserve is True else cls._pending.values()
+        for entry in records:
+            if reserve is not None and (entry.get("control_reserve") is True) != reserve:
+                continue
+            count += 1
             size = entry.get("payload_bytes", 0)
             total_bytes += size
             if entry.get("user_id") == user_id:
@@ -855,21 +921,42 @@ class PluginHub(WebSocketEndpoint):
             if entry.get("session_id") == session_id:
                 session_count += 1
                 session_bytes += size
-        return user_count, session_count, total_bytes, user_bytes, session_bytes
+        return count, user_count, session_count, total_bytes, user_bytes, session_bytes
 
     @classmethod
-    def _pending_capacity_error(cls, session_id, user_id, payload_bytes=1):
-        users, sessions, total_bytes, user_bytes, session_bytes = cls._pending_usage(
-            session_id, user_id
-        )
-        if (
-            len(cls._pending) >= cls.MAX_PENDING_COMMANDS
-            or users >= cls.MAX_PENDING_PER_USER
-            or sessions >= cls.MAX_PENDING_PER_SESSION
-            or total_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES
-            or user_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_USER
-            or session_bytes + payload_bytes > cls.MAX_PENDING_PAYLOAD_BYTES_PER_SESSION
-        ):
+    def _pending_reservation(cls, session_id, user_id, payload_bytes=1, *, control=False):
+        """Choose ordinary capacity first; only reviewed controls may use overflow."""
+        for reserve in (False, True) if control else (False,):
+            usage = cls._pending_usage(session_id, user_id, reserve=reserve)
+            limits = (
+                (
+                    cls.MAX_CONTROL_COMMANDS,
+                    cls.MAX_CONTROL_PER_USER,
+                    cls.MAX_CONTROL_PER_SESSION,
+                    cls.MAX_CONTROL_PAYLOAD_BYTES,
+                    cls.MAX_CONTROL_PAYLOAD_BYTES_PER_USER,
+                    cls.MAX_CONTROL_PAYLOAD_BYTES_PER_SESSION,
+                )
+                if reserve
+                else (
+                    cls.MAX_PENDING_COMMANDS,
+                    cls.MAX_PENDING_PER_USER,
+                    cls.MAX_PENDING_PER_SESSION,
+                    cls.MAX_PENDING_PAYLOAD_BYTES,
+                    cls.MAX_PENDING_PAYLOAD_BYTES_PER_USER,
+                    cls.MAX_PENDING_PAYLOAD_BYTES_PER_SESSION,
+                )
+            )
+            increments = (1, 1, 1, payload_bytes, payload_bytes, payload_bytes)
+            if all(
+                value + extra <= limit for value, extra, limit in zip(usage, increments, limits)
+            ):
+                return reserve
+        return None
+
+    @classmethod
+    def _pending_capacity_error(cls, session_id, user_id, payload_bytes=1, *, control=False):
+        if cls._pending_reservation(session_id, user_id, payload_bytes, control=control) is None:
             return cls._command_capacity_response()
         return None
 
@@ -1434,24 +1521,11 @@ class PluginHub(WebSocketEndpoint):
                 if isinstance(features, (set, frozenset))
                 else None
             )
-            user_count = session_count = total_bytes = user_bytes = session_bytes = 0
-            for entry in cls._pending.values():
-                size = entry.get("payload_bytes", 0)
-                total_bytes += size
-                if entry.get("user_id") == user_id:
-                    user_count += 1
-                    user_bytes += size
-                if entry.get("session_id") == session_id:
-                    session_count += 1
-                    session_bytes += size
-            available = (
-                len(cls._pending) < cls.MAX_PENDING_COMMANDS
-                and user_count < cls.MAX_PENDING_PER_USER
-                and session_count < cls.MAX_PENDING_PER_SESSION
-                and total_bytes < cls.MAX_PENDING_PAYLOAD_BYTES
-                and user_bytes < cls.MAX_PENDING_PAYLOAD_BYTES_PER_USER
-                and session_bytes < cls.MAX_PENDING_PAYLOAD_BYTES_PER_SESSION
-                and cls._has_result_capacity({"user_id": user_id, "session_id": session_id}, 1)
+            _, user_count, session_count, *_ = cls._pending_usage(session_id, user_id)
+            available = cls._pending_capacity_error(
+                session_id, user_id
+            ) is None and cls._has_result_capacity(
+                {"user_id": user_id, "session_id": session_id}, 1
             )
             return CapabilityConnection(
                 **base,
@@ -1786,9 +1860,12 @@ class PluginHub(WebSocketEndpoint):
             if target.scope.principal.startswith("remote:")
             else None
         )
+        control = reserved_control(
+            command_type, params, native=True, trusted_builtin=_catalog_guard is None
+        )
         if cls._lock is not None:
             async with cls._authorized_socket_lock(socket, cls._lock, requester):
-                capacity = cls._pending_capacity_error(session_id, user)
+                capacity = cls._pending_capacity_error(session_id, user, control=control)
                 if capacity is not None:
                     return capacity
         if budget.remaining() <= 0:
@@ -1825,9 +1902,14 @@ class PluginHub(WebSocketEndpoint):
         policy = resolve_operation_policy(
             command_type, params, native=True, trusted_builtin=_catalog_guard is None
         )
+        control = reserved_control(
+            command_type, params, native=True, trusted_builtin=_catalog_guard is None
+        )
         # The event-loop-owned ledger may have filled while the worker ran.
         # Refuse before queueing; actual reservation rechecks under the Hub lock.
-        capacity = cls._pending_capacity_error(session_id, user, prepared.retained_bytes)
+        capacity = cls._pending_capacity_error(
+            session_id, user, prepared.retained_bytes, control=control
+        )
         if capacity is not None:
             return capacity
         async with operation_session(
@@ -1838,6 +1920,7 @@ class PluginHub(WebSocketEndpoint):
                 observational_continuation=_catalog_guard is None
                 and is_observational_continuation(command_type, params),
                 retained_bytes=prepared.retained_bytes,
+                control_reserve=control,
             )
         ):
             return await cls._send_command_response_admitted(
@@ -2186,11 +2269,14 @@ class PluginHub(WebSocketEndpoint):
                 websocket, user_id, _expected_read
             ):
                 return cls._unavailable_retry_response("read_invalidated")
-            # _pending is the single source of accounting: every existing pop on
-            # result/cancel/timeout/disconnect/eviction/shutdown returns capacity.
-            capacity = cls._pending_capacity_error(session_id, user_id, _payload_bytes)
-            if capacity is not None:
-                return capacity
+            # Ordinary accounting follows _pending. Overflow has a separate lease
+            # so cancellation cannot free it before actual workers/delivery settle.
+            control = reserved_control(
+                command_type, params, native=True, trusted_builtin=_catalog_guard is None
+            )
+            reserve = cls._pending_reservation(session_id, user_id, _payload_bytes, control=control)
+            if reserve is None:
+                return cls._command_capacity_response()
             # Unknown/custom/batch commands may mutate. Advance before socket
             # I/O so later readers cannot join an earlier observation.
             if not cls._is_non_mutating(command_type, params):
@@ -2221,6 +2307,20 @@ class PluginHub(WebSocketEndpoint):
                 and valid_generation(arbitration_generation)
                 else None
             )
+            control_owner = (
+                _ControlReservation(
+                    cls._control_reservations,
+                    command_id,
+                    {
+                        "session_id": session_id,
+                        "user_id": user_id,
+                        "payload_bytes": _payload_bytes,
+                        "control_reserve": True,
+                    },
+                )
+                if reserve
+                else None
+            )
             cls._pending[command_id] = {
                 "future": future,
                 "result_socket": websocket,
@@ -2228,6 +2328,8 @@ class PluginHub(WebSocketEndpoint):
                 "session_id": session_id,
                 "user_id": user_id,
                 "payload_bytes": _payload_bytes,
+                "control_reserve": reserve,
+                "control_owner": control_owner,
                 "response_owner": response_owner.get(),
                 "result_ledger": result_ledger,
                 "receipt_owner": execution_owner.get(),
@@ -2474,6 +2576,10 @@ class PluginHub(WebSocketEndpoint):
                 receipt_pin = receipt.acquire_worker() if receipt is not None else None
                 try:
                     send_task = operation_task(authorized_send())
+                    if control_owner is not None:
+                        send_task.add_done_callback(
+                            lambda _, release=control_owner.retain(): release()
+                        )
                 except BaseException:
                     if receipt_pin is not None:
                         receipt_pin.close()
@@ -2617,6 +2723,8 @@ class PluginHub(WebSocketEndpoint):
                 # during send-task cleanup. Only its owner returns this capacity.
                 if response_owner.get() is None:
                     result_ledger.pop(command_id, None)
+                if control_owner is not None:
+                    control_owner.close()
 
     @classmethod
     async def _cancel_command_on_owner(
@@ -3277,6 +3385,8 @@ class PluginHub(WebSocketEndpoint):
             charge = ingress.max_retained_bytes
         else:
             ingress = None
+        if entry.get("control_reserve") is True:
+            charge = min(charge, cls.MAX_CONTROL_RESULT_BYTES)
         if large and ingress is None:
             # Reserve the bounded graph ceiling before traversal/allocation. The
             # two shared response workers therefore cannot build an unbounded queue.
@@ -3302,6 +3412,8 @@ class PluginHub(WebSocketEndpoint):
             cls._socket_lease(websocket),
             ingress,
         )
+        if entry.get("control_owner") is not None:
+            owner.on_release.append(entry["control_owner"].retain())
         entry["result_work"] = work
         return work
 
@@ -3682,18 +3794,22 @@ class PluginHub(WebSocketEndpoint):
                     "session_id": entry["session_id"],
                 }
                 owner = entry.get("response_owner")
+                control_owner = entry.get("control_owner")
                 if owner is not None:
                     if owner.released:
                         result_ledger.pop(command_id, None)
                         future.set_result(response_limit_error("result_capacity"))
                         return
                     owner.entries.append((result_ledger, command_id))
+                    if control_owner is not None:
+                        owner.on_release.append(control_owner.retain())
 
                     def reserve_copy(
                         copy_owner,
                         source_id=command_id,
                         reservation=result_ledger[command_id],
                         ledger=result_ledger,
+                        control_owner=control_owner,
                     ):
                         copy_charge = copy_owner.requested_copy_bytes
                         copy_charge = reservation["bytes"] if copy_charge is None else copy_charge
@@ -3710,6 +3826,8 @@ class PluginHub(WebSocketEndpoint):
                         ledger[copy_id] = {**reservation, "bytes": copy_charge}
                         copy_owner.entries.append((ledger, copy_id))
                         copy_owner.copy_reservations.append(reserve_copy)
+                        if control_owner is not None:
+                            copy_owner.on_release.append(control_owner.retain())
                         return True
 
                     owner.copy_reservations.append(reserve_copy)

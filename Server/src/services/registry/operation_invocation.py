@@ -21,6 +21,7 @@ from core.config import config
 from models.response_limits import response_size
 from models.models import MCPResponse
 from services.execution_receipt_context import owned_to_thread
+from services.control_capacity import reserved_control
 from services.operation_permissions import (
     JsonValue,
     Permission,
@@ -86,6 +87,7 @@ def admission_for(
     expires_at: float | None,
     retained_bytes: int = 0,
     observational_continuation: bool = False,
+    control_reserve: bool = False,
 ) -> OperationAdmission:
     # Old native packages retain conservative public sequencing. A control
     # request can still queue at their existing transport predecessor boundary.
@@ -105,6 +107,7 @@ def admission_for(
         expires_at,
         retained_bytes,
         observational_continuation,
+        control_reserve,
     )
 
 
@@ -404,6 +407,7 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
         if charge is None:
             return refusal_result(_refusal("operation_payload_limit"))
         policy = resolve_operation_policy(name, params, trusted_builtin=trusted)
+        control_reserve = reserved_control(name, params, trusted_builtin=trusted)
         observation = (
             trusted
             and name in {"get_test_job", "get_compile_job"}
@@ -425,7 +429,7 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
             check_public_authority = (
                 await target.authorize_public(name, params) if target.authorize_public else None
             )
-            if target.capacity_error is not None:
+            if target.capacity_error is not None and not control_reserve:
                 refusal = target.capacity_error()
                 if refusal is not None:
                     return refusal
@@ -462,6 +466,7 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                     expires_at=expires_at,
                     retained_bytes=charge,
                     observational_continuation=observation,
+                    control_reserve=control_reserve,
                 )
                 # Reserve the original FIFO position through reload. This grants
                 # no callback authority: the target is checked again below. Only
@@ -504,6 +509,7 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                             expires_at=expires_at,
                             retained_bytes=charge,
                             observational_continuation=observation,
+                            control_reserve=control_reserve,
                         )
                         invocation_started = True
                         from transport.command_resume import queued_origin
@@ -535,6 +541,7 @@ def wrap_tool(function: Callable[P, T], name: str, unity_target: str | None) -> 
                     expires_at=expires_at,
                     retained_bytes=charge,
                     observational_continuation=observation,
+                    control_reserve=control_reserve,
                 )
                 async with operation_session(request):
                     refusal = await validate_target()

@@ -478,8 +478,9 @@ async def test_authorization_loss_after_real_dispatch_keeps_outer_outcome_unknow
 
 @pytest.mark.asyncio
 async def test_readiness_capacity_refusal_has_no_retry_or_tool_dispatch(peer, monkeypatch):
-    # Given: actual Hub command admission has no available slot.
+    # Given: neither ordinary admission nor reviewed-control reserve has a slot.
     monkeypatch.setattr(PluginHub, "MAX_PENDING_PER_SESSION", 0)
+    monkeypatch.setattr(PluginHub, "MAX_CONTROL_PER_SESSION", 0)
     # When: readiness is requested.
     result = await asyncio.wait_for(read(peer), watchdog_timeout())
     # Then: refusal is immediate, without a probe/retry or tool dispatch.

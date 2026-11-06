@@ -5,6 +5,55 @@ transition state, plus jobs owned by this package. A job's public success, failu
 cancellation or timeout does not prove that its native resources have been released.
 Status and cancellation remain available through the reviewed control commands.
 
+## Server control admission headroom
+
+The server scheduler and HTTP plugin transport first try their ordinary admission
+budgets. If those are full, a trusted, reviewed status or cancellation route may
+use a separate overflow pool. Each layer bounds that pool independently:
+
+| Scope | Additional participants | Retained request bytes |
+| --- | ---: | ---: |
+| Server process | 8 | 256 KiB |
+| Authenticated principal | 2 | 64 KiB |
+| Principal/instance (transport session) | 1 | 32 KiB |
+
+These are additional ceilings, not deductions from ordinary capacity. Controls
+use ordinary slots when available; overflow never raises the ordinary limits or
+changes reader/writer FIFO order. A principal's overflow quota spans all its
+instances. The local authority has one principal quota. Scheduler reservations
+remain charged until the invocation and its actual workers settle, including
+after cancellation. The transport keeps overflow count and request charges through
+actual send/result worker settlement and response delivery, including shared copies.
+Response workers and delivery owners also retain their own result byte charges.
+
+Eligibility is defined in `Server/src/services/control_capacity.py`: `ping`,
+`get_editor_state`, `get_compile_job`, `get_test_job`, `get_tool_states`,
+`cancel_test_job`, and these command/action pairs:
+
+| Command | Actions |
+| --- | --- |
+| `manage_build` | `status`, `cancel` |
+| `manage_packages` | `status`, `ping` |
+| `manage_project_auditor` | `availability`, `status` |
+| `manage_editor` | `get_play_mode_job`, `cancel_play_mode_job` |
+| `manage_play_scenario` | `status`, `suite_status`, `cancel`, `suite_cancel` |
+| `manage_navigation` | `bake_status`, `cancel_bake` |
+| `manage_profiler` | `profiler_status`, `window_status`, `window_cancel` |
+
+Unknown commands,
+custom-handler overrides, unlisted aliases, exports, result viewers and arbitrary
+`action: status` or caller-supplied policy metadata cannot claim this pool.
+Authentication, permissions, target generation and native admission still apply.
+
+Transport overflow replies have a 1 MiB retained-result ceiling and share the existing
+global, principal and session response budgets. Headroom does not guarantee
+delivery when those response budgets, preparation workers, the native Editor or
+the overflow pool itself are unavailable. Capacity refusals remain bounded;
+a full result budget may return `result_capacity`. The capability snapshot's
+ordinary admission status does not promise that control headroom is unused.
+
+## Native ownership lifetimes
+
 - Builds reserve ownership before scheduling their native callback. Ownership spans
   preparation, BuildPlayer, result finalization and gaps between batch children.
 - Test jobs retain ownership through their runner's actual cleanup. A cancellation
