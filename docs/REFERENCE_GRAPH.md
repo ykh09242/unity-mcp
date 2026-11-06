@@ -24,6 +24,15 @@ paged progress. Large jobs can resume across attempts; page sizes and journal
 retention are separate from collection and storage admission. See
 [operator budgets](#operator-budgets) before provisioning unusually large projects.
 
+Cold inventory and direct-dependency preparation runs across Editor updates. The
+collector shares immutable preparation between matching consumers and checks its
+epoch and revision before publication. Canceling one consumer leaves other readers
+intact; canceling the last releases unfinished preparation. Native status exposes
+bounded progress and measured callback durations. Unity's census calls remain
+indivisible, so a small result page does not guarantee a short first response. See
+the [collector protocol](development/reference-graph-collector.md#preparation-and-responsiveness)
+for the work limits and timing boundaries.
+
 ## Query and inspect uncertainty
 
 ```json
@@ -253,6 +262,11 @@ and upgrades fall back to a complete catalog load. Cache updates retain shared
 key membership and exclusion/provider status, and publication still checks the
 catalog revision. Saved snapshots and authored configuration are unaffected.
 
+Public `cleanup` also releases the workspace's runtime key and admission caches.
+It waits for current cache readers without blocking the server event loop. The
+next lookup rebuilds those caches from durable evidence; cleanup does not delete
+captured evidence or authored configuration.
+
 Code analysis keeps the most recent 8,192 document changes in a separate journal
 of owner IDs. A warm pass loads changed C# facts, rebinds affected callers, and
 pages the durable queue of owners awaiting publication. Deleted documents and
@@ -413,6 +427,55 @@ keep their policies and history. Archive restoration/import is not provided by
 this command: preserve the archive intact and use `export_config`/`import_config`
 before archival when authored setup must transfer to another Editor. A storage
 error is not permission to delete saved work.
+
+### Retained native capture files
+
+Editor runtime captures use a separate `MCPForUnity/ReferenceRuntime` directory
+beneath .NET's `LocalApplicationData` location (normally `%LOCALAPPDATA%` on
+Windows). They are outside the graph SQLite budget. An Editor restart preserves
+old files but does not grant the new Editor access through normal graph actions.
+The maintenance module provides explicit, OS-owner-verified recovery for them:
+
+```sh
+python -m services.reference_graph.maintenance native-list --directory NATIVE_ROOT --limit 50
+python -m services.reference_graph.maintenance native-inspect --directory NATIVE_ROOT --editor EDITOR_ID --capture CAPTURE_ID
+python -m services.reference_graph.maintenance native-export --directory NATIVE_ROOT --editor EDITOR_ID --capture CAPTURE_ID --destination NEW_ABSOLUTE_DIRECTORY
+python -m services.reference_graph.maintenance native-export --directory NATIVE_ROOT --editor EDITOR_ID --capture CAPTURE_ID --destination NEW_ABSOLUTE_DIRECTORY --apply
+python -m services.reference_graph.maintenance native-reclaim --directory NATIVE_ROOT --editor EDITOR_ID --capture CAPTURE_ID
+python -m services.reference_graph.maintenance native-reclaim --directory NATIVE_ROOT --editor EDITOR_ID --capture CAPTURE_ID --fingerprint PREVIEW_FINGERPRINT --inspected-at PREVIEW_TIMESTAMP --apply
+```
+
+Replace placeholders with the absolute native root and exact IDs returned by
+inventory. Quote paths containing spaces. `--limit` accepts 1-100; pass `next_after`
+as `--after` for another page. Export and reclaim default to preview. Export copies
+raw event and metadata evidence into a new directory outside the native root,
+checks the copies and writes `recovery.json`; it preserves the originals and does
+not import the capture into another Editor. An interrupted export keeps its
+partial destination for inspection; retry with a new destination.
+
+Reclamation requires an idle upgraded capture, verified filesystem identity and
+ownership, explicit `--apply`, and the fingerprint and timestamp from a preview no
+older than 300 seconds. Changed files or active capture leases are refused.
+Reclamation does not imply export. Legacy files are labeled `legacy_unverified`:
+inspection/export additionally requires `--all-editors-stopped`, and legacy
+reclamation is unsupported. That flag asserts that all Editors are stopped; it
+does not stop them. No capture is automatically pruned or deleted by age.
+
+Upgraded producers allow 64 MiB of events per capture, a 1 MiB event, 64 KiB of
+metadata, 256 captures and 512 MiB of native-root logical file bytes, reserving a
+metadata rewrite allowance for each admitted capture. Directory census is bounded
+at 4,096 entries. Exhaustion preserves existing bytes and reports `storage_limit`
+with `stop_reason`. Existing roots above these limits are preserved and refuse
+additional storage. These cooperative limits are not a physical disk quota or a
+guarantee for legacy producers.
+
+Temporary root-lock contention queues events in memory without ending the active
+capture. The FIFO is bounded at 128 records and 4 MiB, and each retry drains at
+most 32 records or 1 MiB with one nonblocking lock attempt. Status exposes
+`pending_count`, `pending_bytes` and `storage_waiting`. If the queue fills or a
+capture must close before it can drain, `storage_backpressure` and
+`unwritten_count` make the incomplete capture explicit. Existing event bytes are
+preserved; these diagnostics do not claim the queued events were saved.
 
 Path searches retain protected search evidence in the owning query's SQLite
 storage, including evidence outside the selected route. Responses and replay

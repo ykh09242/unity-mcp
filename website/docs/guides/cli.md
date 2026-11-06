@@ -53,6 +53,20 @@ unity-mcp editor tests --help
 
 Use help and the [CLI reference](../reference/cli.md) for flags, rather than assuming MCP tool parameters have identical CLI names. MCP tools, CLI commands, and Unity handlers are distinct layers. Additional task examples live in [CLI Examples](./cli-examples.md).
 
+Search by task when the tool name is unknown:
+
+```bash
+unity-mcp tool search "render pipeline"
+unity-mcp --format json tool search "texture"
+```
+
+Default text output includes a short purpose, actions with experimental markers,
+package requirements, skill links and a follow-up inspection command preserving
+the selected host, port, instance and project guard. Long lists are explicitly
+truncated; JSON retains the full discovery response. Discovery reports readiness
+as unobserved: a matching tool does not establish that the selected Editor has its
+required package or is ready to execute it.
+
 ## Read and edit the same script version
 
 Use `unity-mcp --format json script read Assets/Scripts/Player.cs --start-line 10 --line-count 5` to read a line range. The matching Editor returns the SHA-256 of the full source in `data.sha256`. Pass that value to `script edit` with `--expected-sha`. If another writer changes the script, the edit returns `stale_file` and the caller can read the new version before revising the edits.

@@ -81,32 +81,6 @@ Completed snapshots keep the existing ten-minute idle expiry and continuation
 identity rules. Measure cold first-page latency separately from page transfer when
 provisioning large projects.
 
-## Preparation and responsiveness
-
-The cancellation-aware command path stages cold `inventory` and `dependencies`
-preparation on Editor updates. At most two preparations are admitted. Matching
-epoch/revision/source keys share one immutable result while each caller retains
-its own cancellation and page cursor. The final consumer's cancellation retires
-unfinished work; reload and quit retire pending preparations. Synchronous direct
-callers retain the compatibility path.
-
-`AssetDatabase.FindAssets` and `AssetDatabase.GetDependencies` remain indivisible
-Editor-thread calls. Following that census, conversion, filtering, merge ordering,
-deduplication and result copying use slices of at most 8,192 elementary operations
-with a 4 ms time target. One conversion, native lookup or array allocation cannot
-be interrupted. The target is not a worst-case callback guarantee. Epoch, revision
-and idle state are checked between slices and before publishing a snapshot.
-
-Native status advertises `preparation_version: 1` and `preparation`, with at most
-two active records and one recent record per kind. Records expose stage, input and
-operation counts, consumers, Editor update count, native-call duration, cumulative
-preparation duration, maximum observed callback duration and elapsed duration.
-They also expose the operation cap, time target and
-`native_call_interruptible: false`; they retain no source paths or arrays.
-Completed snapshots keep the existing ten-minute idle expiry and continuation
-identity rules. Measure cold first-page latency separately from page transfer when
-provisioning large projects.
-
 ## Verification
 
 The native fixtures cover independent/interleaved readers, import/move/delete history,
