@@ -46,7 +46,7 @@ Replace the placeholder text with your example. **Don't move or rename the marke
 Run the generator to verify your examples survive a regeneration round-trip:
 
 ```bash
-cd Server && uv run python ../tools/generate_docs_reference.py
+uv run --directory Server --locked --extra dev python ../tools/generate_docs_reference.py
 git diff website/docs/reference/tools/<group>/<tool-name>.md
 # Should show only your additions; the rest of the file is regenerated identically.
 ```
@@ -86,7 +86,7 @@ URL changes break external links. Always add a redirect:
 The pre-commit hook (installed via `tools/install-hooks.sh`) auto-regenerates `website/docs/reference/` whenever you stage a change under `Server/src/services/{tools,resources,registry}/`. Without the hook:
 
 ```bash
-cd Server && uv run python ../tools/generate_docs_reference.py
+uv run --directory Server --locked --extra dev python ../tools/generate_docs_reference.py
 git add website/docs/reference/
 ```
 
