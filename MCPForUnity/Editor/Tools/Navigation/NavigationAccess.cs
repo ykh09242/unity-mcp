@@ -15,6 +15,8 @@ namespace MCPForUnity.Editor.Tools.Navigation
 {
     internal static class NavigationAccess
     {
+        private const int AgentTypeLimit = 100;
+
         internal static Type OptionalType(string name) =>
             AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("Unity.AI.Navigation." + name)).FirstOrDefault(t => t != null);
 
@@ -45,6 +47,21 @@ namespace MCPForUnity.Editor.Tools.Navigation
         {
             Type surface = OptionalType("NavMeshSurface");
             string version = surface == null ? null : PackageInfo.FindForAssembly(surface.Assembly)?.version;
+            int agentCount = NavMesh.GetSettingsCount();
+            JArray agents = new JArray();
+            for (int i = 0; i < Math.Min(agentCount, AgentTypeLimit); i++)
+            {
+                int id = NavMesh.GetSettingsByIndex(i).agentTypeID;
+                agents.Add(new JObject { ["agent_type_id"] = id, ["name"] = NavMesh.GetSettingsNameFromID(id) });
+            }
+            JArray areas = new JArray(
+                AreaNames()
+                    .Select(name => new { name, index = NavMesh.GetAreaFromName(name) })
+                    .Where(area => area.index >= 0 && area.index <= 31)
+                    .OrderBy(area => area.index)
+                    .Take(32)
+                    .Select(area => new JObject { ["name"] = area.name, ["index"] = area.index })
+            );
             return new SuccessResponse(
                 "Navigation capabilities.",
                 new
@@ -53,6 +70,12 @@ namespace MCPForUnity.Editor.Tools.Navigation
                     package_available = surface != null,
                     package_name = "com.unity.ai.navigation",
                     package_version = version,
+                    agent_types = agents,
+                    agent_type_count = agentCount,
+                    agent_type_limit = AgentTypeLimit,
+                    agent_types_truncated = agentCount > agents.Count,
+                    areas,
+                    supported_properties = NavigationObjects.SupportedProperties(),
                     surface_bake_supported = surface?.GetMethod("BuildNavMesh", Type.EmptyTypes) != null,
                     native_bake_interruptible = false,
                     baked_agent_type_provenance_available = false,
@@ -152,13 +175,17 @@ namespace MCPForUnity.Editor.Tools.Navigation
 
         internal static void Area(int area)
         {
-#if UNITY_6000_0_OR_NEWER
-            string[] areaNames = NavMesh.GetAreaNames();
-#else
-            string[] areaNames = GameObjectUtility.GetNavMeshAreaNames();
-#endif
-            if (area < 0 || area > 31 || !areaNames.Any(name => NavMesh.GetAreaFromName(name) == area))
+            if (area < 0 || area > 31 || !AreaNames().Any(name => NavMesh.GetAreaFromName(name) == area))
                 throw new ArgumentException("Area must be a configured NavMesh area index (0..31).");
+        }
+
+        private static string[] AreaNames()
+        {
+#if UNITY_6000_0_OR_NEWER
+            return NavMesh.GetAreaNames();
+#else
+            return GameObjectUtility.GetNavMeshAreaNames();
+#endif
         }
     }
 }

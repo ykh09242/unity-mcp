@@ -143,6 +143,59 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void CapabilitiesDiscoverySuppliesReusableAuthoringValuesWithoutChangingSettings()
+        {
+            int count = NavMesh.GetSettingsCount();
+            NavMeshBuildSettings[] settings = Enumerable.Range(0, count).Select(NavMesh.GetSettingsByIndex).ToArray();
+            int undoGroup = Undo.GetCurrentGroup();
+            bool dirty = scene.isDirty;
+            Component[] components = root.GetComponents<Component>();
+            JObject capabilities = Send("capabilities");
+            Assert.IsTrue((bool)capabilities["success"], capabilities.ToString());
+            JObject data = (JObject)capabilities["data"];
+            JArray agents = (JArray)data["agent_types"];
+            Assert.IsNotNull(agents, "Capabilities must expose configured agent IDs and names.");
+            Assert.AreEqual(Math.Min(count, 100), agents.Count);
+            Assert.AreEqual(count, (int)data["agent_type_count"]);
+            Assert.AreEqual(count > agents.Count, (bool)data["agent_types_truncated"]);
+            foreach (JObject entry in agents)
+                Assert.AreEqual(NavMesh.GetSettingsNameFromID((int)entry["agent_type_id"]), (string)entry["name"]);
+            JArray areas = (JArray)data["areas"];
+            Assert.IsNotNull(areas);
+            Assert.LessOrEqual(areas.Count, 32);
+            foreach (JObject entry in areas)
+                Assert.AreEqual(NavMesh.GetAreaFromName((string)entry["name"]), (int)entry["index"]);
+            JObject properties = (JObject)data["supported_properties"];
+            foreach (
+                var entry in new[] { ("surface", surfaceType), ("link", linkType), ("agent", typeof(NavMeshAgent)), ("obstacle", typeof(NavMeshObstacle)) }
+            )
+            {
+                JArray keys = (JArray)properties[entry.Item1];
+                Assert.IsNotEmpty(keys);
+                foreach (string key in keys.Values<string>())
+                    Assert.IsNotNull(entry.Item2.GetProperty(key)?.GetSetMethod(), entry.Item1 + "." + key);
+            }
+            Assert.AreEqual(count, NavMesh.GetSettingsCount());
+            CollectionAssert.AreEqual(settings, Enumerable.Range(0, count).Select(NavMesh.GetSettingsByIndex).ToArray());
+            Assert.AreEqual(undoGroup, Undo.GetCurrentGroup());
+            Assert.AreEqual(dirty, scene.isDirty);
+            CollectionAssert.AreEqual(components, root.GetComponents<Component>());
+            Assert.IsNotEmpty(agents);
+            Assert.IsNotEmpty(areas);
+            CollectionAssert.Contains(properties["surface"].Values<string>().ToArray(), "agentTypeID");
+            CollectionAssert.Contains(properties["surface"].Values<string>().ToArray(), "defaultArea");
+            JObject configured = Send(
+                "configure",
+                "surface",
+                surface.GetInstanceIDCompat(),
+                new JObject { ["agentTypeID"] = agents[0]["agent_type_id"].DeepClone(), ["defaultArea"] = areas[0]["index"].DeepClone() }
+            );
+            Assert.IsTrue((bool)configured["success"], configured.ToString());
+            Assert.AreEqual((int)agents[0]["agent_type_id"], (int)configured["data"]["properties"]["agentTypeID"]);
+            Assert.AreEqual((int)areas[0]["index"], (int)configured["data"]["properties"]["defaultArea"]);
+        }
+
+        [Test]
         public void ExplicitAgentCreationConfigurationAndPagedReadPreserveScope()
         {
             GameObject child = new GameObject("OwnedAgent");

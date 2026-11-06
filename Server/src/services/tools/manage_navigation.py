@@ -32,7 +32,9 @@ ALL_ACTIONS: Final = get_args(NavigationAction)
     group="core",
     description=(
         "Read and explicitly author navigation surfaces, agents, obstacles and links. "
-        "Use capabilities to detect the optional AI Navigation package/version. "
+        "Use capabilities to detect the optional AI Navigation package/version and discover "
+        "configured agent_types (first 100, with count/truncation), named areas (up to 32), "
+        "and installed-version supported_properties by kind without changing settings. "
         "Scene operations require an explicit loaded scene_handle; targets are exact component "
         "or GameObject instance IDs. add creates one component, configure applies supported "
         "public properties with Undo. Bake requires an active surface using Children collection "
@@ -53,10 +55,15 @@ async def manage_navigation(
     target: Annotated[int | None, "Exact component or scene GameObject instance ID."] = None,
     properties: Annotated[
         dict[str, JsonValue] | None,
-        "Supported component public properties; vectors are [x,y,z], enums use names. "
-        "Surface: agentTypeID/collectObjects/useGeometry/layerMask/defaultArea/center/size, "
-        "tile and voxel overrides. Agent: agentTypeID/areaMask/movement/avoidance. "
-        "Obstacle: shape/center/size/radius/height/carving. "
+        "Use capabilities.supported_properties for keys available in the installed version. "
+        "Vectors are [x,y,z], enums use names; all kinds support enabled. "
+        "Surface: agentTypeID/collectObjects/useGeometry/layerMask/defaultArea/center/size/"
+        "overrideTileSize/tileSize/overrideVoxelSize/voxelSize/buildHeightMesh. "
+        "Agent: agentTypeID/areaMask/speed/angularSpeed/acceleration/stoppingDistance/radius/"
+        "height/baseOffset/autoBraking/autoRepath/autoTraverseOffMeshLink/avoidancePriority/"
+        "obstacleAvoidanceType/updatePosition/updateRotation/updateUpAxis. "
+        "Obstacle: shape/center/size/radius/height/carving/carveOnlyStationary/"
+        "carvingMoveThreshold/carvingTimeToStationary. "
         "Link: agentTypeID/area/startPoint/endPoint/width/bidirectional/costModifier/autoUpdate.",
     ] = None,
     job_id: Annotated[str | None, "Bake job ID for bake_status or cancel_bake."] = None,

@@ -70,6 +70,44 @@ def test_configuration_retains_false_and_vector(navigation_transport):
     assert navigation_transport["params"]["target"] == -84
 
 
+def test_capabilities_values_remain_reusable_for_authoring(monkeypatch, navigation_transport):
+    discovery = {
+        "success": True,
+        "data": {
+            "agent_types": [{"agent_type_id": -7, "name": "Configured Agent"}],
+            "agent_type_count": 1,
+            "agent_type_limit": 100,
+            "agent_types_truncated": False,
+            "areas": [{"name": "Walkable", "index": 0}],
+            "supported_properties": {"surface": ["agentTypeID", "defaultArea"]},
+        },
+    }
+    transport = AsyncMock(return_value=discovery)
+    monkeypatch.setattr("services.tools.manage_navigation.send_with_unity_instance", transport)
+    result = asyncio.run(manage_navigation(SimpleNamespace(), action="capabilities"))
+    assert result == discovery
+    assert transport.call_args.args[3] == {"action": "capabilities"}
+    data = result["data"]
+    properties = dict(
+        zip(
+            data["supported_properties"]["surface"],
+            [data["agent_types"][0]["agent_type_id"], data["areas"][0]["index"]],
+            strict=True,
+        )
+    )
+    asyncio.run(
+        manage_navigation(
+            SimpleNamespace(),
+            action="configure",
+            scene_handle=71,
+            kind="surface",
+            target=-84,
+            properties=properties,
+        )
+    )
+    assert transport.call_args.args[3]["properties"] == {"agentTypeID": -7, "defaultArea": 0}
+
+
 @pytest.mark.parametrize("action", ALL_ACTIONS)
 def test_action_envelopes_use_normal_transport(action, navigation_transport):
     asyncio.run(manage_navigation(SimpleNamespace(), action=action, job_id="owned"))

@@ -71,6 +71,28 @@ namespace MCPForUnity.Editor.Tools.Navigation
             ["link"] = new[] { "enabled", "agentTypeID", "area", "startPoint", "endPoint", "width", "bidirectional", "costModifier", "autoUpdate" },
         };
 
+        internal static JObject SupportedProperties()
+        {
+            JObject result = new JObject();
+            foreach (string kind in Fields.Keys)
+            {
+                Type type =
+                    kind == "surface" ? NavigationAccess.OptionalType("NavMeshSurface")
+                    : kind == "link" ? NavigationAccess.OptionalType("NavMeshLink")
+                    : NavigationAccess.Kind(kind);
+                result[kind] = new JArray(Fields[kind].Where(name => ConfigurableProperty(type?.GetProperty(name))));
+            }
+            return result;
+        }
+
+        private static bool ConfigurableProperty(PropertyInfo property)
+        {
+            if (property?.GetSetMethod() == null || property.GetIndexParameters().Length != 0)
+                return false;
+            Type type = property.PropertyType;
+            return type == typeof(bool) || type == typeof(Vector3) || type.IsEnum || type == typeof(int) || type == typeof(LayerMask) || type == typeof(float);
+        }
+
         internal static Component[] InScene(Scene scene, Type type) =>
             scene.GetRootGameObjects().SelectMany(g => g.GetComponentsInChildren(type, true)).OrderBy(c => c.GetInstanceIDCompat()).ToArray();
 
@@ -179,7 +201,7 @@ namespace MCPForUnity.Editor.Tools.Navigation
                 if (!Fields[kind].Contains(item.Name))
                     throw new ArgumentException("Unsupported " + kind + " setting: " + item.Name);
                 PropertyInfo field = component.GetType().GetProperty(item.Name);
-                if (field == null || !field.CanWrite)
+                if (!ConfigurableProperty(field))
                     throw new ArgumentException("Setting is unavailable in this installed version: " + item.Name);
                 object value = ConvertValue(field, item.Value);
                 updates.Add(new KeyValuePair<PropertyInfo, object>(field, value));
