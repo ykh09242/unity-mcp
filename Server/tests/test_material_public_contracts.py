@@ -675,12 +675,42 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
             ),
         ]
 
+        # Direct object values and legacy JSON strings must produce the same native value.
+        for property_name, object_value in (
+            ('_MainTex', {'find': 'Assets/Fixture.png'}),
+            ('_MainTex', {'find': 'Assets/Fixture.png', 'method': 'by_path'}),
+            ('_Color', {'r': 0, 'g': 0.5, 'b': 1, 'a': 0}),
+            ('_Vector', {'x': 0, 'y': -1}),
+            ('_Vector', {'x': 0, 'y': -1, 'z': 2}),
+            ('_Vector', {'x': 0, 'y': -1, 'z': 2, 'w': 0}),
+        ):
+            for value in (object_value, json.dumps(object_value)):
+                cases.append((
+                    {
+                        'action': 'set_material_shader_property',
+                        'material_path': path,
+                        'property': property_name,
+                        'value': value,
+                    },
+                    {
+                        'action': 'set_material_shader_property',
+                        'materialPath': path,
+                        'property': property_name,
+                        'value': object_value,
+                    },
+                ))
+
         async def main():
             global raw
             for mode in ('2026-07-28', 'legacy'):
                 async with Client(server, mode=mode) as client:
                     tools = {tool.name: tool for tool in await client.list_tools()}
                     check('manage_material' in tools, 'registry discovery ' + mode)
+                    value_schema = tools['manage_material'].inputSchema['properties']['value']
+                    check(
+                        any(branch.get('type') == 'object' for branch in value_schema['anyOf']),
+                        'registered object value schema ' + mode,
+                    )
                     action_enum = tools['manage_material'].inputSchema['properties']['action']['enum']
                     check(
                         {'get_render_state', 'set_render_state'} <= set(action_enum),
@@ -784,7 +814,6 @@ def test_material_registered_sdk_slots_and_value_contracts(tmp_path):
                         )
                     for payload in (
                         {'action': 'bad'},
-                        {'action': 'set_material_shader_property', 'value': {'find': 'Assets/Fixture.png'}},
                         {'action': 'set_renderer_color', 'target': 0},
                         {'action': 'set_renderer_color', 'slot': 1.5},
                     ):

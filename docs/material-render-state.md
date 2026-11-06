@@ -14,6 +14,23 @@ The selected slot is forwarded with the existing color, search and modification-
 options. Native slot or material failures retain their structured response and cause
 an unsuccessful CLI exit.
 
+For `set_material_shader_property`, MCP `value` accepts JSON objects directly as
+well as JSON-encoded object strings. Texture instructions use `{"find":
+"Assets/Textures/Example.png", "method": "by_path"}`. Color objects use numeric
+`r`, `g`, `b`, `a` members; vector objects use `x`, `y` and optional `z`, `w`.
+The selected shader property determines which shape is valid. Native conversion
+rejects incompatible values before setting the property; admitting an object in
+the public schema does not bypass shader-type or texture-resolution checks.
+
+```json
+{
+  "action": "set_material_shader_property",
+  "material_path": "Assets/Materials/Example.mat",
+  "property": "_Color",
+  "value": { "r": 1, "g": 0, "b": 0, "a": 1 }
+}
+```
+
 Address exactly one material asset with `material_path`, or a renderer with `target`,
 optional `search_method`, and a zero-based `slot` (default `0`). Reads use
 `Renderer.sharedMaterials` and never instantiate a material. Asset addresses cannot

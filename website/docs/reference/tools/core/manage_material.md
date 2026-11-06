@@ -25,7 +25,7 @@ Manages Unity materials (properties, colors, shaders, render state). Read-only a
 | `property` | `str \| None` | — | Shader property name (e.g., _BaseColor, _MainTex) |
 | `shader` | `str \| None` | — | Shader name (default: Standard) |
 | `properties` | `dict[str, Any] \| str \| None` | — | Initial properties to set as {name: value} dict. |
-| `value` | `list[Any] \| float \| int \| str \| bool \| None` | — | Value to set (color array, float, texture path/instruction) |
+| `value` | `list[Any] \| dict[str, Any] \| float \| int \| str \| bool \| None` | — | Value to set: scalar, color/vector array or object, texture path or {"find": "Assets/...", "method": "by_path"} instruction. JSON-encoded strings remain supported. The native shader-property type validates the value shape. |
 | `color` | `list[float] \| dict[str, float] \| str \| None` | — | Color as [r, g, b] or [r, g, b, a] array, {r, g, b, a} object, or JSON string. |
 | `target` | `str \| None` | — | Target GameObject (name, path, or find instruction) |
 | `search_method` | `Literal['by_id', 'by_name', 'by_path', 'by_tag', 'by_layer', 'by_component'] \| None` | — | Search method for target |

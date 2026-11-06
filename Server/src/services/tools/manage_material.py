@@ -52,8 +52,10 @@ async def manage_material(
     | None = None,
     # set_material_shader_property
     value: Annotated[
-        list | float | int | str | bool | None,
-        "Value to set (color array, float, texture path/instruction)",
+        list | dict[str, Any] | float | int | str | bool | None,
+        "Value to set: scalar, color/vector array or object, texture path or "
+        '{"find": "Assets/...", "method": "by_path"} instruction. JSON-encoded strings remain supported. '
+        "The native shader-property type validates the value shape.",
     ]
     | None = None,
     # set_material_color / set_renderer_color

@@ -58,6 +58,8 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("[2,3,4,5]", 2f, 3f, 4f, 5f)]
         [TestCase("[2,3,4]", 2f, 3f, 4f, 0f)]
         [TestCase("[2,3]", 2f, 3f, 0f, 0f)]
+        [TestCase("{\"x\":2,\"y\":3}", 2f, 3f, 0f, 0f)]
+        [TestCase("{\"x\":2,\"y\":3,\"z\":4}", 2f, 3f, 4f, 0f)]
         [TestCase("{\"x\":2,\"y\":3,\"z\":4,\"w\":5}", 2f, 3f, 4f, 5f)]
         [TestCase("\"[0,-1,2,0]\"", 0f, -1f, 2f, 0f)]
         public void VectorValueIsPreparedWithoutMutation(string json, float x, float y, float z, float w)
@@ -106,6 +108,9 @@ namespace MCPForUnityTests.EditMode.Tools
         [TestCase("_Float", "[1,2,3,4]")]
         [TestCase("_Vector", "null")]
         [TestCase("_Unknown", "3")]
+        [TestCase("_Float", "{\"x\":1,\"y\":2}")]
+        [TestCase("_Int", "{\"r\":0,\"g\":0,\"b\":0,\"a\":1}")]
+        [TestCase("_Unknown", "{\"find\":\"Assets/Fixture.png\"}")]
         public void IncompatiblePropertyValueDoesNotWrite(string property, string json)
         {
             string before = EditorJsonUtility.ToJson(_material);

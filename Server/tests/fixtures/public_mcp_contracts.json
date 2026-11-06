@@ -11150,6 +11150,10 @@
                     "type": "array"
                   },
                   {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
                     "type": "number"
                   },
                   {
@@ -36673,6 +36677,10 @@
                   {
                     "items": {},
                     "type": "array"
+                  },
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
                   },
                   {
                     "type": "number"
