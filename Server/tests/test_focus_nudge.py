@@ -1,6 +1,6 @@
 """Tests for focus_nudge utility — should_nudge() logic and nudge_unity_focus() gating."""
 
-from tests.timing import await_signal
+from tests.timing import await_signal, watchdog_timeout
 
 import asyncio
 import json
@@ -271,6 +271,7 @@ class TestWindowsFocus:
         assert "[void][Win32]::GetWindowText" in run.call_args.args[0][-1]
         assert run.call_args.kwargs["encoding"] == "utf-8"
         assert run.call_args.kwargs["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        assert run.call_args.kwargs["timeout"] == 5
 
     @pytest.mark.parametrize(
         "output", ["27\nTerminal", "{}", '{"window_handle": 0}', '{"window_handle": true}']
@@ -397,6 +398,7 @@ class TestWindowsFocus:
         script = run.call_args.args[0][-1]
         assert "$targetHwnd = [IntPtr]54321" in script
         assert run.call_args.kwargs["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        assert run.call_args.kwargs["timeout"] == 5
         assert original.name not in script
         assert "if (-not [Win32]::SetForegroundWindow($targetHwnd)) { exit 1 }" in script
         assert "if ([Win32]::GetForegroundWindow() -ne $targetHwnd) { exit 1 }" in script
@@ -584,6 +586,9 @@ function Get-Process {
     real_run = subprocess.run
 
     def run_with_fake_api(args, **kwargs):
+        # Cold PowerShell startup and compilation of the synthetic Win32 type
+        # need a test completion watchdog, independent of the product deadline.
+        kwargs["timeout"] = watchdog_timeout()
         return real_run([*args[:-1], bootstrap + args[-1]], **kwargs)
 
     for key in (
