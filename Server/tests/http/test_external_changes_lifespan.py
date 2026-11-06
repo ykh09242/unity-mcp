@@ -114,7 +114,7 @@ async def test_old_lifespan_drain_preserves_new_scanner_generation(
         return True
 
     # Exercise scanner ownership independently of the hub's own generation rules.
-    monkeypatch.setattr(PluginHub, "shutdown", AsyncMock())
+    monkeypatch.setattr(PluginHub, "begin_shutdown", lambda: AsyncMock())
     first = FastMCP("old-scanner-generation")
     first._reference_graph_service = SimpleNamespace(aclose=graph_close)
     first_ready, start_exit = asyncio.Event(), asyncio.Event()
