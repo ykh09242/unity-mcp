@@ -124,6 +124,40 @@ def test_pages_build_uses_the_configured_deployment_origin() -> None:
     assert "workflow_dispatch" in config.get("on", config.get(True))
 
 
+def test_pages_publication_requires_the_current_checkout_reference_check() -> None:
+    # Given: deployment consumes only the successful build from this checkout.
+    jobs = workflow("docs-deploy.yml")["jobs"]
+    steps = jobs["build"]["steps"]
+    reference_steps = workflow("docs-generate.yml")["jobs"]["check"]["steps"]
+    check = next(step for step in reference_steps if step["name"] == "Drift check")
+    # When: the deployable build is inspected for the existing freshness command.
+    index = next(i for i, step in enumerate(steps) if step.get("run") == check["run"])
+    gate = steps[index]
+    # Then: stale references fail before build/upload, for manual runs as well as pushes.
+    assert jobs["deploy"]["needs"] == "build"
+    assert gate["working-directory"] == check["working-directory"]
+    assert "if" not in gate and not gate.get("continue-on-error")
+    assert index < next(i for i, step in enumerate(steps) if step["name"] == "Build")
+    assert index < next(
+        i for i, step in enumerate(steps) if step["name"] == "Upload Pages artifact"
+    )
+
+
+@pytest.mark.parametrize("event", ["push", "pull_request"])
+@pytest.mark.parametrize(
+    "path",
+    ["MCPForUnity/package.json", "MCPForUnity/Editor/Clients/Configurators/ExampleConfigurator.cs"],
+)
+def test_pages_metadata_changes_select_site_validation(event: str, path: str) -> None:
+    # Given: either native package metadata or a client configurator changes alone.
+    config = workflow("docs-deploy.yml")
+    triggers = config.get("on", config.get(True))
+    # When: GitHub evaluates the event's real positive path filters.
+    selected = any(fnmatchcase(path, pattern) for pattern in triggers[event]["paths"])
+    # Then: the metadata consumer is rebuilt for the candidate commit.
+    assert selected
+
+
 def push_selects(workflow_name: str, branch: str, path: str) -> bool:
     """Evaluate the simple positive path and branch filters used by these workflows."""
     config = workflow(workflow_name)
