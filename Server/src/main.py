@@ -45,7 +45,7 @@ from services.custom_tool_service import (
 )
 from core.server_build import RUNNING_SERVER
 from core.sdk_compatibility import runtime_sdk_report
-from services.execution_receipt_context import owned_to_thread
+from services.execution_receipt_context import owned_to_thread, submit_owned_executor
 from services.reference_graph.reconcile import drained_task
 from core.config import config, parse_trusted_proxy_cidrs
 from core.custom_instructions import (
@@ -97,7 +97,7 @@ import os
 from pathlib import Path
 import threading
 import time
-from typing import TYPE_CHECKING, Any, AsyncIterator, Literal
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, TypeVar
 from urllib.parse import urlparse
 
 # Workaround for environments where tool signature evaluation runs with a globals
@@ -220,6 +220,31 @@ _server_version: str | None = None
 # In-memory custom tool service initialized after MCP construction
 custom_tool_service: CustomToolService | None = None
 
+# Stop admitting startup work after this budget. An already running worker must
+# still physically settle before cancellation/deadline cleanup can release it.
+STARTUP_CONNECT_TIMEOUT = 10.0
+_StartupResult = TypeVar("_StartupResult")
+
+
+async def _startup_worker(
+    function: Callable[[], _StartupResult], deadline: float
+) -> _StartupResult:
+    """Drain actual executor work while preserving its waiter's cancellation scope."""
+    loop = asyncio.get_running_loop()
+    if loop.time() >= deadline:
+        raise TimeoutError("Startup Unity connection deadline reached")
+    future = submit_owned_executor(loop, None, function)
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError as cancellation:
+        # Repeated cancellation cannot release physical ownership. Preserve the
+        # original exception so AnyIO can recognize its own cancel-scope exit.
+        with anyio.CancelScope(shield=True):
+            try:
+                await drained_task(asyncio.gather(future, return_exceptions=True))
+            finally:
+                raise cancellation
+
 
 @asynccontextmanager
 async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
@@ -297,8 +322,15 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                 )
             else:
                 # Initialize connection pool and discover instances
-                _unity_connection_pool = get_unity_connection_pool()
-                instances = _unity_connection_pool.discover_all_instances()
+                loop = asyncio.get_running_loop()
+                startup_deadline = loop.time() + STARTUP_CONNECT_TIMEOUT
+                async with asyncio.timeout_at(startup_deadline):
+                    _unity_connection_pool = await _startup_worker(
+                        get_unity_connection_pool, startup_deadline
+                    )
+                    instances = await _startup_worker(
+                        _unity_connection_pool.discover_all_instances, startup_deadline
+                    )
 
                 if instances:
                     logger.info(
@@ -307,7 +339,10 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
 
                     # Try to connect to default instance
                     try:
-                        _unity_connection_pool.get_connection()
+                        async with asyncio.timeout_at(startup_deadline):
+                            await _startup_worker(
+                                _unity_connection_pool.get_connection, startup_deadline
+                            )
                         logger.info("Connected to default Unity instance on startup")
 
                         # In stdio mode, query Unity for tool enabled states and sync
@@ -317,7 +352,10 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                             try:
                                 from services.tools import sync_tool_visibility_from_unity
 
-                                sync_result = await sync_tool_visibility_from_unity(notify=False)
+                                async with asyncio.timeout_at(startup_deadline):
+                                    sync_result = await sync_tool_visibility_from_unity(
+                                        notify=False
+                                    )
                                 if sync_result.get("synced"):
                                     logger.info(
                                         "Stdio startup: synced tool visibility from Unity — "

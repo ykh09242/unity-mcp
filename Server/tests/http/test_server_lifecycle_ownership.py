@@ -3,6 +3,7 @@
 from tests.timing import await_signal, watchdog_timeout
 
 import asyncio  # noqa: ANYIO_OK -- inspect hub-owned task lifetimes.
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -15,7 +16,7 @@ from starlette.websockets import WebSocketState
 import main
 from core.config import config
 from tests.remote_credentials import remote_credentials
-from transport.models import RegisterMessage
+from transport.models import RegisterMessage, RegisterToolsMessage, TOOL_SETTINGS_CAPABILITY
 from transport.plugin_hub import PluginHub
 from transport.plugin_registry import PluginRegistry
 
@@ -28,7 +29,14 @@ async def lifecycle_state(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(main.threading, "Timer", timer)
     monkeypatch.setattr(main, "_plugin_registry", None)
     monkeypatch.setattr(main, "_unity_connection_pool", None)
-    for name in ("_connections", "_pending", "_ping_tasks", "_last_pong"):
+    for name in (
+        "_connections",
+        "_pending",
+        "_ping_tasks",
+        "_last_pong",
+        "_admitted",
+        "_eviction_tasks",
+    ):
         monkeypatch.setattr(PluginHub, name, {})
     for name in ("_registry", "_lock", "_loop", "_mcp"):
         monkeypatch.setattr(PluginHub, name, None)
@@ -465,3 +473,317 @@ async def test_shutdown_owns_pool_created_after_skipped_startup(lifecycle_state,
     assert connections._unity_connection_pool is None
     async with main.server_lifespan(FastMCP("next-generation")):
         assert connections.get_unity_connection_pool() is not pool
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_phase", ["discover_all_instances", "get_connection"])
+@pytest.mark.parametrize("ending", ["cancel", "deadline", "level_cancel"])
+async def test_startup_worker_keeps_loop_responsive_and_drains_before_cleanup(
+    lifecycle_state, monkeypatch, blocked_phase, ending
+):
+    monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "0")
+    monkeypatch.setattr(config, "transport_mode", "http")
+    monkeypatch.setattr(main, "STARTUP_CONNECT_TIMEOUT", 0.02, raising=False)
+    entered, expired = asyncio.Event(), asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    pool = Mock()
+    pool.aclose = AsyncMock()
+    pool.discover_all_instances.return_value = [SimpleNamespace(id="Fixture@hash")]
+
+    def blocked(*args):
+        # Fail directly on the original synchronous startup path, without hanging it.
+        assert threading.get_ident() != loop_thread
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(watchdog_timeout())
+        return (
+            [SimpleNamespace(id="Fixture@hash")]
+            if blocked_phase == "discover_all_instances"
+            else None
+        )
+
+    getattr(pool, blocked_phase).side_effect = blocked
+    monkeypatch.setattr(main, "get_unity_connection_pool", Mock(return_value=pool))
+    yielded = asyncio.Event()
+    scopes = []
+
+    async def start():
+        with anyio.CancelScope() as scope:
+            scopes.append(scope)
+            async with main.server_lifespan(FastMCP("worker-startup")):
+                yielded.set()
+
+    startup = asyncio.create_task(start())
+    loop.call_later(0.04, expired.set)
+    try:
+        await await_signal(entered, "startup worker", producers=(startup,))
+        if ending == "cancel":
+            startup.cancel()
+        elif ending == "level_cancel":
+            scopes[0].cancel()
+        await await_signal(expired, "event-loop ticker")
+        assert not startup.done(), "Actual blocking work must remain owned until it exits"
+        assert not yielded.is_set()
+        pool.aclose.assert_not_awaited()
+        if ending == "cancel":
+            startup.cancel()
+        release.set()
+        result = await asyncio.gather(startup, return_exceptions=True)
+        if ending == "cancel":
+            assert isinstance(result[0], asyncio.CancelledError)
+            assert not yielded.is_set()
+        elif ending == "deadline":
+            assert result == [None]
+            assert yielded.is_set()
+        else:
+            assert result == [None]
+            assert not yielded.is_set()
+        pool.aclose.assert_awaited_once()
+        if blocked_phase == "discover_all_instances":
+            pool.get_connection.assert_not_called()
+    finally:
+        release.set()
+        await asyncio.gather(startup, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("barrier", ["notification_close", "hub_lock"])
+async def test_old_hub_shutdown_preserves_every_new_generation_owner(
+    lifecycle_state, monkeypatch, barrier
+):
+    old_registry = PluginRegistry()
+    PluginHub.configure(old_registry)
+    hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
+    old_socket = socket_stub()
+    await hub._handle_register(old_socket, RegisterMessage(project_hash="old"))
+    old_ping = next(iter(PluginHub._ping_tasks.values()))
+    old_pending = asyncio.get_running_loop().create_future()
+    PluginHub._pending["old-command"] = {"future": old_pending, "session_id": "old"}
+    old_notifier = PluginHub._catalog_notifications
+    old_lock = PluginHub._lock
+    entered, release, new_eviction_release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    old_eviction_release, notification_started = asyncio.Event(), asyncio.Event()
+    notification_release = asyncio.Event()
+    old_eviction = asyncio.create_task(old_eviction_release.wait())
+    PluginHub._eviction_tasks[(id(old_registry), "old")] = old_eviction
+    original_close = old_notifier.close
+
+    async def close_notifications():
+        entered.set()
+        if barrier == "notification_close":
+            await release.wait()
+        await original_close()
+
+    async def send_notification():
+        notification_started.set()
+        await notification_release.wait()
+
+    monkeypatch.setattr(old_notifier, "close", close_notifications)
+    if barrier == "hub_lock":
+        await old_lock.acquire()
+    shutdown = asyncio.create_task(PluginHub.shutdown())
+    new_eviction = None
+    new_pending = asyncio.get_running_loop().create_future()
+    try:
+        await await_signal(entered, "old generation cleanup", producers=(shutdown,))
+        new_registry = PluginRegistry()
+        server = FastMCP("new-hub")
+        PluginHub.configure(new_registry, mcp=server)
+        connection = Mock(send_tool_list_changed=AsyncMock(side_effect=send_notification))
+        PluginHub._catalog_notifications.publish([connection])
+        await await_signal(notification_started, "new generation notification")
+        notification_task = next(iter(PluginHub._catalog_notifications._tasks))
+        new_socket = socket_stub()
+        await hub._handle_register(new_socket, RegisterMessage(project_hash="new"))
+        session_id = next(sid for sid, ws in PluginHub._connections.items() if ws is new_socket)
+        PluginHub._pending["new-command"] = {"future": new_pending, "session_id": session_id}
+        new_eviction = asyncio.create_task(new_eviction_release.wait())
+        PluginHub._eviction_tasks[(id(new_registry), session_id)] = new_eviction
+        owners = {
+            name: getattr(PluginHub, name)
+            for name in (
+                "_registry",
+                "_mcp",
+                "_loop",
+                "_lock",
+                "_connections",
+                "_pending",
+                "_admitted",
+                "_ping_tasks",
+                "_last_pong",
+                "_eviction_tasks",
+                "_catalog_notifications",
+                "_editor_states",
+                "_large_results",
+                "_raw_results",
+                "_readiness_reads",
+                "_ordinary_state_reads",
+                "_ordinary_state_flights",
+            )
+        }
+        release.set()
+        if old_lock.locked():
+            old_lock.release()
+        await asyncio.sleep(0)
+        assert not shutdown.done(), "Old eviction cleanup must retain its original owner"
+        old_eviction_release.set()
+        done, _ = await asyncio.wait({shutdown}, timeout=watchdog_timeout(2.0))
+        assert shutdown in done, "Old cleanup waited on a newly configured eviction owner"
+        shutdown.result()
+        assert PluginHub.is_configured()
+        for name, owner in owners.items():
+            assert getattr(PluginHub, name) is owner, name
+        assert await new_registry.get_session(session_id) is not None
+        assert PluginHub._connections[session_id] is new_socket
+        assert not new_pending.done()
+        assert not PluginHub._ping_tasks[session_id].done()
+        assert not new_eviction.done()
+        assert not notification_task.done()
+        new_socket.close.assert_not_awaited()
+        old_socket.close.assert_awaited_once()
+        assert old_ping.done()
+        assert isinstance(old_pending.exception(), Exception)
+        assert await old_registry.list_sessions() == {}
+    finally:
+        release.set()
+        if old_lock.locked():
+            old_lock.release()
+        new_eviction_release.set()
+        old_eviction_release.set()
+        notification_release.set()
+        if new_eviction is not None:
+            await new_eviction
+        new_pending.cancel()
+        await asyncio.gather(shutdown, return_exceptions=True)
+        for future in (old_pending, new_pending):
+            if future.done() and not future.cancelled():
+                future.exception()
+        await PluginHub.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["register", "register_tools_for_session", "unregister"])
+async def test_registration_waiting_on_old_registry_cannot_publish_into_replacement(
+    lifecycle_state, monkeypatch, operation
+):
+    old_registry = PluginRegistry()
+    PluginHub.configure(old_registry)
+    hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
+    old_socket = socket_stub()
+    PluginHub._admitted[id(old_socket)] = (old_socket, None)
+    if operation != "register":
+        await hub._handle_register(old_socket, RegisterMessage(project_hash="old"))
+    entered = asyncio.Event()
+    mutate = getattr(old_registry, operation)
+
+    async def blocked_register(*args, **kwargs):
+        entered.set()
+        return await mutate(*args, **kwargs)
+
+    monkeypatch.setattr(old_registry, operation, blocked_register)
+    await old_registry._lock.acquire()
+    if operation == "register":
+        mutation = hub._handle_register(old_socket, RegisterMessage(project_hash="old"))
+    elif operation == "register_tools_for_session":
+        mutation = hub._handle_register_tools(old_socket, RegisterToolsMessage(tools=[]))
+    else:
+        mutation = PluginHub._evict_connection_owned(old_socket.state.plugin_session_id, None)
+    registration = asyncio.create_task(mutation)
+    shutdown = None
+    try:
+        await await_signal(entered, "registry lock", producers=(registration,))
+        shutdown = asyncio.create_task(PluginHub.shutdown())
+        await asyncio.sleep(0)
+        assert not PluginHub.is_configured()
+        new_registry = PluginRegistry()
+        PluginHub.configure(new_registry)
+        new_socket = socket_stub()
+        await hub._handle_register(new_socket, RegisterMessage(project_hash="new"))
+        expected_connections = dict(PluginHub._connections)
+        expected_pings = dict(PluginHub._ping_tasks)
+        publish = Mock(wraps=PluginHub._publish_session_catalog)
+        monkeypatch.setattr(PluginHub, "_publish_session_catalog", publish)
+        old_registry._lock.release()
+        await asyncio.gather(registration, return_exceptions=True)
+        await asyncio.wait_for(shutdown, timeout=watchdog_timeout())
+        assert PluginHub._connections == expected_connections
+        assert PluginHub._ping_tasks == expected_pings
+        assert len(await new_registry.list_sessions()) == 1
+        publish.assert_not_called()
+        new_socket.close.assert_not_awaited()
+    finally:
+        if old_registry._lock.locked():
+            old_registry._lock.release()
+        await asyncio.gather(registration, return_exceptions=True)
+        if shutdown is not None:
+            await shutdown
+        await PluginHub.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["registration_ack", "tool_settings_receipt"])
+@pytest.mark.parametrize("ack_failure", [False, True])
+async def test_catalog_notification_after_ack_cannot_use_replacement_generation(
+    lifecycle_state, monkeypatch, operation, ack_failure
+):
+    old_registry = PluginRegistry()
+    PluginHub.configure(old_registry)
+    hub = PluginHub({"type": "websocket"}, AsyncMock(), AsyncMock())
+    old_socket = socket_stub()
+    if operation == "tool_settings_receipt":
+        await hub._handle_register(old_socket, RegisterMessage(project_hash="old"))
+        old_socket.state.plugin_features = frozenset({TOOL_SETTINGS_CAPABILITY})
+
+    # Model a committed catalog delta that requires its owning clients to refresh.
+    monkeypatch.setattr(
+        PluginHub,
+        "_publish_session_catalog",
+        Mock(return_value={"changed": True, "global_component_changed": False}),
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def blocked_ack(payload):
+        entered.set()
+        await release.wait()
+        if ack_failure:
+            raise OSError("fixture ACK failed")
+
+    old_socket.send_json.side_effect = blocked_ack
+    if operation == "registration_ack":
+        mutation = hub._handle_register(old_socket, RegisterMessage(project_hash="old"))
+    else:
+        mutation = hub._handle_register_tools(
+            old_socket,
+            RegisterToolsMessage(tools=[], settings_epoch="a" * 32, desired_revision=1),
+        )
+    pending = asyncio.create_task(mutation)
+    try:
+        await await_signal(entered, "committed registration ACK", producers=(pending,))
+        assert len(await old_registry.list_sessions()) == 1
+        await PluginHub.shutdown()
+        new_registry = PluginRegistry()
+        new_server = FastMCP("replacement-notifications")
+        new_server._catalog_subscriptions = Mock()
+        PluginHub.configure(new_registry, mcp=new_server)
+        new_socket = socket_stub()
+        await hub._handle_register(new_socket, RegisterMessage(project_hash="new"))
+        new_server._catalog_subscriptions.reset_mock()
+        notifications = Mock(wraps=PluginHub._catalog_notifications.publish)
+        monkeypatch.setattr(PluginHub._catalog_notifications, "publish", notifications)
+        expected_connections = dict(PluginHub._connections)
+        release.set()
+        if operation == "registration_ack" and ack_failure:
+            with pytest.raises(OSError, match="fixture ACK failed"):
+                await pending
+        else:
+            await pending
+        notifications.assert_not_called()
+        new_server._catalog_subscriptions.publish.assert_not_called()
+        assert PluginHub._connections == expected_connections
+        assert len(await new_registry.list_sessions()) == 1
+        new_socket.close.assert_not_awaited()
+    finally:
+        release.set()
+        await asyncio.gather(pending, return_exceptions=True)
+        await PluginHub.shutdown()

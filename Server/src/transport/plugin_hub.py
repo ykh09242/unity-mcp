@@ -880,6 +880,9 @@ class PluginHub(WebSocketEndpoint):
     ) -> None:
         cls._fence_plugin_owners()
         cls._catalog_notifications.reset()
+        # A closing generation can still be draining this notifier. New deliveries
+        # need a distinct owner so its eventual close cannot cancel them.
+        cls._catalog_notifications = ToolListNotifier()
         previous_registry = cls._registry
         cls._registry = registry
         if previous_registry is not None and previous_registry is not registry:
@@ -933,35 +936,44 @@ class PluginHub(WebSocketEndpoint):
 
     @classmethod
     async def shutdown(cls) -> None:
-        """Release the plugin resources owned by the current server lifespan."""
+        """Detach this generation before suspension; a later configure may proceed.
+
+        Reconfiguration and shutdown run on the hub's event loop. A replacement
+        lifespan supplies a fresh registry. Cleanup only touches captured resources,
+        even while waiting for an old hub lock.
+        Result charges remain process-wide until their actual workers release them.
+        """
         cls._fence_plugin_owners()
-        await cls._catalog_notifications.close()
         lock = cls._lock
-        if lock is None:
-            return
-        async with lock:
-            registry = cls._registry
-            sockets = {id(ws): ws for ws in cls._connections.values()}
-            sockets.update({key: entry[0] for key, entry in cls._admitted.items()})
-            connections = list(sockets.values())
-            ping_tasks = list(cls._ping_tasks.values())
-            pending = list(cls._pending.values())
-            for websocket in connections:
-                cls._discard_socket_state(websocket)
-            cls._editor_states.reset()
-            cls._large_results = None
-            cls._raw_results.clear()
-            cls._connections.clear()
-            cls._ping_tasks.clear()
-            cls._last_pong.clear()
-            cls._pending.clear()
-            cls._admitted.clear()
-            cls._registry = None
-            if registry is not None:
-                registry.notify_changed()
-            cls._mcp = None
-            cls._loop = None
-            cls._lock = None
+        registry = cls._registry
+        notifications = cls._catalog_notifications
+        sockets = {id(ws): ws for ws in cls._connections.values()}
+        sockets.update({key: entry[0] for key, entry in cls._admitted.items()})
+        connections = list(sockets.values())
+        ping_tasks = list(cls._ping_tasks.values())
+        pending = list(cls._pending.values())
+        eviction_tasks = list(cls._eviction_tasks.values())
+        for websocket in connections:
+            cls._discard_socket_state(websocket)
+        cls._editor_states = EditorStateStore()
+        cls._large_results = None
+        cls._raw_results = ChargeLedger()
+        cls._connections = {}
+        cls._ping_tasks = {}
+        cls._last_pong = {}
+        cls._pending = {}
+        cls._admitted = {}
+        cls._eviction_tasks = {}
+        cls._readiness_reads = SharedToolReads()
+        cls._ordinary_state_reads = SharedToolReads()
+        cls._ordinary_state_flights = weakref.WeakKeyDictionary()
+        cls._registry = None
+        cls._mcp = None
+        cls._loop = None
+        cls._lock = None
+        cls._shutdown_requested = True
+        if registry is not None:
+            registry.notify_changed()
 
         for entry in pending:
             future = entry.get("future")
@@ -969,11 +981,17 @@ class PluginHub(WebSocketEndpoint):
                 future.set_exception(PluginDisconnectedError("Unity plugin server shut down"))
         for task in ping_tasks:
             task.cancel()
+        await notifications.close()
+        # An operation may already hold the old lock. Let its fenced continuation
+        # finish before disposing that registry; never acquire the replacement lock.
+        if lock is not None:
+            async with lock:
+                pass
         await asyncio.gather(*ping_tasks, return_exceptions=True)
         if registry is not None:
             await registry.clear()
         await asyncio.gather(*(cls._close_websocket(ws) for ws in connections))
-        await asyncio.gather(*list(cls._eviction_tasks.values()), return_exceptions=True)
+        await asyncio.gather(*eviction_tasks, return_exceptions=True)
 
     @classmethod
     async def request_idle_shutdown(
@@ -1165,12 +1183,16 @@ class PluginHub(WebSocketEndpoint):
 
     async def on_disconnect(self, websocket: WebSocket, close_code: int) -> None:
         cls = type(self)
-        cls._admitted.pop(id(websocket), None)
+        admitted = cls._admitted.pop(id(websocket), None)
         lock = cls._lock
         if lock is None:
             return
         catalog_changes = []
         async with lock:
+            if cls._lock is not lock or (
+                admitted is None and all(ws is not websocket for ws in cls._connections.values())
+            ):
+                return
             cls._discard_socket_state(websocket)
             session_ids = [sid for sid, ws in cls._connections.items() if ws is websocket]
             for session_id in session_ids:
@@ -1202,6 +1224,8 @@ class PluginHub(WebSocketEndpoint):
                         )
                 if cls._registry:
                     catalog_changes.append(await cls._unregister_catalog(cls._registry, session_id))
+                    if cls._lock is not lock:
+                        return
                 logger.info(f"Plugin session {session_id} disconnected ({close_code})")
 
         for outcome, scope in catalog_changes:
@@ -2801,6 +2825,8 @@ class PluginHub(WebSocketEndpoint):
             try:
 
                 def publish_registration(new_session, prospective):
+                    if cls._registry is not registry or cls._lock is not lock:
+                        raise RuntimeError("Plugin hub generation retired during registration")
                     lease = cls._socket_lease(websocket)
                     if lease is not None:
                         lease.check_now()
@@ -2830,6 +2856,9 @@ class PluginHub(WebSocketEndpoint):
                 )
             except ValueError:
                 await websocket.close(code=4429, reason="Plugin session limit reached")
+                return
+            if cls._registry is not registry or cls._lock is not lock:
+                await websocket.close(code=1013, reason="Plugin server closing")
                 return
             # Clean up the evicted session's connection, ping loop, and pending commands
             # so they don't linger as orphans after a domain-reload reconnection race.
@@ -2921,6 +2950,9 @@ class PluginHub(WebSocketEndpoint):
             if evicted_ws is not None:
                 await cls._close_websocket(evicted_ws)
 
+        # ACK I/O and evicted-socket cleanup can outlive this configured hub.
+        if cls._registry is not registry or cls._lock is not lock:
+            return
         await cls._notify_committed_catalog(catalog_outcome, catalog_scope)
 
         if user_id:
@@ -3024,6 +3056,8 @@ class PluginHub(WebSocketEndpoint):
                     return
 
                 def publish(session, prepared):
+                    if cls._registry is not registry or cls._lock is not lock:
+                        raise RuntimeError("Plugin hub generation retired during tool registration")
                     lease = cls._socket_lease(websocket)
                     if lease is not None:
                         lease.check_now()
@@ -3056,6 +3090,8 @@ class PluginHub(WebSocketEndpoint):
                     ),
                 )
         except Exception as error:
+            if cls._registry is not registry or cls._lock is not lock:
+                return
             names = [tool.name for tool in payload.tools[:256]]
             reason_code = (
                 "duplicate_name" if len(set(names)) != len(names) else "publication_failed"
@@ -3072,6 +3108,9 @@ class PluginHub(WebSocketEndpoint):
             await self._send_tool_settings_result(
                 websocket, correlation, "applied", committed=committed
             )
+        # A receipt send may suspend while shutdown replaces notification owners.
+        if cls._registry is not registry or cls._lock is not lock:
+            return
         try:
             await cls._notify_committed_catalog(outcome, scope)
         except Exception as error:
@@ -3118,6 +3157,8 @@ class PluginHub(WebSocketEndpoint):
 
         def publish(session, remaining):
             nonlocal outcome, scope
+            if cls._registry is not registry:
+                return
             outcome = cls._publish_session_catalog(
                 session, {}, remaining, known=False, withdraw=True
             )
@@ -3875,6 +3916,8 @@ class PluginHub(WebSocketEndpoint):
         catalog_change = (None, None)
         publication_error = None
         async with lock:
+            if cls._lock is not lock:
+                return False
             if expected is not None and (
                 cls._registry is not expected[0]
                 or cls._connections.get(session_id) is not expected[1]
