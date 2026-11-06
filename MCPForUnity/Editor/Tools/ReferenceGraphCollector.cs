@@ -91,7 +91,7 @@ namespace MCPForUnity.Editor.Tools
             if (!ToolConsentThread.IsMainThread)
                 throw new InvalidOperationException("Reference collection requires the Editor thread.");
             string action = request.Value<string>("action");
-            if (action != "inventory" && action != "dependencies")
+            if (action != "inventory" && action != "dependencies" && action != "ignore_rules")
                 return Handle(request);
             // Establish ordinary observation/idle fences before any native census is queued.
             Handle(new JObject { ["action"] = "status" });
@@ -109,23 +109,59 @@ namespace MCPForUnity.Editor.Tools
                     && !EditorApplication.isCompiling
                     && !EditorApplication.isUpdating;
             }
-            if (action == "inventory")
+            if (action == "inventory" || action == "ignore_rules")
             {
-                if (request["snapshot"] != null || offset != 0 || (inventory != null && inventoryEpoch == epoch && inventoryRevision == revision))
+                if (request["snapshot"] != null || offset != 0)
                     return Handle(request);
-                ReferenceGraphPreparation.Snapshot snapshot = await ReferenceGraphPreparation.Acquire(
-                    "inventory:" + epoch + ":" + revision,
-                    () => new ReferenceGraphPreparation("inventory", () => AssetDatabase.FindAssets(""), value => value, Current),
-                    token
-                );
-                token.ThrowIfCancellationRequested();
-                if (!Current())
-                    throw new InvalidInventorySnapshotException("Inventory source changed during preparation; restart the census.");
-                inventory = snapshot.Items;
-                inventoryToken = snapshot.Token;
-                inventoryEpoch = epoch;
-                inventoryRevision = revision;
+                if (action == "ignore_rules" && ignoreCandidates != null && ignoreCandidateEpoch == epoch)
+                    return Handle(request);
+                if (inventory == null || inventoryEpoch != epoch || inventoryRevision != revision)
+                {
+                    ReferenceGraphPreparation.Snapshot snapshot = await ReferenceGraphPreparation.Acquire(
+                        "inventory:" + epoch + ":" + revision,
+                        () => new ReferenceGraphPreparation("inventory", () => AssetDatabase.FindAssets(""), value => value, Current),
+                        token
+                    );
+                    token.ThrowIfCancellationRequested();
+                    if (!Current())
+                        throw new InvalidInventorySnapshotException("Inventory source changed during preparation; restart the census.");
+                    inventory = snapshot.Items;
+                    inventoryToken = snapshot.Token;
+                    inventoryEpoch = epoch;
+                    inventoryRevision = revision;
+                }
                 inventoryUsed = EditorApplication.timeSinceStartup;
+                if (action == "ignore_rules")
+                {
+                    ReferenceGraphIgnoreRules rules = IgnoreRules();
+                    string[] source = inventory;
+                    bool IgnoreCurrent() => Current() && ReferenceEquals(ignoreRules, rules) && ignoreCandidateEpoch == epoch;
+                    await ReferenceGraphPreparation.Acquire(
+                        "ignore_rules:" + epoch + ":" + revision,
+                        () =>
+                        {
+                            Dictionary<string, string> discovered = BaseIgnoreCandidates();
+                            return new ReferenceGraphPreparation(
+                                "ignore_rules",
+                                () => (string[])source.Clone(),
+                                guid =>
+                                {
+                                    AddIgnoreParents(discovered, AssetDatabase.GUIDToAssetPath(guid));
+                                    return null;
+                                },
+                                IgnoreCurrent
+                            )
+                            {
+                                Publish = () => ignoreCandidates = discovered,
+                            };
+                        },
+                        token
+                    );
+                    token.ThrowIfCancellationRequested();
+                    if (!IgnoreCurrent())
+                        throw new InvalidOperationException("Ignore source changed during preparation; restart collection.");
+                    return Handle(request);
+                }
                 var page = (JObject)request.DeepClone();
                 page["snapshot"] = inventoryToken;
                 return Handle(page);
@@ -380,11 +416,7 @@ namespace MCPForUnity.Editor.Tools
                 // or perform another whole-project query on ordinary status/imports.
                 if (inventory == null || inventoryEpoch != ReferenceGraphJournal.Epoch)
                     Inventory(new JObject(), 1);
-                var discovered = new Dictionary<string, string>(StringComparer.Ordinal);
-                string projectRoot = Path.GetDirectoryName(Application.dataPath);
-                discovered[".gitignore"] = SafePathUtility.ResolveWithinRoot(projectRoot, ".gitignore");
-                discovered["Assets/.gitignore"] = SafePathUtility.ResolveWithinRoot(Application.dataPath, ".gitignore");
-                discovered["Packages/.gitignore"] = SafePathUtility.ResolveWithinRoot(projectRoot, "Packages/.gitignore");
+                Dictionary<string, string> discovered = BaseIgnoreCandidates();
                 foreach (string guid in inventory)
                     AddIgnoreParents(discovered, AssetDatabase.GUIDToAssetPath(guid));
                 ignoreCandidates = discovered;
@@ -393,6 +425,17 @@ namespace MCPForUnity.Editor.Tools
                 AddIgnoreParents(ignoreCandidates, path);
             pendingIgnorePaths.Clear();
             return new Dictionary<string, string>(ignoreCandidates, StringComparer.Ordinal);
+        }
+
+        private static Dictionary<string, string> BaseIgnoreCandidates()
+        {
+            string projectRoot = Path.GetDirectoryName(Application.dataPath);
+            return new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [".gitignore"] = SafePathUtility.ResolveWithinRoot(projectRoot, ".gitignore"),
+                ["Assets/.gitignore"] = SafePathUtility.ResolveWithinRoot(Application.dataPath, ".gitignore"),
+                ["Packages/.gitignore"] = SafePathUtility.ResolveWithinRoot(projectRoot, "Packages/.gitignore"),
+            };
         }
 
         private static void AddIgnoreParents(Dictionary<string, string> candidates, string path)

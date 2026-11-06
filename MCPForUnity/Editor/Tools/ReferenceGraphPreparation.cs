@@ -41,6 +41,9 @@ namespace MCPForUnity.Editor.Tools
         private int inputItems;
         private long operations;
 
+        // Publish derived caches only inside the final source/cancellation fence.
+        internal Action Publish { private get; set; }
+
         static ReferenceGraphPreparation()
         {
             AssemblyReloadEvents.beforeAssemblyReload += CancelAll;
@@ -133,10 +136,15 @@ namespace MCPForUnity.Editor.Tools
                 preparation.Step(8192, 4, CancellationToken.None);
                 preparationMilliseconds += slice.Elapsed.TotalMilliseconds;
                 state = preparation.Stage;
+                if (callers.TrueForAll(caller => caller.IsCancellationRequested))
+                    throw new OperationCanceledException();
                 if (!current())
                     throw new InvalidOperationException("Reference source revision changed during preparation; restart collection when idle.");
                 if (preparation.Complete)
+                {
+                    Publish?.Invoke();
                     Finish("complete", null);
+                }
             }
             catch (Exception error)
             {

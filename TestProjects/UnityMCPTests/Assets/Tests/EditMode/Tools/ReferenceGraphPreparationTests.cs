@@ -168,6 +168,149 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public async Task ColdStatusIgnoreRulesInventoryOrderUsesSharedStagedCensus()
+        {
+            ResetColdCollector();
+            var status = await ReferenceGraphCollector.HandleAsync(new Newtonsoft.Json.Linq.JObject { ["action"] = "status" }, CancellationToken.None);
+            Assert.IsNull(CollectorField("inventory"), "Status must leave the census cold.");
+            var request = new Newtonsoft.Json.Linq.JObject { ["action"] = "ignore_rules", ["page_size"] = 1 };
+            Task<Newtonsoft.Json.Linq.JObject> pending = ReferenceGraphCollector.HandleAsync(request, CancellationToken.None);
+            Assert.IsFalse(pending.IsCompleted, "Cold ignore discovery must yield before its native census.");
+            Assert.IsNull(CollectorField("inventory"), "Command admission must not run the native census.");
+            Newtonsoft.Json.Linq.JObject rules = await pending;
+            Assert.AreEqual(status.Value<string>("epoch"), rules.Value<string>("epoch"));
+            Assert.AreEqual(status.Value<long>("revision"), rules.Value<long>("revision"));
+            string inventorySnapshot = (string)CollectorField("inventoryToken");
+            string[] census = (string[])CollectorField("inventory");
+            CollectionAssert.AreEqual(census.OrderBy(value => value, StringComparer.Ordinal), census);
+            Task<Newtonsoft.Json.Linq.JObject> inventory = ReferenceGraphCollector.HandleAsync(
+                new Newtonsoft.Json.Linq.JObject { ["action"] = "inventory", ["page_size"] = 1 },
+                CancellationToken.None
+            );
+            Assert.IsTrue(inventory.IsCompleted, "Inventory must reuse the census prepared for ignore discovery.");
+            Assert.AreEqual(inventorySnapshot, (await inventory).Value<string>("snapshot"));
+            var continuation = (Newtonsoft.Json.Linq.JObject)request.DeepClone();
+            continuation["snapshot"] = rules["snapshot"];
+            continuation["offset"] = rules.Value<int?>("next_offset") ?? 0;
+            Assert.AreEqual(
+                rules.Value<string>("snapshot"),
+                (await ReferenceGraphCollector.HandleAsync(continuation, CancellationToken.None)).Value<string>("snapshot")
+            );
+        }
+
+        [Test]
+        public async Task ColdIgnoreCancellationDoesNotPublishInventoryOrCandidates()
+        {
+            ResetColdCollector();
+            ReferenceGraphCollector.Handle(new Newtonsoft.Json.Linq.JObject { ["action"] = "status" });
+            using var cancellation = new CancellationTokenSource();
+            Task<Newtonsoft.Json.Linq.JObject> pending = ReferenceGraphCollector.HandleAsync(
+                new Newtonsoft.Json.Linq.JObject { ["action"] = "ignore_rules" },
+                cancellation.Token
+            );
+            Assert.IsFalse(pending.IsCompleted, "Cold ignore discovery must be cancellable before the census.");
+            cancellation.Cancel();
+            try
+            {
+                await pending;
+                Assert.Fail("Canceled ignore discovery published a snapshot.");
+            }
+            catch (OperationCanceledException) { }
+            Assert.IsNull(CollectorField("inventory"));
+            Assert.IsNull(CollectorField("ignoreCandidates"));
+        }
+
+        [Test]
+        public async Task IgnoreParentPreparationRejectsAChangedSourceBeforePublication()
+        {
+            ResetColdCollector();
+            await ReferenceGraphCollector.HandleAsync(new Newtonsoft.Json.Linq.JObject { ["action"] = "inventory", ["page_size"] = 1 }, CancellationToken.None);
+            Task<Newtonsoft.Json.Linq.JObject> pending = ReferenceGraphCollector.HandleAsync(
+                new Newtonsoft.Json.Linq.JObject { ["action"] = "ignore_rules" },
+                CancellationToken.None
+            );
+            Assert.IsFalse(pending.IsCompleted);
+            ReferenceGraphJournal.RecordCatalogChange();
+            try
+            {
+                await pending;
+                Assert.Fail("Changed source published ignore candidates.");
+            }
+            catch (InvalidOperationException) { }
+            Assert.IsNull(CollectorField("ignoreCandidates"));
+        }
+
+        [Test]
+        public async Task CancellationDuringFinalConversionCannotPublishDerivedCache()
+        {
+            bool published = false;
+            using var cancellation = new CancellationTokenSource();
+            Task<ReferenceGraphPreparation.Snapshot> pending = ReferenceGraphPreparation.Acquire(
+                "publication-test:" + Guid.NewGuid().ToString("N"),
+                () =>
+                    new ReferenceGraphPreparation(
+                        "ignore_rules",
+                        () => new[] { "a" },
+                        value =>
+                        {
+                            cancellation.Cancel();
+                            return null;
+                        },
+                        () => true
+                    )
+                    {
+                        Publish = () => published = true,
+                    },
+                cancellation.Token
+            );
+            try
+            {
+                await pending;
+                Assert.Fail("Canceled preparation published derived state.");
+            }
+            catch (OperationCanceledException) { }
+            Assert.IsFalse(published);
+        }
+
+        [Test]
+        public async Task IgnoreParentPreparationYieldsAndCancellationPreservesTheInventorySnapshot()
+        {
+            ResetColdCollector();
+            Newtonsoft.Json.Linq.JObject inventory = await ReferenceGraphCollector.HandleAsync(
+                new Newtonsoft.Json.Linq.JObject { ["action"] = "inventory", ["page_size"] = 1 },
+                CancellationToken.None
+            );
+            using var cancellation = new CancellationTokenSource();
+            Task<Newtonsoft.Json.Linq.JObject> pending = ReferenceGraphCollector.HandleAsync(
+                new Newtonsoft.Json.Linq.JObject { ["action"] = "ignore_rules" },
+                cancellation.Token
+            );
+            Assert.IsFalse(pending.IsCompleted, "Ignore parent conversion must be staged even when inventory is warm.");
+            cancellation.Cancel();
+            try
+            {
+                await pending;
+                Assert.Fail("Canceled parent preparation published a snapshot.");
+            }
+            catch (OperationCanceledException) { }
+            Assert.IsNull(CollectorField("ignoreCandidates"));
+            Assert.AreEqual(inventory.Value<string>("snapshot"), CollectorField("inventoryToken"));
+        }
+
+        private static object CollectorField(string name) =>
+            typeof(ReferenceGraphCollector).GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null);
+
+        private static void ResetColdCollector()
+        {
+            typeof(ReferenceGraphCollector)
+                .GetMethod("ReleaseIgnoreRules", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                .Invoke(null, null);
+            typeof(ReferenceGraphCollector)
+                .GetField("inventory", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                .SetValue(null, null);
+        }
+
+        [Test]
         public async Task ColdInventorySharesSnapshotAndContinuationPreservesOrdinalCensus()
         {
             var field = typeof(ReferenceGraphCollector).GetField("inventory", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
