@@ -1420,13 +1420,18 @@ class GraphWorkspace:
         *,
         provider: str = "code",
         coverage: str = "partial_static",
+        skip_ready: bool = False,
         before_publish: Callable[[], None] = lambda: None,
         catalog_lookups: CatalogLookups | None = None,
         catalog_revision: int | None = None,
         document_generation: int | None = None,
         check: Callable[[], None] = lambda: None,
     ) -> None:
-        """Stage bounded batches outside visible evidence, then promote atomically."""
+        """Stage bounded batches outside visible evidence, then promote atomically.
+
+        Callers rechecking unchanged inputs may skip an already-ready generation;
+        ownership, enabled-source and input fences still apply to that no-op.
+        """
 
         def require_current(connection):
             check()
@@ -1445,6 +1450,18 @@ class GraphWorkspace:
         complete = False
         try:
             with self._write(worker) as connection:
+                if (
+                    skip_ready
+                    and connection.execute(
+                        "SELECT 1 FROM observations o JOIN sources s USING(provider) WHERE o.owner=? AND o.provider=? AND o.generation=? AND o.state='ready' AND s.enabled=1",
+                        (owner, provider, generation),
+                    ).fetchone()
+                ):
+                    check()
+                    document_delta.require_generation(connection, document_generation)
+                    self._require_catalog(connection, catalog_revision)
+                    complete = True
+                    return
                 require_current(connection)
                 connection.execute(
                     "DELETE FROM graph_staging WHERE worker=? AND owner=?", (worker, owner)

@@ -1071,12 +1071,20 @@ class Reconciler:
                         owner, "unity", fingerprint, path=asset["path"], kind=asset["kind"]
                     ),
                 )
-                result = Analysis(
-                    [Edge("asset:" + target, "unity_dependency") for target in targets],
-                    coverage="direct_asset_database_dependencies",
-                )
+                # Keep the validated GUID snapshot, but construct only the next
+                # edge in the owned worker. Private bounded staging preserves the
+                # old publication until every edge is ready for atomic promotion.
                 await drained_thread(
-                    self.workspace.publish, self.worker, owner, "unity", generation, result
+                    self.workspace.publish_events,
+                    self.worker,
+                    owner,
+                    generation,
+                    (Edge("asset:" + target, "unity_dependency") for target in targets),
+                    provider="unity",
+                    coverage="direct_asset_database_dependencies",
+                    skip_ready=True,
+                    check=self._check_thread,
+                    _cancel_event=self.stopped,
                 )
                 await self._source(asset, guard)
                 await drained_thread(
