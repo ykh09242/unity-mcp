@@ -16,6 +16,9 @@ namespace MCPForUnity.Editor.Tools.Graphics
         private static Type _scriptableRendererFeatureType;
         private static bool _typesResolved;
 
+        // Owned native fault fixtures exercise a failure after attachment, before saving.
+        internal static Action BeforeFeatureSave = null;
+
         private static void EnsureTypes()
         {
             if (_typesResolved)
@@ -129,9 +132,29 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 return new ErrorResponse("'properties' must be a dictionary or null.");
 
             string materialPath = p.Get("material");
+            Material material = null;
             if (!string.IsNullOrEmpty(materialPath))
+            {
                 materialPath = AssetPathUtility.GetAssetReferencePath(materialPath, allowPackages: true, allowBuiltIn: true);
+                material = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
+                if (material == null)
+                    return new ErrorResponse(
+                        "Initial material could not be loaded. No renderer feature was attached.",
+                        new
+                        {
+                            state = "rejected",
+                            feature_created = false,
+                            failed = new[] { "material" },
+                        }
+                    );
+            }
             ScriptableObject feature = null;
+            var changed = new List<string>();
+            var failed = new List<string>();
+            var cleanupWarnings = new List<string>();
+            string stage = "create";
+            bool attachmentStarted = false;
+            bool linked = false;
             try
             {
                 feature = ScriptableObject.CreateInstance(featureType);
@@ -141,23 +164,55 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 string displayName = p.Get("name") ?? featureType.Name;
                 feature.name = displayName;
 
+                // Configure the transient instance first. Invalid fields cannot leave a saved,
+                // incompletely configured feature for callers to accidentally duplicate on retry.
+                stage = "properties";
+                if (initialProperties is JObject propertiesToken)
+                {
+                    var result = ApplyFeatureProperties(feature, propertiesToken);
+                    changed.AddRange(result.changed);
+                    failed.AddRange(result.failed);
+                }
+                stage = "material";
+                if (material != null)
+                {
+                    if (TrySetMaterial(feature, material))
+                        changed.Add("material");
+                    else
+                        failed.Add("material");
+                }
+                if (failed.Count > 0)
+                    return new ErrorResponse(
+                        "Initial configuration failed. No renderer feature was attached.",
+                        new
+                        {
+                            state = "rejected",
+                            feature_created = false,
+                            prepared = changed,
+                            failed,
+                            cleanup_warnings = cleanupWarnings,
+                        }
+                    );
+
+                stage = "attachment";
                 Undo.RecordObject(rendererData as UnityEngine.Object, "Add Renderer Feature");
+                attachmentStarted = true;
                 AssetDatabase.AddObjectToAsset(feature, rendererData as UnityEngine.Object);
                 if (!EditorUtility.IsPersistent(feature))
-                    return new ErrorResponse("Renderer feature was not added to the renderer data asset.");
+                    throw new InvalidOperationException("Renderer feature was not added to the renderer data asset.");
 
                 // Read a fresh serialized stream after attaching the sub-asset.
                 using var so = new SerializedObject(rendererData as UnityEngine.Object);
                 using var rendererFeaturesProp = so.FindProperty("m_RendererFeatures");
                 if (rendererFeaturesProp == null || !rendererFeaturesProp.isArray)
-                    return new ErrorResponse("m_RendererFeatures array not found.");
+                    throw new InvalidOperationException("m_RendererFeatures array not found.");
 
                 // Also update the map (m_RendererFeatureMap) if it exists
                 // Map stores persistent local file IDs, not transient instance IDs
                 using var mapProp = so.FindProperty("m_RendererFeatureMap");
                 long localId = 0;
                 if (mapProp != null && !AssetDatabase.TryGetGUIDAndLocalFileIdentifier(feature, out _, out localId))
-                    return new ErrorResponse("Could not obtain the renderer feature's persistent local file ID.");
+                    throw new InvalidOperationException("Could not obtain the renderer feature's persistent local file ID.");
 
                 rendererFeaturesProp.arraySize++;
                 using var element = rendererFeaturesProp.GetArrayElementAtIndex(rendererFeaturesProp.arraySize - 1);
@@ -168,18 +223,14 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     using var mapElement = mapProp.GetArrayElementAtIndex(mapProp.arraySize - 1);
                     mapElement.longValue = localId;
                 }
+                stage = "renderer_list";
                 so.ApplyModifiedProperties();
+                linked = true;
 
-                // Configure initial properties if provided
-                var propertiesToken = initialProperties as JObject;
-                if (propertiesToken != null)
-                    ApplyFeatureProperties(feature, propertiesToken);
-
-                // Set material if provided (common for FullScreenPass)
-                if (!string.IsNullOrEmpty(materialPath))
-                    TrySetMaterial(feature, materialPath);
-
+                stage = "save";
+                EditorUtility.SetDirty(feature);
                 EditorUtility.SetDirty(rendererData as UnityEngine.Object);
+                BeforeFeatureSave?.Invoke();
                 AssetDatabase.SaveAssetIfDirty(rendererData as UnityEngine.Object);
 
                 return new
@@ -191,9 +242,36 @@ namespace MCPForUnity.Editor.Tools.Graphics
                         name = displayName,
                         type = featureType.Name,
                         instanceId = feature.GetInstanceIDCompat(),
+                        changed,
+                        failed,
                         renderer = selection.Describe(),
                     },
                 };
+            }
+            catch (Exception exception)
+            {
+                // Native/third-party callbacks are not a transaction. Preserve any attached
+                // subasset and report its identity instead of hiding it behind a generic error.
+                bool persistent = feature != null && EditorUtility.IsPersistent(feature);
+                return new ErrorResponse(
+                    "Renderer feature creation failed. Inspect the reported state before retrying; external callback effects were not rolled back.",
+                    new
+                    {
+                        state = attachmentStarted ? "partial_or_uncertain" : "not_attached",
+                        feature_created = persistent,
+                        name = feature != null ? feature.name : null,
+                        type = featureType.Name,
+                        instanceId = persistent ? (int?)feature.GetInstanceIDCompat() : null,
+                        renderer_link_completed = linked,
+                        save_completed = false,
+                        prepared = changed,
+                        failed,
+                        failed_operation = stage,
+                        exception_type = exception.GetType().Name,
+                        cleanup_warnings = cleanupWarnings,
+                        renderer = selection.Describe(),
+                    }
+                );
             }
             finally
             {
@@ -201,8 +279,17 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 if (feature != null && !EditorUtility.IsPersistent(feature))
                 {
                     var disposableFeature = feature as IDisposable;
-                    UnityEngine.Object.DestroyImmediate(feature);
-                    disposableFeature?.Dispose();
+                    try
+                    {
+                        UnityEngine.Object.DestroyImmediate(feature);
+                    }
+                    catch (Exception exception)
+                    {
+                        cleanupWarnings.Add("destroy:" + exception.GetType().Name);
+                    }
+                    string disposeWarning = DisposeRemovedFeatureResources(disposableFeature);
+                    if (disposeWarning != null)
+                        cleanupWarnings.Add("dispose:" + disposeWarning);
                 }
             }
         }
@@ -657,21 +744,19 @@ namespace MCPForUnity.Editor.Tools.Graphics
             return (changed, failed);
         }
 
-        private static void TrySetMaterial(ScriptableObject feature, string materialPath)
+        private static bool TrySetMaterial(ScriptableObject feature, Material material)
         {
-            var mat = AssetDatabase.LoadAssetAtPath<Material>(AssetPathUtility.GetAssetReferencePath(materialPath, allowPackages: true, allowBuiltIn: true));
-            if (mat == null)
-                return;
-
             using (var so = new SerializedObject(feature))
             {
                 // FullScreenPassRendererFeature uses "m_PassMaterial" or "passMaterial"
                 using var matProp = so.FindProperty("m_PassMaterial") ?? so.FindProperty("passMaterial");
                 if (matProp != null && matProp.propertyType == SerializedPropertyType.ObjectReference)
                 {
-                    matProp.objectReferenceValue = mat;
+                    matProp.objectReferenceValue = material;
                     so.ApplyModifiedProperties();
+                    return true;
                 }
+                return false;
             }
         }
     }

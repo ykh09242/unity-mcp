@@ -1,7 +1,9 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using MCPForUnity.Editor.Tools.Graphics;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -150,6 +152,183 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.IsFalse(response.Value<bool>("success"), response.ToString());
             StringAssert.Contains("'type'", response.Value<string>("error"));
             Assert.AreEqual(1, AssetDatabase.LoadAllAssetsAtPath(rendererPath).Length);
+        }
+
+        [Test]
+        public void MissingInitialMaterialRejectsBeforeOwnedRendererMutation()
+        {
+            AssertCreationRejectedWithoutMutation(new JObject { ["material"] = assetRoot + "/Missing.mat" }, "material");
+        }
+
+        [Test]
+        public void UnknownInitialPropertyRejectsBeforeOwnedRendererMutation()
+        {
+            AssertCreationRejectedWithoutMutation(new JObject { ["properties"] = new JObject { ["missing_setting"] = true } }, "missing_setting");
+        }
+
+        [Test]
+        public void MixedInitialPropertiesRejectBeforeOwnedRendererMutation()
+        {
+            AssertCreationRejectedWithoutMutation(
+                new JObject
+                {
+                    ["properties"] = new JObject { ["m_Active"] = false, ["missing_setting"] = true },
+                },
+                "missing_setting"
+            );
+        }
+
+        [Test]
+        public void ValidInitialPropertiesPersistWithCreatedFeature()
+        {
+            var response = JObject.FromObject(
+                ManageGraphics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "feature_add",
+                        ["type"] = featureType,
+                        ["properties"] = new JObject { ["m_Active"] = false },
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(new[] { "m_Active" }, response["data"]["changed"].Values<string>());
+            Assert.IsEmpty(response["data"]["failed"]);
+            AssetDatabase.ImportAsset(rendererPath, ImportAssetOptions.ForceUpdate);
+            var reloaded = AssetDatabase.LoadAssetAtPath<ScriptableObject>(rendererPath);
+            using var serialized = new SerializedObject(reloaded);
+            var features = serialized.FindProperty("m_RendererFeatures");
+            Assert.AreEqual(1, features.arraySize);
+            var feature = features.GetArrayElementAtIndex(0).objectReferenceValue;
+            Assert.IsNotNull(feature);
+            Assert.AreEqual(rendererPath, AssetDatabase.GetAssetPath(feature));
+            using var featureProperties = new SerializedObject(feature);
+            Assert.IsFalse(featureProperties.FindProperty("m_Active").boolValue);
+        }
+
+        [Test]
+        public void ValidInitialMaterialPersistsWithCreatedFeature()
+        {
+            var shader = Shader.Find("Hidden/InternalErrorShader");
+            Assert.IsNotNull(shader);
+            var material = new Material(shader);
+            string materialPath = assetRoot + "/Pass.mat";
+            AssetDatabase.CreateAsset(material, materialPath);
+            var response = JObject.FromObject(
+                ManageGraphics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "feature_add",
+                        ["type"] = featureType,
+                        ["material"] = materialPath,
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(new[] { "material" }, response["data"]["changed"].Values<string>());
+            AssetDatabase.ImportAsset(rendererPath, ImportAssetOptions.ForceUpdate);
+            using var serialized = new SerializedObject(AssetDatabase.LoadAssetAtPath<ScriptableObject>(rendererPath));
+            var feature = serialized.FindProperty("m_RendererFeatures").GetArrayElementAtIndex(0).objectReferenceValue;
+            Assert.IsNotNull(feature);
+            using var featureProperties = new SerializedObject(feature);
+            var materialProperty = featureProperties.FindProperty("m_PassMaterial") ?? featureProperties.FindProperty("passMaterial");
+            Assert.IsNotNull(materialProperty);
+            Assert.AreEqual(materialPath, AssetDatabase.GetAssetPath(materialProperty.objectReferenceValue));
+        }
+
+        [Test]
+        public void ConfigurePreservesChangedAndFailedFieldContract()
+        {
+            var added = JObject.FromObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "feature_add", ["type"] = featureType }));
+            Assert.IsTrue(added.Value<bool>("success"), added.ToString());
+            var response = JObject.FromObject(
+                ManageGraphics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "feature_configure",
+                        ["index"] = 0,
+                        ["properties"] = new JObject { ["m_Active"] = false, ["missing_setting"] = true },
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            CollectionAssert.AreEqual(new[] { "m_Active" }, response["data"]["changed"].Values<string>());
+            CollectionAssert.AreEqual(new[] { "missing_setting" }, response["data"]["failed"].Values<string>());
+        }
+
+        [Test]
+        public void SaveBoundaryFailureReportsRetainedFeatureIdentity()
+        {
+            var hook = typeof(ManageGraphics)
+                .Assembly.GetType("MCPForUnity.Editor.Tools.Graphics.RendererFeatureOps")
+                ?.GetField("BeforeFeatureSave", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(hook);
+            JObject response;
+            try
+            {
+                hook.SetValue(null, new Action(() => throw new InvalidOperationException("Owned save boundary fault.")));
+                response = JObject.FromObject(
+                    ManageGraphics.HandleCommand(
+                        new JObject
+                        {
+                            ["action"] = "feature_add",
+                            ["type"] = featureType,
+                            ["properties"] = new JObject { ["m_Active"] = false },
+                        }
+                    )
+                );
+            }
+            finally
+            {
+                hook.SetValue(null, null);
+            }
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            var data = response["data"];
+            Assert.AreEqual("partial_or_uncertain", data.Value<string>("state"));
+            Assert.IsTrue(data.Value<bool>("feature_created"));
+            Assert.IsTrue(data.Value<bool>("renderer_link_completed"));
+            Assert.IsFalse(data.Value<bool>("save_completed"));
+            Assert.AreEqual("save", data.Value<string>("failed_operation"));
+            Assert.AreEqual(nameof(InvalidOperationException), data.Value<string>("exception_type"));
+            CollectionAssert.AreEqual(new[] { "m_Active" }, data["prepared"].Values<string>());
+            Assert.AreEqual(2, AssetDatabase.LoadAllAssetsAtPath(rendererPath).Length);
+            using (var serialized = new SerializedObject(renderer))
+            {
+                var features = serialized.FindProperty("m_RendererFeatures");
+                Assert.AreEqual(1, features.arraySize);
+                var feature = features.GetArrayElementAtIndex(0).objectReferenceValue;
+                Assert.IsNotNull(feature);
+                Assert.AreEqual(data.Value<int>("instanceId"), feature.GetInstanceIDCompat());
+            }
+            AssetDatabase.SaveAssetIfDirty(renderer);
+            AssetDatabase.ImportAsset(rendererPath, ImportAssetOptions.ForceUpdate);
+            using var persisted = new SerializedObject(AssetDatabase.LoadAssetAtPath<ScriptableObject>(rendererPath));
+            Assert.AreEqual(1, persisted.FindProperty("m_RendererFeatures").arraySize);
+        }
+
+        private void AssertCreationRejectedWithoutMutation(JObject request, params string[] failed)
+        {
+            byte[] bytes = File.ReadAllBytes(FullPath(rendererPath));
+            string guid = AssetDatabase.AssetPathToGUID(rendererPath);
+            Object[] identities = AssetDatabase.LoadAllAssetsAtPath(rendererPath);
+            bool dirty = EditorUtility.IsDirty(renderer);
+            request["action"] = "feature_add";
+            request["type"] = featureType;
+            var response = JObject.FromObject(ManageGraphics.HandleCommand(request));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.AreEqual("rejected", response["data"].Value<string>("state"));
+            Assert.IsFalse(response["data"].Value<bool>("feature_created"));
+            CollectionAssert.AreEqual(failed, response["data"]["failed"].Values<string>());
+            CollectionAssert.AreEqual(identities, AssetDatabase.LoadAllAssetsAtPath(rendererPath));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(FullPath(rendererPath)));
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(rendererPath));
+            Assert.AreEqual(dirty, EditorUtility.IsDirty(renderer));
+            using (var serialized = new SerializedObject(renderer))
+                Assert.AreEqual(0, serialized.FindProperty("m_RendererFeatures").arraySize);
+            AssetDatabase.ImportAsset(rendererPath, ImportAssetOptions.ForceUpdate);
+            Assert.AreEqual(1, AssetDatabase.LoadAllAssetsAtPath(rendererPath).Length);
+            using var persisted = new SerializedObject(AssetDatabase.LoadAssetAtPath<ScriptableObject>(rendererPath));
+            Assert.AreEqual(0, persisted.FindProperty("m_RendererFeatures").arraySize);
         }
 
         private string FullPath(string path)
