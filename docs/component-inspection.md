@@ -7,6 +7,21 @@ identify separate GameObjects; a leading `/` anchors the path at a root, while a
 unanchored path can match a hierarchy suffix. An implicitly selected path must be
 unique. Strict selection also requires explicitly selected paths to be unique.
 
+The CLI exposes `--strict-selection` and `--component-instance-id` on `component
+remove`, `component set` and `component modify`. Strict selection requires a unique
+GameObject and component unless `--component-index` or `--component-instance-id`
+selects the component. An index is zero-based within `GetComponents(requested type)`,
+including derived types. Component IDs are nonzero signed Int32 values; negative
+Unity IDs are valid. Index and component ID selectors cannot be combined. Omitted
+strict and ID options preserve legacy first-match behavior. Native selection errors
+retain candidate and identity details, and the CLI exits unsuccessfully.
+
+```sh
+unity-mcp component set "Player" BoxCollider isTrigger true --strict-selection
+unity-mcp component modify "Player" BoxCollider --properties '{"size":[2,2,2]}' --component-instance-id -81840
+unity-mcp component remove "Player" BoxCollider --strict-selection --component-index 1 --force
+```
+
 Component reads return fields and safe Unity properties by default. Reading a custom
 component no longer evaluates its C# properties automatically. Values remain under
 `properties`; custom getter names that were skipped appear in `skippedProperties`.

@@ -210,6 +210,7 @@ def test_material_cli_public_values_and_single_json(tmp_path):
                     'target': 'Fixture',
                     'color': [0, 0, 0, 0],
                     'mode': 'property_block',
+                    'slot': 0,
                 },
             ),
             (
@@ -230,6 +231,7 @@ def test_material_cli_public_values_and_single_json(tmp_path):
                     'searchMethod': 'by_path',
                     'color': [1, 0, 0, 1],
                     'mode': 'create_unique',
+                    'slot': 0,
                 },
             ),
         ]

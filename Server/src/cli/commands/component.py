@@ -14,6 +14,25 @@ from cli.utils.constants import SEARCH_METHOD_CHOICE_BASIC
 from cli.utils.confirmation import confirm_destructive_action
 
 
+def _component_command(
+    component_index: int | None, strict_selection: bool, component_instance_id: int | None
+) -> str:
+    """Validate component selectors before prompting or sending a mutation."""
+    if component_instance_id == 0:
+        raise click.BadParameter(
+            "must be a nonzero Int32 integer", param_hint="--component-instance-id"
+        )
+    if component_index is not None and component_instance_id is not None:
+        raise click.UsageError("Use either --component-index or --component-instance-id, not both.")
+    if strict_selection or component_instance_id is not None:
+        if component_index is not None and not 0 <= component_index <= 2147483647:
+            raise click.BadParameter(
+                "must be a nonnegative Int32 integer", param_hint="--component-index"
+            )
+        return "manage_components_selected"
+    return "manage_components"
+
+
 @click.group()
 def component():
     """Component operations - add, remove, modify components on GameObjects."""
@@ -83,6 +102,17 @@ def add(target: str, component_type: str, search_method: Optional[str], properti
     default=None,
     help="Zero-based index when multiple components of the same type exist.",
 )
+@click.option(
+    "--strict-selection",
+    is_flag=True,
+    help="Require a unique target and component unless an index or component ID selects it.",
+)
+@click.option(
+    "--component-instance-id",
+    type=click.IntRange(-2147483648, 2147483647),
+    default=None,
+    help="Nonzero live component instance ID; cannot be combined with --component-index.",
+)
 @handle_unity_errors
 def remove(
     target: str,
@@ -90,6 +120,8 @@ def remove(
     search_method: Optional[str],
     force: bool,
     component_index: Optional[int],
+    strict_selection: bool,
+    component_instance_id: int | None,
 ):
     """Remove a component from a GameObject.
 
@@ -99,6 +131,7 @@ def remove(
         unity-mcp component remove --search-method by_id --force -- -81840 BoxCollider
         unity-mcp component remove "Player" BoxCollider --component-index 1
     """
+    command = _component_command(component_index, strict_selection, component_instance_id)
     config = get_config()
 
     confirm_destructive_action("Remove", component_type, target, force, "from")
@@ -114,7 +147,12 @@ def remove(
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command("manage_components", params, config)
+    if strict_selection:
+        params["strictSelection"] = True
+    if component_instance_id is not None:
+        params["componentInstanceID"] = component_instance_id
+
+    result = run_command(command, params, config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Removed {component_type} from '{target}'")
@@ -138,6 +176,17 @@ def remove(
     default=None,
     help="Zero-based index when multiple components of the same type exist.",
 )
+@click.option(
+    "--strict-selection",
+    is_flag=True,
+    help="Require a unique target and component unless an index or component ID selects it.",
+)
+@click.option(
+    "--component-instance-id",
+    type=click.IntRange(-2147483648, 2147483647),
+    default=None,
+    help="Nonzero live component instance ID; cannot be combined with --component-index.",
+)
 @handle_unity_errors
 def set_property(
     target: str,
@@ -146,6 +195,8 @@ def set_property(
     value: str,
     search_method: Optional[str],
     component_index: Optional[int],
+    strict_selection: bool,
+    component_instance_id: int | None,
 ):
     """Set a single property on a component.
 
@@ -156,6 +207,7 @@ def set_property(
         unity-mcp component set --search-method by_id -- -81840 Light intensity 2.5
         unity-mcp component set "Player" BoxCollider size "[2,2,2]" --component-index 1
     """
+    command = _component_command(component_index, strict_selection, component_instance_id)
     config = get_config()
 
     # Try to parse value as JSON for complex types
@@ -174,7 +226,12 @@ def set_property(
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command("manage_components", params, config)
+    if strict_selection:
+        params["strictSelection"] = True
+    if component_instance_id is not None:
+        params["componentInstanceID"] = component_instance_id
+
+    result = run_command(command, params, config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Set {component_type}.{property_name} = {value}")
@@ -202,6 +259,17 @@ def set_property(
     default=None,
     help="Zero-based index when multiple components of the same type exist.",
 )
+@click.option(
+    "--strict-selection",
+    is_flag=True,
+    help="Require a unique target and component unless an index or component ID selects it.",
+)
+@click.option(
+    "--component-instance-id",
+    type=click.IntRange(-2147483648, 2147483647),
+    default=None,
+    help="Nonzero live component instance ID; cannot be combined with --component-index.",
+)
 @handle_unity_errors
 def modify(
     target: str,
@@ -209,6 +277,8 @@ def modify(
     properties: str,
     search_method: Optional[str],
     component_index: Optional[int],
+    strict_selection: bool,
+    component_instance_id: int | None,
 ):
     """Set multiple properties on a component at once.
 
@@ -218,6 +288,7 @@ def modify(
         unity-mcp component modify "Light" Light --properties '{"intensity": 2.0, "color": [1, 0, 0, 1]}'
         unity-mcp component modify "Player" BoxCollider --properties '{"size": [2,2,2]}' --component-index 1
     """
+    command = _component_command(component_index, strict_selection, component_instance_id)
     properties = admit_json_inputs(properties=properties)["properties"]
 
     config = get_config()
@@ -236,7 +307,12 @@ def modify(
     if component_index is not None:
         params["componentIndex"] = component_index
 
-    result = run_command("manage_components", params, config)
+    if strict_selection:
+        params["strictSelection"] = True
+    if component_instance_id is not None:
+        params["componentInstanceID"] = component_instance_id
+
+    result = run_command(command, params, config)
     click.echo(format_output(result, config.format))
     if result.get("success") and config.format != "json":
         print_success(f"Modified {component_type} on '{target}'")

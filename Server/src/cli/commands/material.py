@@ -197,6 +197,9 @@ def assign(material_path: str, target: str, search_method: Optional[str], slot: 
 @click.argument("b", type=float)
 @click.argument("a", type=float, default=1.0)
 @click.option(
+    "--slot", type=click.IntRange(min=0), default=0, help="Material slot index (default: 0)."
+)
+@click.option(
     "--search-method",
     type=SEARCH_METHOD_CHOICE_RENDERER,
     default=None,
@@ -211,7 +214,14 @@ def assign(material_path: str, target: str, search_method: Optional[str], slot: 
 )
 @handle_unity_errors
 def set_renderer_color(
-    target: str, r: float, g: float, b: float, a: float, search_method: Optional[str], mode: str
+    target: str,
+    r: float,
+    g: float,
+    b: float,
+    a: float,
+    search_method: Optional[str],
+    mode: str,
+    slot: int,
 ):
     """Set a renderer's material color directly.
 
@@ -225,6 +235,7 @@ def set_renderer_color(
     params: dict[str, Any] = {
         "action": "set_renderer_color",
         "target": target,
+        "slot": slot,
         "color": [r, g, b, a],
         "mode": mode,
     }

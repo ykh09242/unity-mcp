@@ -4,6 +4,16 @@
 read permission; edits require edit permission at both public and native admission.
 These actions complement the existing material-property and renderer-color actions.
 
+The CLI renderer-color command accepts a nonnegative `--slot`, defaulting to `0`:
+
+```sh
+unity-mcp material set-renderer-color "Example/Cube" 1 0 0 --slot 1
+```
+
+The selected slot is forwarded with the existing color, search and modification-mode
+options. Native slot or material failures retain their structured response and cause
+an unsuccessful CLI exit.
+
 Address exactly one material asset with `material_path`, or a renderer with `target`,
 optional `search_method`, and a zero-based `slot` (default `0`). Reads use
 `Renderer.sharedMaterials` and never instantiate a material. Asset addresses cannot
