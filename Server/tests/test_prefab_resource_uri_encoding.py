@@ -8,6 +8,41 @@ import textwrap
 
 import pytest
 
+from tests.test_resource_uri_contracts import run_sdk_regression
+
+
+def test_prefab_helper_search_recipe_calls_an_available_core_tool():
+    run_sdk_regression("""
+        import asyncio, importlib, shlex
+        from unittest.mock import AsyncMock
+        from fastmcp import Client, FastMCP
+        from core.config import config
+        from services.resources.prefab import get_prefab_api_docs
+        from services.tools import register_all_tools
+        asset = importlib.import_module("services.tools.manage_asset")
+        asset.get_unity_instance_from_context = AsyncMock(return_value="Selected@owned")
+        asset.send_with_unity_instance = AsyncMock(return_value={
+            "success": True, "message": "Found", "data": {"assets": []}})
+
+        async def scenario():
+            config.transport_mode = "stdio"
+            config.http_remote_hosted = False
+            docs = (await get_prefab_api_docs(None)).data
+            words = shlex.split(docs["workflow"][0])
+            tool = words[words.index("Use") + 1]
+            arguments = dict(word.split("=", 1) for word in words if "=" in word)
+            server = FastMCP("prefab-helper-example")
+            register_all_tools(server, project_scoped_tools=False)
+            async with Client(server, mode="2026-07-28") as client:
+                assert tool in {item.name for item in await client.list_tools()}
+                result = await client.call_tool(tool, arguments, raise_on_error=False)
+                assert not result.is_error, result
+            assert asset.send_with_unity_instance.await_count == 1
+            assert asset.send_with_unity_instance.call_args.args[3]["filterType"] == "Prefab"
+            assert "prefab_stage" in docs["related_tools"]
+        asyncio.run(scenario())
+    """)
+
 
 @pytest.mark.parametrize(
     "resource_name,suffix,action",

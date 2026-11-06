@@ -209,7 +209,7 @@ Read bounded diagnostics for one tool; schemas remain authoritative in tools/lis
 
 **URI:** `mcpforunity://prefab-api`
 
-Documentation for Prefab resources. Use manage_asset action=search filterType=Prefab to find prefabs, then access resources below.
+Documentation for Prefab resources. Use asset_inspect action=search filter_type=Prefab to find prefabs, then access resources below.
 
 URI: mcpforunity://prefab-api
 

@@ -36,7 +36,7 @@ def _normalize_response(response: dict | MCPResponse | Any) -> MCPResponse:
 @mcp_for_unity_resource(
     uri="mcpforunity://prefab-api",
     name="prefab_api",
-    description="Documentation for Prefab resources. Use manage_asset action=search filterType=Prefab to find prefabs, then access resources below.\n\nURI: mcpforunity://prefab-api",
+    description="Documentation for Prefab resources. Use asset_inspect action=search filter_type=Prefab to find prefabs, then access resources below.\n\nURI: mcpforunity://prefab-api",
 )
 async def get_prefab_api_docs(_ctx: Context) -> MCPResponse:
     """
@@ -48,9 +48,9 @@ async def get_prefab_api_docs(_ctx: Context) -> MCPResponse:
     docs = {
         "overview": "Prefab resources provide read-only access to Unity prefab assets.",
         "workflow": [
-            "1. Use manage_asset action=search filterType=Prefab to find prefabs",
+            "1. Use asset_inspect action=search filter_type=Prefab to find prefabs",
             "2. Use the asset path to access detailed data via resources below",
-            "3. Use manage_prefabs action=open_prefab_stage / save_prefab_stage / close_prefab_stage for prefab editing UI transitions",
+            "3. Use prefab_stage action=open_prefab_stage / save_prefab_stage / close_prefab_stage for prefab editing UI transitions",
         ],
         "path_encoding": {
             "note": "Prefab paths must be URL-encoded when used in resource URIs",
@@ -89,9 +89,11 @@ async def get_prefab_api_docs(_ctx: Context) -> MCPResponse:
         },
         "related_tools": {
             "manage_editor": "Editor controls (play/pause/stop, active tool, tags/layers, package deploy/restore)",
-            "manage_prefabs": "Prefab stage lifecycle (open/save/close) and headless prefab inspection/modification",
-            "manage_asset": "Search for prefab assets, get asset info",
-            "manage_gameobject": "Modify GameObjects in open prefab stage",
+            "prefab_stage": "Prefab stage lifecycle (open/save/close)",
+            "prefab_inspect": "Inspect prefab assets and bounded hierarchy pages",
+            "prefab_contents": "Preview or modify isolated prefab contents",
+            "asset_inspect": "Search for prefab assets, get asset info",
+            "gameobject_edit": "Modify GameObjects in open prefab stage",
             "manage_components": "Add/remove/modify components on prefab GameObjects",
         },
     }
