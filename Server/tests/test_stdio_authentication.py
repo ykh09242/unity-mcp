@@ -118,7 +118,9 @@ def read_frame(peer):
 
 
 @contextmanager
-def authenticated_peer(reply_kind="valid", connections=1):
+def authenticated_peer(
+    reply_kind="valid", connections=1, *, clock_sample=None, clock_offered=False
+):
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(connections)
@@ -150,6 +152,18 @@ def authenticated_peer(reply_kind="valid", connections=1):
                             TOKEN, ["server", generation, challenge, nonce, session]
                         ),
                     )
+                    if clock_offered:
+                        reply.update(
+                            capabilities=[
+                                "native_arbitration_v1",
+                                "command_resume_v1",
+                                "command_resume_clock_v1",
+                            ],
+                            arbitration_generation="a" * 32,
+                            resume_generation="b" * 32,
+                        )
+                        if clock_sample is not None:
+                            reply["resume_clock_unix_ms"] = clock_sample
                     if reply_kind == "forged":
                         reply["proof"] = "0" * 64
                     if reply_kind == "wrong_session":
@@ -174,6 +188,22 @@ def authenticated_peer(reply_kind="valid", connections=1):
         listener.close()
         assert not thread.is_alive()
         assert not failures
+
+
+@pytest.mark.parametrize("sample", [None, True, 0, -1, "1000", 1000.0, 9223372036854775808])
+def test_clock_capability_requires_a_valid_sample_before_publication(monkeypatch, sample):
+    monkeypatch.setattr(config, "http_remote_hosted", False)
+    with authenticated_peer(clock_sample=sample, clock_offered=True) as (port, requests):
+        connection = module.UnityConnection(
+            host="127.0.0.1", port=port, auth_token_provider=lambda _: TOKEN
+        )
+        try:
+            assert not connection.connect()
+            assert connection.authenticated_session is None
+            assert connection.sock is None
+            assert "command_resume_clock_v1" in requests[0]["capabilities"]
+        finally:
+            connection.disconnect()
 
 
 @pytest.mark.parametrize("reply_kind", ["valid", "forged", "wrong_session", "refused", "oversized"])

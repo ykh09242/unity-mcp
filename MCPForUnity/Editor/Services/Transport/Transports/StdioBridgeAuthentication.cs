@@ -20,7 +20,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         internal IReadOnlyCollection<string> Capabilities { get; }
         internal string SessionGeneration => ServerGeneration + ":" + SessionId;
 
-        internal StdioAuthenticatedSession(string generation, string session, bool progress, bool arbitration = false, bool resume = false, bool origin = false)
+        internal StdioAuthenticatedSession(
+            string generation,
+            string session,
+            bool progress,
+            bool arbitration = false,
+            bool resume = false,
+            bool origin = false,
+            bool clock = false
+        )
         {
             ServerGeneration = generation;
             SessionId = session;
@@ -33,6 +41,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 capabilities.Add(CommandResumeJournal.Capability);
             if (resume && arbitration && origin)
                 capabilities.Add(CommandResumeJournal.OriginCapability);
+            if (resume && arbitration && clock)
+                capabilities.Add(CommandResumeJournal.ClockCapability);
             Capabilities = capabilities.AsReadOnly();
         }
     }
@@ -173,6 +183,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             bool arbitration = OffersCapability(request["capabilities"], NativeCommandArbitrator.Capability);
             bool resume = OffersCapability(request["capabilities"], CommandResumeJournal.Capability);
             bool origin = OffersCapability(request["capabilities"], CommandResumeJournal.OriginCapability);
+            bool clock = OffersCapability(request["capabilities"], CommandResumeJournal.ClockCapability);
             var acknowledgement = new JObject
             {
                 ["type"] = "authenticated",
@@ -180,7 +191,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 ["session_id"] = session,
                 ["proof"] = Proof(token, "server", Generation, challenge, nonce, session),
             };
-            var negotiated = new StdioAuthenticatedSession(Generation, session, progress, arbitration, resume, origin);
+            var negotiated = new StdioAuthenticatedSession(Generation, session, progress, arbitration, resume, origin, clock);
             deadline.Token.ThrowIfCancellationRequested();
             if (admit != null && !admit(negotiated))
             {
@@ -203,6 +214,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 acknowledgement["arbitration_generation"] = NativeCommandArbitrator.Shared.Generation;
             if (resume)
                 acknowledgement["resume_generation"] = CommandResumeState.SessionId;
+            if (resume && arbitration && clock)
+                acknowledgement["resume_clock_unix_ms"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             await WriteAcknowledgementAsync(stream, acknowledgement, deadline.Token).ConfigureAwait(false);
             return negotiated;
         }

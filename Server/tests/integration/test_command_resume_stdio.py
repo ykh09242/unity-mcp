@@ -7,6 +7,7 @@ import secrets
 import socket
 import struct
 import threading
+import time
 
 import pytest
 
@@ -65,7 +66,9 @@ def result(command, state, value):
 
 
 @contextmanager
-def resume_peer(mode="completed", reloads=1, *, origin=False, business_result=None):
+def resume_peer(
+    mode="completed", reloads=1, *, origin=False, business_result=None, clock_sample=None
+):
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(4)
@@ -106,7 +109,13 @@ def resume_peer(mode="completed", reloads=1, *, origin=False, business_result=No
                             "native_arbitration_v1",
                             "command_resume_v1",
                             *(["command_resume_origin_v1"] if origin else []),
+                            *(["command_resume_clock_v1"] if clock_sample is not None else []),
                         ],
+                        **(
+                            {"resume_clock_unix_ms": clock_sample + attempt * 5000}
+                            if clock_sample is not None
+                            else {}
+                        ),
                         "arbitration_generation": generation,
                         "resume_generation": "f" * 32 if mode == "cold" and attempt else EDITOR,
                     },
@@ -231,14 +240,42 @@ def configure(monkeypatch, port, reconnect_failures=0):
     return connection
 
 
+@pytest.mark.parametrize("skew_ms", [-60000, 60000])
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_negotiated_editor_clock_survives_tcp_reload(monkeypatch, skew_ms, asynchronous):
+    sample = int(time.time() * 1000) + skew_ms - 2000
+    with resume_peer(clock_sample=sample) as (port, commands, _, _):
+        connection = configure(monkeypatch, port)
+        monkeypatch.setattr(config, "command_total_timeout", 10.0)
+        try:
+            if asynchronous:
+                value = await uc.async_send_command_with_retry(
+                    "manage_scene", {"action": "save"}, instance_id=connection.instance_id
+                )
+            else:
+                value = uc.send_command_with_retry(
+                    "manage_scene", {"action": "save"}, instance_id=connection.instance_id
+                )
+            value = value.model_dump() if hasattr(value, "model_dump") else value
+            assert value["success"]
+            assert len(commands) == 2
+            assert sample + 9000 <= commands[0]["resume"]["deadline_unix_ms"] <= sample + 11000
+            assert commands[1]["resume"] == {**commands[0]["resume"], "action": "resume"}
+        finally:
+            connection.disconnect()
+
+
 @pytest.mark.parametrize("asynchronous", [True, False])
 @pytest.mark.parametrize("applied", [True, False])
+@pytest.mark.parametrize("skew_ms", [None, -60000, 60000])
 @pytest.mark.asyncio
 async def test_deadline_after_queued_proof_uses_latest_wire_attempt(
-    monkeypatch, asynchronous, applied
+    monkeypatch, asynchronous, applied, skew_ms
 ):
     mode = "applied_then_offline" if applied else "queued_then_offline"
-    with resume_peer(mode, reloads=0) as (port, commands, mutation, _):
+    sample = int(time.time() * 1000) + skew_ms if skew_ms is not None else None
+    with resume_peer(mode, reloads=0, clock_sample=sample) as (port, commands, mutation, _):
         connection = configure(monkeypatch, port, reconnect_failures=1000)
         monkeypatch.setattr(config, "command_total_timeout", 1.0)
         try:

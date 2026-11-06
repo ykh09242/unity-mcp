@@ -1,6 +1,7 @@
 """Continuation across real WebSocket registration and disconnect boundaries."""
 
 from functools import partial
+import time
 
 import pytest
 
@@ -17,7 +18,7 @@ async def receipt_dispatch(session_id):
         return await PluginHub.send_command(session_id, "manage_scene", {"action": "save"})
 
 
-def register(socket, editor=EDITOR, *, origin=False, path=None):
+def register(socket, editor=EDITOR, *, origin=False, path=None, clock_sample=None):
     socket.receive_json()
     socket.send_json(
         {
@@ -28,13 +29,85 @@ def register(socket, editor=EDITOR, *, origin=False, path=None):
                 "command_resume_v1",
                 "command_cancel_v1",
                 *(["command_resume_origin_v1"] if origin else []),
+                *(["command_resume_clock_v1"] if clock_sample is not None else []),
             ],
+            **({"resume_clock_unix_ms": clock_sample} if clock_sample is not None else {}),
             **({"project_path": path} if path else {}),
             "arbitration_generation": "a" * 32,
             "resume_generation": editor,
         }
     )
     return socket.receive_json()
+
+
+@pytest.mark.parametrize("skew_ms", [-60000, 60000])
+def test_negotiated_editor_clock_survives_reconnect_without_extending_deadline(
+    wire_client, monkeypatch, skew_ms
+):
+    monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 10.0)
+    # A sample can spend time in transit before registration arrives.
+    sample = int(time.time() * 1000) + skew_ms - 2000
+    with wire_client.websocket_connect("/hub/plugin") as first_socket:
+        ack = register(first_socket, clock_sample=sample)
+        future = wire_client.portal.start_task_soon(
+            partial(PluginHub.send_command, ack["session_id"], "manage_scene", {"action": "save"})
+        )
+        first = first_socket.receive_json()
+        respond(first_socket, first, "queued")
+        first = first_socket.receive_json()
+    with wire_client.websocket_connect("/hub/plugin") as second_socket:
+        register(second_socket, clock_sample=sample + 5000)
+        resumed = second_socket.receive_json()
+        respond(second_socket, resumed, "completed")
+        assert future.result(watchdog_timeout())["success"]
+        assert "command_resume_clock_v1" in ack["capabilities"]
+        assert sample + 9000 <= first["resume"]["deadline_unix_ms"] <= sample + 11000
+        assert resumed["resume"] == {**first["resume"], "action": "resume"}
+
+
+@pytest.mark.parametrize("sample", [None, True, 0, -1, "1000", 1000.0, 9223372036854775808])
+def test_clock_capability_requires_a_valid_sample_before_registration(wire_client, sample):
+    from starlette.websockets import WebSocketDisconnect
+
+    with wire_client.websocket_connect("/hub/plugin") as socket:
+        socket.receive_json()
+        socket.send_json(
+            {
+                "type": "register",
+                "project_hash": "owned",
+                "capabilities": [
+                    "native_arbitration_v1",
+                    "command_resume_v1",
+                    "command_resume_clock_v1",
+                ],
+                "arbitration_generation": "a" * 32,
+                "resume_generation": EDITOR,
+                **({"resume_clock_unix_ms": sample} if sample is not None else {}),
+            }
+        )
+        with pytest.raises(WebSocketDisconnect) as error:
+            socket.receive_json()
+        assert error.value.code == 4400
+        assert not PluginHub._connections
+
+
+@pytest.mark.parametrize("skew_ms", [-60000, 60000])
+def test_server_monotonic_timeout_remains_authoritative_with_clock_translation(
+    wire_client, monkeypatch, skew_ms
+):
+    monkeypatch.setattr(PluginHub, "COMMAND_TIMEOUT", 1.0)
+    sample = int(time.time() * 1000) + skew_ms
+    with wire_client.websocket_connect("/hub/plugin") as socket:
+        ack = register(socket, clock_sample=sample)
+        future = wire_client.portal.start_task_soon(
+            partial(PluginHub.send_command, ack["session_id"], "manage_scene", {"action": "save"})
+        )
+        command = socket.receive_json()
+        # A missing reply cannot gain 60 seconds from the Editor clock or cause replay.
+        result = future.result(watchdog_timeout(3))
+        assert result["data"]["reason"] == "outcome_unknown"
+        assert result["hint"] == "inspect_state_before_retry"
+        assert sample + 500 <= command["resume"]["deadline_unix_ms"] <= sample + 1500
 
 
 def respond(socket, command, state, payload=None, *, refusal_reason=None):
@@ -138,10 +211,12 @@ def test_cold_editor_restart_does_not_receive_old_invocation(wire_client, receip
         assert not PluginHub._pending
 
 
-def test_explicit_cancellation_delivers_original_invocation_tombstone(wire_client):
+@pytest.mark.parametrize("skew_ms", [None, -60000, 60000])
+def test_explicit_cancellation_delivers_original_invocation_tombstone(wire_client, skew_ms):
     # Given a queued invocation on a reachable native transport.
     with wire_client.websocket_connect("/hub/plugin") as socket:
-        ack = register(socket)
+        sample = int(time.time() * 1000) + skew_ms if skew_ms is not None else None
+        ack = register(socket, clock_sample=sample)
         future = wire_client.portal.start_task_soon(
             partial(PluginHub.send_command, ack["session_id"], "manage_scene", {"action": "save"})
         )

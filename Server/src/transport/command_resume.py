@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from contextvars import ContextVar
 from threading import Event
 import json
+import math
 import time
 from typing import Final, Literal
 from uuid import uuid4
@@ -16,6 +17,7 @@ from transport.native_arbitration import NativeReply, valid_generation
 
 CAPABILITY: Final = "command_resume_v1"
 ORIGIN_CAPABILITY: Final = "command_resume_origin_v1"
+CLOCK_CAPABILITY: Final = "command_resume_clock_v1"
 # Set only by the uninvoked public owner after a validated same-process rebind.
 queued_origin: ContextVar[str | None] = ContextVar("queued_command_origin", default=None)
 ResumeAction = Literal["new", "status", "resume", "cancel"]
@@ -70,6 +72,29 @@ class CommandResumeAbandoned(RuntimeError):
     """The original caller ended before another transport attempt could begin."""
 
 
+@dataclass(frozen=True, slots=True)
+class CommandResumeClock:
+    """Conservative Editor-clock anchor; sample transit time consumes native budget."""
+
+    editor_unix_ms: int
+    received_monotonic: float
+
+    @classmethod
+    def capture(cls, sample: object) -> CommandResumeClock:
+        if type(sample) is not int or not 0 < sample <= 9223372036854775807:
+            raise CommandResumeProtocolError()
+        return cls(sample, time.monotonic())
+
+    def translate(self, deadline: float) -> int:
+        # The Editor sampled before this server received the sample. Anchoring at
+        # receipt deliberately subtracts that transit time, never adds it. Do not
+        # rebase on dispatch/reconnect or clamp an already elapsed deadline.
+        translated = self.editor_unix_ms + math.floor((deadline - self.received_monotonic) * 1000)
+        if not 0 < translated <= 9223372036854775807:
+            raise CommandResumeProtocolError()
+        return translated
+
+
 @dataclass(slots=True)
 class CommandResumeInvocation:
     """Mutable attempt action with an immutable identity/deadline and thread-safe cancellation."""
@@ -84,7 +109,9 @@ class CommandResumeInvocation:
     origin_generation: str | None = None
 
     @classmethod
-    def create(cls, editor_session_id: str, deadline: float) -> CommandResumeInvocation:
+    def create(
+        cls, editor_session_id: str, deadline: float, clock: CommandResumeClock | None = None
+    ) -> CommandResumeInvocation:
         origin = queued_origin.get()
         if (
             not valid_generation(editor_session_id)
@@ -96,7 +123,9 @@ class CommandResumeInvocation:
         return cls(
             uuid4().hex,
             editor_session_id,
-            int((time.time() + remaining) * 1000),
+            clock.translate(deadline)
+            if clock is not None
+            else int((time.time() + remaining) * 1000),
             origin_generation=origin,
         )
 
@@ -203,11 +232,13 @@ class CommandResumeOwner:
     params_json: str | None = field(default=None, repr=False)
     instance_id: str | None = None
 
-    def bind(self, generation: str | None) -> CommandResumeInvocation | None:
+    def bind(
+        self, generation: str | None, clock: CommandResumeClock | None = None
+    ) -> CommandResumeInvocation | None:
         if self.cancelled.is_set():
             raise CommandResumeAbandoned()
         if self.invocation is None and self.deadline is not None and valid_generation(generation):
-            self.invocation = CommandResumeInvocation.create(generation, self.deadline)
+            self.invocation = CommandResumeInvocation.create(generation, self.deadline, clock)
         return self.invocation
 
     def snapshot(self, params: dict[str, JsonValue]) -> dict[str, JsonValue]:

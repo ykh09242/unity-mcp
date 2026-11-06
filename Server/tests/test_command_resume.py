@@ -5,7 +5,10 @@ import time
 import pytest
 
 from transport.command_resume import (
+    CommandResumeAbandoned,
+    CommandResumeClock,
     CommandResumeInvocation,
+    CommandResumeOwner,
     CommandResumeProtocolError,
     resume_eligible,
 )
@@ -46,6 +49,50 @@ def test_wire_attempts_retain_original_identity_payload_and_deadline():
     continued = invocation.to_wire()
     # Then only the transport action changes.
     assert continued == {**original, "action": "resume"}
+
+
+@pytest.mark.parametrize("skew_ms", [-60000, 60000])
+def test_clock_translation_consumes_transit_and_preserves_original_deadline(monkeypatch, skew_ms):
+    # The native sample at t=100 arrives at t=103. Neither server UTC nor
+    # dispatch delay may enlarge the original monotonic t=130 deadline.
+    monkeypatch.setattr(time, "monotonic", lambda: 103.0)
+    clock = CommandResumeClock.capture(1000000 + skew_ms)
+    monkeypatch.setattr(time, "monotonic", lambda: 108.0)
+    monkeypatch.setattr(time, "time", lambda: 999999999.0)
+    owner = CommandResumeOwner(130.0)
+    invocation = owner.bind("a" * 32, clock)
+    original = invocation.to_wire()
+    assert original["deadline_unix_ms"] == 1027000 + skew_ms
+    assert owner.deadline == 130.0
+    invocation.dispatch()
+    invocation.interrupted()
+    monkeypatch.setattr(time, "monotonic", lambda: 120.0)
+    later = CommandResumeClock.capture(1020000 + skew_ms)
+    assert owner.bind("a" * 32, later) is invocation
+    assert invocation.to_wire() == {**original, "action": "resume"}
+    owner.cancel()
+    assert invocation.to_wire() == {**original, "action": "cancel"}
+    with pytest.raises(CommandResumeAbandoned):
+        owner.bind("a" * 32, later)
+
+
+def test_clock_translation_does_not_refresh_expired_budget_or_round_it_up(monkeypatch):
+    monkeypatch.setattr(time, "monotonic", lambda: 103.0)
+    clock = CommandResumeClock.capture(1000000)
+    assert clock.translate(102.9995) == 999999
+    assert clock.translate(100.0) == 997000
+
+
+def test_legacy_peer_retains_server_wall_deadline(monkeypatch):
+    monkeypatch.setattr(time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(time, "time", lambda: 1000.0)
+    assert CommandResumeInvocation.create("a" * 32, 130.0).deadline_unix_ms == 1030000
+
+
+@pytest.mark.parametrize("sample", [None, True, 0, -1, "1000", 1000.0, 9223372036854775808])
+def test_invalid_clock_sample_cannot_grant_a_deadline(sample):
+    with pytest.raises(CommandResumeProtocolError):
+        CommandResumeClock.capture(sample)
 
 
 @pytest.mark.parametrize("field", ["version", "invocation_id", "editor_session_id", "state"])

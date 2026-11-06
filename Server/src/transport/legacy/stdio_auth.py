@@ -14,7 +14,13 @@ import time
 from typing import Callable
 
 from transport.native_arbitration import CAPABILITY, valid_generation
-from transport.command_resume import CAPABILITY as RESUME_CAPABILITY, ORIGIN_CAPABILITY
+from transport.command_resume import (
+    CAPABILITY as RESUME_CAPABILITY,
+    ORIGIN_CAPABILITY,
+    CLOCK_CAPABILITY,
+    CommandResumeClock,
+    CommandResumeProtocolError,
+)
 
 
 class StdioAuthenticationError(RuntimeError):
@@ -35,6 +41,7 @@ class StdioAuthenticatedSession:
     capabilities: frozenset[str]
     arbitration_generation: str | None = None
     resume_generation: str | None = None
+    resume_clock: CommandResumeClock | None = None
 
     @property
     def session_generation(self) -> str:
@@ -49,7 +56,7 @@ def _optional_capabilities(value: object) -> frozenset[str]:
     ):
         return frozenset()
     return frozenset(value).intersection(
-        {"command_progress_v1", CAPABILITY, RESUME_CAPABILITY, ORIGIN_CAPABILITY}
+        {"command_progress_v1", CAPABILITY, RESUME_CAPABILITY, ORIGIN_CAPABILITY, CLOCK_CAPABILITY}
     )
 
 
@@ -158,6 +165,14 @@ def authenticate_stdio_session(
         raise StdioAuthenticationError("Invalid command continuation generation")
     if ORIGIN_CAPABILITY in accepted and RESUME_CAPABILITY not in accepted:
         raise StdioAuthenticationError("Command origin requires continuation support")
+    resume_clock = None
+    if CLOCK_CAPABILITY in accepted:
+        if RESUME_CAPABILITY not in accepted:
+            raise StdioAuthenticationError("Command clock requires continuation support")
+        try:
+            resume_clock = CommandResumeClock.capture(reply.get("resume_clock_unix_ms"))
+        except CommandResumeProtocolError as exc:
+            raise StdioAuthenticationError("Invalid command continuation clock sample") from exc
     return StdioAuthenticatedSession(
-        generation, session, accepted, arbitration_generation, resume_generation
+        generation, session, accepted, arbitration_generation, resume_generation, resume_clock
     )

@@ -201,6 +201,38 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [TestCase("accepted")]
+        [TestCase("legacy")]
+        [TestCase("without-resume")]
+        [TestCase("without-arbitration")]
+        public async Task ResumeClockAuthRequiresResumeAndArbitration(string offer)
+        {
+            using var host = new TimingHostScope(_ => Task.FromResult<object>(new { done = true }));
+            var offered = new JArray();
+            if (offer != "legacy")
+                offered.Add(CommandResumeJournal.ClockCapability);
+            if (offer != "without-resume")
+                offered.Add(CommandResumeJournal.Capability);
+            if (offer != "without-arbitration")
+                offered.Add(NativeCommandArbitrator.Capability);
+            JObject ack = null;
+            long before = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var connecting = host.Track(Task.Run(() => ConnectProgressPeer(host.Port, host.Token, offered, out ack)));
+            await NativeProgressProbe.AwaitOwned(connecting);
+            using var connected = await connecting;
+            if (offer == "accepted")
+            {
+                CollectionAssert.Contains(ack["capabilities"].Values<string>().ToArray(), CommandResumeJournal.ClockCapability);
+                Assert.AreEqual(JTokenType.Integer, ack["resume_clock_unix_ms"].Type);
+                Assert.That(ack.Value<long>("resume_clock_unix_ms"), Is.InRange(before, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+            }
+            else
+            {
+                Assert.IsNull(ack["resume_clock_unix_ms"]);
+                CollectionAssert.DoesNotContain(ack["capabilities"].Values<string>().ToArray(), CommandResumeJournal.ClockCapability);
+            }
+        }
+
+        [TestCase("accepted")]
         [TestCase("absent")]
         [TestCase("scalar")]
         [TestCase("too-many")]

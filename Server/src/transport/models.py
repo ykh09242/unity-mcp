@@ -96,6 +96,7 @@ class RegisterMessage(BaseModel):
     capabilities: list[PluginCapability] = Field(default_factory=list, max_length=16)
     arbitration_generation: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     resume_generation: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    resume_clock_unix_ms: Annotated[StrictInt, Field(gt=0, le=9223372036854775807)] | None = None
 
     @field_validator("project_name", "project_hash")
     @classmethod

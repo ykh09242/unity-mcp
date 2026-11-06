@@ -131,6 +131,8 @@ from transport.native_arbitration import (
 )
 from transport.command_resume import (
     CAPABILITY as RESUME_CAPABILITY,
+    CLOCK_CAPABILITY,
+    CommandResumeClock,
     ORIGIN_CAPABILITY,
     queued_origin,
     CommandResumeProtocolError,
@@ -435,6 +437,7 @@ class PluginHub(WebSocketEndpoint):
             phase_diagnostics.CAPABILITY,
             ARBITRATION_CAPABILITY,
             RESUME_CAPABILITY,
+            CLOCK_CAPABILITY,
             ORIGIN_CAPABILITY,
         }
     )
@@ -1991,7 +1994,11 @@ class PluginHub(WebSocketEndpoint):
             getattr(socket.state, "plugin_resume_generation", None) if socket is not None else None
         )
         resume = (
-            CommandResumeInvocation.create(resume_generation, budget.expires_at)
+            CommandResumeInvocation.create(
+                resume_generation,
+                budget.expires_at,
+                getattr(socket.state, "plugin_resume_clock", None),
+            )
             if socket is not None
             and cls._supports(socket, RESUME_CAPABILITY)
             and valid_generation(resume_generation)
@@ -2916,6 +2923,14 @@ class PluginHub(WebSocketEndpoint):
     # ------------------------------------------------------------------
     async def _handle_register(self, websocket: WebSocket, payload: RegisterMessage) -> None:
         cls = type(self)
+        resume_clock = (
+            CommandResumeClock.capture(payload.resume_clock_unix_ms)
+            if CLOCK_CAPABILITY in payload.capabilities and payload.resume_clock_unix_ms is not None
+            else None
+        )
+        if CLOCK_CAPABILITY in payload.capabilities and resume_clock is None:
+            await websocket.close(code=4400, reason="Command continuation clock sample missing")
+            return
         registry = cls._registry
         lock = cls._lock
         if registry is None or lock is None:
@@ -3050,7 +3065,10 @@ class PluginHub(WebSocketEndpoint):
             ):
                 accepted = accepted - {RESUME_CAPABILITY}
             if RESUME_CAPABILITY not in accepted:
-                accepted = accepted - {ORIGIN_CAPABILITY}
+                accepted = accepted - {ORIGIN_CAPABILITY, CLOCK_CAPABILITY}
+            websocket.state.plugin_resume_clock = (
+                resume_clock if CLOCK_CAPABILITY in accepted else None
+            )
             websocket.state.plugin_resume_generation = (
                 resume_generation if RESUME_CAPABILITY in accepted else None
             )

@@ -2078,6 +2078,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 ["project_name"] = _projectName,
                 ["arbitration_generation"] = NativeCommandArbitrator.Shared.Generation,
                 ["resume_generation"] = CommandResumeState.SessionId,
+                ["resume_clock_unix_ms"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 ["project_hash"] = _projectHash,
                 ["unity_version"] = _unityVersion,
                 ["project_path"] = _projectPath,
@@ -2092,6 +2093,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     NativeCommandArbitrator.Capability,
                     CommandResumeJournal.Capability,
                     CommandResumeJournal.OriginCapability,
+                    CommandResumeJournal.ClockCapability,
                     HeartbeatCapability
                 ),
             };

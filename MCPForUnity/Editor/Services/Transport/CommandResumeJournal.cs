@@ -16,6 +16,7 @@ namespace MCPForUnity.Editor.Services.Transport
     {
         internal const string Capability = "command_resume_v1";
         internal const string OriginCapability = "command_resume_origin_v1";
+        internal const string ClockCapability = "command_resume_clock_v1";
         internal const int MaxEntries = 128;
         internal const int MaxSnapshotBytes = 2 * 1024 * 1024;
         internal const int MaxResultBytes = 8192;

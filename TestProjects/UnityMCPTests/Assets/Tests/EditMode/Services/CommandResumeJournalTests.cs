@@ -48,6 +48,46 @@ namespace MCPForUnityTests.Editor.Services
             };
 
         [Test]
+        public void TranslatedDeadlineIsNeverRecapturedAfterReload()
+        {
+            foreach (long skew in new[] { -60000L, 60000L })
+            {
+                Setup();
+                long sample = 1000000 + skew;
+                // Native sample transit consumed two seconds before server receipt.
+                // The sender translated its remaining ten seconds against that sample.
+                now = sample + 2000;
+                long deadline = sample + 10000;
+                var request = Request(deadline: deadline);
+                var parameters = new JObject { ["value"] = 1 };
+                Assert.IsNotNull(journal.Admit(request, "test", parameters).Ticket);
+                now += 2000;
+                journal = Open();
+                request["action"] = "resume";
+                request["deadline_unix_ms"] = deadline + 5000;
+                Assert.AreEqual("unavailable", journal.Admit(request, "test", parameters).State, "Reconnect cannot recapture a later deadline.");
+                request["deadline_unix_ms"] = deadline;
+                Assert.AreEqual(
+                    "unavailable",
+                    journal.Admit(request, "test", new JObject { ["value"] = 2 }).State,
+                    "Translation cannot weaken the payload digest."
+                );
+                var resumed = journal.Admit(request, "test", parameters);
+                Assert.IsNotNull(resumed.Ticket);
+                now = deadline;
+                Assert.IsFalse(journal.TryStart(resumed.Ticket), "Main-thread and transport delays consume the original native budget.");
+                Assert.AreEqual("expired", journal.Inspect(resumed.Ticket).State);
+            }
+        }
+
+        [Test]
+        public void TranslatedDeadlineAlreadyConsumedInTransitCannotStart()
+        {
+            now = 1011000;
+            Assert.AreEqual("expired", journal.Admit(Request(deadline: 1010000), "test", new JObject()).State);
+        }
+
+        [Test]
         public void PublicQueueOriginUsesTheSameContinuationGateOnItsFirstNativeSend()
         {
             var cases = new[]

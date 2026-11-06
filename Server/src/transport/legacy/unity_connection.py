@@ -78,6 +78,7 @@ from transport.native_arbitration import (
 )
 from transport.command_resume import (
     CAPABILITY as RESUME_CAPABILITY,
+    CLOCK_CAPABILITY,
     ORIGIN_CAPABILITY,
     queued_origin,
     CommandResumeProtocolError,
@@ -489,6 +490,7 @@ class UnityConnection:
                                 CAPABILITY,
                                 ARBITRATION_CAPABILITY,
                                 RESUME_CAPABILITY,
+                                CLOCK_CAPABILITY,
                                 ORIGIN_CAPABILITY,
                             ),
                         )
@@ -2170,7 +2172,7 @@ def _send_command_with_retry(
     )
     session = conn.authenticated_session
     resume = (
-        _resume_owner.bind(session.resume_generation)
+        _resume_owner.bind(session.resume_generation, session.resume_clock)
         if _resume_owner is not None
         and session is not None
         and RESUME_CAPABILITY in session.capabilities

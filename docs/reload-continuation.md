@@ -139,6 +139,31 @@ WebSocket registration and authenticated stdio handshakes advertise
 Actions are `new`, `resume`, `status` and `cancel`. A missing `resume` checkpoint
 cannot create new work.
 
+When both peers also negotiate `command_resume_clock_v1`, the Editor supplies
+`resume_clock_unix_ms` in its WebSocket registration or authenticated stdio ACK.
+It samples the same UTC clock used for native admission. The server pairs that
+sample with its monotonic receipt time and translates the original deadline:
+
+`editor_deadline_ms = sample_ms + floor((server_deadline - sample_receipt_monotonic) * 1000)`
+
+The sample was taken before receipt, so its transit and handling delay shorten
+the native budget conservatively. Subsequent command transit and queueing consume
+that fixed budget. The server's original monotonic deadline remains authoritative
+for dispatch, retries, waiting and cancellation. Each invocation captures its
+translated `deadline_unix_ms` once; reconnection samples cannot extend it or change
+the journal's deadline and payload identity, including after a domain reload.
+Expired native admissions still fail, and uncertain started work still cannot replay.
+
+A negotiated clock capability without a positive Int64 sample fails registration
+or authentication. Peers without the capability retain the existing server-UTC
+deadline contract and require synchronized wall clocks. The extension tolerates
+a stable positive or negative wall-clock offset; it does not synchronize clocks
+or compensate for subsequent Editor UTC jumps. The server monotonic bound still
+ends the caller's wait and requests cancellation at the original deadline.
+Execution and resource ownership remain retained until workers settle; native work
+already executing retains the existing cooperative cancellation and uncertain-outcome
+behavior.
+
 With `command_resume_origin_v1`, a rebound public callback also sends
 `origin_generation` inside `resume`, including on its preflight requests. Its
 presence requires cross-domain semantic validation even for a new journal entry.

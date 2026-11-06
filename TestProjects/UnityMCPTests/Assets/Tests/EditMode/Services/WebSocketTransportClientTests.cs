@@ -21,6 +21,28 @@ namespace MCPForUnityTests.Editor.Services
     public class WebSocketTransportClientTests
     {
         [Test]
+        public async Task ResumeClockRegistrationPublishesEditorClockSample()
+        {
+            RequireOwnedProgressEditor();
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateClient();
+            long before = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            try
+            {
+                Assert.IsTrue(await client.StartAsync());
+                var registration = await peer.Negotiate(false);
+                CollectionAssert.Contains(registration["capabilities"].Values<string>().ToArray(), CommandResumeJournal.ClockCapability);
+                Assert.AreEqual(JTokenType.Integer, registration["resume_clock_unix_ms"].Type);
+                Assert.That(registration.Value<long>("resume_clock_unix_ms"), Is.InRange(before, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+                peer.AssertHealthy();
+            }
+            finally
+            {
+                await client.StopAsync();
+            }
+        }
+
+        [Test]
         public async Task FailedInitialConnection_PreservesReasonThroughCleanupUntilExplicitStop()
         {
             var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
