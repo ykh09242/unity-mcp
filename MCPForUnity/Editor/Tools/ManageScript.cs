@@ -59,6 +59,7 @@ namespace MCPForUnity.Editor.Tools
         private static Action<string> _preparedCommitStageForTests = null;
         private static Action<string> _scriptWriteBeforeCommitForTests = null;
         private static Action<string> _createScriptImportForTests = null;
+        private static Action<string, bool> _textEditRefreshForTests = null;
 
         internal static ErrorResponse RequireExplicitConsent()
         {
@@ -877,27 +878,20 @@ namespace MCPForUnity.Editor.Tools
             // Atomic write and schedule refresh
             if (preview)
                 return ScriptPreviewResponse(fullPath, relativePath, original, working, spans.Count);
+            bool sourceSaved = false;
+            bool immediate =
+                string.Equals(refreshModeFromCaller, "immediate", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(refreshModeFromCaller, "sync", StringComparison.OrdinalIgnoreCase);
             try
             {
                 WriteScriptFile(fullPath, working, overwrite: true, expectedDigest: originalDigest);
-
-                // Respect refresh mode: immediate vs debounced
-                bool immediate =
-                    string.Equals(refreshModeFromCaller, "immediate", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(refreshModeFromCaller, "sync", StringComparison.OrdinalIgnoreCase);
-                if (immediate)
-                {
-                    McpLog.Info($"[ManageScript] ApplyTextEdits: immediate refresh for '{relativePath}'");
-                    AssetDatabase.ImportAsset(relativePath, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-#if UNITY_EDITOR
-                    UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation();
-#endif
-                }
+                sourceSaved = true;
+                if (_textEditRefreshForTests != null)
+                    _textEditRefreshForTests(relativePath, immediate);
+                else if (immediate)
+                    ManageScriptRefreshHelpers.ImportAndRequestCompile(relativePath);
                 else
-                {
-                    McpLog.Info($"[ManageScript] ApplyTextEdits: debounced refresh scheduled for '{relativePath}'");
                     ManageScriptRefreshHelpers.ScheduleScriptRefresh(relativePath);
-                }
 
                 return new SuccessResponse(
                     $"Applied {spans.Count} text edit(s) to '{relativePath}'.",
@@ -906,13 +900,35 @@ namespace MCPForUnity.Editor.Tools
                         uri = $"mcpforunity://path/{relativePath}",
                         path = relativePath,
                         editsApplied = spans.Count,
+                        source_saved = true,
                         sha256 = newSha,
                         scheduledRefresh = !immediate,
+                        refresh_status = immediate ? "requested" : "scheduled",
                     }
                 );
             }
             catch (Exception ex)
             {
+                if (sourceSaved)
+                    return new ErrorResponse(
+                        "Text edits were saved, but refresh failed.",
+                        new
+                        {
+                            uri = $"mcpforunity://path/{relativePath}",
+                            path = relativePath,
+                            source_saved = true,
+                            applied = true,
+                            editsApplied = spans.Count,
+                            sha256 = newSha,
+                            failed_stage = immediate ? "import_and_compile" : "schedule_refresh",
+                            scheduledRefresh = (bool?)null,
+                            refresh_attempted = true,
+                            refresh_status = "failed",
+                            refresh_confirmation = "unknown",
+                            refresh_error = ex.Message.Substring(0, Math.Min(512, ex.Message.Length)),
+                            recovery = "Inspect the saved source and Editor import/compile state. Do not replay edits; request refresh separately with refresh_unity if needed.",
+                        }
+                    );
                 return new ErrorResponse($"Failed to write edits: {ex.Message}");
             }
         }
