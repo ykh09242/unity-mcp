@@ -1,3 +1,4 @@
+using System.IO;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Tools.GameObjects;
@@ -29,7 +30,12 @@ namespace MCPForUnityTests.Editor.Tools
         [SetUp]
         public void SetUp()
         {
-            scopedConsent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute", "manage_gameobject", "manage_scene_edits");
+            scopedConsent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState(
+                "batch_execute",
+                "manage_gameobject",
+                "manage_scene_edits",
+                "manage_script"
+            );
             testGo = new GameObject("BatchKeyTestGO");
         }
 
@@ -269,6 +275,62 @@ namespace MCPForUnityTests.Editor.Tools
             );
             Assert.IsTrue(response.Value<bool>("success"), response.ToString());
             return (JObject)response.SelectToken("data.results[0].result");
+        }
+
+        private static JObject SendScript(JObject parameters, bool batch)
+        {
+            if (!batch)
+                return JObject.FromObject(ManageScript.HandleCommand(parameters));
+            var response = JObject.FromObject(
+                BatchExecute
+                    .HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "manage_script", ["params"] = parameters }) })
+                    .GetAwaiter()
+                    .GetResult()
+            );
+            return (JObject)response.SelectToken("data.results[0].result");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ScriptReadWindow_HasDirectBatchParity(bool batch)
+        {
+            string folder = "BatchScript_" + System.Guid.NewGuid().ToString("N");
+            string directory = Path.Combine(Application.dataPath, folder);
+            Directory.CreateDirectory(directory);
+            try
+            {
+                File.WriteAllText(Path.Combine(directory, "Probe.cs"), "// first\n// second\n// third\n");
+                var request = new JObject
+                {
+                    ["action"] = "read",
+                    ["name"] = "Probe",
+                    ["path"] = "Assets/" + folder,
+                    ["start_line"] = 2,
+                    ["line_count"] = 1,
+                };
+                var result = SendScript(request, batch);
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                Assert.IsTrue(result["data"].Value<bool>("lineWindowApplied"));
+                Assert.AreEqual("// second\n", result["data"].Value<string>("contents"));
+                Assert.AreEqual(2, request.Value<int>("start_line"), "Caller parameters must stay unchanged.");
+            }
+            finally
+            {
+                File.Delete(Path.Combine(directory, "Probe.cs"));
+                Directory.Delete(directory);
+            }
+        }
+
+        [TestCase("get_change_set")]
+        [TestCase("apply_change_set")]
+        [TestCase("recover_change_set")]
+        public void ScriptChangeSetId_ReachesTheSameLookupThroughBatch(string action)
+        {
+            var request = new JObject { ["action"] = action, ["change_set_id"] = System.Guid.NewGuid().ToString("N") };
+            var direct = SendScript((JObject)request.DeepClone(), false);
+            var batched = SendScript(request, true);
+            Assert.AreEqual("change_set_not_found", direct.Value<string>("code"), direct.ToString());
+            Assert.AreEqual(direct.Value<string>("code"), batched.Value<string>("code"), batched.ToString());
         }
 
         [TestCase("custom_contract_probe")]

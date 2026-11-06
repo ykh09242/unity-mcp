@@ -21,6 +21,10 @@ internal static class Program
 
     // PRODUCTION_COMMIT
 
+    // PRODUCTION_BATCH
+
+    private static string ToCamelCase(string value) => StringCaseUtility.ToCamelCase(value);
+
     private static void Require(bool condition, string message)
     {
         if (!condition)
@@ -33,6 +37,7 @@ internal static class Program
         Directory.CreateDirectory(root);
         int count = 0;
         foreach (bool bom in new[] { false, true })
+        foreach (bool batch in new[] { false, true })
         foreach (string scenario in new[] { "normal", "before_compare", "before_replace", "observation_failure", "later_write" })
         {
             string target = Path.Combine(root, (++count).ToString() + ".cs");
@@ -63,7 +68,7 @@ internal static class Program
                 ["candidate_contents"] = "// candidate\n",
                 ["bom"] = bom,
             };
-            var result = JObject.FromObject(ApplyPreparedScript(target, target, parameters));
+            var result = JObject.FromObject(ApplyPreparedScript(target, target, batch ? NormalizeParameterKeys(parameters, "manage_script") : parameters));
             bool displaced = scenario == "before_replace" || scenario == "observation_failure";
             if (displaced)
             {
@@ -85,7 +90,7 @@ internal static class Program
                 Require(Directory.GetFiles(root, Path.GetFileName(target) + ".*.prepared.*").Length == 0, "Verified attempt must clean its sidecars");
             }
             Require(refreshes == (scenario == "normal" ? 1 : 0), "Conflict must not request refresh");
-            Console.WriteLine($"PASS {scenario} bom={bom}");
+            Console.WriteLine($"PASS {scenario} bom={bom} batch={batch}");
         }
         Console.WriteLine($"PASS {count} actual prepared-script commit scenarios");
     }
@@ -94,6 +99,30 @@ internal static class Program
 internal static class AssetPathUtility
 {
     internal static string GetFullAssetPath(string path) => Path.GetFullPath(path);
+}
+
+internal static class MCPServiceLocator
+{
+    internal static class ToolDiscovery
+    {
+        internal sealed class Metadata
+        {
+            public bool IsBuiltIn => true;
+        }
+
+        internal static Metadata GetToolMetadata(string name) => new Metadata();
+    }
+}
+
+namespace GameObjects
+{
+    internal static class ManageGameObject
+    {
+        internal static JObject NormalizeParameterAliases(JObject source) => throw new InvalidOperationException("Unexpected GameObject route");
+
+        internal static void ResolveParameterAlias(JObject source, string canonical, string alias) =>
+            throw new InvalidOperationException("Unexpected scene route");
+    }
 }
 
 internal static class ManageScriptRefreshHelpers

@@ -578,6 +578,11 @@ namespace MCPForUnity.Editor.Tools
             if (MCPServiceLocator.ToolDiscovery.GetToolMetadata(toolName ?? "")?.IsBuiltIn != true)
                 return (JObject)source.DeepClone();
 
+            // Script handlers own exact snake_case read-window, change-set and byte-proof keys.
+            // Preserve the direct-call contract instead of applying legacy camelCase conversion.
+            if (toolName == "manage_script")
+                return (JObject)source.DeepClone();
+
             if (toolName == "manage_gameobject" || toolName?.StartsWith("gameobject_", StringComparison.Ordinal) == true)
                 return GameObjects.ManageGameObject.NormalizeParameterAliases(source);
             if (toolName == "manage_scene_edits")
