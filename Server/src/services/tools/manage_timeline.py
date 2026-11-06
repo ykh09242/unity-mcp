@@ -11,6 +11,7 @@ from pydantic import JsonValue, StrictFloat, StrictInt, StrictStr
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
+from models import MCPResponse
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
 
@@ -269,4 +270,6 @@ async def manage_timeline(
         "manage_timeline",
         {"action": action, **{key: value for key, value in values.items() if value is not None}},
     )
+    if isinstance(result, MCPResponse):
+        return result.model_dump(exclude_none=True)
     return result if isinstance(result, dict) else {"success": False, "message": str(result)}

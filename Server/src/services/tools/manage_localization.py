@@ -7,6 +7,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import Field, JsonValue, StrictBool, StrictStr
 
+from models import MCPResponse
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from services.tools.refresh_unity import send_mutation
@@ -163,4 +164,6 @@ async def manage_localization(
         result = await send_with_unity_instance(
             async_send_command_with_retry, selected, "manage_localization", params
         )
+    if isinstance(result, MCPResponse):
+        return result.model_dump(exclude_none=True)
     return result if isinstance(result, dict) else failure(str(result))

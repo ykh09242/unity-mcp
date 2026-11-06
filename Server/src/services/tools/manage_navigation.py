@@ -6,6 +6,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import JsonValue
 
+from models import MCPResponse
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -100,7 +101,9 @@ async def manage_navigation(
     response = await send_with_unity_instance(
         async_send_command_with_retry, instance, "manage_navigation", params
     )
-    # The transport boundary returns JSON envelopes; malformed transport replies are failures.
+    # Both transports preserve their authoritative envelope and recovery evidence.
+    if isinstance(response, MCPResponse):
+        return response.model_dump(exclude_none=True)
     if isinstance(response, dict):
         return response
     return {"success": False, "message": str(response)}

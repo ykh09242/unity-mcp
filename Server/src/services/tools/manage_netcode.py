@@ -6,6 +6,7 @@ from fastmcp import Context
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictBool, StrictInt
 
+from models import MCPResponse
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
@@ -75,6 +76,8 @@ async def manage_netcode(
         async_send_command_with_retry, instance, "manage_netcode", params
     )
     # Existing transport JSON envelopes remain authoritative, including native refusals.
+    if isinstance(response, MCPResponse):
+        return response.model_dump(exclude_none=True)
     if isinstance(response, dict):
         return response
     return {"success": False, "message": str(response)}
