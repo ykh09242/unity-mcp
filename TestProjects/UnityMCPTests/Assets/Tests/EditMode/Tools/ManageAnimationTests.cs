@@ -1598,18 +1598,22 @@ namespace MCPForUnityTests.Editor.Tools
 
         private void ApplyEdit(string action)
         {
+            Assert.AreEqual(ownerScene, instance.scene);
+            Assert.AreEqual(unrelatedScene, SceneManager.GetActiveScene());
             var result = ToJObject(
                 ManageAnimation.HandleCommand(
                     new JObject
                     {
                         ["action"] = action,
-                        ["target"] = instance.name,
+                        ["target"] = instance.GetInstanceIDCompat(),
+                        ["searchMethod"] = "by_id",
                         ["controllerPath"] = controllerPath,
                         ["enabled"] = false,
                     }
                 )
             );
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(unrelatedScene, SceneManager.GetActiveScene());
         }
 
         private void AssertEditedState(string action, bool edited)
