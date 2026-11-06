@@ -158,15 +158,29 @@ Metadata is at most 8 KiB per record and 16 MiB including staging; records are c
 1024 globally, 256 per owner and 128 per owner/project. Active calls are capped at 256/32/16
 at those scopes. Results are at most 1 MiB each, with 64/16/8 MiB global/owner/project quotas
 including two worst-case current+stage slots for active retention. One invocation has at
-most 64 owned worker capabilities. Execution only shortens existing deadlines and is capped
-at one hour; noncooperative actual cleanup keeps its charges instead of pretending to stop.
+most 64 owned worker capabilities. Execution only shortens existing deadlines; its total
+ceiling includes result/transport grace as listed below. Noncooperative actual cleanup
+keeps its charges instead of pretending to stop.
 
-Argument identity is bounded by 4 MiB, 65,536 nodes and depth 64. Decode, normalization,
+Argument identity has independent encoded-byte, node-count and depth limits below. Decode, normalization,
 encoding and detached result copies reserve conservative working space before allocation.
 Existing ResponseOwner lifetimes retain delivery charges through actual HTTP handoff or
-retained stdio flush. Aggregate receipt working space uses the existing 256 MiB response
-retained-space ceiling, independently of disk quotas. Oversize retained output keeps truthful
+retained stdio flush. Aggregate receipt working space uses the response retained-space
+ceiling below, independently of disk quotas. Oversize retained output keeps truthful
 status with result_unavailable_reason=result_too_large.
+
+The following limits are checked against the implementation by
+`tools/tests/test_execution_receipt_limits.py`. They describe distinct accounting layers;
+the argument identity ceiling does not replace the HTTP request-body limit.
+
+| Constant | Maximum | Unit and scope |
+| --- | ---: | --- |
+| `EXECUTION_SECONDS` | 86,460 | Seconds per protected execution, including grace (24 hours plus 60 seconds) |
+| `MAX_ARGUMENT_BYTES` | 33,554,432 | Encoded bytes per argument identity (32 MiB) |
+| `MAX_ARGUMENT_NODES` | 1,000,000 | JSON nodes per argument identity |
+| `MAX_ARGUMENT_DEPTH` | 64 | Nesting depth per argument identity |
+| `MAX_RESPONSE_RETAINED_BYTES` | 536,870,912 | Aggregate receipt working-space ceiling (512 MiB), using the response limit constant |
+| `RESULT_BYTES` | 1,048,576 | Bytes per retained application result (1 MiB), separate from aggregate disk quotas |
 
 Result retention defaults off. Arbitrary application output may contain sensitive content,
 including application credentials. Opting in stores exact bounded normalized application
