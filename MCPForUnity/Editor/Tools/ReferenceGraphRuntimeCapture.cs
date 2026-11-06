@@ -46,12 +46,7 @@ namespace MCPForUnity.Editor.Tools
                 if (Active.TryGetValue(token, out Capture existing))
                     return existing.Status();
                 if (File.Exists(SafeFile(location, ".json")))
-                {
-                    JObject previous = ReadMetadata(location);
-                    if (previous.Value<string>("state") == "active")
-                        previous["state"] = "interrupted";
-                    return previous;
-                }
+                    return ReadMetadata(location);
                 string spoolRoot = ReferenceGraphRuntimeSpool.Root(location);
                 Directory.CreateDirectory(spoolRoot);
                 // No lifecycle observer is retained while idle. A gap starts a
@@ -88,6 +83,16 @@ namespace MCPForUnity.Editor.Tools
             {
                 if (Active.TryGetValue(token, out Capture current))
                 {
+                    if (action == "runtime_stop")
+                    {
+                        current.Stop();
+                        if (current.Settled)
+                        {
+                            Active.Remove(token);
+                            UnsubscribeIfIdle();
+                        }
+                        return current.Status();
+                    }
                     current.Close("stopped");
                     Active.Remove(token);
                     UnsubscribeIfIdle();
@@ -132,12 +137,24 @@ namespace MCPForUnity.Editor.Tools
             if (Active.TryGetValue(token, out Capture active))
                 return active.Read(offset, limit);
             JObject metadata = ReadMetadata(location);
-            if (metadata.Value<string>("state") == "active")
-                metadata["state"] = "interrupted";
             return ReadPage(location, metadata, offset, limit);
         }
 
-        private static JObject ReadMetadata(string location) => JObject.Parse(File.ReadAllText(SafeFile(location, ".json"), Encoding.UTF8));
+        private static JObject ReadMetadata(string location)
+        {
+            JObject metadata = JObject.Parse(File.ReadAllText(SafeFile(location, ".json"), Encoding.UTF8));
+            // Only inactive captures reach this reader; a persisted pending state
+            // cannot imply that this domain still owns its lost in-memory queue.
+            if (metadata.Value<string>("state") == "active" || metadata.Value<string>("state") == "finishing")
+            {
+                metadata["state"] = "interrupted";
+                metadata["unwritten_count"] = checked((metadata.Value<long?>("unwritten_count") ?? 0) + (metadata.Value<long?>("pending_count") ?? 0));
+                metadata["pending_count"] = 0;
+                metadata["pending_bytes"] = 0;
+                metadata["storage_waiting"] = false;
+            }
+            return metadata;
+        }
 
         private static JObject ReadPage(string location, JObject metadata, long offset, int limit)
         {
@@ -187,8 +204,13 @@ namespace MCPForUnity.Editor.Tools
 
         private static void DrainCaptures()
         {
-            foreach (Capture capture in Active.Values.ToArray())
-                capture.Drain();
+            foreach (var capture in Active.ToArray())
+            {
+                capture.Value.Drain();
+                if (capture.Value.Settled)
+                    Active.Remove(capture.Key);
+            }
+            UnsubscribeIfIdle();
         }
 
         private static void UnsubscribeIfIdle()
@@ -215,6 +237,16 @@ namespace MCPForUnity.Editor.Tools
             private readonly Queue<byte[]> pending = new Queue<byte[]>();
             private long pendingBytes;
             private bool waiting;
+            private bool finishing;
+
+            internal bool Settled
+            {
+                get
+                {
+                    lock (gate)
+                        return writer == null;
+                }
+            }
 
             internal Capture(string path, string session)
             {
@@ -268,7 +300,7 @@ namespace MCPForUnity.Editor.Tools
             {
                 lock (gate)
                 {
-                    if (writer == null)
+                    if (writer == null || finishing)
                         return;
                     bool accepted = false;
                     try
@@ -386,11 +418,13 @@ namespace MCPForUnity.Editor.Tools
             {
                 lock (gate)
                 {
-                    if (writer == null || pending.Count == 0)
+                    if (writer == null)
                         return;
                     try
                     {
                         DrainPending();
+                        if (writer != null && finishing && pending.Count == 0)
+                            Finish("stopped");
                     }
                     catch (Exception error)
                     {
@@ -471,6 +505,32 @@ namespace MCPForUnity.Editor.Tools
                     File.Replace(temporary, path, null);
                 else
                     File.Move(temporary, path);
+            }
+
+            internal void Stop()
+            {
+                lock (gate)
+                {
+                    if (writer == null || finishing)
+                        return;
+                    subscription?.Dispose();
+                    subscription = null;
+                    finishing = true;
+                    metadata["state"] = "finishing";
+                    Drain();
+                    if (writer == null)
+                        return;
+                    try
+                    {
+                        Status();
+                        Save();
+                    }
+                    catch (Exception error)
+                    {
+                        metadata["error"] = error.GetType().Name;
+                        Finish("observer_failed");
+                    }
+                }
             }
 
             internal void Close(string reason)

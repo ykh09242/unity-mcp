@@ -474,11 +474,28 @@ guarantee for legacy producers.
 
 Temporary root-lock contention queues events in memory without ending the active
 capture. The FIFO is bounded at 128 records and 4 MiB, and each retry drains at
-most 32 records or 1 MiB with one nonblocking lock attempt. Status exposes
-`pending_count`, `pending_bytes` and `storage_waiting`. If the queue fills or a
-capture must close before it can drain, `storage_backpressure` and
+most 32 records or 1 MiB with one nonblocking lock attempt. Small observation
+bursts share the next Editor update; a full batch triggers a bounded fallback
+drain. Each batch checks retained storage under the cross-process root lease and
+flushes once. Status exposes `pending_count`, `pending_bytes` and `storage_waiting`.
+
+`runtime_stop` immediately ends observation. If accepted events remain, the
+capture reports `finishing` and retains its capture lease until that queue has
+settled. Each Editor update or `runtime_poll` drains at most one batch; repeated
+stop requests are idempotent. Continue `runtime_poll` while `capture.state` is
+`finishing`, including when `has_more` is false: that field describes already
+persisted event pages, not pending writes. `runtime_status` is cached and does
+not poll the Editor. Successful completion reports `stopped` with no unwritten
+events. Persistent contention stays visible as `finishing` until ownership can be
+acquired; no root lease is held while waiting between retries.
+
+`runtime_release` explicitly cancels any finishing work and removes that capture.
+Domain reload, Editor quit and Play Mode transitions cannot wait across updates.
+If the queue fills or a forced close cannot drain it, `storage_backpressure` and
 `unwritten_count` make the incomplete capture explicit. Existing event bytes are
-preserved; these diagnostics do not claim the queued events were saved.
+preserved on forced close; these diagnostics do not claim the queued events were
+saved. A persisted `active` or `finishing` receipt without a live capture owner is
+reported as `interrupted` after restart.
 
 Path searches retain protected search evidence in the owning query's SQLite
 storage, including evidence outside the selected route. Responses and replay

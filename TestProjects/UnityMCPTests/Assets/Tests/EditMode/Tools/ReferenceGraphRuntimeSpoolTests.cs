@@ -25,19 +25,25 @@ namespace MCPForUnityTests.EditMode.Tools
             Directory.CreateDirectory(editor);
             location = Path.Combine(editor, Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N"));
             captureType = typeof(ManageReferenceGraph).Assembly.GetType("MCPForUnity.Editor.Tools.ReferenceGraphRuntimeCapture+Capture");
-            capture = Activator.CreateInstance(
-                captureType,
-                BindingFlags.Instance | BindingFlags.NonPublic,
-                null,
-                new object[] { location, Guid.NewGuid().ToString("N") },
-                null
-            );
+            captureType
+                .DeclaringType.GetMethod("HandleAt", BindingFlags.Static | BindingFlags.NonPublic)
+                .Invoke(
+                    null,
+                    new object[]
+                    {
+                        new JObject { ["action"] = "runtime_start", ["token"] = Path.GetFileName(location) },
+                        location,
+                    }
+                );
+            capture = ActiveCaptures()[Path.GetFileName(location)];
         }
 
         [TearDown]
         public void TearDown()
         {
             captureType.GetMethod("Close", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(capture, new object[] { "test_complete" });
+            ActiveCaptures().Remove(Path.GetFileName(location));
+            captureType.DeclaringType.GetMethod("UnsubscribeIfIdle", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
             // This directory is a unique test-owned fixture, never the native
             // profile spool or a pre-existing retained capture.
             if (Directory.Exists(root))
@@ -52,6 +58,171 @@ namespace MCPForUnityTests.EditMode.Tools
             (JObject)captureType.GetMethod("Read", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(capture, new object[] { 0L, 128 });
 
         private void Drain() => captureType.GetMethod("Drain", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(capture, null);
+
+        private System.Collections.IDictionary ActiveCaptures() =>
+            (System.Collections.IDictionary)captureType.DeclaringType.GetField("Active", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+
+        private JObject Stop() =>
+            (JObject)
+                captureType
+                    .DeclaringType.GetMethod("HandleAt", BindingFlags.Static | BindingFlags.NonPublic)
+                    .Invoke(
+                        null,
+                        new object[]
+                        {
+                            new JObject { ["action"] = "runtime_stop", ["token"] = Path.GetFileName(location) },
+                            location,
+                        }
+                    );
+
+        private void UpdateCaptures() => captureType.DeclaringType.GetMethod("DrainCaptures", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+
+        [Test, Platform(Include = "Win")]
+        public void RecoveredContentionStopFinishesMoreThanOneBatchAcrossUpdates()
+        {
+            using (HoldRoot())
+                for (int i = 0; i < 33; i++)
+                    ReferenceGraphRuntime.Load("custom", "queued/" + i);
+            JObject stopping = Stop();
+            Assert.AreEqual("finishing", stopping.Value<string>("state"));
+            Assert.AreEqual(32, stopping.Value<long>("count"));
+            Assert.AreEqual(1, stopping.Value<int>("pending_count"));
+            Assert.AreEqual(0, stopping.Value<long>("unwritten_count"));
+            Assert.IsTrue(ActiveCaptures().Contains(Path.GetFileName(location)), "Finishing work must retain its owning capture.");
+            Assert.IsFalse(ReferenceGraphRuntime.Enabled, "Stop must retire new observations before draining accepted work.");
+            ReferenceGraphRuntime.Load("custom", "late");
+            captureType
+                .GetMethod("Record", BindingFlags.Instance | BindingFlags.NonPublic)
+                .Invoke(capture, new object[] { new ReferenceGraphRuntimeEvent("load", "custom", "late-callback", "", null, "") });
+            UpdateCaptures();
+            Assert.AreEqual("stopped", Metadata().Value<string>("state"));
+            Assert.AreEqual(33, Metadata().Value<long>("count"));
+            Assert.AreEqual(0, Metadata().Value<long>("unwritten_count"));
+            Assert.IsFalse(ActiveCaptures().Contains(Path.GetFileName(location)));
+            JObject read = Read();
+            for (int i = 0; i < 33; i++)
+            {
+                Assert.AreEqual("queued/" + i, read["events"][i].Value<string>("key"));
+                Assert.AreEqual(i + 1, read["events"][i].Value<long>("sequence"));
+            }
+        }
+
+        [Test, Platform(Include = "Win")]
+        public void ContendedStopRemainsFinishingUntilRecoveryAndRepeatedStopIsIdempotent()
+        {
+            using (HoldRoot())
+            {
+                for (int i = 0; i < 65; i++)
+                    ReferenceGraphRuntime.Load("custom", "waiting/" + i);
+                JObject first = Stop();
+                Assert.AreEqual("finishing", first.Value<string>("state"));
+                Assert.AreEqual(65, first.Value<int>("pending_count"));
+                Assert.AreEqual(0, first.Value<long>("count"));
+                Assert.IsTrue(first.Value<bool>("storage_waiting"));
+                Assert.IsFalse(ReferenceGraphRuntime.Enabled);
+                bool acquired = ReferenceGraphRuntimeSpool.TryLock(location + ".lease", out FileStream competing);
+                competing?.Dispose();
+                Assert.IsFalse(acquired, "Pending accepted work must retain its cross-process capture lease.");
+                JObject again = Stop();
+                Assert.AreEqual(65, again.Value<int>("pending_count"));
+                UpdateCaptures();
+                Assert.AreEqual("finishing", Status().Value<string>("state"));
+                Assert.AreEqual(65, Status().Value<int>("pending_count"));
+            }
+            JObject unchanged = Stop();
+            Assert.AreEqual("finishing", unchanged.Value<string>("state"));
+            Assert.AreEqual(0, unchanged.Value<long>("count"));
+            Assert.AreEqual(65, unchanged.Value<int>("pending_count"));
+            for (int update = 0; update < 3; update++)
+            {
+                UpdateCaptures();
+                Assert.AreEqual(Math.Min((update + 1) * 32, 65), Status().Value<long>("count"));
+            }
+            Assert.AreEqual("stopped", Metadata().Value<string>("state"));
+            Assert.AreEqual(65, Stop().Value<long>("count"));
+            Assert.AreEqual(0, Metadata().Value<long>("unwritten_count"));
+            Assert.IsTrue(ReferenceGraphRuntimeSpool.TryLock(location + ".lease", out FileStream settled));
+            settled.Dispose();
+        }
+
+        [Test, Platform(Include = "Win")]
+        public void ReleaseCancelsFinishingWorkAndRemovesOnlyItsOwnedCapture()
+        {
+            string retained = Path.Combine(Path.GetDirectoryName(location), new string('e', 64) + ".events");
+            File.WriteAllText(retained, "retained evidence");
+            using (HoldRoot())
+            {
+                for (int i = 0; i < 65; i++)
+                    ReferenceGraphRuntime.Load("custom", "release/" + i);
+                Assert.AreEqual("finishing", Stop().Value<string>("state"));
+            }
+            JObject released = (JObject)
+                captureType
+                    .DeclaringType.GetMethod("HandleAt", BindingFlags.Static | BindingFlags.NonPublic)
+                    .Invoke(
+                        null,
+                        new object[]
+                        {
+                            new JObject { ["action"] = "runtime_release", ["token"] = Path.GetFileName(location) },
+                            location,
+                        }
+                    );
+            Assert.IsTrue(released.Value<bool>("released"));
+            Assert.IsFalse(ReferenceGraphRuntime.Enabled);
+            Assert.IsFalse(ActiveCaptures().Contains(Path.GetFileName(location)));
+            foreach (string extension in new[] { ".json", ".json.pending", ".events", ".lease" })
+                Assert.IsFalse(File.Exists(location + extension));
+            UpdateCaptures();
+            Assert.IsFalse(File.Exists(location + ".events"));
+            Assert.AreEqual("retained evidence", File.ReadAllText(retained));
+        }
+
+        [Test, Platform(Include = "Win")]
+        public void OrphanedFinishingReceiptReportsInterruptedUnconfirmedWork()
+        {
+            JObject persisted;
+            using (HoldRoot())
+            {
+                for (int i = 0; i < 33; i++)
+                    ReferenceGraphRuntime.Load("custom", "orphaned/" + i);
+                Stop();
+                persisted = Metadata();
+                captureType.GetMethod("Close", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(capture, new object[] { "test_complete" });
+            }
+            ActiveCaptures().Remove(Path.GetFileName(location));
+            // Simulate a process disappearing after persisting finishing metadata.
+            File.WriteAllText(location + ".json", persisted.ToString());
+            JObject interrupted = Stop();
+            Assert.AreEqual("interrupted", interrupted.Value<string>("state"));
+            Assert.AreEqual(0, interrupted.Value<int>("pending_count"));
+            Assert.AreEqual(0, interrupted.Value<long>("pending_bytes"));
+            Assert.IsFalse(interrupted.Value<bool>("storage_waiting"));
+            Assert.AreEqual(33, interrupted.Value<long>("unwritten_count"));
+            Assert.IsFalse(ReferenceGraphRuntime.Enabled);
+        }
+
+        [Test, Platform(Include = "Win")]
+        public void ForcedShutdownDuringFinishingReportsTheUndrainedQueueAndRetiresOwnership()
+        {
+            using (HoldRoot())
+            {
+                for (int i = 0; i < 33; i++)
+                    ReferenceGraphRuntime.Load("custom", "forced/" + i);
+                Assert.AreEqual("finishing", Stop().Value<string>("state"));
+                captureType.DeclaringType.GetMethod("CloseAll", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { "domain_reload" });
+                JObject forced = Metadata();
+                Assert.AreEqual("storage_backpressure", forced.Value<string>("state"));
+                Assert.AreEqual("pending_events_on_domain_reload", forced.Value<string>("stop_reason"));
+                Assert.AreEqual(33, forced.Value<long>("unwritten_count"));
+                Assert.AreEqual(0, forced.Value<int>("pending_count"));
+                Assert.IsFalse(ReferenceGraphRuntime.Enabled);
+                Assert.IsFalse(ActiveCaptures().Contains(Path.GetFileName(location)));
+            }
+            byte[] closed = Events();
+            UpdateCaptures();
+            ReferenceGraphRuntime.Load("custom", "late");
+            CollectionAssert.AreEqual(closed, Events());
+        }
 
         private sealed class CountingWriter : BinaryWriter
         {
