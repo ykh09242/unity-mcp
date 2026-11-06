@@ -89,3 +89,51 @@ def test_exact_capability_query_prefers_focused_tool_and_preserves_action_maturi
     assert first["maturity"] == "stable"
     assert first["action_maturity"]["pipeline_get_diagnostics"] == "experimental"
     assert first["advertised"] is None
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        (
+            "manage_render_pipeline",
+            [
+                "pipeline_get_diagnostics [experimental]",
+                "validate-urp-render-graph-renderer-feature",
+            ],
+        ),
+        ("manage_localization", ["com.unity.localization", "localization/SKILL.md"]),
+    ],
+)
+def test_text_search_shows_actions_support_and_requirements(query, expected):
+    from cli.main import cli
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--no-project-context",
+            "--instance",
+            "Selected@abc",
+            "tool",
+            "search",
+            query,
+            "--limit",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    for value in expected:
+        assert value in result.stdout
+    assert "unobserved" in result.stdout
+    assert (
+        "--instance Selected@abc" in result.stdout or "--instance 'Selected@abc'" in result.stdout
+    )
+    assert f"tool describe {query}" in result.stdout
+
+
+def test_text_search_reports_empty_results():
+    from cli.main import cli
+
+    result = CliRunner().invoke(cli, ["--no-project-context", "tool", "search", "unmatchablexyz"])
+    assert result.exit_code == 0, result.output
+    assert "No matching tools" in result.stdout

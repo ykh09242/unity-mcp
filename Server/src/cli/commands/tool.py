@@ -70,7 +70,13 @@ def search(query: str, limit: int) -> None:
 
     list(discover_modules(Path(tools_package.__file__).parent, tools_package.__name__))
     result = search_catalog(SearchRequest(query=query, limit=limit), get_registered_tools())
-    click.echo(format_output(result, get_config().format))
+    config = get_config()
+    if config.format == "text":
+        from cli.utils.task_search_output import format_task_search
+
+        click.echo(format_task_search(result, config))
+    else:
+        click.echo(format_output(result, config.format))
 
 
 def _validate_name(_ctx, _param, value):
