@@ -11,6 +11,7 @@ from __future__ import annotations
 from bisect import bisect_left, insort
 from collections import Counter, OrderedDict, defaultdict, deque
 from collections.abc import Callable, Iterable, Iterator
+from contextlib import closing
 from dataclasses import dataclass, field, replace
 import re
 import threading
@@ -1084,9 +1085,13 @@ class Catalog:
         self._members = {}
         self._lock = threading.RLock()
         self.resource_keys = []
+        self._changed_resources = set()
         for asset in assets:
             self._add(asset, incremental=False)
         self.resource_keys = sorted(value for scheme, value in self.keys if scheme == "resources")
+        self._resource_targets = {
+            key: tuple(sorted(self.keys[("resources", key)])) for key in self.resource_keys
+        }
 
     @property
     def addressables_unavailable(self):
@@ -1108,6 +1113,8 @@ class Catalog:
             if incremental and key[0] == "resources" and key not in self.keys:
                 insort(self.resource_keys, key[1])
             self.keys[key].add("asset:" + guid)
+            if incremental and key[0] == "resources":
+                self._changed_resources.add(key[1])
 
     def _remove(self, guid: str):
         guid = guid.lower()
@@ -1125,6 +1132,8 @@ class Catalog:
                     self.blocked.discard(key)
             else:
                 self.keys[key].discard("asset:" + guid)
+                if key[0] == "resources":
+                    self._changed_resources.add(key[1])
                 if not self.keys[key]:
                     del self.keys[key]
                     if key[0] == "resources":
@@ -1139,6 +1148,34 @@ class Catalog:
             for asset in assets:
                 self._remove(asset["guid"])
                 self._add(asset, incremental=True)
+            # Sort each changed bucket once, outside the per-call fanout walk.
+            for key in self._changed_resources:
+                targets = self.keys.get(("resources", key))
+                if targets:
+                    self._resource_targets[key] = tuple(sorted(targets))
+                else:
+                    self._resource_targets.pop(key, None)
+            self._changed_resources.clear()
+
+    def _resource_descendants(self, key, lookups, visit):
+        prefix = key.rstrip("/") + "/" if key else ""
+        if lookups is not None:
+            lookups.add(
+                lookups.key("resources-prefix", prefix)
+                if prefix.count("/") <= lookups.MAX_PREFIX_DEPTH
+                else lookups.ANY
+            )
+        if visit is not None:
+            visit()
+        start = bisect_left(self.resource_keys, prefix)
+        for index in range(start, len(self.resource_keys)):
+            value = self.resource_keys[index]
+            if not value.startswith(prefix):
+                break
+            if visit is not None:
+                visit()
+            if value != key:
+                yield value
 
     def resolve(
         self,
@@ -1176,24 +1213,8 @@ class Catalog:
 
         add_targets(self.keys.get((scheme, key), ()))
         if scheme == "resources" and mode == "all":
-            prefix = key.rstrip("/") + "/" if key else ""
-            if lookups is not None:
-                lookups.add(
-                    lookups.key("resources-prefix", prefix)
-                    if prefix.count("/") <= lookups.MAX_PREFIX_DEPTH
-                    else lookups.ANY
-                )
-            if visit is not None:
-                visit()
-            start = bisect_left(self.resource_keys, prefix)
-            for index in range(start, len(self.resource_keys)):
-                value = self.resource_keys[index]
-                if not value.startswith(prefix):
-                    break
-                if visit is not None:
-                    visit()
-                if value != key:
-                    add_targets(self.keys[(scheme, value)])
+            for value in self._resource_descendants(key, lookups, visit):
+                add_targets(self.keys[(scheme, value)])
         if scheme == "addressables":
             if lookups is not None:
                 lookups.add(lookups.key("addressables_label", key))
@@ -1229,6 +1250,45 @@ class Catalog:
                 targets, reason = self.resolve(scheme, match[1], mode, lookups=lookups, visit=visit)
                 return targets, reason, match[2]
         return targets, reason, ""
+
+    def iter_resolved_detail(
+        self, scheme: str, key: str, mode: str, *, lookups=None, visit=lambda: None
+    ) -> Iterator[tuple[str | None, str | None, str]]:
+        """Yield stable key/bucket order without materializing a LoadAll result.
+
+        Consume or close on the calling thread: the lock preserves one catalog
+        revision for the lifetime of this synchronous evidence iterator.
+        """
+        if scheme != "resources" or mode != "all":
+            targets, reason, subobject = self.resolve_detail(
+                scheme, key, mode, lookups=lookups, visit=visit
+            )
+            if reason:
+                yield None, reason, subobject
+            for target in sorted(targets):
+                visit()
+                yield target, None, subobject
+            return
+        with self._lock:
+            key = self.canonical_key(scheme, key)
+            if lookups is not None:
+                lookups.add(lookups.key(scheme, key))
+            seen = set()
+
+            def buckets():
+                yield key
+                yield from self._resource_descendants(key, lookups, visit)
+
+            for value in buckets():
+                visit()
+                for target in self._resource_targets.get(value, ()):
+                    visit()
+                    if target not in seen:
+                        seen.add(target)
+                        yield target, None, ""
+            if not seen:
+                _, reason = self._resolve(scheme, key, mode, lookups=lookups, visit=visit)
+                yield None, reason, ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1865,23 +1925,25 @@ class AnalysisIndex:
                 issues.add("dynamic_key")
                 continue
             key = "".join(value for _, value in expr)
-            targets, reason, subobject = self.catalog.resolve_detail(
-                effect.scheme, key, effect.mode, lookups=lookups
-            )
-            if reason and reason != "excluded":
-                yield {"line": call.line, "call": call.name, "reason": reason, "key": key}
-            for target in sorted(targets):
-                self.check()
-                yield Edge(
-                    target,
-                    effect.scheme + "_load",
-                    key,
-                    call.line,
-                    "possible",
-                    effect.evidence,
-                    target_type=effect.target_type,
-                    subobject=subobject,
+            with closing(
+                self.catalog.iter_resolved_detail(
+                    effect.scheme, key, effect.mode, lookups=lookups, visit=self.check
                 )
+            ) as matches:
+                for target, reason, subobject in matches:
+                    if reason and reason != "excluded":
+                        yield {"line": call.line, "call": call.name, "reason": reason, "key": key}
+                    if target is not None:
+                        yield Edge(
+                            target,
+                            effect.scheme + "_load",
+                            key,
+                            call.line,
+                            "possible",
+                            effect.evidence,
+                            target_type=effect.target_type,
+                            subobject=subobject,
+                        )
         for reason in sorted(issues):
             yield {"line": call.line, "call": call.name, "reason": reason}
 
