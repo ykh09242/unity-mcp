@@ -215,11 +215,13 @@ def test_capabilities_are_negotiated_as_supported_intersection(client):
             "native_arbitration_v1",
             "command_resume_v1",
             "command_resume_origin_v1",
+            "command_resume_clock_v1",
         }
         assert set(registered["capabilities"]) == set(FEATURES)
         assert "tool_settings_ack_v1" not in registered["capabilities"]
         assert "command_progress_v1" not in registered["capabilities"]
         assert "phase_timing_v1" not in registered["capabilities"]
+        assert "command_resume_clock_v1" not in registered["capabilities"]
         assert "unsupported" not in registered["capabilities"]
         state = PluginHub._connections[sid].state
         assert state.plugin_session_id == sid
@@ -227,6 +229,8 @@ def test_capabilities_are_negotiated_as_supported_intersection(client):
         assert "tool_settings_ack_v1" not in state.plugin_features
         assert "command_progress_v1" not in state.plugin_features
         assert "phase_timing_v1" not in state.plugin_features
+        assert "command_resume_clock_v1" not in state.plugin_features
+        assert state.plugin_resume_clock is None
         assert "unsupported" not in state.plugin_features
         assert state.plugin_generation
 
