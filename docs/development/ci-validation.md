@@ -80,13 +80,19 @@ so tool tests do not wait for the longer server suite.
   instrumentation while its inherited runtime-checkable protocol is incompatible with
   warnings-as-errors. Application validation and the warning policy remain enabled.
 
-To inspect local test durations, run from `Server/`:
+To inspect local server test durations, run from `Server/`:
 
 ```sh
 uv run --python 3.14 --locked --extra dev pytest tests/ -q -W error --tb=short --durations=20
 uv run --python 3.14 --locked --extra dev pytest tests/ -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --durations=20
-uv run --python 3.14 --locked --extra dev python -m pytest ../tools/tests/ -o asyncio_default_fixture_loop_scope=function -q -W error --tb=short --durations=20
-uv run --python 3.14 --locked --extra dev python -m pytest ../tools/tests/ -o asyncio_default_fixture_loop_scope=function -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --durations=20
+```
+
+Run the tool suite from the repository root so `tools` imports resolve. `--project Server`
+selects the server environment without changing the command's working directory:
+
+```sh
+uv run --project Server --python 3.14 --locked --extra dev python -m pytest tools/tests/ -o asyncio_default_fixture_loop_scope=function -q -W error --tb=short --durations=20
+uv run --project Server --python 3.14 --locked --extra dev python -m pytest tools/tests/ -o asyncio_default_fixture_loop_scope=function -n 2 --dist=loadfile --max-worker-restart=0 -q -W error --tb=short --durations=20
 ```
 
 Keep test-node selection and failure behavior intact when optimizing. Deadline tests can use a
