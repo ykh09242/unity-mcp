@@ -1,0 +1,66 @@
+name: Onboarding Documentation Contracts
+
+on:
+  pull_request:
+    branches: [main, beta]
+    paths: &inputs
+      - README.md
+      - Server/README.md
+      - MCPForUnity/README.md
+      - CONTRIBUTING.md
+      - SECURITY.md
+      - website/README.md
+      # All routes participate in the local-link contract.
+      - website/docs/**
+      # Local link targets are inputs even when the referring page is unchanged.
+      - docs/**
+      - CODE_OF_CONDUCT.md
+      - LICENSE
+      - Server/LICENSE
+      - MCPForUnity/Documentation~/LICENSE.md
+      - website/DEPENDENCIES.md
+      - .github/ISSUE_TEMPLATE/**
+      - MCPForUnity/package.json
+      - Server/src/**
+      - Server/pyproject.toml
+      - Server/uv.lock
+      - mcp_source.py
+      - tools/cli_reference.py
+      - tools/cli_example_validation.py
+      - tools/tests/test_fork_documentation.py
+      - tools/tests/test_onboarding_workflow.py
+      - .github/workflows/onboarding-contracts.yml
+  push:
+    branches: [beta]
+    paths: *inputs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onboarding-contracts-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Authored onboarding examples and links
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+          python-version: "3.14"
+          enable-cache: false
+      - name: Install locked Python test dependencies
+        run: uv sync --directory Server --locked --extra dev
+      - name: Verify onboarding contracts without Unity or site dependencies
+        env:
+          UNITY_MCP_DISABLE_TELEMETRY: "1"
+        run: >-
+          uv run --project Server --locked --extra dev python -m pytest
+          tools/tests/test_fork_documentation.py tools/tests/test_onboarding_workflow.py
+          -o asyncio_default_fixture_loop_scope=function -q -W error -p no:cacheprovider
