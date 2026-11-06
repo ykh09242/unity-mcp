@@ -41,7 +41,7 @@ Eligibility is defined in `Server/src/services/control_capacity.py`: `ping`,
 | `manage_profiler` | `profiler_status`, `window_status`, `window_cancel` |
 
 Unknown commands,
-custom-handler overrides, unlisted aliases, exports, result viewers and arbitrary
+server-side custom-handler overrides, unlisted aliases, exports, result viewers and arbitrary
 `action: status` or caller-supplied policy metadata cannot claim this pool.
 Authentication, permissions, target generation and native admission still apply.
 
