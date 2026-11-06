@@ -65,8 +65,9 @@ so tool tests do not wait for the longer server suite.
   `--ci-first-file=tools/tests/test_bench_transport.py`.
 - Workers select separate rotating-log directories before importing the application. Child
   processes inherit that worker directory unless their fixture supplies its own directory.
-- The complete Python 3.14 server suite collects coverage. Other versions run the same tests
-  without duplicate coverage collection. Existing subprocess coverage boundaries are unchanged.
+- The complete Python 3.14 server suite collects coverage, including the isolated HTTP child.
+  The child joins its private coverage data into its owning outer worker. Other versions run
+  the same tests without duplicate coverage collection.
 - Every suite treats warnings as errors, reports its 20 slowest tests, and uploads JUnit results.
   Artifact names include both the Python minor and suite, preventing parallel uploads colliding.
   The isolated HTTP child suite writes `test-results-http.xml` alongside the outer report so
@@ -88,6 +89,21 @@ and import origins. Isolated mode and the source-origin gate reject checkout imp
 probes explicitly use `-W error`, since isolated mode ignores `PYTHONWARNINGS`. The 3.15
 archive job uses the same optional beartype setting as the locked suites. These small probes
 complement the complete locked test suites without repeating them.
+
+[`distribution-canary.yml`](../../.github/workflows/distribution-canary.yml) runs one Linux
+Python 3.14 probe each Monday at 04:23 UTC and supports manual dispatch. It selects the
+immutable `mcpServerSource` from the checked commit's `MCPForUnity/package.json`, using the
+shared source-pin validator to require consistent launcher metadata. Scheduled runs use
+the default branch; manual runs use the selected workflow branch. The selected launcher
+commit and server archive commit appear separately in the run summary and retained report.
+
+The canary creates an empty environment and installs that archive with fresh, unlocked
+dependency resolution and no shared uv cache. It reuses the installed-archive HTTP/CLI
+behavior and startup-registration probes, including warnings-as-errors and source-import
+rejection. The artifact retains source identity, install output, toolchain versions, every
+resolved distribution version, and successful probe reports for 30 days. Installation or
+probe failures fail the job; this read-only check publishes no package and does not run
+the complete test matrix. Its purpose is to detect dependency changes between source commits.
 
 To inspect local server test durations, run from `Server/`:
 
