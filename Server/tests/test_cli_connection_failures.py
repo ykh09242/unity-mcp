@@ -15,7 +15,15 @@ from cli.utils import connection
 )
 @pytest.mark.parametrize("verbose", [False, True])
 @pytest.mark.parametrize(
-    "command", [["scene", "active"], ["raw", "fixture"], ["instances"], ["tool", "list"]]
+    "command",
+    [
+        ["scene", "active"],
+        ["raw", "fixture"],
+        ["instances"],
+        ["tool", "list"],
+        ["code", "read", "Assets/Owned.cs"],
+        ["code", "search", "Owned", "Assets/Owned.cs"],
+    ],
 )
 def test_connection_failure_returns_one_sanitized_json_document(
     monkeypatch, failure, command, verbose
@@ -87,3 +95,35 @@ def test_connection_failure_keeps_human_text_on_stderr(monkeypatch):
     assert result.exit_code == 1
     assert result.stdout == ""
     assert "Synthetic server is unavailable" in result.stderr
+
+
+@pytest.mark.parametrize("verbose", [False, True])
+def test_status_keeps_health_success_and_sanitizes_instance_warning(monkeypatch, verbose):
+    credential = "synthetic-status-credential-must-not-escape"
+    client_type = httpx.AsyncClient
+    requests = []
+
+    def respond(request):
+        requests.append(request.url.path)
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "healthy"})
+        return httpx.Response(500, text=f"sensitive response: {credential}")
+
+    monkeypatch.setattr(connection, "read_local_auth_token", lambda *_: credential)
+    monkeypatch.setattr(
+        connection.httpx,
+        "AsyncClient",
+        lambda **_options: client_type(transport=httpx.MockTransport(respond), trust_env=False),
+    )
+    result = CliRunner().invoke(
+        cli, ["--format", "json", *(["--verbose"] if verbose else []), "status"]
+    )
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert document["success"] is True
+    assert document["instances"] == []
+    assert document["warning"]
+    assert credential not in result.output
+    assert result.stderr == ""
+    assert requests == ["/health", "/api/instances"]

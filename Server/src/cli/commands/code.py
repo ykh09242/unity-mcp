@@ -13,7 +13,6 @@ from cli.utils.connection import (
     run_command,
     handle_unity_errors,
     UnityCommandError,
-    UnityConnectionError,
 )
 from cli.utils.script_read import echo_script_read, script_contents
 
@@ -24,10 +23,7 @@ _MATCH_CHARS = 200
 
 def _read_source(params: dict[str, Any], config: CLIConfig) -> dict[str, Any]:
     """Keep read/search transport failures in the selected structured output format."""
-    try:
-        result = run_command("manage_script", params, config)
-    except UnityConnectionError as error:
-        raise UnityCommandError({"success": False, "error": str(error)}) from error
+    result = run_command("manage_script", params, config)
     return result.get("result", result)
 
 

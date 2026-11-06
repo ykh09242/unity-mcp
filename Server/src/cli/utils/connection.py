@@ -4,7 +4,7 @@ import asyncio
 import functools
 import json
 import sys
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Any, Callable, Dict, Final, Optional, TypeVar
 
 import click
 import httpx
@@ -32,6 +32,8 @@ class UnityCommandError(Exception):
 
 F = TypeVar("F", bound=Callable[..., Any])
 
+PUBLIC_CONNECTION_ERROR: Final = "Unity MCP connection failed. Verify the server is running, reachable, and its local authentication token is available."
+
 
 def print_connection_error(error: UnityConnectionError, format_type: str) -> None:
     """Render setup/transport failures without echoing credentials in JSON mode."""
@@ -45,7 +47,7 @@ def print_connection_error(error: UnityConnectionError, format_type: str) -> Non
                 {
                     "success": False,
                     "code": "connection_error",
-                    "error": "Unity MCP connection failed. Verify the server is running, reachable, and its local authentication token is available.",
+                    "error": PUBLIC_CONNECTION_ERROR,
                 },
                 "json",
             )

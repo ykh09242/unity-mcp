@@ -15,6 +15,7 @@ from cli.utils.config import (
     set_config,
 )
 from cli.utils.connection import (
+    PUBLIC_CONNECTION_ERROR,
     UnityConnectionError,
     handle_unity_errors,
     print_connection_error,
@@ -228,8 +229,8 @@ def status(ctx: Context, ready: bool):
                 instances_result = run_list_instances(config)
                 if isinstance(instances_result, dict):
                     result["instances"] = instances_result.get("instances", [])
-            except UnityConnectionError as e:
-                result["warning"] = f"Could not retrieve Unity instances: {e}"
+            except UnityConnectionError:
+                result["warning"] = f"Could not retrieve Unity instances: {PUBLIC_CONNECTION_ERROR}"
         else:
             result["error"] = f"Cannot connect to Unity MCP server at {config.host}:{config.port}"
         click.echo(format_output(result, config.format))
