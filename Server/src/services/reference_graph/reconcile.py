@@ -1326,7 +1326,7 @@ class Reconciler:
                         row["owner"],
                         generation,
                         chain(preview, events),
-                        lambda owner=row["owner"]: index.transitive_dependencies(owner),
+                        lambda owner=row["owner"]: index.direct_dependencies(owner),
                         catalog_lookups=lookups,
                         catalog_revision=catalog_revision,
                         document_generation=document_generation,
@@ -1336,7 +1336,7 @@ class Reconciler:
                 result = Analysis(
                     [event for event in preview if isinstance(event, Edge)],
                     [event for event in preview if isinstance(event, dict)],
-                    dependencies=index.transitive_dependencies(row["owner"]),
+                    dependencies=index.direct_dependencies(row["owner"]),
                     catalog_lookups=lookups,
                 )
             else:

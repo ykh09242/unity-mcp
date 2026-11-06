@@ -1885,6 +1885,11 @@ class AnalysisIndex:
         for reason in sorted(issues):
             yield {"line": call.line, "call": call.name, "reason": reason}
 
+    def direct_dependencies(self, owner: str) -> set[str]:
+        """Store local relationships; the workspace walks them for invalidation."""
+        self.check()
+        return set(self.dependencies.get(owner, ()))
+
     def transitive_dependencies(self, owner: str) -> set[str]:
         # Transitive dependencies ensure a changed constant inside a wrapper also
         # invalidates callers, even when the wrapper's own source is unchanged.
