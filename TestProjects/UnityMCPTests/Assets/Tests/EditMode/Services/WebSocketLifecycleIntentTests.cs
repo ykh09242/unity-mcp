@@ -23,6 +23,85 @@ namespace MCPForUnityTests.Editor.Services
         private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
         [Test]
+        public void Stop_ThrowingDisconnectedObserverPreservesSettlementAndAllowsRestart()
+        {
+            const string timeoutKey = "UNITY_MCP_WEBSOCKET_CONTROL_TIMEOUT_SECONDS";
+            string previousTimeout = Environment.GetEnvironmentVariable(timeoutKey);
+            using var peer = CreatePeer(out Uri endpoint);
+            using var client = CreateClient(endpoint);
+            var context = new HeldContext();
+            var heldReceive = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task<bool> start = context.Start(client);
+            int disconnected = 0;
+            Action throwing = () =>
+            {
+                if (!client.Status.IsConnected)
+                    throw new InvalidOperationException("owned-sensitive-observer-marker");
+            };
+            Action remaining = () =>
+            {
+                if (!client.Status.IsConnected)
+                    Interlocked.Increment(ref disconnected);
+            };
+            try
+            {
+                FinishStart(context, start);
+                Assert.IsTrue(start.GetAwaiter().GetResult());
+                Wait(() => Get(client, "_toolSettingsRegistration") != null, "owned tool settings registration");
+                object lifecycle = Get(client, "_lifecycleCts");
+                lock (Get(client, "_ownershipLock"))
+                    Set(client, "_receiveTask", Task.WhenAll((Task)Get(client, "_receiveTask"), heldReceive.Task));
+                client.StatusChanged += throwing;
+                client.StatusChanged += remaining;
+                Environment.SetEnvironmentVariable(timeoutKey, "0.1");
+                UnityEngine.TestTools.LogAssert.Expect(
+                    UnityEngine.LogType.Warning,
+                    new System.Text.RegularExpressions.Regex("Tool settings status observer failed: InvalidOperationException")
+                );
+
+                Task stop = client.StopAsync();
+                Wait(() => stop.IsCompleted, "bounded stop observation");
+                Assert.DoesNotThrow(() => stop.GetAwaiter().GetResult());
+                Assert.AreEqual(1, Volatile.Read(ref disconnected), "A throwing observer must not skip remaining subscribers.");
+                Assert.IsFalse(((Task)Get(client, "_stopSettlement")).IsCompleted, "The actual held receive loop must continue to own cleanup.");
+                start = context.Start(client);
+                FinishStart(context, start);
+                Assert.IsFalse(start.GetAwaiter().GetResult(), "Observer isolation cannot permit replacement while actual work is unsettled.");
+                Assert.AreSame(lifecycle, Get(client, "_lifecycleCts"));
+
+                heldReceive.SetResult(true);
+                Wait(() => ((Task)Get(client, "_stopSettlement")).IsCompletedSuccessfully, "actual stopped lifecycle settlement");
+                Assert.IsNull(Get(client, "_socket"));
+                Assert.IsNull(Get(client, "_lifecycleCts"));
+                Assert.IsNull(Get(client, "_connectionCts"));
+                Assert.IsNull(Get(client, "_toolSettingsRegistration"));
+                Assert.IsNull(Get(client, "_receiveTask"));
+                Assert.IsNull(Get(client, "_keepAliveTask"));
+                Assert.IsNull(Get(client, "_commandWork"));
+
+                start = context.Start(client);
+                FinishStart(context, start);
+                Assert.IsTrue(start.GetAwaiter().GetResult(), "A diagnostic-only observer failure must not poison the next start.");
+                Assert.IsTrue(client.IsConnected);
+                Assert.AreEqual("owned-editor-session-2", client.State.SessionId);
+            }
+            finally
+            {
+                heldReceive.TrySetResult(true);
+                client.StatusChanged -= throwing;
+                client.StatusChanged -= remaining;
+                try
+                {
+                    Cleanup(client, context, start);
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable(timeoutKey, previousTimeout);
+                }
+            }
+        }
+
+        [Test]
         public void Dispose_RetainsQueuedSendResourcesUntilActualSettlement()
         {
             using var client = CreateClient(new Uri("ws://127.0.0.1:1"));

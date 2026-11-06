@@ -64,6 +64,34 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [UnityTest]
+        public IEnumerator Dispose_ThrowingDisconnectedObserverPreservesOtherObserversAndCleanup()
+        {
+            using var probe = new Probe();
+            Task pending = probe.Request();
+            JObject frame = probe.Frames.ToArray()[0];
+            int notified = 0;
+            probe.State.StatusChanged += () =>
+            {
+                if (!probe.State.Status.IsConnected)
+                    throw new InvalidOperationException("owned-sensitive-observer-marker");
+            };
+            probe.State.StatusChanged += () => notified++;
+            LogAssert.Expect(
+                UnityEngine.LogType.Warning,
+                new System.Text.RegularExpressions.Regex("Tool settings status observer failed: InvalidOperationException")
+            );
+
+            Assert.DoesNotThrow(probe.Dispose);
+
+            yield return Until(() => pending.IsCompleted);
+            Assert.IsFalse(pending.IsFaulted);
+            Assert.AreEqual(1, notified);
+            Assert.AreEqual("disconnected", probe.State.Status.Stage);
+            Assert.IsFalse(probe.Receipt(frame));
+            Assert.IsTrue(probe.IsLifetimeDisposed, "Observer failure cannot skip cancellation-source disposal.");
+        }
+
+        [UnityTest]
         public IEnumerator FailedSend_DoesNotAutomaticallyRetryOrConfirm()
         {
             using var probe = new Probe();
@@ -229,6 +257,24 @@ namespace MCPForUnityTests.Editor.Services
             internal Task Request() => (Task)helper.GetType().GetMethod("RequestAsync").Invoke(helper, null);
 
             internal bool HasReceiptWaiter => helper.GetType().GetField("_receipt", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(helper) != null;
+
+            internal bool IsLifetimeDisposed
+            {
+                get
+                {
+                    var lifetime = (CancellationTokenSource)
+                        helper.GetType().GetField("_lifetime", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(helper);
+                    try
+                    {
+                        _ = lifetime.Token;
+                        return false;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return true;
+                    }
+                }
+            }
 
             internal bool Receipt(JObject frame) =>
                 (bool)

@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -180,7 +181,7 @@ namespace MCPForUnity.Editor.Services
                 _dirty = false;
                 snapshot = _desired;
             }
-            StatusChanged?.Invoke();
+            NotifyStatusChanged();
             return snapshot;
         }
 
@@ -191,7 +192,7 @@ namespace MCPForUnity.Editor.Services
                 _dirty = true;
                 SetStage(_owner != null && _supported ? "pending" : "saved");
             }
-            StatusChanged?.Invoke();
+            NotifyStatusChanged();
         }
 
         public void SetConnection(object owner, string sessionId, bool supported, Func<Task> retry)
@@ -213,7 +214,7 @@ namespace MCPForUnity.Editor.Services
                 _retry = retry;
                 SetStage(supported ? "pending" : "unconfirmed", supported ? null : "unsupported_peer");
             }
-            StatusChanged?.Invoke();
+            NotifyStatusChanged();
         }
 
         public void Disconnect(object owner)
@@ -230,7 +231,7 @@ namespace MCPForUnity.Editor.Services
                 _retryTask = null;
                 SetStage("disconnected");
             }
-            StatusChanged?.Invoke();
+            NotifyStatusChanged();
         }
 
         public ToolSettingsSnapshot BeginAttempt(object owner)
@@ -245,7 +246,7 @@ namespace MCPForUnity.Editor.Services
                 snapshot = _attempt;
                 SetStage("sending");
             }
-            StatusChanged?.Invoke();
+            NotifyStatusChanged();
             return snapshot;
         }
 
@@ -257,7 +258,7 @@ namespace MCPForUnity.Editor.Services
                     return;
                 SetStage("awaiting_ack");
             }
-            StatusChanged?.Invoke();
+            NotifyStatusChanged();
         }
 
         public bool AcceptReceipt(object owner, JObject receipt)
@@ -301,7 +302,7 @@ namespace MCPForUnity.Editor.Services
                 if (_desired.Revision == revision && !_dirty)
                     SetStage(status, receipt.Value<string>("reason"), receipt.Value<string>("message"));
             }
-            StatusChanged?.Invoke();
+            NotifyStatusChanged();
             return true;
         }
 
@@ -317,7 +318,7 @@ namespace MCPForUnity.Editor.Services
                 if (ReferenceEquals(_desired, snapshot) && !_dirty)
                     SetStage(stage, reason, message);
             }
-            StatusChanged?.Invoke();
+            NotifyStatusChanged();
         }
 
         public Task RetryToolSettingsAsync()
@@ -355,7 +356,7 @@ namespace MCPForUnity.Editor.Services
             finally
             {
                 completion.TrySetResult(true);
-                StatusChanged?.Invoke();
+                NotifyStatusChanged();
             }
         }
 
@@ -363,7 +364,7 @@ namespace MCPForUnity.Editor.Services
         {
             lock (_gate)
                 SetStage("preparation_failed", "invalid_catalog", message);
-            StatusChanged?.Invoke();
+            NotifyStatusChanged();
         }
 
         internal void PreparationFailed(object owner, ToolSettingsStatus expected, string exceptionType)
@@ -374,10 +375,33 @@ namespace MCPForUnity.Editor.Services
                     return;
                 SetStage("preparation_failed", "capture_failed", CaptureFailureMessage(exceptionType));
             }
-            StatusChanged?.Invoke();
+            NotifyStatusChanged();
         }
 
         internal static string CaptureFailureMessage(string exceptionType) => "Catalog preparation failed (" + exceptionType + ").";
+
+        private void NotifyStatusChanged()
+        {
+            var observers = StatusChanged;
+            if (observers == null)
+                return;
+            foreach (Action observer in observers.GetInvocationList())
+            {
+                try
+                {
+                    observer();
+                }
+                catch (Exception error)
+                {
+                    // Observers cannot interrupt registration or transport ownership cleanup.
+                    try
+                    {
+                        McpLog.Warn($"Tool settings status observer failed: {error.GetType().Name}");
+                    }
+                    catch { /* Diagnostics must not interrupt the remaining observers. */ }
+                }
+            }
+        }
 
         private bool CanRetry() =>
             _owner != null
