@@ -87,12 +87,12 @@ jobs:
 
       - name: Sync Server deps
         working-directory: Server
-        run: uv sync --python 3.14
+        run: uv sync --locked --python 3.14
 
       - name: Drift check
         working-directory: Server
-        run: uv run --python 3.14 python ../tools/generate_docs_reference.py --check
+        run: uv run --locked --python 3.14 python ../tools/generate_docs_reference.py --check
 
       - name: Check native feature catalog
         working-directory: Server
-        run: uv run --python 3.14 python ../tools/generate_tool_capabilities.py --check
+        run: uv run --locked --python 3.14 python ../tools/generate_tool_capabilities.py --check
