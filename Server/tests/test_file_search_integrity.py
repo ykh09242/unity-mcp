@@ -28,10 +28,10 @@ async def search(search_module, contents, pattern, **kwargs):
 @pytest.mark.parametrize(
     "uri,directory",
     [
-        ("file:///C:/Fixture/Assets/A%2520B/Foo.cs", "Assets/A%20B"),
-        ("file://localhost/C:/Fixture/Assets/A%252FB/Foo.cs", "Assets/A%2FB"),
-        ("file://server/share/Assets/A%2525B/Foo.cs", "Assets/A%25B"),
-        ("file:///C:/Fixture/Assets/A%20B/Foo.cs", "Assets/A B"),
+        ("file:///C:/Fixture/Assets/A%2520B/Foo.cs", "C:/Fixture/Assets/A%20B"),
+        ("file://localhost/C:/Fixture/Assets/A%252FB/Foo.cs", "C:/Fixture/Assets/A%2FB"),
+        ("file://server/share/Assets/A%2525B/Foo.cs", "//server/share/Assets/A%25B"),
+        ("file:///C:/Fixture/Assets/A%20B/Foo.cs", "C:/Fixture/Assets/A B"),
         ("mcpforunity://path/Assets/A%2520B/Foo.cs", "Assets/A%20B"),
         ("Assets/A%2520B/Foo.cs", "Assets/A%20B"),
     ],

@@ -234,12 +234,16 @@ async def main():
     global raw
     for mode in ('2026-07-28', 'legacy'):
         async with Client(server, mode=mode) as client:
-            for uri in ('file:///C:/Fixture/Assets/A%2520B/Foo.cs', 'mcpforunity://path/Assets/A%2520B/Foo.cs', 'Assets/A%2520B/Foo.cs'):
+            for uri, directory in (
+                ('file:///C:/Fixture/Assets/A%2520B/Foo.cs', 'C:/Fixture/Assets/A%20B'),
+                ('mcpforunity://path/Assets/A%2520B/Foo.cs', 'Assets/A%20B'),
+                ('Assets/A%2520B/Foo.cs', 'Assets/A%20B'),
+            ):
                 raw = {'success': True, 'data': {'contents': text}}
                 before = len(requests)
                 result = await client.call_tool('find_in_file', {'uri': uri, 'pattern': 'needle'}, raise_on_error=False)
                 sent = requests[before:]
-                check(sent == [('Project@fixture', 'manage_script', {'action': 'read', 'name': 'Foo', 'path': 'Assets/A%20B'})], 'one percent decode across URI forms')
+                check(sent == [('Project@fixture', 'manage_script', {'action': 'read', 'name': 'Foo', 'path': directory})], 'one percent decode preserves project identity across URI forms')
                 check(result.structured_content == {'success': True, 'data': {'matches': expected_matches, 'count': 2, 'total_matches': 2}}, 'real regex/Unicode offsets/excerpts')
                 print('FILE_WIRE', json.dumps({'mode': mode, 'payload': {'uri': uri, 'pattern': 'needle'}, 'wires': sent, 'response': result.structured_content}))
             for data in ({'contentsEncoded': True, 'encodedContents': base64.b64encode(text.encode()).decode()}, {'contents': ''}):
