@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -355,8 +356,8 @@ namespace MCPForUnityTests.EditMode.Tools
             byte[] before = File.ReadAllBytes(Absolute(_path));
             byte[] metadata = File.ReadAllBytes(Absolute(_path) + ".meta");
             string[] filesBefore = Directory.GetFiles(Absolute(_root + "/"), "*", SearchOption.AllDirectories);
-            int assetId = AssetDatabase.LoadMainAssetAtPath(_path).GetInstanceID();
-            var originals = new HashSet<int>(Resources.FindObjectsOfTypeAll<Texture2D>().Select(texture => texture.GetInstanceID()));
+            int assetId = AssetDatabase.LoadMainAssetAtPath(_path).GetInstanceIDCompat();
+            var originals = new HashSet<int>(Resources.FindObjectsOfTypeAll<Texture2D>().Select(texture => texture.GetInstanceIDCompat()));
             using var cancellation = new CancellationTokenSource();
             using var context = new TextureSliceContext();
             var watch = System.Diagnostics.Stopwatch.StartNew();
@@ -374,7 +375,7 @@ namespace MCPForUnityTests.EditMode.Tools
             );
             double firstSliceMilliseconds = watch.Elapsed.TotalMilliseconds;
             Assert.IsFalse(task.IsCompleted);
-            var temporary = Resources.FindObjectsOfTypeAll<Texture2D>().Single(texture => !originals.Contains(texture.GetInstanceID()));
+            var temporary = Resources.FindObjectsOfTypeAll<Texture2D>().Single(texture => !originals.Contains(texture.GetInstanceIDCompat()));
             int firstFilled = temporary.GetPixelData<Color32>(0).Count(pixel => pixel.a == 255);
             Assert.Greater(firstFilled, 0);
 
@@ -394,7 +395,7 @@ namespace MCPForUnityTests.EditMode.Tools
             CollectionAssert.AreEqual(before, File.ReadAllBytes(Absolute(_path)));
             CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Absolute(_path) + ".meta"));
             CollectionAssert.AreEquivalent(filesBefore, Directory.GetFiles(Absolute(_root + "/"), "*", SearchOption.AllDirectories));
-            Assert.AreEqual(assetId, AssetDatabase.LoadMainAssetAtPath(_path).GetInstanceID());
+            Assert.AreEqual(assetId, AssetDatabase.LoadMainAssetAtPath(_path).GetInstanceIDCompat());
             if (newDestination)
             {
                 Assert.IsFalse(Directory.Exists(Absolute(_root + "/Unpublished")));
