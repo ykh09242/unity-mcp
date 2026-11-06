@@ -185,6 +185,19 @@ jobs:
           uv sync --python "${{ matrix.python }}" --locked --extra dev
           uv run --python "${{ matrix.python }}" --locked --extra dev python -W error -m pytest tests/test_reference_graph_native_spools.py tests/test_reference_graph_store.py tests/test_reference_graph_analysis.py tests/test_reference_graph_semantics.py tests/test_reference_graph_provenance.py tests/test_reference_graph_queries.py tests/test_reference_graph_mutations.py tests/test_reference_graph_runtime.py tests/test_reference_graph_operations.py tests/test_reference_graph_external.py tests/test_reference_graph_external_changes.py tests/test_reference_graph_workspace.py tests/test_reference_graph_policy_admission.py tests/test_reference_graph_reconcile.py tests/test_reference_graph_service.py -q -o asyncio_default_fixture_loop_scope=function --basetemp "${{ runner.temp }}/reference-graph-tests"
 
+      - name: Verify Windows event-loop shutdown and bounded launch output
+        if: runner.os == 'Windows'
+        working-directory: Server
+        env:
+          PY_KEY_VALUE_DISABLE_BEARTYPE: ${{ matrix.python == '3.15' && 'true' || 'false' }}
+          UNITY_MCP_DISABLE_TELEMETRY: "1"
+          UNITY_MCP_LOG_DIR: ${{ runner.temp }}/windows-launch-logs
+        run: >-
+          uv run --python "${{ matrix.python }}" --locked --extra dev python -W error -m pytest
+          tests/test_windows_loop_startup.py tests/test_launch_output.py
+          -q -o asyncio_default_fixture_loop_scope=function -p no:cacheprovider
+          --basetemp "${{ runner.temp }}/windows-launch-tests"
+
       - name: Verify interrupted private-store initialization
         working-directory: Server
         env:
