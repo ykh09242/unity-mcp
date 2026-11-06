@@ -7,6 +7,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Runtime.Helpers;
@@ -83,6 +84,87 @@ namespace MCPForUnity.Editor.Tools
         internal static JObject Handle(JObject request) => HandleCore(request, null);
 
         internal static JObject HandleWithStatus(JObject request, JObject priorStatus) => HandleCore(request, priorStatus);
+
+        internal static async Task<JObject> HandleAsync(JObject request, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!ToolConsentThread.IsMainThread)
+                throw new InvalidOperationException("Reference collection requires the Editor thread.");
+            string action = request.Value<string>("action");
+            if (action != "inventory" && action != "dependencies")
+                return Handle(request);
+            // Establish ordinary observation/idle fences before any native census is queued.
+            Handle(new JObject { ["action"] = "status" });
+            if (EditorApplication.isCompiling || EditorApplication.isUpdating)
+                throw new InvalidOperationException("The Editor is importing or compiling; retry collection when idle.");
+            Integer(request, "page_size", 128, 1, 1000);
+            int offset = Integer(request, "offset", 0, 0, int.MaxValue);
+            string epoch = ReferenceGraphJournal.Epoch;
+            long revision = ReferenceGraphJournal.Revision;
+            bool Current()
+            {
+                FlushPendingChanges();
+                return epoch == ReferenceGraphJournal.Epoch
+                    && revision == ReferenceGraphJournal.Revision
+                    && !EditorApplication.isCompiling
+                    && !EditorApplication.isUpdating;
+            }
+            if (action == "inventory")
+            {
+                if (request["snapshot"] != null || offset != 0 || (inventory != null && inventoryEpoch == epoch && inventoryRevision == revision))
+                    return Handle(request);
+                ReferenceGraphPreparation.Snapshot snapshot = await ReferenceGraphPreparation.Acquire(
+                    "inventory:" + epoch + ":" + revision,
+                    () => new ReferenceGraphPreparation("inventory", () => AssetDatabase.FindAssets(""), value => value, Current),
+                    token
+                );
+                token.ThrowIfCancellationRequested();
+                if (!Current())
+                    throw new InvalidInventorySnapshotException("Inventory source changed during preparation; restart the census.");
+                inventory = snapshot.Items;
+                inventoryToken = snapshot.Token;
+                inventoryEpoch = epoch;
+                inventoryRevision = revision;
+                inventoryUsed = EditorApplication.timeSinceStartup;
+                var page = (JObject)request.DeepClone();
+                page["snapshot"] = inventoryToken;
+                return Handle(page);
+            }
+            string guid = ValidateGuid(request);
+            if (request["asset_guard"] is JObject guard && !AssetGuardCurrent(guard, guid))
+                return Handle(request);
+            JObject asset = Describe(guid);
+            string currentToken = guid + ":" + epoch + ":" + revision;
+            if (
+                !asset.Value<bool>("present")
+                || (request["snapshot"] != null && request.Value<string>("snapshot") != currentToken)
+                || (request["snapshot"] == null && offset != 0)
+                || (dependencies != null && dependencyGuid == guid && dependencyToken == currentToken)
+            )
+                return Handle(request);
+            string path = asset.Value<string>("path");
+            ReferenceGraphPreparation.Snapshot prepared = await ReferenceGraphPreparation.Acquire(
+                "dependencies:" + currentToken,
+                () =>
+                    new ReferenceGraphPreparation(
+                        "dependencies",
+                        () => AssetDatabase.GetDependencies(path, false),
+                        target => target != path && Admitted(target) ? AssetDatabase.AssetPathToGUID(target) : null,
+                        Current
+                    ),
+                token
+            );
+            token.ThrowIfCancellationRequested();
+            if (!Current())
+                throw new InvalidOperationException("Dependency source changed during preparation; restart this asset.");
+            dependencies = prepared.Items;
+            dependencyGuid = guid;
+            dependencyEpoch = epoch;
+            dependencyRevision = revision;
+            dependencyToken = currentToken;
+            dependencyUsed = EditorApplication.timeSinceStartup;
+            return Handle(request);
+        }
 
         private static JObject HandleCore(JObject request, JObject priorStatus)
         {
@@ -199,6 +281,8 @@ namespace MCPForUnity.Editor.Tools
                 ["ignore_current_validation"] = 1,
                 ["asset_guard_version"] = 1,
                 ["asset_batch_version"] = 1,
+                ["preparation_version"] = 1,
+                ["preparation"] = ReferenceGraphPreparation.Status(),
                 ["instance_id"] = ReferenceGraphJournal.InstanceId,
                 ["project_id"] = ProjectIdentityUtility.GetProjectHash(),
                 ["epoch"] = ReferenceGraphJournal.Epoch,

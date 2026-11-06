@@ -17,12 +17,15 @@ namespace MCPForUnity.Editor.Tools
     )]
     public static class ManageReferenceGraph
     {
-        public static object HandleCommand(JObject parameters) => Handle(parameters, CancellationToken.None);
+        public static object HandleCommand(JObject parameters) => Handle(parameters, CancellationToken.None, false).GetAwaiter().GetResult();
 
-        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken) =>
-            Task.FromResult(Handle(parameters, cancellationToken));
+        public static Task<object> HandleCommand(JObject parameters, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Handle(parameters, cancellationToken, true);
+        }
 
-        private static object Handle(JObject parameters, CancellationToken token)
+        private static async Task<object> Handle(JObject parameters, CancellationToken token, bool staged)
         {
             try
             {
@@ -130,6 +133,7 @@ namespace MCPForUnity.Editor.Tools
                         ? ReferenceGraphCollector.HandleWithStatus(parameters, status)
                     : action == "status" ? status
                     : action.StartsWith("runtime_", StringComparison.Ordinal) ? ReferenceGraphRuntimeCapture.Handle(parameters)
+                    : staged ? await ReferenceGraphCollector.HandleAsync(parameters, token)
                     : ReferenceGraphCollector.Handle(parameters);
                 data["instance_id"] = instance;
                 data["project_id"] = project;
