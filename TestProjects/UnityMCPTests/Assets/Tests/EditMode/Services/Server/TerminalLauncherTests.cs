@@ -234,6 +234,7 @@ namespace MCPForUnityTests.Editor.Services.Server
             string logPath = LogPath();
 
             var startInfo = _launcher.CreateHeadlessProcessStartInfo("echo hello", logPath);
+            Assert.AreEqual(logPath, startInfo.EnvironmentVariables["UNITY_MCP_LAUNCH_LOG"]);
 
             // The redirect to the log file is part of the shell payload.
             StringAssert.Contains(logPath, startInfo.Arguments, "Arguments should reference the log file path");
@@ -390,6 +391,7 @@ namespace MCPForUnityTests.Editor.Services.Server
             const string argument = "fixture-argument \'\" & %NAME% ! ^ $() `literal` \\";
             string log = LogPath();
             var info = TerminalLauncher.CreateLiteralHeadlessProcessStartInfo(executable, new[] { argument, "" }, log, windows);
+            Assert.AreEqual(log, info.EnvironmentVariables["UNITY_MCP_LAUNCH_LOG"]);
             StringAssert.DoesNotContain(executable, info.Arguments);
             StringAssert.DoesNotContain(argument, info.Arguments);
             StringAssert.DoesNotContain(log, info.Arguments);
@@ -402,6 +404,60 @@ namespace MCPForUnityTests.Editor.Services.Server
             {
                 Assert.AreEqual("/bin/bash", info.FileName);
                 StringAssert.StartsWith("-c \"exec ", info.Arguments);
+            }
+        }
+
+        [Test]
+        public void LiteralHeadlessLaunch_BoundsPythonOutputWithInheritedHandles()
+        {
+            string python = Environment.GetEnvironmentVariable("MCP_UNITY_TEST_PYTHON");
+            string serverSource = Environment.GetEnvironmentVariable("MCP_UNITY_TEST_SERVER_SRC");
+            if (string.IsNullOrEmpty(python) || !File.Exists(python) || string.IsNullOrEmpty(serverSource))
+                Assert.Ignore("Set MCP_UNITY_TEST_PYTHON and MCP_UNITY_TEST_SERVER_SRC for the bounded output integration test.");
+
+            string root = Path.Combine(_launcher.GetProjectRootPath(), "Library", "MCPForUnity", "Tests", "bounded-log-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            string script = Path.Combine(root, "write_log.py");
+            string log = Path.Combine(root, "launch 한글 & %.log");
+            File.WriteAllText(
+                script,
+                "import logging, os, sys\n"
+                    + "sys.path.insert(0, os.environ['MCP_UNITY_TEST_SERVER_SRC'])\n"
+                    + "from core.launch_output import install_managed_launch_output\n"
+                    + "assert install_managed_launch_output()\n"
+                    + "sys.stdout.buffer.write(b'x' * (10 * 1024 * 1024))\n"
+                    + "logging.basicConfig()\n"
+                    + "for i in range(10000): logging.warning('x' * 1024)\n"
+                    + "sys.stderr.write('final diagnostic 한글\\n')\n",
+                new UTF8Encoding(false)
+            );
+            Process child = null;
+            try
+            {
+                var info = _launcher.CreateHeadlessProcessStartInfo(python, new[] { "-I", "-X", "utf8", script }, log);
+                info.EnvironmentVariables["MCP_UNITY_TEST_SERVER_SRC"] = serverSource;
+                child = Process.Start(info);
+                Assert.IsNotNull(child);
+                Assert.IsTrue(child.WaitForExit(30000), "The bounded output writer must exit within the watchdog.");
+                Assert.AreEqual(0, child.ExitCode);
+                Assert.LessOrEqual(new FileInfo(log).Length, 8 * 1024 * 1024);
+                string captured = File.ReadAllText(log, Encoding.UTF8);
+                StringAssert.Contains("older launch output discarded", captured);
+                StringAssert.EndsWith("final diagnostic 한글", captured.Trim());
+                using (File.Open(log, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+            }
+            finally
+            {
+                if (child != null)
+                {
+                    if (!child.HasExited)
+                    {
+                        child.Kill();
+                        child.WaitForExit(5000);
+                    }
+                    child.Dispose();
+                }
+                Directory.Delete(root, true);
             }
         }
 

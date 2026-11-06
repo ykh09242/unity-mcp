@@ -313,6 +313,10 @@ Requests, results, polling, regex work and authoring/import operations have budg
 
 Check Unity compilation and bridge status, then current authentication and selected instance. Server launch logs are under `Library/MCPForUnity/Logs/server-launch-<port>.log`; never share credentials or raw private payloads. See [Troubleshooting](../website/docs/guides/troubleshooting.md).
 
+For Editor-managed HTTP launches, Python output is limited to 8 MiB in the launch log. When it fills, older output is discarded in place and a marker is written; inherited shell handles remain valid across Editor reloads. The launcher supplies `UNITY_MCP_LAUNCH_LOG`, and the server verifies that the inherited output handles refer to that file before limiting them. Ordinary stdio pipes and manual terminal launches are unchanged. Output from dependency installation before Python starts, or native code writing directly to OS descriptors, is outside this Python limit. Launch-failure messages read at most the final 64 KiB and show up to 40 lines.
+
+On Windows, a failed internal event-loop wakeup socket stops the server with an error after cancellation cleanup, instead of repeatedly logging the same callback failure. Restart the local server from the Editor after this error. Normal client disconnects do not trigger this shutdown.
+
 ## Local development and containers
 
 Clone the fork's `beta` branch for development and run from `Server` with `uv run --locked src/main.py --transport stdio`. An Editor **Server Source Override** can point to this local `Server` directory; **Dev Mode** is an explicit fresh-install setting. Neither changes the published release/pin.

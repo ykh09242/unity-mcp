@@ -975,16 +975,31 @@ namespace MCPForUnity.Editor.Services
             McpLog.Error("Local HTTP server did not become reachable. " + $"Launch log: {logRef}\n{body}\n{copyHint}");
         }
 
-        private static string TailFile(string path, int maxLines)
+        internal static string TailFile(string path, int maxLines)
         {
             try
             {
-                if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                if (string.IsNullOrEmpty(path) || maxLines <= 0 || !File.Exists(path))
                 {
                     return string.Empty;
                 }
 
-                var lines = File.ReadAllLines(path);
+                const int maxBytes = 64 * 1024;
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                long offset = Math.Max(0, stream.Length - maxBytes);
+                stream.Seek(offset, SeekOrigin.Begin);
+                var buffer = new byte[maxBytes];
+                int count = 0;
+                int read;
+                while (count < buffer.Length && (read = stream.Read(buffer, count, buffer.Length - count)) > 0)
+                    count += read;
+                string tail = System.Text.Encoding.UTF8.GetString(buffer, 0, count).TrimEnd('\r', '\n');
+                // A seek can land inside a line or UTF-8 character. Drop that fragment
+                // when a complete following line exists, but retain giant-line tails.
+                int firstNewline = tail.IndexOf('\n');
+                if (offset > 0 && firstNewline >= 0)
+                    tail = tail.Substring(firstNewline + 1);
+                var lines = tail.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None);
                 if (lines.Length <= maxLines)
                 {
                     return string.Join(Environment.NewLine, lines).Trim();

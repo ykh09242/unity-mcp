@@ -1,3 +1,8 @@
+from core.launch_output import install_managed_launch_output
+
+# Install before dependency imports can capture stderr for their own loggers.
+install_managed_launch_output()
+
 from starlette.requests import Request
 from transport.execution_receipts import (
     ExecutionReceipts,

@@ -66,6 +66,8 @@ namespace MCPForUnity.Editor.Services.Server
                 CreateNoWindow = true,
                 WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
             };
+            // Raw path for Python's bounded writer; shell argument slots below are encoded.
+            info.EnvironmentVariables["UNITY_MCP_LAUNCH_LOG"] = logFilePath;
             var command = new StringBuilder(windows ? "" : "exec ");
             long expandedLength = 32; // Include redirection and /d /v:on /s /c framing in the cmd limit.
             AddSlot("MCP_UNITY_EXECUTABLE", fileName);
@@ -145,7 +147,7 @@ namespace MCPForUnity.Editor.Services.Server
             // CreateNoWindow and no console handle, uvx.exe would inherit an invalid stdin and die
             // with "The handle is invalid. (os error 6)" before launching the server.
             string winRedirect = $"{command} < NUL >> \"{logFilePath}\" 2>&1";
-            return new System.Diagnostics.ProcessStartInfo
+            var info = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "cmd.exe",
                 Arguments = $"/c \"{winRedirect}\"",
@@ -160,7 +162,7 @@ namespace MCPForUnity.Editor.Services.Server
             string singleQuotedLog = "'" + logFilePath.Replace("'", "'\\''") + "'";
             string bashPayload = $"{command} >> {singleQuotedLog} 2>&1";
             string escapedPayload = bashPayload.Replace("\\", "\\\\").Replace("\"", "\\\"");
-            return new System.Diagnostics.ProcessStartInfo
+            var info = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "/bin/bash",
                 Arguments = $"-c \"{escapedPayload}\"",
@@ -169,6 +171,8 @@ namespace MCPForUnity.Editor.Services.Server
                 WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
             };
 #endif
+            info.EnvironmentVariables["UNITY_MCP_LAUNCH_LOG"] = logFilePath;
+            return info;
         }
 
         /// <inheritdoc/>
