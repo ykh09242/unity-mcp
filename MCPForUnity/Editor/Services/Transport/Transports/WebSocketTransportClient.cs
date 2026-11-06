@@ -71,6 +71,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private Task _statePublisherCompletion = Task.CompletedTask;
         private bool _largeResultNegotiated;
         private readonly SemaphoreSlim _sendLock = new(1, 1);
+        private int _activeSends;
+        private TaskCompletionSource<bool> _sendCompletion;
+        private Task _disposeSettlement = Task.CompletedTask;
 
         private Uri _endpointUri;
         private string _sessionId;
@@ -188,7 +191,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             long startVersion;
             lock (_ownershipLock)
+            {
+                if (_disposed)
+                    throw new ObjectDisposedException(nameof(WebSocketTransportClient));
                 startVersion = ++_startVersion;
+            }
 
             // Capture identity values on the main thread before any async context switching
             _projectName = _ownedConnection?.ProjectName ?? ProjectIdentityUtility.GetProjectName();
@@ -638,25 +645,31 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         public void Dispose()
         {
-            if (_disposed)
+            lock (_ownershipLock)
             {
-                return;
+                if (_disposed)
+                    return;
+                _disposed = true;
+                // Retire admission in the same critical section as terminal disposal.
+                // Cleanup can require the Editor thread, so retain its actual completion.
+                ForceStop();
+                Task settlement = Task.WhenAll(_forcedCommandSettlement, _stopSettlement, _sendCompletion?.Task ?? Task.CompletedTask);
+                _disposeSettlement = DisposeSendResourcesAsync(settlement);
             }
+        }
 
+        private async Task DisposeSendResourcesAsync(Task settlement)
+        {
             try
             {
-                // Handler cleanup can require the Editor main thread; never block it here.
-                ForceStop();
+                await settlement.ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 McpLog.Warn($"[WebSocket] Dispose failed to stop cleanly: {ex.Message}");
             }
-
-            _sendLock?.Dispose();
-            _socket?.Dispose();
-            _lifecycleCts?.Dispose();
-            _disposed = true;
+            // WhenAll observes all admitted send waits and releases, even on failure.
+            _sendLock.Dispose();
         }
 
         private async Task<CancellationToken?> EstablishConnectionAsync(CancellationToken token)
@@ -980,7 +993,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         // Callers hold _ownershipLock when checking and publishing connection state.
         private bool IsCurrentConnectionToken(CancellationToken token)
         {
-            if (token.IsCancellationRequested || _connectionCts == null || _commandAdmission?.Token.IsCancellationRequested == true)
+            if (_disposed || token.IsCancellationRequested || _connectionCts == null || _commandAdmission?.Token.IsCancellationRequested == true)
                 return false;
             try
             {
@@ -2149,24 +2162,35 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 if (!IsCurrentConnectionToken(ownerToken))
                     throw new OperationCanceledException(ownerToken);
                 socket = _socket ?? throw new InvalidOperationException("WebSocket is not initialised");
+                if (_activeSends++ == 0)
+                    _sendCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             }
 
-            await _sendLock.WaitAsync(token).ConfigureAwait(false);
             try
             {
-                lock (_ownershipLock)
-                    if (!IsCurrentConnectionToken(ownerToken) || !ReferenceEquals(_socket, socket))
-                        throw new OperationCanceledException(ownerToken);
-                if (socket.State != WebSocketState.Open)
+                await _sendLock.WaitAsync(token).ConfigureAwait(false);
+                try
                 {
-                    throw new InvalidOperationException("WebSocket is not open");
-                }
+                    lock (_ownershipLock)
+                        if (!IsCurrentConnectionToken(ownerToken) || !ReferenceEquals(_socket, socket))
+                            throw new OperationCanceledException(ownerToken);
+                    if (socket.State != WebSocketState.Open)
+                    {
+                        throw new InvalidOperationException("WebSocket is not open");
+                    }
 
-                await socket.SendAsync(buffer, type, true, token).ConfigureAwait(false);
+                    await socket.SendAsync(buffer, type, true, token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _sendLock.Release();
+                }
             }
             finally
             {
-                _sendLock.Release();
+                lock (_ownershipLock)
+                    if (--_activeSends == 0)
+                        _sendCompletion.TrySetResult(true);
             }
         }
 

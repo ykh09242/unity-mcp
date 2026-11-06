@@ -23,6 +23,63 @@ namespace MCPForUnityTests.Editor.Services
         private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
         [Test]
+        public void Dispose_RetainsQueuedSendResourcesUntilActualSettlement()
+        {
+            using var client = CreateClient(new Uri("ws://127.0.0.1:1"));
+            var connection = new CancellationTokenSource();
+            using var canceled = new CancellationTokenSource();
+            var receiver = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Set(client, "_connectionCts", connection);
+            Set(client, "_socket", new System.Net.WebSockets.ClientWebSocket());
+            Set(client, "_receiveTask", receiver.Task);
+            var sendLock = (SemaphoreSlim)Get(client, "_sendLock");
+            Assert.IsTrue(sendLock.Wait(0));
+            var send = typeof(WebSocketTransportClient).GetMethod("SendOwnedFrameAsync", Private);
+            var queued = (Task)
+                send.Invoke(
+                    client,
+                    new object[]
+                    {
+                        new ArraySegment<byte>(new byte[1]),
+                        System.Net.WebSockets.WebSocketMessageType.Text,
+                        connection.Token,
+                        CancellationToken.None,
+                    }
+                );
+            var canceling = (Task)
+                send.Invoke(
+                    client,
+                    new object[] { new ArraySegment<byte>(new byte[1]), System.Net.WebSockets.WebSocketMessageType.Text, connection.Token, canceled.Token }
+                );
+            try
+            {
+                client.Dispose();
+                client.Dispose();
+                Assert.IsFalse(receiver.Task.IsCompleted, "Dispose must return without waiting for Editor-owned cleanup.");
+                Assert.IsNull(Get(client, "_connectionCts"));
+                Assert.Throws<ObjectDisposedException>(() => client.StartAsync().GetAwaiter().GetResult());
+                canceled.Cancel();
+                Wait(() => canceling.IsCompleted, "canceled queued send settles after disposal");
+                Assert.IsTrue(canceling.IsCanceled);
+                Assert.DoesNotThrow(() => sendLock.Release(), "Admitted send waiters retain the shared semaphore.");
+                Wait(() => queued.IsCompleted, "retired queued send settles after disposal");
+                Assert.IsTrue(queued.IsCanceled, "Retirement must cancel the send before socket access.");
+                Assert.IsTrue(sendLock.Wait(0));
+                sendLock.Release();
+                receiver.SetResult(true);
+                Wait(() => ((Task)Get(client, "_disposeSettlement")).IsCompleted, "deferred resource disposal");
+                ((Task)Get(client, "_disposeSettlement")).GetAwaiter().GetResult();
+                Assert.Throws<ObjectDisposedException>(() => sendLock.Wait(0));
+            }
+            finally
+            {
+                receiver.TrySetResult(true);
+                canceled.Cancel();
+                client.ForceStop();
+            }
+        }
+
+        [Test]
         public void SilentUpgradeDeadlineReleasesCandidateAndAllowsRetry()
         {
             const string timeoutKey = "UNITY_MCP_WEBSOCKET_CONTROL_TIMEOUT_SECONDS";
