@@ -23,6 +23,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Undo.RecordObject(lr, "Set Line Positions");
             lr.positionCount = positions.Length;
             lr.SetPositions(positions);
+            PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
 
             return new { success = true, message = $"Set {positions.Length} positions" };
@@ -46,6 +47,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Undo.RecordObject(lr, "Add Line Position");
             lr.positionCount = idx + 1;
             lr.SetPosition(idx, pos);
+            PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
 
             return new
@@ -73,6 +75,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             Undo.RecordObject(lr, "Set Line Position");
             lr.SetPosition(index, pos);
+            PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
 
             return new { success = true, message = $"Set position at index {index}" };
@@ -119,6 +122,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Undo.RecordObject(lr, "Set Line Width");
             foreach (var update in updates)
                 update();
+            PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
         }
@@ -144,6 +148,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             RendererHelpers.EnsureMaterial(lr);
             Undo.RecordObject(lr, "Set Line Color");
             apply();
+            PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
         }
@@ -228,6 +233,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             applyCommon();
             changes.AddRange(rendererChanges);
 
+            PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
         }
@@ -275,6 +281,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             int count = lr.positionCount;
             Undo.RecordObject(lr, "Clear Line");
             lr.positionCount = 0;
+            PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
 
             return new { success = true, message = $"Cleared {count} positions" };

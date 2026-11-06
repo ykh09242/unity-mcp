@@ -60,6 +60,7 @@ namespace MCPForUnity.Editor.Helpers
             {
                 Undo.RecordObject(renderer, "Assign default renderer material");
                 renderer.sharedMaterial = replacement;
+                PrefabUtility.RecordPrefabInstancePropertyModifications(renderer);
                 EditorUtility.SetDirty(renderer);
                 return new EnsureMaterialResult(true, replacementReason);
             }
@@ -376,6 +377,7 @@ namespace MCPForUnity.Editor.Helpers
                     {
                         Undo.RecordObject(renderer, undoName);
                         renderer.sharedMaterial = defaultMat;
+                        PrefabUtility.RecordPrefabInstancePropertyModifications(renderer);
                         EditorUtility.SetDirty(renderer);
                         return new { success = true, message = $"Auto-assigned default material: {defaultMat.name}" };
                     }
@@ -390,6 +392,7 @@ namespace MCPForUnity.Editor.Helpers
 
             Undo.RecordObject(renderer, undoName);
             renderer.sharedMaterial = mat;
+            PrefabUtility.RecordPrefabInstancePropertyModifications(renderer);
             EditorUtility.SetDirty(renderer);
 
             return new { success = true, message = $"Set material to {mat.name}" };

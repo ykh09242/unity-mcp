@@ -21,6 +21,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             RendererHelpers.EnsureMaterial(tr);
             Undo.RecordObject(tr, "Set Trail Time");
             tr.time = time;
+            PrefabUtility.RecordPrefabInstancePropertyModifications(tr);
             EditorUtility.SetDirty(tr);
 
             return new { success = true, message = $"Set trail time to {time}s" };
@@ -67,6 +68,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Undo.RecordObject(tr, "Set Trail Width");
             foreach (var update in apply)
                 update();
+            PrefabUtility.RecordPrefabInstancePropertyModifications(tr);
             EditorUtility.SetDirty(tr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
         }
@@ -92,6 +94,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             RendererHelpers.EnsureMaterial(tr);
             Undo.RecordObject(tr, "Set Trail Color");
             apply();
+            PrefabUtility.RecordPrefabInstancePropertyModifications(tr);
             EditorUtility.SetDirty(tr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
         }
@@ -206,6 +209,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Undo.RecordObject(tr, "Set Trail Properties");
             foreach (var update in apply)
                 update();
+            PrefabUtility.RecordPrefabInstancePropertyModifications(tr);
             EditorUtility.SetDirty(tr);
             return new { success = true, message = $"Updated: {string.Join(", ", changes)}" };
         }

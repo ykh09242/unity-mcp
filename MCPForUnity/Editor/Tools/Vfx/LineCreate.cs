@@ -27,6 +27,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             applyAppearance();
 
+            PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
 
             return new { success = true, message = "Created line" };
@@ -80,6 +81,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             applyAppearance();
 
+            PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Created circle with {segments} segments" };
         }
@@ -135,6 +137,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             applyAppearance();
 
+            PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Created arc with {segments} segments" };
         }
@@ -187,6 +190,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             applyAppearance();
 
+            PrefabUtility.RecordPrefabInstancePropertyModifications(lr);
             EditorUtility.SetDirty(lr);
             return new { success = true, message = $"Created {(isQuadratic ? "quadratic" : "cubic")} Bezier" };
         }
