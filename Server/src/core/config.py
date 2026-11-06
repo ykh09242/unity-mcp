@@ -120,6 +120,22 @@ def _phase_diagnostics_from_env() -> bool:
     return (raw or "").strip().lower() in {"1", "true"}
 
 
+def _explicit_target_from_env() -> bool:
+    """Reject malformed opt-in policy instead of silently restoring automatic writes."""
+    name = "UNITY_MCP_REQUIRE_EXPLICIT_TARGET"
+    raw = os.environ.get(name)
+    value = (raw if raw is not None else "false").strip().lower()
+    if value not in {"true", "false", "1", "0"}:
+        raise ValueError(f"{name} must be true/false or 1/0")
+    _INITIAL_DEFAULTS["require_explicit_target"] = False
+    _INITIAL_ORIGINS["require_explicit_target"] = ConfigOrigin(
+        source="environment" if raw is not None else "default",
+        source_detail=name if raw is not None else "built_in",
+        overrides=("built_in",) if raw is not None else (),
+    )
+    return value in {"true", "1"}
+
+
 @dataclass
 class ServerConfig:
     """Main configuration class for the MCP server."""
@@ -134,6 +150,8 @@ class ServerConfig:
 
     # Transport settings
     transport_mode: str = "stdio"
+    # Local MCP writes/execution require a caller-selected project when enabled.
+    require_explicit_target: bool = field(default_factory=_explicit_target_from_env)
 
     # HTTP transport behaviour
     http_remote_hosted: bool = False

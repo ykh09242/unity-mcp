@@ -6,7 +6,8 @@ into the request-scoped state, allowing tools to access it via ctx.get_state("un
 """
 
 from threading import RLock
-from types import SimpleNamespace
+from types import CodeType, FunctionType, SimpleNamespace
+from inspect import getclosurevars
 import asyncio
 import logging
 import time
@@ -18,12 +19,15 @@ from fastmcp.tools.base import ToolResult
 from pydantic import TypeAdapter
 
 from core.config import config
+from core.logging_decorator import log_execution
+from core.telemetry_decorator import telemetry_tool
 from services.execution_receipt_context import owned_to_thread
 from services.command_progress import foreground_progress
 from transport.execution_receipts import (
     PreparedExecution,
     component_version,
     execution_options,
+    install_execution_receipts,
     reject_continuation,
 )
 from services.execution_receipt_identity import (
@@ -34,8 +38,15 @@ from services.execution_receipt_identity import (
 )
 from transport.local_project_context import full_hash
 from services.registry import get_registered_tools
+from services.registry.operation_invocation import trusted_tool, wrap_tool
 from services.test_results_app import TEST_RESULTS_URI, project_test_results_tools
-from services.operation_permissions import authorize_remote_operation, authorize_remote_resource
+from services.operation_permissions import (
+    OperationPermissionError,
+    Permission,
+    authorize_remote_operation,
+    authorize_remote_resource,
+    required_permissions,
+)
 from transport.plugin_hub import (
     NoUnitySessionError,
     PluginHub,
@@ -56,6 +67,52 @@ _diag = logging.getLogger("transport.unity_instance_middleware")
 # with it to set or clear the active unity instance.
 _unity_instance_middleware = None
 _middleware_lock = RLock()
+# These controls operate on server/session state or retained output. A registry
+# unity_target=None alone is insufficient: execute_custom_tool uses that too.
+_LOCAL_TARGET_CONTROL_TOOLS = frozenset(
+    {
+        "set_active_instance",
+        "manage_tools",
+        "debug_request_context",
+        "manage_script_capabilities",
+        "read_response",
+        "get_execution_receipt",
+    }
+)
+_BUILTIN_WRAPPER_CODES = frozenset(
+    code
+    for factory in (log_execution, telemetry_tool, wrap_tool)
+    for parent in factory.__code__.co_consts
+    if isinstance(parent, CodeType)
+    for code in (parent, *parent.co_consts)
+    if isinstance(code, CodeType) and code.co_name in {"_sync_wrapper", "_async_wrapper", "invoke"}
+)
+_RECEIPT_CONTROL_CODES = frozenset(
+    code
+    for code in install_execution_receipts.__code__.co_consts
+    if isinstance(code, CodeType) and code.co_name == "get_execution_receipt"
+)
+
+
+def _trusted_builtin_callback(callback, name: str, receipt_runtime) -> bool:
+    """Check the actual callback, following only our wrappers with matching captures.
+
+    ``inspect.unwrap`` alone would trust arbitrary replacements that set
+    ``__wrapped__`` or borrow a built-in's name via ``functools.wraps``.
+    """
+    while isinstance(callback, FunctionType):
+        if trusted_tool(callback, name):
+            return True
+        closure = getclosurevars(callback).nonlocals
+        if name == "get_execution_receipt" and callback.__code__ in _RECEIPT_CONTROL_CODES:
+            return receipt_runtime is not None and closure.get("runtime") is receipt_runtime
+        if callback.__code__ not in _BUILTIN_WRAPPER_CODES:
+            return False
+        wrapped = getattr(callback, "__wrapped__", None)
+        if wrapped is None or not any(closure.get(key) is wrapped for key in ("func", "function")):
+            return False
+        callback = wrapped
+    return False
 
 
 def get_unity_instance_middleware() -> "UnityInstanceMiddleware":
@@ -161,6 +218,9 @@ class UnityInstanceMiddleware(Middleware):
 
     # Key used in FastMCP's session-scoped state store for the active instance.
     _ACTIVE_INSTANCE_STATE_KEY = "mcpforunity.active_instance"
+    # Only deliberate session selection may populate this key. Older automatic
+    # active state cannot become authority when explicit-target mode is enabled.
+    _EXPLICIT_INSTANCE_STATE_KEY = "mcpforunity.explicit_instance"
     _TOOL_IDENTITY_STATE_KEY = "mcpforunity.tool_permission_identity"
 
     def __init__(self):
@@ -185,6 +245,8 @@ class UnityInstanceMiddleware(Middleware):
         collapsed multiple clients onto the same record.
         """
         async with self._selection_lock:
+            if config.require_explicit_target and not config.http_remote_hosted:
+                await ctx.set_state(self._EXPLICIT_INSTANCE_STATE_KEY, instance_id)
             await ctx.set_state(self._ACTIVE_INSTANCE_STATE_KEY, instance_id)
 
     async def get_active_instance(self, ctx) -> str | None:
@@ -200,6 +262,10 @@ class UnityInstanceMiddleware(Middleware):
         ``delete_state``.
         """
         async with self._selection_lock:
+            if config.require_explicit_target and not config.http_remote_hosted:
+                await ctx.set_state(
+                    self._EXPLICIT_INSTANCE_STATE_KEY, None, serializable=not is_sessionless(ctx)
+                )
             await ctx.set_state(
                 self._ACTIVE_INSTANCE_STATE_KEY, None, serializable=not is_sessionless(ctx)
             )
@@ -207,6 +273,8 @@ class UnityInstanceMiddleware(Middleware):
     async def _select_if_unset(self, ctx, candidate: str) -> str:
         """Preserve an explicit choice made while automatic discovery awaited."""
         async with self._selection_lock:
+            if config.require_explicit_target and not config.http_remote_hosted:
+                return await ctx.get_state(self._EXPLICIT_INSTANCE_STATE_KEY) or candidate
             current = await self.get_active_instance(ctx)
             if current:
                 return current
@@ -458,6 +526,7 @@ class UnityInstanceMiddleware(Middleware):
         *,
         authenticated_user_id: str | None = None,
         allow_reconnect: bool = True,
+        require_explicit: bool = False,
     ) -> None:
         """Inject active Unity instance and user_id into context if available."""
         ctx = context.fastmcp_context
@@ -502,7 +571,22 @@ class UnityInstanceMiddleware(Middleware):
                 active_instance = await self._resolve_instance_value(raw.strip(), ctx)
 
         if not active_instance:
-            active_instance = await self.get_active_instance(ctx)
+            if config.require_explicit_target and not config.http_remote_hosted:
+                # Read/list discovery is request-local and cannot authorize the
+                # next write. Ignore legacy state whose selection origin is unknown.
+                async with self._selection_lock:
+                    active_instance = await ctx.get_state(self._EXPLICIT_INSTANCE_STATE_KEY)
+                if active_instance and require_explicit:
+                    active_instance = await self._resolve_instance_value(
+                        active_instance, ctx, allow_reconnect=allow_reconnect
+                    )
+            else:
+                active_instance = await self.get_active_instance(ctx)
+        if require_explicit and not active_instance:
+            raise ToolError(
+                "explicit_unity_target_required: Pass unity_instance on this call or select "
+                "a project with set_active_instance before editing, running, or testing."
+            )
         if not active_instance:
             active_instance = await self._maybe_autoselect_instance(ctx)
         if active_instance:
@@ -536,6 +620,8 @@ class UnityInstanceMiddleware(Middleware):
                     TimeoutError,
                     NoUnitySessionError,
                 ) as exc:
+                    if require_explicit:
+                        raise ToolError("explicit_unity_target_unavailable") from exc
                     # If resolution fails, it means the Unity instance is not reachable via HTTP/WS.
                     # If we are in stdio mode, this might still be fine if the user is just setting state?
                     # But usually if PluginHub is configured, we expect it to work.
@@ -548,6 +634,8 @@ class UnityInstanceMiddleware(Middleware):
                         exc_info=True,
                     )
                 except Exception as exc:
+                    if require_explicit:
+                        raise
                     # Re-raise unexpected system exceptions to avoid swallowing critical failures
                     if isinstance(exc, (SystemExit, KeyboardInterrupt)):
                         raise
@@ -627,9 +715,14 @@ class UnityInstanceMiddleware(Middleware):
         params.update(arguments or {})
         builtin_names = {entry["name"] for entry in get_registered_tools()}
         public_custom = tool is not None and name not in builtin_names
+        strict_local_target = config.require_explicit_target and not config.http_remote_hosted
+        if strict_local_target:
+            public_custom = not _trusted_builtin_callback(
+                getattr(tool, "fn", None), name, getattr(server, "_execution_receipts", None)
+            )
         public_params = params
         await authorize_remote_operation(name, public_params, custom=public_custom)
-        if name == "get_execution_receipt":
+        if name == "get_execution_receipt" and (not strict_local_target or not public_custom):
             if execution_options(ctx) is not None:
                 raise ReceiptUnavailable("receipt_control_cannot_create_receipt")
             return await call_next(context)
@@ -790,25 +883,47 @@ class UnityInstanceMiddleware(Middleware):
         selection_deadline: float | None = None,
     ):
         ctx = context.fastmcp_context
+        selection_options = {}
+        if config.require_explicit_target and not config.http_remote_hosted:
+            if public_custom or public_name not in _LOCAL_TARGET_CONTROL_TOOLS:
+                try:
+                    permissions = required_permissions(
+                        public_name, public_params, custom=public_custom
+                    )
+                except (OperationPermissionError, ValueError) as error:
+                    raise ToolError(
+                        "explicit_unity_target_classification_failed: Operation permissions "
+                        "could not be determined; no Unity operation was dispatched."
+                    ) from error
+                selection_options["require_explicit"] = bool(permissions - {Permission.READ})
         selection = self._inject_unity_instance(
             context,
             authenticated_user_id=user_id,
             allow_reconnect=public_name == "get_compile_job" or selection_deadline is not None,
+            **selection_options,
         )
-        if selection_deadline is None:
-            await selection
-        else:
-            scope = asyncio.timeout_at(selection_deadline)
-            try:
-                async with scope:
-                    await selection
-            except TimeoutError:
-                if not scope.expired():
-                    raise
-                from services.tools.test_job_wait import unobserved_test_job
+        try:
+            if selection_deadline is None:
+                await selection
+            else:
+                scope = asyncio.timeout_at(selection_deadline)
+                try:
+                    async with scope:
+                        await selection
+                except TimeoutError:
+                    if not scope.expired():
+                        raise
+                    from services.tools.test_job_wait import unobserved_test_job
 
-                result = unobserved_test_job(public_params["job_id"])
-                return ToolResult(structured_content=result.model_dump())
+                    result = unobserved_test_job(public_params["job_id"])
+                    return ToolResult(structured_content=result.model_dump())
+        except (ConnectionError, ValueError, NoUnitySessionError) as error:
+            if selection_options.get("require_explicit"):
+                raise ToolError(
+                    "explicit_unity_target_unavailable: The selected project could not be resolved. "
+                    "Read mcpforunity://instances and explicitly select the intended project."
+                ) from error
+            raise
 
         if config.http_remote_hosted:
             session_id = await ctx.get_state("unity_session_id")
