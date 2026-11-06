@@ -27,6 +27,64 @@ namespace MCPForUnityTests.Editor.Services
     {
         private const int ReadTimeoutMs = 10000;
 
+        [Test]
+        public async Task PreparedInput_DispatchesTheIngressParametersWithoutReparsing()
+        {
+            const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Static;
+            string name = "__stdio_prepared_" + Guid.NewGuid().ToString("N");
+            string payload =
+                "{\"TYPE\":\"discarded\",\"type\":\"discarded_again\",\"TYPE\":\""
+                + name
+                + "\",\"params\":{\"when\":\"2026-10-19T01:02:03Z\",\"text\":\"한글\",\"value\":1,\"value\":2}}";
+            var input = StdioBridgeHost.PrepareCommandInput(payload);
+            Assert.IsTrue(input.IsValidJson);
+            Assert.IsNull(input.Error);
+            Assert.AreEqual(name, input.Command.type);
+            JObject expectedParameters = input.Command.@params;
+            JObject receivedParameters = null;
+            using var handlers = new ProgressHandlerScope();
+            handlers.Set(
+                name,
+                new HandlerInfo(
+                    name,
+                    parameters =>
+                    {
+                        receivedParameters = parameters;
+                        return new { done = true };
+                    },
+                    null
+                )
+            );
+            var result = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var queued = new QueuedCommand
+            {
+                CommandJson = payload,
+                Input = input,
+                TimeoutMs = 300000,
+                Tcs = result,
+            };
+            typeof(StdioBridgeHost).GetMethod("ExecuteQueuedCommand", flags).Invoke(null, new object[] { Guid.NewGuid().ToString("N"), queued });
+            await NativeProgressProbe.AwaitOwned(result.Task);
+            Assert.That(await result.Task, Does.Contain("done"));
+            Assert.AreSame(expectedParameters, receivedParameters, "The Editor dispatcher must reuse the input prepared at ingress.");
+            Assert.AreEqual(JTokenType.String, receivedParameters["when"].Type);
+            Assert.AreEqual("2026-10-19T01:02:03Z", (string)receivedParameters["when"]);
+            Assert.AreEqual("한글", (string)receivedParameters["text"]);
+            Assert.AreEqual(2, (int)receivedParameters["value"]);
+        }
+
+        [TestCase("null", false)]
+        [TestCase("5", false)]
+        [TestCase("{", false)]
+        [TestCase("{} {}", false)]
+        [TestCase("{}/*tail*/", false)]
+        [TestCase("[]", true)]
+        [TestCase("{\"type\":\"x\",\"params\":[]}", true)]
+        public void PreparedInput_PreservesLegacyJsonClassification(string payload, bool validJson)
+        {
+            Assert.AreEqual(validJson, StdioBridgeHost.PrepareCommandInput(payload).IsValidJson);
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void ResumeDeadline_UsesOneEndpointAcrossAdmission(bool progress)
@@ -113,6 +171,7 @@ namespace MCPForUnityTests.Editor.Services
             var queued = new QueuedCommand
             {
                 CommandJson = "{\"type\":\"" + name + "\"}",
+                Input = StdioBridgeHost.PrepareCommandInput("{\"type\":\"" + name + "\"}"),
                 ResumeCommand = command,
                 Tcs = result,
                 TimeoutMs = 300000,

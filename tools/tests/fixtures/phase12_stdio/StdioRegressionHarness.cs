@@ -651,6 +651,7 @@ internal static class StdioRegressionHarness
         new QueuedCommand
         {
             CommandJson = json,
+            Input = StdioBridgeHost.PrepareCommandInput(json),
             Tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously),
             OwnerCancellation = cancel,
         };

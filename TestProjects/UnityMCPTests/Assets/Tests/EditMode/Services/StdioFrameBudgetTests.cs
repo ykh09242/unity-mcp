@@ -1,13 +1,60 @@
 using System;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.Transport;
+using MCPForUnity.Editor.Services.Transport.Transports;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Services
 {
     public class StdioFrameBudgetTests
     {
+        [Test]
+        public void PreparedDenseInputIsRefusedBeforeTypedRetentionAndRestoresTheLease()
+        {
+            string dense = "{\"type\":\"x\",\"params\":{\"numbers\":[" + string.Join(",", new int[4096]) + "]}}";
+            int rawBytes = Encoding.UTF8.GetByteCount(dense);
+            var budget = new StdioFrameBudget(rawBytes * 5L + 1024, 1024, 1);
+            using (var lease = budget.AcquireAsync(rawBytes, CancellationToken.None).Result)
+            {
+                Assert.IsFalse(StdioBridgeHost.TryPrepareCommandInput(dense, JObject.Parse(dense), lease, out var input));
+                Assert.IsNull(input, "Capacity refusal must happen before retaining a typed command for dispatch.");
+                Assert.AreEqual(rawBytes * 5L, budget.ReservedBytes, "A failed increase must leave the original charge intact.");
+            }
+            Assert.AreEqual(0, budget.ReservedBytes);
+        }
+
+        [Test]
+        public void SparseLargeStringKeepsItsFrameLimitAndAdjustedRelease()
+        {
+            string payload = "{\"type\":\"x\",\"params\":{\"text\":\"" + new string('x', 16384) + "\"}}";
+            int rawBytes = Encoding.UTF8.GetByteCount(payload);
+            var budget = new StdioFrameBudget(rawBytes * 6L, 1024, 1);
+            var lease = budget.AcquireAsync(rawBytes, CancellationToken.None).Result;
+            Assert.IsTrue(StdioBridgeHost.TryPrepareCommandInput(payload, JObject.Parse(payload), lease, out var input));
+            Assert.AreEqual(16384, ((string)input.Command.@params["text"]).Length);
+            Assert.GreaterOrEqual(budget.ReservedBytes, rawBytes * 5L);
+            lease.Dispose();
+            lease.Dispose();
+            Assert.AreEqual(0, budget.ReservedBytes);
+        }
+
+        [Test]
+        public void ConcurrentGrowthAndDisposeNeverLoseOrDoubleReleaseAdjustedOwnership()
+        {
+            var budget = new StdioFrameBudget(100, 10, 1);
+            for (int i = 0; i < 128; i++)
+            {
+                var lease = budget.AcquireAsync(10, CancellationToken.None).Result;
+                Task.WhenAll(Task.Run(() => lease.TryIncreaseTo(90)), Task.Run(() => lease.Dispose())).GetAwaiter().GetResult();
+                Assert.IsFalse(lease.TryIncreaseTo(100), "A disposed owner cannot re-acquire capacity.");
+                lease.Dispose();
+                Assert.AreEqual(0, budget.ReservedBytes);
+            }
+        }
+
         [Test]
         public void TwoMaximumFramesKeepSmallControlIngressAvailable()
         {

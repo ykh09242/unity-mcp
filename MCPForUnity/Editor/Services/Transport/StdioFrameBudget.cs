@@ -7,8 +7,9 @@ namespace MCPForUnity.Editor.Services.Transport
 {
     /// <summary>
     /// Conservative accounting for retained transport input, shared across listener generations.
-    /// Five times the declared UTF-8 length allows wire/text/parser headroom; it is not a bound
-    /// on arbitrary JSON graphs, handler output or process RSS. Small frames have a separate
+    /// Five times the declared UTF-8 length allows initial wire/text/parser headroom. Prepared
+    /// commands grow that reservation using a conservative graph estimate; this is not a bound
+    /// on transient parsing, arbitrary custom converters, handler output or process RSS. Small frames have a separate
     /// bounded lane so large input cannot prevent status/cancel ingress. Size grants no tool authority.
     /// </summary>
     internal sealed class StdioFrameBudget
@@ -43,8 +44,9 @@ namespace MCPForUnity.Editor.Services.Transport
 
         internal sealed class Lease : IDisposable
         {
+            private readonly object gate = new();
             private Lane owner;
-            private readonly long bytes;
+            private long bytes;
 
             internal Lease(Lane owner, long bytes)
             {
@@ -52,7 +54,33 @@ namespace MCPForUnity.Editor.Services.Transport
                 this.bytes = bytes;
             }
 
-            public void Dispose() => Interlocked.Exchange(ref owner, null)?.Release(bytes);
+            internal bool TryIncreaseTo(long requiredBytes)
+            {
+                lock (gate)
+                {
+                    if (owner == null)
+                        return false;
+                    if (requiredBytes <= bytes)
+                        return true;
+                    if (!owner.TryIncrease(requiredBytes - bytes))
+                        return false;
+                    bytes = requiredBytes;
+                    return true;
+                }
+            }
+
+            public void Dispose()
+            {
+                Lane released;
+                long releasedBytes;
+                lock (gate)
+                {
+                    released = owner;
+                    owner = null;
+                    releasedBytes = bytes;
+                }
+                released?.Release(releasedBytes);
+            }
         }
 
         internal sealed class Lane
@@ -117,6 +145,17 @@ namespace MCPForUnity.Editor.Services.Transport
                 if (!attached)
                     registration.Dispose();
                 return waiter.Completion.Task;
+            }
+
+            internal bool TryIncrease(long additionalBytes)
+            {
+                lock (gate)
+                {
+                    if (additionalBytes > capacity - reserved)
+                        return false;
+                    reserved += additionalBytes;
+                    return true;
+                }
             }
 
             private void Cancel(Waiter waiter)

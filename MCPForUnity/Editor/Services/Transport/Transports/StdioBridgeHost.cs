@@ -42,6 +42,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         public string ProgressId;
         public StdioAuthenticatedSession Session;
         public long DeadlineAtMs;
+        public StdioCommandInput Input;
         public Command ResumeCommand;
         public Command ResponseBinding;
 
@@ -49,6 +50,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         /// Connection that queued this command. Payload equality alone does not prove retry intent.
         /// </summary>
         public object Owner;
+    }
+
+    internal sealed class StdioCommandInput
+    {
+        internal Command Command;
+        internal string Error;
+        internal bool IsValidJson;
     }
 
     [InitializeOnLoad]
@@ -129,14 +137,25 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             return DefaultFrameIOTimeoutMs;
         }
 
-        internal static int ResolveCommandTimeoutMs(string payload, int defaultTimeoutMs) => ResolveCommandTimeoutMs(payload, defaultTimeoutMs, false, out _);
+        internal static int ResolveCommandTimeoutMs(string payload, int defaultTimeoutMs)
+        {
+            try
+            {
+                return ResolveCommandTimeoutMs(JObject.Parse(payload), defaultTimeoutMs, false, out _);
+            }
+            catch (JsonException)
+            {
+                return defaultTimeoutMs;
+            }
+        }
 
-        private static int ResolveCommandTimeoutMs(string payload, int defaultTimeoutMs, bool arbitration, out string requestNonce)
+        private static int ResolveCommandTimeoutMs(JObject command, int defaultTimeoutMs, bool arbitration, out string requestNonce)
         {
             requestNonce = null;
             try
             {
-                JObject command = JObject.Parse(payload);
+                if (command == null)
+                    return defaultTimeoutMs;
                 if (arbitration && TransportCommandResponse.IsBoundRequest(command["arbitration"] as JObject))
                     requestNonce = (string)command["arbitration"]["request_nonce"];
                 if (command["type"]?.Type != JTokenType.String)
@@ -1058,10 +1077,62 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             Refused,
         }
 
-        private static ProgressPrelude ReadProgressPrelude(string text, out string id)
+        internal static StdioCommandInput PrepareCommandInput(string text, JObject parsedObject = null)
+        {
+            var input = new StdioCommandInput { IsValidJson = IsValidJson(text, parsedObject) };
+            try
+            {
+                // Keep the typed reader: converting a collapsed JObject can change
+                // case-insensitive/interleaved duplicate property assignments and errors.
+                input.Command = TransportJson.DeserializeCommand(text.Trim());
+            }
+            catch (JsonException error)
+            {
+                input.Error = error.Message;
+            }
+            return input;
+        }
+
+        internal static bool TryPrepareCommandInput(string text, JObject parsedObject, StdioFrameBudget.Lease reservation, out StdioCommandInput input)
+        {
+            input = null;
+            if (parsedObject != null && !reservation.TryIncreaseTo(EstimateRetainedInputBytes(text, parsedObject)))
+                return false;
+            input = PrepareCommandInput(text, parsedObject);
+            return true;
+        }
+
+        internal static long EstimateRetainedInputBytes(string text, JObject parsedObject)
+        {
+            // Keep the raw frame/text plus one typed graph. A 512-byte charge per
+            // token covers token/container/property slots; strings add their UTF-16
+            // storage. Unknown fields are conservatively included. This is an estimate,
+            // not an RSS guarantee or a bound on custom Json.NET converter output.
+            long bytes = System.Text.Encoding.UTF8.GetByteCount(text) + 2L * text.Length + 512;
+            JToken token = parsedObject;
+            while (token != null)
+            {
+                bytes += 512;
+                if (token is JProperty property)
+                    bytes += 2L * property.Name.Length;
+                else if (token is JValue value && value.Value is string content)
+                    bytes += 2L * content.Length;
+                if (token is JContainer container && container.First != null)
+                {
+                    token = container.First;
+                    continue;
+                }
+                while (token != parsedObject && token.Next == null)
+                    token = token.Parent;
+                token = token == parsedObject ? null : token.Next;
+            }
+            return bytes;
+        }
+
+        private static ProgressPrelude ReadProgressPrelude(string text, out string id, out JObject value)
         {
             id = null;
-            JObject value;
+            value = null;
             try
             {
                 value = JObject.Parse(text, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
@@ -1072,8 +1143,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     // A duplicate/malformed optional object must not fall back to
                     // command dispatch merely because strict loading refused it.
-                    var malformed = JObject.Parse(text);
-                    if (malformed["type"]?.Type == JTokenType.String && (string)malformed["type"] == "command_progress_begin")
+                    value = JObject.Parse(text);
+                    if (value["type"]?.Type == JTokenType.String && (string)value["type"] == "command_progress_begin")
                         return ProgressPrelude.Refused;
                 }
                 catch (JsonException) { }
@@ -1099,11 +1170,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             return ProgressPrelude.Accepted;
         }
 
-        private static bool IsProgressBusiness(string text)
+        private static bool IsProgressBusiness(string text, out JObject value)
         {
+            value = null;
             try
             {
-                var value = JObject.Parse(text);
+                value = JObject.Parse(text);
                 return value["type"]?.Type == JTokenType.String && (string)value["type"] != "command_progress_begin";
             }
             catch (JsonException)
@@ -1178,7 +1250,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 long frameReadStartedAt = _uptime.ElapsedMilliseconds;
                 frame = await ReadFrameAsUtf8Async(client, stream, FrameIOTimeoutMs, connectionLifetime.Token).ConfigureAwait(false);
                 string commandText = frame.Text;
-                var prelude = ReadProgressPrelude(commandText, out string progressId);
+                var prelude = ReadProgressPrelude(commandText, out string progressId, out JObject commandObject);
                 long admittedAt = _uptime.ElapsedMilliseconds;
                 if (prelude != ProgressPrelude.None)
                 {
@@ -1197,7 +1269,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     commandText = frame.Text;
                     if (RemainingCommandMs(frameReadStartedAt, FrameIOTimeoutMs) == 0)
                         throw new IOException("Stdio progress association deadline expired");
-                    if (!IsProgressBusiness(commandText))
+                    if (!IsProgressBusiness(commandText, out commandObject))
                         throw new IOException("Stdio progress association has no business command");
                 }
                 if (commandText.Trim() == "ping")
@@ -1210,17 +1282,34 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     return;
                 }
                 LogReceivedCommand(commandText);
-                try
+                if (!TryPrepareCommandInput(commandText, commandObject, frame.Reservation, out var input))
                 {
-                    resumeCommand = TransportJson.DeserializeCommand(commandText);
+                    // Reserve graph retention before typed deserialization or journal
+                    // admission. Capacity refusal never enqueues or starts the command.
+                    commandObject = null;
+                    commandText = null;
+                    frame.Dispose();
+                    frame = null;
+                    using var capacityDeadline = CancellationTokenSource.CreateLinkedTokenSource(connectionLifetime.Token);
+                    capacityDeadline.CancelAfter(FrameIOTimeoutMs);
+                    await writer
+                        .WriteResultAsync(
+                            System.Text.Encoding.UTF8.GetBytes("{\"status\":\"error\",\"error\":\"Command queue capacity reached\"}"),
+                            capacityDeadline.Token
+                        )
+                        .ConfigureAwait(false);
+                    return;
                 }
-                catch (JsonException) { /* Preserve the legacy invalid-command response path. */ }
+                resumeCommand = input.Command;
                 int timeoutMs = ResolveCommandTimeoutMs(
-                    commandText,
+                    commandObject,
                     FrameIOTimeoutMs,
                     session.Capabilities.Contains(NativeCommandArbitrator.Capability),
                     out string requestNonce
                 );
+                // Only the typed command crosses admission; do not retain a second
+                // full payload graph while awaiting the command's response.
+                commandObject = null;
                 bool optedIn = prelude == ProgressPrelude.Accepted;
                 var responseBinding = new Command
                 {
@@ -1338,6 +1427,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                                 ProgressId = optedIn ? progressId : null,
                                 Session = session,
                                 DeadlineAtMs = deadlineAtMs >= 0 ? deadlineAtMs : 0,
+                                Input = input,
                                 ResumeCommand = resumeCommand,
                                 ResponseBinding = responseBinding,
                             };
@@ -1347,6 +1437,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     }
                 }
                 commandText = null;
+                input = null;
+                if (owned != null)
+                    resumeCommand = null;
                 frame.Dispose();
                 frame = null;
                 if (owned != null)
@@ -1660,6 +1753,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             internal string Text;
             private StdioFrameBudget.Lease reservation;
+            internal StdioFrameBudget.Lease Reservation => reservation;
 
             internal InboundFrame(string text, StdioFrameBudget.Lease reservation)
             {
@@ -1727,6 +1821,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             if (!command.IsExecuting)
                 command.ResumeCommand?.ResumeTicket?.Owner.Release(command.ResumeCommand.ResumeTicket);
             command.CommandJson = null;
+            command.Input = null;
+            command.ResumeCommand = null;
             Interlocked.Exchange(ref command.InputReservation, null)?.Dispose();
         }
 
@@ -1889,7 +1985,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         return;
                     }
 
-                    if (!IsValidJson(commandText))
+                    if (queuedCommand.Input?.IsValidJson != true)
                     {
                         var invalidJsonResponse = new
                         {
@@ -1983,7 +2079,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             string payload = queuedCommand.CommandJson.Trim();
             TaskCompletionSource<string> completionSource = queuedCommand.Tcs;
-            int commandTimeoutMs = queuedCommand.TimeoutMs > 0 ? queuedCommand.TimeoutMs : ResolveCommandTimeoutMs(payload, FrameIOTimeoutMs);
+            int commandTimeoutMs = queuedCommand.TimeoutMs > 0 ? queuedCommand.TimeoutMs : FrameIOTimeoutMs;
             SynchronizationContext editorContext = SynchronizationContext.Current;
             async void Runner()
             {
@@ -1998,7 +2094,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     queuedCommand.AdmissionCancellation.ThrowIfCancellationRequested();
                     if (remainingMs == 0)
                         throw new OperationCanceledException(cancellation.Token);
-                    var command = queuedCommand.ResumeCommand ?? TransportJson.DeserializeCommand(payload);
+                    if (queuedCommand.Input?.Error != null)
+                        throw new JsonSerializationException(queuedCommand.Input.Error);
+                    var command = queuedCommand.ResumeCommand ?? queuedCommand.Input?.Command;
                     if (queuedCommand.Session == null || !queuedCommand.Session.Capabilities.Contains(NativeCommandArbitrator.Capability))
                         command.arbitration = null;
                     operation = TransportCommandDispatcher.ExecuteTimedCommandAsync(
@@ -2177,7 +2275,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
         }
 
-        private static bool IsValidJson(string text)
+        private static bool IsValidJson(string text, JObject parsedObject = null)
         {
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -2189,7 +2287,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 try
                 {
-                    JToken.Parse(text);
+                    if (parsedObject == null)
+                        JToken.Parse(text);
                     return true;
                 }
                 catch
