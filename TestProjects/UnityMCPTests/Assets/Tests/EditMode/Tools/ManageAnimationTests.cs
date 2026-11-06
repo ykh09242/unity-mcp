@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Tools.Animation;
 using MCPForUnity.Runtime.Helpers;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -1449,6 +1450,7 @@ namespace MCPForUnityTests.Editor.Tools
     [Parallelizable(ParallelScope.None)]
     public class AnimatorPrefabOverrideTests
     {
+        private readonly PrefabTestSceneFixture sceneFixture = new PrefabTestSceneFixture();
         private string assetRoot;
         private string folderGuid;
         private string prefabPath;
@@ -1460,6 +1462,12 @@ namespace MCPForUnityTests.Editor.Tools
         private Scene unrelatedScene;
         private GameObject instance;
         private bool ownsFolder;
+
+        [OneTimeSetUp]
+        public void PrepareRunnerBootstrap() => sceneFixture.PrepareRunnerBootstrap();
+
+        [OneTimeTearDown]
+        public void RestoreRunnerBootstrap() => sceneFixture.RestoreRunnerBootstrap();
 
         [SetUp]
         public void SetUp()
@@ -1480,8 +1488,11 @@ namespace MCPForUnityTests.Editor.Tools
             var originalController = AnimatorController.CreateAnimatorControllerAtPath(originalControllerPath);
             Assert.IsNotNull(originalController);
             Assert.IsNotNull(AnimatorController.CreateAnimatorControllerAtPath(controllerPath));
+            // The helper replaces only the sole clean empty scene or a proven runner
+            // bootstrap. Save this owned scene before Unity permits an additive scene.
+            unrelatedScene = sceneFixture.Create("McpAnimatorOverrides_", Guid.NewGuid().ToString("N"));
+            Assert.IsTrue(EditorSceneManager.SaveScene(unrelatedScene, assetRoot + "/" + unrelatedScene.name + ".unity"));
             ownerScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
-            unrelatedScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
             prefabPath = assetRoot + "/Rig.prefab";
             var source = new GameObject("AnimatorOverride_" + Guid.NewGuid().ToString("N"));
             try
@@ -1500,7 +1511,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(instance.GetComponent<Animator>());
             scenePath = assetRoot + "/Owner.unity";
             Assert.IsTrue(EditorSceneManager.SaveScene(ownerScene, scenePath));
-            Assert.IsTrue(EditorSceneManager.SaveScene(unrelatedScene, assetRoot + "/Unrelated.unity"));
+            Assert.IsTrue(EditorSceneManager.SaveScene(unrelatedScene));
             Assert.IsTrue(SceneManager.SetActiveScene(unrelatedScene));
             Assert.IsFalse(ownerScene.isDirty);
             Assert.IsFalse(unrelatedScene.isDirty);
@@ -1509,22 +1520,33 @@ namespace MCPForUnityTests.Editor.Tools
         [TearDown]
         public void TearDown()
         {
-            if (instance != null)
+            try
             {
-                Undo.ClearUndo(instance.GetComponent<Animator>());
-                Undo.ClearUndo(instance);
+                if (instance != null)
+                {
+                    Undo.ClearUndo(instance.GetComponent<Animator>());
+                    Undo.ClearUndo(instance);
+                }
+                if (ownerScene.IsValid() && ownerScene.isLoaded)
+                    Assert.IsTrue(EditorSceneManager.CloseScene(ownerScene, true));
             }
-            if (originalActiveScene.IsValid() && originalActiveScene.isLoaded)
-                SceneManager.SetActiveScene(originalActiveScene);
-            if (ownerScene.IsValid() && ownerScene.isLoaded)
-                Assert.IsTrue(EditorSceneManager.CloseScene(ownerScene, true));
-            if (unrelatedScene.IsValid() && unrelatedScene.isLoaded)
-                Assert.IsTrue(EditorSceneManager.CloseScene(unrelatedScene, true));
-            if (ownsFolder)
+            finally
             {
-                Assert.AreEqual(assetRoot, AssetDatabase.GUIDToAssetPath(folderGuid));
-                Assert.IsTrue(AssetDatabase.DeleteAsset(assetRoot));
-                ownsFolder = false;
+                try
+                {
+                    sceneFixture.Close();
+                }
+                finally
+                {
+                    if (originalActiveScene.IsValid() && originalActiveScene.isLoaded)
+                        SceneManager.SetActiveScene(originalActiveScene);
+                    if (ownsFolder)
+                    {
+                        Assert.AreEqual(assetRoot, AssetDatabase.GUIDToAssetPath(folderGuid));
+                        Assert.IsTrue(AssetDatabase.DeleteAsset(assetRoot));
+                        ownsFolder = false;
+                    }
+                }
             }
         }
 
