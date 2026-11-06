@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
 using NUnit.Framework;
 
@@ -49,6 +51,73 @@ namespace MCPForUnityTests.Editor.Services
             public Task<bool> VerifyAsync() => Task.FromResult(IsConnected);
 
             public Task ReregisterToolsAsync() => Task.CompletedTask;
+        }
+
+        private sealed class DisposableClient : IMcpTransportClient, IDisposable
+        {
+            public int DisposeCalls;
+            public TaskCompletionSource<bool> PendingStart = new TaskCompletionSource<bool>();
+            public TransportState State { get; private set; } = TransportState.Connected("owned");
+            public bool IsConnected => State.IsConnected;
+            public string TransportName => "owned";
+
+            public Task<bool> StartAsync() => PendingStart.Task;
+
+            public Task StopAsync() => throw new InvalidOperationException("Disposable ownership must be retired through Dispose.");
+
+            public Task<bool> VerifyAsync() => Task.FromResult(IsConnected);
+
+            public Task ReregisterToolsAsync() => Task.CompletedTask;
+
+            public void Dispose()
+            {
+                DisposeCalls++;
+                State = TransportState.Disconnected(TransportName);
+            }
+        }
+
+        [Test]
+        public void LocatorReplacementAndReset_RetireEachManagerOnce()
+        {
+            // Exercise only task-owned services; preserve the running Editor's locator.
+            var saved = new Dictionary<FieldInfo, object>();
+            foreach (FieldInfo field in typeof(MCPServiceLocator).GetFields(BindingFlags.Static | BindingFlags.NonPublic))
+            {
+                saved.Add(field, field.GetValue(null));
+                field.SetValue(null, null);
+            }
+            var client = new DisposableClient();
+            var manager = new TransportManager();
+            manager.Configure(() => client, () => client);
+            var replacement = new TransportManager();
+            var replacementClient = new DisposableClient();
+            replacement.Configure(() => replacementClient, () => replacementClient);
+            try
+            {
+                MCPServiceLocator.Register(manager);
+                Task<bool> pending = manager.StartAsync(TransportMode.Http);
+                manager.GetState(TransportMode.Stdio);
+                MCPServiceLocator.Register(manager);
+                Assert.AreEqual(0, client.DisposeCalls, "Registering the current manager preserves it.");
+                MCPServiceLocator.Register(replacement);
+                Assert.AreEqual(1, client.DisposeCalls, "A client shared by both modes is retired once.");
+                Assert.IsFalse(manager.HasConnectionIntent(TransportMode.Http));
+                Assert.IsFalse(manager.GetState(TransportMode.Stdio).IsConnected);
+                Assert.Throws<ObjectDisposedException>(() => manager.StartAsync(TransportMode.Http));
+                client.PendingStart.SetResult(true);
+                Assert.IsFalse(pending.GetAwaiter().GetResult(), "A late start cannot revive a retired manager.");
+                replacement.GetState(TransportMode.Stdio);
+                MCPServiceLocator.Reset();
+                MCPServiceLocator.Reset();
+                Assert.AreEqual(1, replacementClient.DisposeCalls);
+                Assert.IsNull(MCPServiceLocator.ExistingTransportManager);
+            }
+            finally
+            {
+                MCPServiceLocator.Reset();
+                foreach (var entry in saved)
+                    entry.Key.SetValue(null, entry.Value);
+            }
         }
 
         [TestCase(TransportMode.Http, false)]

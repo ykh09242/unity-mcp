@@ -8,7 +8,7 @@ namespace MCPForUnity.Editor.Services.Transport
     /// <summary>
     /// Coordinates the active transport client and exposes lifecycle helpers.
     /// </summary>
-    public class TransportManager
+    public class TransportManager : IDisposable
     {
         private IMcpTransportClient _httpClient;
         private IMcpTransportClient _stdioClient;
@@ -22,6 +22,7 @@ namespace MCPForUnity.Editor.Services.Transport
         private long _stdioGeneration;
         private bool _httpConnectionIntent;
         private bool _stdioConnectionIntent;
+        private bool _disposed;
 
         static TransportManager()
         {
@@ -63,12 +64,14 @@ namespace MCPForUnity.Editor.Services.Transport
 
         public void Configure(Func<IMcpTransportClient> webSocketFactory, Func<IMcpTransportClient> stdioFactory)
         {
+            ThrowIfDisposed();
             _webSocketFactory = webSocketFactory ?? throw new ArgumentNullException(nameof(webSocketFactory));
             _stdioFactory = stdioFactory ?? throw new ArgumentNullException(nameof(stdioFactory));
         }
 
         private IMcpTransportClient GetOrCreateClient(TransportMode mode)
         {
+            ThrowIfDisposed();
             return mode switch
             {
                 TransportMode.Http => _httpClient ??= _webSocketFactory(),
@@ -79,6 +82,7 @@ namespace MCPForUnity.Editor.Services.Transport
 
         public Task<bool> StartAsync(TransportMode mode)
         {
+            ThrowIfDisposed();
             // Editor-main-thread only (no locking needed). Coalesce concurrent starts for the
             // same mode: manual Connect, reload-resume, and auto-start can otherwise race, and
             // WebSocketTransportClient.StartAsync tears down a live connection first — two
@@ -179,6 +183,8 @@ namespace MCPForUnity.Editor.Services.Transport
 
         private async Task StopAsync(TransportMode? mode, bool forReload)
         {
+            if (_disposed)
+                return;
             async Task StopClient(IMcpTransportClient client, TransportMode clientMode, long generation)
             {
                 if (client == null)
@@ -229,6 +235,8 @@ namespace MCPForUnity.Editor.Services.Transport
 
         public async Task<bool> VerifyAsync(TransportMode mode)
         {
+            if (_disposed)
+                return false;
             // Failed-start cleanup can erase the client's state. Preserve the owned failure
             // until an explicit start/stop, while still recognizing externally started stdio.
             if (!HasConnectionIntent(mode) && !GetState(mode).IsConnected)
@@ -239,7 +247,10 @@ namespace MCPForUnity.Editor.Services.Transport
                 return false;
             }
 
+            long generation = mode == TransportMode.Http ? _httpGeneration : _stdioGeneration;
             bool ok = await client.VerifyAsync();
+            if (!IsCurrent(mode, generation))
+                return false;
             var state = client.State ?? TransportState.Disconnected(client.TransportName, "No state reported");
             UpdateState(mode, state);
             return ok;
@@ -250,7 +261,7 @@ namespace MCPForUnity.Editor.Services.Transport
             return mode switch
             {
                 TransportMode.Http => _httpConnectionIntent ? _httpClient?.State ?? _httpState : _httpState,
-                TransportMode.Stdio => ReconciledStdioState(),
+                TransportMode.Stdio => _disposed ? _stdioState : ReconciledStdioState(),
                 _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported transport mode"),
             };
         }
@@ -322,13 +333,15 @@ namespace MCPForUnity.Editor.Services.Transport
         }
 
         private bool IsCurrent(TransportMode mode, long generation) =>
-            mode == TransportMode.Http ? _httpGeneration == generation : _stdioGeneration == generation;
+            !_disposed && (mode == TransportMode.Http ? _httpGeneration == generation : _stdioGeneration == generation);
 
         /// <summary>
         /// Synchronous teardown for shutdown/reload hooks where async awaits are not possible.
         /// </summary>
         public void ForceStop(TransportMode mode)
         {
+            if (_disposed)
+                return;
             long generation = EndIntent(mode);
             IMcpTransportClient client = GetClient(mode);
             string transportName = client?.TransportName ?? mode.ToString().ToLowerInvariant();
@@ -389,6 +402,60 @@ namespace MCPForUnity.Editor.Services.Transport
                 default:
                     throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported transport mode");
             }
+        }
+
+        /// <summary>Retires this Editor-main-thread owner without waiting for asynchronous transport cleanup.</summary>
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            EndIntent(TransportMode.Http);
+            EndIntent(TransportMode.Stdio);
+            IMcpTransportClient http = _httpClient;
+            IMcpTransportClient stdio = _stdioClient;
+            _httpClient = null;
+            _stdioClient = null;
+            _httpState = TransportState.Disconnected(http?.TransportName ?? "http");
+            _stdioState = TransportState.Disconnected(stdio?.TransportName ?? "stdio");
+            RetireClient(http);
+            if (!ReferenceEquals(http, stdio))
+                RetireClient(stdio);
+        }
+
+        private static void RetireClient(IMcpTransportClient client)
+        {
+            if (client == null)
+                return;
+            try
+            {
+                if (client is IDisposable disposable)
+                    disposable.Dispose();
+                else
+                    _ = ObserveRetirementAsync(client.StopAsync());
+            }
+            catch (Exception ex)
+            {
+                McpLog.Warn($"Error while retiring transport {client.TransportName}: {HttpEndpointUtility.RedactUrls(ex.Message)}");
+            }
+        }
+
+        private static async Task ObserveRetirementAsync(Task settlement)
+        {
+            try
+            {
+                await settlement.ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                McpLog.Warn($"Error while retiring transport: {HttpEndpointUtility.RedactUrls(ex.Message)}");
+            }
+        }
+
+        private void ThrowIfDisposed()
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(TransportManager));
         }
     }
 

@@ -68,7 +68,12 @@ namespace MCPForUnity.Editor.Services
             else if (implementation is IPackageDeploymentService pd)
                 _packageDeploymentService = pd;
             else if (implementation is TransportManager tm)
+            {
+                if (ReferenceEquals(_transportManager, tm))
+                    return;
+                _transportManager?.Dispose();
                 _transportManager = tm;
+            }
         }
 
         /// <summary>
@@ -76,6 +81,9 @@ namespace MCPForUnity.Editor.Services
         /// </summary>
         public static void Reset()
         {
+            // Stop transport admission before releasing any services its cleanup may use.
+            _transportManager?.Dispose();
+            _transportManager = null;
             (_bridgeService as IDisposable)?.Dispose();
             (_clientService as IDisposable)?.Dispose();
             (_pathService as IDisposable)?.Dispose();
@@ -85,7 +93,6 @@ namespace MCPForUnity.Editor.Services
             (_toolDiscoveryService as IDisposable)?.Dispose();
             (_resourceDiscoveryService as IDisposable)?.Dispose();
             (_serverManagementService as IDisposable)?.Dispose();
-            (_transportManager as IDisposable)?.Dispose();
             (_packageDeploymentService as IDisposable)?.Dispose();
 
             _bridgeService = null;
@@ -99,7 +106,6 @@ namespace MCPForUnity.Editor.Services
             _toolConsentService = null;
             _resourceDiscoveryService = null;
             _serverManagementService = null;
-            _transportManager = null;
             _packageDeploymentService = null;
         }
     }
