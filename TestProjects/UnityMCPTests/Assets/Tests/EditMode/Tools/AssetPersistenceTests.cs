@@ -230,6 +230,85 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [Test]
+        public void ProjectSettingsSaveFailureRestoresLiveStateAndAllowsRetry(
+            [Values("add_tag", "remove_tag", "add_layer", "remove_layer")] string action,
+            [Values("read", "serialize", "replace")] string failure,
+            [Values(false, true)] bool initiallyDirty
+        )
+        {
+            string settings = Path.Combine(Path.GetDirectoryName(Application.dataPath), "ProjectSettings/TagManager.asset");
+            var target = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset")[0];
+            byte[] originalDisk = File.ReadAllBytes(settings);
+            string originalLive = EditorJsonUtility.ToJson(target);
+            bool originalDirty = EditorUtility.IsDirty(target);
+            string kind = action.EndsWith("tag") ? "tag" : "layer";
+            string name = "Rollback_" + Guid.NewGuid().ToString("N");
+            string sentinel = "Dirty_" + Guid.NewGuid().ToString("N");
+            string fieldName =
+                failure == "read" ? "ReadTagManagerBytes"
+                : failure == "serialize" ? "SerializeTagManager"
+                : "ReplaceTagManagerFile";
+            var field = typeof(ManageEditor).GetField(fieldName, System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            Assert.IsNotNull(field, "The persistence boundary must support deterministic failure injection.");
+            object originalBoundary = field.GetValue(null);
+            try
+            {
+                if (action.StartsWith("remove"))
+                {
+                    var added = JObject.FromObject(ManageEditor.HandleCommand(new JObject { ["action"] = "add_" + kind, [kind + "Name"] = name }));
+                    Assert.IsTrue(added.Value<bool>("success"), added.ToString());
+                }
+                if (initiallyDirty)
+                {
+                    using var serialized = new SerializedObject(target);
+                    using var tags = serialized.FindProperty("tags");
+                    tags.InsertArrayElementAtIndex(tags.arraySize);
+                    using var tag = tags.GetArrayElementAtIndex(tags.arraySize - 1);
+                    tag.stringValue = sentinel;
+                    serialized.ApplyModifiedPropertiesWithoutUndo();
+                    EditorUtility.SetDirty(target);
+                }
+                else
+                    EditorUtility.ClearDirty(target);
+
+                byte[] beforeDisk = File.ReadAllBytes(settings);
+                string beforeLive = EditorJsonUtility.ToJson(target);
+                Delegate fault =
+                    failure == "read" ? new Func<string, byte[]>(_ => throw new IOException("injected read failure"))
+                    : failure == "serialize"
+                        ? new Action<UnityEngine.Object[], string, bool>((_, __, ___) => throw new IOException("injected serialization failure"))
+                    : new Action<string, string, string>((_, __, ___) => throw new IOException("injected replacement failure"));
+                field.SetValue(null, fault);
+                var request = new JObject { ["action"] = action, [kind + "Name"] = name };
+                var failed = JObject.FromObject(ManageEditor.HandleCommand(request));
+                Assert.IsFalse(failed.Value<bool>("success"), failed.ToString());
+                StringAssert.Contains("injected", failed.Value<string>("error"));
+                CollectionAssert.AreEqual(beforeDisk, File.ReadAllBytes(settings));
+                Assert.AreEqual(beforeLive, EditorJsonUtility.ToJson(target), "Failed mutations must restore preexisting unsaved settings.");
+                Assert.AreEqual(initiallyDirty, EditorUtility.IsDirty(target));
+                CollectionAssert.AreEqual(original, File.ReadAllBytes(unrelatedPath));
+
+                field.SetValue(null, originalBoundary);
+                var retried = JObject.FromObject(ManageEditor.HandleCommand(request));
+                Assert.IsTrue(retried.Value<bool>("success"), retried.ToString());
+                Assert.AreEqual(action.StartsWith("add"), File.ReadAllText(settings).Contains(name));
+                if (initiallyDirty)
+                    StringAssert.Contains(sentinel, File.ReadAllText(settings), "Retry must retain preexisting dirty edits.");
+                Assert.IsFalse(EditorUtility.IsDirty(target));
+            }
+            finally
+            {
+                field.SetValue(null, originalBoundary);
+                File.WriteAllBytes(settings, originalDisk);
+                EditorJsonUtility.FromJsonOverwrite(originalLive, target);
+                if (originalDirty)
+                    EditorUtility.SetDirty(target);
+                else
+                    EditorUtility.ClearDirty(target);
+            }
+        }
+
         [TestCase("clear")]
         [TestCase("missing")]
         [TestCase("set")]

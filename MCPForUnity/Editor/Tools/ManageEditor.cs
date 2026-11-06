@@ -250,6 +250,40 @@ namespace MCPForUnity.Editor.Tools
 
         // --- Tag Management Methods ---
 
+        internal static Func<string, byte[]> ReadTagManagerBytes = System.IO.File.ReadAllBytes;
+        internal static Action<UnityEngine.Object[], string, bool> SerializeTagManager = InternalEditorUtility.SaveToSerializedFileAndForget;
+        internal static Action<string, string, string> ReplaceTagManagerFile = System.IO.File.Replace;
+
+        private static void MutateTagManager(UnityEngine.Object target, Action mutate)
+        {
+            // Capture the live object, including user edits that have not reached disk.
+            string before = EditorJsonUtility.ToJson(target);
+            bool wasDirty = EditorUtility.IsDirty(target);
+            try
+            {
+                mutate();
+                SaveTagManager(target);
+            }
+            catch (Exception failure)
+            {
+                try
+                {
+                    EditorJsonUtility.FromJsonOverwrite(before, target);
+                    if (wasDirty)
+                        EditorUtility.SetDirty(target);
+                    else
+                        EditorUtility.ClearDirty(target);
+                    if (EditorJsonUtility.ToJson(target) != before || EditorUtility.IsDirty(target) != wasDirty)
+                        throw new InvalidOperationException("The restored TagManager state did not match its snapshot.");
+                }
+                catch (Exception recovery)
+                {
+                    throw new AggregateException("TagManager recovery was incomplete; inspect the live project settings before retrying.", failure, recovery);
+                }
+                throw;
+            }
+        }
+
         private static void SaveTagManager(UnityEngine.Object target = null)
         {
             string root = System.IO.Path.GetDirectoryName(Application.dataPath);
@@ -257,47 +291,60 @@ namespace MCPForUnity.Editor.Tools
             UnityEngine.Object[] settings = target == null ? AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset") : new[] { target };
             if (settings.Length != 1)
                 throw new InvalidOperationException("Exactly one TagManager settings object is required.");
-            byte[] before = System.IO.File.ReadAllBytes(physical);
+            byte[] before = ReadTagManagerBytes(physical);
             string temporary = MCPForUnity.Runtime.Helpers.SafePathUtility.ResolveWithinRoot(
                 root,
                 "ProjectSettings/.mcp-tag-manager-" + Guid.NewGuid().ToString("N") + ".tmp"
             );
             if (System.IO.File.Exists(temporary) || System.IO.Directory.Exists(temporary))
                 throw new System.IO.IOException("The temporary settings path is occupied.");
-            UnityEngine.Object[] copies = null;
+            bool committed = false;
             try
             {
-                // Project-setting GUIDs are not persisted by SaveAssetIfDirty. Serialize a
-                // detached copy so saving this file never flushes unrelated dirty assets.
-                copies = InternalEditorUtility.LoadSerializedFileAndForget(physical);
-                if (
-                    copies.Length != 1
-                    || copies[0] == null
-                    || EditorUtility.IsPersistent(copies[0])
-                    || copies[0] == settings[0]
-                    || copies[0].GetType() != settings[0].GetType()
-                )
-                    throw new InvalidOperationException("Could not create an isolated TagManager serialization copy.");
-                EditorUtility.CopySerialized(settings[0], copies[0]);
-                InternalEditorUtility.SaveToSerializedFileAndForget(copies, temporary, true);
+                UnityEngine.Object[] copies = null;
+                try
+                {
+                    // Project-setting GUIDs are not persisted by SaveAssetIfDirty. Serialize a
+                    // detached copy so saving this file never flushes unrelated dirty assets.
+                    copies = InternalEditorUtility.LoadSerializedFileAndForget(physical);
+                    if (
+                        copies.Length != 1
+                        || copies[0] == null
+                        || EditorUtility.IsPersistent(copies[0])
+                        || copies[0] == settings[0]
+                        || copies[0].GetType() != settings[0].GetType()
+                    )
+                        throw new InvalidOperationException("Could not create an isolated TagManager serialization copy.");
+                    EditorUtility.CopySerialized(settings[0], copies[0]);
+                    SerializeTagManager(copies, temporary, true);
+                }
+                finally
+                {
+                    if (copies != null)
+                        foreach (UnityEngine.Object copy in copies)
+                            if (copy != null && !EditorUtility.IsPersistent(copy) && copy != settings[0])
+                                UnityEngine.Object.DestroyImmediate(copy);
+                }
                 MCPForUnity.Runtime.Helpers.SafePathUtility.ResolveWithinRoot(root, temporary);
                 if (!System.IO.File.Exists(temporary))
                     throw new System.IO.IOException("TagManager serialization did not produce a file.");
                 MCPForUnity.Runtime.Helpers.SafePathUtility.ResolveWithinRoot(root, physical);
-                if (!System.Linq.Enumerable.SequenceEqual(before, System.IO.File.ReadAllBytes(physical)))
+                if (!System.Linq.Enumerable.SequenceEqual(before, ReadTagManagerBytes(physical)))
                     throw new System.IO.IOException("TagManager changed while preparing its save.");
-                System.IO.File.Replace(temporary, physical, null);
+                // Complete all native cleanup before the irreversible atomic replacement.
+                // Failure before that boundary restores the live dirty state in MutateTagManager.
                 EditorUtility.ClearDirty(settings[0]);
+                ReplaceTagManagerFile(temporary, physical, null);
+                committed = true;
             }
             finally
             {
-                if (copies != null)
-                    foreach (UnityEngine.Object copy in copies)
-                        if (copy != null && !EditorUtility.IsPersistent(copy) && copy != settings[0])
-                            UnityEngine.Object.DestroyImmediate(copy);
-                MCPForUnity.Runtime.Helpers.SafePathUtility.ResolveWithinRoot(root, temporary);
-                if (System.IO.File.Exists(temporary))
-                    System.IO.File.Delete(temporary);
+                if (!committed)
+                {
+                    MCPForUnity.Runtime.Helpers.SafePathUtility.ResolveWithinRoot(root, temporary);
+                    if (System.IO.File.Exists(temporary))
+                        System.IO.File.Delete(temporary);
+                }
             }
         }
 
@@ -314,10 +361,10 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                // Add the tag using the internal utility
-                InternalEditorUtility.AddTag(tagName);
-                // Persist only TagManager; unrelated user assets remain dirty.
-                SaveTagManager();
+                using var tagManager = GetTagManager();
+                if (tagManager == null)
+                    return new ErrorResponse("Could not access TagManager asset.");
+                MutateTagManager(tagManager.targetObject, () => InternalEditorUtility.AddTag(tagName));
                 return new SuccessResponse($"Tag '{tagName}' added successfully.");
             }
             catch (Exception e)
@@ -341,10 +388,10 @@ namespace MCPForUnity.Editor.Tools
 
             try
             {
-                // Remove the tag using the internal utility
-                InternalEditorUtility.RemoveTag(tagName);
-                // Persist only TagManager.
-                SaveTagManager();
+                using var tagManager = GetTagManager();
+                if (tagManager == null)
+                    return new ErrorResponse("Could not access TagManager asset.");
+                MutateTagManager(tagManager.targetObject, () => InternalEditorUtility.RemoveTag(tagName));
                 return new SuccessResponse($"Tag '{tagName}' removed successfully.");
             }
             catch (Exception e)
@@ -393,13 +440,15 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse("No empty User Layer slots available (8-31 are full).");
                 }
 
-                // Assign the name to the found slot
-                using var targetLayerSP = layersProp.GetArrayElementAtIndex(firstEmptyUserLayer);
-                targetLayerSP.stringValue = layerName;
-                // Apply the changes to the TagManager asset
-                tagManager.ApplyModifiedProperties();
-                // Persist only these project settings.
-                SaveTagManager(tagManager.targetObject);
+                MutateTagManager(
+                    tagManager.targetObject,
+                    () =>
+                    {
+                        using var targetLayerSP = layersProp.GetArrayElementAtIndex(firstEmptyUserLayer);
+                        targetLayerSP.stringValue = layerName;
+                        tagManager.ApplyModifiedProperties();
+                    }
+                );
                 return new SuccessResponse($"Layer '{layerName}' added successfully to slot {firstEmptyUserLayer}.");
             }
             catch (Exception e)
@@ -442,13 +491,15 @@ namespace MCPForUnity.Editor.Tools
                     return new ErrorResponse($"User layer '{layerName}' not found.");
                 }
 
-                // Clear the name for that index
-                using var targetLayerSP = layersProp.GetArrayElementAtIndex(layerIndexToRemove);
-                targetLayerSP.stringValue = string.Empty; // Set to empty string to remove
-                // Apply the changes
-                tagManager.ApplyModifiedProperties();
-                // Persist only these project settings.
-                SaveTagManager(tagManager.targetObject);
+                MutateTagManager(
+                    tagManager.targetObject,
+                    () =>
+                    {
+                        using var targetLayerSP = layersProp.GetArrayElementAtIndex(layerIndexToRemove);
+                        targetLayerSP.stringValue = string.Empty;
+                        tagManager.ApplyModifiedProperties();
+                    }
+                );
                 return new SuccessResponse($"Layer '{layerName}' (slot {layerIndexToRemove}) removed successfully.");
             }
             catch (Exception e)
