@@ -1131,27 +1131,6 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 }
             }
 
-            // Transform: position, rotation, scale
-            Vector3? position = VectorParsing.ParseVector3(@params["position"]);
-            Vector3? rotation = VectorParsing.ParseVector3(@params["rotation"]);
-            Vector3? scale = VectorParsing.ParseVector3(@params["scale"]);
-
-            if (position.HasValue && targetGo.transform.localPosition != position.Value)
-            {
-                targetGo.transform.localPosition = position.Value;
-                modified = true;
-            }
-            if (rotation.HasValue && targetGo.transform.localEulerAngles != rotation.Value)
-            {
-                targetGo.transform.localEulerAngles = rotation.Value;
-                modified = true;
-            }
-            if (scale.HasValue && targetGo.transform.localScale != scale.Value)
-            {
-                targetGo.transform.localScale = scale.Value;
-                modified = true;
-            }
-
             // Parent change (within prefab hierarchy)
             JToken parentToken = @params["parent"];
             if (parentToken != null)
@@ -1186,6 +1165,27 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                     targetGo.transform.SetParent(newParent, true);
                     modified = true;
                 }
+            }
+
+            // Apply explicit local fields after reparenting; omitted fields keep their world-preserving result.
+            Vector3? position = VectorParsing.ParseVector3(@params["position"]);
+            Vector3? rotation = VectorParsing.ParseVector3(@params["rotation"]);
+            Vector3? scale = VectorParsing.ParseVector3(@params["scale"]);
+
+            if (position.HasValue && targetGo.transform.localPosition != position.Value)
+            {
+                targetGo.transform.localPosition = position.Value;
+                modified = true;
+            }
+            if (rotation.HasValue && targetGo.transform.localEulerAngles != rotation.Value)
+            {
+                targetGo.transform.localEulerAngles = rotation.Value;
+                modified = true;
+            }
+            if (scale.HasValue && targetGo.transform.localScale != scale.Value)
+            {
+                targetGo.transform.localScale = scale.Value;
+                modified = true;
             }
 
             // Components to add

@@ -822,6 +822,79 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
+        [TestCase("all")]
+        [TestCase("position")]
+        [TestCase("rotation")]
+        [TestCase("scale")]
+        [TestCase("none")]
+        public void ModifyContents_ReparentAppliesExplicitLocalTransformsAfterParentChange(string fields)
+        {
+            string path = TempDirectory + "/Reparent.prefab";
+            var root = new GameObject("Reparent");
+            Vector3 expectedPosition;
+            Quaternion expectedRotation;
+            Vector3 expectedScale;
+            try
+            {
+                var oldParent = new GameObject("OldParent").transform;
+                oldParent.SetParent(root.transform, false);
+                oldParent.localPosition = new Vector3(-3, 4, 5);
+                oldParent.localEulerAngles = new Vector3(10, 30, 20);
+                oldParent.localScale = new Vector3(2, 3, 4);
+                var newParent = new GameObject("NewParent").transform;
+                newParent.SetParent(root.transform, false);
+                newParent.localPosition = new Vector3(10, -6, 7);
+                newParent.localEulerAngles = new Vector3(25, 70, 15);
+                newParent.localScale = new Vector3(3, 5, 2);
+                var child = new GameObject("Child").transform;
+                child.SetParent(oldParent, false);
+                child.localPosition = new Vector3(2, 1, -3);
+                child.localEulerAngles = new Vector3(20, 15, 35);
+                child.localScale = new Vector3(1, 2, 4);
+                Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(root, path));
+
+                // Omitted fields retain SetParent(worldPositionStays: true) behavior.
+                child.SetParent(newParent, true);
+                expectedPosition = fields == "all" || fields == "position" ? new Vector3(1, 2, 3) : child.localPosition;
+                expectedRotation = fields == "all" || fields == "rotation" ? Quaternion.Euler(40, 50, 60) : child.localRotation;
+                expectedScale = fields == "all" || fields == "scale" ? new Vector3(2, 4, 6) : child.localScale;
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+
+            var request = new JObject
+            {
+                ["action"] = "modify_contents",
+                ["prefabPath"] = path,
+                ["target"] = "OldParent/Child",
+                ["parent"] = "NewParent",
+            };
+            if (fields == "all" || fields == "position")
+                request["position"] = new JArray(1, 2, 3);
+            if (fields == "all" || fields == "rotation")
+                request["rotation"] = new JArray(40, 50, 60);
+            if (fields == "all" || fields == "scale")
+                request["scale"] = new JArray(2, 4, 6);
+            var result = ToJObject(ManagePrefabs.HandleCommand(request));
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            var reloaded = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                Assert.IsNull(reloaded.transform.Find("OldParent/Child"));
+                var child = reloaded.transform.Find("NewParent/Child");
+                Assert.IsNotNull(child);
+                Assert.Less(Vector3.Distance(expectedPosition, child.localPosition), 0.0001f);
+                Assert.Less(Quaternion.Angle(expectedRotation, child.localRotation), 0.01f);
+                Assert.Less(Vector3.Distance(expectedScale, child.localScale), 0.0001f);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(reloaded);
+            }
+        }
+
         [Test]
         public void ModifyContents_AddsAndRemovesComponents()
         {
