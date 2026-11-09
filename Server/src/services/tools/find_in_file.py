@@ -115,19 +115,24 @@ async def find_in_file(
     selected = found[:max_results]
     line_metadata = {}
     line_num = 1
-    previous_start = 0
-    line_end = -1
-    excerpt = None
-    # Reverse regex searches return descending offsets. Count disjoint ranges
-    # in sorted order, then emit matches in the regex's original order.
+    line_start = 0
+    # Same boundaries as ManageScript.SourceLineWindow; never normalize source
+    # text because character offsets must continue to address the original text.
+    boundaries = re.finditer(r"\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]", contents)
+    boundary = next(boundaries, None)
+    excerpt_start = -1
+    excerpt = ""
+    # Advance once through source boundaries, including for reverse regex results,
+    # then emit matches in the regex's original order.
     for start_idx in sorted({m.start() for m in selected}):
-        line_num += contents.count("\n", previous_start, start_idx)
-        previous_start = start_idx
-        if excerpt is None or (line_end != -1 and line_end < start_idx):
-            line_start = contents.rfind("\n", 0, start_idx) + 1
-            line_end = contents.find("\n", start_idx)
-            end = line_end if line_end != -1 else len(contents)
-            excerpt = contents[line_start:end].strip()[:2000]
+        while boundary is not None and boundary.end() <= start_idx:
+            line_num += 1
+            line_start = boundary.end()
+            boundary = next(boundaries, None)
+        if line_start != excerpt_start:
+            line_end = boundary.start() if boundary is not None else len(contents)
+            excerpt = contents[line_start:line_end].strip()[:2000]
+            excerpt_start = line_start
         line_metadata[start_idx] = (line_num, excerpt)
 
     results = []

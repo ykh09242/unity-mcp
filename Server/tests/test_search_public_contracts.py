@@ -251,6 +251,17 @@ async def main():
                 result = await client.call_tool('find_in_file', {'uri': 'Assets/Fixture.cs', 'pattern': 'needle', 'max_results': 1, 'ignore_case': False})
                 wanted = expected_matches[1:] if data.get('contentsEncoded') else []
                 check(result.structured_content == {'success': True, 'data': {'matches': wanted, 'count': len(wanted), 'total_matches': len(wanted)}}, 'encoded text/empty/case/limit')
+            # Match ManageScript.SourceLineWindow: CRLF is one boundary, and
+            # separators must not be normalized because offsets address source text.
+            for separator in ('\r', '\r\n', '\n', '\v', '\f', '\x1c', '\x1d', '\x1e', '\x85', '\u2028', '\u2029'):
+                source = separator.join(('a😀', ' needle needle ', '', 'needle', ''))
+                raw = {'success': True, 'data': {'contents': source}}
+                starts = [source.index('needle'), source.index('needle') + 7, source.rindex('needle')]
+                expected = [dict(line=line, content=content, match='needle', start=start, end=start + 6)
+                            for line, content, start in zip((2, 2, 4), ('needle needle', 'needle needle', 'needle'), starts)]
+                for pattern, wanted in (('needle', expected), ('(?r)needle', expected[::-1])):
+                    result = await client.call_tool('find_in_file', {'uri': 'Assets/Fixture.cs', 'pattern': pattern})
+                    check(result.structured_content == {'success': True, 'data': {'matches': wanted, 'count': 3, 'total_matches': 3}}, 'source boundary ' + repr(separator) + ' ' + pattern)
             raw = {'success': False, 'message': 'Controlled read failure', 'data': None}
             result = await client.call_tool('find_in_file', {'uri': 'Assets/Fixture.cs', 'pattern': 'needle'})
             check(result.structured_content == raw, 'native read rejection preserved')
