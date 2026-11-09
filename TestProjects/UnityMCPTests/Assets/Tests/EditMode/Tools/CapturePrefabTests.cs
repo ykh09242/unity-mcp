@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using MCPForUnity.Editor.Tools;
+using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -56,6 +57,276 @@ namespace MCPForUnityTests.Editor.Tools
                 Object.DestroyImmediate(root);
             }
             AssertCapture(path, "ui_canvas");
+        }
+
+        [TestCase(128, 128, 0f, 20f, 16f, 1f)]
+        [TestCase(256, 256, 0f, 40f, 32f, 2f)]
+        [TestCase(256, 128, 0f, 40f, 32f, 2f)]
+        [TestCase(256, 128, 1f, 20f, 16f, 1f)]
+        public void SceneParentScalesCanvaslessPanelForRequestedResolution(
+            int width,
+            int height,
+            float match,
+            float expectedWidth,
+            float expectedHeight,
+            float scale
+        )
+        {
+            string path = CreatePanelPrefab();
+            var parent = CreateSceneCanvas(match);
+            var scaler = parent.GetComponent(Type.GetType("UnityEngine.UI.CanvasScaler, UnityEngine.UI"));
+            Canvas.ForceUpdateCanvases();
+            string before = EditorJsonUtility.ToJson(scaler);
+            _sceneFixture.ClearDirtiness();
+            var captured = CapturePixels(
+                path,
+                "ui_canvas",
+                width,
+                height,
+                parent.GetInstanceIDCompat(),
+                data =>
+                {
+                    Assert.AreEqual("scene_parent", (string)data["ui_context"]["source"]);
+                    Assert.AreEqual(parent.GetInstanceIDCompat(), (int)data["ui_context"]["parent_instance_id"]);
+                    Assert.AreEqual(scale, (float)data["ui_context"]["scale_factor"]);
+                    Assert.AreEqual(128f, (float)data["ui_context"]["reference_resolution"]["x"]);
+                    Assert.AreEqual("full_viewport", (string)data["ui_context"]["framing"]);
+                }
+            );
+            try
+            {
+                RectInt bounds = PixelBounds(captured, IsRed);
+                Assert.That(bounds.width, Is.EqualTo(expectedWidth).Within(2));
+                Assert.That(bounds.height, Is.EqualTo(expectedHeight).Within(2));
+                Assert.That(bounds.center.x, Is.EqualTo(width / 2f).Within(1));
+                Assert.That(bounds.center.y, Is.EqualTo(height / 2f).Within(1));
+                Assert.AreEqual(before, EditorJsonUtility.ToJson(scaler));
+                Assert.IsTrue(((Behaviour)scaler).enabled);
+            }
+            finally
+            {
+                Object.DestroyImmediate(captured);
+                Object.DestroyImmediate(parent);
+            }
+        }
+
+        [Test]
+        public void SceneParentPreservesAnchoredContainerAndReportsSnapshotLimits()
+        {
+            string path = CreatePanelPrefab();
+            var canvas = CreateSceneCanvas(0f);
+            var parent = new GameObject("Safe area snapshot", typeof(RectTransform));
+            var rect = (RectTransform)parent.transform;
+            rect.SetParent(canvas.transform, false);
+            rect.anchorMin = rect.anchorMax = new Vector2(0.25f, 0.75f);
+            rect.sizeDelta = new Vector2(40, 40);
+            rect.anchoredPosition = new Vector2(8, -4);
+            parent.AddComponent(Type.GetType("UnityEngine.UI.VerticalLayoutGroup, UnityEngine.UI"));
+            Canvas.ForceUpdateCanvases();
+            string before = EditorJsonUtility.ToJson(rect);
+            _sceneFixture.ClearDirtiness();
+            var captured = CapturePixels(
+                path,
+                "ui_canvas",
+                256,
+                256,
+                parent.GetInstanceIDCompat(),
+                data =>
+                {
+                    Assert.AreEqual("rect_transform_snapshot", (string)data["ui_context"]["parent_layout"]);
+                    StringAssert.Contains("VerticalLayoutGroup", data["limitations"].ToString());
+                    StringAssert.Contains("Safe Area", data["limitations"].ToString());
+                }
+            );
+            try
+            {
+                RectInt bounds = PixelBounds(captured, IsRed);
+                Assert.That(bounds.width, Is.EqualTo(40).Within(2));
+                Assert.That(bounds.height, Is.EqualTo(32).Within(2));
+                Assert.That(bounds.center.x, Is.EqualTo(80).Within(1));
+                Assert.That(bounds.center.y, Is.EqualTo(184).Within(1));
+                Assert.AreEqual(before, EditorJsonUtility.ToJson(rect));
+            }
+            finally
+            {
+                Object.DestroyImmediate(captured);
+                Object.DestroyImmediate(canvas);
+            }
+        }
+
+        [Test]
+        public void ExplicitParentOverridesPrefabCanvasScaler()
+        {
+            string path = CreateCanvasPrefab(scaler => SetUiProperty(scaler, "scaleFactor", 7f));
+            var parent = CreateSceneCanvas(0f);
+            _sceneFixture.ClearDirtiness();
+            var captured = CapturePixels(path, "ui_canvas", 256, 256, parent.GetInstanceIDCompat());
+            try
+            {
+                RectInt bounds = PixelBounds(captured, IsRed);
+                Assert.That(bounds.width, Is.EqualTo(40).Within(2));
+                Assert.That(bounds.height, Is.EqualTo(32).Within(2));
+                Assert.That(bounds.center.x, Is.EqualTo(128).Within(1));
+            }
+            finally
+            {
+                Object.DestroyImmediate(captured);
+                Object.DestroyImmediate(parent);
+            }
+        }
+
+        [Test]
+        public void SceneParentCopiesRectangularClippingAndAlphaWithoutParentVisuals()
+        {
+            string path = CreatePanelPrefab();
+            var canvas = CreateSceneCanvas(0f);
+            var parent = new GameObject("Clipped container", typeof(RectTransform), typeof(CanvasGroup));
+            var rect = (RectTransform)parent.transform;
+            rect.SetParent(canvas.transform, false);
+            rect.sizeDelta = new Vector2(10, 10);
+            parent.GetComponent<CanvasGroup>().alpha = 0.5f;
+            parent.AddComponent(Type.GetType("UnityEngine.UI.RectMask2D, UnityEngine.UI"));
+            var image = parent.AddComponent(Type.GetType("UnityEngine.UI.Image, UnityEngine.UI"));
+            SetUiProperty(image, "color", Color.green);
+            _sceneFixture.ClearDirtiness();
+            var captured = CapturePixels(
+                path,
+                "ui_canvas",
+                256,
+                256,
+                parent.GetInstanceIDCompat(),
+                data => StringAssert.Contains("UnityEngine.UI.Image", data["limitations"].ToString())
+            );
+            try
+            {
+                RectInt bounds = PixelBounds(captured, color => color.r > 80 && color.r > color.g * 2);
+                Assert.That(bounds.width, Is.EqualTo(20).Within(2));
+                Assert.That(bounds.height, Is.EqualTo(20).Within(2));
+                Color32 center = captured.GetPixel(128, 128);
+                Assert.Less(center.r, 230, "Parent CanvasGroup alpha must affect the captured panel.");
+                Assert.Less(center.g, 50, "The source parent's green Image must not be cloned.");
+                Assert.AreEqual(0.5f, parent.GetComponent<CanvasGroup>().alpha);
+                Assert.IsTrue(((Behaviour)image).enabled);
+            }
+            finally
+            {
+                Object.DestroyImmediate(captured);
+                Object.DestroyImmediate(canvas);
+            }
+        }
+
+        [Test]
+        public void AuthoredWorldCanvasReportsProjectionAndScalePolicy()
+        {
+            string path = CreateCanvasPrefab(scaler => SetUiProperty(scaler, "dynamicPixelsPerUnit", 2f));
+            var asset = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                asset.GetComponent<Canvas>().renderMode = RenderMode.WorldSpace;
+                PrefabUtility.SaveAsPrefabAsset(asset, path);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(asset);
+            }
+            _sceneFixture.ClearDirtiness();
+            var captured = CapturePixels(
+                path,
+                "ui_canvas",
+                128,
+                128,
+                inspect: data =>
+                {
+                    Assert.AreEqual("WorldSpace", (string)data["ui_context"]["scale_mode"]);
+                    Assert.AreEqual(2f, (float)data["ui_context"]["scale_factor"]);
+                    StringAssert.Contains("World Space", data["limitations"].ToString());
+                }
+            );
+            Object.DestroyImmediate(captured);
+        }
+
+        [Test]
+        public void CanvaslessFallbackReportsOneToOnePreview()
+        {
+            string path = CreatePanelPrefab();
+            _sceneFixture.ClearDirtiness();
+            var captured = CapturePixels(
+                path,
+                "ui_canvas",
+                128,
+                128,
+                inspect: data =>
+                {
+                    Assert.AreEqual("default_canvas", (string)data["ui_context"]["source"]);
+                    Assert.AreEqual(1f, (float)data["ui_context"]["scale_factor"]);
+                    StringAssert.Contains("1x", data["limitations"].ToString());
+                }
+            );
+            Object.DestroyImmediate(captured);
+        }
+
+        [TestCase("stale")]
+        [TestCase("non_ui")]
+        [TestCase("world_space")]
+        [TestCase("inactive")]
+        [TestCase("asset")]
+        [TestCase("component")]
+        [TestCase("preview")]
+        [TestCase("disabled_canvas")]
+        public void InvalidSceneParentFailsWithoutPreviewOrSourceChanges(string kind)
+        {
+            string path = CreatePanelPrefab();
+            var parent = kind == "non_ui" ? new GameObject("Not UI") : CreateSceneCanvas(0f);
+            if (kind == "world_space")
+                parent.GetComponent<Canvas>().renderMode = RenderMode.WorldSpace;
+            if (kind == "inactive")
+                parent.SetActive(false);
+            if (kind == "disabled_canvas")
+                parent.GetComponent<Canvas>().enabled = false;
+            var previewScene = kind == "preview" ? EditorSceneManager.NewPreviewScene() : default;
+            if (previewScene.IsValid())
+                SceneManager.MoveGameObjectToScene(parent, previewScene);
+            int id =
+                kind == "asset" ? AssetDatabase.LoadAssetAtPath<GameObject>(path).GetInstanceIDCompat()
+                : kind == "component" ? parent.transform.GetInstanceIDCompat()
+                : parent.GetInstanceIDCompat();
+            if (kind == "stale")
+                Object.DestroyImmediate(parent);
+            int scenes = EditorSceneManager.previewSceneCount;
+            try
+            {
+                var result = JObject.FromObject(CapturePrefab.HandleCommand(new JObject { ["prefab_path"] = path, ["ui_parent"] = id }));
+                Assert.IsFalse((bool)result["success"]);
+                StringAssert.Contains("ui_parent", (string)result["data"]["message"]);
+                Assert.AreEqual(scenes, EditorSceneManager.previewSceneCount);
+            }
+            finally
+            {
+                if (parent != null)
+                    Object.DestroyImmediate(parent);
+                if (previewScene.IsValid())
+                    EditorSceneManager.ClosePreviewScene(previewScene);
+            }
+        }
+
+        private string CreatePanelPrefab()
+        {
+            var root = new GameObject("Panel", typeof(RectTransform));
+            ((RectTransform)root.transform).sizeDelta = new Vector2(20, 16);
+            var image = root.AddComponent(Type.GetType("UnityEngine.UI.Image, UnityEngine.UI"));
+            SetUiProperty(image, "color", Color.red);
+            return SavePrefab(root, "Panel");
+        }
+
+        private static GameObject CreateSceneCanvas(float match)
+        {
+            var root = new GameObject("Context Canvas", typeof(RectTransform), typeof(Canvas));
+            root.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
+            var scaler = root.AddComponent(Type.GetType("UnityEngine.UI.CanvasScaler, UnityEngine.UI"));
+            SetUiProperty(scaler, "uiScaleMode", "ScaleWithScreenSize");
+            SetUiProperty(scaler, "referenceResolution", new Vector2(128, 128));
+            SetUiProperty(scaler, "matchWidthOrHeight", match);
+            return root;
         }
 
         [Test]
@@ -434,7 +705,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
         }
 
-        private static Texture2D CapturePixels(string path, string framing, int width, int height)
+        private static Texture2D CapturePixels(string path, string framing, int width, int height, int? parent = null, Action<JObject> inspect = null)
         {
             byte[] original = File.ReadAllBytes(path);
             var active = SceneManager.GetActiveScene();
@@ -442,16 +713,15 @@ namespace MCPForUnityTests.Editor.Tools
             int sceneCount = EditorSceneManager.previewSceneCount;
             var selection = Selection.activeObject;
             var renderTarget = RenderTexture.active;
-            JObject result = JObject.FromObject(
-                CapturePrefab.HandleCommand(
-                    new JObject
-                    {
-                        ["prefab_path"] = path,
-                        ["width"] = width,
-                        ["height"] = height,
-                    }
-                )
-            );
+            var request = new JObject
+            {
+                ["prefab_path"] = path,
+                ["width"] = width,
+                ["height"] = height,
+            };
+            if (parent.HasValue)
+                request["ui_parent"] = parent.Value;
+            JObject result = JObject.FromObject(CapturePrefab.HandleCommand(request));
             Assert.IsTrue((bool)result["success"], result.ToString());
             Assert.AreEqual(framing, (string)result["data"]["framing"]);
             Assert.IsTrue((bool)result["data"]["cleanup_completed"]);
@@ -463,6 +733,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreSame(selection, Selection.activeObject);
             Assert.AreSame(renderTarget, RenderTexture.active);
             CollectionAssert.AreEqual(original, File.ReadAllBytes(path));
+            inspect?.Invoke((JObject)result["data"]);
             byte[] png = Convert.FromBase64String((string)result["data"]["imageBase64"]);
             var texture = new Texture2D(1, 1);
             try

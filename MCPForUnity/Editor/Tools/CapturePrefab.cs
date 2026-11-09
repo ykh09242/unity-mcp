@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
@@ -30,13 +31,21 @@ namespace MCPForUnity.Editor.Tools
             string error = null;
             string path = null;
             string framing = null;
+            JObject uiContext = null;
+            var limitations = new List<string>
+            {
+                "Static preview; runtime initialization, animation, button interaction and locale switching are not performed. Prefab edit-time callbacks may execute.",
+            };
             int width = 0,
                 height = 0;
             bool cleanupCompleted = false;
             try
             {
-                if (parameters == null || parameters.Properties().Any(p => p.Name != "prefab_path" && p.Name != "width" && p.Name != "height"))
-                    throw new ArgumentException("Expected prefab_path, width and height only.");
+                if (
+                    parameters == null
+                    || parameters.Properties().Any(p => p.Name != "prefab_path" && p.Name != "width" && p.Name != "height" && p.Name != "ui_parent")
+                )
+                    throw new ArgumentException("Expected prefab_path, width, height and optional ui_parent only.");
                 path = parameters["prefab_path"]?.Type == JTokenType.String ? (string)parameters["prefab_path"] : null;
                 if (
                     string.IsNullOrEmpty(path)
@@ -61,6 +70,7 @@ namespace MCPForUnity.Editor.Tools
                 var asset = AssetDatabase.LoadAssetAtPath<GameObject>(path);
                 if (asset == null || !PrefabUtility.IsPartOfPrefabAsset(asset))
                     throw new ArgumentException("Prefab asset was not found.");
+                var uiParent = PrefabCaptureContext.ResolveParent(parameters["ui_parent"], asset);
 
                 preview = new PreviewRenderUtility();
                 var camera = preview.camera;
@@ -105,7 +115,7 @@ namespace MCPForUnity.Editor.Tools
                     if (instance.transform is RectTransform rect)
                     {
                         framing = "ui_canvas";
-                        FrameCanvas(preview, instance, rect, camera, width, height);
+                        uiContext = PrefabCaptureContext.Frame(preview, instance, rect, camera, width, height, uiParent, limitations);
                     }
                     else
                     {
@@ -159,129 +169,12 @@ namespace MCPForUnity.Editor.Tools
                     width,
                     height,
                     framing,
+                    ui_context = uiContext,
                     cleanup_completed = cleanupCompleted,
                     imageBase64 = Convert.ToBase64String(png),
-                    limitations = new[]
-                    {
-                        "Static preview; runtime initialization, animation and locale switching are not performed. Prefab edit-time callbacks may execute.",
-                    },
+                    limitations,
                 }
             );
-        }
-
-        private static void FrameCanvas(PreviewRenderUtility preview, GameObject instance, RectTransform rect, Camera camera, int width, int height)
-        {
-            // Unity skips Canvas rendering for CameraType.Preview, even with a valid UI mesh.
-            camera.cameraType = CameraType.Game;
-            camera.transform.SetPositionAndRotation(new Vector3(0, 0, -1000), Quaternion.identity);
-            camera.orthographicSize = height / 2f;
-            var canvas = instance.GetComponent<Canvas>();
-            float scaleFactor = canvas != null ? canvas.scaleFactor : 1f;
-            float referencePixelsPerUnit = canvas != null ? canvas.referencePixelsPerUnit : 100f;
-            if (canvas == null)
-            {
-                var canvasRoot = EditorUtility.CreateGameObjectWithHideFlags(
-                    "Prefab Preview Canvas",
-                    HideFlags.HideAndDontSave,
-                    typeof(RectTransform),
-                    typeof(Canvas)
-                );
-                preview.AddSingleGO(canvasRoot);
-                canvas = canvasRoot.GetComponent<Canvas>();
-                rect.SetParent(canvasRoot.transform, false);
-                rect.localRotation = Quaternion.identity;
-                rect.localScale = Vector3.one;
-            }
-            else
-            {
-                // Keep an authored Canvas at the root. CanvasScaler only handles root canvases, and its
-                // display-based calculation is not necessarily the requested camera target viewport.
-                var scaler = instance.GetComponents<Behaviour>().FirstOrDefault(IsCanvasScaler);
-                if (scaler != null && scaler.isActiveAndEnabled)
-                {
-                    CanvasScale(scaler, canvas.renderMode, width, height, out scaleFactor, out referencePixelsPerUnit);
-                    // OnDisable resets the Canvas to 1/100, so apply the captured policy afterwards.
-                    scaler.enabled = false;
-                }
-            }
-            canvas.renderMode = RenderMode.ScreenSpaceCamera;
-            canvas.planeDistance = 10f;
-            canvas.worldCamera = camera;
-            canvas.scaleFactor = scaleFactor;
-            canvas.referencePixelsPerUnit = referencePixelsPerUnit;
-            foreach (var childCanvas in instance.GetComponentsInChildren<Canvas>(true))
-                childCanvas.worldCamera = camera;
-        }
-
-        private static bool IsCanvasScaler(Behaviour behaviour)
-        {
-            for (Type type = behaviour?.GetType(); type != null; type = type.BaseType)
-                if (type.FullName == "UnityEngine.UI.CanvasScaler")
-                    return true;
-            return false;
-        }
-
-        private static T ScalerValue<T>(Behaviour scaler, string property) => (T)scaler.GetType().GetProperty(property).GetValue(scaler);
-
-        private static void CanvasScale(Behaviour scaler, RenderMode mode, int width, int height, out float scale, out float referencePixelsPerUnit)
-        {
-            // Matches the uGUI CanvasScaler policies, using the owned viewport rather than a display.
-            referencePixelsPerUnit = ScalerValue<float>(scaler, "referencePixelsPerUnit");
-            if (mode == RenderMode.WorldSpace)
-            {
-                scale = ScalerValue<float>(scaler, "dynamicPixelsPerUnit");
-                return;
-            }
-            switch (ScalerValue<object>(scaler, "uiScaleMode").ToString())
-            {
-                case "ScaleWithScreenSize":
-                    var reference = ScalerValue<Vector2>(scaler, "referenceResolution");
-                    float horizontal = width / reference.x,
-                        vertical = height / reference.y;
-                    switch (ScalerValue<object>(scaler, "screenMatchMode").ToString())
-                    {
-                        case "Expand":
-                            scale = Mathf.Min(horizontal, vertical);
-                            break;
-                        case "Shrink":
-                            scale = Mathf.Max(horizontal, vertical);
-                            break;
-                        default:
-                            scale = Mathf.Pow(
-                                2,
-                                Mathf.Lerp(Mathf.Log(horizontal, 2), Mathf.Log(vertical, 2), ScalerValue<float>(scaler, "matchWidthOrHeight"))
-                            );
-                            break;
-                    }
-                    break;
-                case "ConstantPhysicalSize":
-                    float dpi = Screen.dpi == 0 ? ScalerValue<float>(scaler, "fallbackScreenDPI") : Screen.dpi;
-                    float unitsPerInch;
-                    switch (ScalerValue<object>(scaler, "physicalUnit").ToString())
-                    {
-                        case "Centimeters":
-                            unitsPerInch = 2.54f;
-                            break;
-                        case "Millimeters":
-                            unitsPerInch = 25.4f;
-                            break;
-                        case "Inches":
-                            unitsPerInch = 1f;
-                            break;
-                        case "Picas":
-                            unitsPerInch = 6f;
-                            break;
-                        default:
-                            unitsPerInch = 72f;
-                            break;
-                    }
-                    scale = dpi / unitsPerInch;
-                    referencePixelsPerUnit *= unitsPerInch / ScalerValue<float>(scaler, "defaultSpriteDPI");
-                    break;
-                default:
-                    scale = ScalerValue<float>(scaler, "scaleFactor");
-                    break;
-            }
         }
 
         private static void FrameRenderers(GameObject instance, Camera camera)
