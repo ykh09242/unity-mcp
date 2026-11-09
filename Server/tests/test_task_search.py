@@ -6,6 +6,105 @@ from click.testing import CliRunner
 import pytest
 
 
+@pytest.mark.parametrize("name", ["unity_reflect", "manage_terrain"])
+def test_search_uses_real_action_declarations(name):
+    from importlib import import_module
+
+    from services.registry import get_registered_tools
+    from services.registry.task_search import SearchRequest, search_catalog
+
+    module = import_module(f"services.tools.{name}")
+    entries = [entry for entry in get_registered_tools() if entry["name"] == name]
+    result = search_catalog(SearchRequest(query=name), entries)["results"][0]
+
+    assert result["actions"] == list(module.ALL_ACTIONS)
+    assert result["actions"]
+    assert result["readiness"] == "unobserved"
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        (
+            "manage_navigation",
+            [
+                "com.unity.ai.navigation",
+                "com.unity.modules.ai",
+                "sample_position/calculate_path require com.unity.ai.navigation",
+                "agent/obstacle operations use the built-in AI module",
+                "surface",
+                "link",
+                "agent",
+                "obstacle",
+                "agent_type_id",
+                "scene_handle",
+            ],
+        ),
+        (
+            "manage_netcode",
+            ["preflight requires com.unity.netcode.gameobjects", "scene_handle"],
+        ),
+        (
+            "manage_input_actions",
+            [
+                "read and authoring operations require com.unity.inputsystem >=1.7.0",
+                "Edit Mode",
+                "expected_revision",
+            ],
+        ),
+    ],
+)
+def test_search_reports_operation_specific_prerequisites_from_real_declarations(name, expected):
+    from importlib import import_module
+
+    from services.registry import get_registered_tools
+    from services.registry.task_search import SearchRequest, search_catalog
+
+    import_module(f"services.tools.{name}")
+    entries = [entry for entry in get_registered_tools() if entry["name"] == name]
+    result = search_catalog(SearchRequest(query=name), entries)["results"][0]
+    requirements = " ".join(result["requirements"])
+
+    for fragment in expected:
+        assert fragment in requirements
+    assert "capabilities: no optional package required" in requirements
+    assert result["readiness"] == "unobserved"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("name", "arguments", "normalized"),
+    [
+        (
+            "unity_reflect",
+            {"action": "GET_TYPE", "class_name": "UnityEngine.GameObject"},
+            "get_type",
+        ),
+        ("manage_terrain", {"action": "GET_INFO", "target": "123"}, "get_info"),
+    ],
+)
+async def test_declared_action_metadata_preserves_legacy_wire_arguments(
+    monkeypatch, name, arguments, normalized
+):
+    from importlib import import_module
+    from unittest.mock import AsyncMock
+
+    from fastmcp import Client, FastMCP
+
+    module = import_module(f"services.tools.{name}")
+    send = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(module, "get_unity_instance_from_context", AsyncMock(return_value="owned"))
+    monkeypatch.setattr(module, "send_with_unity_instance", send)
+    server = FastMCP("legacy-action-metadata")
+    server.tool(getattr(module, name))
+
+    async with Client(server) as client:
+        result = await client.call_tool(name, arguments)
+
+    assert result.structured_content["success"] is True
+    assert send.call_args.args[-1]["action"] == normalized
+
+
 def test_korean_intent_finds_official_skill_without_claiming_readiness():
     # Given: the installed built-in catalog without an editor or MCP connection.
     from cli.main import cli

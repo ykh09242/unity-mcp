@@ -118,6 +118,39 @@ _PURPOSES: Final = {
         ("project-auditor-fixes",),
         ("com.unity.project-auditor; reviewed API 1.0.1, Unity >=2021.3; call availability",),
     ),
+    "manage_navigation": TaskPurpose(
+        "navmesh navigation pathfinding surface agent obstacle link",
+        (),
+        (
+            "capabilities: no optional package required; inspect module/package availability first",
+            "Native navigation operations require com.unity.modules.ai",
+            "surface/link operations, bake and sample_position/calculate_path require com.unity.ai.navigation; "
+            "agent/obstacle operations use the built-in AI module",
+            "Scene operations require an explicit loaded scene_handle; "
+            "sample_position/calculate_path also require a configured agent_type_id and baked NavMesh data",
+            "bake_status/cancel_bake require the existing job_id",
+            "add/configure/bake require idle Edit Mode",
+        ),
+    ),
+    "manage_netcode": TaskPurpose(
+        "netcode network multiplayer preflight",
+        (),
+        (
+            "capabilities: no optional package required; inspect package availability first",
+            "preflight requires com.unity.netcode.gameobjects and an explicit loaded scene_handle; "
+            "inspects local configuration without starting a network session",
+        ),
+    ),
+    "manage_input_actions": TaskPurpose(
+        "input actions binding inputsystem",
+        (),
+        (
+            "capabilities: no optional package required; inspect package availability first",
+            "read and authoring operations require com.unity.inputsystem >=1.7.0 "
+            "and an Assets .inputactions path",
+            "Authoring operations require idle Edit Mode; edits to existing assets require expected_revision",
+        ),
+    ),
     "read_response": TaskPurpose("large response truncated retrieve page 응답 페이지"),
 }
 _CAPABILITIES: Final = {item.name: item for item in CAPABILITIES}
@@ -134,20 +167,20 @@ def action_maturity(name: str) -> dict[str, ToolMaturity]:
 
 
 def _declared_actions(entry: SearchEntry) -> list[str]:
-    """Reuse literal action declarations instead of maintaining a second inventory."""
+    """Reuse Literal types or Annotated catalog metadata, preserving legacy str admission."""
     function = entry.get("func")
     if function is None:
         return []
     parameter = inspect.signature(function, eval_str=True).parameters.get("action")
     if parameter is None:
         return []
-    annotation = parameter.annotation
-    while get_origin(annotation) is not Literal:
-        arguments = get_args(annotation)
-        if not arguments:
-            return []
-        annotation = arguments[0]
-    return [value for value in get_args(annotation) if isinstance(value, str)]
+
+    def literals(annotation) -> list[str]:
+        if get_origin(annotation) is Literal:
+            return [value for value in get_args(annotation) if isinstance(value, str)]
+        return [value for argument in get_args(annotation) for value in literals(argument)]
+
+    return list(dict.fromkeys(literals(parameter.annotation)))
 
 
 def _words(value: str) -> set[str]:

@@ -3,7 +3,7 @@
 import json
 import math
 import re
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -14,7 +14,7 @@ from services.tools import get_unity_instance_from_context
 from transport.legacy.unity_connection import async_send_command_with_retry
 from transport.unity_transport import send_with_unity_instance
 
-ALL_ACTIONS = (
+TerrainAction = Literal[
     "get_info",
     "get_region",
     "set_region",
@@ -22,7 +22,8 @@ ALL_ACTIONS = (
     "set_trees",
     "get_layer",
     "set_layer",
-)
+]
+ALL_ACTIONS = get_args(TerrainAction)
 _REVISION = re.compile(r"terrain1:[0-9a-f]{64}\Z")
 _GUID = re.compile(r"[0-9a-f]{32}\Z")
 
@@ -202,7 +203,8 @@ def _validate(action: str, args: dict[str, Any]) -> str | None:
 )
 async def manage_terrain(
     ctx: Context,
-    action: Annotated[str, "Terrain action."],
+    # Literal metadata advertises actions while retaining legacy str admission.
+    action: Annotated[str, TerrainAction, "Terrain action."],
     target: Annotated[str, "Existing Terrain GameObject id/name/path."],
     search_method: Literal["by_id", "by_name", "by_path"] | None = None,
     channel: str | None = None,

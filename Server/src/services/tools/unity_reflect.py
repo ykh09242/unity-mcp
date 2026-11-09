@@ -1,4 +1,4 @@
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Literal, Optional, get_args
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -9,7 +9,8 @@ from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
-ALL_ACTIONS = ["get_type", "get_member", "search"]
+ReflectionAction = Literal["get_type", "get_member", "search"]
+ALL_ACTIONS = list(get_args(ReflectionAction))
 
 VALID_SCOPES = ["unity", "packages", "project", "all"]
 VALID_TYPE_KINDS = ["class", "interface", "struct", "enum", "delegate"]
@@ -50,7 +51,9 @@ async def _send_reflect_command(
 )
 async def unity_reflect(
     ctx: Context,
-    action: Annotated[str, "The reflection action to perform."],
+    # Keep str admission for legacy case-insensitive callers; Literal metadata
+    # declares the finite catalog without constraining the accepted wire values.
+    action: Annotated[str, ReflectionAction, "The reflection action to perform."],
     class_name: Annotated[Optional[str], "Fully qualified or simple C# class name."] = None,
     member_name: Annotated[Optional[str], "Method, property, or field name to inspect."] = None,
     query: Annotated[Optional[str], "Search query for type name search."] = None,
