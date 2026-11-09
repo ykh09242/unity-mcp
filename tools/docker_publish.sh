@@ -17,6 +17,8 @@
  # - vX.Y.Z
  # - vX.Y
  # - vX
+ # Prereleases receive only vX.Y.Z-prerelease (no major/minor aliases).
+ # Versions may have a leading v; build metadata (+...) is unsupported.
  set -euo pipefail
 
  REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -41,16 +43,26 @@
  fi
  
  VERSION="${VERSION_RAW#v}"
- 
- MAJOR="${VERSION%%.*}"
- MINOR="${VERSION%.*}"     # leaves X.Y
- # (works for X.Y.Z)
+
+ # SemVer core/prerelease syntax, restricted to Docker's unchanged tag syntax.
+ NUMBER='(0|[1-9][0-9]*)'
+ IDENTIFIER="($NUMBER|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+ VERSION_PATTERN="^$NUMBER\.$NUMBER\.$NUMBER(-$IDENTIFIER(\.$IDENTIFIER)*)?$"
+ if [[ ! "$VERSION" =~ $VERSION_PATTERN || "$VERSION" == *[!0-9A-Za-z.-]* ]] || (( ${#VERSION} > 127 )); then
+   echo "Error: unsupported version. Use X.Y.Z[-prerelease] without build metadata (tag limit: 128 characters)." >&2
+   exit 2
+ fi
+
+ TAGS=(-t "$IMAGE:v$VERSION")
+ if [[ "$VERSION" != *-* ]]; then
+   MAJOR="${VERSION%%.*}"
+   MINOR="${VERSION%.*}"
+   TAGS+=(-t "$IMAGE:v$MINOR" -t "$IMAGE:v$MAJOR")
+ fi
  
  docker buildx build \
    --platform linux/amd64 \
    -f "$REPO_ROOT/Server/Dockerfile" \
-   -t "$IMAGE:v$VERSION" \
-   -t "$IMAGE:v$MINOR" \
-   -t "$IMAGE:v$MAJOR" \
+   "${TAGS[@]}" \
    --push \
    "$REPO_ROOT"
