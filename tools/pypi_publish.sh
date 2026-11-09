@@ -29,14 +29,14 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && (pwd -W 2>/dev/null || pwd))"
 
 REPOSITORY="pypi"
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+if (( $# > 1 )) || { (( $# == 1 )) && [[ "$1" != "--test" ]]; }; then
   echo "Usage: $(basename "$0") [--test]" >&2
   echo "Environment:" >&2
   echo "  PYPI_TOKEN (preferred) or TWINE_USERNAME/TWINE_PASSWORD" >&2
   exit 2
 fi
 
-if [[ "${1:-}" == "--test" ]]; then
+if (( $# == 1 )); then
   REPOSITORY="testpypi"
 fi
 

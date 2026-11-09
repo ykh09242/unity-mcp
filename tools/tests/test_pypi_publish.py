@@ -91,7 +91,10 @@ def test_cli_fails_when_no_current_artifacts_exist(tmp_path):
 
 
 @pytest.mark.parametrize("current_artifacts", [True, False])
-def test_publisher_passes_only_selected_artifacts_to_upload(tmp_path, current_artifacts):
+@pytest.mark.parametrize("test_repository", [False, True])
+def test_publisher_passes_only_selected_artifacts_to_upload(
+    tmp_path, current_artifacts, test_repository
+):
     bash = shutil.which("bash")
     if bash is None and os.name == "nt":
         candidate = Path("C:/Program Files/Git/bin/bash.exe")
@@ -135,7 +138,7 @@ def test_publisher_passes_only_selected_artifacts_to_upload(tmp_path, current_ar
     }
     env.update(BASH_ENV=fixture.as_posix(), TWINE_USERNAME="fixture", TWINE_PASSWORD="fixture")
     result = subprocess.run(
-        [bash, script.as_posix(), "--test"],
+        [bash, script.as_posix(), *(["--test"] if test_repository else [])],
         env=env,
         capture_output=True,
         text=True,
@@ -145,9 +148,70 @@ def test_publisher_passes_only_selected_artifacts_to_upload(tmp_path, current_ar
     if current_artifacts:
         assert result.returncode == 0, result.stderr
         arguments = uploads.read_text(encoding="utf-8").splitlines()
-        assert arguments[:5] == ["-m", "twine", "upload", "--repository", "testpypi"]
+        assert arguments[:5] == [
+            "-m",
+            "twine",
+            "upload",
+            "--repository",
+            "testpypi" if test_repository else "pypi",
+        ]
         assert {Path(argument).name for argument in arguments[5:]} == {wheel, sdist}
     else:
         assert result.returncode == 2
         assert "No distribution files match" in result.stderr
         assert not uploads.exists()
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--testpypi"],
+        ["--unknown"],
+        ["production"],
+        [""],
+        ["--test", "extra"],
+        ["--test", "--test"],
+        ["extra", "--test"],
+        ["--testpypi", "--test"],
+    ],
+)
+@pytest.mark.parametrize("credentials", [False, True])
+def test_invalid_arguments_stop_before_credentials_or_build(
+    tmp_path: Path, arguments: list[str], credentials: bool
+) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    script = tools / "pypi_publish.sh"
+    shutil.copyfile(HELPER.with_name("pypi_publish.sh"), script)
+    dist = tmp_path / "Server/dist"
+    dist.mkdir(parents=True)
+    artifact = dist / "preserved.tar.gz"
+    artifact.write_bytes(b"preserved")
+    record = tmp_path / "forbidden-commands"
+    fixture = tmp_path / "offline-publisher.sh"
+    fixture.write_text(
+        "uv() { printf 'uv\\n' >> \"$PUBLISH_TEST_RECORD\"; }\n"
+        "python3() { printf 'python3\\n' >> \"$PUBLISH_TEST_RECORD\"; }\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    env = {
+        key: os.environ[key] for key in ("PATH", "SYSTEMROOT", "TEMP", "TMP") if key in os.environ
+    }
+    env.update(BASH_ENV=fixture.as_posix(), PUBLISH_TEST_RECORD=record.as_posix())
+    if credentials:
+        env.update(TWINE_USERNAME="fixture", TWINE_PASSWORD="fixture")
+    bash = shutil.which("bash") or "C:/Program Files/Git/bin/bash.exe"
+    result = subprocess.run(
+        [bash, script.as_posix(), *arguments],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=20,
+    )
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "Usage:" in result.stderr
+    assert "missing credentials" not in result.stderr
+    assert not record.exists()
+    assert artifact.read_bytes() == b"preserved"
