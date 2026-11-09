@@ -340,7 +340,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Unlocked candidate archive installation failed' }
           "ARCHIVE_PYTHON=$python" >> $env:GITHUB_ENV
           "ARCHIVE_CANDIDATE_SHA=$revision" >> $env:GITHUB_ENV
-      - name: Exercise installed HTTP and CLI behavior
+      - name: Exercise installed MCP, HTTP and CLI behavior
         run: |
           $ErrorActionPreference = 'Stop'
           & $env:ARCHIVE_PYTHON -I -W error "$env:GITHUB_WORKSPACE/tools/check_server_archive.py" --forbid-source $env:GITHUB_WORKSPACE --candidate-sha $env:ARCHIVE_CANDIDATE_SHA

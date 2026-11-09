@@ -83,10 +83,21 @@ so tool tests do not wait for the longer server suite.
 
 The installed-candidate archive job retains Python 3.11 checks on Windows, Linux and macOS
 and adds one Linux Python 3.15 check. Each installs the checked commit's server archive with
-an independent, unlocked dependency resolution, then runs the public HTTP/CLI behavior and
-registration probes. The behavior report records the actual Python and dependency versions
-and import origins. Isolated mode and the source-origin gate reject checkout imports; both
-probes explicitly use `-W error`, since isolated mode ignores `PYTHONWARNINGS`. The 3.15
+an independent, unlocked dependency resolution, then runs the public HTTP/CLI behavior,
+registration and real MCP protocol probes. A supervised worker initializes MCP, lists tools
+and calls the pure `debug_request_context` tool over both stdio and authenticated loopback
+HTTP. The HTTP child must publish its private launch credential after binding before the
+probe contacts that port; invalid credentials must be rejected. Server responses must name
+the installed entry module and neutral working directory, and confirm a running lifespan.
+The worker has a 90-second deadline followed by bounded process-tree/log settlement,
+bounded diagnostic logs and owned configuration, credentials, processes and ports.
+The HTTP child is reaped, closing
+its listener handles; the SDK owns stdio shutdown. No Editor or external service is contacted.
+The behavior report records the actual Python and dependency versions, available installer
+archive hashes, the installed distribution RECORD digest, import origins and both protocol
+proofs. Isolated mode and the source-origin gate reject checkout imports and undeclared
+application modules; both probes explicitly use `-W error`, since isolated mode ignores
+`PYTHONWARNINGS`. The 3.15
 archive job uses the same optional beartype setting as the locked suites. These small probes
 complement the complete locked test suites without repeating them.
 
@@ -98,9 +109,10 @@ the default branch; manual runs use the selected workflow branch. The selected l
 commit and server archive commit appear separately in the run summary and retained report.
 
 The canary creates an empty environment and installs that archive with fresh, unlocked
-dependency resolution and no shared uv cache. It reuses the installed-archive HTTP/CLI
-behavior and startup-registration probes, including warnings-as-errors and source-import
-rejection. The artifact retains source identity, install output, toolchain versions, every
+dependency resolution and no shared uv cache. It reuses the installed-archive HTTP/CLI,
+stdio/authenticated HTTP MCP exchanges and startup-registration probes, including
+warnings-as-errors and source-import rejection. The artifact retains source identity,
+install output, toolchain versions, every
 resolved distribution version, and successful probe reports for 30 days. Installation or
 probe failures fail the job; this read-only check publishes no package and does not run
 the complete test matrix. Its purpose is to detect dependency changes between source commits.

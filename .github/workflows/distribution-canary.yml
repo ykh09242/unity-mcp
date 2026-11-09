@@ -69,7 +69,7 @@ jobs:
           uv pip freeze --no-config --python "$python" > .tmp/distribution-canary/resolved.txt
           printf 'CANARY_PYTHON=%s\n' "$python" >> "$GITHUB_ENV"
 
-      - name: Exercise installed registration and public HTTP and CLI behavior
+      - name: Exercise installed registration, MCP, HTTP and CLI behavior
         env:
           SERVER_COMMIT: ${{ steps.source.outputs.server_commit }}
         shell: bash
@@ -82,7 +82,7 @@ jobs:
             > .tmp/distribution-canary/registration.jsonl
           cat .tmp/distribution-canary/behavior.json
           cat .tmp/distribution-canary/registration.jsonl
-          printf '\nInstalled registration and HTTP/CLI probes passed. Resolved versions are retained in the artifact.\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '\nInstalled registration, stdio/authenticated HTTP MCP and HTTP/CLI probes passed. Resolved versions are retained in the artifact.\n' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Retain source, resolution and probe evidence
         if: always()

@@ -1,8 +1,9 @@
-"""Exercise an archive-installed server's public HTTP/CLI contracts without Unity.
+"""Exercise an archive-installed server's public MCP/HTTP/CLI contracts without Unity.
 
 Run with the archive environment's Python, isolated mode and an empty working directory:
     python -I /path/to/check_server_archive.py --forbid-source CHECKOUT --candidate-sha FULL_SHA
-No listeners, Editor discovery, user configuration or external connections are allowed.
+Only the supervised MCP worker may launch and contact its own loopback listener.
+Editor discovery, user configuration and external connections are prohibited.
 """
 
 import argparse
@@ -10,6 +11,7 @@ import asyncio
 from importlib import import_module
 from importlib.metadata import distribution, version
 import json
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -18,7 +20,18 @@ from tempfile import TemporaryDirectory
 from typing import Final
 
 
-PACKAGES: Final = ("main", "core", "cli", "services", "transport", "fastmcp", "httpx", "click")
+PACKAGES: Final = (
+    "main",
+    "core",
+    "cli",
+    "services",
+    "transport",
+    "fastmcp",
+    "mcp",
+    "httpx",
+    "httpx2",
+    "click",
+)
 
 
 def installed_origins(forbidden: Path) -> dict[str, str]:
@@ -28,12 +41,15 @@ def installed_origins(forbidden: Path) -> dict[str, str]:
     if "archive_info" not in direct or direct.get("dir_info", {}).get("editable"):
         raise RuntimeError("Installed archive required: missing archive installation metadata")
     prefix = Path(sys.prefix).resolve()
+    declared = {Path(installed.locate_file(path)).resolve() for path in installed.files or ()}
     origins = {}
     for name in PACKAGES:
         module = import_module(name)
         origin = Path(module.__file__).resolve()
         if not origin.is_relative_to(prefix) or origin.is_relative_to(forbidden):
             raise RuntimeError(f"Installed archive required: source leakage for {name}: {origin}")
+        if name in {"main", "core", "cli", "services", "transport"} and origin not in declared:
+            raise RuntimeError(f"Installed archive required: undeclared application module {name}")
         origins[name] = str(origin)
     return origins
 
@@ -125,13 +141,69 @@ def check_cli() -> list[str]:
     return ["help_catalog", "raw_json_parse_error", "raw_json_object_required"]
 
 
-async def check_behavior(
-    root: Path, forbidden: Path
-) -> tuple[dict[str, str], dict[str, list[str]]]:
+def check_mcp(root: Path, forbidden: Path) -> dict:
+    """Supervise real installed protocol exchanges with existing bounded tree cleanup."""
+    # Only assurance tooling is loaded from this explicit directory. Product
+    # imports were checked before this and the child starts afresh with -I.
+    tools_directory = str(Path(__file__).resolve().parent)
+    sys.path.insert(0, tools_directory)
+    try:
+        from player_e2e_process import Invocation, execute
+    finally:
+        sys.path.remove(tools_directory)
+    directory = root / "mcp-protocol"
+    invocation = Invocation(
+        command=[
+            sys.executable,
+            "-I",
+            "-W",
+            "error",
+            str(Path(__file__).with_name("installed_mcp_probe.py")),
+            "--forbid-source",
+            str(forbidden),
+            "--root",
+            str(directory),
+        ],
+        directory=directory,
+        timeout=90,
+    )
+    result = execute(invocation)
+    if result["actual_exit_code"] or result["forced_termination"] or result["log_truncated"]:
+        # Retain a bounded diagnosis even when TemporaryDirectory later removes
+        # owned state. Redact the generated launch credential before emission.
+        with (directory / "process.log").open("rb") as log:
+            log.seek(max(0, log.seek(0, 2) - 4096))
+            detail = log.read(4096).decode("utf-8", errors="replace")
+        token_path = directory / "http" / "launch-token"
+        if token_path.exists():
+            token = token_path.read_text(encoding="utf-8").strip()
+            if token:
+                detail = detail.replace(token, "[redacted]")
+        print(detail, file=sys.stderr)
+        raise RuntimeError("Installed MCP protocol worker failed; bounded diagnostic emitted above")
+    proofs = json.loads((directory / "protocol.json").read_text(encoding="utf-8"))
+    if set(proofs) != {"stdio", "http"}:
+        raise RuntimeError("Installed MCP protocol worker returned incomplete transport proof")
+    return {
+        "transports": proofs,
+        "supervision": {
+            "process_id": result["process_id"],
+            "process_ended": result["process_ended"],
+            "forced_termination": False,
+            "timeout_seconds": invocation.timeout,
+        },
+    }
+
+
+async def check_behavior(root: Path, forbidden: Path) -> tuple[dict[str, str], dict]:
     # Windows' event loop creates its own wakeup socket before this hook is installed.
     sys.addaudithook(reject_network)
     origins = installed_origins(forbidden)
-    return origins, {"http": await check_http(root), "cli": check_cli()}
+    return origins, {
+        "http": await check_http(root),
+        "cli": check_cli(),
+        "mcp": check_mcp(root, forbidden),
+    }
 
 
 def main() -> None:
@@ -160,10 +232,20 @@ def main() -> None:
         try:
             os.chdir(root)
             origins, behaviors = asyncio.run(check_behavior(root, forbidden))
+            installed = distribution("ykh09242-unity-mcp-server")
+            record = installed.read_text("RECORD")
+            if record is None:
+                raise RuntimeError("Installed archive required: missing distribution RECORD")
             print(
                 json.dumps(
                     {
                         "candidate_sha": args.candidate_sha,
+                        "archive_hashes": json.loads(installed.read_text("direct_url.json"))[
+                            "archive_info"
+                        ].get("hashes", {}),
+                        "installed_record_sha256": hashlib.sha256(
+                            record.encode("utf-8")
+                        ).hexdigest(),
                         "python": sys.version.split()[0],
                         "dependencies": {
                             name: version(name)

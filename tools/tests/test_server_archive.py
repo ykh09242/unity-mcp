@@ -4,11 +4,86 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import json
+from importlib.util import module_from_spec, spec_from_file_location
+
+import pytest
+from types import SimpleNamespace
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 PROBE = ROOT / "tools/check_server_archive.py"
+
+
+def load_mcp_probe():
+    spec = spec_from_file_location("installed_mcp_probe", ROOT / "tools/installed_mcp_probe.py")
+    module = module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_installed_mcp_probe_rejects_checkout_origin():
+    probe = load_mcp_probe()
+    with pytest.raises(RuntimeError, match="Installed archive required"):
+        probe.installed_main_origin(ROOT)
+
+
+def test_installed_mcp_probe_rejects_source_even_with_archive_metadata(monkeypatch):
+    probe = load_mcp_probe()
+    origin = ROOT / "Server/src/main.py"
+    metadata = SimpleNamespace(
+        files=["main.py"],
+        locate_file=lambda _: origin,
+        read_text=lambda _: '{"archive_info":{"hashes":{"sha256":"fixture"}}}',
+    )
+    monkeypatch.setattr(probe, "distribution", lambda _: metadata)
+    monkeypatch.setattr(probe, "find_spec", lambda _: SimpleNamespace(origin=str(origin)))
+    monkeypatch.setattr(probe.sys, "prefix", str(ROOT))
+    with pytest.raises(RuntimeError, match="Installed archive required"):
+        probe.installed_main_origin(ROOT)
+
+
+def test_installed_mcp_result_requires_real_success_and_installed_server_identity(tmp_path):
+    from mcp.types import CallToolResult, TextContent
+
+    probe = load_mcp_probe()
+    origin = tmp_path / "site-packages/main.py"
+    payload = {
+        "success": True,
+        "data": {
+            "server": {"argv": [str(origin)], "cwd": str(tmp_path), "version": "2.3.4"},
+            "session_state": {"plugin_hub_configured": True},
+        },
+    }
+
+    def result():
+        return CallToolResult(content=[TextContent(type="text", text=json.dumps(payload))])
+
+    probe.validate_tool_result(result(), origin, tmp_path)
+    failed = result().model_copy(update={"is_error": True})
+    with pytest.raises(RuntimeError, match="tool failed"):
+        probe.validate_tool_result(failed, origin, tmp_path)
+    payload["data"]["server"]["argv"] = [str(ROOT / "Server/src/main.py")]
+    with pytest.raises(RuntimeError, match="origin"):
+        probe.validate_tool_result(result(), origin, tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_installed_http_probe_rejects_protocol_failure():
+    import httpx2
+
+    probe = load_mcp_probe()
+
+    async def malformed(_request):
+        return httpx2.Response(
+            200, headers={"content-type": "application/json"}, json={"bad": True}
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(malformed)) as client:
+        with pytest.raises(ExceptionGroup):
+            await probe.http_exchange("http://127.0.0.1/mcp", client, ROOT / "bad.py", ROOT)
 
 
 def test_archive_probe_refuses_editable_worktree_imports(tmp_path):
@@ -52,7 +127,9 @@ def test_archive_workflow_installs_the_checked_candidate_without_lock_or_source_
     assert "ykh09242-unity-mcp-server @ " in install["run"]
     assert "uv sync" not in install["run"]
     behavior = next(
-        step for step in steps if step.get("name") == "Exercise installed HTTP and CLI behavior"
+        step
+        for step in steps
+        if step.get("name") == "Exercise installed MCP, HTTP and CLI behavior"
     )
     assert " -I " in behavior["run"]
     assert "--forbid-source" in behavior["run"]
@@ -87,6 +164,6 @@ def test_archive_workflow_adds_only_linux_315_and_retains_cross_os_311_behavior(
     behavior = next(
         step
         for step in job["steps"]
-        if step.get("name") == "Exercise installed HTTP and CLI behavior"
+        if step.get("name") == "Exercise installed MCP, HTTP and CLI behavior"
     )
     assert behavior["run"].count(" -I -W error ") == 2
