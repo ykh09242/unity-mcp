@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
@@ -46,6 +47,95 @@ namespace MCPForUnityTests.Editor.Tools
             if (folder != null)
                 AssetDatabase.DeleteAsset(folder);
             folder = null;
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void PublicationFailure_LeavesCompleteOriginalAndMetadata(bool preventCleanup)
+        {
+            // Given a BOM source with existing native metadata and an injected publication fault.
+            string path = Create("uss", ".title { color: red; }", true);
+            byte[] original = File.ReadAllBytes(Full(path));
+            byte[] metadata = File.ReadAllBytes(Full(path) + ".meta");
+            JObject preview = Send(Request(path, ".title", new JObject { ["color"] = "blue" }));
+            var hook = typeof(ManageUI)
+                .Assembly.GetType("MCPForUnity.Editor.Tools.UISourcePatch")
+                .GetField("BeforeCommitForTests", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(hook, "Publication must expose its deterministic failure boundary.");
+            FileStream lockedStage = null;
+            string stagePath = null;
+            hook.SetValue(
+                null,
+                (Action)(
+                    () =>
+                    {
+                        stagePath = Directory.GetFiles(Full(folder), ".mcp-*.tmp")[0];
+                        if (preventCleanup)
+                            lockedStage = new FileStream(stagePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                        throw new IOException("injected before atomic commit");
+                    }
+                )
+            );
+            try
+            {
+                // When publication fails, even when the temporary file cannot be cleaned up.
+                JObject result = Send(Request(path, ".title", new JObject { ["color"] = "blue" }, false, preview["data"].Value<string>("source_hash")));
+                // Then the authoritative bytes and GUID metadata remain complete and unchanged.
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                CollectionAssert.AreEqual(original, File.ReadAllBytes(Full(path)));
+                CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Full(path) + ".meta"));
+                if (lockedStage != null)
+                {
+                    byte[] candidate = new byte[lockedStage.Length];
+                    Assert.AreEqual(candidate.Length, lockedStage.Read(candidate, 0, candidate.Length));
+                    CollectionAssert.AreEqual(new byte[] { 239, 187, 191 }, new ArraySegment<byte>(candidate, 0, 3));
+                    Assert.AreEqual(".title { color: blue; }", Encoding.UTF8.GetString(candidate, 3, candidate.Length - 3));
+                }
+            }
+            finally
+            {
+                hook.SetValue(null, null);
+                lockedStage?.Dispose();
+                if (stagePath != null && File.Exists(stagePath))
+                    File.Delete(stagePath);
+            }
+        }
+
+        [Test]
+        public void ConcurrentPublication_RejectsChangedSourceBeforeCommit()
+        {
+            // Given a preview followed by a competing complete replacement at the commit boundary.
+            string path = Create("uss", ".title { color: red; }");
+            JObject preview = Send(Request(path, ".title", new JObject { ["color"] = "blue" }));
+            byte[] metadata = File.ReadAllBytes(Full(path) + ".meta");
+            var hook = typeof(ManageUI)
+                .Assembly.GetType("MCPForUnity.Editor.Tools.UISourcePatch")
+                .GetField("BeforeCommitForTests", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(hook);
+            hook.SetValue(
+                null,
+                (Action)(
+                    () =>
+                    {
+                        string replacement = Full(path) + ".external";
+                        File.WriteAllText(replacement, ".title { color: green; }", new UTF8Encoding(false));
+                        File.Replace(replacement, Full(path), null);
+                    }
+                )
+            );
+            try
+            {
+                // When a stale candidate reaches atomic publication.
+                JObject result = Send(Request(path, ".title", new JObject { ["color"] = "blue" }, false, preview["data"].Value<string>("source_hash")));
+                // Then the other writer's complete source and metadata are retained.
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual(".title { color: green; }", File.ReadAllText(Full(path)));
+                CollectionAssert.AreEqual(metadata, File.ReadAllBytes(Full(path) + ".meta"));
+            }
+            finally
+            {
+                hook.SetValue(null, null);
+            }
         }
 
         [TestCase("uss")]

@@ -18,6 +18,7 @@ namespace MCPForUnity.Editor.Tools
         private const int MaxBytes = 8 * 1024 * 1024;
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
         private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
+        internal static Action BeforeCommitForTests;
 
         private static MatchCollection Matches(string source, string pattern) => Regex.Matches(source, pattern, RegexOptions.CultureInvariant, RegexTimeout);
 
@@ -55,11 +56,8 @@ namespace MCPForUnity.Editor.Tools
             byte[] updated;
             List<Edit> edits;
             string sourceHash;
-            // .NET sharing coordinates cooperating file users from the hash check through writes.
-            // This is not a cross-platform filesystem CAS or protection from noncooperating writers.
-            using (
-                var stream = new FileStream(full, FileMode.Open, preview ? FileAccess.Read : FileAccess.ReadWrite, preview ? FileShare.Read : FileShare.None)
-            )
+            // Read one stable source; atomic publication rechecks its raw hash and metadata.
+            using (var stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
                 if (stream.Length > MaxBytes)
                     return new ErrorResponse("Source exceeds the 8 MiB patch limit.");
@@ -87,44 +85,10 @@ namespace MCPForUnity.Editor.Tools
                 updated = new byte[body.Length + bom];
                 Array.Copy(original, updated, bom);
                 Array.Copy(body, 0, updated, bom, body.Length);
-                if (!preview)
-                {
-                    try
-                    {
-                        stream.Position = 0;
-                        stream.Write(updated, 0, updated.Length);
-                        stream.SetLength(updated.Length);
-                        stream.Flush(true);
-                    }
-                    catch (IOException writeError)
-                    {
-                        try
-                        {
-                            stream.Position = 0;
-                            stream.Write(original, 0, original.Length);
-                            stream.SetLength(original.Length);
-                            stream.Flush(true);
-                        }
-                        catch (IOException restoreError)
-                        {
-                            return new ErrorResponse(
-                                "source_write_failed_restore_failed",
-                                new
-                                {
-                                    path,
-                                    source_hash = sourceHash,
-                                    source_state = "unknown",
-                                    write_error = writeError.Message,
-                                    restore_error = restoreError.Message,
-                                }
-                            );
-                        }
-                        return new ErrorResponse("source_write_failed_original_restored", new { path, source_hash = sourceHash });
-                    }
-                }
             }
             if (!preview)
             {
+                AtomicAssetFile.Replace(full, updated, sourceHash, BeforeCommitForTests);
                 try
                 {
                     AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
