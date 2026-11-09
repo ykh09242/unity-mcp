@@ -737,6 +737,173 @@ namespace MCPForUnityTests.Editor.Services
             });
         }
 
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void ExternalNativeCancellationSummaryNeverFinalizesAsSucceeded(bool taskFinalizer, bool teardownSite)
+        {
+            WithManager(_ =>
+            {
+                NativeTestRunControl.DisableForTests = true;
+                string id = TestJobManager.StartJob(TestMode.EditMode);
+                var jobs = (Dictionary<string, TestJob>)typeof(TestJobManager).GetField("Jobs", Members).GetValue(null);
+                var job = jobs[id];
+                Assert.IsNull(job.Control, "This result did not originate from MCP cancellation.");
+                TestRunSummary summary = NativeCancelledSummary(teardownSite);
+                var result = new TestRunResult(summary, Array.Empty<TestRunTestResult>()) { Availability = "unavailable" };
+                if (taskFinalizer)
+                    typeof(TestJobManager).GetMethod("FinalizeFromTask", Members).Invoke(null, new object[] { id, Task.FromResult(result) });
+                else
+                    TestJobManager.FinalizeCurrentJobFromRunFinished(result);
+                Assert.AreEqual(TestJobStatus.Cancelled, job.Status);
+                Assert.AreEqual("cancelled", job.CompletionKind);
+                Assert.AreEqual(summary.ResultState, job.RetainedSummary.ResultState);
+                Assert.IsNull(TestJobManager.CurrentJobId);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ReleasedNativeOwnerHonorsCancelledSummaryWithoutMcpRequest(bool teardownSite)
+        {
+            WithManager(_ =>
+            {
+                NativeTestRunControl.DisableForTests = false;
+                JObject view = Native(true);
+                NativeTestRunControl.FactoryOverride = (id, timeout) => new NativeTestRunControl(id, timeout, () => 10, () => view, _ => false);
+                string id = TestJobManager.StartJob(TestMode.EditMode, runTimeoutMs: 100);
+                var jobs = (Dictionary<string, TestJob>)typeof(TestJobManager).GetField("Jobs", Members).GetValue(null);
+                var job = jobs[id];
+                job.Control.BindGuid(Guid);
+                Assert.IsFalse(job.Control.Requested);
+                job.RetainedSummary = NativeCancelledSummary(teardownSite);
+                view = Native(false);
+                job.Control.ObserveFinal(Guid);
+                typeof(TestJobManager).GetMethod("OnNativeControlEditorUpdate", Members).Invoke(null, null);
+                Assert.AreEqual(TestJobStatus.Cancelled, job.Status);
+                Assert.AreEqual("cancelled", job.CompletionKind);
+                Assert.IsNull(TestJobManager.CurrentJobId);
+                Assert.IsFalse(TestJobManager.NativeAdmissionBlocked);
+            });
+        }
+
+        [TestCase(false, 0, 0, "Passed", "Succeeded")]
+        [TestCase(true, 0, 0, "Passed", "Succeeded")]
+        [TestCase(false, 1, 0, "Passed", "Succeeded")]
+        [TestCase(true, 1, 0, "Passed", "Succeeded")]
+        [TestCase(false, 0, 1, "Failed", "Failed")]
+        [TestCase(true, 0, 1, "Failed", "Failed")]
+        public void NonCancelledSummaryRetainsTerminalClassification(bool taskFinalizer, int passed, int failed, string state, string expected)
+        {
+            WithManager(_ =>
+            {
+                NativeTestRunControl.DisableForTests = true;
+                string id = TestJobManager.StartJob(TestMode.EditMode);
+                var jobs = (Dictionary<string, TestJob>)typeof(TestJobManager).GetField("Jobs", Members).GetValue(null);
+                var result = new TestRunResult(new TestRunSummary(passed + failed, passed, failed, 0, 0, state), Array.Empty<TestRunTestResult>())
+                {
+                    Availability = "unavailable",
+                };
+                if (taskFinalizer)
+                    typeof(TestJobManager).GetMethod("FinalizeFromTask", Members).Invoke(null, new object[] { id, Task.FromResult(result) });
+                else
+                    TestJobManager.FinalizeCurrentJobFromRunFinished(result);
+                Assert.AreEqual(expected, jobs[id].Status.ToString());
+                Assert.AreEqual("completed", jobs[id].CompletionKind);
+            });
+        }
+
+        private static TestRunSummary NativeCancelledSummary(bool teardownSite)
+        {
+            // Use the installed NUnit producer rather than inventing an adaptor serialization.
+            var native = new NUnit.Framework.Internal.TestSuite("CancelledSuite").MakeTestResult();
+            var state = NUnit.Framework.Interfaces.ResultState.Cancelled;
+            if (teardownSite)
+                state = state.WithSite(NUnit.Framework.Interfaces.FailureSite.TearDown);
+            native.SetResult(state, "External cancellation result fixture.");
+            Assert.Zero(native.FailCount);
+            Assert.Zero(native.PassCount);
+            Assert.AreEqual(teardownSite ? "Failed:Cancelled(TearDown)" : "Failed:Cancelled", native.ResultState.ToString());
+            return new TestRunSummary(0, native.PassCount, native.FailCount, native.SkipCount, native.Duration, native.ResultState.ToString());
+        }
+
+        [Test]
+        public void CancelledRunFinishedAfterReloadPreservesNativeStateWithIncompleteMembership()
+        {
+            WithManager(_ =>
+            {
+                NativeTestRunControl.DisableForTests = true;
+                string id = TestJobManager.StartJob(TestMode.EditMode);
+                var jobs = (Dictionary<string, TestJob>)typeof(TestJobManager).GetField("Jobs", Members).GetValue(null);
+                var job = jobs[id];
+                job.ReloadGeneration = 1;
+                job.TotalTests = 10;
+                TestRunSummary summary = NativeCancelledSummary(true);
+                TestJobManager.FinalizeCurrentJobFromRunFinished(new TestRunResult(summary, Array.Empty<TestRunTestResult>()) { Availability = "unavailable" });
+                Assert.AreEqual(TestJobStatus.Cancelled, job.Status);
+                Assert.AreEqual("cancelled", job.CompletionKind);
+                Assert.AreEqual(summary.ResultState, job.RetainedSummary.ResultState);
+                Assert.AreEqual(10, job.TotalTests, "Cancelled terminal evidence does not erase the original expected membership.");
+            });
+        }
+
+        [Test]
+        public void AuthoritativeCancellationSurvivesLaterPartialCheckpoint()
+        {
+            WithManager(_ =>
+            {
+                NativeTestRunControl.DisableForTests = true;
+                string id = TestJobManager.StartJob(TestMode.EditMode);
+                var jobs = (Dictionary<string, TestJob>)typeof(TestJobManager).GetField("Jobs", Members).GetValue(null);
+                var job = jobs[id];
+                var summary = NativeCancelledSummary(false);
+                TestJobManager.FinalizeCurrentJobFromRunFinished(new TestRunResult(summary, Array.Empty<TestRunTestResult>()) { Availability = "unavailable" });
+                var storeField = typeof(TestJobManager).GetField("ResultStoreOverride", Members);
+                object previousStore = storeField.GetValue(null);
+                string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mcp-cancel-checkpoint-" + System.Guid.NewGuid().ToString("N"));
+                System.IO.Directory.CreateDirectory(root);
+                try
+                {
+                    storeField.SetValue(null, TestJobResultStoreTests.NewStore(root));
+                    TestJobManager.CheckpointObservedResults(id, new[] { new CompletedLeaf() });
+                    Assert.AreSame(summary, job.RetainedSummary, "A later partial observation cannot replace the authoritative cancelled summary.");
+                    Assert.AreEqual("cancelled", job.CompletionKind);
+                    Assert.AreEqual(TestJobStatus.Cancelled, job.Status);
+                    Assert.AreEqual("unavailable", job.ResultAvailability);
+                }
+                finally
+                {
+                    storeField.SetValue(null, previousStore);
+                    System.IO.Directory.Delete(root, true);
+                }
+            });
+        }
+
+        private sealed class CompletedLeaf : ITestResultAdaptor
+        {
+            public ITestAdaptor Test => null;
+            public string Name => "Completed";
+            public string FullName => "Fixture.Completed";
+            public string ResultState => "Passed";
+            public TestStatus TestStatus => TestStatus.Passed;
+            public double Duration => 0.1;
+            public DateTime StartTime => DateTime.UtcNow;
+            public DateTime EndTime => DateTime.UtcNow;
+            public string Message => null;
+            public string StackTrace => null;
+            public int AssertCount => 0;
+            public int FailCount => 0;
+            public int PassCount => 1;
+            public int SkipCount => 0;
+            public int InconclusiveCount => 0;
+            public bool HasChildren => false;
+            public IEnumerable<ITestResultAdaptor> Children => Array.Empty<ITestResultAdaptor>();
+            public string Output => null;
+
+            public NUnit.Framework.Interfaces.TNode ToXml() => new NUnit.Framework.Interfaces.TNode("test-case");
+        }
+
         [Test]
         public void NaturalSuccessSummaryWinsPendingStopAfterPersistedPayloadEviction()
         {

@@ -739,18 +739,18 @@ namespace MCPForUnity.Editor.Services
                 // Capture leaves before cancellation classification clears CurrentJobId and
                 // ConfirmNativeTermination releases the owning service's result adaptors.
                 TestRunnerService.CheckpointObservedResults(job.JobId);
-                if (control.Requested && job.Status == TestJobStatus.Running)
+                var summary = job.RetainedSummary ?? job.Result?.Summary;
+                if ((control.Requested || IsCancelledSummary(summary)) && job.Status == TestJobStatus.Running)
                 {
                     bool stoppedBeforeStart = control.NativeGuid == null;
                     if (stoppedBeforeStart)
                         TestRunnerService.RetireJob(job.JobId, "Test job stopped before native execution.");
                     // The API bool acknowledges an intent, not the authoritative outcome.
                     // A retained callback summary survives reload even when Result is evicted.
-                    var summary = job.RetainedSummary ?? job.Result?.Summary;
                     bool partial = summary?.ResultState == "Partial";
                     if (partial)
                         summary = null;
-                    bool cancelledResult = summary != null && new[] { "Canceled", "Cancelled" }.Contains(summary.ResultState, StringComparer.OrdinalIgnoreCase);
+                    bool cancelledResult = IsCancelledSummary(summary);
                     if (stoppedBeforeStart || cancelledResult || control.CancelAccepted && summary == null)
                     {
                         bool deadline = (string)control.State["reason"] == "deadline";
@@ -762,7 +762,7 @@ namespace MCPForUnity.Editor.Services
                     }
                     else
                     {
-                        job.Status = summary == null || summary.Failed > 0 ? TestJobStatus.Failed : TestJobStatus.Succeeded;
+                        job.Status = summary == null ? TestJobStatus.Failed : ClassifySummary(summary);
                         job.CompletionKind =
                             summary != null ? "completed"
                             : job.ReloadGeneration > 0 ? "interrupted_by_reload"
@@ -1040,6 +1040,7 @@ namespace MCPForUnity.Editor.Services
                 job.LastUpdateUnixMs = now;
                 job.FinishedUnixMs = now;
                 bool interrupted = resultPayload == null;
+                bool cancelled = IsCancelledSummary(resultPayload?.Summary);
                 if (resultPayload != null)
                 {
                     try
@@ -1055,15 +1056,19 @@ namespace MCPForUnity.Editor.Services
                             int skipped = Math.Max(rows.Count(r => r.State == "Skipped"), resultPayload.Skipped);
                             bool completeRows = rows.Count == job.TotalTests.GetValueOrDefault(rows.Count);
                             interrupted =
-                                job.TotalTests.HasValue && total != job.TotalTests.Value
-                                || resultPayload.Total < job.TotalTests.GetValueOrDefault() && !completeRows;
+                                !cancelled
+                                && (
+                                    job.TotalTests.HasValue && total != job.TotalTests.Value
+                                    || resultPayload.Total < job.TotalTests.GetValueOrDefault() && !completeRows
+                                );
                             var summary = new TestRunSummary(
                                 total,
                                 Math.Max(0, total - failed - skipped),
                                 failed,
                                 skipped,
                                 Math.Max(rows.Sum(r => r.DurationSeconds), resultPayload.Summary.DurationSeconds),
-                                interrupted ? "Partial"
+                                cancelled ? resultPayload.Summary.ResultState
+                                    : interrupted ? "Partial"
                                     : failed > 0 ? "Failed"
                                     : resultPayload.Summary.ResultState
                             );
@@ -1085,7 +1090,7 @@ namespace MCPForUnity.Editor.Services
                         resultPayload = null;
                     }
                 }
-                job.Status = interrupted || resultPayload?.Failed > 0 ? TestJobStatus.Failed : TestJobStatus.Succeeded;
+                job.Status = interrupted ? TestJobStatus.Failed : ClassifySummary(resultPayload?.Summary);
                 job.Error = interrupted ? "Test execution ended without a complete result." : null;
                 if (resultPayload != null)
                 {
@@ -1379,7 +1384,13 @@ namespace MCPForUnity.Editor.Services
 
         internal static void CheckpointObservedResults(string jobId, IReadOnlyList<UnityEditor.TestTools.TestRunner.Api.ITestResultAdaptor> leaves)
         {
-            if (jobId == null || !Jobs.TryGetValue(jobId, out var job) || job.CompletionKind == "completed" || leaves.Count == 0)
+            if (
+                jobId == null
+                || !Jobs.TryGetValue(jobId, out var job)
+                || job.CompletionKind == "completed"
+                || IsCancelledSummary(job.RetainedSummary ?? job.Result?.Summary)
+                || leaves.Count == 0
+            )
                 return;
             try
             {
@@ -1468,7 +1479,7 @@ namespace MCPForUnity.Editor.Services
                 return;
             }
             var previousArtifact = job.ResultArtifact;
-            job.CompletionKind = "completed";
+            job.CompletionKind = IsCancelledSummary(result.Summary) ? "cancelled" : "completed";
             job.RetainedSummary = result.Summary;
             job.ResultArtifact = result.Artifact;
             job.ResultAvailability = result.Availability;
@@ -1723,7 +1734,7 @@ namespace MCPForUnity.Editor.Services
                 else
                 {
                     var result = task.Result;
-                    existing.Status = result != null && result.Failed > 0 ? TestJobStatus.Failed : TestJobStatus.Succeeded;
+                    existing.Status = ClassifySummary(result?.Summary);
                     existing.Error = null;
                     existing.Result = result;
                     RetainResult(existing, result);
@@ -1735,6 +1746,21 @@ namespace MCPForUnity.Editor.Services
                 }
             }
             PersistToSessionState(force: true);
+        }
+
+        private static TestJobStatus ClassifySummary(TestRunSummary summary) =>
+            IsCancelledSummary(summary) ? TestJobStatus.Cancelled
+            : summary?.Failed > 0 ? TestJobStatus.Failed
+            : TestJobStatus.Succeeded;
+
+        private static bool IsCancelledSummary(TestRunSummary summary)
+        {
+            string state = summary?.ResultState;
+            // UTF forwards NUnit's ResultState.ToString(), including an optional failure site.
+            return string.Equals(state, "Canceled", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(state, "Cancelled", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(state, "Failed:Cancelled", StringComparison.OrdinalIgnoreCase)
+                || state != null && state.StartsWith("Failed:Cancelled(", StringComparison.OrdinalIgnoreCase) && state.EndsWith(")", StringComparison.Ordinal);
         }
     }
 }
