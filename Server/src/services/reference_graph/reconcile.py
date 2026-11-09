@@ -996,7 +996,9 @@ class Reconciler:
                     and isinstance(row.get("dependency"), str)
                     and row["dependency"].strip("0")
                     and type(row.get("dependency_count")) is int
-                    and row["dependency_count"] >= 0
+                    # Over-limit donor candidates must use normal per-asset
+                    # failure/backoff handling instead of aborting a reuse batch.
+                    and 0 <= row["dependency_count"] <= self.limits.max_dependency_items
                 ):
                     proofs.append(row)
             if proofs:

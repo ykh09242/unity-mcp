@@ -332,6 +332,35 @@ async def test_copying_dependencies_charges_attempt_before_any_owner_is_publishe
 
 
 @pytest.mark.asyncio
+async def test_restart_item_limit_falls_back_per_asset_without_starving_reuse(tmp_path):
+    # Given a complete donor whose first asset exceeds the receiver's item ceiling.
+    first = open_workspace(tmp_path, GraphScope("alice", "first", "project"))
+    editor = VersionedEditor()
+    owner = editor.add(1, "Assets/Owner.txt")
+    healthy = editor.add(2, "Assets/Healthy.txt")
+    target = editor.add(3, "Assets/Target.txt")
+    editor.targets[owner[6:]] = [healthy[6:], target[6:]]
+    assert await Reconciler(first, editor, allowed).reconcile()
+    editor.instance, editor.epoch, editor.snapshot = "second", "two", None
+    editor.calls.clear()
+    second = open_workspace(tmp_path, GraphScope("alice", "second", "project"))
+    # When reuse encounters an over-limit candidate, normal item failure handling owns it.
+    engine = Reconciler(second, editor, allowed, limits=CollectionLimits(max_dependency_items=1))
+    assert not await engine.reconcile()
+    assert second.counts()["failed_assets"] == 1
+    assert not second.dirty_assets()
+    assert "max_dependency_items=1" in str(second.diagnostics(owner))
+    assert {p["guid"] for a, p in editor.calls if a == "dependencies"} == {owner[6:]}
+    # Then healthy donor facts and the donor itself survive, and a raised limit recovers.
+    assert len(first.store.query(owner)["edges"]) == 2
+    assert await Reconciler(
+        second, editor, allowed, limits=CollectionLimits(max_dependency_items=2)
+    ).reconcile()
+    assert second.counts()["failed_assets"] == 0
+    assert {edge["target"] for edge in second.store.query(owner)["edges"]} == {healthy, target}
+
+
+@pytest.mark.asyncio
 async def test_version7_legacy_graph_reuses_native_edges_and_reparses_code(tmp_path):
     from services.reference_graph.runtime import RuntimeObservations
 
