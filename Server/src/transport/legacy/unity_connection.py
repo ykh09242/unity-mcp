@@ -14,7 +14,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from transport.legacy.port_discovery import PortDiscovery
+from transport.legacy.port_discovery import PortDiscovery, discovery_deadline
 import random
 import re
 import socket
@@ -22,7 +22,7 @@ import struct
 import sys
 import threading
 import time
-from typing import Any, Callable, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING, TypeVar
 import weakref
 
 from pydantic_core import from_json
@@ -46,6 +46,24 @@ _resync_pool: ContextVar["UnityConnectionPool | None"] = ContextVar(
 _connection_selection: ContextVar["_ConnectionSelection | None"] = ContextVar(
     "stdio_connection_selection", default=None
 )
+_ConnectionResult = TypeVar("_ConnectionResult")
+
+
+def run_with_connection_deadline(
+    function: Callable[[], _ConnectionResult], deadline: float
+) -> _ConnectionResult:
+    """Carry a startup step's original budget into legacy selection and discovery."""
+    selection = _ConnectionSelection(deadline)
+    token = _connection_selection.set(selection)
+    try:
+        with discovery_deadline(deadline):
+            selection.check()
+            result = function()
+            selection.check()
+            return result
+    finally:
+        _connection_selection.reset(token)
+
 
 from models.models import MCPResponse, UnityInstanceInfo
 from services.operation_permissions import JsonValue
@@ -401,7 +419,12 @@ class UnityConnection:
         """Establish a connection to the Unity Editor."""
         if config.http_remote_hosted:
             raise RuntimeError("Legacy Unity connections are disabled in remote-hosted mode")
-        with self._conn_lock:
+        selection = _connection_selection.get() or _ConnectionSelection(deadline)
+        if selection.deadline is not None:
+            deadline = (
+                min(deadline, selection.deadline) if deadline is not None else selection.deadline
+            )
+        with selection.lock(self._conn_lock):
             if self._retired:
                 return False
             if self.sock:
@@ -1399,7 +1422,7 @@ class UnityConnectionPool:
             selection.check()
 
             # Update cache
-            with self._pool_lock:
+            with selection.lock(self._pool_lock):
                 self._known_instances = {inst.id: inst for inst in instances}
                 self._last_full_scan = time.monotonic()
                 self._target_refreshes.clear()
@@ -1454,7 +1477,7 @@ class UnityConnectionPool:
                 target = PortDiscovery.discover_unity_instance(identifier)
                 selection.check()
                 if target is not None:
-                    with self._pool_lock:
+                    with selection.lock(self._pool_lock):
                         # A refreshed port owner displaces stale metadata, while
                         # retaining the proven target root for editor resources.
                         displaced = [
@@ -1854,7 +1877,8 @@ def get_unity_connection_pool() -> UnityConnectionPool:
     if _unity_connection_pool is not None:
         return _unity_connection_pool
 
-    with _pool_init_lock:
+    selection = _connection_selection.get() or _ConnectionSelection(None)
+    with selection.lock(_pool_init_lock):
         if _unity_connection_pool is not None:
             return _unity_connection_pool
 

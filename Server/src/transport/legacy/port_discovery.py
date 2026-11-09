@@ -12,6 +12,8 @@ What changed and why:
 """
 
 import glob
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 import logging
 import os
@@ -25,6 +27,23 @@ import time
 from models.models import UnityInstanceInfo
 
 logger = logging.getLogger("mcp-for-unity-server")
+_discovery_deadline: ContextVar[float | None] = ContextVar("discovery_deadline", default=None)
+
+
+@contextmanager
+def discovery_deadline(deadline: float):
+    """Bound all probes in one startup step by its remaining original budget."""
+    token = _discovery_deadline.set(deadline)
+    try:
+        yield
+    finally:
+        _discovery_deadline.reset(token)
+
+
+def _check_discovery_deadline() -> None:
+    deadline = _discovery_deadline.get()
+    if deadline is not None and time.monotonic() >= deadline:
+        raise TimeoutError("Startup Unity discovery deadline reached")
 
 
 def _is_pong_reply(reply: object) -> bool:
@@ -83,9 +102,15 @@ class PortDiscovery:
         Current greetings identify candidates without authenticating a disposable peer.
         Only recognized legacy peers receive a ping.
         """
+        _check_discovery_deadline()
+        deadline = time.monotonic() + PortDiscovery.CONNECT_TIMEOUT
+        original = _discovery_deadline.get()
+        if original is not None:
+            deadline = min(deadline, original)
         try:
-            with socket.create_connection(("127.0.0.1", port), PortDiscovery.CONNECT_TIMEOUT) as s:
-                deadline = time.monotonic() + PortDiscovery.CONNECT_TIMEOUT
+            with socket.create_connection(
+                ("127.0.0.1", port), max(0.001, deadline - time.monotonic())
+            ) as s:
 
                 def receive(count: int) -> bytes:
                     remaining = deadline - time.monotonic()
@@ -292,6 +317,7 @@ class PortDiscovery:
         entries = []
         base = PortDiscovery.get_registry_dir()
         for filename in glob.glob(str(base / "unity-mcp-status-*.json")):
+            _check_discovery_deadline()
             try:
                 path = Path(filename)
                 modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
@@ -338,6 +364,7 @@ class PortDiscovery:
         probes_by_port: dict[int, str | bool] = {}
         conflicting_ports: set[int] = set()
         for status_path, data, file_mtime in entries:
+            _check_discovery_deadline()
             try:
                 # Extract hash from filename: unity-mcp-status-{hash}.json
                 filename = status_path.name

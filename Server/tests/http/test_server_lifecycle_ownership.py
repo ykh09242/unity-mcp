@@ -531,13 +531,27 @@ async def test_shutdown_owns_pool_created_after_skipped_startup(lifecycle_state,
 
 
 @pytest.mark.asyncio
+async def test_http_startup_uses_websocket_hub_without_legacy_discovery(
+    lifecycle_state, monkeypatch
+):
+    monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "0")
+    monkeypatch.setattr(config, "transport_mode", "http")
+    pool_factory = Mock(side_effect=AssertionError("HTTP must not discover legacy Editors"))
+    monkeypatch.setattr(main, "get_unity_connection_pool", pool_factory)
+    async with main.server_lifespan(FastMCP("http-startup")) as state:
+        assert state["pool"] is None
+        assert PluginHub.is_configured()
+    pool_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("blocked_phase", ["discover_all_instances", "get_connection"])
 @pytest.mark.parametrize("ending", ["cancel", "deadline", "level_cancel"])
 async def test_startup_worker_keeps_loop_responsive_and_drains_before_cleanup(
     lifecycle_state, monkeypatch, blocked_phase, ending
 ):
     monkeypatch.setenv("UNITY_MCP_SKIP_STARTUP_CONNECT", "0")
-    monkeypatch.setattr(config, "transport_mode", "http")
+    monkeypatch.setattr(config, "transport_mode", "stdio")
     monkeypatch.setattr(main, "STARTUP_CONNECT_TIMEOUT", 0.02, raising=False)
     entered, expired = asyncio.Event(), asyncio.Event()
     release = threading.Event()

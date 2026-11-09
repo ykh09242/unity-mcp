@@ -17,7 +17,11 @@ from transport.unity_instance_middleware import (
 from services.api_key_service import ApiKeyService
 from core.endpoint_logging import endpoint_for_log
 from core.windows_event_loop import run_with_wakeup_guard
-from transport.legacy.unity_connection import get_unity_connection_pool, UnityConnectionPool
+from transport.legacy.unity_connection import (
+    get_unity_connection_pool,
+    run_with_connection_deadline,
+    UnityConnectionPool,
+)
 from services.tools import register_all_tools
 from core.telemetry import (
     begin_telemetry_shutdown,
@@ -239,7 +243,10 @@ async def _startup_worker(
     loop = asyncio.get_running_loop()
     if loop.time() >= deadline:
         raise TimeoutError("Startup Unity connection deadline reached")
-    future = submit_owned_executor(loop, None, function)
+    # Selection and socket helpers use monotonic time; convert the loop's clock
+    # once at admission, preserving the remaining original startup budget.
+    io_deadline = time.monotonic() + (deadline - loop.time())
+    future = submit_owned_executor(loop, None, run_with_connection_deadline, function, io_deadline)
     try:
         return await asyncio.shield(future)
     except asyncio.CancelledError as cancellation:
@@ -326,10 +333,19 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                 logger.info(
                     "Skipping Unity connection on startup (UNITY_MCP_SKIP_STARTUP_CONNECT=1)"
                 )
+            elif (config.transport_mode or "stdio").lower() == "http":
+                # HTTP commands and visibility use PluginHub/WebSocket. Keep
+                # legacy connections lazy for callers that explicitly need them.
+                logger.debug("HTTP startup uses the WebSocket hub without legacy discovery")
             else:
                 # Initialize connection pool and discover instances
                 loop = asyncio.get_running_loop()
-                startup_deadline = loop.time() + STARTUP_CONNECT_TIMEOUT
+                original_deadline = getattr(server, "_unity_startup_deadline", None)
+                startup_deadline = loop.time() + (
+                    original_deadline - time.monotonic()
+                    if original_deadline is not None
+                    else STARTUP_CONNECT_TIMEOUT
+                )
                 async with asyncio.timeout_at(startup_deadline):
                     _unity_connection_pool = await _startup_worker(
                         get_unity_connection_pool, startup_deadline
@@ -1664,12 +1680,26 @@ Examples:
     # If not explicitly set, check Unity status files for the default instance.
     # In stdio mode there is typically only one instance, so "first match wins" is fine.
     project_scoped_tools = project_scoped_tools_explicit
-    if not project_scoped_tools_explicit and not config.http_remote_hosted:
+    startup_deadline = time.monotonic() + STARTUP_CONNECT_TIMEOUT
+    startup_connect = os.environ.get("UNITY_MCP_SKIP_STARTUP_CONNECT", "").lower() not in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    if (
+        not project_scoped_tools_explicit
+        and config.transport_mode == "stdio"
+        and startup_connect
+        and not config.http_remote_hosted
+    ):
         try:
             from transport.legacy.unity_connection import get_unity_connection_pool
 
-            pool = get_unity_connection_pool()
-            instances = pool.discover_all_instances()
+            def discover_defaults():
+                return get_unity_connection_pool().discover_all_instances()
+
+            instances = run_with_connection_deadline(discover_defaults, startup_deadline)
             # If ANY discovered instance requests project-scoped tools, enable them
             for inst in instances:
                 if getattr(inst, "project_scoped_tools", False):
@@ -1706,6 +1736,9 @@ Examples:
             else None
         ),
     )
+
+    # CLI default detection and lifespan I/O consume one original startup budget.
+    mcp._unity_startup_deadline = startup_deadline
 
     # Determine transport mode
     if config.transport_mode == "http":
