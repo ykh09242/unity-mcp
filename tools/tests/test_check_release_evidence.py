@@ -251,6 +251,49 @@ def test_valid_independent_components_use_committed_metadata_not_dirty_worktree(
     assert bundle.check() == []
 
 
+@pytest.mark.parametrize("platform", ["win", "osx", "linux"])
+@pytest.mark.parametrize("profile", ["", "/editor", "/player", "/player-scenarios"])
+def test_compiler_execution_accepts_emitted_platform_profiles(platform: str, profile: str) -> None:
+    module = checker()
+    log = (
+        "2026-11-09T04:24:29Z Compiler      : /fixture/csc.dll\n"
+        f"2026-11-09T04:24:30Z --- MCPForUnity.Runtime [{platform}{profile}] : "
+        "42 sources, 20 refs ---\n"
+    ).encode()
+    assert module.check_execution(module.Kind.COMPILE, {"log": log}) == (True, False)
+
+
+@pytest.mark.parametrize("profile", ["/editor", "/player", "/player-scenarios"])
+def test_profiled_compiler_errors_remain_failed(profile: str) -> None:
+    module = checker()
+    log = (
+        "Compiler      : /fixture/csc.dll\n"
+        f"--- MCPForUnity.Runtime [win{profile}] : 42 sources, 20 refs ---\n"
+        "Fixture.cs(1,1): error CS0103: Fixture symbol does not exist\n"
+    ).encode()
+    assert module.check_execution(module.Kind.COMPILE, {"log": log}) == (False, True)
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "MCPForUnity.Runtime [webgl/editor] : 42 sources, 20 refs",
+        "MCPForUnity.Runtime [win/unknown] : 42 sources, 20 refs",
+        "MCPForUnity.Runtime [win/editor/extra] : 42 sources, 20 refs",
+        "MCPForUnity.Runtime [win/editor] : 0 sources, 20 refs",
+        "MCPForUnity.Runtime [win/editor] : 42 sources, 0 refs",
+        "Unrelated.Runtime [win/editor] : 42 sources, 20 refs",
+    ],
+)
+def test_unsupported_or_empty_compiler_stages_are_rejected(stage: str) -> None:
+    module = checker()
+    with pytest.raises(module.EvidenceError, match="actual compiler-stage execution"):
+        module.check_execution(
+            module.Kind.COMPILE,
+            {"log": f"Compiler      : /fixture/csc.dll\n--- {stage} ---\n".encode()},
+        )
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

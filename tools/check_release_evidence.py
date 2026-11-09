@@ -650,7 +650,8 @@ def check_execution(
             require(
                 "Compiler      :" in log
                 and re.search(
-                    r"--- MCPForUnity\.\w+ \[(?:win|osx|linux)\] : [1-9][0-9]* sources, [1-9][0-9]* refs ---",
+                    r"--- MCPForUnity\.\w+ \[(?:win|osx|linux)(?:/(?:editor|player|player-scenarios))?\] : "
+                    r"[1-9][0-9]* sources, [1-9][0-9]* refs ---",
                     log,
                 )
                 is not None,
