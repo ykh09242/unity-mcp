@@ -177,6 +177,50 @@ def test_runtime_continuations_preserve_large_sessions(capture):
     assert total == 3000
 
 
+def test_runtime_large_record_pages_preserve_every_sequence(capture):
+    from services.reference_graph.response_budget import require_response
+
+    # Given individually native-deliverable records exceeding one response together.
+    _, runtime, identity = capture
+    from services.reference_graph.storage_budget import StorageBudgetError
+
+    for i in range(1, 21):
+        for attempt in range(20):
+            try:
+                runtime.ingest(
+                    identity,
+                    i - 1,
+                    page([{**event(i, "load", ""), "key": "x" * (900 * 1024)}], offset=i),
+                )
+                break
+            except StorageBudgetError:
+                if attempt == 19:
+                    raise
+    # When traversing default pages, byte admission must shorten each page.
+    sequences, after = [], 0
+    for _ in range(21):
+        result = runtime.events(identity, after=after)
+        require_response(result)
+        sequences.extend(row["sequence"] for row in result["events"])
+        if result["next_after"] is None:
+            break
+        assert result["next_after"] > after
+        after = result["next_after"]
+    # Then no supported record disappears or repeats.
+    assert sequences == list(range(1, 21))
+
+
+def test_runtime_individually_undeliverable_record_is_explicit(capture, monkeypatch):
+    from services.reference_graph import response_budget
+    from services.reference_graph.response_budget import GraphResponseTooLarge
+
+    _, runtime, identity = capture
+    runtime.ingest(identity, 0, page([{**event(1, "load", ""), "key": "x" * 2000}]))
+    monkeypatch.setattr(response_budget, "MAX_PAGE_BYTES", 1024)
+    with pytest.raises(GraphResponseTooLarge, match="individual item"):
+        runtime.events(identity)
+
+
 @pytest.mark.parametrize("guid", ["invalid", "", "A" * 32])
 def test_unresolved_runtime_target_does_not_claim_observed_asset(capture, guid):
     workspace, runtime, identity = capture

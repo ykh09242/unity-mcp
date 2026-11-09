@@ -9,6 +9,7 @@ import time
 import uuid
 
 from services.reference_graph.queries import GraphQueries
+from services.reference_graph.response_budget import PageBudget, bounded_rows
 from services.reference_graph.store import Edge, Observation, RevisionConflict, _json
 
 
@@ -353,13 +354,18 @@ class RuntimeObservations:
         catalog = self.workspace.key_admission()
         with self.store._connect() as connection:
             self._session(connection, identity)
-            rows = [
-                json.loads(row[0])
-                for row in connection.execute(
-                    "SELECT payload FROM graph_runtime_events WHERE session=? AND sequence>? ORDER BY sequence LIMIT ?",
-                    (identity, after, limit + 1),
-                )
-            ]
+            rows, budget, more = [], PageBudget(), False
+            records = bounded_rows(
+                connection,
+                "SELECT payload FROM graph_runtime_events WHERE session=? AND sequence>? ORDER BY sequence LIMIT ?",
+                (identity, after, limit + 1),
+            )
+            for record in records:
+                if len(rows) == limit or not budget.admit(record):
+                    more = True
+                    break
+                rows.append(json.loads(record["payload"]))
+            records.close()
             blocked = blocked_bindings(
                 connection, identity, (row.get("handle", "") for row in rows), admission, catalog
             )
@@ -369,8 +375,8 @@ class RuntimeObservations:
                     "Runtime observation is excluded by the current collection policy"
                 )
         return {
-            "events": rows[:limit],
-            "next_after": rows[limit - 1]["sequence"] if len(rows) > limit else None,
+            "events": rows,
+            "next_after": rows[-1]["sequence"] if more else None,
         }
 
     def handles(self, identity, *, after="", limit=100):

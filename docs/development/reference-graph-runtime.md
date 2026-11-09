@@ -57,6 +57,11 @@ Page sizes are 1-1000 records; there is no total event, session age or capture-c
 cap. Polling is explicit, with no permanent per-capture server task. A cancelled
 poll keeps its durable byte cursor; retrying cannot duplicate events or balances.
 Status counters are maintained transactionally rather than recounting all events.
+Native and stored event pages also stop at their byte admission budget before
+decoding another record. A page may contain fewer records than requested; continue
+from its returned byte offset (native polling) or sequence (`next_after` for stored
+events). A record that cannot fit individually fails explicitly without advancing
+the cursor, so it is never silently skipped.
 
 Captures use separate buffered files and are replayed page by page. Runtime
 provenance includes the capture, runtime session, build context, sequence, original

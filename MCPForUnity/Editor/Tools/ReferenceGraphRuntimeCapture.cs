@@ -159,6 +159,8 @@ namespace MCPForUnity.Editor.Tools
         private static JObject ReadPage(string location, JObject metadata, long offset, int limit)
         {
             var events = new JArray();
+            const int pageBytes = 8 * 1024 * 1024;
+            int usedBytes = 0;
             using (var stream = new FileStream(SafeFile(location, ".events"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
             using (var reader = new BinaryReader(stream, Encoding.UTF8))
             {
@@ -167,12 +169,23 @@ namespace MCPForUnity.Editor.Tools
                 stream.Position = offset;
                 while (events.Count < limit && stream.Position < stream.Length)
                 {
+                    long recordOffset = stream.Position;
                     if (stream.Length - stream.Position < 4)
                         throw new InvalidOperationException("Runtime capture has an incomplete record.");
                     int size = reader.ReadInt32();
                     if (size < 0 || size > stream.Length - stream.Position)
                         throw new InvalidOperationException("Runtime capture record is incomplete or invalid.");
+                    // Admit the encoded record before allocating or parsing it.
+                    // Rewind to its original byte boundary for the next page.
+                    if (size > pageBytes - usedBytes)
+                    {
+                        if (events.Count == 0)
+                            throw new InvalidOperationException("Runtime capture individual record exceeds the page byte budget.");
+                        stream.Position = recordOffset;
+                        break;
+                    }
                     events.Add(JObject.Parse(Encoding.UTF8.GetString(reader.ReadBytes(size))));
+                    usedBytes += size;
                 }
                 metadata["next_offset"] = stream.Position;
                 metadata["has_more"] = stream.Position < stream.Length;

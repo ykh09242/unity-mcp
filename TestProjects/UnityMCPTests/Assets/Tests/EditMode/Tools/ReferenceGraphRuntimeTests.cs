@@ -92,6 +92,30 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void LargeRecordPagesKeepCompleteByteCursorTraversal()
+        {
+            string token = Start();
+            for (int i = 0; i < 20; i++)
+                ReferenceGraphRuntime.Load("resources", i + new string('x', 900 * 1024));
+            var keys = new List<string>();
+            long offset = 0;
+            for (int pageNumber = 0; pageNumber < 21; pageNumber++)
+            {
+                JObject page = Call("runtime_read", token, offset, 100);
+                Assert.LessOrEqual(System.Text.Encoding.UTF8.GetByteCount(page.ToString(Newtonsoft.Json.Formatting.None)), 8 * 1024 * 1024 + 16384);
+                keys.AddRange(page["events"].Select(row => row.Value<string>("key")));
+                if (!page.Value<bool>("has_more"))
+                    break;
+                Assert.Greater(page.Value<long>("next_offset"), offset);
+                offset = page.Value<long>("next_offset");
+            }
+            Assert.AreEqual(20, keys.Count);
+            Assert.AreEqual(20, keys.Distinct().Count());
+            for (int i = 0; i < 20; i++)
+                Assert.AreEqual(i + new string('x', 900 * 1024), keys[i]);
+        }
+
+        [Test]
         public void FailingObserverCannotBreakAnotherConsumerOrGameplay()
         {
             string token = Start();
