@@ -110,6 +110,52 @@ async def test_mixed_failure_retains_committed_bytes(
 
 
 @pytest.mark.asyncio
+async def test_mixed_noop_before_failure_does_not_claim_publication(monkeypatch, tmp_path):
+    # Given an unchanged on-disk source and the native editor's explicit no-op receipt.
+    source = tmp_path / "Foo.cs"
+    original = b"class Foo {}\n"
+    source.write_bytes(original)
+    digest = hashlib.sha256(original).hexdigest()
+    monkeypatch.setattr(structured, "get_unity_instance_from_context", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        structured,
+        "send_with_unity_instance",
+        AsyncMock(
+            side_effect=[
+                {"success": True},
+                {"success": True, "data": {"contents": original.decode()}},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        structured,
+        "send_mutation",
+        AsyncMock(
+            side_effect=[
+                {"success": True, "data": {"no_op": True, "editsApplied": 0, "sha256": digest}},
+                {"success": False, "error": "Method Missing not found"},
+            ]
+        ),
+    )
+    # When a text identity edit is followed by a structural rejection.
+    response = await structured.script_apply_edits(
+        AsyncMock(),
+        "Foo",
+        "Assets",
+        [
+            {"op": "regex_replace", "pattern": "Foo", "replacement": "Foo"},
+            {"op": "delete_method", "methodName": "Missing"},
+        ],
+    )
+    # Then success without publication must not become a committed-prefix claim.
+    assert source.read_bytes() == original
+    assert response["success"] is False
+    assert response["data"].get("source_saved") is not True
+    assert not response["data"].get("committed_phases")
+    assert response["data"]["phase_results"][0]["response"]["data"]["no_op"] is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("observed", ["b" * 64, "a" * 64, None])
 async def test_changed_sha_without_expected_result_is_not_verified(monkeypatch, observed):
     send = AsyncMock(return_value={"success": True, "data": {"sha256": observed}})

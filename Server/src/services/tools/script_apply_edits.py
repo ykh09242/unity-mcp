@@ -1882,7 +1882,12 @@ async def script_apply_edits(
             for entry in phase_results
             if entry["response"]["data"].get("source_saved") is True
             or entry["response"]["data"].get("applied") is True
-            or entry["response"].get("success") is True
+            or (
+                entry["response"].get("success") is True
+                and not entry["response"]["data"].get("no_op")
+                and entry["response"]["data"].get("source_saved") is not False
+                and entry["response"]["data"].get("applied") is not False
+            )
         ]
         data = result["data"]
         data["phase_results"] = list(phase_results)
