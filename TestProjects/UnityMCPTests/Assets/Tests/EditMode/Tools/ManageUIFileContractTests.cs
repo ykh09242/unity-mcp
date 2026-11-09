@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
@@ -103,6 +105,63 @@ namespace MCPForUnityTests.Editor.Tools
             );
             Assert.IsFalse(response.Value<bool>("success"));
             Assert.IsFalse(Directory.Exists(FullPath(Folder)));
+        }
+
+        [TestCase("create")]
+        [TestCase("update")]
+        [TestCase("link_stylesheet")]
+        public void ImportFailure_RetainsSavedSourceReceipt(string action)
+        {
+            // Given valid source and a failure at native import after publication.
+            Directory.CreateDirectory(FullPath(Folder));
+            string path = Folder + (action == "link_stylesheet" ? "/Owned.uxml" : "/Owned.uss");
+            string stylePath = Folder + "/Linked.uss";
+            var request = new JObject
+            {
+                ["action"] = action,
+                ["path"] = path,
+                ["contents"] = ".title { color: blue; }",
+            };
+            if (action == "update")
+                File.WriteAllText(FullPath(path), ".title { color: red; }");
+            if (action == "link_stylesheet")
+            {
+                File.WriteAllText(FullPath(path), "<ui:UXML xmlns:ui=\"UnityEngine.UIElements\"><ui:Label text=\"Kept\" /></ui:UXML>");
+                File.WriteAllText(FullPath(stylePath), ".title { color: blue; }");
+                request["stylesheet"] = stylePath;
+            }
+            var hook = typeof(ManageUI).GetField("BeforeSourceImportForTests", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(hook);
+            hook.SetValue(null, (Action<string>)(_ => throw new IOException("injected import failure")));
+            try
+            {
+                // When the public authoring action saves successfully but import fails.
+                JObject result = Send(request);
+                // Then the receipt's digest identifies the retained bytes and refresh-only recovery.
+                Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+                Assert.IsTrue(File.Exists(FullPath(path)));
+                byte[] saved = File.ReadAllBytes(FullPath(path));
+                using var sha = SHA256.Create();
+                string digest = BitConverter.ToString(sha.ComputeHash(saved)).Replace("-", "").ToLowerInvariant();
+                Assert.AreEqual(path, result["data"].Value<string>("path"));
+                Assert.IsTrue(result["data"].Value<bool>("source_saved"));
+                Assert.AreEqual(digest, result["data"].Value<string>("bytes_sha256"));
+                Assert.AreEqual("import", result["data"].Value<string>("failed_stage"));
+                Assert.AreEqual("refresh_only", result["data"].Value<string>("recovery_action"));
+                Assert.IsFalse(result["data"].Value<bool>("retry_safe"));
+                string text = Encoding.UTF8.GetString(saved);
+                if (action == "link_stylesheet")
+                {
+                    Assert.That(text, Does.Contain("Linked.uss"));
+                    Assert.That(text, Does.Contain("Kept"));
+                }
+                else
+                    Assert.AreEqual(".title { color: blue; }", text);
+            }
+            finally
+            {
+                hook.SetValue(null, null);
+            }
         }
     }
 }

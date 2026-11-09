@@ -156,6 +156,37 @@ namespace MCPForUnity.Editor.Tools
             return path;
         }
 
+        internal static Action<string> BeforeSourceImportForTests;
+
+        private static ErrorResponse ImportSavedSource(string path, byte[] savedBytes)
+        {
+            try
+            {
+                BeforeSourceImportForTests?.Invoke(path);
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+                return null;
+            }
+            catch (Exception error)
+            {
+                return new ErrorResponse(
+                    "source_persisted_import_failed",
+                    new
+                    {
+                        path,
+                        source_saved = true,
+                        bytes_sha256 = AtomicAssetFile.Digest(savedBytes),
+                        source_state = "persisted",
+                        failed_stage = "import",
+                        refresh_status = "failed",
+                        import_error = error.Message,
+                        retry_safe = false,
+                        recovery_action = "refresh_only",
+                        retry_guidance = "Source is already saved. Reimport the retained path; do not replay the authoring action.",
+                    }
+                );
+            }
+        }
+
         private static object CreateFile(JObject @params)
         {
             var p = new ToolParams(@params);
@@ -201,8 +232,12 @@ namespace MCPForUnity.Editor.Tools
             using var folders = new AssetFolderScope();
             folders.EnsureParentDirectory(path);
             fullPath = AssetPathUtility.GetFullAssetPath(path);
-            AtomicAssetFile.Create(fullPath, Utf8NoBom.GetBytes(contents));
-            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            byte[] savedBytes = Utf8NoBom.GetBytes(contents);
+            AtomicAssetFile.Create(fullPath, savedBytes);
+            folders.Complete();
+            var importError = ImportSavedSource(path, savedBytes);
+            if (importError != null)
+                return importError;
 
             if (isUxml)
             {
@@ -299,8 +334,11 @@ namespace MCPForUnity.Editor.Tools
                 contents = AddEditorExtensionMode(contents, document);
             }
 
-            AtomicAssetFile.Replace(fullPath, Utf8NoBom.GetBytes(contents), originalDigest);
-            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+            byte[] savedBytes = Utf8NoBom.GetBytes(contents);
+            AtomicAssetFile.Replace(fullPath, savedBytes, originalDigest);
+            var importError = ImportSavedSource(path, savedBytes);
+            if (importError != null)
+                return importError;
 
             if (isUxml)
             {
@@ -2128,8 +2166,11 @@ namespace MCPForUnity.Editor.Tools
             string styleTag = CreateStylesheetTag(stylesheetPath, document.StyleTagName);
             content = content.Insert(insertIdx, styleTag);
 
-            AtomicAssetFile.Replace(fullPath, Utf8NoBom.GetBytes(content), originalDigest);
-            AssetDatabase.ImportAsset(uxmlPath, ImportAssetOptions.ForceUpdate);
+            byte[] savedBytes = Utf8NoBom.GetBytes(content);
+            AtomicAssetFile.Replace(fullPath, savedBytes, originalDigest);
+            var importError = ImportSavedSource(uxmlPath, savedBytes);
+            if (importError != null)
+                return importError;
 
             return new SuccessResponse($"Linked stylesheet '{stylesheetPath}' to '{uxmlPath}'.", new { path = uxmlPath, stylesheet = stylesheetPath });
         }
