@@ -904,6 +904,63 @@ namespace MCPForUnityTests.Editor.Services
             public NUnit.Framework.Interfaces.TNode ToXml() => new NUnit.Framework.Interfaces.TNode("test-case");
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void AuthoritativeCancellationRetainsPublicPagesAcrossReload(bool reloadBetweenPages)
+        {
+            WithManager(_ =>
+            {
+                NativeTestRunControl.DisableForTests = true;
+                string id = TestJobManager.StartJob(TestMode.EditMode);
+                var storeField = typeof(TestJobManager).GetField("ResultStoreOverride", Members);
+                object previousStore = storeField.GetValue(null);
+                string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mcp-cancel-pages-" + System.Guid.NewGuid().ToString("N"));
+                System.IO.Directory.CreateDirectory(root);
+                try
+                {
+                    storeField.SetValue(null, TestJobResultStoreTests.NewStore(root));
+                    var rows = new List<TestRunTestResult>();
+                    for (int index = 0; index < 3; index++)
+                        rows.Add(new TestRunTestResult("Case" + index, "Fixture.Case" + index, "Passed", 0.1, null, null, "retained output"));
+                    var summary = new TestRunSummary(3, 3, 0, 0, 0.3, NativeCancelledSummary(false).ResultState);
+                    TestJobManager.FinalizeCurrentJobFromRunFinished(new TestRunResult(summary, rows));
+                    string cursor = null;
+                    var names = new List<string>();
+                    do
+                    {
+                        var request = new JObject
+                        {
+                            ["job_id"] = id,
+                            ["includeDetails"] = true,
+                            ["page_size"] = 1,
+                        };
+                        if (cursor != null)
+                            request["cursor"] = cursor;
+                        var response = JObject.FromObject(MCPForUnity.Editor.Tools.GetTestJob.HandleCommand(request));
+                        Assert.IsTrue((bool)response["success"], response.ToString());
+                        Assert.AreEqual("cancelled", (string)response["data"]["status"]);
+                        Assert.IsInstanceOf<JObject>(response["data"]["result_page"], "Captured cancellation evidence must be publicly pageable.");
+                        names.Add((string)response["data"]["result_page"]["items"][0]["fullName"]);
+                        cursor = (string)response["data"]["result_page"]["next_cursor"];
+                        if (reloadBetweenPages && names.Count == 1)
+                        {
+                            var jobs = (Dictionary<string, TestJob>)typeof(TestJobManager).GetField("Jobs", Members).GetValue(null);
+                            Assert.IsNotNull(jobs[id].ResultArtifact);
+                            jobs.Clear();
+                            typeof(TestJobManager).GetMethod("TryRestoreFromSessionState", Members).Invoke(null, null);
+                            Assert.IsNull(jobs[id].Result, "The continuation must use persisted artifacts after managed reload.");
+                        }
+                    } while (cursor != null);
+                    CollectionAssert.AreEqual(new[] { "Fixture.Case0", "Fixture.Case1", "Fixture.Case2" }, names);
+                }
+                finally
+                {
+                    storeField.SetValue(null, previousStore);
+                    System.IO.Directory.Delete(root, true);
+                }
+            });
+        }
+
         [Test]
         public void NaturalSuccessSummaryWinsPendingStopAfterPersistedPayloadEviction()
         {

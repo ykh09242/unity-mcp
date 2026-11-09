@@ -35,6 +35,7 @@ namespace MCPForUnity.Editor.Services
         public long StartedUnixMs { get; set; }
         public long? FinishedUnixMs { get; set; }
         public long LastUpdateUnixMs { get; set; }
+        public bool ExecutionStarted { get; set; }
         public int? TotalTests { get; set; }
         public int CompletedTests { get; set; }
         public string CurrentTestFullName { get; set; }
@@ -242,6 +243,7 @@ namespace MCPForUnity.Editor.Services
             public long started_unix_ms { get; set; }
             public long? finished_unix_ms { get; set; }
             public long last_update_unix_ms { get; set; }
+            public bool execution_started { get; set; }
             public int? total_tests { get; set; }
             public int completed_tests { get; set; }
             public string current_test_full_name { get; set; }
@@ -344,6 +346,11 @@ namespace MCPForUnity.Editor.Services
                     )
                         continue;
                     bool corrupt = false;
+                    if (row["execution_started"] != null && row["execution_started"].Type != JTokenType.Boolean)
+                    {
+                        row["execution_started"] = false;
+                        corrupt = true;
+                    }
                     if (row["summary"] != null && row["summary"].Type != JTokenType.Null && !ValidSummary(row["summary"]))
                     {
                         row["summary"] = null;
@@ -428,6 +435,7 @@ namespace MCPForUnity.Editor.Services
                             StartedUnixMs = pj.started_unix_ms,
                             FinishedUnixMs = pj.finished_unix_ms,
                             LastUpdateUnixMs = pj.last_update_unix_ms,
+                            ExecutionStarted = pj.execution_started,
                             TotalTests = pj.total_tests,
                             CompletedTests = pj.completed_tests,
                             CurrentTestFullName = pj.current_test_full_name,
@@ -520,6 +528,7 @@ namespace MCPForUnity.Editor.Services
                             started_unix_ms = j.StartedUnixMs,
                             finished_unix_ms = j.FinishedUnixMs,
                             last_update_unix_ms = j.LastUpdateUnixMs,
+                            execution_started = HasExecutionStarted(j),
                             total_tests = j.TotalTests,
                             completed_tests = j.CompletedTests,
                             current_test_full_name = Preview(j.CurrentTestFullName),
@@ -1041,6 +1050,8 @@ namespace MCPForUnity.Editor.Services
                 job.FinishedUnixMs = now;
                 bool interrupted = resultPayload == null;
                 bool cancelled = IsCancelledSummary(resultPayload?.Summary);
+                bool checkpointUnavailable = false;
+                var incoming = resultPayload;
                 if (resultPayload != null)
                 {
                     try
@@ -1085,9 +1096,17 @@ namespace MCPForUnity.Editor.Services
                     catch (Exception)
                     {
                         // Missing/expired checkpoint evidence cannot establish a complete resumed run.
-                        interrupted = true;
-                        job.ResultAvailability = "partial_checkpoint_unavailable";
-                        resultPayload = null;
+                        // It also cannot override an authoritative native cancellation or discard
+                        // the incoming callback's independently captured result artifact.
+                        checkpointUnavailable = true;
+                        if (cancelled)
+                            resultPayload = incoming;
+                        else
+                        {
+                            interrupted = true;
+                            job.ResultAvailability = "partial_checkpoint_unavailable";
+                            resultPayload = null;
+                        }
                     }
                 }
                 job.Status = interrupted ? TestJobStatus.Failed : ClassifySummary(resultPayload?.Summary);
@@ -1096,6 +1115,8 @@ namespace MCPForUnity.Editor.Services
                 {
                     job.Result = resultPayload;
                     RetainResult(job, resultPayload);
+                    if (checkpointUnavailable)
+                        job.ResultAvailability = "partial_checkpoint_unavailable";
                     job.TotalTests = Math.Max(job.TotalTests.GetValueOrDefault(), resultPayload.Total);
                     job.CompletedTests = resultPayload.Total;
                     if (interrupted && job.ResultArtifact != null && job.ResultAvailability == "available")
@@ -1152,6 +1173,7 @@ namespace MCPForUnity.Editor.Services
                 job.LastUpdateUnixMs = now;
                 // Expected run size and evidence survive resumed/repeated RunStarted.
                 // The waiting flag describes liveness only, never membership or reload history.
+                job.ExecutionStarted = true;
                 if (totalTests.HasValue)
                     job.TotalTests = Math.Max(job.TotalTests.GetValueOrDefault(), totalTests.Value);
                 job.AwaitingReloadResume = false;
@@ -1176,6 +1198,7 @@ namespace MCPForUnity.Editor.Services
 
                 job.LastUpdateUnixMs = now;
                 job.AwaitingReloadResume = false;
+                job.ExecutionStarted = true;
                 job.CurrentTestFullName = testFullName;
                 job.CurrentTestStartedUnixMs = now;
             }
@@ -1194,6 +1217,7 @@ namespace MCPForUnity.Editor.Services
 
                 job.LastUpdateUnixMs = now;
                 job.AwaitingReloadResume = false;
+                job.ExecutionStarted = true;
                 job.CompletedTests = Math.Max(0, job.CompletedTests + 1);
                 job.LastFinishedTestFullName = testFullName;
                 job.LastFinishedUnixMs = now;
@@ -1269,10 +1293,9 @@ namespace MCPForUnity.Editor.Services
                     return null;
                 }
 
-                // Check if job is stuck in "running" state without having called OnRunStarted (TotalTests still null).
-                // This happens when tests fail to initialize (e.g., unsaved scene, compilation issues).
-                // After 15 seconds without initialization, auto-fail the job to prevent hanging.
-                if (job.Status == TestJobStatus.Running && job.TotalTests == null && job.Control?.Requested != true)
+                // A bounded RunStarted count may be unknown even though execution is live.
+                // Only jobs without execution evidence remain subject to the startup deadline.
+                if (job.Status == TestJobStatus.Running && !HasExecutionStarted(job) && job.Control?.Requested != true)
                 {
                     long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     long initTimeout = job.InitTimeoutMs > 0 ? job.InitTimeoutMs : DefaultInitializationTimeoutMs;
@@ -1551,7 +1574,20 @@ namespace MCPForUnity.Editor.Services
         internal static bool HasResultPages(TestJob job) =>
             job.Status != TestJobStatus.Running
             && job.ResultArtifact != null
-            && (job.CompletionKind == "completed" || job.RetainedSummary?.ResultState == "Partial");
+            && (
+                job.CompletionKind == "completed"
+                || IsCancelledSummary(job.RetainedSummary ?? job.Result?.Summary)
+                || job.RetainedSummary?.ResultState == "Partial"
+            );
+
+        // Older session records do not have the explicit witness. Their observed progress
+        // still establishes initialization; admission or an idle Editor alone never does.
+        private static bool HasExecutionStarted(TestJob job) =>
+            job.ExecutionStarted
+            || job.TotalTests.HasValue
+            || job.CompletedTests > 0
+            || job.CurrentTestStartedUnixMs.HasValue
+            || job.LastFinishedUnixMs.HasValue;
 
         internal static object Page(TestJob job, int size, string cursor, bool failedOnly)
         {

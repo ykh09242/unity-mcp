@@ -149,6 +149,101 @@ namespace MCPForUnityTests.Editor.Services
             return ServiceField.GetValue(null) as TestRunnerService;
         }
 
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void UnknownProgressTotalDoesNotExpireInitializedExecution(bool reload, bool leafStarted)
+        {
+            var job = AddJob();
+            job.InitTimeoutMs = 1000;
+            var service = RestoreCallbacks();
+            ITestAdaptor tree = new TestStub("Leaf", false, "leaf", "leaf");
+            for (int index = 0; index < 512; index++)
+                tree = new TestStub("Nested", true, "nested", "nested") { Children = new[] { tree } };
+            service.RunStarted(tree);
+            Assert.IsNull(job.TotalTests, "The depth budget must leave an unknown progress total.");
+            var completed = new ResultStub("Fixture.LongRunning", "Passed");
+            if (leafStarted)
+                service.TestStarted(completed.Test);
+            job.StartedUnixMs -= 5000;
+            if (reload)
+            {
+                service = ReloadOwner(service);
+                job = _jobs[job.JobId];
+            }
+            Assert.IsFalse(EditorStateCache.GetActualIsCompiling());
+            Assert.IsFalse(EditorApplication.isUpdating);
+            var polled = TestJobManager.GetJob(job.JobId);
+            Assert.AreEqual(TestJobStatus.Running, polled.Status, "Initialization evidence is independent of a known test count.");
+            Assert.AreEqual(job.JobId, TestJobManager.CurrentJobId);
+            Assert.IsTrue(TestRunnerService.HasOwnedNativeRun);
+            Assert.IsNull(job.TotalTests);
+            service.TestFinished(completed);
+            service.RunFinished(ResultStub.Suite(completed));
+            Assert.AreEqual(TestJobStatus.Succeeded, job.Status);
+            Assert.AreEqual(1, job.Result.Results.Count);
+            Assert.AreEqual("Fixture.LongRunning", job.Result.Results[0].FullName);
+        }
+
+        [TestCase("missing")]
+        [TestCase("expired")]
+        [TestCase("corrupt")]
+        public void UnavailablePriorCheckpointCannotDiscardAuthoritativeCancelledCallback(string unavailable)
+        {
+            var job = AddJob();
+            job.TotalTests = 2;
+            var service = RestoreCallbacks();
+            service.TestFinished(new ResultStub("Fixture.Prior", "Passed"));
+            service = ReloadOwner(service);
+            job = _jobs[job.JobId];
+            string oldGeneration = (string)job.ResultArtifact["generation"];
+            string manifest = Path.Combine(_resultRoot, "Library", "MCPForUnity", "TestJobResults", oldGeneration, "manifest.json");
+            if (unavailable == "missing")
+                File.Delete(manifest);
+            else if (unavailable == "corrupt")
+                File.WriteAllText(manifest, "{broken}");
+            else
+            {
+                var value = JObject.Parse(File.ReadAllText(manifest));
+                long expired = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 86400001;
+                value["completed_unix_ms"] = expired;
+                byte[] bytes = System.Text.Encoding.UTF8.GetBytes(value.ToString(Newtonsoft.Json.Formatting.None));
+                File.WriteAllBytes(manifest, bytes);
+                job.ResultArtifact["completed_unix_ms"] = expired;
+                job.ResultArtifact["sha256"] = TestJobResultStore.Hash(bytes);
+            }
+            if (unavailable == "corrupt")
+                Assert.Throws<InvalidDataException>(() => TestJobManager.ResultStore.Manifest(job.JobId, job.ResultArtifact));
+            else
+                Assert.Throws<FileNotFoundException>(() => TestJobManager.ResultStore.Manifest(job.JobId, job.ResultArtifact));
+            string cancelledState = NUnit.Framework.Interfaces.ResultState.Cancelled.ToString();
+            var terminal = new ResultStub("Suite", cancelledState, null, new ResultStub("Fixture.Terminal", "Passed")) { IsSuite = true };
+            service.RunFinished(terminal);
+            Assert.AreEqual(TestJobStatus.Cancelled, job.Status);
+            Assert.AreEqual(cancelledState, job.RetainedSummary.ResultState);
+            Assert.AreEqual("cancelled", job.CompletionKind);
+            Assert.AreEqual("partial_checkpoint_unavailable", job.ResultAvailability);
+            Assert.IsNotNull(job.ResultArtifact, "Incoming captured leaves remain usable despite unavailable prior details.");
+            Assert.AreNotEqual(oldGeneration, (string)job.ResultArtifact["generation"]);
+            _jobs.Clear();
+            InvokeManager("TryRestoreFromSessionState");
+            var response = JObject.FromObject(
+                MCPForUnity.Editor.Tools.GetTestJob.HandleCommand(
+                    new JObject
+                    {
+                        ["job_id"] = job.JobId,
+                        ["includeDetails"] = true,
+                        ["page_size"] = 1,
+                    }
+                )
+            );
+            Assert.IsTrue((bool)response["success"], response.ToString());
+            Assert.AreEqual("cancelled", (string)response["data"]["status"]);
+            Assert.AreEqual("partial_checkpoint_unavailable", (string)response["data"]["result_availability"]);
+            Assert.AreEqual("Fixture.Terminal", (string)response["data"]["result_page"]["items"][0]["fullName"]);
+        }
+
         [TestCase("depth")]
         [TestCase("visits")]
         [TestCase("elapsed")]
