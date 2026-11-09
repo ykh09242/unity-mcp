@@ -492,6 +492,55 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(300, result["data"].Value<int>("timeout_seconds"));
         }
 
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void ReadinessJobIdRejectsChangedTargetOrBudget(bool completed, bool changeBudget)
+        {
+            Clock(100);
+            Ready(false);
+            var request = new JObject
+            {
+                ["job_id"] = Guid.NewGuid().ToString("N"),
+                ["wait_until"] = "scene_loaded",
+                ["timeout_seconds"] = 30,
+            };
+            var started = Invoke("play", request);
+            Assert.IsTrue(started.Value<bool>("success"));
+            Ready(completed);
+            var before = Invoke("get_play_mode_job", new JObject { ["job_id"] = request["job_id"] });
+            var changed = (JObject)request.DeepClone();
+            if (changeBudget)
+                changed["timeout_seconds"] = 31;
+            else
+                changed["wait_until"] = "first_frame";
+            var conflict = Invoke("play", changed);
+            Assert.IsFalse(conflict.Value<bool>("success"), conflict.ToString());
+            Assert.AreEqual("play_readiness_job_id_conflict", conflict.Value<string>("error"));
+            Assert.IsTrue(JToken.DeepEquals(before["data"], conflict["data"]));
+            Assert.IsFalse(EditorApplication.isPlayingOrWillChangePlaymode);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void ReadinessJobIdIdenticalRetryPreservesOriginalDeadline(bool completed)
+        {
+            Clock(100);
+            Ready(false);
+            var request = new JObject { ["job_id"] = Guid.NewGuid().ToString("N"), ["wait_until"] = "first_frame" };
+            var started = Invoke("play", request);
+            Ready(completed);
+            Clock(110);
+            request["timeout_seconds"] = 300;
+            var retry = Invoke("play", request);
+            Assert.IsTrue(retry.Value<bool>("success"), retry.ToString());
+            Assert.AreEqual(started["data"]["job_id"], retry["data"]["job_id"]);
+            Assert.AreEqual(started["data"]["deadline_editor_seconds"], retry["data"]["deadline_editor_seconds"]);
+            Assert.AreEqual(completed ? "succeeded" : "running", retry["data"].Value<string>("status"));
+            Assert.IsFalse(EditorApplication.isPlayingOrWillChangePlaymode);
+        }
+
         [Test]
         public void ReloadKeepsMonotonicDeadlineDespiteChangedWallClock()
         {

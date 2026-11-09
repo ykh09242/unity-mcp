@@ -86,7 +86,11 @@ namespace MCPForUnity.Editor.Services
                 return new ErrorResponse(error);
             Tick();
             if (requestedId != null && _job != null && _job.job_id == requestedId)
+            {
+                if (_job.wait_until != target || _job.timeout_seconds != timeout)
+                    return new ErrorResponse("play_readiness_job_id_conflict", Snapshot());
                 return new SuccessResponse("Existing play mode readiness job.", Snapshot());
+            }
             if (_job != null && _job.status == "running")
                 return new ErrorResponse("play_readiness_busy", Snapshot());
             _job = new Job
