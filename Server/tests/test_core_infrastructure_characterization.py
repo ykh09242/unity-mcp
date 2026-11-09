@@ -70,9 +70,11 @@ def reset_decorator_log_budget(monkeypatch):
 
 
 @pytest.fixture
-def caplog_fixture(caplog):
+def caplog_fixture(caplog, monkeypatch):
     """Fixture to capture and configure logging."""
     caplog.set_level(logging.DEBUG)
+    caplog.set_level(logging.DEBUG, logger="unity-mcp-telemetry")
+    monkeypatch.setattr(logging.getLogger("unity-mcp-telemetry"), "propagate", True)
     return caplog
 
 
@@ -968,8 +970,9 @@ class TestTelemetryConfigPrecedence:
 
                     assert "env.endpoint.com" in config.endpoint
 
-    def test_telemetry_config_timeout_default(self):
+    def test_telemetry_config_timeout_default(self, monkeypatch):
         """Verify telemetry timeout has default value."""
+        monkeypatch.delenv("UNITY_MCP_TELEMETRY_TIMEOUT", raising=False)
         with patch("core.telemetry.import_module", side_effect=Exception("No module")):
             with patch("core.telemetry.TelemetryConfig._is_disabled", return_value=False):
                 config = TelemetryConfig()
