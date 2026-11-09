@@ -51,6 +51,15 @@ Collection has no application-specific folder names or asset naming rules. Optio
 exclusions belong to the requesting user's graph policy, so one consumer's exclusions
 cannot change another consumer's inventory. Hidden/import-ineligible paths are omitted.
 
+The server's per-asset `MAX_SOURCE_BYTES` and `MAX_DEPENDENCY_ITEMS` operator
+limits reject that asset before retaining excessive input. The previous evidence
+remains stale, diagnostics name the exceeded limit and its environment setting,
+and collection continues with later assets. Failed assets use the existing retry
+backoff; a source change, explicit retry, or changed operator item limits makes
+them eligible again. Attempt-wide page, item, byte and time exhaustion still
+aborts the attempt with its durable checkpoints. Ignore-policy failures remain
+fail-closed.
+
 This evidence does not prove that an asset is unused. Dynamic code, binary serialized
 strings, compilation errors and unsupported package APIs remain coverage limitations.
 Existing live mutation/reference guards remain authoritative for destructive actions.

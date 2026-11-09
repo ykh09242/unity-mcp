@@ -719,7 +719,6 @@ async def test_nonfolder_dependency_limit_keeps_verified_partial_query_on_retry(
     service_setup, monkeypatch
 ):
     from services.reference_graph.collection_protocol import (
-        CollectionBudgetExceeded,
         CollectionLimits,
     )
 
@@ -758,7 +757,9 @@ async def test_nonfolder_dependency_limit_keeps_verified_partial_query_on_retry(
 
     service.send = native
     try:
-        for _ in range(2):
+        for attempt in range(2):
+            with entry.workspace.store._connect(write=True) as db:
+                db.execute("UPDATE graph_asset_failures SET retry_at=0")
             paused.clear()
             release.clear()
             work = asyncio.create_task(entry.engine.reconcile())
@@ -766,11 +767,13 @@ async def test_nonfolder_dependency_limit_keeps_verified_partial_query_on_retry(
                 await asyncio.wait_for(paused.wait(), watchdog_timeout())
                 result = (await service.execute(ctx, "query", {"node": "asset:" + a}))["data"]
                 assert [edge["target"] for edge in result["edges"]] == ["asset:" + b]
-                assert result["graph_status"]["partial_static"]
+                if attempt == 0:
+                    assert result["graph_status"]["partial_static"]
+                else:
+                    assert entry.workspace.counts()["failed_assets"] == 1
             finally:
                 release.set()
-                with pytest.raises(CollectionBudgetExceeded, match="max_dependency_items"):
-                    await work
+                assert not await work
     finally:
         await service.aclose()
 
@@ -2353,7 +2356,6 @@ async def test_aggregate_inventory_budgets_reject_before_database_write(setup, l
 @pytest.mark.asyncio
 async def test_source_memory_budget_rejects_before_decoding_or_saving(setup, monkeypatch):
     from services.reference_graph.collection_protocol import (
-        CollectionBudgetExceeded,
         CollectionLimits,
     )
 
@@ -2363,17 +2365,16 @@ async def test_source_memory_budget_rejects_before_decoding_or_saving(setup, mon
         base64, "b64decode", lambda *args, **kwargs: pytest.fail("Decoded over budget")
     )
     engine = Reconciler(workspace, editor, allowed, limits=CollectionLimits(max_source_bytes=10))
-    with pytest.raises(CollectionBudgetExceeded, match="max_source_bytes=10"):
-        await engine.reconcile()
+    assert not await engine.reconcile()
     assert not workspace.documents([owner])
-    assert workspace.dirty_assets()
-    assert workspace.progress()["phase"] == "error"
+    assert not workspace.dirty_assets()
+    assert workspace.counts()["failed_assets"] == 1
+    assert "max_source_bytes=10" in str(workspace.diagnostics(owner))
 
 
 @pytest.mark.asyncio
-async def test_dependency_memory_budget_keeps_previous_edges_and_dirty_state(setup):
+async def test_dependency_memory_budget_keeps_previous_edges_and_backoff(setup):
     from services.reference_graph.collection_protocol import (
-        CollectionBudgetExceeded,
         CollectionLimits,
     )
 
@@ -2383,11 +2384,11 @@ async def test_dependency_memory_budget_keeps_previous_edges_and_dirty_state(set
 
     async def collect(action, **params):
         page = await editor(action, **params)
-        if action == "dependencies":
+        if action == "dependencies" and params["guid"] == owner[6:]:
             offset = params["offset"]
             page.update(
                 targets=[f"{offset + 2 if growing else 9:032x}"],
-                next_offset=offset + 1 if growing else None,
+                next_offset=offset + 1 if growing and offset < 2 else None,
             )
         return page
 
@@ -2395,16 +2396,65 @@ async def test_dependency_memory_budget_keeps_previous_edges_and_dirty_state(set
     assert {row["target"] for row in store.query(owner)["edges"]} == {"asset:" + f"{9:032x}"}
     growing = True
     editor.event("Assets/Owner.asset")
+    healthy = editor.add(2, "Assets/Healthy.asset")
     engine = Reconciler(
         workspace, collect, allowed, limits=CollectionLimits(max_dependency_items=2)
     )
-    with pytest.raises(CollectionBudgetExceeded, match="max_dependency_items=2"):
-        await engine.reconcile()
+    assert not await engine.reconcile()
     remaining = store.query(owner)["edges"]
     assert {row["target"] for row in remaining} == {"asset:" + f"{9:032x}"}
     assert all(row["stale"] for row in remaining)
-    assert workspace.dirty_assets()
-    assert sum(action == "dependencies" for action, _ in editor.calls) == 4
+    assert not workspace.dirty_assets()
+    assert workspace.counts()["failed_assets"] == 1
+    assert any(
+        action == "dependencies" and params["guid"] == healthy[6:]
+        for action, params in editor.calls
+    )
+    engine = Reconciler(
+        workspace, collect, allowed, limits=CollectionLimits(max_dependency_items=3)
+    )
+    assert await engine.reconcile()
+    assert workspace.counts()["failed_assets"] == 0
+    assert {row["target"] for row in store.query(owner)["edges"]} == {
+        "asset:" + f"{number:032x}" for number in (2, 3, 4)
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recovery", ["source", "limit"])
+async def test_item_budget_failure_preserves_stale_evidence_and_progresses_later_assets(
+    setup, recovery
+):
+    from services.reference_graph.collection_protocol import CollectionLimits
+
+    # Given an existing early asset that grows past its per-item source limit.
+    store, workspace, editor, engine = setup
+    owner = editor.add(1, "Assets/Owner.cs", "class Owner {}")
+    assert await engine.reconcile()
+    old_document = workspace.documents([owner])[0]
+    editor.add(1, "Assets/Owner.cs", "class Owner {" + " " * 200 + "}")
+    healthy = editor.add(2, "Assets/Healthy.cs", "class Healthy {}")
+    engine = Reconciler(workspace, editor, allowed, limits=CollectionLimits(max_source_bytes=50))
+    # When the independent pass runs, the failing item must enter backoff.
+    assert not await engine.reconcile()
+    assert workspace.documents([healthy])
+    assert workspace.documents([owner])[0]["data"] == old_document["data"]
+    assert workspace.documents([owner])[0]["fingerprint"] == old_document["fingerprint"]
+    assert workspace.documents([owner])[0]["state"] == "pending"
+    assert workspace.counts()["failed_assets"] == 1
+    assert "MAX_SOURCE_BYTES" in str(workspace.diagnostics(owner))
+    with store._connect() as db:
+        assert db.execute("SELECT retry_at FROM graph_asset_failures").fetchone()[0] > time.time()
+    # Then either a source change or an operator limit change recovers immediately.
+    if recovery == "source":
+        editor.add(1, "Assets/Owner.cs", "class Changed {}")
+    else:
+        engine = Reconciler(
+            workspace, editor, allowed, limits=CollectionLimits(max_source_bytes=500)
+        )
+    assert await engine.reconcile()
+    assert workspace.counts()["failed_assets"] == 0
+    assert workspace.documents([owner])[0]["fingerprint"] != old_document["fingerprint"]
 
 
 @pytest.mark.asyncio

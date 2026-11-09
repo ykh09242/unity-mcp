@@ -1113,6 +1113,22 @@ class GraphWorkspace:
                 for row in connection.execute("SELECT payload FROM graph_assets ORDER BY guid")
             ]
 
+    def asset_limits(self, worker: str, limits: dict[str, int]) -> None:
+        """Retry item-ceiling failures when operator provisioning changes."""
+        with self._write(worker) as connection:
+            previous = self._state(connection, "asset_limits")
+            if previous == limits:
+                return
+            if previous is not None:
+                connection.execute(
+                    "UPDATE graph_asset_failures SET retry_at=0 WHERE 'asset:'||guid IN "
+                    "(SELECT owner FROM observations WHERE provider='unity' AND "
+                    "(error LIKE 'CollectionBudgetExceeded: Reference collection exceeded max_source_bytes=%' "
+                    "OR error LIKE 'CollectionBudgetExceeded: Reference collection exceeded max_dependency_items=%'))"
+                )
+                connection.execute("DELETE FROM graph_state WHERE key='retry_scan'")
+            self._set(connection, "asset_limits", limits)
+
     def queue_due_assets(
         self, worker: str, through: float, *, after: tuple[float, str] | None = None
     ) -> list[tuple[float, str]]:

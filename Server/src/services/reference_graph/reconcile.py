@@ -859,6 +859,14 @@ class Reconciler:
 
     async def _assets(self, ignore_snapshot: str | None) -> None:
         await self._phase("collecting")
+        await drained_thread(
+            self.workspace.asset_limits,
+            self.worker,
+            {
+                name: getattr(self.limits, name)
+                for name in ("max_source_bytes", "max_dependency_items")
+            },
+        )
         # Discover due work once, in bounded index order, before draining the
         # GUID-ordered ready queue. A retry becoming due later waits for the next
         # pass instead of repeatedly sorting the entire due backlog per page.
@@ -948,6 +956,10 @@ class Reconciler:
                 await drained_thread(self.workspace.clean_asset, self.worker, guid, version=version)
         except RevisionConflict:
             raise
+        except CollectionBudgetExceeded as error:
+            if error.name not in {"max_source_bytes", "max_dependency_items"}:
+                raise
+            await drained_thread(self.workspace.fail_asset, self.worker, asset, error)
         except (OSError, ValueError, RecursionError) as error:
             await drained_thread(self.workspace.fail_asset, self.worker, asset, error)
 
