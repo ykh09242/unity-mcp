@@ -71,6 +71,20 @@ def test_search_reports_operation_specific_prerequisites_from_real_declarations(
     assert result["readiness"] == "unobserved"
 
 
+def test_navigation_discovery_preserves_status_listing_without_job_id():
+    from services.registry import get_registered_tools
+    from services.registry.task_search import SearchRequest, search_catalog
+    from services.tools.manage_navigation import manage_navigation
+
+    entries = [entry for entry in get_registered_tools() if entry["func"] is manage_navigation]
+    result = search_catalog(SearchRequest(query="manage_navigation"), entries)["results"][0]
+
+    assert (
+        "bake_status: job_id is optional; omit it to list retained jobs" in result["requirements"]
+    )
+    assert "cancel_bake requires an existing job_id" in result["requirements"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("name", "arguments", "normalized"),

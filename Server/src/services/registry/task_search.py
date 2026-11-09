@@ -128,7 +128,8 @@ _PURPOSES: Final = {
             "agent/obstacle operations use the built-in AI module",
             "Scene operations require an explicit loaded scene_handle; "
             "sample_position/calculate_path also require a configured agent_type_id and baked NavMesh data",
-            "bake_status/cancel_bake require the existing job_id",
+            "bake_status: job_id is optional; omit it to list retained jobs",
+            "cancel_bake requires an existing job_id",
             "add/configure/bake require idle Edit Mode",
         ),
     ),
