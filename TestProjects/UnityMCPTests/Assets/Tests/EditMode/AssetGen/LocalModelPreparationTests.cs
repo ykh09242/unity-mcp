@@ -3,10 +3,15 @@ using System.Collections;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPForUnity.Editor.Models;
+using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Import;
+using MCPForUnity.Editor.Services.Transport;
+using MCPForUnity.Editor.Tools;
 using MCPForUnity.Editor.Tools.AssetGen;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -300,6 +305,179 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsTrue(File.Exists(source));
         }
 
+        [UnityTest]
+        public IEnumerator CancellationAfterCommitRetainsPathsThroughTransportJournal() => CanceledPublishedModel(false);
+
+        [UnityTest]
+        public IEnumerator CancellationDuringNativeImportRetainsPathsThroughTransportJournal() => CanceledPublishedModel(true);
+
+        [Test]
+        public void CanceledArchiveReceiptOmitsCandidateInventoryAndRetainsPublishedPaths()
+        {
+            // Given retained bytes and a valid, large archive-selection inventory.
+            string source = Write("retained/model.obj", "o retained\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+            string path = root + "/Sources/retained/model.obj";
+            var candidates = new JArray(Enumerable.Range(0, 200).Select(index => new string('x', 64) + index + ".obj"));
+            var archive = new JObject
+            {
+                ["archive_path"] = outputRoot + "/models.zip",
+                ["selected_asset_path"] = path,
+                ["extraction_root"] = root + "/Sources/retained",
+                ["extraction"] = "complete",
+                ["candidate_count"] = candidates.Count,
+                ["candidates"] = candidates,
+                ["candidates_complete"] = true,
+            };
+            var job = new AssetGenJob
+            {
+                AssetPath = path,
+                ModelImportStage = "registered",
+                ArchiveSelection = archive,
+            };
+            var committed = new BundleStageResult
+            {
+                MainAssetPath = outputRoot + "/models.zip",
+                Evidence = new JObject { ["stage"] = "staged" },
+            };
+            string stored = null;
+            var journal = new CommandResumeJournal(() => stored, value => stored = value, () => 1000);
+            var request = new JObject
+            {
+                ["version"] = 1,
+                ["invocation_id"] = Guid.NewGuid().ToString("N"),
+                ["editor_session_id"] = journal.SessionId,
+                ["deadline_unix_ms"] = 10000,
+                ["action"] = "new",
+            };
+            var admission = journal.Admit(request, "import_model_file", new JObject());
+            Assert.IsTrue(journal.TryStart(admission.Ticket));
+            request["action"] = "cancel";
+            journal.Admit(request, "import_model_file", new JObject());
+            // When the real cancellation receipt is checkpointed at the existing bounded journal.
+            JObject result = JObject.FromObject(ImportModelFile.CancellationReceipt(job, committed));
+            journal.Complete(admission.Ticket, new JObject { ["status"] = "success", ["result"] = result });
+            journal.Release(admission.Ticket);
+            journal = new CommandResumeJournal(() => stored, value => stored = value, () => 1000);
+            request["action"] = "resume";
+            var resumed = journal.Admit(request, "import_model_file", new JObject());
+            // Then inventory size cannot erase the inspectable saved output and cancellation fence.
+            Assert.AreEqual("canceled", resumed.State);
+            Assert.IsNotNull(resumed.Payload);
+            JToken data = resumed.Payload["result"]["data"];
+            Assert.AreEqual(path, data.Value<string>("asset_path"));
+            Assert.AreEqual("registered", data.Value<string>("model_import_stage"));
+            Assert.IsTrue(data.Value<bool>("source_saved"));
+            Assert.AreEqual(archive["extraction_root"], data["archive_selection"]["extraction_root"]);
+            Assert.AreEqual(200, data["archive_selection"].Value<int>("candidate_count"));
+            Assert.IsNull(data["archive_selection"]["candidates"]);
+            Assert.IsTrue(data["archive_selection"].Value<bool>("candidates_omitted"));
+            Assert.AreEqual(200, ((JArray)archive["candidates"]).Count, "Receipt compaction must not alter the import job's evidence.");
+            Assert.AreEqual("o retained\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n", File.ReadAllText(source));
+        }
+
+        private IEnumerator CanceledPublishedModel(bool duringImport)
+        {
+            // Given real model bytes, a collision, and a resumable transport invocation.
+            string source = Write("triangle.obj", "o Triangle\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+            byte[] original = File.ReadAllBytes(source);
+            Directory.CreateDirectory(Path.Combine(project, outputRoot));
+            string collision = Path.Combine(project, outputRoot, "prepared.obj");
+            File.WriteAllText(collision, "existing owned output");
+            const string commandName = "__local_model_cancel_receipt";
+            CommandRegistry.Initialize();
+            var handlers = (IDictionary)typeof(CommandRegistry).GetField("_handlers", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            object previous = handlers[commandName];
+            handlers[commandName] = HandlerInfo.Cooperative(commandName, ImportModelFile.HandleCommand);
+            string stored = null;
+            var journal = new CommandResumeJournal(() => stored, value => stored = value, () => 1000);
+            var parameters = Parameters(source);
+            parameters["targetSize"] = 0;
+            var request = new JObject
+            {
+                ["version"] = 1,
+                ["invocation_id"] = Guid.NewGuid().ToString("N"),
+                ["editor_session_id"] = journal.SessionId,
+                ["deadline_unix_ms"] = 10000,
+                ["action"] = "new",
+            };
+            var admission = journal.Admit(request, commandName, parameters);
+            using var cancellation = new CancellationTokenSource();
+            journal.BindCancellation(admission.Ticket, cancellation.Cancel);
+            var hook = typeof(ImportModelFile).GetField("AfterCommitForTests", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.IsNotNull(hook);
+            bool reachedBoundary = false;
+            long reservationAtCancel = 0;
+            void Cancel()
+            {
+                reachedBoundary = true;
+                reservationAtCancel = AssetDiskBudget.ReservedBytesForTests(project);
+                request["action"] = "cancel";
+                Assert.AreEqual("canceled", journal.Admit(request, commandName, parameters).State);
+            }
+            if (duringImport)
+                ModelCancellationPostprocessor.Observe = imported =>
+                {
+                    if (!reachedBoundary && imported.Contains(outputRoot + "/prepared_1.obj"))
+                        Cancel();
+                };
+            else
+                hook.SetValue(null, (Action)(() => Cancel()));
+            TransportCommandOperation operation = null;
+            try
+            {
+                // When cancellation arrives only after bytes are committed (or inside native import).
+                operation = TransportCommandDispatcher.ExecuteCommandAsync(
+                    new Command
+                    {
+                        type = commandName,
+                        @params = parameters,
+                        ResumeTicket = admission.Ticket,
+                    },
+                    cancellation.Token
+                );
+                var deadline = Stopwatch.StartNew();
+                while (!operation.Completion.IsCompleted && deadline.Elapsed < TimeSpan.FromSeconds(15))
+                    yield return null;
+                // Then settlement retains a canceled fence and a reloadable publication receipt.
+                Assert.IsTrue(operation.Completion.IsCompleted);
+                Assert.IsTrue(reachedBoundary);
+                Assert.Greater(reservationAtCancel, 0, "Cancellation must not release the active preparation.");
+                Assert.Zero(AssetDiskBudget.ReservedBytesForTests(project));
+                journal.Release(admission.Ticket);
+                journal = new CommandResumeJournal(() => stored, value => stored = value, () => 1000);
+                request["action"] = "resume";
+                var resumed = journal.Admit(request, commandName, parameters);
+                Assert.AreEqual("canceled", resumed.State);
+                Assert.IsNull(resumed.Ticket, "The retained result must not schedule a duplicate import.");
+                JObject envelope = JObject.Parse(resumed.Response(null).ToJson());
+                JToken result = envelope["payload"]["result"];
+                Assert.IsNotNull(result, envelope.ToString());
+                Assert.IsFalse(result.Value<bool>("success"));
+                JToken data = result["data"];
+                Assert.IsTrue(data.Value<bool>("source_saved"));
+                Assert.AreEqual("canceled", data.Value<string>("execution_status"));
+                Assert.AreEqual(outputRoot + "/prepared_1.obj", data.Value<string>("asset_path"));
+                Assert.AreEqual(duringImport ? "usable" : "saved", data.Value<string>("model_import_stage"));
+                Assert.AreEqual("inspect_then_reimport_retained", data.Value<string>("recovery_action"));
+                Assert.IsFalse(data.Value<bool>("retry_safe"));
+                CollectionAssert.AreEqual(original, File.ReadAllBytes(Path.Combine(project, data.Value<string>("asset_path"))));
+                CollectionAssert.AreEqual(original, File.ReadAllBytes(source));
+                Assert.AreEqual("existing owned output", File.ReadAllText(collision));
+                Assert.AreEqual(1, Directory.GetFiles(Path.Combine(project, outputRoot), "prepared_*.obj").Length);
+            }
+            finally
+            {
+                hook.SetValue(null, null);
+                ModelCancellationPostprocessor.Observe = null;
+                if (previous == null)
+                    handlers.Remove(commandName);
+                else
+                    handlers[commandName] = previous;
+                if (operation == null || operation.Completion.IsCompleted)
+                    journal.Release(admission.Ticket);
+            }
+        }
+
         private sealed class BlockingReader : MemoryStream
         {
             private readonly ManualResetEventSlim entered;
@@ -344,5 +522,12 @@ namespace MCPForUnityTests.Editor.AssetGen
                 return read;
             }
         }
+    }
+
+    internal sealed class ModelCancellationPostprocessor : AssetPostprocessor
+    {
+        internal static Action<string[]> Observe;
+
+        private static void OnPostprocessAllAssets(string[] imported, string[] deleted, string[] moved, string[] movedFrom) => Observe?.Invoke(imported);
     }
 }

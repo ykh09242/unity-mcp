@@ -25,6 +25,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
     public static class ImportModelFile
     {
         private static readonly string[] SupportedExt = { ".fbx", ".obj", ".glb", ".gltf", ".zip" };
+        internal static Action AfterCommitForTests;
 
         public static object HandleCommand(JObject @params) => Handle(@params, CancellationToken.None, false).GetAwaiter().GetResult();
 
@@ -35,6 +36,8 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             if (@params == null)
                 return new ErrorResponse("Parameters cannot be null.");
             var p = new ToolParams(@params);
+            BundleStageResult committed = null;
+            AssetGenJob job = null;
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -58,7 +61,7 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 if (string.IsNullOrWhiteSpace(baseName))
                     baseName = Path.GetFileNameWithoutExtension(srcAbs);
 
-                var job = new AssetGenJob
+                job = new AssetGenJob
                 {
                     TargetSize = p.GetFloat("targetSize", 1f) ?? 1f,
                     AnimationType = p.Get("animationType"),
@@ -76,9 +79,12 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                 BundleStageResult staged = prepared.Publish(outputFolder, baseName);
                 JObject dependencyEvidence = staged.Evidence;
                 prepared.Commit();
+                committed = staged;
+                job.AssetPath = staged.MainAssetPath;
+                job.ModelImportStage = "saved";
+                AfterCommitForTests?.Invoke();
                 AssetGenJob result = ImportStaged(job, staged.MainAssetPath, staged.BundleRoot, cancellationToken);
-                if (result?.State == AssetGenJobState.Canceled)
-                    cancellationToken.ThrowIfCancellationRequested();
+                cancellationToken.ThrowIfCancellationRequested();
 
                 if (result == null || result.State == AssetGenJobState.Failed)
                     return new ErrorResponse(
@@ -108,6 +114,8 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                if (committed != null)
+                    return CancellationReceipt(job, committed);
                 throw;
             }
             catch (ArchiveSelectionException e)
@@ -122,6 +130,39 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             {
                 return new ErrorResponse(SecretRedactor.Scrub(e.Message));
             }
+        }
+
+        internal static object CancellationReceipt(AssetGenJob job, BundleStageResult committed) =>
+            new ErrorResponse(
+                "model_import_canceled_after_publication",
+                new
+                {
+                    source_saved = true,
+                    execution_status = "canceled",
+                    asset_path = job.AssetPath ?? committed.MainAssetPath,
+                    asset_guid = job.AssetGuid,
+                    published_asset_path = committed.MainAssetPath,
+                    bundle_root = committed.BundleRoot,
+                    model_import_stage = job.ModelImportStage,
+                    dependency_bundle = committed.Evidence,
+                    archive_selection = CancellationArchiveEvidence(job.ArchiveSelection),
+                    retry_safe = false,
+                    recovery_action = "inspect_then_reimport_retained",
+                    retry_guidance = "Published files were retained. Inspect the reported paths and import stage; reimport retained output if needed instead of repeating source staging.",
+                }
+            );
+
+        private static JObject CancellationArchiveEvidence(JObject evidence)
+        {
+            if (evidence == null)
+                return null;
+            // Optional candidate inventories can exceed the bounded terminal journal. Retain
+            // the actual extraction/selection facts needed to inspect output without restaging.
+            var retained = new JObject { ["candidates_omitted"] = true };
+            foreach (string key in new[] { "archive_path", "selected_path", "selected_asset_path", "extraction_root", "extraction", "candidate_count" })
+                if (evidence.TryGetValue(key, out JToken value))
+                    retained[key] = value.DeepClone();
+            return retained;
         }
 
         private static AssetGenJob ImportStaged(AssetGenJob job, string mainPath, string bundleRoot, CancellationToken cancellationToken)

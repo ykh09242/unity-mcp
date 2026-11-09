@@ -355,6 +355,15 @@ namespace MCPForUnity.Editor.Services.Transport
             {
                 if (unavailable || !Owns(ticket) || !entries.TryGetValue(ticket.Id, out Entry entry))
                     return Reply(ticket?.Request, "unavailable");
+                if (entry.phase == "canceled")
+                {
+                    // Cancellation fences replay, not facts from work that has now actually settled.
+                    // Keep ownership until the transport's normal Release; bound the late receipt
+                    // exactly like any other terminal result without changing the canceled state.
+                    entry.result = RetainedResult(result);
+                    if (!Persist())
+                        return Reply(ticket.Request, "unavailable");
+                }
                 if (entry.phase != "canceled")
                 {
                     entry.not_started = notStarted;

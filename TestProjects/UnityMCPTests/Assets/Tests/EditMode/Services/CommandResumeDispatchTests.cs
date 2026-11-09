@@ -367,5 +367,71 @@ namespace MCPForUnityTests.Editor.Services
                 journal.Release(admission.Ticket);
             }
         }
+
+        [UnityTest]
+        public IEnumerator CanceledJournalRetainsLateReceiptOnlyAfterActualSettlement()
+        {
+            // Given an executing writer whose actual work has not yet settled.
+            var held = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            handlers[Name] = HandlerInfo.Cooperative(
+                Name,
+                (_, token) =>
+                {
+                    calls++;
+                    return held.Task;
+                }
+            );
+            var admission = journal.Admit(Request(), Name, new JObject());
+            using var cancellation = new CancellationTokenSource();
+            journal.BindCancellation(admission.Ticket, cancellation.Cancel);
+            var operation = TransportCommandDispatcher.ExecuteCommandAsync(
+                new Command
+                {
+                    type = Name,
+                    @params = new JObject(),
+                    ResumeTicket = admission.Ticket,
+                },
+                cancellation.Token
+            );
+            var receipt = new JObject
+            {
+                ["success"] = false,
+                ["data"] = new JObject
+                {
+                    ["source_saved"] = true,
+                    ["asset_path"] = "Assets/retained.obj",
+                    ["execution_status"] = "canceled",
+                },
+            };
+            try
+            {
+                // When cancellation requests stop but the worker still owns execution.
+                Assert.AreEqual("canceled", journal.Admit(Request("cancel"), Name, new JObject()).State);
+                Assert.IsTrue(operation.Response.IsCanceled);
+                Assert.IsFalse(operation.Completion.IsCompleted);
+                Assert.IsNull(journal.Inspect(admission.Ticket).Payload);
+                var blocked = TransportCommandDispatcher.ExecuteCommandAsync(new Command { type = Name, arbitration = Binding() }, CancellationToken.None);
+                Assert.AreEqual("not_started", (string)JObject.Parse(blocked.Response.Result.ToJson())["native_arbitration"]["disposition"]);
+                held.TrySetResult(receipt);
+                var wait = System.Diagnostics.Stopwatch.StartNew();
+                while (!operation.Completion.IsCompleted && wait.Elapsed < TimeSpan.FromSeconds(10))
+                    yield return null;
+                // Then the terminal receipt survives journal reconstruction without replaying work.
+                Assert.IsTrue(operation.Completion.IsCompleted);
+                journal.Release(admission.Ticket);
+                journal = Open();
+                var resumed = journal.Admit(Request("resume"), Name, new JObject());
+                Assert.AreEqual("canceled", resumed.State);
+                Assert.IsNull(resumed.Ticket);
+                JObject response = JObject.Parse(resumed.Response(Binding()).ToJson());
+                Assert.IsTrue(JToken.DeepEquals(receipt, response.SelectToken("payload.payload.result")), response.ToString());
+                Assert.AreEqual(1, calls);
+            }
+            finally
+            {
+                held.TrySetResult(receipt);
+                journal.Release(admission.Ticket);
+            }
+        }
     }
 }
