@@ -1867,6 +1867,52 @@ async def script_apply_edits(
 
     # Compute text spans once: preview and both write routes preserve the same payloads.
     routing = "mixed/text-first" if mixed else "text"
+    phase_results = []
+
+    def phase_result(phase, result):
+        """Retain each native receipt before a later phase can hide its publication."""
+        result = dict(result) if isinstance(result, dict) else _err("invalid_response", str(result))
+        native_data = result.get("data")
+        result["data"] = dict(native_data) if isinstance(native_data, dict) else {}
+        if not mixed:
+            return _with_norm(result, normalized_for_echo, routing=routing)
+        phase_results.append({"phase": phase, "response": {**result, "data": dict(result["data"])}})
+        committed = [
+            entry
+            for entry in phase_results
+            if entry["response"]["data"].get("source_saved") is True
+            or entry["response"]["data"].get("applied") is True
+            or entry["response"].get("success") is True
+        ]
+        data = result["data"]
+        data["phase_results"] = list(phase_results)
+        if committed:
+            data.update(
+                source_saved=True,
+                path=f"{path}/{name}.cs",
+                committed_phases=[entry["phase"] for entry in committed],
+            )
+            latest = committed[-1]["response"]["data"]
+            for key in ("sha256", "bytes_sha256"):
+                if key in latest:
+                    data[f"committed_{key}"] = latest[key]
+            if not result.get("success"):
+                saved_this_phase = committed[-1]["phase"] == phase
+                data.update(
+                    outcome="partial",
+                    failed_phase=phase,
+                    retry_safe=False,
+                    recovery_action=(
+                        "refresh_then_resume_remaining"
+                        if saved_this_phase and phase == "text"
+                        else "refresh_only"
+                        if saved_this_phase
+                        else "inspect_then_resume_remaining"
+                    ),
+                    retry_guidance="Inspect the retained phase receipts and current source. Do not replay committed edits; retry refresh or only the remaining edits.",
+                )
+        return _with_norm(result, normalized_for_echo, routing=routing)
+
     text_edits = [edit for edit in edits if edit.get("op", "") in TEXT]
     struct_edits = [edit for edit in edits if edit.get("op", "") in STRUCT]
     try:
@@ -1954,14 +2000,9 @@ async def script_apply_edits(
         response = await send_mutation(
             ctx, unity_instance, "manage_script", params_text, verify_after_disconnect=_verify_text
         )
+        response = phase_result("text", response)
         if not (isinstance(response, dict) and response.get("success")):
-            return _with_norm(
-                response
-                if isinstance(response, dict)
-                else {"success": False, "message": str(response)},
-                normalized_for_echo,
-                routing=routing,
-            )
+            return response
         if not mixed:
             return _with_norm(response, normalized_for_echo, routing=routing)
         # The structural phase must not verify against changes from the text phase.
@@ -2014,20 +2055,19 @@ async def script_apply_edits(
                 "data": {"execution_status": "unknown", "retry_safe": False},
             }
 
-        response = await send_mutation(
-            ctx,
-            unity_instance,
-            "manage_script",
-            params_struct,
-            verify_after_disconnect=_verify_struct,
-        )
-        return _with_norm(
-            response
-            if isinstance(response, dict)
-            else {"success": False, "message": str(response)},
-            normalized_for_echo,
-            routing=routing,
-        )
+        try:
+            response = await send_mutation(
+                ctx,
+                unity_instance,
+                "manage_script",
+                params_struct,
+                verify_after_disconnect=_verify_struct,
+            )
+        except Exception as exc:
+            # Tool boundary: a later transport/verification failure must not erase a known commit.
+            logger.exception("Structured phase failed after mixed text publication")
+            response = _err("edit_unconfirmed", str(exc), extra={"execution_status": "unknown"})
+        return phase_result("structured", response)
 
     return _with_norm(
         {"success": True, "message": "Applied text edits (no structured ops)"},

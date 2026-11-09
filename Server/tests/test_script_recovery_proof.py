@@ -2,6 +2,7 @@
 
 import base64
 import importlib
+import hashlib
 from unittest.mock import AsyncMock
 
 import pytest
@@ -9,6 +10,103 @@ import pytest
 refresh = importlib.import_module("services.tools.refresh_unity")
 scripts = importlib.import_module("services.tools.manage_script")
 structured = importlib.import_module("services.tools.script_apply_edits")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("structured_first", [False, True])
+@pytest.mark.parametrize(
+    "failure", ["structured", "text_refresh", "structured_refresh", "transport"]
+)
+async def test_mixed_failure_retains_committed_bytes(
+    monkeypatch, tmp_path, structured_first, failure
+):
+    # Given a real source file behind the native transport boundary.
+    source = tmp_path / "Foo.cs"
+    source.write_bytes(b"class Foo {}\n")
+    calls = []
+
+    async def native(_sender, _instance, _command, params):
+        calls.append(params["action"])
+        match params["action"]:
+            case "validate_edit":
+                return {"success": True}
+            case "read":
+                return {"success": True, "data": {"contents": source.read_text()}}
+            case "get_sha":
+                return {
+                    "success": True,
+                    "data": {"sha256": hashlib.sha256(source.read_bytes()).hexdigest()},
+                }
+        raise AssertionError(params)
+
+    async def mutate(_ctx, _instance, _command, params, **_kwargs):
+        action = params["action"]
+        calls.append(action)
+        if action == "edit" and failure == "transport":
+            raise ConnectionError("lost structured result")
+        if action == "edit" and failure == "structured":
+            return {
+                "success": False,
+                "error": "Method Missing not found",
+                "data": {"source_saved": False},
+            }
+        if action == "apply_text_edits":
+            source.write_bytes(source.read_bytes() + params["edits"][0]["newText"].encode())
+        else:
+            source.write_bytes(source.read_bytes().replace(b"class Foo", b"class Changed"))
+        refresh_failed = failure == (
+            "text_refresh" if action == "apply_text_edits" else "structured_refresh"
+        )
+        return {
+            "success": not refresh_failed,
+            "error": "injected refresh failure" if refresh_failed else None,
+            "data": {
+                "source_saved": True,
+                "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "refresh_status": "failed" if refresh_failed else "requested",
+            },
+        }
+
+    monkeypatch.setattr(
+        structured, "get_unity_instance_from_context", AsyncMock(return_value="Game@01234567")
+    )
+    monkeypatch.setattr(structured, "send_with_unity_instance", native)
+    monkeypatch.setattr(structured, "send_mutation", mutate)
+    edits = [
+        {"op": "append", "text": "// appended\n"},
+        {"op": "replace_method", "methodName": "Missing", "replacement": "void Missing() {}"},
+    ]
+    if structured_first:
+        edits.reverse()
+
+    # When a later phase fails, even if the original request lists the structured edit first.
+    response = await structured.script_apply_edits(AsyncMock(), "Foo", "Assets", edits)
+
+    # Then the public receipt describes the committed prefix without inviting a replay.
+    expected = (
+        b"class Changed {}\n// appended\n"
+        if failure == "structured_refresh"
+        else b"class Foo {}\n// appended\n"
+    )
+    assert source.read_bytes() == expected
+    assert response["success"] is False
+    data = response["data"]
+    assert data["source_saved"] is True
+    assert data["outcome"] == "partial"
+    assert data["path"] == "Assets/Foo.cs"
+    assert data["committed_sha256"] == hashlib.sha256(expected).hexdigest()
+    assert data["failed_phase"] == ("text" if failure == "text_refresh" else "structured")
+    assert data["retry_safe"] is False
+    assert data["recovery_action"] == (
+        "refresh_then_resume_remaining"
+        if failure == "text_refresh"
+        else "refresh_only"
+        if failure == "structured_refresh"
+        else "inspect_then_resume_remaining"
+    )
+    assert data["phase_results"][0]["response"]["data"]["source_saved"] is True
+    assert calls.count("apply_text_edits") == 1
+    assert calls.count("edit") == (0 if failure == "text_refresh" else 1)
 
 
 @pytest.mark.asyncio
