@@ -52,6 +52,21 @@ namespace MCPForUnity.Editor.Services.Transport
             if (retired != null && TestJobManager.ControlFor(retired.JobId) is { Released: false })
                 retired = null;
             var recovery = PreferRecovery(PreferRecovery(TestJobManager.NativeRecoveryDetails, retired), ProjectAuditorJobs.RecoveryDetails);
+            bool scenePending = UnityPlayScenarioHost.ObservePendingSceneOperation(out bool sceneUnknown);
+            if (scenePending)
+                recovery = PreferRecovery(
+                    recovery,
+                    new NativeRecoveryDetails(
+                        "scene_operation",
+                        sceneUnknown ? "completion_unknown" : "operation_pending",
+                        sceneUnknown ? "scene_operation_state_unknown" : "scene_operation_pending",
+                        sceneUnknown ? "restart_required" : "recoverable",
+                        sceneUnknown ? "inspect_native_work_then_restart_editor" : "wait_for_scene_operation",
+                        sceneUnknown
+                            ? "A retained scene operation lost its native completion observer. Inspect scene activity, then restart the Editor before new native work; idle Editor flags do not prove completion."
+                            : "A retained scene operation is still pending after its waiter ended. Wait for the native operation to complete; cancellation or releasing the waiter does not end its ownership."
+                    )
+                );
             if (BuildRunner.NativeRecoveryRequired)
                 recovery = PreferRecovery(
                     recovery,
@@ -80,6 +95,7 @@ namespace MCPForUnity.Editor.Services.Transport
                     || BuildPipeline.isBuildingPlayer
                     || PlayScenarioService.IsBusy
                     || PlayScenarioSuiteService.IsBusy
+                    || scenePending
                     || ProjectAuditorJobs.HasNativeOwner,
                 RecoveryRequired = RequiresRecovery(recovery),
                 RecoveryDetails = recovery,

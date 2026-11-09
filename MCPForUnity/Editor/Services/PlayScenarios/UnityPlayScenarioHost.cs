@@ -41,6 +41,13 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         private static void RetainSceneUncertainty() => SessionState.SetBool(SceneUnknownKey, PlayScenarioSceneOperation.CaptureReloadUnknown());
 
+        internal static bool ObservePendingSceneOperation(out bool requiresRecovery)
+        {
+            // Generic admission can be the first observer after reload, before any host is constructed.
+            PlayScenarioSceneOperation.RestoreReloadUnknown(SessionState.GetBool(SceneUnknownKey, false));
+            return PlayScenarioSceneOperation.ObservePendingOperation(out requiresRecovery);
+        }
+
         private PlayScenarioQueryCounts _queryCounts;
 
         public PlayScenarioQueryCounts CaptureQueryCounts() => _queryCounts;

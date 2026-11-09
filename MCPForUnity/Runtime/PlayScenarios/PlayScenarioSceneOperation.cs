@@ -70,43 +70,37 @@ namespace MCPForUnity.Runtime.PlayScenarios
         {
             if (!enabled)
                 return true;
-            if (unknown)
+            bool pending = ObservePendingOperation(out bool requiresRecovery);
+            if (requiresRecovery)
                 throw new InvalidOperationException(
-                    "scene_operation_state_unknown: an owned operation crossed assembly reload; start a fresh Editor session before new scene effects."
+                    "scene_operation_state_unknown: native completion cannot be observed; inspect scene activity and start a fresh Editor session before new scene effects."
                 );
-            if (completion == null)
-                return true;
-            try
+            return !pending;
+        }
+
+        /// <summary>Observe retained native ownership on the Unity main thread. Idle state cannot settle unknown ownership.</summary>
+        public static bool ObservePendingOperation(out bool requiresRecovery)
+        {
+            if (!unknown && completion != null)
             {
-                if (!completion())
-                    return false;
+                try
+                {
+                    if (completion())
+                        completion = null;
+                }
+                catch
+                {
+                    unknown = true;
+                }
             }
-            catch
-            {
-                unknown = true;
-                throw new InvalidOperationException("scene_operation_state_unknown: native operation completion is unavailable.");
-            }
-            completion = null;
-            return true;
+            requiresRecovery = unknown;
+            return unknown || completion != null;
         }
 
         public static bool CaptureReloadUnknown()
         {
-            if (unknown)
-                return true;
-            if (completion == null)
-                return false;
-            try
-            {
-                if (completion())
-                {
-                    completion = null;
-                    return false;
-                }
-            }
-            catch { }
-            unknown = true;
-            return true;
+            unknown |= ObservePendingOperation(out _);
+            return unknown;
         }
 
         public static void RestoreReloadUnknown(bool value) => unknown |= value;

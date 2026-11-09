@@ -1,7 +1,9 @@
 using System;
 using System.IO;
 using System.Reflection;
+using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.PlayScenarios;
+using MCPForUnity.Editor.Services.Transport;
 using MCPForUnity.Runtime.PlayScenarios;
 using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json;
@@ -412,6 +414,107 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
         }
 
         private static object Call(Type type, string name, params object[] args) => type.GetMethod(name, Flags).Invoke(null, args);
+
+        [Test]
+        public void RetainedSceneOwnerBlocksGenericAdmissionUntilCompletion()
+        {
+            Type type = Control();
+            var guard = SceneAdmission();
+            bool done = false;
+            int reads = 0;
+            int mainThread = System.Threading.Thread.CurrentThread.ManagedThreadId;
+            try
+            {
+                Call(type, "ResetForTests");
+                Call(
+                    type,
+                    "TrackCompletion",
+                    (Func<bool>)(
+                        () =>
+                        {
+                            Assert.AreEqual(mainThread, System.Threading.Thread.CurrentThread.ManagedThreadId);
+                            reads++;
+                            return done;
+                        }
+                    )
+                );
+                // The public waiter has ended; the native completion lease must remain authoritative.
+                new PlayScenarioSceneOperation(true, (_, __) => throw new AssertionException("No scene effect is permitted.")).Release();
+                Assert.IsFalse(guard.TryAcquire(ToolOperationMode.Exclusive, "manage_scene", null, null, out _, out var pending));
+                Assert.AreEqual("native_job_active", pending.Reason);
+                Assert.AreEqual("scene_operation", pending.Recovery?.Source);
+                Assert.AreEqual("wait_for_scene_operation", pending.RecoveryAction);
+                Assert.AreEqual(1, reads);
+                AssertSceneControlsAdmitted(guard);
+                Assert.AreEqual(1, reads, "Control admission must not need a native completion read.");
+                done = true;
+                Assert.IsTrue(guard.TryAcquire(ToolOperationMode.Exclusive, "manage_scene", null, null, out var admitted, out _));
+                admitted.Dispose();
+                Assert.AreEqual(2, reads);
+                Assert.IsTrue(guard.TryAcquire(ToolOperationMode.Exclusive, "manage_scene", null, null, out admitted, out _));
+                admitted.Dispose();
+                Assert.AreEqual(2, reads, "Completed leases must be removed, not observed forever.");
+            }
+            finally
+            {
+                Call(type, "ResetForTests");
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void UnknownSceneOwnerRequiresRecoveryAndPreservesControlAdmission(bool observerThrows)
+        {
+            Type type = Control();
+            const string unknownKey = "MCPForUnity.PlayScenario.SceneOperationUnknown";
+            bool savedUnknown = SessionState.GetBool(unknownKey, false);
+            try
+            {
+                Call(type, "ResetForTests");
+                if (observerThrows)
+                    Call(type, "TrackCompletion", (Func<bool>)(() => throw new InvalidOperationException("lost native handle")));
+                else
+                {
+                    Call(type, "TrackCompletion", (Func<bool>)(() => false));
+                    Assert.IsTrue((bool)Call(type, "CaptureReloadUnknown"));
+                    Call(type, "ResetForTests");
+                    SessionState.SetBool(unknownKey, true);
+                }
+                var guard = SceneAdmission();
+                Assert.IsFalse(guard.TryAcquire(ToolOperationMode.Exclusive, "execute_code", null, null, out _, out var blocker));
+                Assert.AreEqual("recovery_required", blocker.Reason);
+                Assert.IsFalse(blocker.Retryable);
+                Assert.AreEqual("scene_operation", blocker.Recovery?.Source);
+                Assert.AreEqual("restart_required", blocker.Recovery?.Mode);
+                Assert.AreEqual("inspect_native_work_then_restart_editor", blocker.RecoveryAction);
+                StringAssert.Contains("restart", blocker.Recovery.Message);
+                AssertSceneControlsAdmitted(guard);
+                Call(type, "RestoreReloadUnknown", false);
+                Assert.IsFalse(guard.TryAcquire(ToolOperationMode.Exclusive, "manage_scene", null, null, out _, out _));
+            }
+            finally
+            {
+                SessionState.SetBool(unknownKey, savedUnknown);
+                Call(type, "ResetForTests");
+            }
+        }
+
+        private static NativeCommandArbitrator SceneAdmission() =>
+            new NativeCommandArbitrator(
+                (command, parameters) => NativeOperationBarriers.TryGetBlocker(command, parameters, out var blocker) ? blocker : (NativeAdmissionBlocker?)null
+            );
+
+        private static void AssertSceneControlsAdmitted(NativeCommandArbitrator guard)
+        {
+            foreach (string command in new[] { "ping", "get_editor_state", "cancel_test_job" })
+            {
+                var parameters = new JObject();
+                var policy = ToolOperationPolicy.Resolve(command, parameters, true);
+                Assert.AreEqual(ToolOperationMode.Control, policy.Mode, command);
+                Assert.IsTrue(guard.TryAcquire(policy.Mode, command, parameters, null, out var lease, out _), command);
+                lease.Dispose();
+            }
+        }
 
         [Test]
         public void LegacyHostCancelCleanupAndNextRunRetainNativeLoadUntilCompletion()
