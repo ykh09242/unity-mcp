@@ -216,6 +216,37 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         [Test]
+        public void SceneParentPreservesNestedCanvasSortingBoundaryAcrossMasks()
+        {
+            string path = CreatePanelPrefab();
+            var canvas = CreateSceneCanvas(0f);
+            var masked = new GameObject("Masked container", typeof(RectTransform));
+            masked.transform.SetParent(canvas.transform, false);
+            ((RectTransform)masked.transform).sizeDelta = new Vector2(10, 10);
+            masked.AddComponent(Type.GetType("UnityEngine.UI.RectMask2D, UnityEngine.UI"));
+            var parent = new GameObject("Sorting boundary", typeof(RectTransform), typeof(Canvas));
+            parent.transform.SetParent(masked.transform, false);
+            ((RectTransform)parent.transform).sizeDelta = new Vector2(20, 20);
+            parent.GetComponent<Canvas>().overrideSorting = true;
+            parent.GetComponent<Canvas>().sortingOrder = 3;
+            _sceneFixture.ClearDirtiness();
+            var captured = CapturePixels(path, "ui_canvas", 256, 256, parent.GetInstanceIDCompat());
+            try
+            {
+                RectInt bounds = PixelBounds(captured, IsRed);
+                Assert.That(bounds.width, Is.EqualTo(40).Within(2), "The nested overrideSorting Canvas must break ancestor rectangular masking.");
+                Assert.That(bounds.height, Is.EqualTo(32).Within(2));
+                Assert.IsTrue(parent.GetComponent<Canvas>().overrideSorting);
+                Assert.AreEqual(3, parent.GetComponent<Canvas>().sortingOrder);
+            }
+            finally
+            {
+                Object.DestroyImmediate(captured);
+                Object.DestroyImmediate(canvas);
+            }
+        }
+
+        [Test]
         public void AuthoredWorldCanvasReportsProjectionAndScalePolicy()
         {
             string path = CreateCanvasPrefab(scaler => SetUiProperty(scaler, "dynamicPixelsPerUnit", 2f));

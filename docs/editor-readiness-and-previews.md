@@ -96,7 +96,8 @@ Size policies are also supported; physical sizing reports the Editor's DPI or
 the configured fallback, rather than claiming to emulate a target device.
 
 Parent RectTransform anchors, offsets, rotation and scale are copied into an
-owned hierarchy, along with CanvasGroup and built-in RectMask2D presentation.
+owned hierarchy, along with nested Canvas sorting/clipping boundaries,
+CanvasGroup and built-in RectMask2D presentation.
 This is a snapshot, not a clone of the scene: parent scripts, layout controllers,
 sibling objects, parent visuals and stencil Mask graphics are omitted and their
 component types are reported. Safe Area and sibling-dependent layout are not

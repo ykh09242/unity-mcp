@@ -113,7 +113,7 @@ namespace MCPForUnity.Editor.Tools
             canvas.worldCamera = camera;
             canvas.scaleFactor = scale;
             canvas.referencePixelsPerUnit = pixelsPerUnit;
-            foreach (var childCanvas in instance.GetComponentsInChildren<Canvas>(true))
+            foreach (var childCanvas in canvas.GetComponentsInChildren<Canvas>(true))
                 childCanvas.worldCamera = camera;
             if (projectedWorldCanvas)
                 limitations.Add("The authored World Space Canvas is projected into a screen-space preview; scene camera placement is not reproduced.");
@@ -161,7 +161,7 @@ namespace MCPForUnity.Editor.Tools
             metadata["parent_layout"] = "rect_transform_snapshot";
             metadata["omitted_parent_components"] = new JArray(omitted);
             limitations.Add(
-                "Parent context uses current RectTransform, CanvasGroup and RectMask2D snapshots. Siblings, parent visuals, layout controllers and scripts are not cloned; runtime Safe Area and sibling-dependent layout are not recomputed for the output resolution."
+                "Parent context uses current RectTransform, nested Canvas, CanvasGroup and RectMask2D snapshots. Siblings, parent visuals, layout controllers and scripts are not cloned; runtime Safe Area and sibling-dependent layout are not recomputed for the output resolution."
             );
             if (omitted.Count > 0)
                 limitations.Add("Omitted parent components: " + string.Join(", ", omitted) + ".");
@@ -177,9 +177,22 @@ namespace MCPForUnity.Editor.Tools
                     omitted.Add("Missing script");
                     continue;
                 }
-                if (component is Transform || component is Canvas || component is Behaviour behaviour && IsCanvasScaler(behaviour))
+                if (component is Transform || component is Behaviour behaviour && IsCanvasScaler(behaviour))
                     continue;
-                if (component is CanvasGroup group)
+                if (component is Canvas sourceCanvas)
+                {
+                    if (destination.GetComponent<Canvas>() != null)
+                        continue; // The owned root is configured from the selected scaling policy.
+                    var copy = destination.AddComponent<Canvas>();
+                    copy.overrideSorting = sourceCanvas.overrideSorting;
+                    copy.sortingLayerID = sourceCanvas.sortingLayerID;
+                    copy.sortingOrder = sourceCanvas.sortingOrder;
+                    copy.overridePixelPerfect = sourceCanvas.overridePixelPerfect;
+                    copy.pixelPerfect = sourceCanvas.pixelPerfect;
+                    copy.additionalShaderChannels = sourceCanvas.additionalShaderChannels;
+                    copy.enabled = sourceCanvas.enabled;
+                }
+                else if (component is CanvasGroup group)
                 {
                     var copy = destination.AddComponent<CanvasGroup>();
                     copy.alpha = group.alpha;
