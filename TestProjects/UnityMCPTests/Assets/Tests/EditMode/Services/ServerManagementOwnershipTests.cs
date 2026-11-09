@@ -106,6 +106,83 @@ namespace MCPForUnityTests.Editor.Services
             Assert.AreEqual(0, _terminator.Calls);
             Assert.IsTrue(_pids.TryGetHandshake(out _, out _));
             StringAssert.Contains("connected or connecting Unity sessions", _service.LastStopFailure);
+            StringAssert.Contains("retry Stop Server in this editor", _service.LastStopFailure);
+
+            // Once the peer disconnects, the same owner can retry without relaunching.
+            _shutdownStatus = 200;
+            Assert.IsTrue(_service.StopLocalHttpServer());
+            Assert.AreEqual(2, _requests);
+            Assert.IsTrue(_pids.TryGetHandshake(out _, out _));
+            Assert.AreEqual(0, _terminator.Calls);
+        }
+
+        [Test]
+        public void Stop_ExitedContenderDoesNotReportForeignListenerShutdown()
+        {
+            // This project's competing launch exited; a different project won the port.
+            File.WriteAllText(_pidPath, LauncherPid.ToString());
+            _pids.StoreOwnedLaunchProcess(LauncherPid, Port, InstanceToken);
+            _detector.ExistsByPid[LauncherPid] = false;
+
+            Assert.IsFalse(_service.StopLocalHttpServer(), "An exited contender must not report the winning server's shutdown as requested.");
+
+            Assert.IsTrue(_detector.Listening);
+            Assert.AreEqual(0, _requests);
+            Assert.AreEqual(0, _terminator.Calls);
+            Assert.IsFalse(_pids.TryGetHandshake(out _, out _));
+            Assert.IsFalse(File.Exists(_pidPath));
+            StringAssert.Contains("another process", _service.LastStopFailure);
+            StringAssert.Contains("owning editor", _service.LastStopFailure);
+        }
+
+        [Test]
+        public void Stop_RecreatedOwnerRecoversAfterCompetingProjectClearsTracking()
+        {
+            _shutdownStatus = 409;
+            Assert.IsFalse(_service.StopLocalHttpServer());
+
+            var peerPids = new PidFileManager(Path.Combine(_root, "peer-project"));
+            try
+            {
+                string peerPath = peerPids.GetPidFilePath(Port);
+                File.WriteAllText(peerPath, LauncherPid.ToString());
+                peerPids.StoreHandshake(peerPath, "other-project-launch");
+                peerPids.StoreOwnedLaunchProcess(LauncherPid, Port, "other-project-launch");
+                _detector.ExistsByPid[LauncherPid] = false;
+                var peerService = new ServerManagementService(
+                    _detector,
+                    peerPids,
+                    _terminator,
+                    shutdownRequester: (_, _) => throw new AssertionException("The peer must never request the winning server's shutdown.")
+                );
+                Assert.IsFalse(peerService.StopLocalHttpServer());
+                Assert.IsFalse(peerPids.TryGetHandshake(out _, out _));
+
+                // Reopening the owning project constructs fresh services; no new launch
+                // or in-memory reference is needed to recover its persisted handshake.
+                _pids = new PidFileManager(_root);
+                _service = new ServerManagementService(
+                    _detector,
+                    _pids,
+                    _terminator,
+                    shutdownRequester: (_, token) =>
+                    {
+                        Assert.AreEqual(InstanceToken, token);
+                        _requests++;
+                        _detector.Listening = false;
+                        return (true, null);
+                    }
+                );
+                AssertOriginalOwnership();
+                Assert.IsTrue(_service.StopLocalHttpServer());
+                Assert.AreEqual(2, _requests);
+                Assert.IsFalse(_pids.TryGetHandshake(out _, out _));
+                Assert.AreEqual(0, _terminator.Calls);
+            }
+            finally
+            {
+                peerPids.ClearTracking();
+            }
         }
 
         [Test]

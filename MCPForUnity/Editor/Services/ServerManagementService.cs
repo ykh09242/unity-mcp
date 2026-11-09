@@ -718,7 +718,8 @@ namespace MCPForUnity.Editor.Services
                 if (!TryGetLocalHttpServerHandshake(out string pidFilePath, out string instanceToken))
                     return RefuseStop(
                         "This project has no managed launch identity. The server may belong to another project, "
-                            + "a manual launch, or an older package version. Stop it from its owning editor/terminal, then start it here.",
+                            + "a manual launch, or an older package version. End its Unity sessions, then stop it from its owning editor/terminal. "
+                            + "Reopen the owning project if its editor was closed.",
                         quiet
                     );
                 if (!TryGetPortFromPidFilePath(pidFilePath, out int ownedPort) || ownedPort != port)
@@ -727,7 +728,8 @@ namespace MCPForUnity.Editor.Services
                     return RefuseStop("The managed server PID file is unavailable or invalid. Wait for startup to finish and retry.", quiet);
                 if (pid == GetCurrentProcessIdSafe())
                     return RefuseStop("The PID file identifies the Unity Editor; refusing to terminate it.", quiet);
-                if (!GetListeningProcessIdsForPort(port).Contains(pid))
+                var listeningPids = GetListeningProcessIdsForPort(port);
+                if (!listeningPids.Contains(pid))
                 {
                     if (!IsTrackedProcessPossiblyAlive(pid, port, instanceToken, launcher: false))
                     {
@@ -736,6 +738,12 @@ namespace MCPForUnity.Editor.Services
                             DeletePidFile(pidFilePath);
                             ClearLocalServerPidTracking();
                         }
+                        if (listeningPids.Count > 0)
+                            return RefuseStop(
+                                "This project's server process has exited, but another process is listening on this port. "
+                                    + "End its Unity sessions, then use Stop Server in its owning editor. Reopen the owning project if its editor was closed.",
+                                quiet
+                            );
                         return true;
                     }
                     return RefuseStop("The managed PID is no longer the listener. The port may have been reused; stop its owner manually.", quiet);
@@ -824,7 +832,11 @@ namespace MCPForUnity.Editor.Services
                     "This server version does not support atomic shutdown. Stop it from its owning terminal, then restart it with the current package."
                 );
             if (statusCode == 409)
-                return (false, "The server still has connected or connecting Unity sessions. End those sessions before stopping the shared server.");
+                return (
+                    false,
+                    "The server still has connected or connecting Unity sessions. End those sessions, then retry Stop Server in this editor (the owning project). "
+                        + "Reopen this project if its editor was closed; ownership is retained."
+                );
             if (statusCode == 401 || statusCode == 403)
                 return (
                     false,
