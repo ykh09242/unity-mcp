@@ -48,8 +48,13 @@ and generated source facts in the same transaction. Key-based references are
 reanalyzed against the replacement; explicit GUID references and manual
 declarations retain their original identities and can remain dangling.
 
-`diagnostics` accepts `node`, `limit`, and `offset`. Supply the returned `revision`
-for nonzero offsets. It reports unresolved keys, dynamic expressions, ambiguity,
+`diagnostics` accepts `node`, `limit`, and a returned `cursor`. Continue with
+`next_cursor` until it is null; byte admission may shorten a requested page.
+The cursor seeks after the last delivered provider/ordinal and is bound to the
+node, graph revision and authenticated scope. Reusing a cursor repeats that page;
+a changed revision requires restarting. Legacy `offset` access remains supported;
+supply the returned `revision` for nonzero offsets, or switch to its `next_cursor`.
+It reports unresolved keys, dynamic expressions, ambiguity,
 binary serialization, and the coverage of each evidence provider. Every response
 includes `graph_status` with progress, errors, queue state, and freshness. Importing,
 compilation failure, Addressables event-observer errors, journal gaps, unfinished

@@ -1,6 +1,7 @@
 """Derived state and recovery share the graph's identity and SQLite transaction."""
 
 import time
+import json
 from contextlib import contextmanager
 
 import pytest
@@ -22,6 +23,121 @@ def workspace(tmp_path):
     result = GraphWorkspace(store)
     assert result.acquire("worker")
     return result
+
+
+def test_diagnostics_keyset_pages_are_scope_revision_and_owner_bound(workspace, tmp_path):
+    # Given ordered issues spanning provider boundaries.
+    with workspace.store._connect(write=True) as db:
+        db.executemany("INSERT INTO sources VALUES (?,1,1,'{}')", [("alpha",), ("beta",)])
+        db.executemany(
+            "INSERT INTO graph_issues VALUES ('owner',?,?,?)",
+            [
+                (provider, ordinal, json.dumps({"number": index}))
+                for index, (provider, ordinal) in enumerate(
+                    (p, n) for p in ("alpha", "beta") for n in range(3)
+                )
+            ],
+        )
+    first = workspace.diagnostics("owner", limit=2)
+    cursor = first["next_cursor"]
+    # When a continuation is reused, it gives the same next page.
+    second = workspace.diagnostics("owner", cursor=cursor, limit=2)
+    assert workspace.diagnostics("owner", cursor=cursor, limit=2) == second
+    third = workspace.diagnostics("owner", cursor=second["next_cursor"], limit=2)
+    assert [i["number"] for p in (first, second, third) for i in p["issues"]] == list(range(6))
+    assert third["next_cursor"] is None
+    legacy = workspace.diagnostics("owner", offset=2, revision=first["revision"], limit=2)
+    assert legacy["issues"] == second["issues"]
+    # Then a cursor cannot cross owner, database scope, or graph revision.
+    with pytest.raises(ValueError, match="cursor"):
+        workspace.diagnostics("different", cursor=cursor)
+    other = GraphWorkspace(
+        GraphStore.open(tmp_path / "other", GraphScope("other", "editor", "project"))
+    )
+    with pytest.raises(ValueError, match="cursor"):
+        other.diagnostics("owner", cursor=cursor)
+    with workspace.store._connect(write=True) as db:
+        workspace.store._bump(db)
+    with pytest.raises(RevisionConflict):
+        workspace.diagnostics("owner", cursor=cursor)
+
+
+def test_diagnostics_keyset_traversal_has_bounded_sql_work(workspace, monkeypatch):
+    # Given 20,000 diagnostics in an indexed owner/provider/ordinal range.
+    with workspace.store._connect(write=True) as db:
+        db.execute("INSERT INTO sources VALUES ('provider',1,1,'{}')")
+        db.executemany(
+            "INSERT INTO graph_issues VALUES ('owner','provider',?,?)",
+            [(i, json.dumps({"number": i})) for i in range(20000)],
+        )
+    original_connect = workspace.store._connect
+    steps = 0
+
+    def tick():
+        nonlocal steps
+        steps += 1
+        return 0
+
+    @contextmanager
+    def counted_connect(*args, **kwargs):
+        with original_connect(*args, **kwargs) as db:
+            db.set_progress_handler(tick, 1)
+            try:
+                yield db
+            finally:
+                db.set_progress_handler(None, 0)
+
+    monkeypatch.setattr(workspace.store, "_connect", counted_connect)
+    # When traversed completely twice, each page does work proportional to its rows.
+    for _ in range(2):
+        cursor, seen, costs = None, [], []
+        for _ in range(201):
+            steps = 0
+            page = workspace.diagnostics("owner", cursor=cursor, limit=100)
+            costs.append(steps)
+            seen.extend(item["number"] for item in page["issues"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+        assert seen == list(range(20000))
+        # Permit statement preparation and final-page differences, not offset scans.
+        assert max(costs[2:]) < min(costs[2:]) * 2, costs
+
+
+def test_diagnostics_keyset_keeps_long_identifiers_out_of_cursor(workspace):
+    # Given deliverable rows whose owner/provider would overflow a cursor token.
+    owner, provider = "owner" * 1000, "provider" * 1000
+    with workspace.store._connect(write=True) as db:
+        db.execute("INSERT INTO sources VALUES (?,1,1,'{}')", (provider,))
+        db.executemany(
+            "INSERT INTO graph_issues VALUES (?,?,?,'{}')", [(owner, provider, i) for i in range(3)]
+        )
+    # When seeking to the next page, the compact cursor remains reusable.
+    page = workspace.diagnostics(owner, limit=1)
+    assert len(page["next_cursor"]) <= 2048
+    for _ in range(2):
+        page = workspace.diagnostics(owner, limit=1, cursor=page["next_cursor"])
+        assert len(page["issues"]) == 1
+    assert page["next_cursor"] is None
+
+
+def test_diagnostics_cursor_delivery_can_borrow_read_snapshot(workspace):
+    # Given diagnostics delivered inside the service's shared read snapshot.
+    with workspace.store.read_snapshot():
+        # When a page needs cursor encoding, it must not initialize query storage.
+        assert workspace.diagnostics("owner")["next_cursor"] is None
+
+
+def test_diagnostics_cursor_rejects_out_of_range_row_before_sqlite_binding(workspace):
+    from services.reference_graph.queries import decode_cursor, encode_cursor
+
+    with workspace.store._connect(write=True) as db:
+        db.executemany("INSERT INTO graph_issues VALUES ('owner','unity',?,'{}')", [(0,), (1,)])
+    cursor = workspace.diagnostics("owner", limit=1)["next_cursor"]
+    position = decode_cursor(workspace.store.scope.key, cursor)
+    position["row"] = 2**63
+    with pytest.raises(ValueError, match="cursor"):
+        workspace.diagnostics("owner", cursor=encode_cursor(workspace.store.scope.key, position))
 
 
 def row(guid="a" * 32, path="Assets/Resources/Fixture.prefab"):

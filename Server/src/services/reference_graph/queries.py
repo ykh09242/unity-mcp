@@ -39,6 +39,24 @@ _SELECT = """SELECT e.*,o.state,n.present,n.path AS target_path,src.path AS sour
  AND """
 
 
+def encode_cursor(scope: str, value: dict) -> str:
+    """Encode scoped continuation metadata without opening query storage."""
+    return base64.urlsafe_b64encode(_json({"scope": scope, **value}).encode()).decode()
+
+
+def decode_cursor(scope: str, cursor: str) -> dict:
+    """Reject malformed or cross-scope continuations before using their anchors."""
+    try:
+        if not isinstance(cursor, str) or len(cursor) > 2048:
+            raise ValueError("Invalid cursor")
+        data = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
+        if not isinstance(data, dict) or data.get("scope") != scope:
+            raise ValueError("Cursor belongs to another scope")
+        return data
+    except (ValueError, TypeError, UnicodeError) as error:
+        raise ValueError("Invalid graph query cursor") from error
+
+
 class GraphQueries:
     def __init__(self, store: GraphStore):
         self.store = store
@@ -114,20 +132,10 @@ class GraphQueries:
         }
 
     def _encode(self, value: dict) -> str:
-        return base64.urlsafe_b64encode(
-            _json({"scope": self.store.scope.key, **value}).encode()
-        ).decode()
+        return encode_cursor(self.store.scope.key, value)
 
     def _decode(self, cursor: str) -> dict:
-        try:
-            if not isinstance(cursor, str) or len(cursor) > 2048:
-                raise ValueError("Invalid cursor")
-            data = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
-            if not isinstance(data, dict) or data.get("scope") != self.store.scope.key:
-                raise ValueError("Cursor belongs to another scope")
-            return data
-        except (ValueError, TypeError, UnicodeError) as error:
-            raise ValueError("Invalid graph query cursor") from error
+        return decode_cursor(self.store.scope.key, cursor)
 
     def _job(self, connection, kind: str, parameters: dict, cursor: str | None) -> tuple:
         revision = self._revision(connection)

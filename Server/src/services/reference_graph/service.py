@@ -1058,7 +1058,7 @@ class ReferenceGraphService:
             "status": set(),
             "sync": {"force"},
             "query": {"node", "direction", "limit", "cursor", "consistency"},
-            "diagnostics": {"node", "offset", "limit", "revision", "consistency"},
+            "diagnostics": {"node", "offset", "limit", "revision", "cursor", "consistency"},
             "explain": {"id", "consistency"},
             "impact": {"node", "direction", "limit", "cursor", "max_depth", "consistency"},
             "path": {"node", "target", "direction", "limit", "cursor", "consistency"},

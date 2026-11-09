@@ -405,7 +405,10 @@ async def test_authorization_metadata_is_complete_or_byte_bounded_failure(setup,
 
 
 @pytest.mark.asyncio
-async def test_diagnostics_byte_offsets_and_response_metadata_are_bounded(setup, monkeypatch):
+@pytest.mark.parametrize("continuation", ["offset", "cursor"])
+async def test_diagnostics_byte_offsets_and_response_metadata_are_bounded(
+    setup, monkeypatch, continuation
+):
     service, ctx = setup
     try:
         # Given diagnostic payloads and response metadata backed by real SQLite rows.
@@ -431,7 +434,10 @@ async def test_diagnostics_byte_offsets_and_response_metadata_are_bounded(setup,
             issues.extend(page["issues"])
             if page["next_offset"] is None:
                 break
-            options.update(offset=page["next_offset"], revision=page["revision"])
+            if continuation == "offset":
+                options.update(offset=page["next_offset"], revision=page["revision"])
+            else:
+                options.update(cursor=page["next_cursor"])
         else:
             pytest.fail("Diagnostic byte pages did not finish")
         assert [item["ordinal"] for item in issues] == list(range(4))

@@ -1642,8 +1642,16 @@ class GraphWorkspace:
             connection.execute("DELETE FROM graph_changed_inputs")
 
     def diagnostics(
-        self, owner: str, *, offset: int = 0, limit: int = 100, revision: int | None = None
+        self,
+        owner: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        revision: int | None = None,
+        cursor: str | None = None,
     ) -> dict:
+        from services.reference_graph.queries import decode_cursor, encode_cursor
+
         if (
             type(offset) is not int
             or offset < 0
@@ -1651,10 +1659,29 @@ class GraphWorkspace:
             or not 1 <= limit <= 1000
         ):
             raise ValueError("Use nonnegative offset and page size from 1 to 1000")
+        position = None
+        if cursor is not None:
+            position = decode_cursor(self.store.scope.key, cursor)
+            if (
+                offset
+                or position.get("kind") != "diagnostics"
+                or position.get("owner") != _hash(owner)
+                or type(position.get("revision")) is not int
+                or type(position.get("row")) is not int
+                or not 0 < position["row"] < 2**63
+                or not isinstance(position.get("anchor"), str)
+                or type(position.get("offset")) is not int
+                or position["offset"] < 0
+            ):
+                raise ValueError("Invalid diagnostics cursor; retain its original node")
         with self.store._connect() as connection:
             current = connection.execute("SELECT revision FROM graph_meta").fetchone()[0]
-            if (offset and revision is None) or (revision is not None and revision != current):
-                raise RevisionConflict("Diagnostics changed; restart with offset zero")
+            if (
+                (offset and revision is None)
+                or (revision is not None and revision != current)
+                or (position is not None and position["revision"] != current)
+            ):
+                raise RevisionConflict("Diagnostics changed; restart from the first page")
             if connection.execute(
                 "SELECT 1 FROM graph_excluded_nodes WHERE id=?", (owner,)
             ).fetchone():
@@ -1663,15 +1690,31 @@ class GraphWorkspace:
                     "coverage": [],
                     "issues": [],
                     "next_offset": None,
+                    "next_cursor": None,
                     "excluded": True,
                     "reason": "excluded_by_collection_policy",
                 }
-            rows = bounded_rows(
-                connection,
-                "SELECT i.provider,i.payload FROM graph_issues i JOIN sources s USING(provider) WHERE i.owner=? AND s.enabled=1 ORDER BY i.provider,i.ordinal LIMIT ? OFFSET ?",
-                (owner, limit + 1, offset),
-            )
-            issues, budget, more = [], PageBudget(), False
+            statement = "SELECT i.rowid AS cursor_row,i.provider,i.ordinal,i.payload FROM graph_issues i JOIN sources s USING(provider) WHERE i.owner=? AND s.enabled=1"
+            parameters = [owner]
+            if position is not None:
+                anchor_row = connection.execute(
+                    "SELECT provider,ordinal FROM graph_issues WHERE rowid=? AND owner=?",
+                    (position["row"], owner),
+                ).fetchone()
+                if anchor_row is None or _hash(list(anchor_row)) != position["anchor"]:
+                    raise ValueError(
+                        "Invalid diagnostics cursor anchor; restart from the first page"
+                    )
+                statement += " AND (i.provider,i.ordinal)>(?,?)"
+                parameters.extend(anchor_row)
+                offset = position["offset"]
+            statement += " ORDER BY i.provider,i.ordinal LIMIT ?"
+            parameters.append(limit + 1)
+            if position is None and offset:
+                statement += " OFFSET ?"
+                parameters.append(offset)
+            rows = bounded_rows(connection, statement, tuple(parameters))
+            issues, budget, more, anchor = [], PageBudget(), False, None
             for row in rows:
                 if len(issues) == limit or not budget.admit(row):
                     more = True
@@ -1683,6 +1726,9 @@ class GraphWorkspace:
                     issue.pop("key")
                     issue["key_redacted"] = True
                 issues.append({"provider": provider, **issue})
+                # Keep potentially long IDs out of the bounded cursor. Revision
+                # and digest fences reject deleted, moved or reused row anchors.
+                anchor = {"row": row["cursor_row"], "anchor": _hash([provider, row["ordinal"]])}
             rows.close()
             coverage, coverage_budget = [], PageBudget()
             for row in bounded_rows(
@@ -1710,6 +1756,18 @@ class GraphWorkspace:
                 "coverage": coverage,
                 "issues": issues,
                 "next_offset": offset + len(issues) if more else None,
+                "next_cursor": encode_cursor(
+                    self.store.scope.key,
+                    {
+                        "kind": "diagnostics",
+                        "owner": _hash(owner),
+                        "revision": current,
+                        "offset": offset + len(issues),
+                        **anchor,
+                    },
+                )
+                if more
+                else None,
             }
 
     def counts(self) -> dict:
