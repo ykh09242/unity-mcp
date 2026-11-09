@@ -64,7 +64,7 @@ intersections. Runtime validation uses the same action rules.
 
 ## Prefab capture
 
-`capture_prefab(prefab_path, width=1024, height=1024)` returns a PNG image and
+`capture_prefab(prefab_path, width=1024, height=1024, ui_parent=None)` returns a PNG image and
 metadata. Paths must name `.prefab` assets under `Assets/` or `Packages/`;
 width and height are integer pixels in 64..2048. A graphics-capable Editor in
 Edit Mode is required. Remote scoped callers need edit permission because
@@ -80,6 +80,38 @@ The capture is static and is not an in-game
 screenshot. Runtime initialization, animation and localization systems are not
 assumed or invoked. Project edit-time callbacks can still execute on the clone.
 A failed capture is not automatically replayed.
+
+For a UI panel that normally lives under a scene Canvas, resolve its intended
+parent with `find_gameobjects` in the same Unity instance, then pass that
+GameObject's integer instance ID as `ui_parent`. The parent may be the Canvas
+itself or a RectTransform container beneath it. It must be active, in a loaded
+ordinary scene, and under an enabled screen-space root Canvas. Stale IDs, assets,
+components, prefab/preview stages and world-space contexts are rejected.
+
+The selected parent's root Canvas policy takes precedence over the prefab's
+CanvasScaler. Scale With Screen Size is recalculated from the requested output
+width/height, reference resolution and Match/Expand/Shrink settings; the current
+Game View scale factor is not reused. Constant Pixel Size and Constant Physical
+Size policies are also supported; physical sizing reports the Editor's DPI or
+the configured fallback, rather than claiming to emulate a target device.
+
+Parent RectTransform anchors, offsets, rotation and scale are copied into an
+owned hierarchy, along with CanvasGroup and built-in RectMask2D presentation.
+This is a snapshot, not a clone of the scene: parent scripts, layout controllers,
+sibling objects, parent visuals and stencil Mask graphics are omitted and their
+component types are reported. Safe Area and sibling-dependent layout are not
+recomputed. A prefab with a root Canvas fills the selected parent; a Canvas-less
+prefab retains its authored root placement beneath that parent. The source
+hierarchy is never reparented and its CanvasScaler is never disabled.
+
+Without `ui_parent`, an authored root Canvas supplies its own policy. A
+Canvas-less prefab uses a warned 1x preview. The returned `data.ui_context`
+identifies `scene_parent`, `prefab_canvas` or `default_canvas`, the full-viewport
+framing, effective scale and pixel density, and applicable reference resolution,
+match policy, parent identity and snapshot limitations. Read this metadata and
+`limitations` alongside the image before assessing placement or clipping. A 3D
+capture has `ui_context: null` and keeps renderer-bounds framing. Use a running
+Game View and interaction checks to validate button actions or runtime layout.
 
 ## Validation reports
 

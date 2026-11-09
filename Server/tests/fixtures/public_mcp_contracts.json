@@ -2187,6 +2187,19 @@
                 "minLength": 1,
                 "type": "string"
               },
+              "ui_parent": {
+                "anyOf": [
+                  {
+                    "maximum": 2147483647,
+                    "minimum": -2147483648,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "unity_instance": {
                 "anyOf": [
                   {
@@ -27719,6 +27732,19 @@
                 "maxLength": 4096,
                 "minLength": 1,
                 "type": "string"
+              },
+              "ui_parent": {
+                "anyOf": [
+                  {
+                    "maximum": 2147483647,
+                    "minimum": -2147483648,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "unity_instance": {
                 "anyOf": [

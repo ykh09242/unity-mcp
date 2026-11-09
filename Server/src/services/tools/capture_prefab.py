@@ -21,6 +21,9 @@ from transport.unity_transport import send_with_unity_instance
     description=(
         "Render a prefab asset to PNG in an isolated preview scene, then clean up. "
         "Supports root RectTransform UI and front-view renderer bounds. Edit Mode and graphics required. "
+        "For UI without its own Canvas, pass ui_parent from find_gameobjects to use that scene parent's "
+        "Canvas scaling policy at the requested resolution and a static parent layout snapshot. "
+        "Returns ui_context provenance and limitations alongside the image; no parent means authored Canvas or a warned 1x fallback. "
         "Does not save the prefab, initialize gameplay, animate or switch locales. Edit-time callbacks may execute."
     ),
     annotations=ToolAnnotations(title="Capture Prefab", readOnlyHint=False, destructiveHint=False),
@@ -37,6 +40,19 @@ async def capture_prefab(
     ],
     width: Annotated[int, Field(strict=True, ge=64, le=2048)] = 1024,
     height: Annotated[int, Field(strict=True, ge=64, le=2048)] = 1024,
+    ui_parent: Annotated[
+        int | None,
+        Field(
+            strict=True,
+            ge=-2147483648,
+            le=2147483647,
+            description=(
+                "Optional nonzero GameObject instance ID of an active scene Canvas or RectTransform "
+                "under a screen-space Canvas. Overrides the prefab Canvas policy. Parent scripts, "
+                "siblings and dynamic layout/Safe Area logic are not executed. Resolve in the same Unity instance."
+            ),
+        ),
+    ] = None,
 ) -> ToolResult | dict:
     if (
         not isinstance(prefab_path, str)
@@ -48,15 +64,25 @@ async def capture_prefab(
         or any(type(value) is not int or not 64 <= value <= 2048 for value in (width, height))
     ):
         return {"success": False, "error": "Invalid prefab path or capture dimensions."}
+    if ui_parent is not None and (
+        type(ui_parent) is not int or ui_parent == 0 or not -2147483648 <= ui_parent <= 2147483647
+    ):
+        return {
+            "success": False,
+            "error": "ui_parent must be a nonzero signed 32-bit GameObject ID.",
+        }
     blocked = await preflight(ctx, wait_for_no_compile=True)
     if blocked is not None:
         return blocked.model_dump()
     instance = await get_unity_instance_from_context(ctx)
+    parameters = {"prefab_path": prefab_path, "width": width, "height": height}
+    if ui_parent is not None:
+        parameters["ui_parent"] = ui_parent
     response = await send_with_unity_instance(
         async_send_command_with_retry,
         instance,
         "capture_prefab",
-        {"prefab_path": prefab_path, "width": width, "height": height},
+        parameters,
         retry_on_reload=False,
     )
     response = response.model_dump() if isinstance(response, MCPResponse) else response
