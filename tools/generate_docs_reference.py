@@ -46,6 +46,8 @@ from pathlib import Path
 from types import GenericAlias, ModuleType, UnionType
 from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
+from fastmcp import Context
+
 if __package__:
     from .cli_reference import prepare_cli_reference
     from .public_contracts import CONTRACT_OUT, public_contract_drift, render_public_contracts
@@ -235,6 +237,11 @@ def introspect_params(func: Any) -> list[ParamDoc]:
         if name in {"self", "cls", "ctx"}:
             continue
         annotation = hints.get(name, param.annotation)
+        injected_type = annotation
+        while get_origin(injected_type) is Annotated:
+            injected_type = get_args(injected_type)[0]
+        if injected_type is Context:
+            continue
         out.append(
             ParamDoc(
                 name=name,

@@ -108,9 +108,6 @@ Documentation for GameObject resources. Use find_gameobjects tool to get instanc
 
 URI: mcpforunity://scene/gameobject-api
 
-**Parameters:**
-
-- `_ctx` (`Context`, required)
 
 ## `gameobject_by_handle`
 
@@ -213,9 +210,6 @@ Documentation for Prefab resources. Use asset_inspect action=search filter_type=
 
 URI: mcpforunity://prefab-api
 
-**Parameters:**
-
-- `_ctx` (`Context`, required)
 
 ## `prefab_hierarchy`
 

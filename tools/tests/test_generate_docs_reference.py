@@ -6,6 +6,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Annotated, Union
 
 import pytest
+from fastmcp import Context
 from pydantic import BeforeValidator, Field
 
 _TOOLS_DIR = Path(__file__).resolve().parents[1]
@@ -14,6 +15,14 @@ if str(_TOOLS_DIR) not in sys.path:
 
 import generate_docs_reference as docs  # noqa: E402
 from generate_docs_reference import _annotation_description, _diff_trees, _render_type  # noqa: E402
+
+
+@pytest.mark.parametrize("annotation", [Context, Annotated[Context, "Injected context"]])
+def test_resource_parameters_hide_context_by_annotation(annotation):
+    def resource(_ctx: annotation, uri: str) -> None:
+        pass
+
+    assert [parameter.name for parameter in docs.introspect_params(resource)] == ["uri"]
 
 
 @pytest.fixture(autouse=True)
