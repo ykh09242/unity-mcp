@@ -149,6 +149,94 @@ namespace MCPForUnityTests.Editor.Services
             return ServiceField.GetValue(null) as TestRunnerService;
         }
 
+        [TestCase("depth")]
+        [TestCase("visits")]
+        [TestCase("elapsed")]
+        [TestCase("adaptor_error")]
+        public void RunStartedProgressBudgetExhaustionKeepsRunObservable(string budget)
+        {
+            var job = AddJob();
+            job.AwaitingReloadResume = true;
+            var service = RestoreCallbacks();
+            int visits = 0;
+            double clock = 0;
+            var clockField = typeof(TestRunnerService).GetField("ProgressClockForTests", PrivateStatic);
+            object oldClock = clockField?.GetValue(null);
+            clockField?.SetValue(null, (Func<double>)(() => clock));
+            var leaf = new TestStub("Leaf", false, "leaf", "leaf") { Visit = () => visits++ };
+            var root = new TestStub("Root", true, "root", "root");
+            bool disposed = false;
+            IEnumerable<ITestAdaptor> ManyChildren()
+            {
+                try
+                {
+                    for (int i = 0; i < 30000; i++)
+                        yield return leaf;
+                }
+                finally
+                {
+                    disposed = true;
+                }
+            }
+            root.Children = new[] { leaf };
+            if (budget == "depth")
+            {
+                // A finite 512-level baseline is safe even before the recursive counter is fixed.
+                ITestAdaptor node = leaf;
+                for (int i = 0; i < 512; i++)
+                    node = new TestStub("Nested", true, "nested", "nested") { Children = new[] { node }, Visit = () => visits++ };
+                root.Children = new[] { node };
+            }
+            else if (budget == "visits")
+                root.Children = ManyChildren();
+            else if (budget == "elapsed")
+                root.Visit = () => clock = 1;
+            else
+                leaf.Visit = () => throw new InvalidOperationException("Adaptor no longer available.");
+            try
+            {
+                service.RunStarted(root);
+                Assert.IsNull(job.TotalTests, "A partial count must never be published as a known total.");
+                Assert.IsFalse(job.AwaitingReloadResume);
+                Assert.AreEqual(TestJobStatus.Running, job.Status);
+                Assert.LessOrEqual(visits, 10000, "The callback must stop traversing before an entire large/deep tree is consumed.");
+                if (budget == "visits")
+                    Assert.IsTrue(disposed, "Budget exhaustion must dispose retained enumerators.");
+                var completed = new ResultStub("Fixture.Completed", "Passed");
+                service.TestStarted(completed.Test);
+                service.TestFinished(completed);
+                service.RunFinished(ResultStub.Suite(completed));
+                Assert.AreEqual(TestJobStatus.Succeeded, job.Status);
+                Assert.AreEqual(1, job.RetainedSummary.Passed);
+                Assert.AreEqual(1, job.Result.Results.Count, "Progress counting must not truncate the independent terminal result capture.");
+            }
+            finally
+            {
+                clockField?.SetValue(null, oldClock);
+            }
+        }
+
+        [Test]
+        public void RunStartedCountsOnlyLeavesWithinBudgetAndKeepsResultCapture()
+        {
+            var job = AddJob();
+            var service = RestoreCallbacks();
+            var first = new ResultStub("Fixture.First", "Passed");
+            var second = new ResultStub("Fixture.Second", "Passed");
+            var root = new TestStub("Root", true, "root", "root")
+            {
+                Children = new[] { new TestStub("EmptySuite", true, "empty", "empty"), first.Test, second.Test },
+            };
+            service.RunStarted(root);
+            Assert.AreEqual(2, job.TotalTests);
+            service.TestFinished(first);
+            service.TestFinished(second);
+            service.RunFinished(ResultStub.Suite(first, second));
+            Assert.AreEqual(TestJobStatus.Succeeded, job.Status);
+            Assert.AreEqual(2, job.RetainedSummary.Passed);
+            Assert.AreEqual(2, job.Result.Results.Count);
+        }
+
         [Test]
         public void RestoreRunningJob_RecreatesLazyServiceOnce_WithoutRestartingRun()
         {
@@ -1015,9 +1103,17 @@ namespace MCPForUnityTests.Editor.Services
             public string Name { get; }
             public string FullName => Name;
             public int TestCaseCount => IsSuite ? 0 : 1;
-            public bool HasChildren => false;
+            public Action Visit { get; set; }
+            public bool HasChildren
+            {
+                get
+                {
+                    Visit?.Invoke();
+                    return Children?.Any() ?? false;
+                }
+            }
             public bool IsSuite { get; }
-            public IEnumerable<ITestAdaptor> Children => Array.Empty<ITestAdaptor>();
+            public IEnumerable<ITestAdaptor> Children { get; set; } = Array.Empty<ITestAdaptor>();
             public ITestAdaptor Parent => null;
             public int TestCaseTimeout => 0;
             public ITypeInfo TypeInfo => null;

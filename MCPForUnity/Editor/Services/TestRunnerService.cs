@@ -23,6 +23,10 @@ namespace MCPForUnity.Editor.Services
     {
         private static readonly TestMode[] AllModes = { TestMode.EditMode, TestMode.PlayMode };
         internal static Func<ExecutionSettings, string> ExecuteForTests = null;
+        internal static Func<double> ProgressClockForTests = null;
+        private const int ProgressVisitLimit = 10000;
+        private const int ProgressDepthLimit = 256;
+        private const double ProgressSecondsLimit = 0.02;
 
         private readonly TestRunnerApi _testRunnerApi;
         private readonly Action<TestMode, Action<ITestAdaptor>> _retrieveTestList;
@@ -629,33 +633,71 @@ namespace MCPForUnity.Editor.Services
 
         #endregion
 
-        private static int CountLeafTests(ITestAdaptor node)
+        private static int? CountLeafTests(ITestAdaptor node)
         {
             if (node == null)
-            {
-                return 0;
-            }
-
-            if (!node.HasChildren)
-            {
-                return 1;
-            }
-
+                return null;
+            double Now() => ProgressClockForTests?.Invoke() ?? (double)System.Diagnostics.Stopwatch.GetTimestamp() / System.Diagnostics.Stopwatch.Frequency;
+            double started = Now();
+            int visits = 0,
+                steps = 0,
+                depth = 0;
             int total = 0;
+            // Keep one enumerator per depth; never materialize an unbounded child sequence.
+            var pending = new Stack<(IEnumerator<ITestAdaptor> Children, int Depth)>();
             try
             {
-                foreach (var child in node.Children)
+                while (true)
                 {
-                    total += CountLeafTests(child);
+                    // Steps also bound null children and empty suites. A single adaptor call
+                    // cannot be preempted, so recheck elapsed time after reading it as well.
+                    if (++steps > ProgressVisitLimit * 2 || Now() - started >= ProgressSecondsLimit)
+                        return null;
+                    if (node != null)
+                    {
+                        if (++visits > ProgressVisitLimit || depth > ProgressDepthLimit)
+                            return null;
+                        if (node.HasChildren)
+                        {
+                            var children = node.Children;
+                            if (children == null)
+                                return null;
+                            pending.Push((children.GetEnumerator(), depth + 1));
+                        }
+                        else if (!node.IsSuite)
+                            total++;
+                        node = null;
+                    }
+                    if (Now() - started >= ProgressSecondsLimit)
+                        return null;
+                    if (pending.Count == 0)
+                        return total;
+                    var frame = pending.Peek();
+                    if (frame.Children.MoveNext())
+                    {
+                        node = frame.Children.Current;
+                        depth = frame.Depth;
+                    }
+                    else
+                        pending.Pop().Children.Dispose();
                 }
             }
             catch
             {
-                // If Unity changes the adaptor behavior, treat it as "unknown total".
-                return 0;
+                // Progress is optional; an unavailable adaptor does not invalidate result capture.
+                return null;
             }
-
-            return total;
+            finally
+            {
+                while (pending.Count > 0)
+                {
+                    try
+                    {
+                        pending.Pop().Children?.Dispose();
+                    }
+                    catch { /* Progress cleanup must not escape the native callback. */ }
+                }
+            }
         }
 
         private static void SaveDirtyScenesIfNeeded()
