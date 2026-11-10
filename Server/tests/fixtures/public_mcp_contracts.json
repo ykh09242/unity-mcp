@@ -7617,106 +7617,57 @@
                 "default": null,
                 "properties": {
                   "compression_format": {
-                    "anyOf": [
-                      {
-                        "enum": [
-                          "PCM",
-                          "Vorbis",
-                          "ADPCM",
-                          "MP3",
-                          "VAG",
-                          "HEVAG",
-                          "AAC",
-                          "GCADPCM",
-                          "ATRAC9"
-                        ],
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "default": null,
+                    "enum": [
+                      "PCM",
+                      "Vorbis",
+                      "ADPCM",
+                      "MP3",
+                      "VAG",
+                      "HEVAG",
+                      "AAC",
+                      "GCADPCM",
+                      "ATRAC9"
                     ],
-                    "default": null
+                    "type": "string"
                   },
                   "force_to_mono": {
-                    "anyOf": [
-                      {
-                        "type": "boolean"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null
+                    "default": null,
+                    "type": "boolean"
                   },
                   "load_in_background": {
-                    "anyOf": [
-                      {
-                        "type": "boolean"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null
+                    "default": null,
+                    "type": "boolean"
                   },
                   "load_type": {
-                    "anyOf": [
-                      {
-                        "enum": [
-                          "DecompressOnLoad",
-                          "CompressedInMemory",
-                          "Streaming"
-                        ],
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "default": null,
+                    "enum": [
+                      "DecompressOnLoad",
+                      "CompressedInMemory",
+                      "Streaming"
                     ],
-                    "default": null
+                    "type": "string"
                   },
                   "quality": {
-                    "anyOf": [
-                      {
-                        "maximum": 1,
-                        "minimum": 0,
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null
+                    "default": null,
+                    "maximum": 1,
+                    "minimum": 0,
+                    "type": "number"
                   },
                   "sample_rate_override": {
-                    "anyOf": [
-                      {
-                        "maximum": 192000,
-                        "minimum": 8000,
-                        "type": "integer"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null
+                    "default": null,
+                    "maximum": 192000,
+                    "minimum": 8000,
+                    "type": "integer"
                   },
                   "sample_rate_setting": {
-                    "anyOf": [
-                      {
-                        "enum": [
-                          "PreserveSampleRate",
-                          "OptimizeSampleRate",
-                          "OverrideSampleRate"
-                        ],
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "default": null,
+                    "enum": [
+                      "PreserveSampleRate",
+                      "OptimizeSampleRate",
+                      "OverrideSampleRate"
                     ],
-                    "default": null
+                    "type": "string"
                   }
                 },
                 "type": "object"
@@ -33197,106 +33148,57 @@
                 "default": null,
                 "properties": {
                   "compression_format": {
-                    "anyOf": [
-                      {
-                        "enum": [
-                          "PCM",
-                          "Vorbis",
-                          "ADPCM",
-                          "MP3",
-                          "VAG",
-                          "HEVAG",
-                          "AAC",
-                          "GCADPCM",
-                          "ATRAC9"
-                        ],
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "default": null,
+                    "enum": [
+                      "PCM",
+                      "Vorbis",
+                      "ADPCM",
+                      "MP3",
+                      "VAG",
+                      "HEVAG",
+                      "AAC",
+                      "GCADPCM",
+                      "ATRAC9"
                     ],
-                    "default": null
+                    "type": "string"
                   },
                   "force_to_mono": {
-                    "anyOf": [
-                      {
-                        "type": "boolean"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null
+                    "default": null,
+                    "type": "boolean"
                   },
                   "load_in_background": {
-                    "anyOf": [
-                      {
-                        "type": "boolean"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null
+                    "default": null,
+                    "type": "boolean"
                   },
                   "load_type": {
-                    "anyOf": [
-                      {
-                        "enum": [
-                          "DecompressOnLoad",
-                          "CompressedInMemory",
-                          "Streaming"
-                        ],
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "default": null,
+                    "enum": [
+                      "DecompressOnLoad",
+                      "CompressedInMemory",
+                      "Streaming"
                     ],
-                    "default": null
+                    "type": "string"
                   },
                   "quality": {
-                    "anyOf": [
-                      {
-                        "maximum": 1,
-                        "minimum": 0,
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null
+                    "default": null,
+                    "maximum": 1,
+                    "minimum": 0,
+                    "type": "number"
                   },
                   "sample_rate_override": {
-                    "anyOf": [
-                      {
-                        "maximum": 192000,
-                        "minimum": 8000,
-                        "type": "integer"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null
+                    "default": null,
+                    "maximum": 192000,
+                    "minimum": 8000,
+                    "type": "integer"
                   },
                   "sample_rate_setting": {
-                    "anyOf": [
-                      {
-                        "enum": [
-                          "PreserveSampleRate",
-                          "OptimizeSampleRate",
-                          "OverrideSampleRate"
-                        ],
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "default": null,
+                    "enum": [
+                      "PreserveSampleRate",
+                      "OptimizeSampleRate",
+                      "OverrideSampleRate"
                     ],
-                    "default": null
+                    "type": "string"
                   }
                 },
                 "type": "object"

@@ -13,7 +13,9 @@ from pydantic import (
     StrictBool,
     StrictInt,
     StrictStr,
+    field_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 
 from services.registry import mcp_for_unity_tool
 from services.tools import get_unity_instance_from_context
@@ -26,17 +28,33 @@ class AudioImportPolicy(BaseModel):
     """An explicit patch to one platform's existing sample settings."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    load_type: Literal["DecompressOnLoad", "CompressedInMemory", "Streaming"] | None = None
+    load_type: (
+        Literal["DecompressOnLoad", "CompressedInMemory", "Streaming"] | SkipJsonSchema[None]
+    ) = None
     compression_format: (
-        Literal["PCM", "Vorbis", "ADPCM", "MP3", "VAG", "HEVAG", "AAC", "GCADPCM", "ATRAC9"] | None
+        Literal["PCM", "Vorbis", "ADPCM", "MP3", "VAG", "HEVAG", "AAC", "GCADPCM", "ATRAC9"]
+        | SkipJsonSchema[None]
     ) = None
-    quality: Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)] | None = None
+    quality: (
+        Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)] | SkipJsonSchema[None]
+    ) = None
     sample_rate_setting: (
-        Literal["PreserveSampleRate", "OptimizeSampleRate", "OverrideSampleRate"] | None
+        Literal["PreserveSampleRate", "OptimizeSampleRate", "OverrideSampleRate"]
+        | SkipJsonSchema[None]
     ) = None
-    sample_rate_override: Annotated[int, Field(strict=True, ge=8000, le=192000)] | None = None
-    force_to_mono: StrictBool | None = None
-    load_in_background: StrictBool | None = None
+    sample_rate_override: (
+        Annotated[int, Field(strict=True, ge=8000, le=192000)] | SkipJsonSchema[None]
+    ) = None
+    force_to_mono: StrictBool | SkipJsonSchema[None] = None
+    load_in_background: StrictBool | SkipJsonSchema[None] = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def reject_supplied_null(cls, value: JsonValue) -> JsonValue:
+        """Only omission leaves a sample setting unchanged; supplied null is invalid."""
+        if value is None:
+            raise ValueError("Omit unchanged import settings; supplied null is invalid.")
+        return value
 
 
 def _provided_policy(value: AudioImportPolicy | JsonValue) -> AudioImportPolicy | JsonValue:

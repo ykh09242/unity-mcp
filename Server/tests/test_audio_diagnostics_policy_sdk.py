@@ -34,6 +34,11 @@ def test_audio_diagnostics_policy_sdk_boundary(tmp_path):
                 assert {"action", "target"} == set(schema["required"])
                 assert "diagnose" in schema["properties"]["action"]["enum"]
                 assert not any(part.get("type") == "null" for part in schema["properties"]["settings"].get("anyOf", []))
+                policy = schema["properties"]["settings"]
+                for field in policy["properties"].values():
+                    assert field.get("type") != "null"
+                    assert not any(part.get("type") == "null" for part in field.get("anyOf", []))
+                assert not policy.get("required")
                 for args, route in (
                     ({"action": "diagnose", "target": 42}, "read"),
                     ({"action": "get_routing", "target": "Music", "mixer_path": "Assets/Owned.mixer"}, "read"),
@@ -41,6 +46,7 @@ def test_audio_diagnostics_policy_sdk_boundary(tmp_path):
                     ({"action": "set_routing", "target": 42, "clear_routing": True}, "write"),
                     ({"action": "read_import_settings", "target": "Assets/Owned.wav", "platform": "Standalone"}, "read"),
                     ({"action": "apply_import_settings", "target": "Assets/Owned.wav", "platform": "Standalone", "settings": {"quality": .42, "load_type": "CompressedInMemory"}}, "write"),
+                    ({"action": "apply_import_settings", "target": "Assets/Owned.wav", "settings": {"quality": 0, "force_to_mono": False, "load_in_background": False}}, "write"),
                     ({"action": "apply_import_settings", "target": "Assets/Owned.wav", "platform": "Standalone", "clear_override": True}, "write"),
                 ):
                     result = await client.call_tool("manage_audio", args)
@@ -62,6 +68,17 @@ def test_audio_diagnostics_policy_sdk_boundary(tmp_path):
                         assert type(error).__name__ in ("ToolError", "MCPError", "ValidationError"), error
                     else: assert result.is_error or not result.structured_content["success"], result
                     assert len(sent) == before
+                for name in ("load_type", "compression_format", "quality", "sample_rate_setting", "sample_rate_override", "force_to_mono", "load_in_background"):
+                    before = len(sent)
+                    try:
+                        result = await client.call_tool("manage_audio", {
+                            "action": "apply_import_settings", "target": "Assets/Owned.wav", "settings": {name: None}
+                        })
+                    except Exception as error:
+                        assert type(error).__name__ in ("ToolError", "MCPError", "ValidationError"), error
+                    else:
+                        assert result.is_error, (name, result)
+                    assert len(sent) == before, name
         asyncio.run(main())
     """)
     result = subprocess.run(
