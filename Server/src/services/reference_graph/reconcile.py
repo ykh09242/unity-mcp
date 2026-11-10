@@ -1232,7 +1232,12 @@ class Reconciler:
 
     async def _analysis(self) -> None:
         if time.monotonic() - self._analysis_used > 300:
-            self._analysis_cache = None
+            self._analysis_cache = await drained_thread(
+                analysis_cache.expire,
+                self._analysis_cache,
+                self._check_thread,
+                _cancel_event=self.stopped,
+            )
         rules = await drained_thread(self.store.rules_state)
         rules_changed = rules["revision"] != await drained_thread(
             self.workspace.state, "analyzed_rules_revision", -1

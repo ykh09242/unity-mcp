@@ -2,13 +2,16 @@
 
 import asyncio
 from dataclasses import asdict
+import gc
 import json
 import threading
+import time
+import weakref
 
 import pytest
 
-from services.reference_graph import document_delta
-from services.reference_graph.analysis import parse_csharp
+from services.reference_graph import analysis_cache, document_delta
+from services.reference_graph.analysis import AnalysisIndex, Catalog, parse_csharp
 from services.reference_graph.reconcile import Reconciler
 from services.reference_graph.store import GraphScope, GraphStore, Observation, RevisionConflict
 from services.reference_graph.workspace import GraphWorkspace
@@ -35,8 +38,9 @@ def summary(owner):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [100, 1000])
 @pytest.mark.parametrize("format_", ["summary", "csharp"])
-async def test_one_warm_document_edit_reads_only_changed_metadata(
-    workspace, monkeypatch, size, format_
+@pytest.mark.parametrize("cache_state", ["warm", "expired", "cold", "expired_over_budget"])
+async def test_one_document_edit_preserves_unaffected_publications(
+    workspace, monkeypatch, size, format_, cache_state
 ):
     engine = Reconciler(workspace, Editor(), allowed)
     assert workspace.acquire(engine.worker)
@@ -60,6 +64,10 @@ async def test_one_warm_document_edit_reads_only_changed_metadata(
         workspace._set(db, "analysis_dirty", True)
         db.execute("DELETE FROM graph_changed_inputs")
     await engine._analysis()
+    with workspace.store._connect() as db:
+        previous = dict(
+            db.execute("SELECT owner,generation FROM observations WHERE provider='code'")
+        )
     visited, hydrated = [], []
     deltas, pending = [], []
     manifest, documents = workspace.document_manifest, workspace.documents
@@ -89,6 +97,12 @@ async def test_one_warm_document_edit_reads_only_changed_metadata(
     monkeypatch.setattr(workspace, "documents", count_documents)
     monkeypatch.setattr(document_delta, "changed_owners", count_deltas)
     monkeypatch.setattr(document_delta, "pending", count_pending)
+    if cache_state.startswith("expired"):
+        engine._analysis_used = time.monotonic() - 301
+        if cache_state == "expired_over_budget":
+            monkeypatch.setattr(analysis_cache, "MAX_EVIDENCE_BYTES", 0)
+    elif cache_state == "cold":
+        engine.clear_caches()
     if format_ == "csharp":
         assert save_csharp(workspace, engine.worker, "1", "class Renamed {}")
     else:
@@ -97,12 +111,74 @@ async def test_one_warm_document_edit_reads_only_changed_metadata(
         )
     await engine._analysis()
     print(
-        f"warm analysis {format_}, size={size}: manifest={len(visited)}, "
+        f"{cache_state} analysis {format_}, size={size}: manifest={len(visited)}, "
         f"deltas={len(deltas)}, pending={len(pending)}, hydrated={len(hydrated)}"
     )
     assert visited == []
-    assert deltas == pending == ["1"]
-    assert hydrated == (["1", "1"] if format_ == "csharp" else ["1"])
+    cold = cache_state in {"cold", "expired_over_budget"}
+    cold_csharp = cold and format_ == "csharp"
+    assert deltas == ([] if cold else ["1"])
+    assert pending == (sorted(previous) if cold_csharp else ["1"])
+    with workspace.store._connect() as db:
+        current = dict(
+            db.execute("SELECT owner,generation FROM observations WHERE provider='code'")
+        )
+    assert {owner for owner in current if current[owner] != previous[owner]} == set(pending)
+    expected = size * 2 if cold_csharp else size + 1 if cache_state == "expired" else 2
+    assert len(hydrated) == (expected if format_ == "csharp" else 1)
+
+
+def test_expiry_evidence_budget_is_shared_and_reclaimed_when_owner_drops(monkeypatch):
+    # Given independent scopes sharing one bounded retention ledger.
+    def cached():
+        return analysis_cache.AnalysisCache(
+            0,
+            0,
+            0,
+            AnalysisIndex([parse_csharp("owner", "Assets/T.cs", "class T {}")], Catalog([])),
+            set(),
+        )
+
+    monkeypatch.setattr(analysis_cache, "_retained_evidence", weakref.WeakKeyDictionary())
+    first = cached()
+    index = weakref.ref(first.index)
+    first = analysis_cache.expire(first, lambda: None)
+    assert first.index is None and first.evidence is not None
+    gc.collect()
+    assert index() is None
+    size = sum(analysis_cache._retained_evidence.values())
+    monkeypatch.setattr(analysis_cache, "MAX_EVIDENCE_BYTES", size)
+    # When the remaining process budget cannot admit another scope.
+    assert analysis_cache.expire(cached(), lambda: None) is None
+    del first
+    gc.collect()
+    # Then dropping the first owner releases its charge for the next scope.
+    second = analysis_cache.expire(cached(), lambda: None)
+    assert second.index is None and second.evidence is not None
+    assert sum(analysis_cache._retained_evidence.values()) == size
+
+    # The baseline of blocked owners is retained too and must share the cap.
+    del second
+    gc.collect()
+    third = cached()._replace(blocked={"blocked" * 1000})
+    assert analysis_cache.expire(third, lambda: None) is None
+
+
+def test_expiry_evidence_obeys_operator_checks():
+    cache = analysis_cache.AnalysisCache(
+        0,
+        0,
+        0,
+        AnalysisIndex([parse_csharp("owner", "Assets/T.cs", "class T {}")], Catalog([])),
+        set(),
+    )
+
+    def stopped():
+        raise RuntimeError("operator stopped")
+
+    with pytest.raises(RuntimeError, match="operator stopped"):
+        analysis_cache.expire(cache, stopped)
+    assert cache.index is not None
 
 
 def test_document_events_and_observation_queue_commit_together(workspace):
@@ -190,7 +266,16 @@ def save_csharp(workspace, worker, owner, source):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "fallback", ["warm", "journal_gap", "eviction", "reopen", "queue_interrupted"]
+    "fallback",
+    [
+        "warm",
+        "expiry",
+        "journal_gap",
+        "expiry_journal_gap",
+        "eviction",
+        "reopen",
+        "queue_interrupted",
+    ],
 )
 async def test_rebinding_after_same_identity_document_edits_and_removal(
     workspace, monkeypatch, fallback
@@ -220,7 +305,7 @@ async def test_rebinding_after_same_identity_document_edits_and_removal(
 
     assert targets() == ["asset:" + target["guid"]]
     save_csharp(workspace, worker, "part", "partial class C { void Load(object key) { } }")
-    if fallback == "journal_gap":
+    if fallback in {"journal_gap", "expiry_journal_gap"}:
         with workspace.store._connect(write=True) as db:
             db.execute("DELETE FROM graph_document_changes")
     elif fallback == "eviction":
@@ -242,15 +327,23 @@ async def test_rebinding_after_same_identity_document_edits_and_removal(
                 await engine._analysis()
         assert engine._analysis_cache is None
         assert "part" in workspace.changed_inputs()
+    if fallback.startswith("expiry"):
+        engine._analysis_used = time.monotonic() - 301
     await engine._analysis()
     assert targets() == []
     workspace.save_document(worker, "part", "summary", "same", summary("part"))
+    if fallback.startswith("expiry"):
+        engine._analysis_used = time.monotonic() - 301
     await engine._analysis()
     assert targets() == ["asset:" + target["guid"]]
     save_csharp(workspace, worker, "part", "partial class C { void Load(object key) { } }")
+    if fallback.startswith("expiry"):
+        engine._analysis_used = time.monotonic() - 301
     await engine._analysis()
     assert targets() == []
     workspace.drop_document(worker, "part")
+    if fallback.startswith("expiry"):
+        engine._analysis_used = time.monotonic() - 301
     await engine._analysis()
     assert targets() == ["asset:" + target["guid"]]
 
@@ -392,8 +485,10 @@ async def test_cancel_during_enqueue_drains_writer_and_rebuilds_on_retry(workspa
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("evict", [False, True])
-async def test_blocked_declaration_and_unchanged_recovery_rebind_eligible_callers(workspace, evict):
+@pytest.mark.parametrize("cache_state", ["warm", "expired", "evicted"])
+async def test_blocked_declaration_and_unchanged_recovery_rebind_eligible_callers(
+    workspace, cache_state
+):
     engine = Reconciler(workspace, Editor(), allowed)
     worker = engine.worker
     assert workspace.acquire(worker)
@@ -421,8 +516,10 @@ async def test_blocked_declaration_and_unchanged_recovery_rebind_eligible_caller
     await engine._analysis()
     assert not workspace.store.query("caller")["edges"]
     workspace.fail_asset(worker, {"guid": guid}, ValueError("synthetic failure"))
-    if evict:
+    if cache_state == "evicted":
         engine.clear_caches()
+    elif cache_state == "expired":
+        engine._analysis_used = time.monotonic() - 301
     await engine._analysis()
     assert workspace.blocked_analysis() == {part}
     assert [e["target"] for e in workspace.store.query("caller")["edges"]] == [
@@ -432,6 +529,8 @@ async def test_blocked_declaration_and_unchanged_recovery_rebind_eligible_caller
         assert document_delta.pending(db, "", 100) == [part]
     assert not workspace.state("analysis_dirty")
     workspace.clean_asset(worker, guid)
+    if cache_state == "expired":
+        engine._analysis_used = time.monotonic() - 301
     await engine._analysis()
     assert not workspace.store.query("caller")["edges"]
     assert workspace.document_manifest()[part]["state"] == "ready"
