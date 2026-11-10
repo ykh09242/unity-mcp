@@ -75,6 +75,10 @@ from transport.command_timeout import (
     MAX_COMMAND_TIMEOUT,
 )
 from transport.command_payload import CommandPreparationBusy, prepare_command
+from transport.command_dispatch import (
+    CommandDispatch,
+    CommandNotDispatchedError as CommandNotDispatchedError,
+)
 
 # Compatibility facade: all callers share the same ContextVar and evidence types.
 from transport.command_budget import (
@@ -115,7 +119,6 @@ from transport.remote_auth_middleware import AUTHENTICATED_LEASE_STATE
 from transport.socket_write_guard import (
     SOCKET_SEND_BOUNDARY_STATE,
     SocketSendBoundary,
-    SocketWriteGuard,
     socket_write_guard,
 )
 from services.tools.shared_tool_reads import SharedReadCapacityError, SharedToolReads
@@ -197,10 +200,6 @@ def _install_session_tracking(mcp: "FastMCP") -> None:
 
 class PluginDisconnectedError(RuntimeError):
     """Raised when a plugin WebSocket disconnects while commands are in flight."""
-
-
-class CommandNotDispatchedError(RuntimeError):
-    """The command was refused before any attempt to write to its plugin."""
 
 
 class NoUnitySessionError(RuntimeError):
@@ -2491,136 +2490,45 @@ class PluginHub(WebSocketEndpoint):
                 raise TimeoutError
             deadline = budget.expires_at
             phase_diagnostics.step(command_type, "send")
-            phase = budget.phase = "send"
+            budget.phase = "send"
             budget.command_id = command_id
             try:
-
-                async def authorized_send():
-                    for lease in (requester, plugin):
-                        if lease is not None:
-                            await lease.check()
-                    for lease in (requester, plugin):
-                        if lease is not None:
-                            lease.check_now()
-                            # Recheck the serialized canonical operation immediately
-                            # before socket I/O, after all yielding authorization checks.
-                            authorize_operation(
-                                lease.permissions,
-                                payload["name"],
-                                payload["params"],
-                                custom=_catalog_guard is not None,
-                                native=True,
-                            )
-                    receipt = execution_owner.get()
-                    if receipt is not None:
-                        await receipt.native_async(
-                            payload["name"],
-                            payload["params"],
-                            custom=_catalog_guard is not None,
-                            kind="http",
-                            attempt_id=command_id,
-                            session_id=session_id,
-                            generation=generation,
-                            project_hash=session.project_hash if session is not None else None,
-                            resume=_resume,
-                        )
-                    writer = SocketWriteGuard(
-                        asyncio.current_task(), websocket, authorize_write, dispatch_write
-                    )
-                    writer_token = socket_write_guard.set(writer)
-                    try:
-                        if getattr(websocket.state, "plugin_guarded_send", False):
-                            # Carry final admission through both Hub and optional
-                            # remote-auth send wrappers, immediately before I/O.
-                            await websocket.send_json(payload)
-                        elif await writer.authorize():
-                            writer.dispatch()
-                            await websocket.send_json(payload)
-                    finally:
-                        socket_write_guard.reset(writer_token)
-                    for lease in (requester, plugin):
-                        if lease is not None:
-                            await lease.check()
-
-                async def authorize_write() -> bool:
-                    # Scheduling, credential renewal and optional journal I/O
-                    # can all yield after admission. Every writer must recheck
-                    # its exact target/catalog after those yields, before I/O.
-                    async with cls._authorized_socket_lock(websocket, lock, requester):
-                        current_session = (
-                            await registry.get_session(session_id) if registry is not None else None
-                        )
-                        if future.done():
-                            return False
-                        if (
-                            cls._lock is not lock
-                            or cls._registry is not registry
-                            or cls._connections.get(session_id) is not websocket
-                            or websocket.client_state != WebSocketState.CONNECTED
-                            or getattr(websocket.state, "plugin_generation", None) != generation
-                            or session is None
-                            or current_session is None
-                            or current_session.project_hash != session.project_hash
-                            or current_session.user_id != user_id
-                        ):
-                            raise CommandNotDispatchedError("Plugin target generation changed")
-                        if context is not None and (
-                            context.selection is None
-                            or not context.selection.matches(
-                                registry, session_id, websocket, current_session
-                            )
-                        ):
-                            raise CommandNotDispatchedError("Plugin project context changed")
-                        if admitted_read is not None and not cls._matches_read_identity(
-                            websocket, user_id, admitted_read
-                        ):
-                            future.set_result(cls._unavailable_retry_response("read_invalidated"))
-                            return False
-                        if _catalog_guard is not None and not _catalog_guard.check_http(
-                            session_id, user_id
-                        ):
-                            from services.custom_tool_service import custom_catalog_changed
-
-                            future.set_result(custom_catalog_changed().model_dump())
-                            return False
-                        if cls._socket_lease(websocket) is not plugin:
-                            raise CredentialLeaseError()
-                    # Classification can inspect a batch. The exact socket and immutable
-                    # grants are fenced above; no await separates this check from return.
-                    for lease in (requester, plugin):
-                        if lease is not None:
-                            lease.check_now()
-                            authorize_operation(
-                                lease.permissions,
-                                payload["name"],
-                                payload["params"],
-                                custom=_catalog_guard is not None,
-                                native=True,
-                            )
-                    return True
-
-                def dispatch_write() -> None:
-                    # Serialization and synchronous admission can outlast the
-                    # event loop's pending timeout callback. Fence the actual
-                    # write before publishing any dispatch evidence.
-                    if budget.remaining() <= 0:
-                        raise TimeoutError
-                    if _resume is not None:
-                        _resume.dispatch()
-                    receipt = execution_owner.get()
-                    if receipt is not None:
-                        receipt.dispatch_started(
-                            kind="http",
-                            attempt_id=command_id,
-                            session_id=session_id,
-                            generation=generation,
-                        )
-                    budget.dispatched = True
+                dispatch = CommandDispatch(
+                    websocket=websocket,
+                    registry=registry,
+                    session=session,
+                    session_id=session_id,
+                    generation=generation,
+                    user_id=user_id,
+                    command_id=command_id,
+                    payload=payload,
+                    future=future,
+                    budget=budget,
+                    response_deadline=deadline,
+                    requester=requester,
+                    plugin=plugin,
+                    context=context,
+                    catalog_guard=_catalog_guard,
+                    resume=_resume,
+                    authorized_lock=lambda: cls._authorized_socket_lock(websocket, lock, requester),
+                    target_is_current=lambda: (
+                        cls._lock is lock
+                        and cls._registry is registry
+                        and cls._connections.get(session_id) is websocket
+                    ),
+                    read_is_current=(
+                        (lambda: cls._matches_read_identity(websocket, user_id, admitted_read))
+                        if admitted_read is not None
+                        else None
+                    ),
+                    read_invalidated=lambda: cls._unavailable_retry_response("read_invalidated"),
+                    socket_lease=lambda socket: cls._socket_lease(socket),
+                )
 
                 receipt = execution_owner.get()
                 receipt_pin = receipt.acquire_worker() if receipt is not None else None
                 try:
-                    send_task = operation_task(authorized_send())
+                    send_task = operation_task(dispatch.send())
                     if control_owner is not None:
                         send_task.add_done_callback(
                             lambda _, release=control_owner.retain(): release()
@@ -2631,28 +2539,7 @@ class PluginHub(WebSocketEndpoint):
                     raise
                 if receipt_pin is not None:
                     own_future(send_task, receipt_pin)
-                done, _ = await asyncio.wait(
-                    {send_task, future},
-                    timeout=budget.remaining(),
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                # A disconnect must also interrupt a blocked socket write.
-                if future in done:
-                    for lease in (requester, cls._socket_lease(websocket)):
-                        if lease is not None:
-                            await lease.check()
-                    return future.result()
-                if send_task not in done:
-                    raise asyncio.TimeoutError
-                send_task.result()
-                phase_diagnostics.step(command_type, "response")
-                phase = budget.phase = "response"
-                remaining = max(0.0, deadline - asyncio.get_running_loop().time())
-                result = await asyncio.wait_for(future, timeout=remaining)
-                for lease in (requester, cls._socket_lease(websocket)):
-                    if lease is not None:
-                        await lease.check()
-                return result
+                return await dispatch.observe(send_task, wait_for=asyncio.wait_for)
             except NativeNotStarted:
                 raise
             except TimeoutError:
@@ -2677,7 +2564,7 @@ class PluginHub(WebSocketEndpoint):
                     "Remote operation permission ended",
                     session_id=session_id,
                     command_id=command_id,
-                    phase=phase,
+                    phase=budget.phase,
                     cause="permission_ended",
                 )
             except CredentialLeaseError:
@@ -2689,7 +2576,7 @@ class PluginHub(WebSocketEndpoint):
                     "Remote authorization ended",
                     session_id=session_id,
                     command_id=command_id,
-                    phase=phase,
+                    phase=budget.phase,
                     cause="authentication_ended",
                 )
             except (PluginDisconnectedError, OSError) as exc:
@@ -2705,7 +2592,7 @@ class PluginHub(WebSocketEndpoint):
                     str(exc) or type(exc).__name__,
                     session_id=session_id,
                     command_id=command_id,
-                    phase=phase,
+                    phase=budget.phase,
                     cause="timeout" if isinstance(exc, TimeoutError) else "disconnected",
                 )
             except asyncio.CancelledError:
@@ -2719,7 +2606,7 @@ class PluginHub(WebSocketEndpoint):
                     "socket write was cancelled",
                     session_id=session_id,
                     command_id=command_id,
-                    phase=phase,
+                    phase=budget.phase,
                     cause="send_cancelled",
                 )
             except Exception as exc:
@@ -2736,7 +2623,7 @@ class PluginHub(WebSocketEndpoint):
                     str(exc) or type(exc).__name__,
                     session_id=session_id,
                     command_id=command_id,
-                    phase=phase,
+                    phase=budget.phase,
                     cause=cause,
                 )
         except asyncio.CancelledError:
