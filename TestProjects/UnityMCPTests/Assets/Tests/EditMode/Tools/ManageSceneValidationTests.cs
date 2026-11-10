@@ -80,6 +80,86 @@ namespace MCPForUnity.Tests.EditMode.Tools
         }
 
         [Test]
+        public void AssetComponents_ImportedMissingScriptRetainsValidComponentsAndSlots()
+        {
+            CreateMissingScriptFixture(out string path);
+            byte[] before = File.ReadAllBytes(path);
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            Assert.AreEqual(1, GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(prefab));
+            int dirtyCount = EditorUtility.GetDirtyCount(prefab);
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject { ["action"] = "get_components", ["path"] = path }));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var slots = (JArray)response["data"];
+            Assert.AreEqual(3, slots.Count);
+            Assert.AreEqual("UnityEngine.Transform", slots[0].Value<string>("typeName"));
+            Assert.IsFalse(slots[0].Value<bool>("missingScript"));
+            Assert.AreEqual(0, slots[0].Value<int>("slotIndex"));
+            Assert.AreEqual("UnityEngine.BoxCollider", slots[1].Value<string>("typeName"));
+            Assert.IsFalse(slots[1].Value<bool>("missingScript"));
+            Assert.IsTrue(slots[2].Value<bool>("missingScript"));
+            Assert.AreEqual(2, slots[2].Value<int>("slotIndex"));
+            Assert.AreEqual(JTokenType.Null, slots[2]["typeName"].Type);
+            Assert.AreEqual(JTokenType.Null, slots[2]["instanceID"].Type);
+            StringAssert.Contains("1 missing script slot(s)", response.Value<string>("message"));
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(prefab));
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+        }
+
+        [Test]
+        public void AssetComponents_HealthyPrefabKeepsExistingComponentFields()
+        {
+            assetFolder = "Assets/__McpSceneValidation_" + Guid.NewGuid().ToString("N");
+            AssetDatabase.CreateFolder("Assets", assetFolder.Substring(7));
+            string path = assetFolder + "/Healthy.prefab";
+            var source = new GameObject("Healthy");
+            try
+            {
+                source.AddComponent<MCPForUnityTests.Editor.Tools.SafeEditRequiredComponent>();
+                PrefabUtility.SaveAsPrefabAsset(source, path);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(source);
+            }
+            byte[] before = File.ReadAllBytes(path);
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject { ["action"] = "get_components", ["path"] = path }));
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            var slots = (JArray)response["data"];
+            Assert.AreEqual(3, slots.Count);
+            foreach (var slot in slots)
+            {
+                Assert.IsNotEmpty(slot.Value<string>("typeName"));
+                Assert.AreNotEqual(0, slot.Value<int>("instanceID"));
+                Assert.IsFalse(slot.Value<bool>("missingScript"));
+            }
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("Assets/__McpMissingComponentInspection.prefab")]
+        public void AssetComponents_MissingPathReturnsUsefulError(string path)
+        {
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject { ["action"] = "get_components", ["path"] = path }));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains(string.IsNullOrEmpty(path) ? "'path' is required" : "Asset not found", response.Value<string>("error"));
+        }
+
+        [Test]
+        public void AssetComponents_NonGameObjectReturnsUsefulError()
+        {
+            assetFolder = "Assets/__McpSceneValidation_" + Guid.NewGuid().ToString("N");
+            AssetDatabase.CreateFolder("Assets", assetFolder.Substring(7));
+            string path = assetFolder + "/Text.txt";
+            File.WriteAllText(path, "component inspection fixture");
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            var response = JObject.FromObject(ManageAsset.HandleCommand(new JObject { ["action"] = "get_components", ["path"] = path }));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            StringAssert.Contains("not a GameObject", response.Value<string>("error"));
+            Assert.AreEqual("component inspection fixture", File.ReadAllText(path));
+        }
+
+        [Test]
         public void Validate_RealMissingScript_RepairsOnlyAfterCompleteObservation()
         {
             GameObject broken = CreateMissingScriptFixture(out string path);

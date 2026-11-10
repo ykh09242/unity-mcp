@@ -967,18 +967,30 @@ namespace MCPForUnity.Editor.Tools
                 Component[] components = gameObject.GetComponents<Component>();
 
                 // 6. Format component data
-                List<object> componentList = components
-                    .Select(comp => new
-                    {
-                        typeName = comp.GetType().FullName,
-                        instanceID = comp.GetInstanceIDCompat(),
-                        // TODO: Add more component-specific details here if needed in the future?
-                        //       Requires reflection or specific handling per component type.
-                    })
-                    .ToList<object>(); // Explicit cast for clarity if needed
+                int missingScriptCount = 0;
+                var componentList = new List<object>(components.Length);
+                for (int slotIndex = 0; slotIndex < components.Length; slotIndex++)
+                {
+                    Component component = components[slotIndex];
+                    bool missingScript = component == null;
+                    if (missingScript)
+                        missingScriptCount++;
+                    componentList.Add(
+                        new
+                        {
+                            typeName = missingScript ? null : component.GetType().FullName,
+                            instanceID = missingScript ? (int?)null : component.GetInstanceIDCompat(),
+                            slotIndex,
+                            missingScript,
+                        }
+                    );
+                }
 
                 // 7. Return success response
-                return new SuccessResponse($"Found {componentList.Count} component(s) on asset '{fullPath}'.", componentList);
+                return new SuccessResponse(
+                    $"Found {components.Length - missingScriptCount} component(s) and {missingScriptCount} missing script slot(s) on asset '{fullPath}'.",
+                    componentList
+                );
             }
             catch (Exception e)
             {
