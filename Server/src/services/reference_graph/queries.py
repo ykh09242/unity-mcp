@@ -19,7 +19,7 @@ from services.reference_graph.store import (
     _json,
     edge_candidates,
 )
-from services.reference_graph import path_proof, snapshot_storage
+from services.reference_graph import path_proof, reclamation, snapshot_storage
 from services.reference_graph.response_budget import (
     MAX_REPLAY_BYTES,
     GraphResponseTooLarge,
@@ -65,7 +65,7 @@ class GraphQueries:
                 "CREATE TABLE IF NOT EXISTS graph_queries_schema(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_queries_schema").fetchone()
-            if version and version[0] not in (1, 2, 3, 4):
+            if version and version[0] not in (1, 2, 3, 4, 5):
                 raise ValueError("Unsupported graph query schema")
             if version is None:
                 for statement in (
@@ -99,6 +99,10 @@ class GraphQueries:
                 ):
                     connection.execute(statement)
                 connection.execute("UPDATE graph_queries_schema SET version=4")
+            if version is None or version[0] < 5:
+                # Empty work queues preserve existing jobs and legacy snapshots.
+                reclamation.initialize(connection)
+                connection.execute("UPDATE graph_queries_schema SET version=5")
             snapshot_storage.initialize(connection)
 
     @staticmethod
@@ -723,10 +727,14 @@ class GraphQueries:
 
     @staticmethod
     def _release(connection, identity: str) -> bool:
-        connection.execute("DELETE FROM graph_query_proofs WHERE job=?", (identity,))
-        connection.execute("DELETE FROM graph_query_nodes WHERE job=?", (identity,))
-        connection.execute("DELETE FROM graph_query_queue WHERE job=?", (identity,))
-        return connection.execute("DELETE FROM graph_queries WHERE id=?", (identity,)).rowcount > 0
+        # Removing the public row fences cursors and proof readers immediately;
+        # the same transaction durably records the backing that cleanup owns.
+        removed = (
+            connection.execute("DELETE FROM graph_queries WHERE id=?", (identity,)).rowcount > 0
+        )
+        if removed:
+            reclamation.enqueue(connection, "query", identity)
+        return removed
 
     @staticmethod
     def _mutation_owned(connection, identity: str) -> bool:

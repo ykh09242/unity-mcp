@@ -7,7 +7,7 @@ import math
 import time
 
 from services.reference_graph.store import _hash
-from services.reference_graph import snapshot_storage
+from services.reference_graph import reclamation, snapshot_storage
 from services.reference_graph.storage_budget import file_sizes
 from services.reference_graph.response_budget import PageBudget, bounded_rows
 
@@ -217,36 +217,16 @@ def cleanup(workspace, *, before, limit=100):
                 after = (row["used"], identity)
                 examined += 1
                 continue
-            tables = [
-                ("graph_query_proofs", "job", identity),
-                ("graph_query_nodes", "job", identity),
-                ("graph_query_queue", "job", identity),
-            ]
             reclaim_snapshot = db.execute(
                 "SELECT 1 FROM graph_snapshots WHERE id=? AND (state<>'ready' OR ?=1)",
                 (identity, abandoned),
             ).fetchone()
-            if reclaim_snapshot:
-                backing = snapshot_storage.backing(db, identity)
-                if not db.execute(
-                    "SELECT 1 FROM graph_snapshot_refs WHERE backing=? AND snapshot<>? LIMIT 1",
-                    (backing, identity),
-                ).fetchone():
-                    # Partial or undisclosed captures can own a ready backing.
-                    # Retire reuse atomically before the first bounded edge deletion.
-                    snapshot_storage.retire(db, backing)
-                    tables.append(("graph_snapshot_edges", "snapshot", backing))
-            for table, column, value in tables:
-                changed = db.execute(
-                    f"DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {column}=? LIMIT ?)",
-                    (value, budget),
-                ).rowcount
-                scratch += changed
-                budget -= changed
-            if any(
-                db.execute(f"SELECT 1 FROM {table} WHERE {column}=? LIMIT 1", (value,)).fetchone()
-                for table, column, value in tables
-            ):
+            changed, remaining = reclamation.delete_rows(
+                db, reclamation.QUERY_TABLES, identity, budget
+            )
+            scratch += changed
+            budget -= changed
+            if remaining:
                 break
             if (
                 reclaim_snapshot
@@ -274,19 +254,15 @@ def cleanup(workspace, *, before, limit=100):
             "UPDATE graph_query_cleanup SET after_used=?,after_id=?,cutoff=?,revision=? WHERE id=1",
             (*(after if queries_remain and after is not None else (None, None)), before, revision),
         )
-        abandoned = list(
-            db.execute(
-                "SELECT rowid FROM graph_staging s WHERE NOT EXISTS (SELECT 1 FROM graph_worker w WHERE w.owner=s.worker AND w.expires>?) LIMIT ?",
-                (time.time(), limit + 1),
-            )
-        )
-        db.executemany("DELETE FROM graph_staging WHERE rowid=?", abandoned[:limit])
+        reclaimed, released_remain = reclamation.reclaim(db, budget)
+        scratch += reclaimed
+        abandoned, staging_remain = reclamation.staging(db, limit, time.time())
     return {
         "completed_queries_removed": removed,
         "obsolete_queries_removed": obsolete,
         "query_scratch_rows_removed": scratch,
-        "abandoned_staging_removed": min(limit, len(abandoned)),
-        "more": queries_remain or len(abandoned) > limit,
+        "abandoned_staging_removed": abandoned,
+        "more": queries_remain or released_remain or staging_remain,
         "disk_reclamation": "reusable_sqlite_pages_no_vacuum",
     }
 

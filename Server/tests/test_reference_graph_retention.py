@@ -71,6 +71,10 @@ def test_concurrent_captures_merge_backing_and_last_alias_reclaims_rows(tmp_path
         assert db.execute("SELECT count(*) FROM graph_snapshot_edges").fetchone()[0] == 3
     queries.delete_snapshot(first["snapshot"]["id"])
     queries.delete_snapshot(second["snapshot"]["id"])
+    workspace = GraphWorkspace(store)
+    progress = FixtureProgress(4 * 3 + 32, "released snapshot backing")
+    while cleanup(workspace, before=0, limit=2)["more"]:
+        progress.step()
     with store._connect() as db:
         assert db.execute("SELECT count(*) FROM graph_snapshot_edges").fetchone()[0] == 0
 
@@ -91,7 +95,7 @@ def test_cleanup_retires_partial_alias_before_new_capture_reuses_backing(
     queries.delete_snapshot(original)
     queries.abandon(partial)
 
-    # When bounded cleanup removes one edge, then both reuse paths stop advertising it.
+    # Retiring the alias first invalidates both reuse paths through a durable marker.
     result = cleanup(workspace, before=time.time() + 1, limit=1)
     assert result["more"] and result["query_scratch_rows_removed"] == 1
     with store._connect() as db:
@@ -99,14 +103,12 @@ def test_cleanup_retires_partial_alias_before_new_capture_reuses_backing(
             db.execute(
                 "SELECT count(*) FROM graph_snapshot_edges WHERE snapshot=?", (original,)
             ).fetchone()[0]
-            == 2
+            == 3
         )
-        assert not db.execute(
-            "SELECT 1 FROM graph_snapshot_versions WHERE backing=?", (original,)
+        assert db.execute(
+            "SELECT 1 FROM graph_reclamation WHERE kind='snapshot' AND identity=?", (original,)
         ).fetchone()
-        assert not db.execute(
-            "SELECT 1 FROM graph_snapshot_contents WHERE backing=?", (original,)
-        ).fetchone()
+        assert not db.execute("SELECT 1 FROM graph_snapshots WHERE id=?", (partial,)).fetchone()
 
     # Restart and optionally bypass the version index while retaining identical content.
     workspace = GraphWorkspace(GraphStore.open(tmp_path, store.scope))

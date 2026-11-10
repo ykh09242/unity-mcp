@@ -154,6 +154,15 @@ def test_high_fanin_runtime_search_finishes_with_bounded_proof_pages(tmp_path, r
     assert result["visited_nodes"] >= 5002
     assert queries.path("root", "destination", limit=100, cursor=cursor) == result
     assert queries.release(result["query_id"])
+    with pytest.raises(ValueError, match="released query"):
+        queries.path("root", "destination", limit=100, cursor=cursor)
+    for _ in range(20):
+        batch = cleanup(workspace, before=0, limit=1000)
+        assert batch["query_scratch_rows_removed"] <= 1000
+        if not batch["more"]:
+            break
+    else:
+        pytest.fail("Released high-fan-in proof was not reclaimed")
     with store._connect() as db:
         assert db.execute("SELECT count(*) FROM graph_query_proofs").fetchone()[0] == 0
 

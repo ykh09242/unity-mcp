@@ -298,6 +298,10 @@ def test_unchanged_diff_pages_bound_comparison_work_and_defer_finished_traversal
             == 1
         )
     assert queries.release(result["query_id"])
+    from services.reference_graph.operations import cleanup
+    from services.reference_graph.workspace import GraphWorkspace
+
+    assert not cleanup(GraphWorkspace(store), before=0, limit=10)["more"]
     with store._connect() as connection:
         assert (
             connection.execute(
@@ -375,7 +379,7 @@ def test_query_schema_upgrade_preserves_existing_resumable_job(graph):
     upgraded = GraphQueries(store)
     assert upgraded.impact("a", direction="outgoing", limit=1, cursor=page["next_cursor"])
     with store._connect() as db:
-        assert db.execute("SELECT version FROM graph_queries_schema").fetchone()[0] == 4
+        assert db.execute("SELECT version FROM graph_queries_schema").fetchone()[0] == 5
         assert db.execute("SELECT abandoned FROM graph_queries").fetchone()[0] == 0
 
 
