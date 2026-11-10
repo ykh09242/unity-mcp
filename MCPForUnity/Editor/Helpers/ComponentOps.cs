@@ -133,14 +133,37 @@ namespace MCPForUnity.Editor.Helpers
                 return false;
             }
 
+            return RemoveComponent(component, out error);
+        }
+
+        /// <summary>Removes the exact native component and confirms that Unity accepted the removal.</summary>
+        internal static bool RemoveComponent(Component component, out string error)
+        {
+            error = null;
+            if (component == null)
+            {
+                error = "Component is null.";
+                return false;
+            }
+            if (component is Transform)
+            {
+                error = "Cannot remove Transform or RectTransform components.";
+                return false;
+            }
+            string componentName = component.GetType().Name;
             try
             {
                 Undo.DestroyObjectImmediate(component);
+                if (component != null)
+                {
+                    error = $"Unity refused to remove component '{componentName}'; the component still exists.";
+                    return false;
+                }
                 return true;
             }
             catch (Exception ex)
             {
-                error = $"Error removing component '{componentType.Name}': {ex.Message}";
+                error = $"Error removing component '{componentName}': {ex.Message}";
                 return false;
             }
         }

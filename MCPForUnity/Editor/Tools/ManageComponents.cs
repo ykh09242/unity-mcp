@@ -385,9 +385,8 @@ namespace MCPForUnity.Editor.Tools
                         $"component_index {componentIndex.Value} out of range. Found {components.Length} '{componentTypeName}' component(s)."
                     );
                 Component selected = selection != null ? selection.Component : components[componentIndex.Value];
-                if (selected is Transform)
-                    return new ErrorResponse("Cannot remove Transform or RectTransform components.");
-                Undo.DestroyObjectImmediate(selected);
+                if (!ComponentOps.RemoveComponent(selected, out string removalError))
+                    return new ErrorResponse(removalError);
                 EditorUtility.SetDirty(targetGo);
                 MarkOwningSceneDirty(targetGo);
                 return new

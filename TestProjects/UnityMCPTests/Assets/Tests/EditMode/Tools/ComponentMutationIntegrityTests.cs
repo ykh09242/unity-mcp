@@ -148,7 +148,7 @@ namespace MCPForUnityTests.Editor.Tools
             }
 
             if (conversion)
-                LogAssert.Expect(LogType.Error, new Regex("Error converting token to System.Boolean"));
+                LogAssert.Expect(LogType.Error, new Regex(@"\[PropertyConversion\] Property value conversion failed\.$"));
             var result = Call(request);
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
@@ -292,6 +292,73 @@ namespace MCPForUnityTests.Editor.Tools
                 Undo.ClearUndo(protectedTarget);
                 UnityEngine.Object.DestroyImmediate(protectedTarget);
             }
+        }
+
+        [TestCase("ordinary")]
+        [TestCase("indexed")]
+        [TestCase("strict")]
+        [TestCase("helper")]
+        public void RequiredComponentRemovalReportsRefusalAndPreservesCleanScene(string route)
+        {
+            UnityEngine.Object.DestroyImmediate(second);
+            var dependent = target.AddComponent<SafeEditRequiredComponent>();
+            Assert.IsNotNull(dependent);
+            Assert.AreEqual(1, target.GetComponents<BoxCollider>().Length);
+            Assert.IsTrue(EditorSceneManager.SaveScene(ownedScene, assetRoot + "/" + ownedScene.name + ".unity"));
+            Component[] before = target.GetComponents<Component>();
+            int dirty = EditorUtility.GetDirtyCount(target);
+            LogAssert.Expect(LogType.Error, new Regex(".*BoxCollider.*", RegexOptions.Singleline));
+            if (route == "helper")
+            {
+                bool removed = MCPForUnity.Editor.Helpers.ComponentOps.RemoveComponent(target, typeof(BoxCollider), out string error);
+                Assert.IsFalse(removed, "The helper must observe native survival after Unity refuses removal.");
+                Assert.IsNotEmpty(error);
+            }
+            else
+            {
+                JObject request = Request("remove");
+                if (route == "indexed")
+                    request["componentIndex"] = 0;
+                if (route == "strict")
+                {
+                    request["strictSelection"] = true;
+                    request["componentInstanceID"] = first.GetInstanceIDCompat();
+                }
+                JObject response = Call(request);
+                Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.IsNotEmpty(response.Value<string>("error"));
+            }
+            Assert.IsTrue(first != null, "The native required component must survive.");
+            CollectionAssert.AreEqual(before, target.GetComponents<Component>());
+            Assert.AreEqual(dirty, EditorUtility.GetDirtyCount(target));
+            Assert.IsFalse(ownedScene.isDirty);
+        }
+
+        [TestCase("ordinary")]
+        [TestCase("indexed")]
+        [TestCase("strict")]
+        [TestCase("helper")]
+        public void SuccessfulRemovalConfirmsNativeDestruction(string route)
+        {
+            if (route == "helper")
+            {
+                Assert.IsTrue(MCPForUnity.Editor.Helpers.ComponentOps.RemoveComponent(target, typeof(BoxCollider), out string error), error);
+            }
+            else
+            {
+                JObject request = Request("remove");
+                if (route == "indexed")
+                    request["componentIndex"] = 0;
+                if (route == "strict")
+                {
+                    request["strictSelection"] = true;
+                    request["componentInstanceID"] = first.GetInstanceIDCompat();
+                }
+                Success(Call(request));
+                Assert.IsTrue(ownedScene.isDirty);
+            }
+            Assert.IsTrue(first == null, "Success requires Unity-null native destruction.");
+            CollectionAssert.AreEqual(new[] { second }, target.GetComponents<BoxCollider>());
         }
 
         [TestCase("set_property", "string")]
