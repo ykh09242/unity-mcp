@@ -1,15 +1,22 @@
-# Unity MCP Feature Roadmap 2026
+# Historical Unity MCP Feature Roadmap 2026
+
+> **Historical research baseline.** This page preserves an earlier proposal and its
+> original capability assessments; it is not the current implementation status or
+> delivery schedule. Use the generated [current tool catalog](../reference/tools/index.md)
+> and [`manage_packages` reference](../reference/tools/core/manage_packages.md) for supported
+> operations. The [tool visibility and capability guidance](../guides/tool-groups.md)
+> explains discovery, optional dependencies and project permissions today.
 
 ## Research Summary
 
-Six parallel research agents investigated 12+ domains across Unity's API surface. Every domain was assessed for: API stability, implementation complexity, developer value, dead ends, and dependencies.
+The original research investigated 12+ domains across Unity's API surface. Each domain was assessed for API stability, implementation complexity, developer value, dead ends, and dependencies. The analysis below describes that baseline, including gaps that have since been implemented.
 
-### Current Tool Coverage (19 tools)
+### Tool Coverage at the Historical Baseline (19 tools)
 Animation, Asset, Audio, Camera, Components, Editor, GameObjects, Graphics, Lighting, Material, Prefabs, ProBuilder, Scene, Script, ScriptableObject, Shader, Texture, UI, VFX
 
 ---
 
-## Prioritized Implementation Plan
+## Original Prioritized Implementation Plan
 
 ### Tier 1: Foundation (Unblocks Everything Else)
 
@@ -22,7 +29,7 @@ Animation, Asset, Audio, Camera, Components, Editor, GameObjects, Graphics, Ligh
 | **Dependencies** | None (core Unity) |
 | **Audience** | 100% of users |
 
-**Why first**: Directly unblocks XR, Addressables, Input System, and any workflow requiring optional packages. Currently the #1 gap — AI can detect missing packages but cannot install them.
+**Original rationale**: Package management would unblock XR, Addressables, Input System, and other workflows requiring optional packages. At the research baseline, assistants could detect missing packages but could not install them. Package operations are now available through the current `manage_packages` tool linked above.
 
 **Key APIs**: `PackageManager.Client.Add/Remove/List/Search/Embed` (all public, async). Scoped registries via `manifest.json` editing. Assembly definitions as JSON files.
 
