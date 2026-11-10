@@ -249,7 +249,12 @@ async def test_custom_poll_timeout_delivers_only_last_successful_observation(pol
         now[0] = 2.0
         result = await asyncio.wait_for(task, watchdog_timeout())
         assert not result.success and "Timeout" in result.message
-        assert result.data["data"]["value"] == 2
+        assert result.hint == "inspect_state_before_retry"
+        assert result.data["job_id"] == "job-1"
+        assert result.data["poll_action"] == "status"
+        assert result.data["next_action"] == "poll_same_job"
+        assert result.data["last_response"]["data"]["value"] == 2
+        assert result.data["last_observation"] == {"truncated": True}
         assert len(polling.hub._retained_results) == len(owner.entries) == 1
         assert polling.payload_refs[0]() is None
         assert polling.payload_refs[1]() is not None

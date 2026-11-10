@@ -283,3 +283,102 @@ async def test_initial_retry_failure_does_not_invent_started_job(service, monkey
     assert not result.success
     assert result.hint == "retry"
     send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transient", ["exception", "retry", "timeout"])
+async def test_poll_timeout_retains_new_job_and_last_observation(service, monkeypatch, transient):
+    # Given: a mutation assigns a job and its first observation advances the job.
+    now = [0.0]
+
+    async def advance(delay):
+        now[0] += delay
+
+    monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(module.asyncio, "sleep", advance)
+    initial = {"_mcp_status": "pending", "data": {"job_id": "new-job", "completed": 0}}
+    observed = {"_mcp_status": "pending", "data": {"job_id": "new-job", "completed": 1}}
+    failure = {
+        "exception": ConnectionError("Disconnected"),
+        "retry": module.PluginHub._unavailable_retry_response(),
+        "timeout": TimeoutError(),
+    }[transient]
+    send = AsyncMock(side_effect=[initial, observed, failure])
+    monkeypatch.setattr(module, "send_with_unity_instance", send)
+    monkeypatch.setattr(
+        service,
+        "get_tool_definition",
+        AsyncMock(
+            return_value=ToolDefinitionModel(
+                name="build", requires_polling=True, max_poll_seconds=3, poll_action="inspect"
+            )
+        ),
+    )
+    params = {"action": "start"}
+
+    # When: a transient failure consumes the remainder of the original polling budget.
+    result = await service.execute_tool("project", "build", "Project@hash", params)
+
+    # Then: recovery identifies the same job and preserves the last real observation.
+    assert not result.success
+    assert result.hint == "inspect_state_before_retry"
+    assert result.data["job_id"] == "new-job"
+    assert result.data["poll_action"] == "inspect"
+    assert result.data["next_action"] == "poll_same_job"
+    assert result.data["last_observation"] == observed
+    if transient == "retry":
+        assert result.data["last_response"]["hint"] == "retry"
+    assert now[0] == 3.0
+    assert [call.args[3] for call in send.call_args_list] == [
+        {"action": "start"},
+        {"action": "inspect", "job_id": "new-job"},
+        {"action": "inspect", "job_id": "new-job"},
+    ]
+    assert params == {"action": "start"}
+    assert service._active_polls == 0
+
+
+def test_poll_observation_is_detached_from_the_replaced_response(service):
+    # Given: a small observation that the next fetch may release or mutate.
+    response = {"_mcp_status": "pending", "data": {"job_id": "new-job", "completed": 1}}
+    # When: its timeout diagnostic is retained independently.
+    observation = service._poll_observation(response)
+    response["data"]["completed"] = 2
+    # Then: the earlier diagnostic remains a detached snapshot.
+    assert observation["data"]["completed"] == 1
+
+
+def test_poll_observation_does_not_retain_large_replaced_payload(service):
+    # Given: an observation with a large payload whose reservation will be released.
+    response = {"_mcp_status": "pending", "data": {"preview": "x" * 100_000}}
+    # When: the service creates the independent timeout diagnostic.
+    observation = service._poll_observation(response)
+    # Then: it retains only a constant-sized omission marker.
+    assert observation == {"truncated": True}
+
+
+@pytest.mark.asyncio
+async def test_initial_dispatch_timeout_retains_caller_job_and_poll_action(service, monkeypatch):
+    # Given: the caller already owns a job ID when the initial request times out.
+    monkeypatch.setattr(
+        service,
+        "get_tool_definition",
+        AsyncMock(
+            return_value=ToolDefinitionModel(
+                name="build", requires_polling=True, poll_action="inspect"
+            )
+        ),
+    )
+    send = AsyncMock(side_effect=TimeoutError())
+    monkeypatch.setattr(module, "send_with_unity_instance", send)
+    # When: the initial dispatch expires without a response.
+    result = await service.execute_tool(
+        "project", "build", "Project@hash", {"action": "start", "job_id": "owned-job"}
+    )
+    # Then: recovery still addresses the caller's known job and never restarts it.
+    assert result.hint == "inspect_state_before_retry"
+    assert result.data["job_id"] == "owned-job"
+    assert result.data["poll_action"] == "inspect"
+    assert result.data["next_action"] == "poll_same_job"
+    send.assert_awaited_once()
+    assert service._active_polls == 0

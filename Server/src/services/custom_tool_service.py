@@ -27,6 +27,7 @@ from models.models import (
     parse_tool_parameter_default,
 )
 from models.response_lifetime import ResponsePollLifetime
+from models.response_limits import response_size
 from models.unity_response import extract_unity_result
 from models.custom_tool_schema import (
     PreparedSchema,
@@ -507,7 +508,11 @@ class CustomToolService:
                         output_schema=schema,
                     )
                 except asyncio.TimeoutError:
-                    return self._poll_timeout(tool_name, None)
+                    return self._poll_timeout(
+                        tool_name,
+                        None,
+                        {**params, "action": definition.poll_action or "status"},
+                    )
                 logger.info("Custom tool completed (success=%s, polled=True)", result.success)
                 return result
         finally:
@@ -582,12 +587,31 @@ class CustomToolService:
             if user_count:
                 self._polls_by_user[user_id] = user_count
 
-    def _poll_timeout(self, tool_name: str, response) -> MCPResponse:
+    def _poll_timeout(
+        self, tool_name: str, response, poll_params=None, last_observation=None
+    ) -> MCPResponse:
+        data = self._safe_response(response)
+        if poll_params is not None:
+            data = {
+                "reason": "custom_tool_poll_timeout",
+                "job_id": poll_params.get("job_id"),
+                "poll_action": poll_params["action"],
+                "next_action": "poll_same_job",
+                "last_observation": last_observation,
+                "last_response": data,
+            }
         return MCPResponse(
             success=False,
             message=f"Timeout waiting for {tool_name} to complete",
-            data=self._safe_response(response),
+            hint="inspect_state_before_retry",
+            data=data,
         )
+
+    def _poll_observation(self, response):
+        """Keep a small detached diagnostic, never an earlier uncharged response graph."""
+        if response_size(response, max_bytes=4096, max_nodes=128, max_retained=32768) is None:
+            return {"truncated": True}
+        return json.loads(json.dumps(response, ensure_ascii=False))
 
     def _is_registered(self, project_id: str, tool_name: str) -> bool:
         return tool_name in self._project_tools.get(project_id, {})
@@ -634,6 +658,7 @@ class CustomToolService:
                 else time.monotonic() + timeout
             )
             response = initial_response
+            last_observation = self._poll_observation(response)
             initial_response = data = None
             poll_response = False
 
@@ -684,6 +709,12 @@ class CustomToolService:
                             timeout=remaining,
                         )
                         poll_response = True
+                        if (
+                            isinstance(response, dict)
+                            and response.get("_mcp_status") == "pending"
+                            and response.get("success", True)
+                        ):
+                            last_observation = self._poll_observation(response)
                         if time.monotonic() >= deadline:
                             break
                     except asyncio.TimeoutError:
@@ -706,10 +737,10 @@ class CustomToolService:
                             "message": f"Retrying after transient error: {exc}",
                         }
 
-                return self._poll_timeout(tool_name, response)
+                return self._poll_timeout(tool_name, response, poll_params, last_observation)
             finally:
                 # Cancelled tasks may retain their traceback after this frame exits.
-                response = failure_data = None
+                response = failure_data = last_observation = None
 
     def _interpret_status(self, response, *, poll_response: bool = False) -> tuple[str, float]:
         if response is None:
