@@ -4,8 +4,12 @@ from tests.timing import watchdog_timeout
 
 import asyncio  # noqa: ANYIO_OK -- exercise the hub's asyncio loop boundary.
 from contextlib import closing
+from concurrent.futures import CancelledError as ThreadCancelledError
+from contextvars import ContextVar
 import inspect
 import threading
+import weakref
+from types import SimpleNamespace
 
 from anyio.from_thread import start_blocking_portal
 import pytest
@@ -145,30 +149,296 @@ def test_sync_wait_preserves_operation_timeout_error(monkeypatch):
 
 def test_replacement_before_loop_acceptance_cannot_start_operation(monkeypatch):
     invoked = []
-    original_submit = asyncio.run_coroutine_threadsafe
 
     async def operation():
         invoked.append(True)
         return "unexpected dispatch"
 
-    def submit(coro, loop):
-        monkeypatch.setattr(PluginHub, "_registry", object())
-        future = original_submit(coro, loop)
-        # Force loop acceptance before the caller can perform its next check.
+    with start_blocking_portal() as portal:
+        loop = portal.call(asyncio.get_running_loop)
+        monkeypatch.setattr(PluginHub, "_loop", loop)
+        original_schedule = loop.call_soon_threadsafe
+
+        def schedule(callback, *args, **kwargs):
+            def replace_before_admission():
+                monkeypatch.setattr(PluginHub, "_registry", object())
+                callback(*args)
+
+            return original_schedule(replace_before_admission, **kwargs)
+
+        with monkeypatch.context() as scoped:
+            scoped.setattr(loop, "call_soon_threadsafe", schedule)
+            with closing(operation()) as coro:
+                with pytest.raises(RuntimeError, match="replaced"):
+                    PluginHub._run_coroutine_sync(coro)
+                assert invoked == []
+                assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
+
+
+def test_abandonment_while_loop_enters_ownership_returns_not_dispatched(monkeypatch):
+    loop = asyncio.new_event_loop()
+    callback_entered, callback_release = threading.Event(), threading.Event()
+    loop_at_ownership, finished, submitted = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+    raw_lock = threading.Lock()
+    failures, results, invoked, outstanding = [], [], [], []
+
+    class ContendedOwnership:
+        """Coordinate the real thread lock without replacing its synchronization."""
+
+        def __enter__(self):
+            if threading.current_thread() is caller:
+                raw_lock.acquire()
+                if submitted.is_set():
+                    callback_release.set()
+                    assert loop_at_ownership.wait(watchdog_timeout())
+            else:
+                loop_at_ownership.set()
+                raw_lock.acquire()
+            return self
+
+        def __exit__(self, *_args):
+            raw_lock.release()
+
+    def block_loop():
+        callback_entered.set()
+        assert callback_release.wait(watchdog_timeout())
+
+    async def operation() -> None:
+        invoked.append(True)
+
+    coro = operation()
+
+    def invoke():
         try:
-            future.result(timeout=watchdog_timeout())
-        except RuntimeError:
-            pass
-        return future
+            results.append(PluginHub.send_command_blocking("hash", "manage_scene", {}))
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            finished.set()
+
+    original_schedule = loop.call_soon_threadsafe
+
+    def schedule(callback, *args, **kwargs):
+        handle = original_schedule(callback, *args, **kwargs)
+        if threading.current_thread() is caller and not submitted.is_set():
+            monkeypatch.setattr(PluginHub, "_registry", object())
+            submitted.set()
+        return handle
+
+    monkeypatch.setattr(PluginHub, "_loop", loop)
+    monkeypatch.setattr(PluginHub, "send_command_for_instance", lambda *_args: coro)
+    monkeypatch.setattr("transport.plugin_hub.threading", SimpleNamespace(Lock=ContendedOwnership))
+    monkeypatch.setattr(loop, "call_soon_threadsafe", schedule)
+    owner = threading.Thread(target=loop.run_forever, daemon=True)
+    caller = threading.Thread(target=invoke, daemon=True)
+    loop.call_soon(block_loop)
+    owner.start()
+    assert callback_entered.wait(watchdog_timeout())
+    caller.start()
+    try:
+        assert finished.wait(watchdog_timeout())
+        assert failures == []
+        assert results[0]["data"]["dispatch"] == "not_dispatched"
+        assert invoked == []
+        assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
+    finally:
+        callback_release.set()
+
+        def stop_when_idle():
+            outstanding.extend(asyncio.all_tasks(loop))
+            loop.stop()
+
+        original_schedule(stop_when_idle)
+        caller.join(watchdog_timeout())
+        owner.join(watchdog_timeout())
+        loop.close()
+        coro.close()
+        assert not caller.is_alive() and not owner.is_alive()
+        assert outstanding == []
+
+
+@pytest.mark.parametrize("boundary", ["schedule", "schedule_after_queue", "create_task"])
+def test_sync_admission_failure_settles_caller_and_closes_unaccepted_coroutine(
+    monkeypatch, boundary
+):
+    failure = LookupError("controlled admission failure")
+    rejected, invoked = [], []
+
+    async def should_not_start():
+        invoked.append(True)
+        return "accepted"
+
+    def reject(candidate, *_args, **_kwargs):
+        if inspect.iscoroutine(candidate):
+            rejected.append(candidate)
+        if boundary == "schedule_after_queue":
+            original_schedule(candidate, *_args, **_kwargs)
+        raise failure
 
     with start_blocking_portal() as portal:
-        monkeypatch.setattr(PluginHub, "_loop", portal.call(asyncio.get_running_loop))
-        monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", submit)
-        with closing(operation()) as coro:
-            with pytest.raises(RuntimeError, match="replaced"):
-                PluginHub._run_coroutine_sync(coro)
-            assert invoked == []
-            assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
+        loop = portal.call(asyncio.get_running_loop)
+        original_schedule = loop.call_soon_threadsafe
+        monkeypatch.setattr(PluginHub, "_loop", loop)
+        with closing(should_not_start()) as operation:
+            try:
+                with monkeypatch.context() as scoped:
+                    scoped.setattr(
+                        loop,
+                        "create_task" if boundary == "create_task" else "call_soon_threadsafe",
+                        reject,
+                    )
+                    scoped.setattr(loop, "call_exception_handler", lambda _context: None)
+                    with pytest.raises(LookupError) as actual:
+                        PluginHub._run_coroutine_sync(operation)
+                    assert actual.value is failure
+                    assert inspect.getcoroutinestate(operation) == inspect.CORO_CLOSED
+            finally:
+                # Dispose the baseline implementation's rejected wrapper after RED.
+                for candidate in rejected:
+                    candidate.close()
+        portal.call(lambda: None)
+        assert invoked == []
+
+
+@pytest.mark.parametrize("eager", [False, True])
+@pytest.mark.parametrize("outcome", ["value", "error", "cancel"])
+def test_sync_task_settlement_preserves_context_and_outcome(monkeypatch, eager, outcome):
+    if eager and not hasattr(asyncio, "eager_task_factory"):
+        pytest.skip("Eager task factories require Python 3.12 or newer")
+    context = ContextVar("sync_admission_test_context")
+    marker, failure = object(), LookupError("owned operation error")
+
+    async def operation():
+        assert context.get() is marker
+        if outcome == "error":
+            raise failure
+        if outcome == "cancel":
+            raise asyncio.CancelledError
+        return marker
+
+    with start_blocking_portal() as portal:
+        loop = portal.call(asyncio.get_running_loop)
+        monkeypatch.setattr(PluginHub, "_loop", loop)
+        previous = portal.call(loop.get_task_factory)
+        if eager:
+            portal.call(loop.set_task_factory, asyncio.eager_task_factory)
+        token = context.set(marker)
+        try:
+            if outcome == "value":
+                assert PluginHub._run_coroutine_sync(operation()) is marker
+            elif outcome == "error":
+                with pytest.raises(LookupError) as actual:
+                    PluginHub._run_coroutine_sync(operation())
+                assert actual.value is failure
+            else:
+                with pytest.raises(ThreadCancelledError):
+                    PluginHub._run_coroutine_sync(operation())
+        finally:
+            context.reset(token)
+            portal.call(loop.set_task_factory, previous)
+
+
+def test_slow_task_creation_cannot_hold_the_sync_caller_past_its_deadline(monkeypatch):
+    loop = asyncio.new_event_loop()
+    ready, creating, release, finished = (threading.Event() for _ in range(4))
+    invoked, results, failures = [], [], []
+
+    async def operation():
+        invoked.append(True)
+        return {"success": True}
+
+    coro = operation()
+    original_create = loop.create_task
+
+    def held_create(candidate, **kwargs):
+        if candidate is coro:
+            creating.set()
+            assert release.wait(watchdog_timeout())
+        return original_create(candidate, **kwargs)
+
+    def invoke():
+        try:
+            results.append(PluginHub.send_command_blocking("hash", "manage_scene", {}))
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(PluginHub, "_loop", loop)
+    monkeypatch.setattr(PluginHub, "send_command_for_instance", lambda *_args: coro)
+    monkeypatch.setattr(PluginHub, "_command_timeouts", lambda *_args: (0.1, 0.1))
+    monkeypatch.setattr(PluginHub, "CANCEL_TIMEOUT", 0)
+    monkeypatch.setattr(loop, "create_task", held_create)
+    owner = threading.Thread(target=loop.run_forever, daemon=True)
+    caller = threading.Thread(target=invoke, daemon=True)
+    loop.call_soon(ready.set)
+    owner.start()
+    assert ready.wait(watchdog_timeout())
+    caller.start()
+    try:
+        assert creating.wait(watchdog_timeout())
+        assert finished.wait(0.5), "Task creation retained the caller's ownership lock"
+        assert failures == []
+        assert results[0]["data"]["reason"] == "outcome_unknown"
+        assert invoked == []
+    finally:
+        release.set()
+        asyncio.run_coroutine_threadsafe(asyncio.sleep(0), loop).result(watchdog_timeout())
+        loop.call_soon_threadsafe(loop.stop)
+        caller.join(watchdog_timeout())
+        owner.join(watchdog_timeout())
+        loop.close()
+        assert not caller.is_alive() and not owner.is_alive()
+    assert invoked == []
+    assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
+
+
+def test_abandoned_submission_releases_coroutine_payload_without_loop_restart(monkeypatch):
+    loop = asyncio.new_event_loop()
+    ready, stopped = threading.Event(), threading.Event()
+
+    class Payload:
+        pass
+
+    async def operation(payload):
+        raise AssertionError(f"Abandoned payload executed: {type(payload)}")
+
+    payload = Payload()
+    retained = weakref.ref(payload)
+    coro = operation(payload)
+    del payload
+
+    def run_loop():
+        loop.call_soon(ready.set)
+        loop.run_forever()
+        stopped.set()
+
+    original_schedule = loop.call_soon_threadsafe
+
+    def stop_before_admission(callback, *args, **kwargs):
+        original_schedule(loop.stop)
+        assert stopped.wait(watchdog_timeout())
+        return original_schedule(callback, *args, **kwargs)
+
+    monkeypatch.setattr(PluginHub, "_loop", loop)
+    monkeypatch.setattr(loop, "call_soon_threadsafe", stop_before_admission)
+    owner = threading.Thread(target=run_loop, daemon=True)
+    owner.start()
+    assert ready.wait(watchdog_timeout())
+    try:
+        with pytest.raises(RuntimeError, match="stopped"):
+            PluginHub._run_coroutine_sync(coro)
+        assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
+        assert retained() is None
+    finally:
+        owner.join(watchdog_timeout())
+        loop.close()  # No restart or cleanup turn is required for unaccepted work.
+        coro.close()
+        assert not owner.is_alive()
 
 
 @pytest.mark.parametrize("stop_before_submission", [True, False])
@@ -192,16 +462,15 @@ def test_loop_stop_race_releases_sync_caller_without_restart(
         loop.stop()
         await asyncio.Event().wait()
 
-    original_submit = asyncio.run_coroutine_threadsafe
-    submitted = []
+    original_schedule = loop.call_soon_threadsafe
+    submitted = threading.Event()
 
-    def submit(coro, target):
-        if stop_before_submission:
-            target.call_soon_threadsafe(target.stop)
+    def schedule(callback, *args, **kwargs):
+        if stop_before_submission and not submitted.is_set():
+            original_schedule(loop.stop)
             assert stopped.wait(watchdog_timeout())
-        future = original_submit(coro, target)
-        submitted.append(future)
-        return future
+        submitted.set()
+        return original_schedule(callback, *args, **kwargs)
 
     coro = operation()
 
@@ -226,7 +495,7 @@ def test_loop_stop_race_releases_sync_caller_without_restart(
 
     monkeypatch.setattr(PluginHub, "_loop", loop)
     monkeypatch.setattr(PluginHub, "send_command_for_instance", command_operation)
-    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", submit)
+    monkeypatch.setattr(loop, "call_soon_threadsafe", schedule)
     owner = threading.Thread(target=run_loop, daemon=True)
     caller = threading.Thread(target=invoke, daemon=True)
     owner.start()
@@ -252,8 +521,6 @@ def test_loop_stop_race_releases_sync_caller_without_restart(
             assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
     finally:
         owner.join(watchdog_timeout())
-        for future in submitted:
-            future.cancel()
 
         async def drain() -> None:
             # Give even the unfixed submission a turn, then dispose its task.
@@ -275,3 +542,5 @@ def test_loop_stop_race_releases_sync_caller_without_restart(
         loop.close()
         coro.close()
         assert not caller.is_alive()
+        if stop_before_submission:
+            assert invoked == [], "Abandoned admission executed when the loop restarted"

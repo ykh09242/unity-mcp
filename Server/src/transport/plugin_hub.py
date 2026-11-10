@@ -12,6 +12,7 @@ import uuid
 import weakref
 from hashlib import sha256
 from collections.abc import Coroutine, Mapping
+from concurrent.futures import Future as ThreadFuture
 from dataclasses import dataclass, replace
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext, suppress
 from contextvars import ContextVar
@@ -4732,25 +4733,60 @@ class PluginHub(WebSocketEndpoint):
     ) -> Any:
         ownership = threading.Lock()
         started = abandoned = False
-        submitted = None
+        task: asyncio.Task | None = None
+        future: ThreadFuture = ThreadFuture()
 
-        async def run_owned() -> Any:
-            nonlocal started
+        def settled(completed: asyncio.Task) -> None:
+            # Task state is read only on its loop. Even an abandoned caller's
+            # task exception must be retrieved when the loop eventually drains.
+            with ownership:
+                if completed.cancelled():
+                    future.cancel()
+                    return
+                error = completed.exception()
+                if not future.done():
+                    if error is None:
+                        future.set_result(completed.result())
+                    else:
+                        future.set_exception(error)
+
+        def admit() -> None:
+            nonlocal task, started
             with ownership:
                 if abandoned:
-                    return None
-                if cls._loop is not loop or cls._registry is not registry:
+                    return
+                try:
+                    if cls._loop is not loop or cls._registry is not registry:
+                        raise _SyncWaitInterrupted(
+                            "PluginHub event loop stopped or was replaced", started=False
+                        )
+                    if loop.time() >= deadline:
+                        raise _SyncWaitInterrupted(
+                            "PluginHub synchronous wait deadline exceeded", started=False
+                        )
+                except BaseException as error:
                     coro.close()
-                    raise _SyncWaitInterrupted(
-                        "PluginHub event loop stopped or was replaced", started=False
-                    )
-                if loop.time() >= deadline:
-                    coro.close()
-                    raise _SyncWaitInterrupted(
-                        "PluginHub synchronous wait deadline exceeded", started=False
-                    )
+                    future.set_exception(error)
+                    return
+                # Transfer before invoking a potentially eager task factory.
+                # No user coroutine or factory runs under the ownership lock.
                 started = True
-            return await coro
+            try:
+                created = loop.create_task(coro)
+            except BaseException as error:
+                coro.close()
+                with ownership:
+                    if not future.done():
+                        future.set_exception(error)
+                return
+            created.add_done_callback(settled)
+            with ownership:
+                task = created
+                cancel_now = abandoned
+            if cancel_now:
+                # Abandonment may precede publication of the accepted task.
+                # Cancel on this loop before deferred task execution can start.
+                created.cancel()
 
         try:
             loop = cls._loop
@@ -4772,14 +4808,21 @@ class PluginHub(WebSocketEndpoint):
             request = http_request_budget.get()
             if request is not None:
                 deadline = min(deadline, request.budget.expires_at)
-            submitted = run_owned()
-            future = asyncio.run_coroutine_threadsafe(submitted, loop)
-        except RuntimeError:
-            # Before submission succeeds, this adapter still owns the coroutine.
-            if submitted is not None:
-                submitted.close()
+        except BaseException:
             coro.close()
             raise
+        with ownership:
+            try:
+                # Schedule a plain callback, not a second coroutine that might
+                # be executing when a different thread abandons the admission.
+                loop.call_soon_threadsafe(admit)
+            except BaseException:
+                # Even a scheduler that queues before raising cannot admit the
+                # operation once it acquires this same ownership lock.
+                abandoned = True
+                coro.close()
+                future.cancel()
+                raise
         try:
             while True:
                 if future.done():
@@ -4798,14 +4841,26 @@ class PluginHub(WebSocketEndpoint):
                     if future.done():
                         return future.result()
             with ownership:
+                if future.done():
+                    return future.result()
                 abandoned = True
                 if not started:
                     coro.close()
-                    submitted.close()
                 raise _SyncWaitInterrupted(detail, started=started)
         finally:
-            if not future.done():
-                future.cancel()
+            cancel_task = None
+            with ownership:
+                if not future.done():
+                    abandoned = True
+                    if not started:
+                        coro.close()
+                    future.cancel()
+                    cancel_task = task
+            if cancel_task is not None:
+                # An accepted task belongs to the loop; never close its
+                # coroutine or invoke Task.cancel from the waiting thread.
+                with suppress(RuntimeError):
+                    loop.call_soon_threadsafe(cancel_task.cancel)
 
     @classmethod
     def send_command_blocking(
