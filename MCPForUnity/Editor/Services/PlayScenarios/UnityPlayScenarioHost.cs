@@ -292,20 +292,32 @@ namespace MCPForUnity.Editor.Services.PlayScenarios
 
         public void Release()
         {
-            ReleaseBorrowedState();
-            sceneOperation.Release();
+            try
+            {
+                ReleaseBorrowedState();
+            }
+            finally
+            {
+                sceneOperation.Release();
+            }
         }
 
         private void ReleaseBorrowedState()
         {
             targetQuery.Release();
-            ReleaseInput();
-            sceneScope.Release();
-            // Releasing a reference does not cancel Unity's scene load or destroy scene objects.
-            _loadPath = null;
-            _targetPath = null;
-            _targetId = null;
-            _targetSegments = null;
+            try
+            {
+                ReleaseInput();
+            }
+            finally
+            {
+                sceneScope.Release();
+                // Releasing a reference does not cancel Unity's scene load or destroy scene objects.
+                _loadPath = null;
+                _targetPath = null;
+                _targetId = null;
+                _targetSegments = null;
+            }
         }
     }
 }

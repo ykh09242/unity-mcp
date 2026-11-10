@@ -270,15 +270,21 @@ namespace MCPForUnity.Runtime.PlayScenarios
         public void Release()
         {
             targetQuery.Release();
-            ReleaseInput();
-            sceneOperation.Release();
-            sceneScope.Release();
-            preparedTarget = null;
-            preparedTargetId = null;
-            preparedComponent = null;
-            targetSegments = null;
-            componentType = null;
-            subscriptionCount = null;
+            try
+            {
+                ReleaseInput();
+            }
+            finally
+            {
+                sceneOperation.Release();
+                sceneScope.Release();
+                preparedTarget = null;
+                preparedTargetId = null;
+                preparedComponent = null;
+                targetSegments = null;
+                componentType = null;
+                subscriptionCount = null;
+            }
         }
     }
 }

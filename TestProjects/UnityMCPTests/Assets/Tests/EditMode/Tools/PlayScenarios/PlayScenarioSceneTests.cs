@@ -415,6 +415,77 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
 
         private static object Call(Type type, string name, params object[] args) => type.GetMethod(name, Flags).Invoke(null, args);
 
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void HostReleaseClearsBoundScopeEvenWhenInputReleaseFails(bool player, bool failRelease)
+        {
+            var previousFactory = PlayScenarioPlayerInput.CreateInputBackend;
+            Scene previous = SceneManager.GetActiveScene();
+            Scene owned = default;
+            string path = fixtureFolder + "/release-scope.unity";
+            try
+            {
+                owned = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+                Assert.That(EditorSceneManager.SaveScene(owned, path), Is.True);
+                IPlayScenarioHost host = player ? new PlayScenarioPlayerHost(new[] { path }, null, true) : new UnityPlayScenarioHost(null, true);
+                var scope = (PlayScenarioSceneScope)host.GetType().GetField("sceneScope", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(host);
+                Assert.That(
+                    host.Evaluate(
+                        new PlayScenarioStep
+                        {
+                            Action = "wait_object",
+                            Scene = path,
+                            Target = "Missing",
+                        },
+                        true
+                    ).Ready,
+                    Is.False
+                );
+                PlayScenarioPlayerInput.CreateInputBackend = () => new ReleaseScopeBackend(failRelease);
+                host.Evaluate(new PlayScenarioStep { Action = "input", Input = JObject.Parse("{'action':'key','key':'Space','frames':5}") }, true);
+
+                if (failRelease)
+                    Assert.Throws<PlayScenarioInputReleaseException>(() => host.Release());
+                else
+                    host.Release();
+
+                EditorSceneManager.CloseScene(owned, true);
+                owned = EditorSceneManager.OpenScene(path, OpenSceneMode.Additive);
+                Assert.That(scope.Resolve(path, false), Is.EqualTo(owned), "Release must remove the old scene binding even after an input failure.");
+            }
+            finally
+            {
+                PlayScenarioPlayerInput.CreateInputBackend = previousFactory;
+                if (previous.IsValid() && previous.isLoaded)
+                    SceneManager.SetActiveScene(previous);
+                if (owned.IsValid() && owned.isLoaded)
+                    EditorSceneManager.CloseScene(owned, true);
+            }
+        }
+
+        private sealed class ReleaseScopeBackend : MCPForUnity.Editor.Tools.Input.IScenarioInputSimulationBackend
+        {
+            private readonly bool failRelease;
+
+            internal ReleaseScopeBackend(bool failRelease) => this.failRelease = failRelease;
+
+            public bool Available => true;
+            public string UnavailableReason => null;
+            public object Status => null;
+            public long UpdateCount => 0;
+            public bool LeaseActive => true;
+
+            public object Apply(MCPForUnity.Editor.Tools.Input.InputSimulationRequest request) => null;
+
+            public void ReleaseAll()
+            {
+                if (failRelease)
+                    throw new InvalidOperationException("release uncertain");
+            }
+        }
+
         [Test]
         public void RetainedSceneOwnerBlocksGenericAdmissionUntilCompletion()
         {

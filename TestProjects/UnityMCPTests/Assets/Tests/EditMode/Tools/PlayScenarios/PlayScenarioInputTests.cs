@@ -1,9 +1,11 @@
 using System;
+using System.Reflection;
 using MCPForUnity.Editor.Services.PlayScenarios;
 using MCPForUnity.Editor.Tools.Input;
 using MCPForUnity.Runtime.PlayScenarios;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEngine;
 
 namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
 {
@@ -111,6 +113,103 @@ namespace MCPForUnityTests.EditMode.Tools.PlayScenarios
             player.Release();
             Assert.That(backend.Releases, Is.EqualTo(2));
         }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void RealHostReleaseFailureStillReleasesWaiterWithoutLosingPendingOwnership(bool player, bool pending)
+        {
+            IPlayScenarioHost host = CreateRealHost(player);
+            var operation = RealHostOperation(host);
+            var original = new InvalidOperationException("release uncertain");
+            bool done = false;
+            try
+            {
+                ResetSceneOwnership();
+                Assert.That(host.Evaluate(Definition().Steps[1], true).Ready, Is.False);
+                if (pending)
+                {
+                    typeof(PlayScenarioSceneOperation)
+                        .GetMethod("TrackCompletion", BindingFlags.Static | BindingFlags.NonPublic)
+                        .Invoke(null, new object[] { (Func<bool>)(() => done) });
+                    typeof(PlayScenarioSceneOperation)
+                        .GetField("operation", BindingFlags.Instance | BindingFlags.NonPublic)
+                        .SetValue(operation, new AsyncOperation());
+                    Assert.That(operation.HandleCount, Is.EqualTo(1));
+                }
+                backend.DuringRelease = () => throw original;
+
+                var failure = Assert.Throws<PlayScenarioInputReleaseException>(() => host.Release());
+
+                Assert.That(failure.InnerException, Is.SameAs(original));
+                AssertReleasedWaiter(operation);
+                if (host is PlayScenarioPlayerHost runtime)
+                    Assert.That(runtime.CaptureMetrics(1, 1000).RunnerSubscriptionCount, Is.Zero);
+                Assert.That(PlayScenarioSceneOperation.ObservePendingOperation(out bool recovery), Is.EqualTo(pending));
+                Assert.That(recovery, Is.False);
+                var repeated = Assert.Throws<InvalidOperationException>(() => host.Release());
+                Assert.That(repeated.InnerException, Is.SameAs(original));
+                Assert.That(backend.Releases, Is.EqualTo(1), "An uncertain input release must never be replayed.");
+                done = true;
+                Assert.That(PlayScenarioSceneOperation.ObservePendingOperation(out recovery), Is.False);
+            }
+            finally
+            {
+                ResetSceneOwnership();
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RealHostEngineReleasePreservesInputFailureAndReleasesIndependentWaiter(bool player)
+        {
+            IPlayScenarioHost host = CreateRealHost(player);
+            Assert.That(host.Evaluate(Definition().Steps[1], true).Ready, Is.False);
+            backend.DuringRelease = () => throw new InvalidOperationException("release uncertain");
+            var engine = new PlayScenarioEngine(PlayScenarioEngine.Create(Definition(), new string('a', 32), 1, 30, 1000), host);
+
+            engine.Release();
+
+            Assert.That(engine.State.RunnerResourcesReleased, Is.False);
+            Assert.That(engine.State.ReportError, Does.Contain("release uncertain"));
+            AssertReleasedWaiter(RealHostOperation(host));
+            engine.Release();
+            Assert.That(engine.State.RunnerResourcesReleased, Is.False);
+            Assert.That(backend.Releases, Is.EqualTo(1));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void RealHostSuccessfulReleaseIsIdempotentAndReleasesIndependentWaiter(bool player)
+        {
+            IPlayScenarioHost host = CreateRealHost(player);
+            Assert.That(host.Evaluate(Definition().Steps[1], true).Ready, Is.False);
+
+            host.Release();
+            host.Release();
+
+            Assert.That(backend.Releases, Is.EqualTo(1));
+            AssertReleasedWaiter(RealHostOperation(host));
+            if (host is PlayScenarioPlayerHost runtime)
+                Assert.That(runtime.CaptureMetrics(1, 1000).RunnerSubscriptionCount, Is.Zero);
+        }
+
+        private static IPlayScenarioHost CreateRealHost(bool player) =>
+            player ? new PlayScenarioPlayerHost(new[] { "Assets/Test.unity" }, () => 7, true) : new UnityPlayScenarioHost(null, true);
+
+        private static PlayScenarioSceneOperation RealHostOperation(IPlayScenarioHost host) =>
+            (PlayScenarioSceneOperation)host.GetType().GetField("sceneOperation", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(host);
+
+        private static void AssertReleasedWaiter(PlayScenarioSceneOperation operation)
+        {
+            Assert.That(operation.HandleCount, Is.Zero);
+            var failure = Assert.Throws<InvalidOperationException>(() => operation.Evaluate(Definition().Steps[0], true));
+            Assert.That(failure.Message, Does.Contain("released scene-operation waiter"));
+        }
+
+        private static void ResetSceneOwnership() =>
+            typeof(PlayScenarioSceneOperation).GetMethod("ResetForTests", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
 
         [Test]
         public void UnavailableBackendFailsExplicitlyAndReleasesOwnedDevices()
