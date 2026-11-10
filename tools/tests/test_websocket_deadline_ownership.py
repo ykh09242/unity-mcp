@@ -48,12 +48,24 @@ def test_websocket_deadline_callback_ownership(tmp_path):
     ):
         offset = source.index(start)
         members.append(source[offset : source.index(end, offset)])
+    stdio_source = (
+        ROOT / "MCPForUnity/Editor/Services/Transport/Transports/StdioBridgeHost.cs"
+    ).read_text(encoding="utf-8")
+    stdio_start = stdio_source.index("        private sealed class CommandCancellation")
+    stdio_members = stdio_source[
+        stdio_start : stdio_source.index(
+            "        private static void ExecuteQueuedCommand", stdio_start
+        )
+    ]
     template = (
         ROOT / "tools/tests/fixtures/transport_disposal/WebSocketDeadlineHarness.cs"
     ).read_text(encoding="utf-8")
     harness = tmp_path / "Harness.cs"
     harness.write_text(
-        template.replace("// PRODUCTION_MEMBERS", "\n".join(members)), encoding="utf-8"
+        template.replace("// PRODUCTION_MEMBERS", "\n".join(members)).replace(
+            "// STDIO_PRODUCTION_MEMBERS", stdio_members
+        ),
+        encoding="utf-8",
     )
     source_paths = [
         harness,
@@ -99,4 +111,12 @@ def test_websocket_deadline_callback_ownership(tmp_path):
     )
     result = subprocess.run([dotnet, str(output)], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "PASS CancellationSettlement_RejectsLateCallbacksAndJoinsConcurrentCallbacks(False)"
+        in result.stdout
+    )
+    assert (
+        "PASS CancellationSettlement_RejectsLateCallbacksAndJoinsConcurrentCallbacks(True)"
+        in result.stdout
+    )
     assert "PASS WebSocket deadline ownership" in result.stdout

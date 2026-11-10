@@ -940,8 +940,9 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
-        [Test]
-        public async Task DeadlineCallback_RetainsDrainAndSourceAfterActualHandlerSettlement()
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task DeadlineCallback_RetainsDrainAndSourceAfterActualHandlerSettlement(bool callbackFirst)
         {
             RequireOwnedProgressEditor();
             using var handlers = new ProgressHandlerScope();
@@ -965,11 +966,15 @@ namespace MCPForUnityTests.Editor.Services
             );
             using var peer = new ProgressWirePeer();
             using var client = peer.CreateClient();
+            using var contenderPeer = new ProgressWirePeer();
+            using var contenderClient = contenderPeer.CreateClient();
             CancellationTokenRegistration callback = default;
             try
             {
                 Assert.IsTrue(await client.StartAsync());
                 await peer.Negotiate(false);
+                Assert.IsTrue(await contenderClient.StartAsync());
+                await contenderPeer.Negotiate(false, arbitration: true);
                 string id = Guid.NewGuid().ToString("D");
                 peer.Send(
                     new JObject
@@ -997,23 +1002,64 @@ namespace MCPForUnityTests.Editor.Services
                 var timer = (Timer)request.GetType().GetField("deadlineTimer", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(request);
                 timer.Change(20, Timeout.Infinite);
                 await NativeProgressProbe.AwaitOwned(callbackEntered.Task);
-                releaseHandler.TrySetResult(new { complete = true });
-                await peer.Result(id);
+                if (callbackFirst)
+                    releaseCallback.Set();
+                else
+                {
+                    releaseHandler.TrySetResult(new { complete = true });
+                    await peer.Result(id);
+                }
+                peer.Send(new JObject { ["type"] = "cancel", ["id"] = id });
                 await peer.Barrier();
                 Assert.IsTrue(client.IsConnected, "Deadline callbacks must not block receive-loop control.");
-                Assert.IsFalse(work.DrainAsync().IsCompleted, "The actual handler and result have settled, but the deadline callback is still owned.");
+                Assert.IsFalse(work.DrainAsync().IsCompleted, "Both the handler and callback must settle before releasing ownership.");
                 Assert.DoesNotThrow(() => _ = source.Token);
+                await AssertContenderAdmissionAsync(true);
+                await StdioBridgeLifecycleTests.AssertIndependentAdmissionAsync(true, TransportMode.Stdio);
                 releaseCallback.Set();
+                releaseHandler.TrySetResult(new { complete = true });
                 await NativeProgressProbe.AwaitOwned(work.DrainAsync());
                 Assert.Throws<ObjectDisposedException>(() => _ = source.Token);
+                await AssertContenderAdmissionAsync(false);
+                await StdioBridgeLifecycleTests.AssertIndependentAdmissionAsync(false, TransportMode.Stdio);
                 peer.AssertHealthy();
+                contenderPeer.AssertHealthy();
             }
             finally
             {
                 releaseCallback.Set();
                 releaseHandler.TrySetResult(new { complete = true });
                 callback.Dispose();
+                await StopOwnedProgressClient(contenderClient);
                 await StopOwnedProgressClient(client);
+            }
+
+            async Task AssertContenderAdmissionAsync(bool blocked)
+            {
+                using var tools = NativeProgressProbe.EnableTools("batch_execute", "get_selection");
+                foreach (string tool in new[] { "batch_execute", "get_selection", "ping" })
+                {
+                    string contenderId = Guid.NewGuid().ToString("D");
+                    contenderPeer.Send(
+                        new JObject
+                        {
+                            ["type"] = "execute",
+                            ["id"] = contenderId,
+                            ["name"] = tool,
+                            ["params"] = tool == "batch_execute" ? new JObject { ["commands"] = new JArray() } : new JObject(),
+                            ["arbitration"] = new JObject
+                            {
+                                ["version"] = 1,
+                                ["request_nonce"] = Guid.NewGuid().ToString("N"),
+                                ["instance_generation"] = NativeCommandArbitrator.Shared.Generation,
+                            },
+                        }
+                    );
+                    var proof = (await contenderPeer.Result(contenderId))["result"]?["native_arbitration"];
+                    Assert.AreEqual(blocked && tool != "ping" ? "not_started" : "started", (string)proof?["disposition"], tool);
+                    if (blocked && tool != "ping")
+                        Assert.AreEqual("operation_busy", (string)proof?["reason"], tool);
+                }
             }
         }
 
@@ -2352,7 +2398,7 @@ namespace MCPForUnityTests.Editor.Services
 
             internal Task<JObject> Result(string id) => (Task<JObject>)Call("Result", id);
 
-            internal async Task<JObject> Negotiate(bool supported, bool phaseTiming = false, bool resume = false)
+            internal async Task<JObject> Negotiate(bool supported, bool phaseTiming = false, bool resume = false, bool arbitration = false)
             {
                 await (Task)Call("WaitRegistered", 1);
                 JObject registration = await Message(message => message.Value<string>("type") == "register");
@@ -2363,6 +2409,8 @@ namespace MCPForUnityTests.Editor.Services
                     capabilities.Add("phase_timing_v1");
                 if (resume)
                     capabilities.Add(CommandResumeJournal.Capability);
+                if (arbitration)
+                    capabilities.Add(NativeCommandArbitrator.Capability);
                 Send(new JObject { ["type"] = "welcome", ["capabilities"] = capabilities.DeepClone() });
                 Send(
                     new JObject

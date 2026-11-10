@@ -25,6 +25,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
         // PRODUCTION_MEMBERS
     }
+
+    // The complete stdio callback owner is extracted from production source too;
+    // both transport cancellation/settlement races execute their actual ownership code.
+    public static class StdioBridgeHost
+    {
+        // STDIO_PRODUCTION_MEMBERS
+    }
 }
 
 internal static class WebSocketDeadlineHarness

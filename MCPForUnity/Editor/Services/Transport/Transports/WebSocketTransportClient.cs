@@ -1665,7 +1665,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
             if (work == null)
                 return;
-            var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+            var deadline = new CancellationTokenSource();
             var command = new Command
             {
                 type = commandName,
@@ -1706,6 +1706,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     // Publish queue ownership before even an already-expired deadline
                     // can schedule user cancellation callbacks.
+                    request.BindConnectionCancellation(token);
                     request.ScheduleDeadline(
                         CommandDeadlineRemainingMilliseconds(
                             timeoutSeconds,
@@ -1773,8 +1774,14 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             private readonly CommandAdmission cancellation = new CommandAdmission();
             private Timer deadlineTimer;
             private bool deadlineExpired;
+            private readonly object cancellationGate = new object();
+            private CancellationTokenRegistration connectionCancellation;
+            private Task cancellationTask;
+            private bool cancellationFinished;
             public CancellationToken RequestCancellation => cancellation.Token;
             public bool CancelRequested => RequestCancellation.IsCancellationRequested && !deadlineExpired;
+
+            public void BindConnectionCancellation(CancellationToken token) => connectionCancellation = token.Register(() => _ = CancelAsync());
 
             public void ScheduleDeadline(double remainingMilliseconds)
             {
@@ -1797,14 +1804,44 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
             public Task CancelAsync()
             {
-                cancellation.Retire();
-                Progress?.Close();
-                return Task.Run(() => Deadline.Cancel());
+                lock (cancellationGate)
+                {
+                    if (cancellationFinished)
+                        return Task.CompletedTask;
+                    if (cancellationTask == null)
+                    {
+                        cancellation.Retire();
+                        Progress?.Close();
+                        cancellationTask = Task.Run(() => Deadline.Cancel());
+                    }
+                    return cancellationTask;
+                }
+            }
+
+            public async Task CompleteCancellationAsync()
+            {
+                Task pending;
+                lock (cancellationGate)
+                {
+                    // Closing cancellation admission and capturing its worker are one
+                    // decision: a racing timer/connection/cancel cannot start after release.
+                    cancellationFinished = true;
+                    pending = cancellationTask;
+                }
+                deadlineTimer?.Dispose();
+                connectionCancellation.Dispose();
+                try
+                {
+                    if (pending != null)
+                        await pending.ConfigureAwait(false);
+                }
+                catch (Exception) { /* Callback failure still settles the retained owner. */ }
             }
 
             public void Dispose()
             {
                 deadlineTimer?.Dispose();
+                connectionCancellation.Dispose();
                 cancellation.Dispose();
                 Deadline.Dispose();
             }
@@ -1879,7 +1916,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         request.Timing,
                         request.Progress,
                         request.Admission?.Token ?? CancellationToken.None,
-                        request.RequestCancellation
+                        request.RequestCancellation,
+                        request.CompleteCancellationAsync
                     );
                     request.Response = operation.Response;
                     return await operation.Response.ConfigureAwait(false);
@@ -1905,6 +1943,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         await operation.Completion.ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { }
+                await request.CompleteCancellationAsync().ConfigureAwait(false);
                 request.Timing?.ExecutionDone();
                 request.Command.ResumeTicket?.Owner.Release(request.Command.ResumeTicket);
             }

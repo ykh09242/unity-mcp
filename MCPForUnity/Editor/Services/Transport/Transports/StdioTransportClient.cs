@@ -12,6 +12,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
     public class StdioTransportClient : IMcpTransportClient
     {
         private TransportState _state = TransportState.Disconnected("stdio");
+        private const string UnsettledError =
+            "execution_unsettled: the stdio listener is stopped, but previous command or cancellation work is still settling.";
         private readonly Func<CancellationToken, Task<bool>> _startAndWait;
         private readonly Action _stopBridge;
         private CancellationTokenSource _startCancellation;
@@ -41,7 +43,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 bool bridgeRunning = StdioBridgeHost.IsRunning;
                 int livePort = StdioBridgeHost.GetCurrentPort();
-                if (bridgeRunning != _state.IsConnected || (bridgeRunning && _state.Port != livePort))
+                if (!bridgeRunning && StdioBridgeHost.HasUnsettledWork)
+                    _state = TransportState.Disconnected("stdio", UnsettledError);
+                else if (!bridgeRunning && _state.Error == UnsettledError)
+                    _state = TransportState.Disconnected("stdio");
+                else if (bridgeRunning != _state.IsConnected || (bridgeRunning && _state.Port != livePort))
                 {
                     _state = bridgeRunning ? TransportState.Connected("stdio", port: livePort) : TransportState.Disconnected("stdio", "Bridge not running");
                 }
@@ -126,7 +132,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             RetirePendingStart();
             stopBridge();
-            _state = TransportState.Disconnected("stdio");
+            _state = TransportState.Disconnected("stdio", StdioBridgeHost.HasUnsettledWork ? UnsettledError : null);
             return Task.CompletedTask;
         }
 
@@ -135,7 +141,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             bool running = StdioBridgeHost.IsRunning;
             _state = running
                 ? TransportState.Connected("stdio", port: StdioBridgeHost.GetCurrentPort())
-                : TransportState.Disconnected("stdio", "Bridge not running");
+                : TransportState.Disconnected("stdio", StdioBridgeHost.HasUnsettledWork ? UnsettledError : "Bridge not running");
             return Task.FromResult(running);
         }
 

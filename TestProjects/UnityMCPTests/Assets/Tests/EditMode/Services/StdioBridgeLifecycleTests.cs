@@ -337,11 +337,15 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
-        [TestCase(false, false)]
-        [TestCase(true, false)]
-        [TestCase(false, true)]
-        [TestCase(true, true)]
-        public async Task Stop_ReturnsWhileCancellationCallbackAndHandlerRemainOwned(bool throws, bool callbackFirst)
+        [TestCase(false, false, "stop")]
+        [TestCase(true, false, "stop")]
+        [TestCase(false, true, "stop")]
+        [TestCase(true, true, "stop")]
+        [TestCase(false, false, "reload")]
+        [TestCase(false, true, "reload")]
+        [TestCase(false, false, "restart")]
+        [TestCase(false, true, "restart")]
+        public async Task Stop_ReturnsWhileCancellationCallbackAndHandlerRemainOwned(bool throws, bool callbackFirst, string transition)
         {
             AssertIdle();
             CommandRegistry.Initialize();
@@ -353,6 +357,9 @@ namespace MCPForUnityTests.Editor.Services
             using var releaseCallback = new ManualResetEventSlim();
             var handler = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
             CancellationTokenRegistration registration = default;
+            using var transport = new TransportManager();
+            var client = new StdioTransportClient();
+            transport.Configure(() => null, () => client);
             Task stopping = null;
             TcpClient peer = null;
             int callbacks = 0;
@@ -382,13 +389,13 @@ namespace MCPForUnityTests.Editor.Services
                 await PumpUntilAsync(() => entered.IsSet);
                 Assert.AreEqual(1, StdioBridgeHost.QueuedCommandCount);
                 Assert.Greater(StdioBridgeHost.ReservedInputBytes, 0);
-                stopping = Task.Run(StdioBridgeHost.Stop);
+                stopping = Task.Run(() => transition == "reload" ? client.StopForReloadAsync() : client.StopAsync());
                 Assert.IsTrue(callbackEntered.Wait(TimeSpan.FromSeconds(5)), "Cancellation must reach the actual dispatched handler.");
                 Assert.IsTrue(stopping.Wait(TimeSpan.FromSeconds(1)), "Stop must return while a cancellation callback is held.");
                 Assert.IsFalse(StdioBridgeHost.IsRunning);
-                StdioBridgeHost.StartOwned(0, token);
-                Assert.IsTrue(StdioBridgeHost.IsRunning, "A replacement must be able to start while the old command drains.");
-                object replacement = typeof(StdioBridgeHost).GetField("authentication", Static).GetValue(null);
+                Assert.IsFalse(client.State.IsConnected);
+                StringAssert.StartsWith("execution_unsettled:", client.State.Error);
+                StringAssert.StartsWith("execution_unsettled:", transport.GetState(TransportMode.Stdio).Error);
                 if (callbackFirst)
                     releaseCallback.Set();
                 else
@@ -400,12 +407,30 @@ namespace MCPForUnityTests.Editor.Services
                     "Both the handler and cancellation callback must settle before retiring the old command."
                 );
                 Assert.Greater(StdioBridgeHost.ReservedInputBytes, 0, "The old command must retain input ownership through complete settlement.");
+                StringAssert.StartsWith("execution_unsettled:", transport.GetState(TransportMode.Stdio).Error);
+                await AssertIndependentAdmissionAsync(true, TransportMode.Http);
+                object replacement = null;
+                if (transition == "restart")
+                {
+                    StdioBridgeHost.StartOwned(0, token);
+                    Assert.IsTrue(StdioBridgeHost.IsRunning, "A replacement must be able to start while the old command drains.");
+                    replacement = typeof(StdioBridgeHost).GetField("authentication", Static).GetValue(null);
+                    await AssertIndependentAdmissionAsync(true, TransportMode.Http);
+                }
                 releaseCallback.Set();
                 handler.TrySetResult(new { done = true });
                 await PumpUntilAsync(() => StdioBridgeHost.QueuedCommandCount == 0 && StdioBridgeHost.ReservedInputBytes == 0);
                 Assert.AreEqual(1, callbacks);
-                Assert.IsTrue(StdioBridgeHost.IsRunning, "The old drain must not poison a valid replacement launch.");
-                Assert.AreSame(replacement, typeof(StdioBridgeHost).GetField("authentication", Static).GetValue(null));
+                Assert.IsNull(client.State.Error);
+                Assert.IsNull(transport.GetState(TransportMode.Stdio).Error);
+                await AssertIndependentAdmissionAsync(false, TransportMode.Http);
+                if (transition == "restart")
+                {
+                    Assert.IsTrue(StdioBridgeHost.IsRunning, "The old drain must not poison a valid replacement launch.");
+                    Assert.AreSame(replacement, typeof(StdioBridgeHost).GetField("authentication", Static).GetValue(null));
+                }
+                else
+                    Assert.IsFalse(client.State.IsConnected);
             }
             finally
             {
@@ -418,6 +443,32 @@ namespace MCPForUnityTests.Editor.Services
                 await PumpUntilAsync(() => StdioBridgeHost.QueuedCommandCount == 0 && StdioBridgeHost.ReservedInputBytes == 0);
                 registration.Dispose();
                 handlers.Remove(name);
+            }
+        }
+
+        internal static async Task AssertIndependentAdmissionAsync(bool blocked, TransportMode origin)
+        {
+            using var settings = NativeProgressProbe.EnableTools("batch_execute", "get_selection");
+            foreach (string tool in new[] { "batch_execute", "get_selection", "ping" })
+            {
+                var command = new Command
+                {
+                    type = tool,
+                    @params = tool == "batch_execute" ? new JObject { ["commands"] = new JArray() } : new JObject(),
+                    arbitration = new JObject
+                    {
+                        ["version"] = 1,
+                        ["request_nonce"] = Guid.NewGuid().ToString("N"),
+                        ["instance_generation"] = NativeCommandArbitrator.Shared.Generation,
+                    },
+                };
+                var operation = TransportCommandDispatcher.ExecuteCommandAsync(command, CancellationToken.None, origin);
+                await PumpUntilAsync(() => operation.Response.IsCompleted && operation.Completion.IsCompleted);
+                var response = JObject.Parse((await operation.Response).ToJson());
+                var proof = response["native_arbitration"];
+                Assert.AreEqual(blocked && tool != "ping" ? "not_started" : "started", (string)proof?["disposition"], tool);
+                if (blocked && tool != "ping")
+                    Assert.AreEqual("operation_busy", (string)proof?["reason"], tool);
             }
         }
 

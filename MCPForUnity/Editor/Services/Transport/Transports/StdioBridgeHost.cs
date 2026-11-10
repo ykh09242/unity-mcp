@@ -107,6 +107,16 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private static Dictionary<string, QueuedCommand> commandQueue = new();
         private static readonly LinkedList<string> commandOrder = new();
         private static readonly List<string> canceledCommandIds = new();
+        private static int cancellationWorkers;
+
+        internal static bool HasUnsettledWork
+        {
+            get
+            {
+                lock (lockObj)
+                    return commandQueue.Count != 0 || Volatile.Read(ref cancellationWorkers) != 0;
+            }
+        }
         private static int mainThreadId;
         private static int currentUnityPort = 6400;
         private static bool isAutoConnectMode = false;
@@ -809,6 +819,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     authenticatingClients.Clear();
                 }
                 cancel = cts;
+                if (cancel != null)
+                    Interlocked.Increment(ref cancellationWorkers);
                 cts = null;
                 toWait = listenerTask;
                 listenerTask = null;
@@ -834,6 +846,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     {
                         cancel.Dispose();
                         retiredAdmission?.Dispose();
+                        Interlocked.Decrement(ref cancellationWorkers);
                     }
                 });
             else
@@ -2106,7 +2119,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         queuedCommand.Timing,
                         queuedCommand.Progress,
                         queuedCommand.AdmissionCancellation,
-                        queuedCommand.OwnerCancellation
+                        queuedCommand.OwnerCancellation,
+                        cancellation.CompleteAsync
                     );
                     command = null;
                     // Dispatch above runs on the Editor thread. Below, only frozen responses,

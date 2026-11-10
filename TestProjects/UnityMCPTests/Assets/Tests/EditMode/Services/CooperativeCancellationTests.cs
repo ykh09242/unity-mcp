@@ -11,6 +11,72 @@ namespace MCPForUnityTests.Editor.Services
     [TestFixture]
     public class CooperativeCancellationTests
     {
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task CancellationSettlement_RejectsLateCallbacksAndJoinsConcurrentCallbacks(bool stdio)
+        {
+            for (int iteration = 0; iteration < 24; iteration++)
+            {
+                using var source = new CancellationTokenSource();
+                using var start = new ManualResetEventSlim();
+                using var release = new ManualResetEventSlim();
+                var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                object request;
+                CancellationToken token;
+                if (stdio)
+                {
+                    Type type = typeof(StdioBridgeHost).GetNestedType("CommandCancellation", BindingFlags.NonPublic);
+                    request = Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.NonPublic, null, new object[] { source.Token, 30000 }, null);
+                    token = (CancellationToken)type.GetProperty("Token", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(request);
+                }
+                else
+                {
+                    request = NewWebSocketRequest(new ConnectionCommandWork(CancellationToken.None), "race", source);
+                    token = source.Token;
+                }
+                Type requestType = request.GetType();
+                const BindingFlags methods = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                MethodInfo cancel = requestType.GetMethod(stdio ? "RequestCancellation" : "CancelAsync", methods);
+                MethodInfo complete = requestType.GetMethod(stdio ? "CompleteAsync" : "CompleteCancellationAsync", methods);
+                using var registration = token.Register(() =>
+                {
+                    entered.TrySetResult(true);
+                    release.Wait();
+                });
+                var canceling = Task.Run(async () =>
+                {
+                    start.Wait();
+                    if (cancel.Invoke(request, null) is Task task)
+                        await task;
+                });
+                var settling = Task.Run(async () =>
+                {
+                    start.Wait();
+                    await (Task)complete.Invoke(request, null);
+                });
+                try
+                {
+                    start.Set();
+                    Task observed = await Task.WhenAny(entered.Task, settling, Task.Delay(5000));
+                    Assert.IsTrue(observed == entered.Task || observed == settling, "Cancellation/settlement race stalled.");
+                    if (entered.Task.IsCompleted)
+                        Assert.IsFalse(settling.IsCompleted, "Settlement cannot release a callback that is still running.");
+                    else
+                    {
+                        await canceling;
+                        Assert.IsFalse(entered.Task.IsCompleted, "A callback cannot start after settlement closes cancellation admission.");
+                    }
+                }
+                finally
+                {
+                    release.Set();
+                    await Task.WhenAll(canceling, settling);
+                    (request as IDisposable)?.Dispose();
+                }
+                Assert.DoesNotThrow(() => cancel.Invoke(request, null), "Late cancellation must not access a disposed source.");
+            }
+        }
+
         [TestCase(false, false)]
         [TestCase(false, true)]
         [TestCase(true, false)]

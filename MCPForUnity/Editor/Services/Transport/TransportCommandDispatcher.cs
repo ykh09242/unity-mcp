@@ -36,7 +36,8 @@ namespace MCPForUnity.Editor.Services.Transport
                 bool ownsTiming,
                 ICommandProgress progress,
                 CancellationToken admissionCancellation,
-                CancellationToken requestCancellation
+                CancellationToken requestCancellation,
+                Func<Task> settleCancellation
             )
             {
                 CommandJson = commandJson;
@@ -50,6 +51,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 CancellationToken = cancellationToken;
                 AdmissionCancellation = admissionCancellation;
                 RequestCancellation = requestCancellation;
+                SettleCancellation = settleCancellation;
                 CancellationRegistration = registration;
                 QueuedAt = DateTime.UtcNow;
             }
@@ -80,6 +82,8 @@ namespace MCPForUnity.Editor.Services.Transport
             public DateTime QueuedAt { get; }
             public JObject Arbitration { get; set; }
             public NativeCommandArbitrator.Lease Lease { get; set; }
+            public Func<Task> SettleCancellation { get; }
+            public int SettlementStarted;
 
             public void Dispose()
             {
@@ -229,12 +233,13 @@ namespace MCPForUnity.Editor.Services.Transport
             CommandPhaseTiming timing,
             ICommandProgress progress,
             CancellationToken admissionCancellation,
-            CancellationToken requestCancellation = default
+            CancellationToken requestCancellation = default,
+            Func<Task> settleCancellation = null
         )
         {
             if (command == null)
                 throw new ArgumentNullException(nameof(command));
-            return Enqueue(null, command, cancellationToken, origin, timing, true, progress, admissionCancellation, requestCancellation);
+            return Enqueue(null, command, cancellationToken, origin, timing, true, progress, admissionCancellation, requestCancellation, settleCancellation);
         }
 
         private static TransportCommandOperation Enqueue(
@@ -246,7 +251,8 @@ namespace MCPForUnity.Editor.Services.Transport
             bool transportOwnsTiming = false,
             ICommandProgress progress = null,
             CancellationToken admissionCancellation = default,
-            CancellationToken requestCancellation = default
+            CancellationToken requestCancellation = default,
+            Func<Task> settleCancellation = null
         )
         {
             EnsureInitialised();
@@ -269,7 +275,8 @@ namespace MCPForUnity.Editor.Services.Transport
                 ownsTiming,
                 progress,
                 admissionCancellation,
-                requestCancellation
+                requestCancellation,
+                settleCancellation
             );
             var operation = new TransportCommandOperation(pending.ResponseSource.Task, pending.ExecutionSource.Task, pending.JsonResponseSource?.Task);
 
@@ -823,11 +830,27 @@ namespace MCPForUnity.Editor.Services.Transport
                 UnhookUpdateIfIdle();
             }
 
-            // Cancellation only completes the response. Actual handler settlement owns this release.
-            pending.Lease?.Dispose();
-            pending.Dispose();
-            pending.ExecutionSource.TrySetResult(true);
-            pending.Timing?.ExecutionDone();
+            // Delivery may finish first. Keep the Editor-wide lease until the handler
+            // and its cancellation owner have both settled, without blocking the pump.
+            if (Interlocked.Exchange(ref pending.SettlementStarted, 1) == 0)
+                _ = SettlePendingAsync(pending);
+        }
+
+        private static async Task SettlePendingAsync(PendingCommand pending)
+        {
+            try
+            {
+                if (pending.SettleCancellation != null)
+                    await pending.SettleCancellation().ConfigureAwait(false);
+            }
+            catch (Exception) { /* A failed cancellation callback has still settled. */ }
+            finally
+            {
+                pending.Lease?.Dispose();
+                pending.Dispose();
+                pending.ExecutionSource.TrySetResult(true);
+                pending.Timing?.ExecutionDone();
+            }
         }
 
         private static object SerializeError(string message, string commandType = null, string stackTrace = null)

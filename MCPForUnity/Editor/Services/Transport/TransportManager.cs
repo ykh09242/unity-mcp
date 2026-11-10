@@ -303,7 +303,8 @@ namespace MCPForUnity.Editor.Services.Transport
             TransportState live = client.State;
             bool connectivityChanged = client.IsConnected != _stdioState.IsConnected;
             bool portChanged = client.IsConnected && live?.Port != _stdioState.Port;
-            if (connectivityChanged || portChanged)
+            bool settlementChanged = HasUnsettledExecution(live) != HasUnsettledExecution(_stdioState);
+            if (connectivityChanged || portChanged || settlementChanged)
             {
                 _stdioState = live ?? (client.IsConnected ? TransportState.Connected(client.TransportName) : TransportState.Disconnected(client.TransportName));
             }
