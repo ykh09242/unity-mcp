@@ -30,6 +30,7 @@ from transport.local_project_context import (
 from transport.local_server_lifecycle import request_local_shutdown
 from transport.models import SessionDetails, SessionList
 from transport.plugin_hub import (
+    CommandNotDispatchedError,
     PluginHub,
     _CommandBudget,
     _HttpRequestBudget,
@@ -410,7 +411,27 @@ def install_http_routes(
             budget = request_budget.command_budget(
                 command_type, PluginHub._command_timeouts(command_type, params)[1]
             )
-            result = await PluginHub.send_command(session_id, command_type, params, _budget=budget)
+            try:
+                result = await PluginHub.send_command(
+                    session_id, command_type, params, _budget=budget
+                )
+            except CommandNotDispatchedError as exc:
+                return JSONResponse(
+                    bound_response(
+                        {
+                            "success": False,
+                            "error": str(exc),
+                            "hint": "retry",
+                            "data": {
+                                "reason": "command_not_dispatched",
+                                "dispatch": "not_dispatched",
+                                "command": command_type,
+                                "unity_instance": unity_instance,
+                            },
+                        }
+                    ),
+                    status_code=503,
+                )
             return JSONResponse(bound_response(result))
 
         @mcp.custom_route("/api/instances", methods=["GET"])
