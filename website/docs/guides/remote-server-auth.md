@@ -201,7 +201,7 @@ Each user can only see and interact with their authorized Unity instances. Hoste
 
 ### Auto-Select Disabled
 
-In local mode, the server automatically selects the sole connected Unity instance. In remote-hosted mode, this auto-selection is disabled. Users must explicitly call `set_active_instance` with a `Name@hash` from the `mcpforunity://instances` resource.
+In local mode, the server automatically selects the sole connected Unity instance. In remote-hosted mode, this auto-selection is disabled. Read a `Name@hash` from `mcpforunity://instances`, then supply it as `unity_instance` on tool calls or `_meta.unity_instance` on resource reads. A stateful legacy connection can use `set_active_instance` to store its session default; sessionless clients must target each request explicitly.
 
 ### CLI Routes Disabled
 

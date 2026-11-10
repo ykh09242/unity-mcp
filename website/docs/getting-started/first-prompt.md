@@ -20,7 +20,7 @@ Confirm that the project and scene are the ones you intend. Tool calls use `unit
 
 > In that Editor, create one GameObject named `MCP_FirstCube` using the Cube primitive at position (0, 0, 0). Do not create scripts, change packages, enter Play mode, or save the scene. Return its instance ID and hierarchy path.
 
-The assistant should call `manage_gameobject` with the chosen target. Confirm the cube appears in Unity's Hierarchy and Scene view. A tool response is useful evidence, but inspect the Editor before repeating a timed-out write.
+The assistant should call `gameobject_create` with the chosen `unity_instance`, name `MCP_FirstCube`, primitive type `Cube`, and position `[0, 0, 0]`, following its advertised schema. This tool is included in the default essential tool selection. Confirm the cube appears in Unity's Hierarchy and Scene view. A tool response is useful evidence, but inspect the Editor before repeating a timed-out write.
 
 ## 3. Verify the result
 
