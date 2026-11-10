@@ -142,6 +142,9 @@ namespace MCPForUnity.Editor.Services.AssetGen
         private static readonly Dictionary<string, AssetGenJob> Jobs = new();
         private static readonly Dictionary<string, Runner> Runners = new();
         private static readonly Dictionary<string, AssetGenJobCheckpoint> Checkpoints = new();
+
+        // Local execution can stop before its terminal evidence is durably acknowledged.
+        private static readonly HashSet<string> PendingCancellationIds = new();
         private static long _epoch;
 
         // Keep the 100 most recently finished jobs, plus every active job.
@@ -330,7 +333,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
         {
             if (JournalEnabled && _journalError != null)
                 throw new IOException(_journalError);
-            if (Jobs.Values.Count(job => !IsTerminal(job.State)) >= AssetGenJobCheckpoint.MaxActive)
+            if (Jobs.Values.Count(job => !IsTerminal(job.State) || PendingCancellationIds.Contains(job.JobId)) >= AssetGenJobCheckpoint.MaxActive)
                 throw new InvalidOperationException("At most 64 active generation jobs are supported. Finish or cancel an existing job first.");
         }
 
@@ -679,8 +682,8 @@ namespace MCPForUnity.Editor.Services.AssetGen
                         State = job.RecoveryState == "outcome_unknown" ? "unknown" : job.State.ToString().ToLowerInvariant(),
                         Phase = progress?.phase ?? job.ProviderPhase ?? job.State.ToString().ToLowerInvariant(),
                         Detail = detail,
-                        Active = runner != null || !IsTerminal(job.State),
-                        CanCancel = !canceled && (runner != null || job.State == AssetGenJobState.Queued),
+                        Active = runner != null || !IsTerminal(job.State) || PendingCancellationIds.Contains(job.JobId),
+                        CanCancel = PendingCancellationIds.Contains(job.JobId) || (!canceled && (runner != null || job.State == AssetGenJobState.Queued)),
                         Cancellation =
                             canceled
                                 ? "Local cancellation requested; provider completion is not confirmed"
@@ -746,18 +749,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 r.Job.ProgressEvidence?.RequestCancellation();
                 r.Canceled = true;
                 AssetGenSubmissionIntent.Forget(jobId);
-                r.Job.State = AssetGenJobState.Canceled;
-                r.Job.RecoveryState = "terminal";
-                r.Job.RecoveryCode = "canceled";
-                bool persisted = true;
-                try
-                {
-                    PersistRequired(r.Job, r.Checkpoint);
-                }
-                catch
-                {
-                    persisted = false;
-                }
+                bool persisted = PersistCancellation(r.Job);
                 try
                 {
                     r.Cts.Cancel();
@@ -767,14 +759,46 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     Finalize(r);
                 return persisted;
             }
-            if (Jobs.TryGetValue(jobId, out var job) && job.State == AssetGenJobState.Queued)
+            if (Jobs.TryGetValue(jobId, out var job) && (job.State == AssetGenJobState.Queued || PendingCancellationIds.Contains(jobId)))
             {
                 job.ProgressEvidence?.RequestCancellation();
-                job.State = AssetGenJobState.Canceled;
-                Persist(job);
-                return true;
+                AssetGenSubmissionIntent.Forget(jobId);
+                return PersistCancellation(job);
             }
             return false;
+        }
+
+        private static bool PersistCancellation(AssetGenJob job)
+        {
+            PendingCancellationIds.Add(job.JobId);
+            TerminalJobIds.Remove(job.JobId);
+            job.State = AssetGenJobState.Canceled;
+            try
+            {
+                job.RecoveryState = "terminal";
+                job.RecoveryCode = "canceled";
+                // A terminal tombstone needs no resumable checkpoint. Keep output/provider receipts
+                // on the job, without allowing an expired execution checkpoint to block cancellation.
+                PersistRequired(job, null);
+                PendingCancellationIds.Remove(job.JobId);
+                TrackJob(job);
+                try
+                {
+                    WriteJobIndex();
+                }
+                catch { /* Durable terminal evidence already exists; session history is best-effort. */ }
+                return true;
+            }
+            catch
+            {
+                job.RecoveryState = "outcome_unknown";
+                job.RecoveryCode = "checkpoint_write_failed";
+                return false;
+            }
+            finally
+            {
+                OperationActivity.Invalidate();
+            }
         }
 
         // ---------- runner ----------
@@ -1292,8 +1316,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             }
             if (r.Canceled)
             {
-                r.Job.State = AssetGenJobState.Canceled;
-                Persist(r.Job);
+                PersistCancellation(r.Job);
                 Finalize(r);
                 return;
             }
@@ -1553,8 +1576,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                             return;
                         if (r.Canceled || r.Job.State == AssetGenJobState.Canceled)
                         {
-                            r.Job.State = AssetGenJobState.Canceled;
-                            Persist(r.Job);
+                            PersistCancellation(r.Job);
                             Finalize(r);
                             return;
                         }
@@ -1577,8 +1599,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     return;
                 if (r.Canceled)
                 {
-                    r.Job.State = AssetGenJobState.Canceled;
-                    Persist(r.Job);
+                    PersistCancellation(r.Job);
                     Finalize(r);
                     return;
                 }
@@ -2191,7 +2212,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
                 JobOrderNodes[job.JobId] = JobOrder.AddLast(job.JobId);
                 _jobIndexDirty = true;
             }
-            if (!IsTerminal(job.State) || !TerminalJobIds.Add(job.JobId))
+            if (!IsTerminal(job.State) || PendingCancellationIds.Contains(job.JobId) || !TerminalJobIds.Add(job.JobId))
                 return;
             // A long-running older job must remain queryable when it finally completes.
             var completedNode = JobOrderNodes[job.JobId];
@@ -2259,6 +2280,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             PrepareForAssemblyReload();
             Jobs.Clear();
             Checkpoints.Clear();
+            PendingCancellationIds.Clear();
             JobOrder.Clear();
             JobOrderNodes.Clear();
             TerminalJobIds.Clear();
@@ -2277,6 +2299,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             SessionState.EraseString(JobIndexKey);
             Jobs.Clear();
             Checkpoints.Clear();
+            PendingCancellationIds.Clear();
             JobOrder.Clear();
             JobOrderNodes.Clear();
             TerminalJobIds.Clear();

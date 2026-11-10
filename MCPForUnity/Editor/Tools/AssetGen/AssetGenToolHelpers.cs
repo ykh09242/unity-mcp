@@ -65,6 +65,8 @@ namespace MCPForUnity.Editor.Tools.AssetGen
                         }
                     );
                 case AssetGenJobState.Canceled:
+                    if (job.RecoveryCode == "checkpoint_write_failed")
+                        return CancellationCheckpointFailure(job);
                     return new SuccessResponse(
                         "Generation canceled.",
                         new
@@ -106,10 +108,34 @@ namespace MCPForUnity.Editor.Tools.AssetGen
             string jobId = p.Get("job_id");
             if (string.IsNullOrEmpty(jobId))
                 return new ErrorResponse("'job_id' is required for cancel.");
-            return AssetGenJobManager.Cancel(jobId)
-                ? new SuccessResponse($"Cancel requested for job '{jobId}'.")
+            if (AssetGenJobManager.Cancel(jobId))
+                return new SuccessResponse($"Cancel requested for job '{jobId}'.");
+            AssetGenJob job = AssetGenJobManager.GetJob(jobId);
+            return job?.State == AssetGenJobState.Canceled && job.RecoveryCode == "checkpoint_write_failed"
+                ? CancellationCheckpointFailure(job)
                 : new ErrorResponse($"No cancelable job found with ID '{jobId}'.");
         }
+
+        private static object CancellationCheckpointFailure(AssetGenJob job) =>
+            new ErrorResponse(
+                "Local cancellation was requested, but its durable checkpoint could not be confirmed. Retry cancel with the same job_id before restarting the Editor.",
+                new
+                {
+                    job_id = job.JobId,
+                    state = "canceled",
+                    recovery_state = job.RecoveryState,
+                    recovery_code = job.RecoveryCode,
+                    retryable = true,
+                    cancellation_durability = "unknown",
+                    provider_task_id = job.ProviderTaskId,
+                    provider_phase = job.ProviderPhase,
+                    progress_detail = job.ProgressEvidence?.Read(),
+                    asset_path = job.AssetPath,
+                    asset_guid = job.AssetGuid,
+                    model_import_stage = job.ModelImportStage,
+                    archive_selection = job.ArchiveSelection,
+                }
+            );
 
         /// <summary>List the configured providers for a given kind (audio / image / model).</summary>
         public static object ListProviders(string kind)

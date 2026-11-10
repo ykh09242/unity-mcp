@@ -3,10 +3,12 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Security;
 using MCPForUnity.Editor.Services.AssetGen;
 using MCPForUnity.Editor.Services.AssetGen.Http;
 using MCPForUnity.Editor.Services.AssetGen.Providers;
+using MCPForUnity.Editor.Tools.AssetGen;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -388,6 +390,289 @@ namespace MCPForUnityTests.Editor.AssetGen
             Assert.IsNotNull(AssetGenJobManager.GetJob(legacyId), "Unbound same-process history must not disappear when durable records also exist.");
             Assert.AreEqual(AssetGenJobState.Done, AssetGenJobManager.GetJob(legacyId).State);
             Assert.AreEqual(AssetGenJobState.Running, AssetGenJobManager.GetJob(job.JobId).State);
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void FailedCancellationCheckpointRemainsRetryableWithoutRunner(bool queued, bool published)
+        {
+            var job = Start();
+            if (!queued)
+                Pump(job.JobId, 2);
+            int calls = http.RecordedRequests.Count;
+            string path = Path.Combine(root, job.JobId + ".json");
+            string previous = File.ReadAllText(path);
+            var journal = (AssetGenJobJournal)typeof(AssetGenJobManager).GetProperty("Journal", Flags).GetValue(null);
+            InjectCancellationWriteFailure(job, journal, published);
+            var parameters = new ToolParams(new JObject { ["job_id"] = job.JobId });
+            JObject cancel = JObject.FromObject(AssetGenToolHelpers.Cancel(parameters));
+            Assert.IsFalse((bool)cancel["success"]);
+            Assert.AreEqual("checkpoint_write_failed", (string)cancel["data"]["recovery_code"]);
+            Assert.AreEqual("outcome_unknown", job.RecoveryState);
+            Assert.AreEqual(AssetGenJobState.Canceled, job.State, "Local execution must stay canceled even when durability is uncertain.");
+            JObject status = JObject.FromObject(AssetGenToolHelpers.Status(parameters, "Model", 1));
+            Assert.IsFalse((bool)status["success"]);
+            Assert.AreEqual("checkpoint_write_failed", (string)status["data"]["recovery_code"]);
+            Assert.IsTrue((bool)status["data"]["retryable"]);
+            Pump(job.JobId);
+            Assert.AreEqual(calls, http.RecordedRequests.Count);
+            if (!published)
+                Assert.AreEqual(previous, File.ReadAllText(path));
+            else
+                Assert.AreEqual((int)AssetGenJobState.Canceled, (int)JObject.Parse(File.ReadAllText(path))["job"]["State"]);
+            AssetGenJobManager.BeforeCheckpointWriteForTests = null;
+            journal.AfterPublicationForTests = null;
+            Assert.IsTrue(AssetGenJobManager.Cancel(job.JobId), "Retry must not require a live runner.");
+            Assert.AreSame(journal, typeof(AssetGenJobManager).GetProperty("Journal", Flags).GetValue(null), "Retry must retain its journal lease.");
+            Assert.AreEqual("terminal", job.RecoveryState);
+            Assert.AreEqual("canceled", job.RecoveryCode);
+            Restart();
+            Pump(job.JobId);
+            Assert.AreEqual(AssetGenJobState.Canceled, AssetGenJobManager.GetJob(job.JobId).State);
+            Assert.AreEqual("canceled", AssetGenJobManager.GetJob(job.JobId).RecoveryCode);
+            Assert.AreEqual(calls, http.RecordedRequests.Count);
+        }
+
+        private static void InjectCancellationWriteFailure(AssetGenJob job, AssetGenJobJournal journal, bool published)
+        {
+            if (published)
+                journal.AfterPublicationForTests = name =>
+                {
+                    if (name == job.JobId + ".json")
+                        throw new IOException("Injected lost publication acknowledgement.");
+                };
+            else
+                AssetGenJobManager.BeforeCheckpointWriteForTests = _ => throw new IOException("Injected cancellation checkpoint failure.");
+        }
+
+        [TestCase(1, false)]
+        [TestCase(3, false)]
+        [TestCase(3, true)]
+        public void CancellationRetryPreservesPublishedCandidateAcrossFailedReplacements(int retries, bool replaceEvidence)
+        {
+            if (Path.DirectorySeparatorChar != '\\')
+                Assert.Ignore("This fixture injects replacement failure using Windows file-sharing semantics.");
+            var job = Start();
+            var journal = (AssetGenJobJournal)typeof(AssetGenJobManager).GetProperty("Journal", Flags).GetValue(null);
+            InjectCancellationWriteFailure(job, journal, true);
+            Assert.IsFalse(AssetGenJobManager.Cancel(job.JobId));
+            journal.AfterPublicationForTests = null;
+            string path = Path.Combine(root, job.JobId + ".json");
+            string candidate = File.ReadAllText(path);
+            using (var held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                for (int i = 0; i < retries; i++)
+                {
+                    now++;
+                    utc = utc.AddSeconds(1);
+                    Assert.IsFalse(AssetGenJobManager.Cancel(job.JobId));
+                }
+                Assert.AreEqual(candidate, File.ReadAllText(path));
+            }
+            if (replaceEvidence)
+            {
+                var envelope = JObject.Parse(candidate);
+                envelope["job"]["AssetPath"] = "Assets/Retained/replaced-after-retries.glb";
+                string replaced = envelope.ToString(Formatting.None);
+                File.WriteAllText(path, replaced);
+                Assert.IsFalse(AssetGenJobManager.Cancel(job.JobId));
+                Assert.AreEqual(replaced, File.ReadAllText(path));
+            }
+            else
+            {
+                now++;
+                utc = utc.AddSeconds(1);
+                Assert.IsTrue(AssetGenJobManager.Cancel(job.JobId));
+                Restart();
+                Pump(job.JobId);
+                Assert.AreEqual(AssetGenJobState.Canceled, AssetGenJobManager.GetJob(job.JobId).State);
+            }
+            Assert.IsEmpty(http.RecordedRequests);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CancellationRetryRejectsSameOwnerReplacement(bool published)
+        {
+            var job = Start();
+            var journal = (AssetGenJobJournal)typeof(AssetGenJobManager).GetProperty("Journal", Flags).GetValue(null);
+            InjectCancellationWriteFailure(job, journal, published);
+            Assert.IsFalse(AssetGenJobManager.Cancel(job.JobId));
+            AssetGenJobManager.BeforeCheckpointWriteForTests = null;
+            journal.AfterPublicationForTests = null;
+            string path = Path.Combine(root, job.JobId + ".json");
+            var envelope = JObject.Parse(File.ReadAllText(path));
+            envelope["job"]["AssetPath"] = "Assets/Retained/changed.glb";
+            string replaced = envelope.ToString(Formatting.None);
+            File.WriteAllText(path, replaced);
+            Assert.IsFalse(AssetGenJobManager.Cancel(job.JobId));
+            Assert.AreEqual("checkpoint_write_failed", job.RecoveryCode);
+            Assert.AreEqual(replaced, File.ReadAllText(path));
+            Assert.AreSame(journal, typeof(AssetGenJobManager).GetProperty("Journal", Flags).GetValue(null));
+            Assert.IsEmpty(http.RecordedRequests);
+        }
+
+        [Test]
+        public void CancellationRetryDoesNotAdoptUnrelatedRecordReplacement()
+        {
+            var job = Start();
+            var other = Start();
+            AssetGenJobManager.BeforeCheckpointWriteForTests = _ => throw new IOException("Injected cancellation checkpoint failure.");
+            Assert.IsFalse(AssetGenJobManager.Cancel(job.JobId));
+            AssetGenJobManager.BeforeCheckpointWriteForTests = null;
+            string path = Path.Combine(root, other.JobId + ".json");
+            var envelope = JObject.Parse(File.ReadAllText(path));
+            envelope["job"]["AssetPath"] = "Assets/Retained/unrelated.glb";
+            string replaced = envelope.ToString(Formatting.None);
+            File.WriteAllText(path, replaced);
+            Assert.IsTrue(AssetGenJobManager.Cancel(job.JobId));
+            Assert.IsFalse(AssetGenJobManager.Cancel(other.JobId), "Retrying one job must not adopt another job's changed preimage.");
+            Assert.AreEqual(replaced, File.ReadAllText(path));
+            Assert.IsEmpty(http.RecordedRequests);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CancellationRetryRequiresRetainedPublicationPreimage(bool missing)
+        {
+            var job = Start();
+            var journal = (AssetGenJobJournal)typeof(AssetGenJobManager).GetProperty("Journal", Flags).GetValue(null);
+            InjectCancellationWriteFailure(job, journal, true);
+            Assert.IsFalse(AssetGenJobManager.Cancel(job.JobId));
+            journal.AfterPublicationForTests = null;
+            string path = Path.Combine(root, job.JobId + ".json");
+            string candidate = File.ReadAllText(path);
+            string backup = Directory.GetFiles(root, ".journal-*.tmp.bak").Single();
+            if (missing)
+                File.Delete(backup);
+            else
+                File.WriteAllText(backup, "changed preimage");
+            Assert.IsFalse(AssetGenJobManager.Cancel(job.JobId));
+            Assert.AreEqual(candidate, File.ReadAllText(path));
+            Assert.IsEmpty(http.RecordedRequests);
+        }
+
+        [Test]
+        public void QueuedCancellationWithoutRunnerRequiresDurableAcknowledgement()
+        {
+            var job = Start();
+            var runners = (System.Collections.IDictionary)typeof(AssetGenJobManager).GetField("Runners", Flags).GetValue(null);
+            typeof(AssetGenJobManager).GetMethod("Finalize", Flags).Invoke(null, new[] { runners[job.JobId] });
+            AssetGenJobManager.BeforeCheckpointWriteForTests = _ => throw new IOException("Injected queued cancellation failure.");
+            Assert.IsFalse(AssetGenJobManager.Cancel(job.JobId));
+            Assert.AreEqual("checkpoint_write_failed", job.RecoveryCode);
+            AssetGenJobManager.BeforeCheckpointWriteForTests = null;
+            Assert.IsTrue(AssetGenJobManager.Cancel(job.JobId));
+            Restart();
+            Assert.AreEqual(AssetGenJobState.Canceled, AssetGenJobManager.GetJob(job.JobId).State);
+            Assert.IsEmpty(http.RecordedRequests);
+        }
+
+        [Test]
+        public void CancellationRetryDoesNotOverwriteForeignJournalEvidence()
+        {
+            var job = Start();
+            AssetGenJobManager.BeforeCheckpointWriteForTests = _ => throw new IOException("Injected cancellation failure.");
+            Assert.IsFalse(AssetGenJobManager.Cancel(job.JobId));
+            AssetGenJobManager.BeforeCheckpointWriteForTests = null;
+            string path = Path.Combine(root, job.JobId + ".json");
+            var envelope = JObject.Parse(File.ReadAllText(path));
+            envelope["owner"] = new string('f', 64);
+            string foreign = envelope.ToString(Formatting.None);
+            File.WriteAllText(path, foreign);
+            Assert.IsFalse(AssetGenJobManager.Cancel(job.JobId));
+            Assert.AreEqual("checkpoint_write_failed", job.RecoveryCode);
+            Assert.AreEqual(foreign, File.ReadAllText(path));
+            Assert.IsEmpty(http.RecordedRequests);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CancellationDuringImportRetainsFinalReceiptUntilCheckpointRetry(bool firstWriteFails)
+        {
+            int imports = 0;
+            string savedPath = null;
+            string folder = "Assets/TcrGeneration_" + Path.GetFileName(root).Substring("TcrGeneration_".Length);
+            http.Handler = request => new HttpResult
+            {
+                IsSuccess = true,
+                Status = 200,
+                Body = request.DownloadProvider != null ? ModelImportPipelineTests.ContainerOnlyGlb() : null,
+                Text =
+                    request.DownloadProvider != null ? null
+                    : request.Method == "POST" ? "{\"code\":0,\"data\":{\"task_id\":\"owned-import-task\"}}"
+                    : "{\"code\":0,\"data\":{\"status\":\"success\",\"output\":{\"model\":\"https://tripo-data.rg1.data.tripo3d.com/model.glb\"}}}",
+            };
+            AssetGenJobManager.ImportOverrideForTests = (job, path) =>
+            {
+                imports++;
+                savedPath = path;
+                if (firstWriteFails)
+                    AssetGenJobManager.BeforeCheckpointWriteForTests = _ => throw new IOException("Injected initial cancellation failure.");
+                Assert.AreEqual(!firstWriteFails, AssetGenJobManager.Cancel(job.JobId));
+                AssetGenJobManager.BeforeCheckpointWriteForTests = _ => throw new IOException("Injected final receipt failure.");
+                // An importer may return a replacement DTO after cancellation was requested.
+                return new AssetGenJob
+                {
+                    JobId = job.JobId,
+                    Kind = job.Kind,
+                    Provider = job.Provider,
+                    State = AssetGenJobState.Done,
+                    AssetPath = path,
+                    AssetGuid = new string('a', 32),
+                    ModelImportStage = "registered",
+                };
+            };
+            try
+            {
+                var started = Start();
+                Pump(started.JobId, 16);
+                var job = AssetGenJobManager.GetJob(started.JobId);
+                Assert.AreEqual(1, imports);
+                Assert.AreEqual(AssetGenJobState.Canceled, job.State);
+                Assert.AreEqual("checkpoint_write_failed", job.RecoveryCode);
+                Assert.AreEqual("outcome_unknown", job.RecoveryState);
+                Assert.AreEqual(savedPath, job.AssetPath);
+                Assert.AreEqual(new string('a', 32), job.AssetGuid);
+                Assert.AreEqual("registered", job.ModelImportStage);
+                int calls = http.RecordedRequests.Count;
+                AssetGenJobManager.BeforeCheckpointWriteForTests = null;
+                Assert.IsTrue(AssetGenJobManager.Cancel(job.JobId));
+                Restart();
+                Pump(job.JobId);
+                var restored = AssetGenJobManager.GetJob(job.JobId);
+                Assert.AreEqual(AssetGenJobState.Canceled, restored.State);
+                Assert.AreEqual(savedPath, restored.AssetPath);
+                Assert.AreEqual(new string('a', 32), restored.AssetGuid);
+                Assert.AreEqual("registered", restored.ModelImportStage);
+                Assert.AreEqual(calls, http.RecordedRequests.Count);
+                Assert.AreEqual(1, imports);
+            }
+            finally
+            {
+                AssetGenJobManager.BeforeCheckpointWriteForTests = null;
+                AssetDatabase.DeleteAsset(folder);
+            }
+        }
+
+        [Test]
+        public void PendingCancellationKeepsItsAdmissionSlotAndSurvivesHistoryEviction()
+        {
+            var pending = Start();
+            AssetGenJobManager.BeforeCheckpointWriteForTests = _ => throw new IOException("Injected cancellation checkpoint failure.");
+            Assert.IsFalse(AssetGenJobManager.Cancel(pending.JobId));
+            AssetGenJobManager.BeforeCheckpointWriteForTests = null;
+            for (int i = 0; i <= AssetGenJobManager.MaxTerminalJobs; i++)
+                Assert.IsTrue(AssetGenJobManager.Cancel(Start().JobId));
+            Assert.IsNotNull(AssetGenJobManager.GetJob(pending.JobId));
+            for (int i = 1; i < AssetGenJobCheckpoint.MaxActive; i++)
+                Start();
+            Assert.Throws<InvalidOperationException>(() => Start());
+            Assert.IsTrue(AssetGenJobManager.Cancel(pending.JobId));
+            Assert.DoesNotThrow(() => Start());
+            Assert.IsEmpty(http.RecordedRequests);
         }
 
         [Test]

@@ -24,6 +24,28 @@ namespace MCPForUnity.Editor.Services.AssetGen
         private string[] ids = Array.Empty<string>();
         private readonly Dictionary<string, string> hashes = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> fingerprints = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, PublicationAttempt> pendingPublications = new(StringComparer.Ordinal);
+        internal Action<string> AfterPublicationForTests;
+
+        private sealed class PublicationAttempt
+        {
+            internal string ExpectedHash;
+            internal string PublishedHash;
+            internal string PreimageHash;
+            internal string Stage;
+            internal string Backup;
+            internal PublicationAttempt Previous;
+
+            internal PublicationAttempt WithoutPrevious() =>
+                new PublicationAttempt
+                {
+                    ExpectedHash = ExpectedHash,
+                    PublishedHash = PublishedHash,
+                    PreimageHash = PreimageHash,
+                    Stage = Stage,
+                    Backup = Backup,
+                };
+        }
 
         internal AssetGenJobJournal(string root, string owner, string instance, Func<DateTimeOffset> utc)
         {
@@ -250,6 +272,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             catch { /* Retain unverified or undeletable evidence; never delete generated assets. */ }
             hashes.Remove(id);
             fingerprints.Remove(id);
+            pendingPublications.Remove(id + ".json");
         }
 
         private string Publish(string name, string text, string expected, int maximum)
@@ -259,8 +282,20 @@ namespace MCPForUnity.Editor.Services.AssetGen
             lease.Verify();
             string path = PathFor(name);
             string previous = File.Exists(path) ? ReadText(path, maximum) : null;
-            if ((previous == null ? null : Hash(previous)) != expected)
-                throw new IOException("Journal evidence changed outside this owner.");
+            string previousHash = previous == null ? null : Hash(previous);
+            PublicationAttempt verifiedPrevious = null;
+            if (previousHash != expected)
+            {
+                // Only this instance's exact interrupted publication can replace its original
+                // preimage. Never adopt a same-owner replacement or refresh unrelated hashes.
+                pendingPublications.TryGetValue(name, out var pending);
+                verifiedPrevious =
+                    MatchesPublication(pending, expected, previousHash, maximum) ? pending
+                    : MatchesPublication(pending?.Previous, expected, previousHash, maximum) ? pending.Previous
+                    : null;
+                if (verifiedPrevious == null)
+                    throw new IOException("Journal evidence changed outside this owner.");
+            }
             string stage = PathFor(".journal-" + Guid.NewGuid().ToString("N") + ".tmp"),
                 backup = stage + ".bak";
             byte[] bytes = Encoding.UTF8.GetBytes(text);
@@ -268,6 +303,17 @@ namespace MCPForUnity.Editor.Services.AssetGen
             try
             {
                 AtomicFilePublication.StageNew(stage, stream => stream.Write(bytes, 0, bytes.Length));
+                pendingPublications[name] = new PublicationAttempt
+                {
+                    ExpectedHash = expected,
+                    PublishedHash = Hash(text),
+                    PreimageHash = previousHash,
+                    Stage = stage,
+                    Backup = backup,
+                    // Replacement can fail before touching the verified candidate still on disk.
+                    // Keep that proof too, flattened to at most two attempts per journal file.
+                    Previous = verifiedPrevious?.WithoutPrevious(),
+                };
                 if (previous == null)
                     AtomicFilePublication.Create(stage, path);
                 else
@@ -276,9 +322,11 @@ namespace MCPForUnity.Editor.Services.AssetGen
                     if (ReadText(backup, maximum) != previous)
                         throw new IOException("Journal preimage changed during publication.");
                 }
+                AfterPublicationForTests?.Invoke(name);
                 if (ReadText(path, maximum) != text)
                     throw new IOException("Journal publication is unverified.");
                 confirmed = true;
+                pendingPublications.Remove(name);
                 return Hash(text);
             }
             finally
@@ -296,6 +344,18 @@ namespace MCPForUnity.Editor.Services.AssetGen
             }
         }
 
+        private static bool MatchesPublication(PublicationAttempt pending, string expected, string actual, int maximum) =>
+            pending != null && pending.ExpectedHash == expected && pending.PublishedHash == actual && VerifiedPreimage(pending, maximum);
+
+        private static bool VerifiedPreimage(PublicationAttempt pending, int maximum)
+        {
+            if (pending.PreimageHash == null)
+                return true; // Atomic create had no existing target to displace.
+            // Unix replacement may exchange files before renaming the displaced preimage to backup.
+            string path = File.Exists(pending.Backup) ? pending.Backup : pending.Stage;
+            return File.Exists(path) && Hash(ReadText(path, maximum)) == pending.PreimageHash;
+        }
+
         public void Dispose()
         {
             lease?.Dispose();
@@ -305,6 +365,7 @@ namespace MCPForUnity.Editor.Services.AssetGen
             indexHash = null;
             hashes.Clear();
             fingerprints.Clear();
+            pendingPublications.Clear();
         }
     }
 }
