@@ -15,6 +15,7 @@ from services.tools.manage_script import _split_uri, _validate_script_name
 from services.tools.utils import coerce_bool, coerce_int
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
+from utils.source_lines import source_line_locations
 
 logger = logging.getLogger("mcp-for-unity-server")
 
@@ -113,36 +114,20 @@ async def find_in_file(
         return {"success": False, "message": f"Regex search rejected: {e}"}
 
     selected = found[:max_results]
-    line_metadata = {}
-    line_num = 1
-    line_start = 0
-    # Same boundaries as ManageScript.SourceLineWindow; never normalize source
-    # text because character offsets must continue to address the original text.
-    boundaries = re.finditer(r"\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]", contents)
-    boundary = next(boundaries, None)
-    excerpt_start = -1
-    excerpt = ""
-    # Advance once through source boundaries, including for reverse regex results,
-    # then emit matches in the regex's original order.
-    for start_idx in sorted({m.start() for m in selected}):
-        while boundary is not None and boundary.end() <= start_idx:
-            line_num += 1
-            line_start = boundary.end()
-            boundary = next(boundaries, None)
-        if line_start != excerpt_start:
-            line_end = boundary.start() if boundary is not None else len(contents)
-            excerpt = contents[line_start:line_end].strip()[:2000]
-            excerpt_start = line_start
-        line_metadata[start_idx] = (line_num, excerpt)
+    locations = source_line_locations(contents, (match.start() for match in selected))
+    excerpts = {
+        line.start: contents[line.start : line.end].strip()[:2000]
+        for line in set(locations.values())
+    }
 
     results = []
     for m in selected:
         start_idx = m.start()
-        line_num, excerpt = line_metadata[start_idx]
+        line = locations[start_idx]
         results.append(
             {
-                "line": line_num,
-                "content": excerpt,
+                "line": line.number,
+                "content": excerpts[line.start],
                 "match": m.group(0)[:2000],
                 "start": start_idx,
                 "end": m.end(),

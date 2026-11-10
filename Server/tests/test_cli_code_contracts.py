@@ -126,6 +126,46 @@ def test_search_returns_one_json_document_for_matches_and_empty_sources(
 
 
 @pytest.mark.parametrize(
+    "separator",
+    ["\r", "\r\n", "\n", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_search_uses_native_line_boundaries_in_regex_order(script_response, separator, reverse):
+    response, _ = script_response
+    response["data"]["contents"] = separator.join(("first", "needle needle", "", "needle", ""))
+    pattern = "(?r)needle" if reverse else "needle"
+    result = CliRunner().invoke(
+        cli, ["--format", "json", "code", "search", pattern, "Assets/Foo.cs"]
+    )
+
+    assert result.exit_code == 0, result.output
+    matches = json.loads(result.stdout)["data"]["matches"]
+    expected = [(2, "needle needle"), (2, "needle needle"), (4, "needle")]
+    assert [(row["line"], row["content"]) for row in matches] == (
+        expected[::-1] if reverse else expected
+    )
+    assert all(not row["contentTruncated"] for row in matches)
+
+
+@pytest.mark.parametrize("separator", ["\r", "\r\n", "\u2028"])
+def test_search_keeps_bounded_centered_excerpts_on_native_lines(script_response, separator):
+    response, _ = script_response
+    response["data"]["contents"] = separator.join(
+        ("previous", "a" * 400 + "needle" + "b" * 400, "next")
+    )
+    result = CliRunner().invoke(
+        cli, ["--format", "json", "code", "search", "needle", "Assets/Foo.cs"]
+    )
+
+    assert result.exit_code == 0, result.output
+    match = json.loads(result.stdout)["data"]["matches"][0]
+    assert match["line"] == 2
+    assert match["content"] == "a" * 250 + "needle" + "b" * 244
+    assert match["contentTruncated"] is True
+    assert match["matchTruncated"] is False
+
+
+@pytest.mark.parametrize(
     "command", [["read", "Assets/Foo.cs"], ["search", "first", "Assets/Foo.cs"]]
 )
 def test_code_preserves_domain_error_json(script_response, command):

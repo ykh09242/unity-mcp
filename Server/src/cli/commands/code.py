@@ -232,6 +232,7 @@ def search(pattern: str, path: str, max_results: int, case_sensitive: bool):
 
     # Load the server-side regex engine only when this command actually searches.
     from services.tools import bounded_regex
+    from utils.source_lines import source_line_locations
 
     # Step 2: Perform regex search locally
     flags = re.MULTILINE
@@ -244,31 +245,23 @@ def search(pattern: str, path: str, max_results: int, case_sensitive: bool):
         found = bounded_regex.find_matches(
             pattern, contents, flags, limit, budget=budget, truncate=True
         )
+        selected = found[:limit]
+        budget.consume(max((match.start() for match in selected), default=0))
+        locations = source_line_locations(contents, (match.start() for match in selected))
         results = []
-        cursor = 0
-        line_num = 1
-        for match in found[:limit]:
+        for match in selected:
             start_idx = match.start()
-            budget.consume(start_idx - cursor + _EXCERPT_CHARS + _MATCH_CHARS)
-            line_num += contents.count("\n", cursor, start_idx)
-            cursor = start_idx
-            # Search only a bounded neighborhood rather than copying a whole wide line.
-            excerpt_start = max(0, start_idx - _EXCERPT_CHARS // 2)
-            line_start = contents.rfind("\n", excerpt_start, start_idx) + 1
-            line_start = max(excerpt_start, line_start)
-            excerpt_end = min(len(contents), line_start + _EXCERPT_CHARS)
-            line_end = contents.find("\n", start_idx, excerpt_end)
-            if line_end == -1:
-                line_end = excerpt_end
+            budget.consume(_EXCERPT_CHARS + _MATCH_CHARS)
+            line = locations[start_idx]
+            # Keep a centered, bounded excerpt even when the source line is wide.
+            excerpt_start = max(line.start, start_idx - _EXCERPT_CHARS // 2)
+            excerpt_end = min(line.end, excerpt_start + _EXCERPT_CHARS)
             results.append(
                 {
-                    "line": line_num,
-                    "content": contents[line_start:line_end].strip(),
+                    "line": line.number,
+                    "content": contents[excerpt_start:excerpt_end].strip(),
                     "match": contents[start_idx : min(match.end(), start_idx + _MATCH_CHARS)],
-                    "contentTruncated": line_start > 0
-                    and contents[line_start - 1] != "\n"
-                    or line_end < len(contents)
-                    and contents[line_end] != "\n",
+                    "contentTruncated": excerpt_start > line.start or excerpt_end < line.end,
                     "matchTruncated": match.end() - start_idx > _MATCH_CHARS,
                 }
             )
