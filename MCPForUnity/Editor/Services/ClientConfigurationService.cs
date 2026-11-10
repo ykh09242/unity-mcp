@@ -143,6 +143,16 @@ namespace MCPForUnity.Editor.Services
                 configurator.CheckStatus(attemptAutoRewrite: false);
                 stage = "configure";
                 ConfigureWithTransportCoercion(configurator);
+                stage = "validation";
+                var status = configurator.Status;
+                if (!IsConfigurationComplete(status))
+                {
+                    summary.FailureCount++;
+                    summary.Messages.Add(
+                        $"⚠ {SafeDisplay(configurator)}: Configuration validation is incomplete. Check connection settings and client instructions, then retry."
+                    );
+                    return "validation:" + status;
+                }
             }
             catch (Exception ex)
             {
@@ -155,6 +165,11 @@ namespace MCPForUnity.Editor.Services
             summary.Messages.Add($"✓ {SafeDisplay(configurator)}: Configured successfully");
             return null;
         }
+
+        // Configure may save an entry without validating it. Consume the provider's
+        // published status without starting another probe or changing its lifecycle.
+        internal static bool IsConfigurationComplete(McpStatus status) =>
+            status == McpStatus.Configured || status == McpStatus.Running || status == McpStatus.Connected;
 
         private ClientConfigurationTarget[] CaptureCatalog(out string unavailable)
         {

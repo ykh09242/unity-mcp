@@ -326,12 +326,21 @@ namespace MCPForUnity.Editor.Windows
                 try
                 {
                     configureClient(client);
-                    success++;
-                    configuredClients.Add(client.Id);
-                    clientSelections[client.Id] = false;
-                    toggle.SetValueWithoutNotify(false);
-                    toggle.SetEnabled(false);
-                    result = "Configured. This client will not be repeated during retry.";
+                    if (ClientConfigurationService.IsConfigurationComplete(client.Status))
+                    {
+                        success++;
+                        configuredClients.Add(client.Id);
+                        clientSelections[client.Id] = false;
+                        toggle.SetValueWithoutNotify(false);
+                        toggle.SetEnabled(false);
+                        result = "Configured. This client will not be repeated during retry.";
+                    }
+                    else
+                    {
+                        failure++;
+                        clientSelections[client.Id] = true;
+                        result = "Configuration validation is incomplete. Check connection settings and client instructions, then retry.";
+                    }
                 }
                 catch (Exception)
                 {

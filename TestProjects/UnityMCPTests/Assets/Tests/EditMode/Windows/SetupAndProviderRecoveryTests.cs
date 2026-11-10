@@ -49,7 +49,7 @@ namespace MCPForUnityTests.EditMode.Windows
         {
             public string Id { get; set; }
             public string DisplayName => Id;
-            public McpStatus Status => default;
+            public McpStatus Status { get; set; } = McpStatus.Configured;
             public ConfiguredTransport ConfiguredTransport => default;
             public bool SupportsAutoConfigure { get; set; } = true;
             public bool IsInstalled => true;
@@ -308,6 +308,54 @@ namespace MCPForUnityTests.EditMode.Windows
 
         [TestCase(false)]
         [TestCase(true)]
+        public void InvalidSavedSetupRemainsRetryableWithoutRepeatingValidatedPeers(bool allInvalid)
+        {
+            WithReadySetup(
+                (window, _) =>
+                {
+                    var first = new Client { Id = "first" };
+                    var second = new Client { Id = "second" };
+                    var clients = new IMcpClientConfigurator[] { first, second };
+                    var calls = new Dictionary<string, int>();
+                    bool retry = false;
+                    int completed = 0;
+                    Set(window, "getClients", (Func<IReadOnlyList<IMcpClientConfigurator>>)(() => clients));
+                    Set(
+                        window,
+                        "configureClient",
+                        (Action<IMcpClientConfigurator>)(
+                            client =>
+                            {
+                                calls[client.Id] = calls.TryGetValue(client.Id, out int count) ? count + 1 : 1;
+                                ((Client)client).Status = !retry && (allInvalid || client.Id == "second") ? McpStatus.IncorrectPath : McpStatus.Configured;
+                            }
+                        )
+                    );
+                    Set(window, "finishSetup", (Action)(() => completed++));
+                    Invoke(window, "ShowClientsStep");
+                    Invoke(window, "OnConfigureSelectedClicked");
+
+                    Assert.Zero(completed, "Saving an invalid entry must not complete setup.");
+                    var root = window.rootVisualElement;
+                    StringAssert.Contains(allInvalid ? "0 configured, 2 failed" : "1 configured, 1 failed", root.Q<Label>("clients-result").text);
+                    Assert.IsTrue(root.Q<Button>("configure-selected-button").enabledSelf);
+                    var failedRow = root.Query<Toggle>().ToList().Find(toggle => toggle.label == "second");
+                    Assert.IsTrue(failedRow.value);
+                    Assert.IsTrue(failedRow.enabledSelf);
+                    Assert.IsTrue(root.Query<Label>().ToList().Exists(label => label.text.Contains("validation") && label.text.Contains("retry")));
+
+                    Invoke(window, "ShowClientsStep");
+                    retry = true;
+                    Invoke(window, "OnConfigureSelectedClicked");
+                    Assert.AreEqual(allInvalid ? 2 : 1, calls["first"]);
+                    Assert.AreEqual(2, calls["second"]);
+                    Assert.AreEqual(1, completed);
+                }
+            );
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public void ManualOnlyClientShowsInstructionsAndCannotBeAutomaticallyConfigured(bool includeAutomatic)
         {
             WithReadySetup(
@@ -344,11 +392,14 @@ namespace MCPForUnityTests.EditMode.Windows
             var section = (McpClientConfigSection)FormatterServices.GetUninitializedObject(typeof(McpClientConfigSection));
             var status = new Label("previous client ready");
             Set(section, "configurationChangeStatusLabel", status);
-            Set(section, "configurationPreviewText", new TextField { value = "previous" });
+            var preview = new TextField { value = "previous" };
+            Set(section, "configurationPreviewText", preview);
             var apply = new Button();
             Set(section, "applyConfigurationButton", apply);
             Invoke(section, "OnCancelConfigurationPreviewClicked");
-            Assert.IsEmpty(status.text);
+            Assert.AreEqual("Choose Preview change to see what will be saved.", status.text);
+            StringAssert.DoesNotContain("previous client", status.text);
+            Assert.IsEmpty(preview.value);
             Assert.IsFalse(apply.enabledSelf);
         }
 

@@ -106,6 +106,7 @@ namespace MCPForUnityTests.Editor.Helpers
             public override void Configure()
             {
                 ConfigureCalls++;
+                client.SetStatus(McpStatus.Configured);
             }
 
             public override string GetManualSnippet() => "";

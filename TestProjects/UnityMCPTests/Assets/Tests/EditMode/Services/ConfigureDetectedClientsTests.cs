@@ -56,6 +56,34 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [Test]
+        public void InvalidSavedConfigurationCountsAsFailureAndRetryPreservesValidatedPeers()
+        {
+            var success = new FakeClient("success", store);
+            var invalid = new FakeClient("invalid", store) { ConfiguredStatus = McpStatus.IncorrectPath };
+            var service = CreateService(success, invalid);
+
+            var summary = service.ConfigureAllDetectedClients();
+
+            Assert.AreEqual(1, summary.SuccessCount);
+            Assert.AreEqual(1, summary.FailureCount);
+            Assert.IsTrue(File.Exists(invalid.GetConfigPath()), "A saved file can still fail validation.");
+            Assert.IsTrue(summary.Attempt.CanRetry);
+            CollectionAssert.AreEqual(new[] { "invalid" }, summary.Attempt.Failures.Select(row => row.ClientId));
+            Assert.IsTrue(summary.Messages.Any(message => message.Contains("invalid") && message.Contains("validation") && message.Contains("retry")));
+            File.WriteAllText(success.GetConfigPath(), "user-edited-success");
+            invalid.ConfiguredStatus = McpStatus.Configured;
+
+            var retry = service.RetryFailedClients(summary.Attempt);
+
+            Assert.AreEqual(1, retry.Summary.SuccessCount);
+            Assert.Zero(retry.Summary.FailureCount);
+            Assert.IsFalse(retry.Attempt.CanRetry);
+            Assert.AreEqual(1, success.ConfigureCalls);
+            Assert.AreEqual(2, invalid.ConfigureCalls);
+            Assert.AreEqual("user-edited-success", File.ReadAllText(success.GetConfigPath()));
+        }
+
+        [Test]
         public void StatusFailure_DoesNotConfigureFailedClientOrPreventPeers()
         {
             var failed = new FakeClient("failed", store) { FailStatus = true };
@@ -548,7 +576,8 @@ namespace MCPForUnityTests.Editor.Services
             public bool FailDisplay { get; set; }
             public string Id => FailIdentity ? throw new IOException("owned-sensitive-marker") : Identity;
             public string DisplayName => FailDisplay ? throw new IOException("owned-sensitive-display-marker") : Identity;
-            public McpStatus Status => McpStatus.NotConfigured;
+            public McpStatus Status { get; private set; } = McpStatus.NotConfigured;
+            public McpStatus ConfiguredStatus { get; set; } = McpStatus.Configured;
             public ConfiguredTransport ConfiguredTransport => ConfiguredTransport.Unknown;
             public bool SupportsAutoConfigure { get; set; } = true;
             public bool SupportsSkills => false;
@@ -602,6 +631,7 @@ namespace MCPForUnityTests.Editor.Services
                     throw new IOException("owned-sensitive-marker");
                 if (!MergeOwnedFields)
                     File.WriteAllText(GetConfigPath(), http ? "http" : "stdio");
+                Status = ConfiguredStatus;
             }
 
             public string GetConfigPath() => Path.Combine(store.Root, Identity + ".config");
