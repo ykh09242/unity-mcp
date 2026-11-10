@@ -228,6 +228,82 @@ namespace MCPForUnityTests.EditMode.Tools
         }
 
         [Test]
+        public void UnchangedBlockerPersistsOnceAndChangedReasonKeepsInvocationFence()
+        {
+            JObject job = Queued();
+            string reason = "compiling";
+            int saves = 0;
+            int invokes = 0;
+            for (int i = 0; i < 20; i++)
+                Assert.IsFalse(Advance(job, () => Assert.Fail("blocked validation"), () => invokes++, () => reason, () => saves++));
+            Assert.AreEqual(1, saves);
+            reason = "native_job_active";
+            Assert.IsFalse(Advance(job, () => { }, () => invokes++, () => reason, () => saves++));
+            Assert.AreEqual(2, saves);
+            reason = null;
+            Assert.IsTrue(
+                Advance(
+                    job,
+                    () => { },
+                    () =>
+                    {
+                        Assert.AreEqual(3, saves);
+                        invokes++;
+                    },
+                    () => reason,
+                    () => saves++
+                )
+            );
+            Assert.AreEqual(4, saves, "Invocation and terminal checkpoints must remain immediate.");
+            Assert.AreEqual(1, invokes);
+            AssertSharedIsReleased();
+        }
+
+        [Test]
+        public void UnchangedFinalBarrierPersistsOnceWithoutExtendingDeadline()
+        {
+            JObject job = Queued();
+            string deadline = (string)job["deadline_utc"];
+            int checks = 0;
+            int saves = 0;
+            for (int i = 0; i < 20; i++)
+                Assert.IsFalse(
+                    Advance(job, () => { }, () => Assert.Fail("blocked native entry"), () => ++checks % 2 == 0 ? "foreign_owner" : null, () => saves++)
+                );
+            Assert.AreEqual(1, saves);
+            Assert.AreEqual(deadline, (string)job["deadline_utc"]);
+            job["deadline_utc"] = DateTime.UtcNow.AddSeconds(-1).ToString("O");
+            Assert.IsFalse(Advance(job, () => Assert.Fail("expired validation"), () => Assert.Fail("expired native entry"), save: () => saves++));
+            Assert.AreEqual(2, saves);
+            Assert.AreEqual("failed", (string)job["state"]);
+            AssertSharedIsReleased();
+        }
+
+        [UnityTest]
+        public IEnumerator UnchangedArbitrationBlockerPersistsOnce()
+        {
+            JObject job = Queued();
+            var settlement = new TaskCompletionSource<bool>();
+            Task owner = HoldExclusiveUntil(settlement.Task);
+            int saves = 0;
+            try
+            {
+                for (int i = 0; i < 20; i++)
+                    Assert.IsFalse(Advance(job, () => Assert.Fail("blocked validation"), () => Assert.Fail("blocked native entry"), save: () => saves++));
+                Assert.AreEqual(1, saves);
+                StringAssert.Contains("operation_busy", (string)job["detail"]);
+            }
+            finally
+            {
+                settlement.TrySetResult(true);
+            }
+            while (!owner.IsCompleted)
+                yield return null;
+            Assert.IsFalse(owner.IsFaulted, owner.Exception?.ToString());
+            AssertSharedIsReleased();
+        }
+
+        [Test]
         public void RepeatedReloadOfQueuedJobPreservesIdDeadlineAndInvokesOnce()
         {
             JObject initial = Queued();

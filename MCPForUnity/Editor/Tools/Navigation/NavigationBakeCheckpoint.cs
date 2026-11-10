@@ -91,8 +91,7 @@ namespace MCPForUnity.Editor.Tools.Navigation
                 string reason = blocker();
                 if (reason != null)
                 {
-                    job["detail"] = "Waiting before native bake: " + reason;
-                    save();
+                    SaveWaitingReason(job, reason, save);
                     return false;
                 }
                 // The request's command lease ended when it returned the queued job.
@@ -108,8 +107,7 @@ namespace MCPForUnity.Editor.Tools.Navigation
                     )
                 )
                 {
-                    job["detail"] = "Waiting before native bake: " + admission.Reason;
-                    save();
+                    SaveWaitingReason(job, admission.Reason, save);
                     return false;
                 }
                 validate();
@@ -119,8 +117,7 @@ namespace MCPForUnity.Editor.Tools.Navigation
                 reason = blocker();
                 if (reason != null)
                 {
-                    job["detail"] = "Waiting before native bake: " + reason;
-                    save();
+                    SaveWaitingReason(job, reason, save);
                     return false;
                 }
                 if (DateTime.UtcNow >= deadline.ToUniversalTime())
@@ -147,6 +144,15 @@ namespace MCPForUnity.Editor.Tools.Navigation
             {
                 lease?.Dispose();
             }
+        }
+
+        private static void SaveWaitingReason(JObject job, string reason, Action save)
+        {
+            string detail = "Waiting before native bake: " + reason;
+            if ((string)job["detail"] == detail)
+                return;
+            job["detail"] = detail;
+            save();
         }
     }
 }
