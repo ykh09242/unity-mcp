@@ -53,8 +53,19 @@ def batches(store, result: dict):
             for row in rows:
                 if not budget.admit(row):
                     break
-                batch.append(json.loads(row["payload"]))
+                evidence = json.loads(row["payload"])
+                # External owners and manual endpoints expand to source configuration
+                # during authorization. Compact proof bytes cannot bound that expansion;
+                # authorize each such record independently while retaining runtime batches.
+                expanded = evidence["provider"] == "manual" or evidence["provider"].startswith(
+                    "external:"
+                )
+                if expanded and batch:
+                    break
+                batch.append(evidence)
                 after = row["seq"]
+                if expanded:
+                    break
             rows.close()
         if not batch:
             if count != proof["count"]:

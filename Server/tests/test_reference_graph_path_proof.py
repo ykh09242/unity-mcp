@@ -20,6 +20,97 @@ from services.reference_graph.store import (
 from services.reference_graph.workspace import GraphWorkspace
 
 
+@pytest.mark.parametrize("revocation", ["grant", "file", "oversize_metadata"])
+def test_external_proof_progress_reauthorizes_accumulated_owners(tmp_path, monkeypatch, revocation):
+    from services.reference_graph import response_budget
+    from services.reference_graph.external import ExternalSource
+    from services.reference_graph.store import _json
+
+    root = tmp_path / "source"
+    root.mkdir()
+    config = {"root": str(root), "include": ["*.json"], "exclude": ["x" * 2500], "mappings": []}
+    store = GraphStore.open(tmp_path / "graph", GraphScope("user", "editor", "project"))
+    workspace = GraphWorkspace(store)
+    store.set_source("external:fixture", config, expected_version=0)
+    adapter = ExternalSource(config)
+    for index in range(3):
+        path = f"{index}.json"
+        (root / path).write_text("{}", encoding="utf-8")
+        owner = f"owner{index}"
+        generation = store.observe_batch(
+            [
+                Observation(
+                    owner,
+                    "external:fixture",
+                    "one",
+                    path=path,
+                    source_version=1,
+                    provenance={"repository": {"state": "disabled"}},
+                )
+            ]
+        )[0]
+        assert store.publish(owner, "external:fixture", generation, [Edge("root", "external")])
+        with store._connect(write=True) as db:
+            db.execute(
+                "INSERT INTO graph_external VALUES (?,?,?,?,?,?,?)",
+                ("external:fixture", owner, path, "one", _json(adapter.stamp(path)), "one", "one"),
+            )
+    revoked = False
+
+    def grant(scope, configuration):
+        assert scope == store.scope and configuration == config
+        if revoked:
+            raise PermissionError("revoked fixture grant")
+
+    service = ReferenceGraphService(tmp_path / "graph")
+    # _grant is static and deliberately rechecks the operator boundary itself.
+    monkeypatch.setattr(ReferenceGraphService, "_operator_grant", staticmethod(grant))
+    monkeypatch.setattr(response_budget, "MAX_PAGE_BYTES", 8192)
+    for index in range(3):
+        assert not service._validate_external(
+            workspace,
+            {
+                "revision": store.revision(),
+                "edges": [{"provider": "external:fixture", "owner": f"owner{index}"}],
+            },
+        )
+    earliest_owner = None
+    for restart in range(2):
+        queries = GraphQueries(GraphStore.open(tmp_path / "graph", store.scope))
+        cursor = None
+        for _ in range(12):
+            result = queries.path("root", "missing", limit=1, cursor=cursor)
+            if cursor is None:
+                earliest_owner = next(path_proof.batches(store, result))[0]["owner"]
+            assert not service._validate_exploration(workspace, result)
+            if cursor is not None:
+                replay = queries.path("root", "missing", limit=1, cursor=cursor)
+                assert replay == result
+                assert not service._validate_exploration(workspace, replay)
+            if result["next_cursor"] is None:
+                break
+            cursor = result["next_cursor"]
+        else:
+            pytest.fail(f"External proof did not finish after restart {restart}")
+        assert result["path_found"] is False
+        assert result["_search_proof"]["count"] == 3
+    assert earliest_owner is not None
+    if revocation == "grant":
+        revoked = True
+        error = PermissionError
+    elif revocation == "file":
+        (root / f"{earliest_owner[-1]}.json").unlink()
+        error = FileNotFoundError
+    else:
+        with store._connect(write=True) as db:
+            db.execute(
+                "UPDATE graph_external SET stamp=? WHERE owner=?", ("x" * 9000, earliest_owner)
+            )
+        error = response_budget.GraphResponseTooLarge
+    with pytest.raises(error):
+        service._validate_exploration(workspace, result)
+
+
 @pytest.mark.parametrize("reachable", [False, True])
 def test_high_fanin_runtime_search_finishes_with_bounded_proof_pages(tmp_path, reachable):
     store = GraphStore.open(tmp_path, GraphScope("user", "editor", "project"))
