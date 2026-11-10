@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services.Transport;
@@ -18,12 +20,18 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
         private const int MaximumJobs = 8;
         internal const int MaximumIssues = 4096;
         private const int MaximumBytes = 4 * 1024 * 1024;
+        private const int MaximumArtifactBytes = MaximumBytes + 32 * 1024;
         private const int PageBytes = 256 * 1024;
         private const long RetentionMs = 10 * 60 * 1000;
         private static readonly object Gate = new object();
         private static readonly Dictionary<string, Audit> Jobs = new Dictionary<string, Audit>(StringComparer.Ordinal);
         private static readonly string SessionId = SessionState.GetString(Key + ".session", Guid.NewGuid().ToString("N"));
         internal static Func<IProjectAuditorBackend> BackendFactory = () => new ProjectAuditorApi();
+        internal static Func<string, string> SessionReader = key => SessionState.GetString(key, string.Empty);
+        internal static Action<string, string> SessionWriter = SessionState.SetString;
+        internal static Action<string> SessionEraser = SessionState.EraseString;
+        internal static Func<long> Clock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        private static readonly string[] StringFields = { "Category", "Severity", "Areas", "Description", "RelativePath", "DescriptorId", "Recommendation" };
         private static Audit active;
         private static bool dirty;
         internal static bool RecoveryRequired { get; private set; }
@@ -57,6 +65,8 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
             internal long Finished;
             internal bool NativeInvoked;
             internal bool ResultsAvailable = true;
+            internal string ResultsUnavailableReason;
+            internal string SnapshotHash;
             internal bool Truncated;
             internal int Rules;
             internal int Diagnostics;
@@ -72,7 +82,7 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
         static ProjectAuditorJobs()
         {
             SessionState.SetString(Key + ".session", SessionId);
-            Restore(SessionState.GetString(Key, "[]"), SessionState.GetBool(Key + ".recovery", false));
+            Restore(SessionReader(Key) is { Length: > 0 } serialized ? serialized : "[]", SessionState.GetBool(Key + ".recovery", false));
             EditorApplication.update += SaveIfDirty;
             AssemblyReloadEvents.beforeAssemblyReload += BeforeReload;
             EditorApplication.playModeStateChanged += OnPlayMode;
@@ -81,7 +91,12 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
         internal static bool ValidId(string id) =>
             id != null && id.Length == 32 && id.All(character => character >= '0' && character <= '9' || character >= 'a' && character <= 'f');
 
-        private static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        private static long Now => Clock();
+
+        private static int FieldMaximum(string name) =>
+            name == "Category" || name == "Severity" || name == "DescriptorId" ? 128
+            : name == "Areas" ? 256
+            : 2048;
 
         internal static JObject Availability()
         {
@@ -248,13 +263,10 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                 }
                 bool shortened = false;
                 var captured = new JObject();
-                foreach (string name in new[] { "Category", "Severity", "Areas", "Description", "RelativePath", "DescriptorId", "Recommendation" })
+                foreach (string name in StringFields)
                 {
                     string value = row[name]?.Type == JTokenType.String ? (string)row[name] : null;
-                    int maximum =
-                        name == "Category" || name == "Severity" || name == "DescriptorId" ? 128
-                        : name == "Areas" ? 256
-                        : 2048;
+                    int maximum = FieldMaximum(name);
                     if (value != null && value.Length > maximum)
                     {
                         int end = char.IsHighSurrogate(value[maximum - 1]) ? maximum - 1 : maximum;
@@ -266,7 +278,7 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                 captured["Line"] = row["Line"]?.Type == JTokenType.Integer ? row["Line"].DeepClone() : JValue.CreateNull();
                 captured["fields_truncated"] = shortened;
                 int bytes = Encoding.UTF8.GetByteCount(captured.ToString(Formatting.None));
-                if (bytes > MaximumBytes - audit.Bytes)
+                if (bytes > PageBytes || bytes > MaximumBytes - audit.Bytes)
                     audit.Truncated = true;
                 else
                 {
@@ -320,7 +332,10 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
         private static void Finish(Audit audit, string state, string reason)
         {
             audit.State = state;
-            audit.Reason = reason;
+            int end = Math.Min(reason?.Length ?? 0, 2048);
+            if (end > 0 && char.IsHighSurrogate(reason[end - 1]))
+                end--;
+            audit.Reason = reason?.Substring(0, end);
             audit.Finished = Now;
             dirty = true;
         }
@@ -341,6 +356,8 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
 
         internal static object Issues(string id, int size, string cursor)
         {
+            if (size < 1 || size > 100)
+                throw new ArgumentException("page_size must be an integer from 1 to 100.");
             lock (Gate)
             {
                 Prune();
@@ -403,9 +420,9 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                 ["diagnostic_count_exact"] = !audit.Truncated,
                 ["retained_issue_count"] = audit.Issues.Count,
                 ["results_available"] = audit.ResultsAvailable,
-                ["results_unavailable_reason"] = audit.ResultsAvailable ? null : "captured_rows_lost_on_domain_reload",
+                ["results_unavailable_reason"] = audit.ResultsAvailable ? null : audit.ResultsUnavailableReason,
                 ["observation_truncated"] = audit.Truncated,
-                ["clean"] = audit.State == "completed" && !audit.Truncated ? new JValue(audit.Diagnostics == 0) : JValue.CreateNull(),
+                ["clean"] = audit.State == "completed" && !audit.Truncated && audit.ResultsAvailable ? new JValue(audit.Diagnostics == 0) : JValue.CreateNull(),
                 ["cancel_supported"] = false,
                 ["recovery_required"] = RecoveryRequired,
             };
@@ -418,7 +435,17 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                     .Select(audit => audit.Id)
                     .ToArray()
             )
-                Jobs.Remove(id);
+            {
+                // Keys are derived only from tracked identities in this Editor session, never from artifact contents.
+                // Failed cleanup retains the history slot rather than allowing unbounded orphaned artifacts.
+                try
+                {
+                    SessionEraser(SnapshotKey(id));
+                    Jobs.Remove(id);
+                    dirty = true;
+                }
+                catch { /* Retry owned cleanup on the next observation. */ }
+            }
         }
 
         private static void SaveIfDirty()
@@ -430,9 +457,169 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
 
         private static void Persist()
         {
-            SessionState.SetString(Key, new JArray(Jobs.Values.Select(Describe)).ToString(Formatting.None));
+            Prune();
+            SessionWriter(Key, new JArray(Jobs.Values.Select(Receipt)).ToString(Formatting.None));
             SessionState.SetBool(Key + ".recovery", RecoveryRequired);
             dirty = false;
+        }
+
+        private static string SnapshotKey(string id) => Key + ".issues." + SessionId + "." + id;
+
+        private static string Hash(string text)
+        {
+            using var hash = SHA256.Create();
+            return string.Concat(hash.ComputeHash(Encoding.UTF8.GetBytes(text)).Select(value => value.ToString("x2", CultureInfo.InvariantCulture)));
+        }
+
+        private static JObject SnapshotSummary(JObject summary)
+        {
+            var result = (JObject)summary.DeepClone();
+            foreach (
+                string name in new[]
+                {
+                    "native_owner_retained",
+                    "results_available",
+                    "results_unavailable_reason",
+                    "recovery_required",
+                    "diagnostic_snapshot_sha256",
+                }
+            )
+                result.Remove(name);
+            return result;
+        }
+
+        private static JObject Receipt(Audit audit)
+        {
+            JObject receipt = Describe(audit);
+            if (!audit.Terminal || ReferenceEquals(active, audit) || !audit.ResultsAvailable)
+            {
+                receipt["results_available"] = false;
+                receipt["results_unavailable_reason"] = audit.ResultsUnavailableReason ?? "audit_completion_unobserved";
+                return receipt;
+            }
+            try
+            {
+                if (audit.SnapshotHash == null)
+                {
+                    string text = new JObject
+                    {
+                        ["version"] = 1,
+                        ["summary"] = SnapshotSummary(receipt),
+                        ["captured_bytes"] = audit.Bytes,
+                        ["items"] = new JArray(audit.Issues),
+                    }.ToString(Formatting.None);
+                    if (Encoding.UTF8.GetByteCount(text) > MaximumArtifactBytes)
+                        throw new InvalidDataException("Diagnostic snapshot exceeds its storage bound.");
+                    string key = SnapshotKey(audit.Id);
+                    SessionWriter(key, text);
+                    if (SessionReader(key) != text)
+                        throw new InvalidDataException("Diagnostic snapshot write was incomplete.");
+                    audit.SnapshotHash = Hash(text);
+                }
+                receipt["diagnostic_snapshot_sha256"] = audit.SnapshotHash;
+            }
+            catch
+            {
+                // A failed durable capture never destroys the still-owned detached rows in memory.
+                receipt["results_available"] = false;
+                receipt["results_unavailable_reason"] = "captured_rows_persistence_failed";
+            }
+            return receipt;
+        }
+
+        private static JToken Parse(string text)
+        {
+            using var reader = new JsonTextReader(new StringReader(text)) { DateParseHandling = DateParseHandling.None, MaxDepth = 16 };
+            JToken value = JToken.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error });
+            if (reader.Read())
+                throw new InvalidDataException("Unexpected trailing state content.");
+            return value;
+        }
+
+        private static int Count(JObject row, string name, int maximum = int.MaxValue)
+        {
+            if (row[name]?.Type != JTokenType.Integer || (long)row[name] < 0 || (long)row[name] > maximum)
+                throw new InvalidDataException("Invalid diagnostic count.");
+            return (int)row[name];
+        }
+
+        private static bool Flag(JObject row, string name)
+        {
+            if (row[name]?.Type != JTokenType.Boolean)
+                throw new InvalidDataException("Invalid diagnostic flag.");
+            return (bool)row[name];
+        }
+
+        private static void RestoreSnapshot(Audit audit, JObject summary, int retained)
+        {
+            audit.ResultsAvailable = false;
+            audit.ResultsUnavailableReason = (string)summary["results_unavailable_reason"] ?? "captured_rows_lost_on_domain_reload";
+            if (!audit.Terminal || Flag(summary, "native_owner_retained"))
+            {
+                RecoveryRequired |= audit.NativeInvoked;
+                audit.ResultsUnavailableReason = "audit_completion_unobserved";
+                return;
+            }
+            if (!Flag(summary, "results_available"))
+                return;
+            string expectedHash = (string)summary["diagnostic_snapshot_sha256"];
+            if (expectedHash == null)
+            {
+                // Version-one summary-only receipts can prove an empty exact observation, never missing rows.
+                audit.ResultsAvailable = audit.Diagnostics == 0 && retained == 0 && !audit.Truncated;
+                return;
+            }
+            audit.ResultsUnavailableReason = "captured_rows_corrupt_on_domain_reload";
+            try
+            {
+                if (expectedHash.Length != 64 || expectedHash.Any(character => !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f')))
+                    return;
+                string text = SessionReader(SnapshotKey(audit.Id));
+                if (string.IsNullOrEmpty(text))
+                {
+                    audit.ResultsUnavailableReason = "captured_rows_missing_on_domain_reload";
+                    return;
+                }
+                if (text.Length > MaximumArtifactBytes || Encoding.UTF8.GetByteCount(text) > MaximumArtifactBytes || Hash(text) != expectedHash)
+                    return;
+                if (
+                    Parse(text) is not JObject snapshot
+                    || snapshot.Count != 4
+                    || snapshot["version"]?.Type != JTokenType.Integer
+                    || (int?)snapshot["version"] != 1
+                    || !JToken.DeepEquals(snapshot["summary"], SnapshotSummary(summary))
+                    || snapshot["items"] is not JArray rows
+                    || rows.Count != retained
+                )
+                    return;
+                int bytes = 0;
+                foreach (JToken token in rows)
+                {
+                    if (token is not JObject row || row.Count != StringFields.Length + 2 || row["fields_truncated"]?.Type != JTokenType.Boolean)
+                        return;
+                    foreach (string name in StringFields)
+                        if (
+                            row[name] == null
+                            || row[name].Type != JTokenType.Null && (row[name].Type != JTokenType.String || ((string)row[name]).Length > FieldMaximum(name))
+                        )
+                            return;
+                    if (row["Line"] == null || row["Line"].Type != JTokenType.Null && row["Line"].Type != JTokenType.Integer)
+                        return;
+                    int rowBytes = Encoding.UTF8.GetByteCount(row.ToString(Formatting.None));
+                    if (rowBytes > PageBytes || rowBytes > MaximumBytes - bytes)
+                        return;
+                    bytes += rowBytes;
+                }
+                if (Count(snapshot, "captured_bytes", MaximumBytes) != bytes)
+                    return;
+                // Publish only after the complete artifact, including every page's scalar rows, was validated.
+                audit.Issues.AddRange(rows.Cast<JObject>());
+                audit.Bytes = bytes;
+                audit.SnapshotHash = expectedHash;
+                audit.ResultsAvailable = true;
+                audit.ResultsUnavailableReason = null;
+            }
+            catch { /* Corrupt or unavailable snapshots never become fabricated diagnostic pages. */ }
         }
 
         private static void BeforeReload()
@@ -468,15 +655,16 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                 Jobs.Clear();
                 active = null;
                 RecoveryRequired = recovery;
-                if (serialized.Length > 128 * 1024)
+                dirty = false;
+                if (serialized == null || serialized.Length > 128 * 1024 || Encoding.UTF8.GetByteCount(serialized) > 128 * 1024)
                 {
                     RecoveryRequired = true;
                     return;
                 }
                 try
                 {
-                    JArray rows = JArray.Parse(serialized);
-                    if (rows.Count > MaximumJobs || rows.Any(row => !(row is JObject)))
+                    JArray rows = Parse(serialized) as JArray;
+                    if (rows == null || rows.Count > MaximumJobs || rows.Any(row => !(row is JObject)))
                     {
                         RecoveryRequired = true;
                         return;
@@ -487,11 +675,11 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                         if (
                             !ValidId(id)
                             || (string)row["editor_session_id"] != SessionId
+                            || Jobs.ContainsKey(id)
                             || !new[] { "queued", "running", "completed", "failed", "unavailable", "interrupted" }.Contains((string)row["state"])
                         )
                         {
-                            RecoveryRequired = true;
-                            continue;
+                            throw new InvalidDataException("Invalid or foreign audit identity.");
                         }
                         var audit = new Audit
                         {
@@ -501,15 +689,27 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                             Target = (string)row["build_target"],
                             Started = (long?)row["started_unix_ms"] ?? 0,
                             Finished = (long?)row["finished_unix_ms"] ?? Now,
-                            NativeInvoked = (bool?)row["native_invoked"] ?? false,
-                            Rules = (int?)row["registered_rule_count"] ?? 0,
-                            Diagnostics = (int?)row["diagnostic_count"] ?? 0,
-                            Modules = (int?)row["modules_completed"] ?? 0,
-                            FailedModules = (int?)row["modules_failed"] ?? 0,
-                            InterruptedModules = (int?)row["modules_interrupted"] ?? 0,
-                            Truncated = (bool?)row["observation_truncated"] ?? true,
+                            NativeInvoked = Flag(row, "native_invoked"),
+                            Rules = Count(row, "registered_rule_count"),
+                            Diagnostics = Count(row, "diagnostic_count"),
+                            Modules = Count(row, "modules_completed"),
+                            FailedModules = Count(row, "modules_failed"),
+                            InterruptedModules = Count(row, "modules_interrupted"),
+                            Truncated = Flag(row, "observation_truncated"),
                         };
-                        audit.ResultsAvailable = audit.Diagnostics == 0 && !audit.Truncated;
+                        int retained = Count(row, "retained_issue_count", MaximumIssues);
+                        if (
+                            retained > audit.Diagnostics
+                            || Flag(row, "results_available") && !audit.Truncated && retained != audit.Diagnostics
+                            || audit.Started < 0
+                            || audit.Finished < 0
+                            || (audit.Reason?.Length ?? 0) > 2048
+                            || (audit.Target?.Length ?? 0) > 128
+                            || audit.FailedModules > audit.Modules
+                            || audit.InterruptedModules > audit.Modules - audit.FailedModules
+                        )
+                            throw new InvalidDataException("Invalid audit observation bounds.");
+                        RestoreSnapshot(audit, row, retained);
                         if (!audit.Terminal)
                         {
                             RecoveryRequired |= audit.NativeInvoked;
@@ -517,9 +717,18 @@ namespace MCPForUnity.Editor.Tools.ProjectAuditor
                         }
                         Jobs[id] = audit;
                     }
+                    Prune();
                 }
-                catch (Exception error) when (error is JsonException || error is InvalidCastException || error is FormatException || error is OverflowException)
+                catch (Exception error)
+                    when (error is JsonException
+                        || error is InvalidCastException
+                        || error is FormatException
+                        || error is OverflowException
+                        || error is InvalidDataException
+                        || error is ArgumentException
+                    )
                 {
+                    Jobs.Clear();
                     RecoveryRequired = true;
                 }
             }
