@@ -1,4 +1,4 @@
-"""Fetch a missing validated immutable server pin before the offline drift check."""
+"""Fetch a missing validated server or skill pin before its offline provenance check."""
 
 import argparse
 from dataclasses import asdict, dataclass
@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 from typing import Final
 
-from check_release_evidence import BASE, EvidenceError, digest, git, require
+from check_release_evidence import BASE, EvidenceError, committed, digest, git, load_json, require
 from check_source_pin_drift import resolve_commit, source_pin
 
 
@@ -20,6 +20,13 @@ FORK_GIT_URL: Final = BASE + ".git"
 class PreparedHistory:
     checked_commit: str
     server_commit: str
+    fetched: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedSkillHistory:
+    checked_commit: str
+    skill_commit: str
     fetched: bool
 
 
@@ -62,10 +69,8 @@ def fetch_pin(repo: Path, pin: str) -> None:
     require(result.returncode == 0, "Pinned history fetch failed")
 
 
-def prepare(repo: Path, revision: str = "HEAD") -> PreparedHistory:
-    """Validate committed metadata and retrieve only a missing exact source commit."""
-    checked = resolve_commit(repo, revision)
-    pin = source_pin(repo, checked)
+def ensure_pin(repo: Path, pin: str) -> bool:
+    """Ensure the exact commit is available, preserving checkout, refs and FETCH_HEAD."""
     try:
         object_type = git(repo, "cat-file", "-t", pin)
     except EvidenceError:
@@ -75,16 +80,38 @@ def prepare(repo: Path, revision: str = "HEAD") -> PreparedHistory:
         require(object_type.strip() == b"commit", "Pinned object is not a commit")
         fetched = False
     require(resolve_commit(repo, pin) == pin, "Pinned object is not a commit")
-    return PreparedHistory(checked, pin, fetched)
+    return fetched
+
+
+def prepare(repo: Path, revision: str = "HEAD") -> PreparedHistory:
+    """Validate committed metadata and retrieve only a missing exact source commit."""
+    checked = resolve_commit(repo, revision)
+    pin = source_pin(repo, checked)
+    return PreparedHistory(checked, pin, ensure_pin(repo, pin))
+
+
+def prepare_skill(repo: Path, revision: str = "HEAD") -> PreparedSkillHistory:
+    """Read the independent skill pin from committed package metadata before fetching."""
+    checked = resolve_commit(repo, revision)
+    package = load_json(committed(repo, checked, "MCPForUnity/package.json"))
+    require(package.get("name") == "com.ykh09242.unity-mcp", "Wrong Unity package identity")
+    pin = package.get("mcpSkillRevision")
+    require(isinstance(pin, str) and digest(pin, 40), "Expected a full immutable skill pin")
+    return PreparedSkillHistory(checked, pin, ensure_pin(repo, pin))
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--revision", default="HEAD")
+    parser.add_argument("--component", choices=("server", "skill"), default="server")
     args = parser.parse_args(argv)
     try:
-        result = prepare(args.repo, args.revision)
+        result = (
+            prepare_skill(args.repo, args.revision)
+            if args.component == "skill"
+            else prepare(args.repo, args.revision)
+        )
     except (
         EvidenceError,
         OSError,

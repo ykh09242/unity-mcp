@@ -66,3 +66,18 @@ still runs the offline checker to preserve its `unavailable` report on preparati
 failure. Neither helper converts unavailable history into a passing freshness result.
 `check_source_pin_drift.py` remains offline and read-only; local authoring and release
 checks continue to require their selected commits to be available locally.
+
+## Skill provenance in CI
+
+The source-pin workflow also runs `python tools/check_skill_pin.py --verify-git` on
+changes to either skill mirror, the server bundle, package/manifest pins or generated
+source inputs. This compares both complete checkout mirrors with the actual commit
+selected by `mcpSkillRevision`; an available but stale pin fails the check.
+
+Before verification, `python tools/prepare_source_pin_history.py --revision HEAD --component skill`
+reads the independent skill pin from committed package metadata and prepares a missing
+commit with the same fixed-fork, exact-SHA, depth-one fetch and timeout described above.
+This works in shallow checkouts without replacing refs, changing checkout files or
+overwriting `FETCH_HEAD`. Invalid pins and unavailable commits fail preparation; the
+offline content check still runs to report missing history. Existing server metadata,
+baseline drift rules and release evidence checks remain enforced separately.

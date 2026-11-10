@@ -4,28 +4,38 @@ on:
   push:
     branches: [beta]
     paths:
+      - .claude/skills/unity-mcp-skill/**
+      - unity-mcp-skill/**
       - Server/**
       - MCPForUnity/package.json
       - manifest.json
       - release-source-inputs.json
       - tools/check_source_pin_drift.py
+      - tools/check_skill_pin.py
       - tools/prepare_source_pin_history.py
       - tools/check_release_evidence.py
       - tools/tests/test_check_source_pin_drift.py
       - tools/tests/test_prepare_source_pin_history.py
+      - tools/tests/test_check_skill_pin.py
+      - tools/tests/test_prepare_skill_pin_history.py
       - .github/workflows/source-pin-drift.yml
   pull_request:
     branches: [beta, main]
     paths:
+      - .claude/skills/unity-mcp-skill/**
+      - unity-mcp-skill/**
       - Server/**
       - MCPForUnity/package.json
       - manifest.json
       - release-source-inputs.json
       - tools/check_source_pin_drift.py
+      - tools/check_skill_pin.py
       - tools/prepare_source_pin_history.py
       - tools/check_release_evidence.py
       - tools/tests/test_check_source_pin_drift.py
       - tools/tests/test_prepare_source_pin_history.py
+      - tools/tests/test_check_skill_pin.py
+      - tools/tests/test_prepare_skill_pin_history.py
       - .github/workflows/source-pin-drift.yml
   workflow_dispatch:
     inputs:
@@ -94,3 +104,12 @@ jobs:
           path: ${{ runner.temp }}/source-pin-drift.json
           if-no-files-found: warn
           retention-days: 14
+      - name: Prepare immutable skill history
+        id: skill_history
+        if: always()
+        env:
+          CHECK_REVISION: ${{ github.sha }}
+        run: python3 tools/prepare_source_pin_history.py --revision "$CHECK_REVISION" --component skill
+      - name: Verify pinned skill content
+        if: always() && steps.skill_history.outcome != 'skipped'
+        run: python3 tools/check_skill_pin.py --verify-git
