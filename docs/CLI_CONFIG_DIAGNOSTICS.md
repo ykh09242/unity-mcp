@@ -20,8 +20,9 @@ fields, URL user information, paths, queries and fragments are redacted. An unse
 secret remains `null`. Unknown environment variables are never included.
 
 CLI precedence is Click command line, environment, default map, then built-in
-default. Project context replaces only fields Click marked as built-in defaults;
-its own implicit defaults are also reported as `project_context`. Explicit flags
+default. Project context replaces only explicitly supplied fields that Click marked
+as built-in defaults. Omitted context fields retain their canonical CLI defaults and
+`default` provenance, including the 300-second timeout. Explicit flags
 that equal a built-in value retain their actual source. Empty Click environment
 values are ignored; invalid selected values still fail with exit code 2 and an
 input-free error. An invalid value hidden by a higher-priority flag is not parsed.

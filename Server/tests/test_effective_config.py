@@ -105,8 +105,8 @@ def test_project_context_source_is_recorded_even_when_value_equals_default(monke
     assert result.exit_code == 0, result.output
     fields = json.loads(result.stdout)["fields"]
     assert fields["port"]["source"] == "project_context"
-    assert fields["timeout"]["value"] == 30
-    assert fields["timeout"]["source"] == "project_context"
+    assert fields["timeout"]["value"] == 300
+    assert fields["timeout"]["source"] == "default"
 
 
 def start_server(monkeypatch, arguments):

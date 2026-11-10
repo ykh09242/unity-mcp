@@ -61,6 +61,31 @@ def invoke(*args):
     )
 
 
+@pytest.mark.parametrize(
+    "settings,environment,flags,expected",
+    [
+        ({}, None, [], 300),
+        ({"timeout": 17}, None, [], 17),
+        ({"timeout": 17}, "24", [], 24),
+        ({"timeout": 17}, "24", ["--timeout", "300"], 300),
+    ],
+)
+def test_context_timeout_preserves_canonical_default_and_explicit_precedence(
+    transport, monkeypatch, tmp_path, settings, environment, flags, expected
+):
+    # Given: a context may omit timeout or explicitly supply a lower-priority value.
+    root = project(tmp_path / "Timeout", **settings)
+    monkeypatch.chdir(root)
+    if environment is not None:
+        monkeypatch.setenv("UNITY_MCP_TIMEOUT", environment)
+    # When: the real CLI resolves its timeout and dispatches through HTTP.
+    result = invoke(*flags)
+    # Then: omission preserves 300 seconds; context, environment and flags keep precedence.
+    assert result.exit_code == 0, result.output
+    assert transport[1][0].timeout == expected
+    assert set(transport[0][0].extensions["timeout"].values()) == {expected}
+
+
 def test_automatic_context_captures_root_and_exact_target_from_nested_cwd(
     transport, monkeypatch, tmp_path
 ):

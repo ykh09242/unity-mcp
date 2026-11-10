@@ -142,6 +142,8 @@ def resolve_project_context(
             )
 
             for name in ("host", "port", "timeout", "format", "instance"):
+                if name not in model.model_fields_set:
+                    continue
                 if sources.get(name) == ParameterSource.DEFAULT:
                     setattr(
                         config,
