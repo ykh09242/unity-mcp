@@ -1,6 +1,7 @@
 """Run the native cancellation regressions against exact production ownership members."""
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,11 +11,41 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
+@pytest.mark.parametrize("required", [False, True])
+@pytest.mark.parametrize("missing", ["dotnet", "nunit"])
+def test_harness_prerequisite_policy(monkeypatch, tmp_path, required, missing):
+    # Given a clean runner missing exactly one managed harness prerequisite.
+    monkeypatch.setattr(shutil, "which", lambda _: None if missing == "dotnet" else "dotnet")
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+    monkeypatch.delenv("UNITY_MCP_DEADLINE_NUNIT_REFERENCE", raising=False)
+    if missing != "nunit":
+        reference = tmp_path / ".compile-refs/nunit.framework.dll"
+        reference.parent.mkdir()
+        reference.write_bytes(b"fixture-only; must not reach compilation")
+    if required:
+        monkeypatch.setenv("UNITY_MCP_REQUIRE_DEADLINE_HARNESS", "1")
+    else:
+        monkeypatch.delenv("UNITY_MCP_REQUIRE_DEADLINE_HARNESS", raising=False)
+
+    # When the designated harness is invoked, required CI must fail rather than skip.
+    outcome = pytest.fail.Exception if required else pytest.skip.Exception
+    with pytest.raises((pytest.fail.Exception, pytest.skip.Exception), match="NUnit|SDK") as raised:
+        test_websocket_deadline_callback_ownership(tmp_path)
+    assert isinstance(raised.value, outcome)
+
+
 def test_websocket_deadline_callback_ownership(tmp_path):
     dotnet = shutil.which("dotnet")
-    nunit = ROOT / ".compile-refs/nunit.framework.dll"
+    nunit = Path(
+        os.environ.get(
+            "UNITY_MCP_DEADLINE_NUNIT_REFERENCE", ROOT / ".compile-refs/nunit.framework.dll"
+        )
+    )
     if not dotnet or not nunit.is_file():
-        pytest.skip("Existing .NET SDK and .compile-refs NUnit required")
+        message = "Existing .NET SDK and .compile-refs NUnit required"
+        if os.environ.get("UNITY_MCP_REQUIRE_DEADLINE_HARNESS") == "1":
+            pytest.fail(message)
+        pytest.skip(message)
     version, directory = (
         subprocess.check_output([dotnet, "--list-sdks"], text=True).splitlines()[-1].split(" ", 1)
     )

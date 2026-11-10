@@ -418,6 +418,23 @@ jobs:
           # instead of whatever `uv pip install` would fetch today.
           uv sync --python "${{ matrix.python-version }}" --locked --extra dev
 
+      - name: Set up managed harness SDK
+        if: matrix.suite == 'tools' && matrix.python-version == '3.15'
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 9.0.x
+          skip-lts-prepass: true
+
+      - name: Prepare verified managed harness reference
+        if: matrix.suite == 'tools' && matrix.python-version == '3.15'
+        run: uv run --directory Server --locked --extra dev python ../tools/prepare_managed_test_refs.py --output ../.compile-refs/nunit.framework.dll
+
+      - name: Require production deadline ownership assertions
+        if: matrix.suite == 'tools' && matrix.python-version == '3.15'
+        env:
+          UNITY_MCP_REQUIRE_DEADLINE_HARNESS: '1'
+        run: uv run --directory Server --locked --extra dev python -m pytest ../tools/tests/test_websocket_deadline_ownership.py -q -W error -o asyncio_default_fixture_loop_scope=function
+
       - name: Run Pylint
         # Keep static analysis off the longer server-test path and run it once.
         if: matrix.suite == 'tools' && matrix.python-version == '3.15'
