@@ -170,7 +170,12 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                         // Recorded and dirtied like the sibling controller_assign path.
                         UnityEditor.Undo.RecordObject(animator, "Assign AnimatorController");
                         animator.runtimeAnimatorController = asset;
+                        if (PrefabUtility.IsPartOfPrefabInstance(animator))
+                            PrefabUtility.RecordPrefabInstancePropertyModifications(animator);
+                        EditorUtility.SetDirty(animator);
                         EditorUtility.SetDirty(go);
+                        if (go.scene.IsValid() && go.scene.isLoaded)
+                            UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(go.scene);
                     }
                     else
                     {

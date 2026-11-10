@@ -3,10 +3,12 @@ using System.IO;
 using System.Linq;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Tools.Sprite2D;
+using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using static MCPForUnityTests.Editor.TestUtilities;
 
@@ -2274,6 +2276,77 @@ namespace MCPForUnityTests.Editor.Tools
             // the array was what let this refusal keep a shape no other refusal in the tool has.
             Assert.AreEqual("add_to_scene", result.Value<string>("step"));
             Assert.That(ErrorText(result), Does.Contain("NoSuchObject"));
+        }
+
+        [Test]
+        public void FullSetup_ExistingPrefabAnimatorSurvivesUndoRedoAndSceneReopen()
+        {
+            var fixture = new PrefabTestSceneFixture();
+            fixture.PrepareRunnerBootstrap();
+            try
+            {
+                var scene = fixture.Create("McpSpritePersistence_", System.Guid.NewGuid().ToString("N"));
+                string sheet = CreateSheet("persistent", 4, 1);
+                string prefabPath = TempRoot + "/Sprite.prefab";
+                string controllerPath = TempRoot + "/Assigned.controller";
+                string targetName = "SpritePersistence_" + System.Guid.NewGuid().ToString("N");
+                var root = new GameObject("SpriteRoot");
+                var sourceChild = new GameObject(targetName, typeof(Animator), typeof(SpriteRenderer));
+                sourceChild.transform.SetParent(root.transform, false);
+                GameObject prefab;
+                try
+                {
+                    prefab = PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+                    Assert.IsNotNull(prefab);
+                }
+                finally
+                {
+                    Object.DestroyImmediate(root);
+                }
+                byte[] source = File.ReadAllBytes(prefabPath);
+                var instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, scene);
+                string instanceName = instance.name;
+                var animator = instance.GetComponentInChildren<Animator>();
+                Undo.IncrementCurrentGroup();
+                var result = Run(
+                    new JObject
+                    {
+                        ["action"] = "full_setup",
+                        ["path"] = sheet,
+                        ["cols"] = 4,
+                        ["output_dir"] = TempRoot,
+                        ["controller_path"] = controllerPath,
+                        ["add_to_scene"] = true,
+                        ["scene_target"] = targetName,
+                    }
+                );
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                Assert.AreSame(animator, instance.GetComponentInChildren<Animator>());
+                var controller = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(controllerPath);
+                Assert.AreSame(controller, animator.runtimeAnimatorController);
+                Assert.IsTrue(
+                    PrefabUtility
+                        .GetPropertyModifications(instance)
+                        .Any(mod => mod.target == PrefabUtility.GetCorrespondingObjectFromSource(animator) && mod.propertyPath == "m_Controller")
+                );
+                Undo.FlushUndoRecordObjects();
+                Undo.IncrementCurrentGroup();
+                Undo.PerformUndo();
+                Assert.IsNull(animator.runtimeAnimatorController);
+                Undo.PerformRedo();
+                Assert.AreSame(controller, animator.runtimeAnimatorController);
+                Assert.IsTrue(EditorSceneManager.SaveScene(scene, TempRoot + "/" + scene.name + ".unity"));
+                scene = fixture.ReopenSavedScene();
+                animator = scene.GetRootGameObjects().Single(go => go.name == instanceName).GetComponentInChildren<Animator>();
+                Assert.AreSame(controller, animator.runtimeAnimatorController);
+                Assert.IsNull(PrefabUtility.GetCorrespondingObjectFromSource(animator).runtimeAnimatorController);
+                CollectionAssert.AreEqual(source, File.ReadAllBytes(prefabPath));
+            }
+            finally
+            {
+                fixture.Close();
+                fixture.RestoreRunnerBootstrap();
+            }
         }
 
         [Test]

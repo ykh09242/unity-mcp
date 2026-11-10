@@ -95,7 +95,7 @@ namespace MCPForUnityTests.Editor.Tools
             );
         }
 
-        private Component CreatePrefabCamera(bool cinemachine)
+        private Component CreatePrefabCamera(bool cinemachine, Type pipelineType = null)
         {
             if (cinemachine && !CameraHelpers.HasCinemachine)
                 Assert.Ignore("Cinemachine is not installed.");
@@ -104,6 +104,8 @@ namespace MCPForUnityTests.Editor.Tools
                 var component = _cameraGo.AddComponent(CameraHelpers.CinemachineCameraType);
                 if (component is Behaviour behaviour)
                     behaviour.enabled = false;
+                if (pipelineType != null)
+                    _cameraGo.AddComponent(pipelineType);
             }
             _assetRoot = "Assets/__McpCameraContract_" + Guid.NewGuid().ToString("N");
             _assetRootGuid = AssetDatabase.CreateFolder("Assets", _assetRoot.Substring("Assets/".Length));
@@ -226,6 +228,55 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(originalFov, sourceCamera.fieldOfView);
             Assert.AreEqual(originalDepth, sourceCamera.depth);
             Assert.Less(Quaternion.Angle(originalRotation, sourceCamera.transform.localRotation), 0.01f);
+        }
+
+        [TestCase("body", "CinemachineThirdPersonFollow", "CameraDistance")]
+        [TestCase("aim", "CinemachinePanTilt", "PanAxis.Value")]
+        [TestCase("noise", "CinemachineBasicMultiChannelPerlin", "AmplitudeGain")]
+        public void ExistingCinemachinePipelinePrefabFieldsSurviveUndoRedoAndSceneReopen(string stage, string typeName, string property)
+        {
+            if (!CameraHelpers.HasCinemachine)
+                Assert.Ignore("Cinemachine is not installed.");
+            var type = CameraHelpers.ResolveComponentType(typeName);
+            Assert.IsNotNull(type, "The Cinemachine 3 test profile must supply " + typeName);
+            CreatePrefabCamera(true, type);
+            var component = _cameraGo.GetComponent(type);
+            float original;
+            using (var serialized = new SerializedObject(component))
+            {
+                using var field = serialized.FindProperty(property);
+                Assert.IsNotNull(field, property);
+                original = field.floatValue;
+            }
+            byte[] source = System.IO.File.ReadAllBytes(_assetRoot + "/Camera.prefab");
+            float expected = original + 7;
+            var request = PrefabRequest(new JObject { [property] = expected });
+            Undo.IncrementCurrentGroup();
+            object result = stage switch
+            {
+                "body" => CameraConfigure.SetBody(request),
+                "aim" => CameraConfigure.SetAim(request),
+                _ => CameraConfigure.SetNoise(request),
+            };
+            Assert.IsTrue(JObject.FromObject(result).Value<bool>("success"), JObject.FromObject(result).ToString());
+            Assert.AreSame(component, _cameraGo.GetComponent(type), "The existing pipeline component must be reused.");
+            Assert.IsTrue(
+                PrefabUtility
+                    .GetPropertyModifications(PrefabUtility.GetOutermostPrefabInstanceRoot(_cameraGo))
+                    .Any(mod => mod.target == PrefabUtility.GetCorrespondingObjectFromSource(component) && mod.propertyPath == property)
+            );
+            Undo.FlushUndoRecordObjects();
+            Undo.IncrementCurrentGroup();
+            Undo.PerformUndo();
+            using (var serialized = new SerializedObject(component))
+                Assert.AreEqual(original, serialized.FindProperty(property).floatValue);
+            Undo.PerformRedo();
+            using (var serialized = new SerializedObject(component))
+                Assert.AreEqual(expected, serialized.FindProperty(property).floatValue);
+            ReopenPrefabScene();
+            using (var serialized = new SerializedObject(_cameraGo.GetComponent(type)))
+                Assert.AreEqual(expected, serialized.FindProperty(property).floatValue);
+            CollectionAssert.AreEqual(source, System.IO.File.ReadAllBytes(_assetRoot + "/Camera.prefab"));
         }
 
         [Test]

@@ -575,6 +575,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             {
                 foreach (var setter in setters)
                     setter(component);
+                CameraHelpers.RecordPrefabInstanceChanges(component);
                 return null;
             }
             catch (Exception ex)
