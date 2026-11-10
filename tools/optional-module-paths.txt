@@ -1,5 +1,6 @@
 MCPForUnity/package.json
 MCPForUnity/**/*.asmdef
+MCPForUnity/**/*.cs
 MCPForUnity/Runtime/Helpers/OptionalUnityModules.cs
 MCPForUnity/Runtime/Helpers/UnityPhysicsCompat.cs
 MCPForUnity/Runtime/Helpers/ScreenshotUtility.cs
