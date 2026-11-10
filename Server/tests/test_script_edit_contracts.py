@@ -3,6 +3,7 @@
 import asyncio
 import importlib
 import re
+from copy import deepcopy
 from pathlib import Path
 from threading import BoundedSemaphore, Event, get_ident
 from unittest.mock import AsyncMock
@@ -391,3 +392,66 @@ async def test_mixed_preflight_keeps_dotnet_patterns_and_text_created_anchors(mo
         "apply_text_edits",
         "edit",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mixed", [False, True])
+@pytest.mark.parametrize(
+    "detail_fields,has_metadata",
+    [
+        ({"data": "Unterminated character class."}, False),
+        ({"data": None}, False),
+        ({"data": ["Unterminated character class."]}, False),
+        ({"data": {"detail": "Unterminated character class."}}, True),
+        ({}, True),
+    ],
+)
+async def test_native_script_rejection_preserves_data_shape(
+    monkeypatch, mixed, detail_fields, has_metadata
+):
+    # Native ErrorResponse permits non-object data, including regex diagnostics.
+    failure = {
+        "success": False,
+        "code": "invalid_edit",
+        "error": "Invalid regular expression.",
+        **deepcopy(detail_fields),
+    }
+    original = deepcopy(failure)
+    reads = []
+
+    async def read_or_validate(_sender, _instance, _command, parameters):
+        reads.append(parameters["action"])
+        if parameters["action"] == "validate_edit":
+            return failure
+        assert parameters["action"] == "get_sha"
+        return {"success": True, "data": {"sha256": "a" * 64}}
+
+    monkeypatch.setattr(
+        script_edits, "get_unity_instance_from_context", AsyncMock(return_value="Project@abc")
+    )
+    monkeypatch.setattr(script_edits, "send_with_unity_instance", read_or_validate)
+    writer = AsyncMock(return_value=failure)
+    monkeypatch.setattr(script_edits, "send_mutation", writer)
+    edits = [{"op": "anchor_delete", "anchor": "["}]
+    if mixed:
+        edits.insert(0, {"op": "append", "text": "// pending text"})
+
+    response = await script_edits.script_apply_edits(AsyncMock(), "Foo", "Assets", edits)
+
+    assert response["success"] is False
+    assert response["code"] == "invalid_edit"
+    assert response["error"] == "Invalid regular expression."
+    if has_metadata:
+        assert response["data"]["normalizedEdits"] == edits
+        assert response["data"]["routing"] == ("mixed/text-first" if mixed else "structured")
+        if "data" in original:
+            assert response["data"]["detail"] == "Unterminated character class."
+    else:
+        assert response == original
+    if mixed:
+        assert reads == ["validate_edit"]
+        writer.assert_not_awaited()
+    else:
+        assert reads == ["get_sha"]
+        writer.assert_awaited_once()
+        assert writer.call_args.args[3]["action"] == "edit"

@@ -849,6 +849,9 @@ def _with_norm(
     if not isinstance(resp, dict):
         return resp
     data = resp.setdefault("data", {})
+    if not isinstance(data, dict):
+        # Native errors may carry scalar details; preserve their original envelope.
+        return resp
     data.setdefault("normalizedEdits", edits)
     if routing:
         data["routing"] = routing
