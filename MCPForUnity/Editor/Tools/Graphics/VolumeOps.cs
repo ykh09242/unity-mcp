@@ -526,6 +526,10 @@ namespace MCPForUnity.Editor.Tools.Graphics
             var priority = p.GetFloat("priority");
             bool? isGlobal = p.Has("is_global") ? p.GetBool("is_global") : null;
             var blendDist = p.GetFloat("blend_distance");
+            if (!weight.HasValue && !priority.HasValue && !isGlobal.HasValue && !blendDist.HasValue)
+                return new ErrorResponse("No properties specified. Use: weight, priority, is_global, blend_distance.");
+
+            Undo.RecordObject(volume as UnityEngine.Object, "Set Volume Properties");
             var changed = new List<string>();
             if (weight.HasValue)
             {
@@ -551,9 +555,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                 changed.Add("blendDistance");
             }
 
-            if (changed.Count == 0)
-                return new ErrorResponse("No properties specified. Use: weight, priority, is_global, blend_distance.");
-
+            PrefabUtility.RecordPrefabInstancePropertyModifications(volume as UnityEngine.Object);
             GraphicsHelpers.MarkDirty(volume);
             return new
             {

@@ -106,6 +106,149 @@ namespace MCPForUnityTests.Editor.Tools
 
         [TestCase(false)]
         [TestCase(true)]
+        public void VolumePropertiesSupportUndoAndRedo(bool nested)
+        {
+            if (!GraphicsHelpers.HasVolumeSystem)
+                Assert.Ignore("The Volume system is not installed.");
+            var volume = new GameObject("UndoVolume").AddComponent(GraphicsHelpers.VolumeType);
+            var before = ReadVolumeProperties(volume);
+            var properties = new JObject
+            {
+                ["weight"] = 0.25f,
+                ["priority"] = 7f,
+                ["is_global"] = true,
+                ["blend_distance"] = 3f,
+            };
+            var request = nested ? new JObject { ["properties"] = properties } : (JObject)properties.DeepClone();
+            request["target"] = volume.gameObject.GetInstanceID();
+            Undo.IncrementCurrentGroup();
+            try
+            {
+                var result = JObject.FromObject(VolumeOps.SetProperties(request));
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                CollectionAssert.AreEqual(new[] { "weight", "priority", "isGlobal", "blendDistance" }, result["data"]["changed"].ToObject<string[]>());
+                var after = ReadVolumeProperties(volume);
+                Assert.AreEqual(0.25f, after.Value<float>("weight"));
+                Assert.AreEqual(7f, after.Value<float>("priority"));
+                Assert.IsTrue(after.Value<bool>("is_global"));
+                Assert.AreEqual(3f, after.Value<float>("blend_distance"));
+                Undo.FlushUndoRecordObjects();
+                Undo.PerformUndo();
+                Assert.IsTrue(JToken.DeepEquals(before, ReadVolumeProperties(volume)), "Undo must restore every requested property.");
+                Undo.PerformRedo();
+                Assert.IsTrue(JToken.DeepEquals(after, ReadVolumeProperties(volume)), "Redo must reapply every requested property.");
+            }
+            finally
+            {
+                Undo.ClearUndo(volume);
+                Undo.IncrementCurrentGroup();
+            }
+        }
+
+        [Test]
+        public void VolumePrefabPropertiesPersistAsInstanceOverrides()
+        {
+            if (!GraphicsHelpers.HasVolumeSystem)
+                Assert.Ignore("The Volume system is not installed.");
+            string folder = "Assets/__McpVolumeOverrides_" + System.Guid.NewGuid().ToString("N");
+            string guid = AssetDatabase.CreateFolder("Assets", System.IO.Path.GetFileName(folder));
+            var source = new GameObject("VolumePrefab");
+            var sourceVolume = source.AddComponent(GraphicsHelpers.VolumeType);
+            using (var serialized = new SerializedObject(sourceVolume))
+            {
+                serialized.FindProperty("m_IsGlobal").boolValue = false;
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+            }
+            Component instanceVolume = null;
+            try
+            {
+                string prefabPath = folder + "/Volume.prefab";
+                var prefab = PrefabUtility.SaveAsPrefabAsset(source, prefabPath);
+                Assert.IsNotNull(prefab);
+                var original = ReadVolumeProperties(prefab.GetComponent(GraphicsHelpers.VolumeType));
+                string prefabFullPath = System.IO.Path.Combine(Application.dataPath, prefabPath.Substring("Assets/".Length));
+                byte[] prefabBytes = System.IO.File.ReadAllBytes(prefabFullPath);
+                Object.DestroyImmediate(source);
+                var instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, _testScene);
+                instanceVolume = instance.GetComponent(GraphicsHelpers.VolumeType);
+                var expected = new JObject
+                {
+                    ["weight"] = 0.25f,
+                    ["priority"] = 7f,
+                    ["is_global"] = true,
+                    ["blend_distance"] = 3f,
+                };
+                var result = JObject.FromObject(VolumeOps.SetProperties(new JObject { ["target"] = instance.GetInstanceID(), ["properties"] = expected }));
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                Assert.IsTrue(JToken.DeepEquals(expected, ReadVolumeProperties(instanceVolume)));
+                var modifications = PrefabUtility.GetPropertyModifications(instanceVolume);
+                Assert.IsNotNull(modifications);
+                foreach (string property in new[] { "weight", "priority", "m_IsGlobal", "blendDistance" })
+                    Assert.IsTrue(
+                        System.Array.Exists(modifications, modification => modification.propertyPath == property),
+                        property + " must be an override."
+                    );
+                string scenePath = folder + "/" + _testScene.name + ".unity";
+                Undo.FlushUndoRecordObjects();
+                Undo.ClearUndo(instanceVolume);
+                Assert.IsTrue(EditorSceneManager.SaveScene(_testScene, scenePath));
+                Assert.IsFalse(_testScene.isDirty, "The persistence check must reopen a fully saved owned scene.");
+                _testScene = _sceneFixture.ReopenSavedScene();
+                instanceVolume = _testScene.GetRootGameObjects()[0].GetComponent(GraphicsHelpers.VolumeType);
+                Assert.IsNotNull(instanceVolume);
+                Assert.IsTrue(PrefabUtility.IsPartOfPrefabInstance(instanceVolume));
+                Assert.IsTrue(JToken.DeepEquals(expected, ReadVolumeProperties(instanceVolume)), "Scene reload must retain the instance changes.");
+                Assert.IsTrue(JToken.DeepEquals(original, ReadVolumeProperties(prefab.GetComponent(GraphicsHelpers.VolumeType))));
+                CollectionAssert.AreEqual(prefabBytes, System.IO.File.ReadAllBytes(prefabFullPath));
+            }
+            finally
+            {
+                if (source != null)
+                    Object.DestroyImmediate(source);
+                if (instanceVolume != null)
+                    Undo.ClearUndo(instanceVolume);
+                _sceneFixture.Close();
+                Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(folder));
+                Assert.IsTrue(AssetDatabase.DeleteAsset(folder));
+            }
+        }
+
+        [TestCase("empty")]
+        [TestCase("weight")]
+        [TestCase("is_global")]
+        public void InvalidVolumePropertiesPreserveValuesAndCleanScene(string invalid)
+        {
+            if (!GraphicsHelpers.HasVolumeSystem)
+                Assert.Ignore("The Volume system is not installed.");
+            var volume = new GameObject("RejectedVolume").AddComponent(GraphicsHelpers.VolumeType);
+            var before = ReadVolumeProperties(volume);
+            _sceneFixture.ClearDirtiness();
+            var request = new JObject { ["target"] = volume.gameObject.GetInstanceID() };
+            if (invalid != "empty")
+            {
+                request["priority"] = 17f;
+                request[invalid] = new JObject();
+            }
+            var response = JObject.FromObject(ManageGraphics.HandleCommand(new JObject(request) { ["action"] = "volume_set_properties" }));
+            Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(JToken.DeepEquals(before, ReadVolumeProperties(volume)));
+            Assert.IsFalse(_testScene.isDirty);
+        }
+
+        private static JObject ReadVolumeProperties(Component volume)
+        {
+            using var serialized = new SerializedObject(volume);
+            return new JObject
+            {
+                ["weight"] = serialized.FindProperty("weight").floatValue,
+                ["priority"] = serialized.FindProperty("priority").floatValue,
+                ["is_global"] = serialized.FindProperty("m_IsGlobal").boolValue,
+                ["blend_distance"] = serialized.FindProperty("blendDistance").floatValue,
+            };
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public void PipelineEmptyKeyRetainsBestEffortChangedAndFailedContract(bool emptyFirst)
         {
             WithOwnedPipeline(asset =>
