@@ -99,7 +99,9 @@ def finish(connection: sqlite3.Connection, identity: str) -> None:
             connection.execute(
                 "UPDATE graph_snapshot_refs SET backing=? WHERE snapshot=?", (shared, identity)
             )
-            connection.execute("DELETE FROM graph_snapshot_edges WHERE snapshot=?", (identity,))
+            # The final work page owns only its page and the alias switch. Retire
+            # duplicate evidence atomically; maintenance reclaims it in batches.
+            retire(connection, identity)
         else:
             connection.execute(
                 "INSERT OR REPLACE INTO graph_snapshot_contents VALUES (?,?)", (row[2], identity)

@@ -61,12 +61,15 @@ def test_concurrent_captures_merge_backing_and_last_alias_reclaims_rows(tmp_path
     first = queries.snapshot(name="first", limit=1)
     second = queries.snapshot(name="second", limit=1)
 
-    # When both finish, then both names refer to one copy of the graph.
+    # Both names share evidence immediately; maintenance reclaims the private copy.
     for name, page in (("first", first), ("second", second)):
         progress = FixtureProgress(4 * 3 + 32, "concurrent snapshot fixture")
         while page["next_cursor"]:
             progress.step(page["next_cursor"])
             page = queries.snapshot(name=name, limit=1, cursor=page["next_cursor"])
+    workspace = GraphWorkspace(store)
+    while cleanup(workspace, before=0, limit=2)["more"]:
+        progress.step()
     with store._connect() as db:
         assert db.execute("SELECT count(*) FROM graph_snapshot_edges").fetchone()[0] == 3
     queries.delete_snapshot(first["snapshot"]["id"])
@@ -317,6 +320,10 @@ def test_redundant_revision_changes_do_not_duplicate_identical_snapshot_payloads
         )
         saved.append(capture(queries, str(version)))
     assert queries.diff(saved[0], saved[-1])["changes"] == []
+    workspace = GraphWorkspace(store)
+    progress = FixtureProgress(20, "duplicate revision snapshot backing")
+    while cleanup(workspace, before=0, limit=2)["more"]:
+        progress.step()
     with store._connect() as db:
         assert db.execute("SELECT count(*) FROM graph_snapshot_edges").fetchone()[0] == 1
 
@@ -336,6 +343,42 @@ def test_snapshot_last_page_replay_uses_backing_after_first_alias_is_deleted(tmp
     queries.delete_snapshot(original)
     reopened = GraphQueries(GraphStore.open(tmp_path, store.scope))
     assert reopened.snapshot(name="alias", limit=2, cursor=cursor) == completed
+
+
+def test_snapshot_dedup_cancellation_rolls_back_alias_and_reclamation(tmp_path, monkeypatch):
+    store = GraphStore.open(tmp_path, GraphScope("user", "editor", "project"))
+    for index in range(3):
+        store.put_declaration(str(index), "owner", Edge(str(index), "declared"), expected_version=0)
+    queries = GraphQueries(store)
+    first = queries.snapshot(name="first", limit=2)
+    second = queries.snapshot(name="second", limit=2)
+    queries.snapshot(name="first", limit=2, cursor=first["next_cursor"])
+    finish = snapshot_storage.finish
+
+    def cancelled(connection, identity):
+        finish(connection, identity)
+        raise InterruptedError("cancelled final page")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(snapshot_storage, "finish", cancelled)
+        with pytest.raises(InterruptedError, match="cancelled"):
+            queries.snapshot(name="second", limit=2, cursor=second["next_cursor"])
+    identity = second["snapshot"]["id"]
+    with store._connect() as db:
+        assert snapshot_storage.backing(db, identity) == identity
+        assert not db.execute(
+            "SELECT 1 FROM graph_reclamation WHERE identity=?", (identity,)
+        ).fetchone()
+        assert (
+            db.execute(
+                "SELECT count(*) FROM graph_snapshot_edges WHERE snapshot=?", (identity,)
+            ).fetchone()[0]
+            == 2
+        )
+    reopened = GraphQueries(GraphStore.open(tmp_path, store.scope))
+    completed = reopened.snapshot(name="second", limit=2, cursor=second["next_cursor"])
+    assert completed["next_cursor"] is None
+    assert reopened.diff(first["snapshot"]["id"], identity)["changes"] == []
 
 
 def test_legacy_snapshot_survives_auxiliary_schema_upgrade_and_rollback(tmp_path, monkeypatch):

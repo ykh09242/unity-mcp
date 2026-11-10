@@ -280,6 +280,7 @@ def test_final_snapshot_alias_release_is_bounded_and_preserves_shared_backing(
         assert steps[0] < 5000
         assert result["query_scratch_rows_removed"] == 10 and result["more"]
     assert workspace.queries().diff(fresh, fresh)["changes"] == []
+
     total, maximum = drain(workspace, monkeypatch, 2 * count // 1000 + 5)
     print(f"drained snapshot count={count} rows={total} max_sql_steps={maximum}")
     with store._connect() as db:
@@ -293,6 +294,54 @@ def test_final_snapshot_alias_release_is_bounded_and_preserves_shared_backing(
             "SELECT 1 FROM graph_snapshot_contents WHERE backing=?", (original,)
         ).fetchone()
     assert workspace.queries().diff(fresh, fresh)["changes"] == []
+
+
+@pytest.mark.parametrize("count", [1001, 10001])
+def test_snapshot_dedup_final_page_defers_bounded_reclamation(workspace, monkeypatch, count):
+    store, queries = workspace.store, workspace.queries()
+    with store._connect(write=True) as db:
+        for index in range(count):
+            store._insert_edge(db, "root", "manual", Edge(str(index), "manual"))
+    first = queries.snapshot(name="first", limit=1000)
+    second = queries.snapshot(name="second", limit=1000)
+    for _ in range(count // 1000):
+        first = queries.snapshot(name="first", limit=1000, cursor=first["next_cursor"])
+    assert first["next_cursor"] is None
+    for _ in range(count // 1000 - 1):
+        second = queries.snapshot(name="second", limit=1000, cursor=second["next_cursor"])
+    cursor, private = second["next_cursor"], second["snapshot"]["id"]
+    with sql_steps(store, monkeypatch) as steps:
+        completed = queries.snapshot(name="second", limit=1000, cursor=cursor)
+    print(f"dedup final count={count} sql_steps={steps[0]}")
+    assert steps[0] < 5000
+    assert completed["next_cursor"] is None and len(completed["edges"]) == 1
+    with store._connect() as db:
+        assert snapshot_storage.backing(db, private) == first["snapshot"]["id"]
+        assert (
+            db.execute(
+                "SELECT count(*) FROM graph_snapshot_edges WHERE snapshot=?", (private,)
+            ).fetchone()[0]
+            == count
+        )
+    workspace = GraphWorkspace(GraphStore(store.path, store.scope))
+    reopened = workspace.queries()
+    assert reopened.snapshot(name="second", limit=1000, cursor=cursor) == completed
+    for _ in range(count // 100 + 2):
+        with sql_steps(workspace.store, monkeypatch) as steps:
+            result = cleanup(workspace, before=0, limit=100)
+        assert steps[0] < 10000
+        assert result["query_scratch_rows_removed"] <= 100
+        if not result["more"]:
+            break
+    else:
+        pytest.fail("Discarded snapshot backing did not drain")
+    with store._connect() as db:
+        assert not db.execute(
+            "SELECT 1 FROM graph_snapshot_edges WHERE snapshot=?", (private,)
+        ).fetchone()
+        assert db.execute("SELECT count(*) FROM graph_snapshot_edges").fetchone()[0] == count
+    assert reopened.snapshot(name="second", limit=1000, cursor=cursor) == completed
+    assert reopened.diff(first["snapshot"]["id"], private)["changes"] == []
 
 
 @pytest.mark.parametrize("legacy_snapshot", [False, True])
