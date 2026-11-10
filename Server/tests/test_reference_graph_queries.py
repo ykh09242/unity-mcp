@@ -279,7 +279,7 @@ def test_historical_source_grant_versions_cannot_be_reused_after_reconfiguration
         queries.diff(before, after)
 
 
-def test_unchanged_diff_pages_bound_comparison_work_and_release_finished_traversal(graph):
+def test_unchanged_diff_pages_bound_comparison_work_and_defer_finished_traversal_cleanup(graph):
     store, queries = graph
     publish(store, "root", [f"child{i}" for i in range(1200)])
     before = snapshot(queries, limit=1000)
@@ -290,6 +290,14 @@ def test_unchanged_diff_pages_bound_comparison_work_and_release_finished_travers
     following = queries.diff(before, after, limit=10, cursor=first["next_cursor"])
     assert following["compared"] == 10 and following["next_cursor"] != first["next_cursor"]
     result = queries.impact("absent")
+    with store._connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM graph_query_nodes WHERE job=?", (result["query_id"],)
+            ).fetchone()[0]
+            == 1
+        )
+    assert queries.release(result["query_id"])
     with store._connect() as connection:
         assert (
             connection.execute(
@@ -357,13 +365,17 @@ def test_query_schema_upgrade_preserves_existing_resumable_job(graph):
     publish(store, "a", ["b", "c", "d"])
     page = queries.impact("a", direction="outgoing", limit=1)
     with store._connect(write=True) as db:
+        db.execute("DROP TRIGGER graph_query_cleanup_insert")
+        db.execute("DROP TRIGGER graph_query_cleanup_update")
+        db.execute("DROP TABLE graph_query_cleanup")
+        db.execute("DROP INDEX graph_query_cleanup_order")
         db.execute("ALTER TABLE graph_queries DROP COLUMN abandoned")
         db.execute("DROP TABLE graph_query_proofs")
         db.execute("UPDATE graph_queries_schema SET version=1")
     upgraded = GraphQueries(store)
     assert upgraded.impact("a", direction="outgoing", limit=1, cursor=page["next_cursor"])
     with store._connect() as db:
-        assert db.execute("SELECT version FROM graph_queries_schema").fetchone()[0] == 3
+        assert db.execute("SELECT version FROM graph_queries_schema").fetchone()[0] == 4
         assert db.execute("SELECT abandoned FROM graph_queries").fetchone()[0] == 0
 
 

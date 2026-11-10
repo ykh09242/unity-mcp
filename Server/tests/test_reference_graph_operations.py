@@ -305,6 +305,13 @@ async def test_cleanup_preserves_active_jobs_and_authored_history(setup):
             assert result["memory_caches_cleared"] is False
         finally:
             entry.engine._gate.release()
+        # Candidate scanning is bounded too: the first batch may only visit the
+        # older active query. Continue until the finished query is reclaimed.
+        for _ in range(4):
+            if result["completed_queries_removed"]:
+                break
+            assert result["more"]
+            result = (await service.execute(ctx, "cleanup", {"before": before, "limit": 1}))["data"]
         assert result["completed_queries_removed"] == 1
         with store._connect() as db:
             assert db.execute(

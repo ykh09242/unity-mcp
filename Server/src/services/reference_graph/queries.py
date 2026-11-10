@@ -65,7 +65,7 @@ class GraphQueries:
                 "CREATE TABLE IF NOT EXISTS graph_queries_schema(version INTEGER NOT NULL)"
             )
             version = connection.execute("SELECT version FROM graph_queries_schema").fetchone()
-            if version and version[0] not in (1, 2, 3):
+            if version and version[0] not in (1, 2, 3, 4):
                 raise ValueError("Unsupported graph query schema")
             if version is None:
                 for statement in (
@@ -86,6 +86,19 @@ class GraphQueries:
             if version is None or version[0] < 3:
                 path_proof.initialize(connection)
                 connection.execute("UPDATE graph_queries_schema SET version=3")
+            if version is None or version[0] < 4:
+                for statement in (
+                    "CREATE INDEX IF NOT EXISTS graph_query_cleanup_order ON graph_queries(used,id)",
+                    "CREATE TABLE IF NOT EXISTS graph_query_cleanup(id INTEGER PRIMARY KEY CHECK(id=1),after_used REAL,after_id TEXT,cutoff REAL,revision INTEGER)",
+                    "INSERT OR IGNORE INTO graph_query_cleanup(id) VALUES (1)",
+                    # A candidate becoming eligible behind a saved scan must be revisited.
+                    # A revision change resets the scan in cleanup itself. Ineligible
+                    # query progress and deleting candidates need no invalidation.
+                    "CREATE TRIGGER IF NOT EXISTS graph_query_cleanup_insert AFTER INSERT ON graph_queries BEGIN UPDATE graph_query_cleanup SET after_used=NULL,after_id=NULL WHERE id=1 AND (NEW.used,NEW.id)<=(after_used,after_id) AND (NEW.finished=1 OR NEW.abandoned=1 OR NEW.revision<>(SELECT revision FROM graph_meta)); END",
+                    "CREATE TRIGGER IF NOT EXISTS graph_query_cleanup_update AFTER UPDATE OF used,id,finished,abandoned,revision ON graph_queries BEGIN UPDATE graph_query_cleanup SET after_used=NULL,after_id=NULL WHERE id=1 AND (NEW.used,NEW.id)<=(after_used,after_id) AND (NEW.finished=1 OR NEW.abandoned=1 OR NEW.revision<>(SELECT revision FROM graph_meta)); END",
+                ):
+                    connection.execute(statement)
+                connection.execute("UPDATE graph_queries_schema SET version=4")
             snapshot_storage.initialize(connection)
 
     @staticmethod
@@ -204,10 +217,8 @@ class GraphQueries:
             "UPDATE graph_queries SET sequence=?,last=?,result=?,finished=?,used=? WHERE id=?",
             (next_sequence, last, _json(persisted), int(not more), time.time(), job["id"]),
         )
-        if not more:
-            # Retain only the last response for a lost-response retry. The large
-            # traversal queue and visited set have no value after completion.
-            connection.execute("DELETE FROM graph_query_nodes WHERE job=?", (job["id"],))
+        # Retain the last response for a lost-response retry. Explicit bounded
+        # cleanup reclaims completed traversal scratch, including large visited sets.
         return result
 
     def explain(self, identity: str) -> dict:
@@ -452,7 +463,6 @@ class GraphQueries:
             if target is not None:
                 edges = []
                 if route_node:
-                    connection.execute("DELETE FROM graph_query_queue WHERE job=?", (job["id"],))
                     # Trace the BFS parent links backwards in bounded pages;
                     # clients may order by depth to present start-to-target.
                     while route_node != node and len(edges) < limit:

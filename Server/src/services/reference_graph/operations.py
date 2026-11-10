@@ -192,15 +192,31 @@ def cleanup(workspace, *, before, limit=100):
     workspace.queries()
     with workspace.store._connect(write=True, public_edit=True) as db:
         revision = db.execute("SELECT revision FROM graph_meta").fetchone()[0]
-        eligible = "used<? AND (finished=1 OR abandoned=1 OR revision<>?)"
+        scan = db.execute("SELECT * FROM graph_query_cleanup WHERE id=1").fetchone()
+        after = (
+            (scan["after_used"], scan["after_id"])
+            if scan["after_used"] is not None
+            and scan["revision"] == revision
+            and before >= scan["cutoff"]
+            else None
+        )
+        # Bound candidate work as well as deletions. Filtering eligibility in SQL
+        # would scan arbitrarily many active jobs even with the ordering index.
+        position = " AND (used,id)>(?,?)" if after is not None else ""
         rows = list(
             db.execute(
-                f"SELECT id,finished,abandoned FROM graph_queries WHERE {eligible} ORDER BY used,id LIMIT ?",
-                (before, revision, limit),
+                f"SELECT id,finished,abandoned,revision,used FROM graph_queries WHERE used<?{position} ORDER BY used,id LIMIT ?",
+                (before, *(after or ()), limit + 1),
             )
         )
         removed, obsolete, scratch, budget = 0, 0, 0, limit
-        for identity, finished, abandoned in rows:
+        examined = 0
+        for row in rows[:limit]:
+            identity, finished, abandoned = row["id"], row["finished"], row["abandoned"]
+            if not (finished or abandoned or row["revision"] != revision):
+                after = (row["used"], identity)
+                examined += 1
+                continue
             tables = [
                 ("graph_query_proofs", "job", identity),
                 ("graph_query_nodes", "job", identity),
@@ -247,12 +263,16 @@ def cleanup(workspace, *, before, limit=100):
                 snapshot_storage.discard(db, identity)
             removed += int(bool(finished))
             obsolete += int(not finished)
+            after = (row["used"], identity)
+            examined += 1
             if not budget:
                 break
-        queries_remain = bool(
-            db.execute(
-                f"SELECT 1 FROM graph_queries WHERE {eligible} LIMIT 1", (before, revision)
-            ).fetchone()
+        queries_remain = examined < len(rows)
+        # A partially reclaimed job stays ahead of the anchor. Completing the
+        # sweep resets it so a later explicit cleanup can observe new history.
+        db.execute(
+            "UPDATE graph_query_cleanup SET after_used=?,after_id=?,cutoff=?,revision=? WHERE id=1",
+            (*(after if queries_remain and after is not None else (None, None)), before, revision),
         )
         abandoned = list(
             db.execute(
