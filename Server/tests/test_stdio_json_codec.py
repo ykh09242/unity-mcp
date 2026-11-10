@@ -2,7 +2,6 @@
 
 import json
 import math
-import re
 import socket
 import struct
 import sys
@@ -198,10 +197,29 @@ def test_nested_bigints_preserve_configured_digit_limit(reply_connection, limit,
         )
         assert actual == expected
     else:
-        with pytest.raises(ValueError, match=re.escape(expected_error)):
-            uc.send_command_with_retry("manage_scene", {}, max_retries=0, retry_on_reload=False)
+        actual = uc.send_command_with_retry(
+            "manage_scene", {}, max_retries=0, retry_on_reload=False
+        )
+        assert actual.success is False
+        assert actual.error == expected_error
+        assert actual.data == {"reason": "outcome_unknown", "command": "manage_scene"}
 
-    # Then the unchanged stdlib exception/socket contract and limit are retained.
+    # Then the configured limit remains unchanged and invalid replies retire the socket.
     assert sys.get_int_max_str_digits() == limit
-    assert len(sock.sent) == 2 and sock.timeout == 1.25 and not sock.closed
+    assert len(sock.sent) == 2 and sock.timeout == 1.25
+    assert sock.closed is (expected_error is not None)
+    assert conn.sock is (sock if expected_error is None else None)
+
+
+def test_non_decoder_value_error_is_not_a_protocol_failure(reply_connection, monkeypatch):
+    conn, sock = reply_connection(b'{"status":"success","result":{}}')
+
+    def invalid_internal_state(*args):
+        raise ValueError("controlled internal state failure")
+
+    monkeypatch.setattr(uc, "decode_native_reply", invalid_internal_state)
+    with pytest.raises(ValueError, match="controlled internal state failure"):
+        conn.send_command("manage_gameobject", {"action": "modify"}, max_attempts=2)
+
+    assert len(sock.sent) == 2 and not sock.closed
     assert conn.sock is sock

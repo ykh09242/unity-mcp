@@ -238,7 +238,13 @@ def _decode_unity_response(data: bytes | bytearray, deadline: float | None = Non
         charge = 512 * profile.nodes + text_charge
         if not _stdio_decode_graph_budget.reserve(graph_owner, charge):
             raise _UnityProtocolError("Unity response decode capacity unavailable")
-        return decode_json(data, fallback_text=profile.text, native_decoder=from_json)
+        try:
+            return decode_json(data, fallback_text=profile.text, native_decoder=from_json)
+        except ValueError as exc:
+            # Decoder failures (including the process integer digit limit) make
+            # this reply unobservable. Do not classify unrelated ValueErrors
+            # from command handling as protocol failures.
+            raise _UnityProtocolError(str(exc)) from exc
     finally:
         graph_owner.release()
         raw_owner.release()
@@ -1169,6 +1175,8 @@ class UnityConnection:
                     if _resume is not None:
                         resp = _resume.unwrap(resp)
                     reply = decode_native_reply(resp, arbitration)
+                    if reply.payload.get("status") not in ("success", "error"):
+                        raise _UnityProtocolError("Unity response status must be success or error")
                     if _resume is not None:
                         _resume.validate_reply(reply)
                         if _resume.action == "cancel":
