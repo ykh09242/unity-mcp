@@ -993,11 +993,12 @@ async def test_rest_command_selection_and_dispatch_share_budget(command_hub, mon
     import httpx
     from core.config import config
     import main as main_module
+    import transport.http_routes as routes_module
 
     request_budgets = []
     request_started, send_entered, release_reply = (asyncio.Event() for _ in range(3))
     observed_deadlines = []
-    original_request_budget = main_module._HttpRequestBudget
+    original_request_budget = routes_module._HttpRequestBudget
 
     def observe_request_budget(started_at, budget, scope):
         request_budget = original_request_budget(started_at, budget, scope)
@@ -1005,7 +1006,7 @@ async def test_rest_command_selection_and_dispatch_share_budget(command_hub, mon
         request_started.set()
         return request_budget
 
-    monkeypatch.setattr(main_module, "_HttpRequestBudget", observe_request_budget)
+    monkeypatch.setattr(routes_module, "_HttpRequestBudget", observe_request_budget)
     monkeypatch.setattr(config, "local_auth_token", "deadline-fixture")
     app = main_module.create_mcp_server(False).http_app()
     if case == "custom_long":
