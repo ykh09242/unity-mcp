@@ -34,7 +34,7 @@ pushes its enabled catalog through the authenticated plugin session, and session
 activation cannot grant a tool absent from that catalog. Resolve the Editor toggle/catalog
 or authentication problem instead of repeatedly activating a group.
 
-Project custom tools may be advertised directly or through `execute_custom_tool`. If available, inspect `mcpforunity://custom-tools` and use the declared custom tool's actual name/parameter schema. Do not dispatch hidden built-in handlers through this tool or a batch: doing so does not reproduce the built-in wrapper's argument mapping or client binding. Hosted mode does not expose arbitrary project custom tools. A returned tool description or an example in this skill does not establish a callable client function.
+Project custom tools may be advertised directly or through `execute_custom_tool`. If available, inspect `mcpforunity://custom-tools` and use the declared custom tool's actual name/parameter schema. Hosted mode supports the authenticated user's enabled project custom tools through this scoped catalog and dispatcher; it does not publish them as process-global MCP methods. Supply the selected `unity_instance` and preserve the catalog's schema, availability and permission checks. Do not dispatch hidden built-in handlers through this tool or a batch: doing so does not reproduce the built-in wrapper's argument mapping or client binding. A returned tool description or an example in this skill does not establish a callable client function.
 
 ## Select The Project
 
