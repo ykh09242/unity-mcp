@@ -293,27 +293,61 @@ def test_exact_target_real_pong_does_not_override_newer_port_identity(monkeypatc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("configured", [False, True])
 async def test_explicit_middleware_freshly_validates_target_without_connecting(
-    target_environment, monkeypatch
+    target_environment, monkeypatch, configured
 ):
     from transport.unity_instance_middleware import UnityInstanceMiddleware, PluginHub
+    from transport.plugin_registry import PluginRegistry
 
+    # Given: the same configured, empty Hub used by normal stdio startup.
     pool, write, probes, _, _ = target_environment
     monkeypatch.setattr(config, "transport_mode", "stdio")
-    monkeypatch.setattr(PluginHub, "is_configured", lambda: False)
+    if configured:
+        PluginHub.configure(PluginRegistry())
+    else:
+        monkeypatch.setattr(PluginHub, "is_configured", lambda: False)
     monkeypatch.setattr(uc, "get_unity_connection_pool", lambda: pool)
     monkeypatch.setattr(
         uc.UnityConnection,
         "connect",
         lambda *a, **kw: pytest.fail("metadata lookup must not connect"),
     )
-    middleware = UnityInstanceMiddleware()
-    assert await middleware._resolve_instance_value("Main@deadbeef", None) == "Main@deadbeef"
-    write("Main", "deadbeef", 6402, offset=1)
-    assert await middleware._resolve_instance_value("Main@deadbeef", None) == "Main@deadbeef"
-    assert pool._known_instances["Main@deadbeef"].port == 6402
-    assert probes == [6400, 6402]
-    assert pool._connections == {}
+    try:
+        # When: exact selection is freshly validated before and after a port change.
+        middleware = UnityInstanceMiddleware()
+        assert await middleware._resolve_instance_value("Main@deadbeef", None) == "Main@deadbeef"
+        write("Main", "deadbeef", 6402, offset=1)
+        assert await middleware._resolve_instance_value("Main@deadbeef", None) == "Main@deadbeef"
+        # Then: only the selected Editor is probed, with no native connection.
+        assert pool._known_instances["Main@deadbeef"].port == 6402
+        assert probes == [6400, 6402]
+        assert pool._connections == {}
+    finally:
+        if configured:
+            await PluginHub.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_configured_stdio_hub_keeps_prefix_ambiguity(target_environment, monkeypatch):
+    from transport.unity_instance_middleware import UnityInstanceMiddleware, PluginHub
+    from transport.plugin_registry import PluginRegistry
+
+    # Given: startup configured an empty Hub while two stdio identities share a prefix.
+    pool, write, probes, _, _ = target_environment
+    write("Prefix", "dead0000", 6402, offset=1)
+    monkeypatch.setattr(config, "transport_mode", "stdio")
+    monkeypatch.setattr(uc, "get_unity_connection_pool", lambda: pool)
+    PluginHub.configure(PluginRegistry())
+    try:
+        # When: a noncanonical prefix requires the complete legacy inventory.
+        with pytest.raises(ValueError, match="ambiguous"):
+            await UnityInstanceMiddleware()._resolve_instance_value("dead", None)
+        # Then: both matching targets were considered; no arbitrary selection was made.
+        assert sorted(probes) == [6400, 6401, 6402]
+        assert pool._connections == {}
+    finally:
+        await PluginHub.shutdown()
 
 
 @pytest.mark.asyncio
@@ -335,7 +369,7 @@ async def test_middleware_missing_exact_target_keeps_exact_only_semantics(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "transport,remote,hub", [("http", False, False), ("stdio", True, False), ("stdio", False, True)]
+    "transport,remote,hub", [("http", False, False), ("http", False, True), ("stdio", True, False)]
 )
 async def test_middleware_target_fast_path_preserves_http_and_pluginhub_routing(
     target_environment, monkeypatch, transport, remote, hub

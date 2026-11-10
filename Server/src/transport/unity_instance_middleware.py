@@ -362,9 +362,9 @@ class UnityInstanceMiddleware(Middleware):
             raise ValueError("unity_instance value must not be empty.")
 
         instances = None
-        # Local stdio exact IDs need fresh target metadata, not unrelated port
-        # probes. Leave PluginHub discovery and tenant visibility unchanged.
-        if transport != "http" and not config.http_remote_hosted and not PluginHub.is_configured():
+        # Local stdio routes through the legacy pool even when startup configured
+        # the Hub. Exact IDs need fresh target metadata, not unrelated port probes.
+        if transport != "http" and not config.http_remote_hosted:
             from transport.legacy.unity_connection import (
                 get_unity_connection_pool,
                 UnityConnectionPool,
@@ -1060,19 +1060,19 @@ class UnityInstanceMiddleware(Middleware):
 
     async def on_list_resources(self, context: MiddlewareContext, call_next):
         await authorize_remote_resource()
-        await self._inject_unity_instance(context)
+        await self._inject_unity_instance(context, allow_reconnect=False)
         return await call_next(context)
 
     async def on_list_resource_templates(self, context: MiddlewareContext, call_next):
         await authorize_remote_resource()
-        await self._inject_unity_instance(context)
+        await self._inject_unity_instance(context, allow_reconnect=False)
         return await call_next(context)
 
     async def on_list_tools(self, context: MiddlewareContext, call_next):
         """Filter MCP tool listing to the Unity-enabled set when session data is available."""
         await authorize_remote_resource()
         try:
-            await self._inject_unity_instance(context)
+            await self._inject_unity_instance(context, allow_reconnect=False)
         except Exception as exc:
             # Re-raise authentication errors so callers get a proper auth failure
             if isinstance(exc, RuntimeError) and "authentication" in str(exc).lower():
