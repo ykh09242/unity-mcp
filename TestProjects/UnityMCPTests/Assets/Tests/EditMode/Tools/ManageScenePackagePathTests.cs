@@ -221,7 +221,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
                 bool invoked = false;
                 void Closed(Scene scene)
                 {
-                    if (scene.handle != fixture.CleanSceneHandle)
+                    if (scene != fixture.CleanScene)
                         return;
                     fixture.AddCallbackEdit();
                     invoked = true;
@@ -294,7 +294,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
             private GameObject _callbackEdit;
             public string Folder { get; }
             public string TargetPath => Folder + "/Target.unity";
-            public int CleanSceneHandle { get; }
+            public Scene CleanScene { get; }
 
             public SceneReplacementFixture(bool dirtyIsActive, bool initiallyDirty = true)
             {
@@ -308,7 +308,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
                 {
                     AssetDatabase.CreateFolder("Assets", Folder.Substring("Assets/".Length));
                     var clean = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-                    CleanSceneHandle = clean.handle;
+                    CleanScene = clean;
                     Assert.IsTrue(EditorSceneManager.SaveScene(clean, Folder + "/Clean.unity"));
                     var target = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
                     Assert.IsTrue(EditorSceneManager.SaveScene(target, TargetPath));

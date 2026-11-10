@@ -1,4 +1,5 @@
 using MCPForUnity.Editor.Tools.Graphics;
+using MCPForUnity.Runtime.Helpers;
 using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -75,7 +76,7 @@ namespace MCPForUnityTests.Editor.Tools
                     VolumeOps.SetProperties(
                         new JObject
                         {
-                            ["target"] = volumeGo.GetInstanceID(),
+                            ["target"] = volumeGo.GetInstanceIDCompat(),
                             ["properties"] = new JObject { ["weight"] = 0.25f },
                         }
                     )
@@ -120,7 +121,7 @@ namespace MCPForUnityTests.Editor.Tools
                 ["blend_distance"] = 3f,
             };
             var request = nested ? new JObject { ["properties"] = properties } : (JObject)properties.DeepClone();
-            request["target"] = volume.gameObject.GetInstanceID();
+            request["target"] = volume.gameObject.GetInstanceIDCompat();
             Undo.IncrementCurrentGroup();
             try
             {
@@ -178,7 +179,9 @@ namespace MCPForUnityTests.Editor.Tools
                     ["is_global"] = true,
                     ["blend_distance"] = 3f,
                 };
-                var result = JObject.FromObject(VolumeOps.SetProperties(new JObject { ["target"] = instance.GetInstanceID(), ["properties"] = expected }));
+                var result = JObject.FromObject(
+                    VolumeOps.SetProperties(new JObject { ["target"] = instance.GetInstanceIDCompat(), ["properties"] = expected })
+                );
                 Assert.IsTrue(result.Value<bool>("success"), result.ToString());
                 Assert.IsTrue(JToken.DeepEquals(expected, ReadVolumeProperties(instanceVolume)));
                 var modifications = PrefabUtility.GetPropertyModifications(instanceVolume);
@@ -223,7 +226,7 @@ namespace MCPForUnityTests.Editor.Tools
             var volume = new GameObject("RejectedVolume").AddComponent(GraphicsHelpers.VolumeType);
             var before = ReadVolumeProperties(volume);
             _sceneFixture.ClearDirtiness();
-            var request = new JObject { ["target"] = volume.gameObject.GetInstanceID() };
+            var request = new JObject { ["target"] = volume.gameObject.GetInstanceIDCompat() };
             if (invalid != "empty")
             {
                 request["priority"] = 17f;
