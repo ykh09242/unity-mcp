@@ -3,6 +3,7 @@ using MCPForUnityTests.Editor.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
@@ -45,6 +46,61 @@ namespace MCPForUnityTests.Editor.Tools
                     Undo.ClearUndo(_ownedSettings);
                     Object.DestroyImmediate(_ownedSettings);
                 }
+            }
+        }
+
+        [Test]
+        public void VolumeConfigurationDoesNotDirtyUnrelatedPrefabStage()
+        {
+            if (!GraphicsHelpers.HasVolumeSystem)
+                Assert.Ignore("The Volume system is not installed.");
+            string folder = "Assets/__McpVolumeSceneOwner_" + System.Guid.NewGuid().ToString("N");
+            var originalSelection = Selection.objects;
+            var originalActiveObject = Selection.activeObject;
+            string guid = AssetDatabase.CreateFolder("Assets", System.IO.Path.GetFileName(folder));
+            var source = new GameObject("UnrelatedPrefab");
+            PrefabStage stage = null;
+            try
+            {
+                Assert.IsNotNull(PrefabUtility.SaveAsPrefabAsset(source, folder + "/Unrelated.prefab"));
+                Object.DestroyImmediate(source);
+                var volumeGo = new GameObject("OwnedVolume");
+                var volume = volumeGo.AddComponent(GraphicsHelpers.VolumeType);
+                Assert.IsTrue(EditorSceneManager.SaveScene(_testScene, folder + "/" + _testScene.name + ".unity"));
+                stage = PrefabStageUtility.OpenPrefab(folder + "/Unrelated.prefab");
+                Assert.IsNotNull(stage);
+                Assert.IsFalse(stage.scene.isDirty);
+                Assert.IsFalse(_testScene.isDirty);
+                var result = JObject.FromObject(
+                    VolumeOps.SetProperties(
+                        new JObject
+                        {
+                            ["target"] = volumeGo.GetInstanceID(),
+                            ["properties"] = new JObject { ["weight"] = 0.25f },
+                        }
+                    )
+                );
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                using (var serialized = new SerializedObject(volume))
+                    Assert.AreEqual(0.25f, serialized.FindProperty("weight").floatValue);
+                Assert.IsTrue(_testScene.isDirty, "The changed Volume's scene must own the mutation.");
+                Assert.IsFalse(stage.scene.isDirty, "An unrelated Prefab Stage must remain clean.");
+            }
+            finally
+            {
+                if (stage != null && PrefabStageUtility.GetCurrentPrefabStage() == stage)
+                {
+                    stage.ClearDirtiness();
+                    StageUtility.GoToMainStage();
+                }
+                if (source != null)
+                    Object.DestroyImmediate(source);
+                // Close the saved fixture scene before deleting its owned asset directory.
+                _sceneFixture.Close();
+                Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(folder));
+                Assert.IsTrue(AssetDatabase.DeleteAsset(folder));
+                Selection.objects = originalSelection;
+                Selection.activeObject = originalActiveObject;
             }
         }
 
