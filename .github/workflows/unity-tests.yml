@@ -603,7 +603,10 @@ jobs:
         env:
           RESULTS_XML: artifacts/domain-reload/${{ matrix.testMode }}-results.xml
           TEST_RUN_OUTCOME: ${{ steps.domain-tests.outcome }}
-        run: python3 tools/check_unity_test_results.py "$RESULTS_XML" --runner-outcome "$TEST_RUN_OUTCOME"
+        run: |
+          python3 tools/check_unity_test_results.py "$RESULTS_XML" --runner-outcome "$TEST_RUN_OUTCOME" \
+            --require-test MCPForUnityTests.Editor.Tools.DomainReloadResilienceTests.CreateScript_ThenQueryConsole_Succeeds \
+            --require-test MCPForUnityTests.Editor.Tools.DomainReloadResilienceTests.ReadConsole_AfterDomainReload_Succeeds
 
       - name: Run tests
         uses: game-ci/unity-test-runner@32e57712352b500e17974b245a6dce9e11a73213 # v4.4.0
@@ -631,6 +634,7 @@ jobs:
         env:
           ARTIFACTS_PATH: ${{ steps.tests.outputs.artifactsPath }}
           TEST_RUN_OUTCOME: ${{ steps.tests.outcome }}
+          TEST_MODE: ${{ matrix.testMode }}
         run: |
           set -euo pipefail
           # `|| true` so a missing $ARTIFACTS_PATH (Unity crashed before producing any) doesn't trip
@@ -640,7 +644,18 @@ jobs:
             echo "::error::No test results XML found — Unity may have crashed"
             exit 1
           fi
-          python3 tools/check_unity_test_results.py "$RESULTS_XML" --runner-outcome "$TEST_RUN_OUTCOME"
+          # Stable base-package bodies prevent a partial/discovery-only run from passing.
+          # Optional integrations and PlayMode retain their separate evidence gates.
+          required=()
+          if [[ "$TEST_MODE" == "editmode" ]]; then
+            required+=(
+              --require-test MCPForUnityTests.Editor.Resources.GetTestsTests.OmittedParameters_ReturnDefaultTestPage
+              --require-test MCPForUnityTests.Editor.Tools.ComponentMutationIntegrityTests.RequiredComponentRemovalReportsRefusalAndPreservesCleanScene
+              --require-test MCPForUnityTests.EditMode.Tools.SimulationProfileIntegrityTests.TimestepsIncreaseAcrossCurrentCeilingAndRestore
+              --require-test MCPForUnityTests.EditMode.Tools.SimulationProfileIntegrityTests.TimestepsDecreaseAcrossCurrentFloorAndRestore
+            )
+          fi
+          python3 tools/check_unity_test_results.py "$RESULTS_XML" --runner-outcome "$TEST_RUN_OUTCOME" "${required[@]}"
 
       - name: Require actual PlayMode bodies and reload attribution
         if: always() && matrix.testMode == 'playmode'

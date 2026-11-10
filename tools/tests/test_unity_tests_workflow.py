@@ -3,9 +3,12 @@
 import json
 from pathlib import Path
 import re
+import xml.etree.ElementTree as ET
 
 import pytest
 import yaml
+
+from tools.check_unity_test_results import check_results
 
 
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "unity-tests.yml"
@@ -29,6 +32,42 @@ def test_every_runner_step_pins_the_action_commit_and_cli_release():
         assert re.search(r"^          cliVersion: v\d+\.\d+\.\d+$", step, re.M), step
         # The read-only job cannot create a check run; the local gate reads the XML instead.
         assert re.search(r'^          githubToken: ""$', step, re.M), step
+
+
+@pytest.mark.parametrize("step_name", ["Check domain reload test results", "Check test results"])
+@pytest.mark.parametrize("missing_result", [None, "Skipped", "Failed", "Passed"])
+def test_critical_native_body_inventory_rejects_missing_or_unexecuted_bodies(
+    tmp_path, step_name, missing_result
+):
+    config = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    step = next(
+        step for step in config["jobs"]["testAllModes"]["steps"] if step.get("name") == step_name
+    )
+    required = re.findall(r"--require-test\s+([\w.]+)", step["run"])
+    assert required, "The native gate must identify critical test bodies, not only totals"
+    assert len(set(required)) == len(required)
+    if step_name == "Check test results":
+        assert step["env"]["TEST_MODE"] == "${{ matrix.testMode }}"
+        assert 'if [[ "$TEST_MODE" == "editmode" ]]' in step["run"]
+    for missing in required:
+        cases = [(name, "Passed") for name in required if name != missing]
+        cases.append(("Other.Suite.UnrelatedPassingBody", "Passed"))
+        if missing_result is not None:
+            cases.append((missing, missing_result))
+        counts = {
+            "total": str(len(cases)),
+            "passed": str(sum(result == "Passed" for _, result in cases)),
+            "failed": str(sum(result == "Failed" for _, result in cases)),
+            "skipped": str(sum(result == "Skipped" for _, result in cases)),
+            "inconclusive": "0",
+            "result": "Failed" if missing_result == "Failed" else "Passed",
+        }
+        root = ET.Element("test-run", counts)
+        for name, result in cases:
+            ET.SubElement(root, "test-case", fullname=name, result=result)
+        path = tmp_path / "results.xml"
+        ET.ElementTree(root).write(path, encoding="unicode")
+        assert check_results(path, "success", required) == (0 if missing_result == "Passed" else 1)
 
 
 def test_unity_test_project_uses_the_packages_test_framework():
