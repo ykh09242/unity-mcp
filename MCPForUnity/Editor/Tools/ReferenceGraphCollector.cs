@@ -85,12 +85,64 @@ namespace MCPForUnity.Editor.Tools
 
         internal static JObject HandleWithStatus(JObject request, JObject priorStatus) => HandleCore(request, priorStatus);
 
+        internal static async Task<JObject> HandleWithStatusAsync(JObject request, JObject priorStatus, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!ToolConsentThread.IsMainThread)
+                throw new InvalidOperationException("Reference collection requires the Editor thread.");
+            JObject before = priorStatus ?? Handle(new JObject { ["action"] = "status" });
+            string verified = null;
+            try
+            {
+                if (!EditorApplication.isCompiling && !EditorApplication.isUpdating)
+                {
+                    string epoch = ReferenceGraphJournal.Epoch;
+                    long revision = ReferenceGraphJournal.Revision;
+                    ReferenceGraphIgnoreRules rules = IgnoreRules(true);
+                    bool Current()
+                    {
+                        FlushPendingChanges();
+                        return ReferenceEquals(ignoreRules, rules)
+                            && epoch == ReferenceGraphJournal.Epoch
+                            && revision == ReferenceGraphJournal.Revision
+                            && !EditorApplication.isCompiling
+                            && !EditorApplication.isUpdating;
+                    }
+                    verified = await rules.ValidateCurrentAsync(epoch, revision, Current, token);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                // Failed or stale proof cannot authorize cached evidence.
+            }
+            token.ThrowIfCancellationRequested();
+            JObject checkedStatus = Handle(new JObject { ["action"] = "status" });
+            bool valid =
+                verified != null
+                && checkedStatus.Value<string>("ignore_state") == "available"
+                && JToken.DeepEquals(before["epoch"], checkedStatus["epoch"])
+                && JToken.DeepEquals(before["revision"], checkedStatus["revision"])
+                && JToken.DeepEquals(before["ignore_revision"], checkedStatus["ignore_revision"]);
+            checkedStatus["ignore_current_verified"] = valid;
+            if (valid)
+                checkedStatus["ignore_snapshot_digest"] = verified;
+            return checkedStatus;
+        }
+
         internal static async Task<JObject> HandleAsync(JObject request, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
             if (!ToolConsentThread.IsMainThread)
                 throw new InvalidOperationException("Reference collection requires the Editor thread.");
             string action = request.Value<string>("action");
+            if (action == "status" && request.Value<bool?>("validate_ignore_current") == true)
+                return await HandleWithStatusAsync(request, null, token);
+            if ((action == "source" || action == "dependencies") && request["asset_guard"] is JObject)
+                return await HandleGuardedAssetAsync(request, token);
             if (action != "inventory" && action != "dependencies" && action != "ignore_rules")
                 return Handle(request);
             // Establish ordinary observation/idle fences before any native census is queued.
@@ -109,12 +161,26 @@ namespace MCPForUnity.Editor.Tools
                     && !EditorApplication.isCompiling
                     && !EditorApplication.isUpdating;
             }
+            async Task<JObject> ReadIgnoreRules()
+            {
+                ReferenceGraphIgnoreRules rules = IgnoreRules(true);
+                bool IgnoreCurrent() => Current() && ReferenceEquals(ignoreRules, rules) && ignoreCandidateEpoch == epoch;
+                return await rules.RulesAsync(
+                    request,
+                    Integer(request, "page_size", 128, 1, 1000),
+                    epoch,
+                    revision,
+                    DiscoverIgnoreCandidates,
+                    IgnoreCurrent,
+                    token
+                );
+            }
             if (action == "inventory" || action == "ignore_rules")
             {
                 if (request["snapshot"] != null || offset != 0)
-                    return Handle(request);
+                    return action == "ignore_rules" ? await ReadIgnoreRules() : Handle(request);
                 if (action == "ignore_rules" && ignoreCandidates != null && ignoreCandidateEpoch == epoch)
-                    return Handle(request);
+                    return await ReadIgnoreRules();
                 if (inventory == null || inventoryEpoch != epoch || inventoryRevision != revision)
                 {
                     ReferenceGraphPreparation.Snapshot snapshot = await ReferenceGraphPreparation.Acquire(
@@ -160,15 +226,13 @@ namespace MCPForUnity.Editor.Tools
                     token.ThrowIfCancellationRequested();
                     if (!IgnoreCurrent())
                         throw new InvalidOperationException("Ignore source changed during preparation; restart collection.");
-                    return Handle(request);
+                    return await ReadIgnoreRules();
                 }
                 var page = (JObject)request.DeepClone();
                 page["snapshot"] = inventoryToken;
                 return Handle(page);
             }
             string guid = ValidateGuid(request);
-            if (request["asset_guard"] is JObject guard && !AssetGuardCurrent(guard, guid))
-                return Handle(request);
             JObject asset = Describe(guid);
             string currentToken = guid + ":" + epoch + ":" + revision;
             if (
@@ -200,6 +264,83 @@ namespace MCPForUnity.Editor.Tools
             dependencyToken = currentToken;
             dependencyUsed = EditorApplication.timeSinceStartup;
             return Handle(request);
+        }
+
+        private static async Task<JObject> HandleGuardedAssetAsync(JObject request, CancellationToken token)
+        {
+            Handle(new JObject { ["action"] = "status" });
+            if (EditorApplication.isCompiling || EditorApplication.isUpdating)
+                throw new InvalidOperationException("The Editor is importing or compiling; retry collection when idle.");
+            string guid = ValidateGuid(request);
+            JObject guard = (JObject)request["asset_guard"];
+            Func<bool> guardCurrent = await ValidateAssetGuardAsync(guard, guid, token);
+            if (guardCurrent == null || !guardCurrent())
+                return new JObject { ["asset_guard_current"] = false };
+            var unguarded = (JObject)request.DeepClone();
+            unguarded.Remove("asset_guard");
+            JObject result;
+            if (request.Value<string>("action") == "dependencies")
+            {
+                // Preparation can span Editor frames. Revalidate the ignore digest after
+                // it settles, then deliver the bounded page without the synchronous guard.
+                await HandleAsync(unguarded, token);
+                guardCurrent = await ValidateAssetGuardAsync(guard, guid, token);
+                if (guardCurrent == null || !guardCurrent())
+                    return new JObject { ["asset_guard_current"] = false };
+                result = Dependencies(unguarded, Integer(request, "page_size", 128, 1, 1000));
+            }
+            else
+                result = Source(unguarded);
+            token.ThrowIfCancellationRequested();
+            result["asset_guard_current"] = true;
+            return result;
+        }
+
+        private static async Task<Func<bool>> ValidateAssetGuardAsync(JObject guard, string guid, CancellationToken token)
+        {
+            string epoch = guard.Value<string>("epoch");
+            long revision = guard.Value<long>("revision");
+            ReferenceGraphIgnoreRules observedRules = null;
+            long generation = 0;
+            bool Current()
+            {
+                FlushPendingChanges();
+                bool current =
+                    epoch == ReferenceGraphJournal.Epoch
+                    && revision == ReferenceGraphJournal.Revision
+                    && !EditorApplication.isCompiling
+                    && !EditorApplication.isUpdating
+                    && string.Equals(AssetDatabase.GUIDToAssetPath(guid), guard.Value<string>("path"), StringComparison.Ordinal);
+                if (!current || observedRules == null)
+                    return current;
+                if (!ReferenceEquals(ignoreRules, observedRules))
+                    return false;
+                observedRules.Status(epoch, revision);
+                return observedRules.Revision == generation;
+            }
+            if (!Current())
+                return null;
+            string digest = guard.Value<string>("ignore_digest");
+            if (digest != null)
+            {
+                try
+                {
+                    observedRules = IgnoreRules(true);
+                    generation = observedRules.Revision;
+                    if (await observedRules.ValidateCurrentAsync(epoch, revision, Current, token) != digest)
+                        return null;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception)
+                {
+                    return null;
+                }
+            }
+            token.ThrowIfCancellationRequested();
+            return Current() ? Current : null;
         }
 
         private static JObject HandleCore(JObject request, JObject priorStatus)

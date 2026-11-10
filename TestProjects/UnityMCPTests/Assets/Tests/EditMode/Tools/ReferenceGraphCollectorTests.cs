@@ -3,6 +3,8 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -104,6 +106,351 @@ namespace MCPForUnityTests.EditMode.Tools
                     typeof(ReferenceGraphIgnoreRules).GetField("watchers", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(rules)
             )
                 watcher.EnableRaisingEvents = false;
+        }
+
+        private void CreateHashingFixture()
+        {
+            rules.Dispose();
+            rules = new ReferenceGraphIgnoreRules(root, 1, _ => throw new IOException("Owned event-free fixture"));
+            using (var stream = new FileStream(candidates[".gitignore"], FileMode.Create, FileAccess.Write, FileShare.Read))
+                stream.SetLength(32L * 1024 * 1024);
+            for (int index = 0; index < 128; index++)
+            {
+                string logical = "Assets/Owned" + index + "/.gitignore";
+                string path = Path.Combine(root, logical);
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                File.WriteAllText(path, new string('x', 4096));
+                candidates.Add(logical, path);
+            }
+        }
+
+        private static async Task WaitForHashRead(ManualResetEventSlim entered)
+        {
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            while (!entered.IsSet && elapsed.ElapsedMilliseconds < 15000)
+                await Task.Delay(1);
+            Assert.IsTrue(entered.IsSet, "The real file hashing worker must reach its first read.");
+        }
+
+        [Test]
+        public void RegisteredReferenceGraphUsesCancellableAsyncEntryPoint()
+        {
+            MethodInfo handler = CommandRegistry.GetCommandMethod(typeof(ManageReferenceGraph));
+            Assert.IsNotNull(handler);
+            CollectionAssert.AreEqual(
+                new[] { typeof(JObject), typeof(CancellationToken) },
+                handler.GetParameters().Select(parameter => parameter.ParameterType)
+            );
+            Assert.AreEqual(typeof(Task<object>), handler.ReturnType);
+        }
+
+        [TestCase("source")]
+        [TestCase("dependencies")]
+        public async Task RegisteredAssetGuardsHashOffThreadAndCancelBeforePayloadDelivery(string action)
+        {
+            CreateHashingFixture();
+            JObject status = ReferenceGraphCollector.Handle(new JObject { ["action"] = "status" });
+            string epoch = status.Value<string>("epoch");
+            long revision = status.Value<long>("revision");
+            await rules.RulesAsync(new JObject(), 1000, epoch, revision, () => candidates, () => true, CancellationToken.None);
+            string digest = await rules.ValidateCurrentAsync(epoch, revision, () => true, CancellationToken.None);
+            const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+            FieldInfo owner = typeof(ReferenceGraphCollector).GetField("ignoreRules", flags);
+            FieldInfo candidateField = typeof(ReferenceGraphCollector).GetField("ignoreCandidates", flags);
+            FieldInfo candidateEpoch = typeof(ReferenceGraphCollector).GetField("ignoreCandidateEpoch", flags);
+            object previousOwner = owner.GetValue(null);
+            object previousCandidates = candidateField.GetValue(null);
+            object previousEpoch = candidateEpoch.GetValue(null);
+            owner.SetValue(null, rules);
+            candidateField.SetValue(null, candidates);
+            candidateEpoch.SetValue(null, epoch);
+            using var entered = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            using var cancellation = new CancellationTokenSource();
+            int editorThread = Thread.CurrentThread.ManagedThreadId;
+            int workerThread = editorThread;
+            rules.FingerprintReadForTests = (_, __) =>
+            {
+                workerThread = Thread.CurrentThread.ManagedThreadId;
+                entered.Set();
+                if (!release.Wait(15000))
+                    throw new TimeoutException("Registered guard hash read gate timed out.");
+            };
+            string path = "Assets/Tests/EditMode/Tools/ReferenceGraphCollectorTests.cs";
+            var request = new JObject
+            {
+                ["action"] = action,
+                ["guid"] = AssetDatabase.AssetPathToGUID(path),
+                ["expected_instance_id"] = status["instance_id"],
+                ["expected_project_id"] = status["project_id"],
+                ["asset_guard"] = new JObject
+                {
+                    ["path"] = path,
+                    ["epoch"] = epoch,
+                    ["revision"] = revision,
+                    ["ignore_digest"] = digest,
+                },
+            };
+            Task<object> operation = null;
+            try
+            {
+                MethodInfo handler = CommandRegistry.GetCommandMethod(typeof(ManageReferenceGraph));
+                operation = (Task<object>)handler.Invoke(null, new object[] { request, cancellation.Token });
+                await WaitForHashRead(entered);
+                Assert.AreNotEqual(editorThread, workerThread, "Registered asset guards must use the owned background hash worker.");
+                Assert.IsFalse(operation.IsCompleted);
+                cancellation.Cancel();
+                release.Set();
+                try
+                {
+                    await operation;
+                }
+                catch (OperationCanceledException) { }
+                Assert.IsTrue(operation.IsCanceled);
+                int synchronousReads = 0;
+                rules.FingerprintReadForTests = (_, __) =>
+                {
+                    if (Thread.CurrentThread.ManagedThreadId == editorThread)
+                        Interlocked.Increment(ref synchronousReads);
+                };
+                JObject delivered = JObject.FromObject(await (Task<object>)handler.Invoke(null, new object[] { request, CancellationToken.None }));
+                Assert.IsTrue(delivered.Value<bool>("success"), delivered.ToString());
+                Assert.IsTrue(delivered["data"].Value<bool>("asset_guard_current"), delivered.ToString());
+                Assert.AreEqual(0, synchronousReads, "A validated async guard must not fall back to synchronous hashing at payload delivery.");
+                Assert.IsNotNull(delivered["data"][action == "source" ? "bytes_base64" : "targets"]);
+                if (action == "source")
+                {
+                    request["fingerprint"] = "stale-source-fingerprint";
+                    JObject badSource = JObject.FromObject(await (Task<object>)handler.Invoke(null, new object[] { request, CancellationToken.None }));
+                    Assert.IsFalse(badSource.Value<bool>("success"), "Async ignore validation must preserve the source continuation fingerprint fence.");
+                    request.Remove("fingerprint");
+                }
+                string rulePath = candidates[".gitignore"];
+                DateTime stamp = File.GetLastWriteTimeUtc(rulePath);
+                using (var stream = new FileStream(rulePath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
+                    stream.WriteByte(1);
+                File.SetLastWriteTimeUtc(rulePath, stamp);
+                JObject stale = JObject.FromObject(await (Task<object>)handler.Invoke(null, new object[] { request, CancellationToken.None }));
+                Assert.IsTrue(stale.Value<bool>("success"), stale.ToString());
+                Assert.IsFalse(stale["data"].Value<bool>("asset_guard_current"));
+                Assert.IsNull(stale["data"]["bytes_base64"]);
+                Assert.IsNull(stale["data"]["targets"]);
+            }
+            finally
+            {
+                release.Set();
+                try
+                {
+                    if (operation != null)
+                        await operation;
+                }
+                catch (OperationCanceledException) { }
+                rules.FingerprintReadForTests = null;
+                owner.SetValue(null, previousOwner);
+                candidateField.SetValue(null, previousCandidates);
+                candidateEpoch.SetValue(null, previousEpoch);
+            }
+            Assert.IsTrue(operation.IsCanceled, "Registered source/dependency guard cancellation must propagate before payload publication.");
+        }
+
+        [Test]
+        public async Task AsyncCaptureManyLargeRulesYieldsAndCancellationRetainsOwnershipUntilWorkerSettles()
+        {
+            CreateHashingFixture();
+            using var entered = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            using var cancellation = new CancellationTokenSource();
+            int editorThread = Thread.CurrentThread.ManagedThreadId;
+            int workerThread = editorThread;
+            rules.FingerprintReadForTests = (_, __) =>
+            {
+                workerThread = Thread.CurrentThread.ManagedThreadId;
+                entered.Set();
+                if (!release.Wait(15000))
+                    throw new TimeoutException("Owned hash read gate timed out.");
+            };
+            Task<JObject> operation = rules.RulesAsync(new JObject(), 1000, "epoch", 1, () => candidates, () => true, cancellation.Token);
+            try
+            {
+                await WaitForHashRead(entered);
+                int updates = 0;
+                double maximumGap = 0;
+                var frame = System.Diagnostics.Stopwatch.StartNew();
+                void Update()
+                {
+                    maximumGap = Math.Max(maximumGap, frame.Elapsed.TotalMilliseconds);
+                    frame.Restart();
+                    updates++;
+                }
+                EditorApplication.update += Update;
+                try
+                {
+                    var timeout = System.Diagnostics.Stopwatch.StartNew();
+                    while (updates < 3 && timeout.ElapsedMilliseconds < 15000)
+                        await Task.Delay(1);
+                }
+                finally
+                {
+                    EditorApplication.update -= Update;
+                }
+                Assert.GreaterOrEqual(updates, 3, "Editor callbacks must continue while a file read is outstanding.");
+                Assert.AreNotEqual(editorThread, workerThread);
+                TestContext.WriteLine("Ignore hash blocked-read Editor updates=" + updates + "; maximum interval ms=" + maximumGap);
+                cancellation.Cancel();
+                Assert.IsFalse(operation.IsCompleted, "Cancellation must retain the real worker until its read settles.");
+                bool occupied = false;
+                try
+                {
+                    await rules.RulesAsync(new JObject(), 1, "epoch", 1, () => candidates, () => true, CancellationToken.None);
+                }
+                catch (InvalidOperationException)
+                {
+                    occupied = true;
+                }
+                Assert.IsTrue(occupied, "A canceled but outstanding worker must still own the instance's capacity.");
+            }
+            finally
+            {
+                release.Set();
+                try
+                {
+                    await operation;
+                }
+                catch (OperationCanceledException) { }
+                rules.FingerprintReadForTests = null;
+            }
+            Assert.IsTrue(operation.IsCanceled);
+            int hashUpdates = 0;
+            double maximumHashGap = 0;
+            var hashFrame = System.Diagnostics.Stopwatch.StartNew();
+            void HashUpdate()
+            {
+                maximumHashGap = Math.Max(maximumHashGap, hashFrame.Elapsed.TotalMilliseconds);
+                hashFrame.Restart();
+                hashUpdates++;
+            }
+            EditorApplication.update += HashUpdate;
+            JObject page;
+            try
+            {
+                page = await rules.RulesAsync(new JObject(), 1000, "epoch", 1, () => candidates, () => true, CancellationToken.None);
+            }
+            finally
+            {
+                EditorApplication.update -= HashUpdate;
+            }
+            TestContext.WriteLine("Ignore hash 32 MiB plus 128 rule files Editor updates=" + hashUpdates + "; maximum interval ms=" + maximumHashGap);
+            Assert.Greater(hashUpdates, 0, "The real capture must yield while hashing the large/many-file fixture.");
+            Assert.AreEqual(129, ((JArray)page["files"]).Count);
+            Assert.IsNotNull(await rules.ValidateCurrentAsync("epoch", 1, () => true, CancellationToken.None));
+        }
+
+        [TestCase("epoch", false)]
+        [TestCase("observer", false)]
+        [TestCase("dispose", false)]
+        [TestCase("source", false)]
+        [TestCase("epoch", true)]
+        [TestCase("observer", true)]
+        [TestCase("dispose", true)]
+        [TestCase("source", true)]
+        public async Task AsyncCaptureRejectsStaleResultsBeforePublication(string change, bool validate)
+        {
+            CreateHashingFixture();
+            if (validate)
+                await rules.RulesAsync(new JObject(), 1, "epoch", 1, () => candidates, () => true, CancellationToken.None);
+            using var entered = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            bool current = true;
+            rules.FingerprintReadForTests = (_, __) =>
+            {
+                entered.Set();
+                if (!release.Wait(15000))
+                    throw new TimeoutException("Owned hash read gate timed out.");
+            };
+            Task operation = validate
+                ? rules.ValidateCurrentAsync("epoch", 1, () => current, CancellationToken.None)
+                : rules.RulesAsync(new JObject(), 1, "epoch", 1, () => candidates, () => current, CancellationToken.None);
+            bool rejected = false;
+            try
+            {
+                await WaitForHashRead(entered);
+                if (change == "epoch")
+                    rules.Status("new-epoch", 2);
+                else if (change == "observer")
+                    typeof(ReferenceGraphIgnoreRules).GetMethod("MarkChanged", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(rules, null);
+                else if (change == "dispose")
+                    rules.Dispose();
+                else
+                    current = false;
+            }
+            finally
+            {
+                release.Set();
+                try
+                {
+                    await operation;
+                }
+                catch (OperationCanceledException)
+                {
+                    rejected = true;
+                }
+                catch (InvalidOperationException)
+                {
+                    rejected = true;
+                }
+                rules.FingerprintReadForTests = null;
+            }
+            Assert.IsTrue(rejected, "Stale background evidence must never publish a snapshot.");
+            Assert.IsNull(typeof(ReferenceGraphIgnoreRules).GetField("snapshot", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(rules));
+        }
+
+        [Test]
+        public async Task AsyncValidationCancelsAndStillDetectsSameStampEdits()
+        {
+            CreateHashingFixture();
+            JObject page = await rules.RulesAsync(new JObject(), 1000, "epoch", 1, () => candidates, () => true, CancellationToken.None);
+            using var entered = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            using var cancellation = new CancellationTokenSource();
+            rules.FingerprintReadForTests = (_, __) =>
+            {
+                entered.Set();
+                if (!release.Wait(15000))
+                    throw new TimeoutException("Owned hash validation gate timed out.");
+            };
+            Task<string> validation = rules.ValidateCurrentAsync("epoch", 1, () => true, cancellation.Token);
+            try
+            {
+                await WaitForHashRead(entered);
+                cancellation.Cancel();
+            }
+            finally
+            {
+                release.Set();
+                try
+                {
+                    await validation;
+                }
+                catch (OperationCanceledException) { }
+                rules.FingerprintReadForTests = null;
+            }
+            Assert.IsTrue(validation.IsCanceled);
+            string path = candidates[".gitignore"];
+            DateTime stamp = File.GetLastWriteTimeUtc(path);
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
+                stream.WriteByte(1);
+            File.SetLastWriteTimeUtc(path, stamp);
+            bool rejected = false;
+            try
+            {
+                await rules.ValidateCurrentAsync("epoch", 1, () => true, CancellationToken.None);
+            }
+            catch (InvalidOperationException)
+            {
+                rejected = true;
+            }
+            Assert.IsTrue(rejected, "An equal-length/equal-time edit must fail fresh digest validation.");
+            Assert.AreEqual("unavailable", rules.Status("epoch", 1).Value<string>("ignore_state"));
         }
 
         [Test]

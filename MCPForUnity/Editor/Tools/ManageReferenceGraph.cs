@@ -130,11 +130,16 @@ namespace MCPForUnity.Editor.Tools
                 token.ThrowIfCancellationRequested();
                 JObject data =
                     action == "status" && parameters.Value<bool?>("validate_ignore_current") == true
-                        ? ReferenceGraphCollector.HandleWithStatus(parameters, status)
-                    : action == "status" ? status
-                    : action.StartsWith("runtime_", StringComparison.Ordinal) ? ReferenceGraphRuntimeCapture.Handle(parameters)
-                    : staged ? await ReferenceGraphCollector.HandleAsync(parameters, token)
-                    : ReferenceGraphCollector.Handle(parameters);
+                        ? staged
+                            ? await ReferenceGraphCollector.HandleWithStatusAsync(parameters, status, token)
+                            : ReferenceGraphCollector.HandleWithStatus(parameters, status)
+                        : action == "status"
+                            ? status
+                            : action.StartsWith("runtime_", StringComparison.Ordinal)
+                                ? ReferenceGraphRuntimeCapture.Handle(parameters)
+                                : staged
+                                    ? await ReferenceGraphCollector.HandleAsync(parameters, token)
+                                    : ReferenceGraphCollector.Handle(parameters);
                 data["instance_id"] = instance;
                 data["project_id"] = project;
                 return new SuccessResponse("Reference evidence collected", data);
