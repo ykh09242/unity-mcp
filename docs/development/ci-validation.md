@@ -102,7 +102,7 @@ archive job uses the same optional beartype setting as the locked suites. These 
 complement the complete locked test suites without repeating them.
 
 [`distribution-canary.yml`](../../.github/workflows/distribution-canary.yml) runs Python
-3.11 probes on Linux, Windows and Intel macOS, plus a Linux Python 3.14 probe, each Monday
+3.11 probes on Linux, Windows and Intel macOS, plus Linux Python 3.14 and 3.15 probes, each Monday
 at 04:23 UTC and supports manual dispatch. Each row selects the
 immutable `mcpServerSource` from the checked commit's `MCPForUnity/package.json`, using the
 shared source-pin validator to require consistent launcher metadata. Scheduled runs use
@@ -112,7 +112,9 @@ commit and server archive commit appear separately in the run summary and retain
 The canary creates an empty environment and installs that archive with fresh, unlocked
 dependency resolution and no shared uv cache. It reuses the installed-archive HTTP/CLI,
 stdio/authenticated HTTP MCP exchanges and startup-registration probes, including
-warnings-as-errors and source-import rejection. Each OS/Python artifact retains source identity,
+warnings-as-errors and source-import rejection. Python 3.15 disables only optional
+`py-key-value-aio` beartype instrumentation, matching the locked suites; application
+validation and warnings-as-errors remain enabled. Each OS/Python artifact retains source identity,
 install output, toolchain versions, every
 resolved distribution version, and successful probe reports for 30 days. Installation or
 probe failures fail the job; this read-only check publishes no package and does not run
