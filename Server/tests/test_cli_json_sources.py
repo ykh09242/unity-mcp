@@ -245,7 +245,12 @@ def test_source_contents_and_nested_values_are_never_expanded(admission, tmp_pat
     calls.clear()
     result = invoke(cli, ("raw", "owned_tool"), None, "@" + str(path))
     assert result.exit_code == 1
-    assert "expected an object" in result.stderr and "PRIVATE_MARKER" not in result.stderr
+    error = json.loads(result.stdout)
+    assert error["success"] is False
+    assert error["code"] == "invalid_json_params"
+    assert "expected an object" in error["error"]
+    assert "PRIVATE_MARKER" not in result.output
+    assert result.stderr == ""
     assert not calls
 
 

@@ -1,6 +1,5 @@
 """Code CLI commands - read, search, and execute source code."""
 
-import sys
 import os
 import re
 import click
@@ -8,7 +7,8 @@ import regex
 from typing import Optional, Any
 
 from cli.utils.config import CLIConfig, get_config
-from cli.utils.output import format_output, print_error, print_info, print_success
+from cli.utils.output import format_output, print_info, print_success
+from cli.utils.input_errors import CLIInputError
 from cli.utils.connection import (
     run_command,
     handle_unity_errors,
@@ -66,8 +66,7 @@ def execute(source: Optional[str], file: Optional[str], no_safety_checks: bool):
         with open(file, "r", encoding="utf-8") as f:
             source = f.read()
     elif not source:
-        print_error("Provide code as an argument or use --file.")
-        sys.exit(1)
+        raise CLIInputError("missing_code", "Provide code as an argument or use --file.")
 
     params: dict[str, Any] = {
         "action": "execute",

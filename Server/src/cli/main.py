@@ -25,6 +25,7 @@ from cli.utils.connection import (
     warn_if_remote_host,
 )
 from cli.utils.output import format_output, print_error, print_info, print_success
+from cli.utils.input_errors import CLIInputError
 from cli.utils.suggestions import format_suggestions, suggest_matches
 
 
@@ -301,12 +302,13 @@ def raw_command(ctx: Context, command_type: str, params: tuple):
     try:
         params_dict = load_finite_json(params_str)
     except (ValueError, RecursionError) as e:
-        print_error(f"Invalid JSON params: {e}")
-        sys.exit(1)
+        raise CLIInputError("invalid_json_params", f"Invalid JSON params: {e}") from None
 
     if not isinstance(params_dict, dict):
-        print_error(f"Invalid JSON params: expected an object, got {type(params_dict).__name__}")
-        sys.exit(1)
+        raise CLIInputError(
+            "invalid_json_params",
+            f"Invalid JSON params: expected an object, got {type(params_dict).__name__}",
+        )
 
     try:
         result = run_command(command_type, params_dict, config)

@@ -1,12 +1,11 @@
 """Scene CLI commands."""
 
-import sys
-
 import click
 from typing import Optional, Any
 
 from cli.utils.config import get_config
-from cli.utils.output import format_output, print_error, print_success, print_warning
+from cli.utils.output import format_output, print_success, print_warning
+from cli.utils.input_errors import CLIInputError
 from cli.utils.connection import run_command, handle_unity_errors
 
 
@@ -94,8 +93,7 @@ def load(scene: str, by_index: bool):
         try:
             params["buildIndex"] = int(scene)
         except ValueError:
-            print_error(f"Invalid build index: {scene}")
-            sys.exit(1)
+            raise CLIInputError("invalid_scene_index", f"Invalid build index: {scene}") from None
     else:
         if scene.endswith(".unity"):
             params["path"] = scene

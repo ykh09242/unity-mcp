@@ -139,8 +139,11 @@ def test_raw_rejects_non_object_parameters_before_dispatch(command_requests, pay
         ],
     )
     assert result.exit_code == 1, result.output
-    assert result.stdout == ""
-    assert "expected an object" in result.stderr
+    error = json.loads(result.stdout)
+    assert error["success"] is False
+    assert error["code"] == "invalid_json_params"
+    assert "expected an object" in error["error"]
+    assert result.stderr == ""
     assert command_requests == []
 
 
@@ -193,8 +196,15 @@ def test_nonfinite_inline_input_is_an_input_error_before_network(
     result = CliRunner().invoke(cli, ["--format", "json", *command])
 
     assert result.exit_code == 1, result.output
-    assert result.stdout == ""
-    assert "finite" in result.stderr.lower()
+    if consumer == "raw":
+        error = json.loads(result.stdout)
+        assert error["success"] is False
+        assert error["code"] == "invalid_json_params"
+        assert "finite" in error["error"].lower()
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert "finite" in result.stderr.lower()
     assert "connection" not in result.output.lower()
     assert command_requests == []
 

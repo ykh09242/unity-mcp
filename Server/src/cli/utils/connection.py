@@ -57,11 +57,13 @@ def print_connection_error(error: UnityConnectionError, format_type: str) -> Non
 
 
 def handle_unity_errors(func: F) -> F:
-    """Handle failed Unity commands and transport errors consistently.
+    """Handle local input, failed Unity commands and transport errors consistently.
 
     Preserve completed command responses in the requested output format.
     JSON transport failures omit untrusted exception/response diagnostics;
     text transport failures retain their human stderr output. Both exit with code 1.
+    Typed command input failures emit one JSON error with a stable code, or retain
+    their human stderr diagnostic; JSON diagnostic text is capped at 1000 characters.
 
     Usage:
         @scene.command("active")
@@ -72,12 +74,23 @@ def handle_unity_errors(func: F) -> F:
             click.echo(format_output(result, config.format))
     """
     import click
-    from cli.utils.output import format_output
+    from cli.utils.input_errors import CLIInputError
+    from cli.utils.output import format_output, print_error
 
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return func(*args, **kwargs)
+        except CLIInputError as e:
+            if get_config().format == "json":
+                click.echo(
+                    format_output(
+                        {"success": False, "code": e.code, "error": str(e)[:1000]}, "json"
+                    )
+                )
+            else:
+                print_error(str(e))
+            sys.exit(1)
         except UnityCommandError as e:
             click.echo(format_output(e.response, get_config().format))
             sys.exit(1)
