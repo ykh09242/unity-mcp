@@ -3358,17 +3358,35 @@ class PluginHub(WebSocketEndpoint):
             charge = ingress.max_retained_bytes
         else:
             ingress = None
-        if entry.get("control_reserve") is True:
-            charge = min(charge, cls.MAX_CONTROL_RESULT_BYTES)
+        control = entry.get("control_reserve") is True
+        ceiling = (
+            min(cls.MAX_RESULT_RETAINED_BYTES, cls.MAX_CONTROL_RESULT_BYTES)
+            if control
+            else cls.MAX_RESULT_RETAINED_BYTES
+        )
+        charge = min(charge, ceiling)
         background = scope is not None and scope.background_results
         if background:
-            active = tuple(cls._result_tasks.values())
+            # Preserve the same ordinary/reserved partition as command admission.
+            # Detached work still counts in its partition after its waiter exits.
+            active = tuple(
+                work
+                for work in cls._result_tasks.values()
+                if (work.entry.get("control_reserve") is True) == control
+            )
+            maximum, per_user, per_session = (
+                (cls.MAX_CONTROL_COMMANDS, cls.MAX_CONTROL_PER_USER, cls.MAX_CONTROL_PER_SESSION)
+                if control
+                else (
+                    cls.MAX_PENDING_COMMANDS,
+                    cls.MAX_PENDING_PER_USER,
+                    cls.MAX_PENDING_PER_SESSION,
+                )
+            )
             if (
-                len(active) >= cls.MAX_PENDING_COMMANDS
-                or sum(w.entry.get("user_id") == entry.get("user_id") for w in active)
-                >= cls.MAX_PENDING_PER_USER
-                or sum(w.entry["session_id"] == entry["session_id"] for w in active)
-                >= cls.MAX_PENDING_PER_SESSION
+                len(active) >= maximum
+                or sum(w.entry.get("user_id") == entry.get("user_id") for w in active) >= per_user
+                or sum(w.entry["session_id"] == entry["session_id"] for w in active) >= per_session
             ):
                 entry["future"].set_result(response_limit_error("result_capacity"))
                 return None
@@ -3401,7 +3419,7 @@ class PluginHub(WebSocketEndpoint):
                     )
                     return None
                 reserved = measured
-            elif background and large and not raw_charge and charge < cls.MAX_RESULT_RETAINED_BYTES:
+            elif background and large and not raw_charge and charge < ceiling:
                 # A decoded direct frame has no ingress owner to bound its graph.
                 # Do not park that graph behind a smaller reservation than the
                 # unmeasured worker ceiling.

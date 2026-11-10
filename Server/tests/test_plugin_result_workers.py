@@ -246,6 +246,7 @@ async def test_dispatch_result_keeps_actual_owners_and_fences_late_delivery(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reserved", [False, True])
 @pytest.mark.parametrize(
     "limit",
     [
@@ -258,17 +259,25 @@ async def test_dispatch_result_keeps_actual_owners_and_fences_late_delivery(
     ],
 )
 async def test_dispatch_result_capacity_counts_detached_work_until_actual_exit(
-    owned_hub, monkeypatch, limit
+    owned_hub, monkeypatch, limit, reserved
 ):
     hub, _ = owned_hub
     cls = type(hub)
+    if reserved:
+        limit = limit.replace("MAX_PENDING", "MAX_CONTROL")
     monkeypatch.setattr(
-        cls, limit, 1 if "PENDING" in limit else hub_module.response_size({"ok": True})
+        cls, limit, hub_module.response_size({"ok": True}) if "BYTES" in limit else 1
     )
     receipt = HeldReceipt()
     loop = asyncio.get_running_loop()
     original, refused = loop.create_future(), loop.create_future()
-    entry = {"future": original, "session_id": "owned", "user_id": None, "receipt_owner": receipt}
+    entry = {
+        "future": original,
+        "session_id": "owned",
+        "user_id": None,
+        "receipt_owner": receipt,
+        "control_reserve": reserved,
+    }
     cls._pending[COMMAND_ID] = entry
     peer = await dispatch_peer(hub)
     try:
@@ -278,7 +287,12 @@ async def test_dispatch_result_capacity_counts_detached_work_until_actual_exit(
         # A caller stopping its wait does not return task or graph capacity.
         cls._pending.pop(COMMAND_ID)
         original.cancel()
-        cls._pending["second"] = {"future": refused, "session_id": "owned", "user_id": None}
+        cls._pending["second"] = {
+            "future": refused,
+            "session_id": "owned",
+            "user_id": None,
+            "control_reserve": reserved,
+        }
         await peer_result(peer, {"ok": True}, command_id="second")
         result = await asyncio.wait_for(asyncio.shield(refused), watchdog_timeout())
         assert result["data"]["reason"] == "result_capacity"
@@ -294,6 +308,163 @@ async def test_dispatch_result_capacity_counts_detached_work_until_actual_exit(
         await asyncio.gather(peer.task, return_exceptions=True)
         original.cancel()
         refused.cancel()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "limit", ["MAX_PENDING_COMMANDS", "MAX_PENDING_PER_USER", "MAX_PENDING_PER_SESSION"]
+)
+async def test_dispatch_control_result_preserves_reserved_headroom(owned_hub, monkeypatch, limit):
+    hub, _ = owned_hub
+    cls = type(hub)
+    monkeypatch.setattr(cls, limit, 2)
+    receipt = HeldReceipt()
+    loop = asyncio.get_running_loop()
+    peer = await dispatch_peer(hub)
+    futures = []
+    control_owner = None
+    delivery = hub_module.ResponseOwner()
+    try:
+        for index in range(2):
+            command_id = str(index)
+            assert cls._pending_reservation("owned", None) is False
+            future = loop.create_future()
+            futures.append(future)
+            cls._pending[command_id] = {
+                "future": future,
+                "session_id": "owned",
+                "user_id": None,
+                "receipt_owner": receipt,
+            }
+            await peer_result(peer, {"ok": True}, command_id=command_id)
+        await peer_frame(peer, {"type": "ping", "challenge": "e" * 32})
+        await await_signal(peer.pong, "ordinary results accepted", producers=(peer.task,))
+        await settled()
+        assert len(receipt.calls) == receipt.pins == 2
+        ordinary_charge = cls._retained_results.total_bytes
+        assert cls._pending_reservation("owned", None) is None
+        assert cls._pending_reservation("owned", None, control=True) is True
+        record = {
+            "session_id": "owned",
+            "user_id": None,
+            "payload_bytes": 1,
+            "control_reserve": True,
+        }
+        control_owner = hub_module._ControlReservation(cls._control_reservations, "control", record)
+        control = loop.create_future()
+        futures.append(control)
+        cls._pending["control"] = {
+            **record,
+            "future": control,
+            "control_owner": control_owner,
+            "response_owner": delivery,
+        }
+        expected = {"ok": "cancelled"}
+        await peer_result(peer, expected, command_id="control")
+        assert await asyncio.wait_for(asyncio.shield(control), watchdog_timeout()) == expected
+        assert not any(future.done() for future in futures[:2])
+        cls._pending.pop("control")
+        control_owner.close()
+        assert "control" in cls._control_reservations
+        assert cls._retained_results.total_bytes == ordinary_charge + hub_module.response_size(
+            expected
+        )
+        delivery.release()
+        await settled()
+        assert "control" not in cls._control_reservations
+        assert cls._retained_results.total_bytes == ordinary_charge
+    finally:
+        receipt.release.set()
+        await settled()
+        peer.task.cancel()
+        await asyncio.gather(peer.task, return_exceptions=True)
+        delivery.release()
+        if control_owner is not None:
+            control_owner.close()
+        for index, future in enumerate(futures):
+            future.cancel()
+            cls._retained_results.pop(str(index), None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_dispatch_reserved_control_worker_uses_control_result_ceiling(
+    owned_hub, monkeypatch, cancel
+):
+    hub, _ = owned_hub
+    cls = type(hub)
+    monkeypatch.setattr(cls, "MAX_PENDING_COMMANDS", 1)
+    peer = await dispatch_peer(hub)
+    ordinary = asyncio.get_running_loop().create_future()
+    cls._pending["ordinary"] = {"future": ordinary, "session_id": "owned", "user_id": None}
+    expected = {"values": list(range(300))}
+    assert hub_module.needs_response_worker(expected)
+    assert len(json.dumps(expected)) < 64 * 1024
+    assert hub_module.response_size(expected) < cls.MAX_CONTROL_RESULT_BYTES
+    assert cls._pending_reservation("owned", None, control=True) is True
+    record = {
+        "session_id": "owned",
+        "user_id": None,
+        "payload_bytes": 1,
+        "control_reserve": True,
+    }
+    control_owner = hub_module._ControlReservation(cls._control_reservations, COMMAND_ID, record)
+    delivery = hub_module.ResponseOwner()
+    future = asyncio.get_running_loop().create_future()
+    cls._pending[COMMAND_ID] = {
+        **record,
+        "future": future,
+        "control_owner": control_owner,
+        "response_owner": delivery,
+    }
+    entered, release = asyncio.Event(), Event()
+    loop = asyncio.get_running_loop()
+    native = hub_module.response_size
+
+    def held(*args, **kwargs):
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(watchdog_timeout())
+        return native(*args, **kwargs)
+
+    monkeypatch.setattr(hub_module, "response_size", held)
+    worker = None
+    try:
+        await peer_result(peer, expected)
+        await await_signal(
+            entered, "reserved control worker entered", producers=(peer.task, future)
+        )
+        worker = next(
+            task for task, work in cls._result_tasks.items() if work.command_id == COMMAND_ID
+        )
+        assert cls._retained_results.total_bytes == cls.MAX_CONTROL_RESULT_BYTES
+        if cancel:
+            cls._pending.pop(COMMAND_ID)
+            future.cancel()
+            control_owner.close()
+            await settled()
+            assert COMMAND_ID in cls._control_reservations
+            assert cls._retained_results.total_bytes == cls.MAX_CONTROL_RESULT_BYTES
+            assert cls._pending_reservation("owned", None, control=True) is None
+        release.set()
+        await worker
+        if cancel:
+            assert cls._retained_results.total_bytes == 0
+            assert COMMAND_ID not in cls._control_reservations
+        else:
+            assert future.result() == expected
+            assert cls._retained_results.total_bytes == native(expected)
+    finally:
+        release.set()
+        if worker is not None:
+            await asyncio.gather(worker, return_exceptions=True)
+        peer.task.cancel()
+        await asyncio.gather(peer.task, return_exceptions=True)
+        future.cancel()
+        if ordinary.done() and not ordinary.cancelled():
+            ordinary.exception()
+        ordinary.cancel()
+        delivery.release()
+        control_owner.close()
 
 
 @pytest.mark.asyncio
