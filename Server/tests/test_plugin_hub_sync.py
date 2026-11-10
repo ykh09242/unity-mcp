@@ -109,3 +109,169 @@ def test_live_loop_sync_call_preserves_operation_error(monkeypatch: pytest.Monke
         with pytest.raises(LookupError) as actual:
             PluginHub._run_coroutine_sync(reject())
         assert actual.value is failure
+
+
+@pytest.mark.parametrize("replace_registry", [False, True])
+def test_live_sync_wait_has_deadline_and_generation_fence(monkeypatch, replace_registry):
+    released = threading.Event()
+
+    async def operation():
+        try:
+            if replace_registry:
+                monkeypatch.setattr(PluginHub, "_registry", object())
+            await asyncio.Event().wait()
+        finally:
+            released.set()
+
+    with start_blocking_portal() as portal:
+        monkeypatch.setattr(PluginHub, "_loop", portal.call(asyncio.get_running_loop))
+        with pytest.raises(RuntimeError, match="replaced" if replace_registry else "deadline"):
+            PluginHub._run_coroutine_sync(operation(), timeout_s=0.2)
+        assert released.wait(watchdog_timeout())
+
+
+def test_sync_wait_preserves_operation_timeout_error(monkeypatch):
+    failure = TimeoutError("operation timed out")
+
+    async def operation():
+        raise failure
+
+    with start_blocking_portal() as portal:
+        monkeypatch.setattr(PluginHub, "_loop", portal.call(asyncio.get_running_loop))
+        with pytest.raises(TimeoutError) as actual:
+            PluginHub._run_coroutine_sync(operation())
+        assert actual.value is failure
+
+
+def test_replacement_before_loop_acceptance_cannot_start_operation(monkeypatch):
+    invoked = []
+    original_submit = asyncio.run_coroutine_threadsafe
+
+    async def operation():
+        invoked.append(True)
+        return "unexpected dispatch"
+
+    def submit(coro, loop):
+        monkeypatch.setattr(PluginHub, "_registry", object())
+        future = original_submit(coro, loop)
+        # Force loop acceptance before the caller can perform its next check.
+        try:
+            future.result(timeout=watchdog_timeout())
+        except RuntimeError:
+            pass
+        return future
+
+    with start_blocking_portal() as portal:
+        monkeypatch.setattr(PluginHub, "_loop", portal.call(asyncio.get_running_loop))
+        monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", submit)
+        with closing(operation()) as coro:
+            with pytest.raises(RuntimeError, match="replaced"):
+                PluginHub._run_coroutine_sync(coro)
+            assert invoked == []
+            assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
+
+
+@pytest.mark.parametrize("stop_before_submission", [True, False])
+@pytest.mark.parametrize("command_call", [False, True])
+def test_loop_stop_race_releases_sync_caller_without_restart(
+    monkeypatch: pytest.MonkeyPatch, stop_before_submission: bool, command_call: bool
+):
+    loop = asyncio.new_event_loop()
+    ready, stopped, finished = threading.Event(), threading.Event(), threading.Event()
+    failures: list[BaseException] = []
+    results = []
+    invoked: list[bool] = []
+
+    def run_loop() -> None:
+        loop.call_soon(ready.set)
+        loop.run_forever()
+        stopped.set()
+
+    async def operation() -> None:
+        invoked.append(True)
+        loop.stop()
+        await asyncio.Event().wait()
+
+    original_submit = asyncio.run_coroutine_threadsafe
+    submitted = []
+
+    def submit(coro, target):
+        if stop_before_submission:
+            target.call_soon_threadsafe(target.stop)
+            assert stopped.wait(watchdog_timeout())
+        future = original_submit(coro, target)
+        submitted.append(future)
+        return future
+
+    coro = operation()
+
+    def command_operation(*args):
+        assert args == ("owned-project", "manage_scene", {"action": "save"})
+        return coro
+
+    def invoke() -> None:
+        try:
+            if command_call:
+                results.append(
+                    PluginHub.send_command_blocking(
+                        "owned-project", "manage_scene", {"action": "save"}
+                    )
+                )
+            else:
+                PluginHub._run_coroutine_sync(coro)
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(PluginHub, "_loop", loop)
+    monkeypatch.setattr(PluginHub, "send_command_for_instance", command_operation)
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", submit)
+    owner = threading.Thread(target=run_loop, daemon=True)
+    caller = threading.Thread(target=invoke, daemon=True)
+    owner.start()
+    assert ready.wait(watchdog_timeout())
+    caller.start()
+    try:
+        assert stopped.wait(watchdog_timeout())
+        assert finished.wait(0.5), "Stopped loop stranded the synchronous caller"
+        if command_call:
+            assert failures == []
+            assert len(results) == 1
+            if stop_before_submission:
+                assert results[0]["data"]["dispatch"] == "not_dispatched"
+            else:
+                assert results[0]["data"]["reason"] == "outcome_unknown"
+                assert results[0]["hint"] == "inspect_state_before_retry"
+                assert invoked == [True]
+        else:
+            assert len(failures) == 1
+            assert isinstance(failures[0], RuntimeError)
+        if stop_before_submission:
+            assert invoked == []
+            assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
+    finally:
+        owner.join(watchdog_timeout())
+        for future in submitted:
+            future.cancel()
+
+        async def drain() -> None:
+            # Give even the unfixed submission a turn, then dispose its task.
+            await asyncio.sleep(0)
+            for task in asyncio.all_tasks(loop):
+                if task is not asyncio.current_task():
+                    task.cancel()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        # The operation can stop the cleanup loop on its first turn in RED.
+        cleanup = loop.create_task(drain())
+        while not cleanup.done():
+            loop.call_soon(loop.stop)
+            loop.run_forever()
+        loop.call_soon(loop.stop)
+        loop.run_forever()
+        caller.join(watchdog_timeout())
+        loop.close()
+        coro.close()
+        assert not caller.is_alive()

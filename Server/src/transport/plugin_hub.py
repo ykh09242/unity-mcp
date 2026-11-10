@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 import weakref
@@ -205,6 +206,12 @@ class PluginDisconnectedError(RuntimeError):
 
 class NoUnitySessionError(RuntimeError):
     """Raised when no Unity plugins are available."""
+
+
+class _SyncWaitInterrupted(RuntimeError):
+    def __init__(self, detail: str, *, started: bool) -> None:
+        super().__init__(detail)
+        self.started = started
 
 
 @dataclass(frozen=True, slots=True)
@@ -4689,7 +4696,31 @@ class PluginHub(WebSocketEndpoint):
     # Blocking helpers for synchronous tool code
     # ------------------------------------------------------------------
     @classmethod
-    def _run_coroutine_sync(cls, coro: Coroutine[Any, Any, Any]) -> Any:
+    def _run_coroutine_sync(
+        cls, coro: Coroutine[Any, Any, Any], *, timeout_s: float | None = None
+    ) -> Any:
+        ownership = threading.Lock()
+        started = abandoned = False
+        submitted = None
+
+        async def run_owned() -> Any:
+            nonlocal started
+            with ownership:
+                if abandoned:
+                    return None
+                if cls._loop is not loop or cls._registry is not registry:
+                    coro.close()
+                    raise _SyncWaitInterrupted(
+                        "PluginHub event loop stopped or was replaced", started=False
+                    )
+                if loop.time() >= deadline:
+                    coro.close()
+                    raise _SyncWaitInterrupted(
+                        "PluginHub synchronous wait deadline exceeded", started=False
+                    )
+                started = True
+            return await coro
+
         try:
             loop = cls._loop
             if loop is None:
@@ -4705,12 +4736,45 @@ class PluginHub(WebSocketEndpoint):
                     raise RuntimeError(
                         "Cannot wait synchronously for PluginHub coroutine from within the event loop"
                     )
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
+            registry = cls._registry
+            deadline = loop.time() + (cls.COMMAND_TIMEOUT if timeout_s is None else timeout_s)
+            request = http_request_budget.get()
+            if request is not None:
+                deadline = min(deadline, request.budget.expires_at)
+            submitted = run_owned()
+            future = asyncio.run_coroutine_threadsafe(submitted, loop)
         except RuntimeError:
             # Before submission succeeds, this adapter still owns the coroutine.
+            if submitted is not None:
+                submitted.close()
             coro.close()
             raise
-        return future.result()
+        try:
+            while True:
+                if future.done():
+                    return future.result()
+                if cls._loop is not loop or cls._registry is not registry or not loop.is_running():
+                    detail = "PluginHub event loop stopped or was replaced"
+                    break
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    detail = "PluginHub synchronous wait deadline exceeded"
+                    break
+                try:
+                    return future.result(timeout=min(0.1, remaining))
+                except TimeoutError:
+                    # An operation's own TimeoutError is its actual result.
+                    if future.done():
+                        return future.result()
+            with ownership:
+                abandoned = True
+                if not started:
+                    coro.close()
+                    submitted.close()
+                raise _SyncWaitInterrupted(detail, started=started)
+        finally:
+            if not future.done():
+                future.cancel()
 
     @classmethod
     def send_command_blocking(
@@ -4719,9 +4783,19 @@ class PluginHub(WebSocketEndpoint):
         command_type: str,
         params: dict[str, Any],
     ) -> dict[str, Any]:
-        return cls._run_coroutine_sync(
-            cls.send_command_for_instance(unity_instance, command_type, params)
-        )
+        try:
+            return cls._run_coroutine_sync(
+                cls.send_command_for_instance(unity_instance, command_type, params),
+                timeout_s=cls._command_timeouts(command_type, params)[1] + cls.CANCEL_TIMEOUT,
+            )
+        except _SyncWaitInterrupted as error:
+            if error.started:
+                return command_outcome_unknown(command_type, str(error), cause="sync_wait_ended")
+            return MCPResponse(
+                success=False,
+                error=str(error),
+                data={"reason": "transport_unavailable", "dispatch": "not_dispatched"},
+            ).model_dump()
 
     @classmethod
     def list_sessions_sync(cls) -> SessionList:
