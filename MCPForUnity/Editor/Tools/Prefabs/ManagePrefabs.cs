@@ -1016,7 +1016,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
         /// <summary>
         /// Finds a GameObject within loaded prefab contents by name or path.
         /// </summary>
-        private static GameObject FindInPrefabContents(GameObject prefabContents, string target)
+        private static GameObject FindInPrefabContents(GameObject prefabContents, string target, bool relativePathOnly = false)
         {
             if (string.IsNullOrEmpty(target))
             {
@@ -1024,43 +1024,28 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 return prefabContents;
             }
 
-            // Try to find by path first (e.g., "Parent/Child/Target")
-            if (target.Contains("/"))
-            {
-                Transform found = prefabContents.transform.Find(target);
-                if (found != null)
-                {
-                    return found.gameObject;
-                }
-
-                // If path starts with root name, try without it
-                if (target.StartsWith(prefabContents.name + "/"))
-                {
-                    string relativePath = target.Substring(prefabContents.name.Length + 1);
-                    found = prefabContents.transform.Find(relativePath);
-                    if (found != null)
-                    {
-                        return found.gameObject;
-                    }
-                }
-            }
-
-            // Check if target matches root name
-            if (prefabContents.name == target)
-            {
-                return prefabContents;
-            }
-
-            // Search by name in hierarchy
+            // Transform.Find silently chooses one sibling when names or full paths repeat.
+            // Resolve every candidate before choosing a mutation target, including parents/deletions.
+            GameObject match = null;
             foreach (Transform t in prefabContents.GetComponentsInChildren<Transform>(true))
             {
-                if (t.gameObject.name == target)
+                if (relativePathOnly && t == prefabContents.transform)
+                    continue;
+                string relativePath = "";
+                for (Transform ancestor = t; ancestor != prefabContents.transform; ancestor = ancestor.parent)
+                    relativePath = ancestor.name + (relativePath.Length == 0 ? "" : "/" + relativePath);
+                bool matches =
+                    relativePathOnly ? relativePath == target
+                    : target.Contains("/") ? relativePath == target || prefabContents.name + "/" + relativePath == target
+                    : t.name == target;
+                if (matches)
                 {
-                    return t.gameObject;
+                    if (match != null)
+                        throw new ArgumentException($"Prefab selector '{target}' is ambiguous. Use a unique hierarchy path; no changes were saved.");
+                    match = t.gameObject;
                 }
             }
-
-            return null;
+            return match;
         }
 
         /// <summary>
@@ -1734,7 +1719,7 @@ namespace MCPForUnity.Editor.Tools.Prefabs
                 }
 
                 // Find the child to remove
-                Transform childToRemove = targetGo.transform.Find(childPath);
+                Transform childToRemove = FindInPrefabContents(targetGo, childPath, relativePathOnly: true)?.transform;
                 if (childToRemove == null)
                 {
                     return (removedCount, new ErrorResponse($"Child '{childPath}' not found under '{targetGo.name}'."));

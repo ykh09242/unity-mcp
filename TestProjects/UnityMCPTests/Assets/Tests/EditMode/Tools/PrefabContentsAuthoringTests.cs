@@ -54,6 +54,90 @@ namespace MCPForUnityTests.Editor.Tools
                 )
             );
 
+        private void CreateAmbiguousHierarchy()
+        {
+            var contents = PrefabUtility.LoadPrefabContents(path);
+            try
+            {
+                foreach (string branch in new[] { "Branch", "Branch", "Unique" })
+                {
+                    var parent = new GameObject(branch);
+                    parent.transform.SetParent(contents.transform, false);
+                    new GameObject("Leaf").transform.SetParent(parent.transform, false);
+                }
+                PrefabUtility.SaveAsPrefabAsset(contents, path);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(contents);
+            }
+        }
+
+        [TestCase("Leaf", false)]
+        [TestCase("Branch/Leaf", false)]
+        [TestCase("Panel/Branch/Leaf", false)]
+        [TestCase("Branch", true)]
+        [TestCase("Panel/Branch", true)]
+        public void AmbiguousMutationSelectorsAreRefusedWithoutSaving(string selector, bool parent)
+        {
+            CreateAmbiguousHierarchy();
+            byte[] before = File.ReadAllBytes(path);
+            int scenes = UnityEditor.SceneManagement.EditorSceneManager.previewSceneCount;
+            var request = new JObject { ["action"] = "modify_contents", ["prefabPath"] = path };
+            if (parent)
+                request["createChild"] = new JObject { ["name"] = "Added", ["parent"] = selector };
+            else
+            {
+                request["target"] = selector;
+                request["name"] = "Changed";
+            }
+            var result = JObject.FromObject(ManagePrefabs.HandleCommand(request));
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("ambiguous", result.ToString().ToLowerInvariant());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+            Assert.AreEqual(scenes, UnityEditor.SceneManagement.EditorSceneManager.previewSceneCount, "Isolated contents must be unloaded after refusal.");
+        }
+
+        [TestCase("parent")]
+        [TestCase("deleteChild")]
+        public void AmbiguousReparentAndDeleteSelectorsAreRefusedWithoutSaving(string operation)
+        {
+            CreateAmbiguousHierarchy();
+            byte[] before = File.ReadAllBytes(path);
+            var request = new JObject { ["action"] = "modify_contents", ["prefabPath"] = path };
+            if (operation == "parent")
+            {
+                request["target"] = "Unique/Leaf";
+                request["parent"] = "Branch";
+            }
+            else
+                request["deleteChild"] = "Branch/Leaf";
+            var result = JObject.FromObject(ManagePrefabs.HandleCommand(request));
+            Assert.IsFalse(result.Value<bool>("success"), result.ToString());
+            StringAssert.Contains("ambiguous", result.ToString().ToLowerInvariant());
+            CollectionAssert.AreEqual(before, File.ReadAllBytes(path));
+        }
+
+        [TestCase("Unique/Leaf")]
+        [TestCase("Panel/Unique/Leaf")]
+        public void UniqueMutationPathsStillResolve(string selector)
+        {
+            CreateAmbiguousHierarchy();
+            var result = JObject.FromObject(
+                ManagePrefabs.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "modify_contents",
+                        ["prefabPath"] = path,
+                        ["target"] = selector,
+                        ["name"] = "Changed",
+                    }
+                )
+            );
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<GameObject>(path).transform.Find("Unique/Changed"));
+        }
+
         [TestCase("m_AnchoredPosition")]
         [TestCase("m_AnchorMin")]
         public void Vector2Object_SavesBothComponents(string property)
