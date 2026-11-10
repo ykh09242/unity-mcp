@@ -1,7 +1,9 @@
 using System;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Services.Transport;
+using MCPForUnity.Editor.Services.Transport.Transports;
 using NUnit.Framework;
 
 namespace MCPForUnityTests.Editor.Services
@@ -9,6 +11,210 @@ namespace MCPForUnityTests.Editor.Services
     [TestFixture]
     public class CooperativeCancellationTests
     {
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void WebSocketCancellation_HoldsDrainCapacityAndSourceUntilCallbacksSettle(bool explicitCancel, bool callbackThrows)
+        {
+            var owner = new ConnectionCommandWork(CancellationToken.None, 2);
+            using var source = new CancellationTokenSource();
+            using var entered = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            var handler = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var callback = source.Token.Register(() =>
+            {
+                entered.Set();
+                release.Wait();
+                if (callbackThrows)
+                    throw new InvalidOperationException("Controlled callback failure");
+            });
+            object request = NewWebSocketRequest(owner, "held", source);
+            int mutations = 0;
+            Assert.IsNull(owner.TryStartWithAsyncCancellation("held", _ => handler.Task, RequestCancel(request), settled: ((IDisposable)request).Dispose));
+            Assert.IsNull(
+                owner.TryStart(
+                    "next",
+                    async predecessor =>
+                    {
+                        await predecessor.ConfigureAwait(false);
+                        Interlocked.Increment(ref mutations);
+                    }
+                )
+            );
+            try
+            {
+                if (explicitCancel)
+                    Assert.IsTrue(owner.TryCancel("held"));
+                else
+                    ScheduleRequestDeadline(request, 20);
+                Assert.IsTrue(entered.Wait(TimeSpan.FromSeconds(5)), "Cancellation must reach the controlled callback.");
+                handler.TrySetResult(true);
+                Assert.IsFalse(owner.DrainAsync().Wait(TimeSpan.FromMilliseconds(50)), "A completed handler must retain the active deadline callback.");
+                Assert.AreEqual(0, Volatile.Read(ref mutations));
+                Assert.DoesNotThrow(() => _ = source.Token, "The source belongs to the callback until it exits.");
+                Assert.AreEqual("Command queue is full", owner.TryStart("overflow", _ => Task.CompletedTask));
+                release.Set();
+                Assert.IsTrue(owner.DrainAsync().Wait(TimeSpan.FromSeconds(5)));
+                Assert.AreEqual(1, mutations);
+                Assert.Throws<ObjectDisposedException>(() => _ = source.Token);
+                Assert.IsNull(owner.TryStart("after", _ => Task.CompletedTask));
+            }
+            finally
+            {
+                release.Set();
+                handler.TrySetResult(true);
+                Assert.IsTrue(owner.DrainAsync().Wait(TimeSpan.FromSeconds(5)));
+            }
+        }
+
+        private static object NewWebSocketRequest(ConnectionCommandWork owner, string id, CancellationTokenSource source)
+        {
+            Type type = typeof(WebSocketTransportClient).GetNestedType("QueuedCommand", BindingFlags.NonPublic);
+            object request = Activator.CreateInstance(type, true);
+            type.GetField("Id").SetValue(request, id);
+            type.GetField("Owner").SetValue(request, owner);
+            type.GetField("Deadline").SetValue(request, source);
+            return request;
+        }
+
+        private static Func<Task> RequestCancel(object request) =>
+            (Func<Task>)Delegate.CreateDelegate(typeof(Func<Task>), request, request.GetType().GetMethod("CancelAsync"));
+
+        private static void ScheduleRequestDeadline(object request, double remainingMilliseconds) =>
+            request.GetType().GetMethod("ScheduleDeadline").Invoke(request, new object[] { remainingMilliseconds });
+
+        [Test]
+        public void WebSocketExpiredAtAdmission_MarksDeadlineWithoutBlockingOnCallbacks()
+        {
+            var owner = new ConnectionCommandWork(CancellationToken.None, 1);
+            using var source = new CancellationTokenSource();
+            using var entered = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            using var callback = source.Token.Register(() =>
+            {
+                entered.Set();
+                release.Wait();
+            });
+            object request = NewWebSocketRequest(owner, "expired", source);
+            Task<string> admission = Task.Run(() =>
+                owner.TryStartWithAsyncCancellation(
+                    "expired",
+                    _ =>
+                    {
+                        ScheduleRequestDeadline(request, WebSocketTransportClient.CommandDeadlineRemainingMilliseconds(1, 1000, null, 0));
+                        return Task.CompletedTask;
+                    },
+                    RequestCancel(request),
+                    settled: ((IDisposable)request).Dispose
+                )
+            );
+            try
+            {
+                Assert.IsTrue(admission.Wait(TimeSpan.FromSeconds(5)), "An exhausted deadline must not run arbitrary callbacks on the admitting thread.");
+                Assert.IsNull(admission.Result);
+                var token = (CancellationToken)request.GetType().GetProperty("RequestCancellation").GetValue(request);
+                Assert.IsTrue(token.IsCancellationRequested, "Expiry fences admission before the callback worker is scheduled.");
+                Assert.IsFalse((bool)request.GetType().GetProperty("CancelRequested").GetValue(request), "Deadline errors must still say timed out.");
+                Assert.IsTrue(entered.Wait(TimeSpan.FromSeconds(5)));
+                Assert.IsFalse(owner.DrainAsync().IsCompleted);
+                Assert.DoesNotThrow(() => _ = source.Token);
+            }
+            finally
+            {
+                release.Set();
+                Assert.IsTrue(admission.Wait(TimeSpan.FromSeconds(5)));
+                Assert.IsTrue(owner.DrainAsync().Wait(TimeSpan.FromSeconds(5)));
+            }
+            Assert.Throws<ObjectDisposedException>(() => _ = source.Token);
+        }
+
+        [Test]
+        public void WebSocketQueuedDeadline_SkipsHandlerAndRetainsPredecessorOrdering()
+        {
+            var owner = new ConnectionCommandWork(CancellationToken.None, 2);
+            var previous = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var source = new CancellationTokenSource();
+            using var expired = new ManualResetEventSlim();
+            using var callback = source.Token.Register(expired.Set);
+            object request = NewWebSocketRequest(owner, "queued", source);
+            int calls = 0;
+            Assert.IsNull(owner.TryStart("previous", _ => previous.Task));
+            Assert.IsNull(
+                owner.TryStartWithAsyncCancellation(
+                    "queued",
+                    async predecessor =>
+                    {
+                        ScheduleRequestDeadline(request, 20);
+                        try
+                        {
+                            await ConnectionCommandWork.WaitAsync(predecessor, source.Token).ConfigureAwait(false);
+                            source.Token.ThrowIfCancellationRequested();
+                            Interlocked.Increment(ref calls);
+                        }
+                        finally
+                        {
+                            await predecessor.ConfigureAwait(false);
+                        }
+                    },
+                    RequestCancel(request),
+                    settled: ((IDisposable)request).Dispose
+                )
+            );
+            try
+            {
+                Assert.IsTrue(expired.Wait(TimeSpan.FromSeconds(5)));
+                Assert.AreEqual(0, calls);
+                Assert.IsFalse(owner.DrainAsync().IsCompleted);
+                Assert.AreEqual("Command queue is full", owner.TryStart("overflow", _ => Task.CompletedTask));
+            }
+            finally
+            {
+                previous.TrySetResult(true);
+                Assert.IsTrue(owner.DrainAsync().Wait(TimeSpan.FromSeconds(5)));
+            }
+            Assert.AreEqual(0, calls);
+        }
+
+        [Test]
+        public void WebSocketLateDeadline_DoesNotCancelReplacementWithReusedId()
+        {
+            var owner = new ConnectionCommandWork(CancellationToken.None, 1);
+            using var source = new CancellationTokenSource();
+            object request = NewWebSocketRequest(owner, "reused", source);
+            Assert.IsNull(
+                owner.TryStartWithAsyncCancellation(
+                    "reused",
+                    _ =>
+                    {
+                        ScheduleRequestDeadline(request, 60000);
+                        return Task.CompletedTask;
+                    },
+                    RequestCancel(request),
+                    settled: ((IDisposable)request).Dispose
+                )
+            );
+            Assert.IsTrue(owner.DrainAsync().Wait(TimeSpan.FromSeconds(5)));
+            Assert.Throws<ObjectDisposedException>(() => _ = source.Token);
+            var replacement = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int cancellations = 0;
+            Assert.IsNull(owner.TryStart("reused", _ => replacement.Task, () => Interlocked.Increment(ref cancellations)));
+            try
+            {
+                // Timer.Dispose can leave a callback queued. Invoke that exact production
+                // callback after disposal to make the race deterministic.
+                Assert.DoesNotThrow(() => request.GetType().GetMethod("Expire", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(request, null));
+                Assert.AreEqual(0, cancellations);
+                Assert.IsTrue(owner.TryCancel("reused"), "The replacement keeps its cancellation registration.");
+            }
+            finally
+            {
+                replacement.TrySetResult(true);
+                Assert.IsTrue(owner.DrainAsync().Wait(TimeSpan.FromSeconds(5)));
+            }
+            Assert.AreEqual(1, cancellations);
+        }
+
         [Test]
         public void CancelControl_UsesOnlyOwningWorkAndCallsOutsideQueueLock()
         {

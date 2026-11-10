@@ -63,7 +63,10 @@ namespace MCPForUnity.Editor.Services.Transport
             return null;
         }
 
-        public bool TryCancel(string id)
+        public bool TryCancel(string id) => TryCancel(id, null, null);
+
+        // Timers must identify the original request, since a settled id can be reused.
+        internal bool TryCancel(string id, Func<Task> expectedCancellation, Func<Task> cancellationOverride)
         {
             if (string.IsNullOrEmpty(id))
                 return false;
@@ -73,12 +76,14 @@ namespace MCPForUnity.Editor.Services.Transport
             {
                 if (_token.IsCancellationRequested || !_cancellations.TryGetValue(id, out cancel))
                     return false;
+                if (expectedCancellation != null && cancel != expectedCancellation)
+                    return false;
                 _cancellations.Remove(id);
                 _cancellationTasks.Add(id, completion.Task);
             }
             // Publish callback ownership before invoking the request marker. The async
             // callback must return promptly; user token callbacks run on its owned task.
-            _ = ObserveCancellationAsync(cancel, completion);
+            _ = ObserveCancellationAsync(cancellationOverride ?? cancel, completion);
             return true;
         }
 

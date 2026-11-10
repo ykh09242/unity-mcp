@@ -1663,13 +1663,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     return;
                 }
             }
-            ScheduleCommandDeadline(
-                deadline,
-                timeoutSeconds,
-                timeoutClock.Elapsed.TotalMilliseconds,
-                command.resume?.Value<long>("deadline_unix_ms"),
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-            );
+            long? resumeDeadline = command.resume?.Value<long>("deadline_unix_ms");
             var request = new QueuedCommand
             {
                 Id = commandId,
@@ -1687,7 +1681,20 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             bool bypass = AllowsArbitrationBypass(arbitrationNegotiated, command);
             string rejection = work.TryStartWithAsyncCancellation(
                 commandId,
-                previous => ExecuteQueuedCommandAsync(previous, request, token),
+                previous =>
+                {
+                    // Publish queue ownership before even an already-expired deadline
+                    // can schedule user cancellation callbacks.
+                    request.ScheduleDeadline(
+                        CommandDeadlineRemainingMilliseconds(
+                            timeoutSeconds,
+                            timeoutClock.Elapsed.TotalMilliseconds,
+                            resumeDeadline,
+                            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                        )
+                    );
+                    return ExecuteQueuedCommandAsync(previous, request, token);
+                },
                 request.CancelAsync,
                 bypass,
                 request.Dispose
@@ -1743,8 +1750,29 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             public CommandProgressBuffer Progress;
             public Task Response;
             private readonly CommandAdmission cancellation = new CommandAdmission();
+            private Timer deadlineTimer;
+            private bool deadlineExpired;
             public CancellationToken RequestCancellation => cancellation.Token;
-            public bool CancelRequested => RequestCancellation.IsCancellationRequested;
+            public bool CancelRequested => RequestCancellation.IsCancellationRequested && !deadlineExpired;
+
+            public void ScheduleDeadline(double remainingMilliseconds)
+            {
+                if (remainingMilliseconds <= 0)
+                    Expire();
+                else
+                {
+                    deadlineTimer = new Timer(_ => Expire(), null, Timeout.Infinite, Timeout.Infinite);
+                    deadlineTimer.Change(TimeSpan.FromMilliseconds(remainingMilliseconds), Timeout.InfiniteTimeSpan);
+                }
+            }
+
+            private void Expire() => Owner.TryCancel(Id, CancelAsync, CancelDeadlineAsync);
+
+            private Task CancelDeadlineAsync()
+            {
+                deadlineExpired = true;
+                return CancelAsync();
+            }
 
             public Task CancelAsync()
             {
@@ -1755,6 +1783,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
             public void Dispose()
             {
+                deadlineTimer?.Dispose();
                 cancellation.Dispose();
                 Deadline.Dispose();
             }
@@ -1802,20 +1831,21 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                 async Task<object> RunCommandAsync()
                 {
+                    request.RequestCancellation.ThrowIfCancellationRequested();
                     var command = request.Command;
                     if (command.resume != null)
                     {
                         var admitted = await TransportCommandDispatcher.AdmitResumeAsync(command, request.Deadline.Token).ConfigureAwait(false);
                         command.ResumeTicket = admitted.Ticket;
                         request.Deadline.Token.ThrowIfCancellationRequested();
+                        request.RequestCancellation.ThrowIfCancellationRequested();
                         if (admitted.Ticket == null)
                             return admitted.Response(command.arbitration);
                         admitted.Ticket.Owner.BindCancellation(admitted.Ticket, () => request.Owner.TryCancel(request.Id));
                     }
                     await ConnectionCommandWork.WaitAsync(previous, request.Deadline.Token).ConfigureAwait(false);
                     request.Deadline.Token.ThrowIfCancellationRequested();
-                    if (request.CancelRequested)
-                        throw new OperationCanceledException();
+                    request.RequestCancellation.ThrowIfCancellationRequested();
                     if (request.Progress != null)
                     {
                         progressStop = CancellationTokenSource.CreateLinkedTokenSource(request.Deadline.Token);

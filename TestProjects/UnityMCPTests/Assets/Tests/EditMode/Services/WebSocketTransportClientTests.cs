@@ -940,6 +940,83 @@ namespace MCPForUnityTests.Editor.Services
             }
         }
 
+        [Test]
+        public async Task DeadlineCallback_RetainsDrainAndSourceAfterActualHandlerSettlement()
+        {
+            RequireOwnedProgressEditor();
+            using var handlers = new ProgressHandlerScope();
+            using var settings = NativeProgressProbe.EnableTools("batch_execute");
+            using var releaseCallback = new ManualResetEventSlim();
+            var callbackEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseHandler = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            const string child = "__owned_deadline_settlement";
+            handlers.Set(
+                child,
+                new MCPForUnity.Editor.Tools.HandlerInfo(
+                    child,
+                    null,
+                    _ =>
+                    {
+                        entered.TrySetResult(true);
+                        return releaseHandler.Task;
+                    }
+                )
+            );
+            using var peer = new ProgressWirePeer();
+            using var client = peer.CreateClient();
+            CancellationTokenRegistration callback = default;
+            try
+            {
+                Assert.IsTrue(await client.StartAsync());
+                await peer.Negotiate(false);
+                string id = Guid.NewGuid().ToString("D");
+                peer.Send(
+                    new JObject
+                    {
+                        ["type"] = "execute",
+                        ["id"] = id,
+                        ["name"] = "batch_execute",
+                        ["params"] = new JObject { ["commands"] = new JArray(new JObject { ["tool"] = child }) },
+                        ["timeout"] = 30,
+                    }
+                );
+                await NativeProgressProbe.AwaitOwned(entered.Task);
+                var work = (ConnectionCommandWork)GetField(client, "_commandWork");
+                var cancellations =
+                    (Dictionary<string, Func<Task>>)
+                        typeof(ConnectionCommandWork).GetField("_cancellations", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(work);
+                object request = cancellations[id].Target;
+                var source = (CancellationTokenSource)request.GetType().GetField("Deadline").GetValue(request);
+                callback = source.Token.Register(() =>
+                {
+                    callbackEntered.TrySetResult(true);
+                    releaseCallback.Wait();
+                });
+                // Arm the production timer only after the controlled callback is ready.
+                var timer = (Timer)request.GetType().GetField("deadlineTimer", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(request);
+                timer.Change(20, Timeout.Infinite);
+                await NativeProgressProbe.AwaitOwned(callbackEntered.Task);
+                releaseHandler.TrySetResult(new { complete = true });
+                await peer.Result(id);
+                await peer.Barrier();
+                Assert.IsTrue(client.IsConnected, "Deadline callbacks must not block receive-loop control.");
+                Assert.IsFalse(work.DrainAsync().IsCompleted, "The actual handler and result have settled, but the deadline callback is still owned.");
+                Assert.DoesNotThrow(() => _ = source.Token);
+                releaseCallback.Set();
+                await NativeProgressProbe.AwaitOwned(work.DrainAsync());
+                Assert.Throws<ObjectDisposedException>(() => _ = source.Token);
+                peer.AssertHealthy();
+            }
+            finally
+            {
+                releaseCallback.Set();
+                releaseHandler.TrySetResult(new { complete = true });
+                callback.Dispose();
+                await StopOwnedProgressClient(client);
+            }
+        }
+
         [TestCase("force")]
         [TestCase("disconnect")]
         [TestCase("wire")]
