@@ -8,6 +8,14 @@ from models.models import MCPResponse
 from models.response_limits import bound_response
 
 
+def extract_unity_result(response: Any) -> Any:
+    """Extract bounded native JSON for callers that own response adaptation."""
+    response = bound_response(response)
+    if isinstance(response, dict) and response.get("status") == "success" and "result" in response:
+        return response["result"]
+    return normalize_unity_response(response)
+
+
 def normalize_unity_response(response: Any) -> Any:
     """Normalize Unity's {status,result} payloads into MCPResponse shape."""
     response = bound_response(response)
@@ -15,31 +23,33 @@ def normalize_unity_response(response: Any) -> Any:
         return response
 
     status = response.get("status")
-    result = (
-        response.get("result")
-        if isinstance(response.get("result"), dict)
-        else response.get("result")
-    )
+    result = response.get("result")
 
     # Already MCPResponse-shaped
     if "success" in response:
         return response
-    if isinstance(result, dict) and "success" in result:
+    if isinstance(result, dict) and (
+        "success" in result or result.get("_mcp_status") in ("pending", "complete", "error")
+    ):
         return result
 
     if status is None:
         return response
 
-    payload = result if isinstance(result, dict) else {}
+    # Only legacy response-shaped dictionaries use implicit metadata. Business
+    # objects keep every field together, including a field named "data".
+    payload = (
+        result
+        if isinstance(result, dict)
+        and result.keys() <= MCPResponse.model_fields.keys() | {"status"}
+        and any(key in result for key in ("message", "error", "data"))
+        else {}
+    )
     success = status == "success"
     message = payload.get("message") or response.get("message")
     error = payload.get("error") or response.get("error")
 
-    data = payload.get("data")
-    if data is None and isinstance(payload, dict) and payload:
-        data = {k: v for k, v in payload.items() if k not in {"message", "error", "status", "code"}}
-        if not data:
-            data = None
+    data = payload.get("data") if payload else result
 
     normalized: dict[str, Any] = {
         "success": success,

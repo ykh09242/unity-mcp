@@ -14,7 +14,6 @@ from starlette.websockets import WebSocketState
 from core.config import config
 from models.models import ToolDefinitionModel
 from models.response_limits import ResponseOwner, response_owner, response_size
-from models.unity_response import normalize_unity_response
 import services.custom_tool_service as module
 from services.custom_tool_service import CustomToolService
 from transport.charge_ledger import ChargeLedger
@@ -98,11 +97,14 @@ def polling(monkeypatch):
     websocket.send_json = send_json
 
     async def dispatch(_send, _target, name, params, **kwargs):
-        assert kwargs == {"user_id": "alice"}
+        assert kwargs == {
+            "user_id": "alice",
+            "_response_adapter": module.extract_unity_result,
+        }
         if state.calls + 1 == state.replace_at:
             state.ledgers.append(OwnedHub._retained_results)
             OwnedHub._retained_results = ChargeLedger()
-        result = normalize_unity_response(await OwnedHub.send_command("session", name, params))
+        result = kwargs["_response_adapter"](await OwnedHub.send_command("session", name, params))
         if state.calls == state.fail_at:
             raise RuntimeError("transient status failure after acquisition")
         return result

@@ -27,6 +27,7 @@ from models.models import (
     parse_tool_parameter_default,
 )
 from models.response_lifetime import ResponsePollLifetime
+from models.unity_response import extract_unity_result
 from models.custom_tool_schema import (
     PreparedSchema,
     SchemaContractError,
@@ -367,7 +368,7 @@ class CustomToolService:
     async def _send_custom(self, guard, unity_instance, tool_name, params, user_id):
         if guard is not None and not guard.current():
             return custom_catalog_changed()
-        options = {"user_id": user_id}
+        options = {"user_id": user_id, "_response_adapter": extract_unity_result}
         if guard is not None:
             options["_catalog_guard"] = guard
         return await send_with_unity_instance(
@@ -776,7 +777,8 @@ class CustomToolService:
                 # A success or status marker alone does not make the fields typed metadata.
                 return MCPResponse(success=success is not False, data=response)
 
-        return MCPResponse(success=False, message=str(response))
+        # Stdio already extracts native JSON values; HTTP adapts its envelope first.
+        return MCPResponse(success=True, data=response)
 
     def _finish_schema_response(
         self, response, schema: PreparedSchema | None, job_id=None

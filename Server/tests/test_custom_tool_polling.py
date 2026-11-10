@@ -6,7 +6,7 @@ import pytest
 
 import services.custom_tool_service as module
 from models.models import ToolDefinitionModel
-from models.unity_response import normalize_unity_response
+from models.unity_response import extract_unity_result, normalize_unity_response
 from services.custom_tool_service import CustomToolService
 
 
@@ -157,7 +157,10 @@ async def test_custom_tool_polling_threads_user_and_job_parameters(service, monk
 
     assert result.success is True
     assert send.call_args.args[3] == {"action": "status", "job_id": "job-1"}
-    assert send.call_args.kwargs == {"user_id": "user-a"}
+    assert send.call_args.kwargs == {
+        "user_id": "user-a",
+        "_response_adapter": extract_unity_result,
+    }
     assert params["action"] == "start"
 
 
@@ -207,7 +210,10 @@ async def test_pending_job_survives_retryable_poll_response(service, monkeypatch
         {"action": "status", "job_id": "job-1"},
         {"action": "status", "job_id": "job-1"},
     ]
-    assert all(call.kwargs == {"user_id": "user-a"} for call in send.call_args_list)
+    assert all(
+        call.kwargs == {"user_id": "user-a", "_response_adapter": extract_unity_result}
+        for call in send.call_args_list
+    )
     assert service._active_polls == 0
 
 

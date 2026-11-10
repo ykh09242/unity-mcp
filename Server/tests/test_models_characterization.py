@@ -734,7 +734,7 @@ class TestNormalizeUnityResponse:
         result = normalize_unity_response(response)
 
         assert result["success"] is True
-        assert result["data"] is None
+        assert result["data"] == {}
 
     def test_normalize_status_code_excluded_from_data(self):
         """Test that 'code' and 'status' fields are filtered from data."""

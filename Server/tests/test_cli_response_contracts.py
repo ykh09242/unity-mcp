@@ -242,6 +242,25 @@ def test_raw_custom_payload_without_status_is_not_failure(command_response):
     assert json.loads(result.stdout) == response
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [[1, 2], [], "owned", "", 42, 0, True, False, None, {}, {"data": [1], "label": "owned"}],
+)
+def test_raw_native_envelope_keeps_business_values(command_response, payload):
+    response, requests = command_response
+    response.clear()
+    response.update({"status": "success", "result": payload})
+
+    result = CliRunner().invoke(cli, ["--format", "json", "raw", "owned_custom"])
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert document["success"] is True
+    assert document["data"] == payload
+    assert type(document["data"]) is type(payload)
+    assert requests == [{"type": "owned_custom", "params": {}}]
+
+
 @pytest.mark.parametrize("output_format", ["text", "json", "table"])
 def test_raw_message_only_success_remains_visible(command_response, output_format):
     response, requests = command_response

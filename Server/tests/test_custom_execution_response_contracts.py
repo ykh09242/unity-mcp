@@ -79,10 +79,10 @@ async def main():
                         raise InstanceSelectionRequiredError(available_instances=["OwnedA@a", "OwnedB@b"])
                     if case == "poll_error":
                         if len(requests) == 1:
-                            return {"_mcp_status": "pending", "_mcp_poll_interval": .1, "data": {"job_id": "owned-job"}}
+                            return {"status": "success", "result": {"_mcp_status": "pending", "_mcp_poll_interval": .1, "data": {"job_id": "owned-job"}}}
                         assert params == {"count": 7 if entry == "execute_custom_tool" else 3, "action": "status", "job_id": "owned-job"}
-                        return {"_mcp_status": "error", "success": True, "error": "fixture_failed", "hint": "retry", "data": {"job_id": "owned-job"}}
-                    return {"success": True, "message": "fixture completed", "data": {"value": 1}}
+                        return {"status": "success", "result": {"_mcp_status": "error", "success": True, "error": "fixture_failed", "hint": "retry", "data": {"job_id": "owned-job"}}}
+                    return {"status": "success", "result": {"success": True, "message": "fixture completed", "data": {"value": 1}}}
                 PluginHub.send_command_for_instance = send
                 arguments = {"tool_name": target, "parameters": {"count": 7}} if entry == "execute_custom_tool" else {}
                 result = await client.call_tool(entry, arguments, raise_on_error=False)
@@ -99,6 +99,35 @@ async def main():
                 else:
                     passed = response == {"success": True, "message": "fixture completed", "error": None, "data": {"value": 1}, "hint": None}
                 cases.append({"entry": entry, "case": case, "passed": passed, "response": response, "requests": requests})
+            service._project_tools["fixturehash"][target].requires_polling = False
+            native_cases = [(payload, payload) for payload in (
+                [1, {"enabled": False}, None], [], "owned-result", "", 42, 0, 1.5, True, False, None, {},
+                {"data": [1], "label": "owned"},
+                {"status": "business", "message": "owned", "code": 7, "data": None, "label": "owned"},
+                {"_mcp_status": ["business"], "data": [], "label": "owned"},
+                {"message": "business"}, {"error": "business"}, {"status": "business"},
+            )]
+            native_cases.append(({"data": {"x": 1}}, {"x": 1}))
+            for payload, expected_data in native_cases:
+                responses = []
+                for transport in ("http", "stdio"):
+                    config.transport_mode = transport
+                    async def native_http(instance, command, params, **kwargs):
+                        assert instance == "Selected@fixturehash" and command == target
+                        return {"status": "success", "result": copy.deepcopy(payload)}
+                    async def native_stdio(command, params, **kwargs):
+                        assert kwargs["instance_id"] == "Selected@fixturehash" and command == target
+                        return copy.deepcopy(payload)
+                    PluginHub.send_command_for_instance = native_http
+                    module.async_send_command_with_retry = native_stdio
+                    result = await client.call_tool(entry, arguments, raise_on_error=False)
+                    response = json.loads(result.content[0].text)
+                    passed = (not result.is_error and response["success"] is True and response["data"] == expected_data
+                              and type(response["data"]) is type(expected_data))
+                    cases.append({"entry": entry, "case": "native_" + transport, "passed": passed, "response": response})
+                    responses.append(response)
+                assert responses[0] == responses[1], (payload, responses)
+            config.transport_mode = "http"
     print(json.dumps({"protocol": sys.argv[1], "cases": cases, "failed": sum(not c["passed"] for c in cases)}))
     assert all(c["passed"] for c in cases), [(c["entry"], c["case"], c["response"]) for c in cases if not c["passed"]]
 anyio.run(main)

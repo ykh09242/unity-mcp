@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
-from typing import Awaitable, Callable, TypeVar
+from typing import Any, Awaitable, Callable, TypeVar
 
 from transport.plugin_hub import (
     CommandNotDispatchedError,
@@ -123,10 +123,10 @@ def _is_http_transport() -> bool:
     return config.transport_mode.lower() == "http"
 
 
-def _observed_unity_response(raw):
-    """Observe the final canonical response, including outer error construction."""
+def _observed_unity_response(raw, response_adapter: Callable[[Any], Any] | None = None):
+    """Observe native outcomes before caller-owned response adaptation."""
     observe_native_result(raw)
-    return normalize_unity_response(raw)
+    return (response_adapter or normalize_unity_response)(raw)
 
 
 async def _resolve_user_id_from_request() -> str | None:
@@ -146,6 +146,7 @@ async def send_with_unity_instance(
     *args,
     user_id: str | None = None,
     _progress: ProgressSink | None = None,
+    _response_adapter: Callable[[Any], Any] | None = None,
     **kwargs,
 ) -> T:
     if _is_http_transport():
@@ -196,7 +197,7 @@ async def send_with_unity_instance(
             transport_returned = True
             if config.http_remote_hosted:
                 await lease.check()
-            return _observed_unity_response(raw)
+            return _observed_unity_response(raw, _response_adapter)
         except CredentialLeaseError:
             if transport_returned:
                 return _observed_unity_response(

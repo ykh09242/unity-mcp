@@ -77,7 +77,8 @@ async def test_initial_batch_response_job_id_targets_status_until_terminal(
     assert result.success is final["success"]
     assert result.error == final.get("error")
     assert all(
-        params["job_id"] == "batch-new" and kwargs == {"user_id": "user-a"}
+        params["job_id"] == "batch-new"
+        and kwargs == {"user_id": "user-a", "_response_adapter": module.extract_unity_result}
         for params, kwargs in sent[1:]
     )
     assert original == {"action": "batch", "targets": ["windows64", "linux64"], **caller}
