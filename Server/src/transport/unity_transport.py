@@ -125,8 +125,14 @@ def _is_http_transport() -> bool:
 
 def _observed_unity_response(raw, response_adapter: Callable[[Any], Any] | None = None):
     """Observe native outcomes before caller-owned response adaptation."""
+    raw = _public_response_value(raw)
     observe_native_result(raw)
     return (response_adapter or normalize_unity_response)(raw)
+
+
+def _public_response_value(response):
+    """Expose actual MCP responses as dictionaries before public wrappers consume them."""
+    return response.model_dump() if isinstance(response, MCPResponse) else response
 
 
 async def _resolve_user_id_from_request() -> str | None:
@@ -252,6 +258,6 @@ async def send_with_unity_instance(
         kwargs["_progress"] = _progress
     if unity_instance:
         kwargs.setdefault("instance_id", unity_instance)
-    result = await send_fn(*args, **kwargs)
-    observe_native_result({"data": result.data} if isinstance(result, MCPResponse) else result)
+    result = _public_response_value(await send_fn(*args, **kwargs))
+    observe_native_result(result)
     return result
