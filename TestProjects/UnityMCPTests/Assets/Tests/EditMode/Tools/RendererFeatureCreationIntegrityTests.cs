@@ -256,6 +256,55 @@ namespace MCPForUnityTests.EditMode.Tools
             CollectionAssert.AreEqual(new[] { "missing_setting" }, response["data"]["failed"].Values<string>());
         }
 
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void ConfigureWithoutAcceptedPropertiesPreservesPendingEdits(bool rejected, bool initiallyDirty)
+        {
+            var added = JObject.FromObject(ManageGraphics.HandleCommand(new JObject { ["action"] = "feature_add", ["type"] = featureType }));
+            Assert.IsTrue(added.Value<bool>("success"), added.ToString());
+            Object feature;
+            using (var serialized = new SerializedObject(renderer))
+                feature = serialized.FindProperty("m_RendererFeatures").GetArrayElementAtIndex(0).objectReferenceValue;
+            Assert.IsNotNull(feature);
+            Assert.IsFalse(EditorUtility.IsDirty(renderer));
+            Assert.IsFalse(EditorUtility.IsDirty(feature));
+            byte[] bytes = File.ReadAllBytes(FullPath(rendererPath));
+            if (initiallyDirty)
+            {
+                renderer.name += "_PendingOwnerEdit";
+                feature.name += "_PendingFeatureEdit";
+                EditorUtility.SetDirty(renderer);
+                EditorUtility.SetDirty(feature);
+            }
+            string rendererName = renderer.name;
+            string featureName = feature.name;
+            int rendererDirtyCount = EditorUtility.GetDirtyCount(renderer);
+            int featureDirtyCount = EditorUtility.GetDirtyCount(feature);
+            var properties = rejected ? new JObject { ["missing_setting"] = true } : new JObject();
+            var response = JObject.FromObject(
+                ManageGraphics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "feature_configure",
+                        ["index"] = 0,
+                        ["properties"] = properties,
+                    }
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsEmpty(response["data"]["changed"]);
+            CollectionAssert.AreEqual(rejected ? new[] { "missing_setting" } : Array.Empty<string>(), response["data"]["failed"].Values<string>());
+            Assert.AreEqual(rendererName, renderer.name);
+            Assert.AreEqual(featureName, feature.name);
+            Assert.AreEqual(initiallyDirty, EditorUtility.IsDirty(renderer));
+            Assert.AreEqual(initiallyDirty, EditorUtility.IsDirty(feature));
+            Assert.AreEqual(rendererDirtyCount, EditorUtility.GetDirtyCount(renderer));
+            Assert.AreEqual(featureDirtyCount, EditorUtility.GetDirtyCount(feature));
+            CollectionAssert.AreEqual(bytes, File.ReadAllBytes(FullPath(rendererPath)), "A no-write request must not persist pending owner or subasset edits.");
+        }
+
         [Test]
         public void SaveBoundaryFailureReportsRetainedFeatureIdentity()
         {

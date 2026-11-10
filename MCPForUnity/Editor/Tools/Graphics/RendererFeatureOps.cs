@@ -454,9 +454,12 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             Undo.RecordObject(feature, "Configure Renderer Feature");
             var result = ApplyFeatureProperties(feature, propertiesToken);
-            EditorUtility.SetDirty(feature);
-            EditorUtility.SetDirty(rendererData as UnityEngine.Object);
-            AssetDatabase.SaveAssetIfDirty(rendererData as UnityEngine.Object);
+            if (result.changed.Count > 0)
+            {
+                EditorUtility.SetDirty(feature);
+                EditorUtility.SetDirty(rendererData as UnityEngine.Object);
+                AssetDatabase.SaveAssetIfDirty(rendererData as UnityEngine.Object);
+            }
 
             return new
             {
