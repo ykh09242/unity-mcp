@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Services;
@@ -20,7 +21,6 @@ namespace MCPForUnityTests.Editor.Services
 
         private FakeTransportClient _fakeClient;
         private TransportManager _manager;
-        private TransportManager _savedManager;
         private bool _savedResumeFlag;
         private bool _savedUseHttpTransport;
         private string _savedResumeStatus;
@@ -34,7 +34,6 @@ namespace MCPForUnityTests.Editor.Services
             _savedResumeFlag = SessionState.GetBool(HttpBridgeReloadHandler.ResumeSessionKey, false);
             _savedResumeStatus = HttpBridgeReloadHandler.ResumeStatus;
             _savedUseHttpTransport = EditorPrefs.GetBool(EditorPrefKeys.UseHttpTransport, true);
-            _savedManager = MCPServiceLocator.TransportManager;
 
             SessionState.EraseBool(HttpBridgeReloadHandler.ResumeSessionKey);
 
@@ -50,12 +49,14 @@ namespace MCPForUnityTests.Editor.Services
         [TearDown]
         public void TearDown()
         {
+            HttpBridgeReloadHandler.CancelPendingResume();
             // Stored-false and absent are indistinguishable: every read uses GetBool(key, false).
             SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, _savedResumeFlag);
             SessionState.SetString(HttpBridgeReloadHandler.ResumeStatusSessionKey, _savedResumeStatus);
             EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, _savedUseHttpTransport);
             EditorConfigurationCache.Instance.Refresh();
-            MCPServiceLocator.Register(_savedManager);
+            // Register retires the previous owner; a saved instance cannot be restored.
+            MCPServiceLocator.Register(new TransportManager());
         }
 
         private static bool ResumeFlagSet => SessionState.GetBool(HttpBridgeReloadHandler.ResumeSessionKey, false);
@@ -263,6 +264,46 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsTrue(resume.IsCompleted, "resume should complete synchronously with fakes");
             Assert.AreEqual(1, _fakeClient.StartCalls, "a session established while the resume waited must not be bounced");
             Assert.IsFalse(ResumeFlagSet);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Resume_FinalRetiredFaultPreservesNewPendingIntent(bool replaceOwner)
+        {
+            // Given a final resume attempt suspended at a controlled transport boundary.
+            var client = new ConnectingHttpClient();
+            var manager = new TransportManager();
+            manager.Configure(() => client, () => client);
+            MCPServiceLocator.Register(manager);
+            SynchronizationContext saved = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(null);
+            try
+            {
+                SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, true);
+                Task resume = HttpBridgeReloadHandler.ResumeHttpWithRetriesAsync(new[] { TimeSpan.Zero }, () => false);
+                Assert.IsFalse(resume.IsCompleted);
+                if (replaceOwner)
+                    MCPServiceLocator.Register(new TransportManager());
+                else
+                    HttpBridgeReloadHandler.CancelPendingResume();
+                SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, true);
+                SessionState.SetString(HttpBridgeReloadHandler.ResumeStatusSessionKey, "new-owner-intent");
+
+                // When the retired final attempt faults after newer pending intent is recorded.
+                client.Pending.SetException(new InvalidOperationException("retired-start-failure"));
+
+                // Then completion preserves the newer flag and status instead of exhausting them.
+                Assert.IsTrue(resume.IsCompleted);
+                resume.GetAwaiter().GetResult();
+                Assert.IsTrue(ResumeFlagSet);
+                Assert.AreEqual("new-owner-intent", HttpBridgeReloadHandler.ResumeStatus);
+            }
+            finally
+            {
+                HttpBridgeReloadHandler.CancelPendingResume();
+                client.Pending.TrySetResult(false);
+                SynchronizationContext.SetSynchronizationContext(saved);
+            }
         }
 
         [Test]

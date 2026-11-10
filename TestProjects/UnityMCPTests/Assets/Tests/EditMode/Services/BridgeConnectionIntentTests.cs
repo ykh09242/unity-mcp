@@ -16,7 +16,6 @@ namespace MCPForUnityTests.Editor.Services
     public class BridgeConnectionIntentTests : TransportPreferenceTestBase
     {
         private readonly Dictionary<string, (bool exists, string value)> _preferences = new();
-        private TransportManager _savedManager;
         private TransportManager _manager;
         private ControlledClient _http;
         private ControlledClient _stdio;
@@ -27,7 +26,6 @@ namespace MCPForUnityTests.Editor.Services
         [SetUp]
         public void SetUp()
         {
-            _savedManager = MCPServiceLocator.TransportManager;
             foreach (string key in new[] { EditorPrefKeys.HttpTransportScope, EditorPrefKeys.HttpBaseUrl, EditorPrefKeys.HttpRemoteBaseUrl })
                 _preferences[key] = (EditorPrefs.HasKey(key), EditorPrefs.GetString(key));
             _resume = HttpBridgeReloadHandler.IsResumePending;
@@ -49,12 +47,14 @@ namespace MCPForUnityTests.Editor.Services
         [TearDown]
         public void TearDown()
         {
+            HttpBridgeReloadHandler.CancelPendingResume();
             _http.PendingStart?.TrySetResult(false);
             _http.PendingStop?.TrySetResult(true);
             _stdio.PendingStart?.TrySetResult(false);
             _stdio.PendingStop?.TrySetResult(true);
             _manager.StopAsync().GetAwaiter().GetResult();
-            MCPServiceLocator.Register(_savedManager);
+            // Register retires the previous owner; a saved instance cannot be restored.
+            MCPServiceLocator.Register(new TransportManager());
             foreach (var pref in _preferences)
                 if (pref.Value.exists)
                     EditorPrefs.SetString(pref.Key, pref.Value.value);
@@ -65,6 +65,67 @@ namespace MCPForUnityTests.Editor.Services
             SessionState.SetBool(HttpBridgeReloadHandler.ResumeSessionKey, _resume);
             SessionState.SetString(HttpBridgeReloadHandler.ResumeStatusSessionKey, _resumeStatus);
             SessionState.SetBool(HttpAutoStartHandler.ConnectPendingKey, _connectPending);
+        }
+
+        [Test]
+        public void CachedDefaultBridge_UsesReplacementOwnerAndRejectsRetiredRestoration()
+        {
+            // Given the cached default bridge while its original owner is active.
+            IBridgeControlService previousBridge = MCPServiceLocator.Bridge;
+            var bridge = new BridgeControlService();
+            MCPServiceLocator.Register<IBridgeControlService>(bridge);
+            var client = new ControlledClient();
+            var replacement = new TransportManager();
+            replacement.Configure(() => client, () => new ControlledClient());
+            try
+            {
+                // When the locator transfers ownership to a replacement manager.
+                MCPServiceLocator.Register(replacement);
+
+                // Then the same bridge reaches that owner, and an invalid restoration leaves it usable.
+                Assert.AreSame(bridge, MCPServiceLocator.Bridge);
+                Assert.IsTrue(bridge.StartAsync().Result);
+                Assert.IsTrue(bridge.IsRunning);
+                Assert.AreEqual(1, client.StartCalls);
+                Assert.Throws<ObjectDisposedException>(() => MCPServiceLocator.Register(_manager));
+                Assert.AreSame(replacement, MCPServiceLocator.TransportManager);
+                Assert.IsTrue(bridge.VerifyAsync().Result.Success);
+                Assert.IsTrue(bridge.StopAsync().IsCompleted);
+                Assert.IsFalse(bridge.IsRunning);
+            }
+            finally
+            {
+                MCPServiceLocator.Register<IBridgeControlService>(previousBridge);
+            }
+        }
+
+        [Test]
+        public void AsyncVerification_IncompleteProbeLeavesCallingContextAvailable()
+        {
+            // Given a connected owner and a probe waiting on this thread's context.
+            Assert.IsTrue(_manager.StartAsync(TransportMode.Http).Result);
+            _http.PendingVerify = new TaskCompletionSource<bool>();
+            var context = new QueuedContext();
+            SynchronizationContext saved = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(context);
+            try
+            {
+                // When asynchronous verification starts before the probe completes.
+                Task<BridgeVerificationResult> verification = new BridgeControlService().VerifyAsync();
+
+                // Then control returns to the caller and pumping its context completes the result.
+                Assert.IsFalse(verification.IsCompleted);
+                _http.PendingVerify.SetResult(true);
+                context.Drain();
+                Assert.IsTrue(verification.IsCompleted && verification.Result.Success);
+                Assert.IsTrue(new BridgeControlService().Verify(0).Success, "Completed probes retain synchronous compatibility.");
+            }
+            finally
+            {
+                _http.PendingVerify.TrySetResult(false);
+                context.Drain();
+                SynchronizationContext.SetSynchronizationContext(saved);
+            }
         }
 
         [TestCase(false)]
@@ -282,6 +343,7 @@ namespace MCPForUnityTests.Editor.Services
         {
             public TaskCompletionSource<bool> PendingStart;
             public TaskCompletionSource<bool> PendingStop;
+            public TaskCompletionSource<bool> PendingVerify;
             public string StartFailure;
             public int StartCalls;
             public int StopCalls;
@@ -303,9 +365,22 @@ namespace MCPForUnityTests.Editor.Services
                 return PendingStop?.Task ?? Task.CompletedTask;
             }
 
-            public Task<bool> VerifyAsync() => Task.FromResult(IsConnected);
+            public Task<bool> VerifyAsync() => PendingVerify?.Task ?? Task.FromResult(IsConnected);
 
             public Task ReregisterToolsAsync() => Task.CompletedTask;
+        }
+
+        private sealed class QueuedContext : SynchronizationContext
+        {
+            private readonly Queue<Action> _callbacks = new();
+
+            public override void Post(SendOrPostCallback callback, object state) => _callbacks.Enqueue(() => callback(state));
+
+            internal void Drain()
+            {
+                while (_callbacks.Count != 0)
+                    _callbacks.Dequeue()();
+            }
         }
     }
 }

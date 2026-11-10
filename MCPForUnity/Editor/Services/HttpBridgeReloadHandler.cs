@@ -178,10 +178,13 @@ namespace MCPForUnity.Editor.Services
             Exception lastException = null;
             string lastReason = "no transport error detail";
             int generation = _resumeGeneration;
+            TransportManager owner = null;
+            bool IsCurrentResume() =>
+                IsResumePending && generation == _resumeGeneration && (owner == null || ReferenceEquals(owner, MCPServiceLocator.ExistingTransportManager));
 
             for (int i = 0; i < schedule.Length; i++)
             {
-                if (!IsResumePending || generation != _resumeGeneration)
+                if (!IsCurrentResume())
                     return;
                 int attempt = i + 1;
                 McpLog.Debug($"[HTTP Reload] Resume attempt {attempt}/{schedule.Length}");
@@ -202,7 +205,7 @@ namespace MCPForUnity.Editor.Services
                 }
 
                 // The flag doubles as the cancel signal (see CancelPendingResume).
-                if (!IsResumePending || generation != _resumeGeneration)
+                if (!IsCurrentResume())
                     return;
                 try
                 {
@@ -225,15 +228,16 @@ namespace MCPForUnity.Editor.Services
 
                     // Never bounce a session someone else established while we were waiting
                     // (WebSocketTransportClient.StartAsync tears down a live connection first).
-                    if (MCPServiceLocator.TransportManager.IsRunning(TransportMode.Http))
+                    owner ??= MCPServiceLocator.TransportManager;
+                    if (owner.IsRunning(TransportMode.Http))
                     {
                         SessionState.EraseBool(ResumeSessionKey);
                         SessionState.EraseString(ResumeStatusSessionKey);
                         return;
                     }
 
-                    bool started = await MCPServiceLocator.TransportManager.StartAsync(TransportMode.Http);
-                    if (!IsResumePending || generation != _resumeGeneration)
+                    bool started = await owner.StartAsync(TransportMode.Http);
+                    if (!IsCurrentResume())
                         return;
                     if (started)
                     {
@@ -244,13 +248,15 @@ namespace MCPForUnity.Editor.Services
                         return;
                     }
 
-                    var state = MCPServiceLocator.TransportManager.GetState(TransportMode.Http);
+                    var state = owner.GetState(TransportMode.Http);
                     string reason = string.IsNullOrWhiteSpace(state?.Error) ? "no error detail" : state.Error;
                     lastReason = reason;
                     McpLog.Debug($"[HTTP Reload] Resume attempt {attempt} failed: {reason}");
                 }
                 catch (Exception ex)
                 {
+                    if (!IsCurrentResume())
+                        return;
                     lastException = ex;
                     lastReason = ex.GetType().Name;
                     McpLog.Debug($"[HTTP Reload] Resume attempt {attempt} threw: {ex.Message}");
@@ -260,6 +266,8 @@ namespace MCPForUnity.Editor.Services
             // Exhausted: erase the flag so later reload boundaries don't replay this failure
             // loop for the rest of the session. This cannot swallow a multi-pass resume — a
             // reload mid-loop kills the task before this line, leaving the flag set.
+            if (!IsCurrentResume())
+                return;
             SessionState.EraseBool(ResumeSessionKey);
             SessionState.SetString(
                 ResumeStatusSessionKey,

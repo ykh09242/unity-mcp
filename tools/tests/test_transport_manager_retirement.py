@@ -10,7 +10,19 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_manager_and_locator_retire_previous_owners(tmp_path):
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "retirement",
+        "replacement",
+        "verification",
+        "verification-compatibility",
+        "resume",
+        "resume-owner",
+        "resume-current-fault",
+    ],
+)
+def test_manager_and_locator_retire_previous_owners(tmp_path, scenario):
     dotnet = shutil.which("dotnet")
     if not dotnet:
         pytest.skip("Existing .NET SDK required for the manager ownership regression")
@@ -32,7 +44,11 @@ def test_manager_and_locator_retire_previous_owners(tmp_path):
         ROOT / "MCPForUnity/Editor/Services/Transport/TransportState.cs",
         ROOT / "MCPForUnity/Editor/Services/Transport/IMcpTransportClient.cs",
         ROOT / "MCPForUnity/Editor/Services/MCPServiceLocator.cs",
+        ROOT / "MCPForUnity/Editor/Services/BridgeControlService.cs",
+        ROOT / "MCPForUnity/Editor/Services/IBridgeControlService.cs",
+        ROOT / "MCPForUnity/Editor/Services/HttpBridgeReloadHandler.cs",
         ROOT / "tools/tests/fixtures/transport_disposal/ManagerRetirementHarness.cs",
+        ROOT / "tools/tests/fixtures/transport_disposal/ConnectionLifecycleHarness.cs",
     ]
     output = tmp_path / "Harness.dll"
     response = tmp_path / "compile.rsp"
@@ -70,7 +86,11 @@ def test_manager_and_locator_retire_previous_owners(tmp_path):
         encoding="utf-8",
     )
     result = subprocess.run(
-        [dotnet, str(output)], check=False, capture_output=True, text=True, timeout=20
+        [dotnet, str(output), scenario],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "PASS manager and locator retirement" in result.stdout
+    assert f"PASS manager and locator {scenario}" in result.stdout

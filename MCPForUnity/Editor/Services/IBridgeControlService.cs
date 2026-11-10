@@ -40,7 +40,9 @@ namespace MCPForUnity.Editor.Services
         Task StopAsync();
 
         /// <summary>
-        /// Verifies the bridge connection by sending a ping and waiting for a pong response
+        /// Verifies the bridge when the probe completes synchronously. An incomplete probe
+        /// returns an unsuccessful pending result without blocking the calling thread.
+        /// Use VerifyAsync to await a ping/pong response.
         /// </summary>
         /// <param name="port">The port to verify</param>
         /// <returns>Verification result with detailed status</returns>

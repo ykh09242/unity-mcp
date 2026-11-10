@@ -13,14 +13,8 @@ namespace MCPForUnity.Editor.Services
     /// </summary>
     public class BridgeControlService : IBridgeControlService
     {
-        private readonly TransportManager _transportManager;
         private TransportMode _preferredMode = TransportMode.Http;
         private long _transitionGeneration;
-
-        public BridgeControlService()
-        {
-            _transportManager = MCPServiceLocator.TransportManager;
-        }
 
         private TransportMode ResolvePreferredMode()
         {
@@ -59,7 +53,7 @@ namespace MCPForUnity.Editor.Services
             get
             {
                 var mode = ResolvePreferredMode();
-                return _transportManager.IsRunning(mode);
+                return MCPServiceLocator.TransportManager.IsRunning(mode);
             }
         }
 
@@ -68,7 +62,7 @@ namespace MCPForUnity.Editor.Services
             get
             {
                 var mode = ResolvePreferredMode();
-                var state = _transportManager.GetState(mode);
+                var state = MCPServiceLocator.TransportManager.GetState(mode);
                 if (state.Port.HasValue)
                 {
                     return state.Port.Value;
@@ -86,6 +80,7 @@ namespace MCPForUnity.Editor.Services
         {
             StdioBridgeReloadHandler.CancelPendingResume();
             var mode = ResolvePreferredMode();
+            var manager = MCPServiceLocator.TransportManager;
             long generation = ++_transitionGeneration;
             var configuration = EditorConfigurationCache.Instance;
             void InvalidateTransition(string key)
@@ -93,7 +88,8 @@ namespace MCPForUnity.Editor.Services
                 if (key == nameof(EditorConfigurationCache.UseHttpTransport) || TransportManager.IsHttpConnectionConfiguration(key))
                     ++_transitionGeneration;
             }
-            bool IsCurrentTransition() => generation == _transitionGeneration && mode == ResolvePreferredMode();
+            bool IsCurrentTransition() =>
+                generation == _transitionGeneration && mode == ResolvePreferredMode() && ReferenceEquals(manager, MCPServiceLocator.ExistingTransportManager);
             configuration.OnConfigurationChanged += InvalidateTransition;
             try
             {
@@ -102,7 +98,7 @@ namespace MCPForUnity.Editor.Services
                 var otherMode = mode == TransportMode.Http ? TransportMode.Stdio : TransportMode.Http;
                 try
                 {
-                    await _transportManager.StopAsync(otherMode);
+                    await manager.StopAsync(otherMode);
                 }
                 catch (Exception ex)
                 {
@@ -123,12 +119,12 @@ namespace MCPForUnity.Editor.Services
                     catch { }
                 }
 
-                bool started = await _transportManager.StartAsync(mode);
+                bool started = await manager.StartAsync(mode);
                 if (!IsCurrentTransition())
                     return false;
                 if (!started)
                 {
-                    string reason = _transportManager.GetState(mode)?.Error ?? "No transport error detail";
+                    string reason = manager.GetState(mode)?.Error ?? "No transport error detail";
                     McpLog.Warn($"Failed to start MCP transport {mode}: {HttpEndpointUtility.RedactUrls(reason)}");
                 }
                 return started;
@@ -152,7 +148,7 @@ namespace MCPForUnity.Editor.Services
             try
             {
                 var mode = ResolvePreferredMode();
-                await _transportManager.StopAsync(mode);
+                await MCPServiceLocator.TransportManager.StopAsync(mode);
             }
             catch (Exception ex)
             {
@@ -163,16 +159,26 @@ namespace MCPForUnity.Editor.Services
         public async Task<BridgeVerificationResult> VerifyAsync()
         {
             var mode = ResolvePreferredMode();
-            bool pingSucceeded = await _transportManager.VerifyAsync(mode);
-            var state = _transportManager.GetState(mode);
+            var manager = MCPServiceLocator.TransportManager;
+            bool pingSucceeded = await manager.VerifyAsync(mode);
+            var state = manager.GetState(mode);
             return BuildVerificationResult(state, mode, pingSucceeded);
         }
 
         public BridgeVerificationResult Verify(int port)
         {
             var mode = ResolvePreferredMode();
-            bool pingSucceeded = _transportManager.VerifyAsync(mode).GetAwaiter().GetResult();
-            var state = _transportManager.GetState(mode);
+            var manager = MCPServiceLocator.TransportManager;
+            Task<bool> verification = manager.VerifyAsync(mode);
+            if (!verification.IsCompleted)
+            {
+                // A heartbeat continuation may need the calling Editor context. Return the
+                // compatibility result immediately; callers needing the probe must await VerifyAsync.
+                _ = ObservePendingVerificationAsync(verification, manager);
+                return BuildVerificationResult(manager.GetState(mode), mode, false, "Verification is pending. Use VerifyAsync to await the connection probe.");
+            }
+            bool pingSucceeded = verification.GetAwaiter().GetResult();
+            var state = manager.GetState(mode);
 
             if (mode == TransportMode.Stdio)
             {
@@ -184,6 +190,19 @@ namespace MCPForUnity.Editor.Services
             }
 
             return BuildVerificationResult(state, mode, pingSucceeded);
+        }
+
+        private static async Task ObservePendingVerificationAsync(Task<bool> verification, TransportManager manager)
+        {
+            try
+            {
+                await verification.ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                if (ReferenceEquals(manager, MCPServiceLocator.ExistingTransportManager))
+                    McpLog.Warn($"Error verifying MCP transport: {HttpEndpointUtility.RedactUrls(ex.Message)}");
+            }
         }
     }
 }

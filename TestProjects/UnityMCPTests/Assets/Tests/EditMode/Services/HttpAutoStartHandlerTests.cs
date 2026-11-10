@@ -17,7 +17,6 @@ namespace MCPForUnityTests.Editor.Services
     public class HttpAutoStartHandlerTests : TransportPreferenceTestBase
     {
         private FakeTransportClient _fakeClient;
-        private TransportManager _savedManager;
         private bool _savedLatch;
         private bool _savedConnectPending;
         private bool _savedResumeFlag;
@@ -32,7 +31,6 @@ namespace MCPForUnityTests.Editor.Services
             _savedResumeFlag = SessionState.GetBool(HttpBridgeReloadHandler.ResumeSessionKey, false);
             _savedAutoStart = EditorPrefs.GetBool(EditorPrefKeys.AutoStartOnLoad, false);
             _savedUseHttpTransport = EditorPrefs.GetBool(EditorPrefKeys.UseHttpTransport, true);
-            _savedManager = MCPServiceLocator.TransportManager;
 
             SessionState.EraseBool(HttpAutoStartHandler.SessionInitKey);
             SessionState.EraseBool(HttpAutoStartHandler.ConnectPendingKey);
@@ -57,7 +55,8 @@ namespace MCPForUnityTests.Editor.Services
             EditorPrefs.SetBool(EditorPrefKeys.AutoStartOnLoad, _savedAutoStart);
             EditorPrefs.SetBool(EditorPrefKeys.UseHttpTransport, _savedUseHttpTransport);
             EditorConfigurationCache.Instance.Refresh();
-            MCPServiceLocator.Register(_savedManager);
+            // Register retires the previous owner; a saved instance cannot be restored.
+            MCPServiceLocator.Register(new TransportManager());
         }
 
         private static bool LatchSet => SessionState.GetBool(HttpAutoStartHandler.SessionInitKey, false);

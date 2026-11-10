@@ -56,8 +56,14 @@ internal static class ManagerRetirementHarness
             throw new Exception(message);
     }
 
-    private static async Task Main()
+    private static async Task Main(string[] args)
     {
+        if (args.Length != 0 && args[0] != "retirement")
+        {
+            await ConnectionLifecycleHarness.RunAsync(args[0]);
+            Console.WriteLine("PASS manager and locator " + args[0]);
+            return;
+        }
         var client = new Client();
         var old = new TransportManager();
         old.Configure(() => client, () => client);
@@ -109,6 +115,10 @@ namespace MCPForUnity.Editor.Helpers
     internal static class McpLog
     {
         internal static void Warn(string message) => Console.Error.WriteLine(message);
+
+        internal static void Error(string message) => Console.Error.WriteLine(message);
+
+        internal static void Debug(string message) { }
     }
 
     internal static class HttpEndpointUtility
@@ -129,11 +139,6 @@ namespace MCPForUnity.Editor.Helpers
 
 namespace MCPForUnity.Editor.Services
 {
-    internal static class HttpBridgeReloadHandler
-    {
-        internal static void CancelPendingResume() { }
-    }
-
     internal static class HttpAutoStartHandler
     {
         internal static void CancelPendingReconnect() { }
@@ -143,10 +148,6 @@ namespace MCPForUnity.Editor.Services
     {
         internal static void CancelPendingResume() { }
     }
-
-    public interface IBridgeControlService { }
-
-    public class BridgeControlService : IBridgeControlService { }
 
     public interface IClientConfigurationService { }
 
@@ -191,6 +192,15 @@ namespace MCPForUnity.Editor.Services
 
 namespace MCPForUnity.Editor.Services.Transport.Transports
 {
+    internal static class StdioBridgeHost
+    {
+        internal static int GetCurrentPort() => 6400;
+
+        internal static bool IsAutoConnectMode() => false;
+
+        internal static void Stop() { }
+    }
+
     public class StdioTransportClient : IMcpTransportClient
     {
         public bool IsConnected => false;

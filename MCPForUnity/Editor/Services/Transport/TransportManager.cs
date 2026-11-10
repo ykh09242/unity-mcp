@@ -24,6 +24,8 @@ namespace MCPForUnity.Editor.Services.Transport
         private bool _stdioConnectionIntent;
         private bool _disposed;
 
+        internal bool IsDisposed => _disposed;
+
         static TransportManager()
         {
             // Observe configuration once per domain, without retaining replaced/test managers.

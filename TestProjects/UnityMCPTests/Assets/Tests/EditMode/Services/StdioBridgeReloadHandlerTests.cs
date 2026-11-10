@@ -14,7 +14,6 @@ namespace MCPForUnityTests.Editor.Services
     {
         private static readonly TimeSpan[] ZeroSchedule = { TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero };
         private const string MigrationKey = StdioBridgeReloadHandler.ResumeSessionKey + ".Migrated";
-        private TransportManager savedManager;
         private bool hadLegacy;
         private bool legacy;
         private bool migrated;
@@ -32,7 +31,6 @@ namespace MCPForUnityTests.Editor.Services
             legacy = EditorPrefs.GetBool(StdioBridgeReloadHandler.ResumeSessionKey, false);
             migrated = SessionState.GetBool(MigrationKey, false);
             hadMigration = migrated == SessionState.GetBool(MigrationKey, true);
-            savedManager = MCPServiceLocator.TransportManager;
             ownsState = true;
             // This fixture substitutes a transport with automatic-start intent. Its fake
             // start never clears the real host's intent, so isolate that static state too.
@@ -58,7 +56,8 @@ namespace MCPForUnityTests.Editor.Services
                 return;
             StdioBridgeReloadHandler.CancelPendingResume();
             client.Completion.TrySetResult(false);
-            MCPServiceLocator.Register(savedManager);
+            // Register retires the previous owner; a saved instance cannot be restored.
+            MCPServiceLocator.Register(new TransportManager());
             typeof(MCPForUnity.Editor.Services.Transport.Transports.StdioBridgeHost)
                 .GetField("explicitlyStopped", BindingFlags.NonPublic | BindingFlags.Static)
                 .SetValue(null, savedExplicitStop);

@@ -69,10 +69,13 @@ namespace MCPForUnity.Editor.Services
                 _packageDeploymentService = pd;
             else if (implementation is TransportManager tm)
             {
+                if (tm.IsDisposed)
+                    throw new ObjectDisposedException(nameof(TransportManager), "A retired transport manager cannot be registered again.");
                 if (ReferenceEquals(_transportManager, tm))
                     return;
-                _transportManager?.Dispose();
+                TransportManager previous = _transportManager;
                 _transportManager = tm;
+                previous?.Dispose();
             }
         }
 
