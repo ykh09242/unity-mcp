@@ -1023,6 +1023,75 @@ namespace MCPForUnityTests.EditMode.Tools
                 ["device_profiles"] = new JArray(profiles),
             };
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void DeviceProfiles_HaveDirectBatchAcceptanceAndRefusalParity(bool invalid)
+        {
+            using var consent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute");
+            using var availability = new MCPForUnityTests.Editor.Services.ScopedRegistryAvailabilityTestState(new[] { "manage_ugui" });
+            CommandRegistry.Initialize();
+            var request = Request(Virtual(800, 600, 160));
+            request["include_inactive"] = false;
+            request["minimum_touch_target_mm"] = 7;
+            if (invalid)
+                request["device_profiles"][0]["dpi"] = 0;
+            var original = request.DeepClone();
+            var direct = JObject.FromObject(ManageUGUI.HandleCommand((JObject)request.DeepClone()));
+            var envelope = JObject.FromObject(
+                BatchExecute
+                    .HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "manage_ugui", ["params"] = request }) })
+                    .GetAwaiter()
+                    .GetResult()
+            );
+            var batched = (JObject)envelope.SelectToken("data.results[0].result");
+            Assert.IsNotNull(batched, envelope.ToString());
+            Assert.AreEqual(!invalid, direct.Value<bool>("success"), direct.ToString());
+            Assert.AreEqual(direct.Value<bool>("success"), batched.Value<bool>("success"), batched.ToString());
+            Assert.AreEqual(direct.Value<string>("message"), batched.Value<string>("message"));
+            Assert.AreEqual(direct.Value<string>("code"), batched.Value<string>("code"));
+            Assert.IsTrue(JToken.DeepEquals(direct.SelectToken("data.profiles"), batched.SelectToken("data.profiles")), batched.ToString());
+            Assert.IsTrue(JToken.DeepEquals(original, request), "Batch admission must not change nested safe_area or caller keys.");
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Raycast_HasDirectBatchAcceptanceAndRefusalParity(bool invalid)
+        {
+            using var consent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute");
+            using var availability = new MCPForUnityTests.Editor.Services.ScopedRegistryAvailabilityTestState(new[] { "manage_ugui" });
+            CommandRegistry.Initialize();
+            root.AddComponent(Ui("GraphicRaycaster"));
+            var rect = (RectTransform)target.transform;
+            Vector2 point = RectTransformUtility.WorldToScreenPoint(null, rect.TransformPoint(rect.rect.center));
+            var request = new JObject
+            {
+                ["action"] = "diagnose_raycast",
+                ["target"] = target.GetInstanceIDCompat(),
+                ["screen_position"] = invalid ? new JArray(1, 2, 3) : new JArray(point.x, point.y),
+                ["allow_custom_filters"] = false,
+                ["max_nodes"] = 200,
+                ["max_depth"] = 10,
+            };
+            var original = request.DeepClone();
+            string before = EditorJsonUtility.ToJson(rect);
+            var direct = JObject.FromObject(ManageUGUI.HandleCommand((JObject)request.DeepClone()));
+            var envelope = JObject.FromObject(
+                BatchExecute
+                    .HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "manage_ugui", ["params"] = request }) })
+                    .GetAwaiter()
+                    .GetResult()
+            );
+            var batched = (JObject)envelope.SelectToken("data.results[0].result");
+            Assert.IsNotNull(batched, envelope.ToString());
+            Assert.AreEqual(!invalid, direct.Value<bool>("success"), direct.ToString());
+            Assert.AreEqual(direct.Value<bool>("success"), batched.Value<bool>("success"), batched.ToString());
+            Assert.AreEqual(direct.Value<string>("message"), batched.Value<string>("message"));
+            Assert.AreEqual(direct.SelectToken("data.status"), batched.SelectToken("data.status"));
+            Assert.IsTrue(JToken.DeepEquals(direct.SelectToken("data.policy"), batched.SelectToken("data.policy")), batched.ToString());
+            Assert.IsTrue(JToken.DeepEquals(original, request), "Screen coordinates and explicit flags must remain unchanged.");
+            Assert.AreEqual(before, EditorJsonUtility.ToJson(rect));
+        }
+
         private static JObject Virtual(int width, int height, double dpi) =>
             new JObject
             {

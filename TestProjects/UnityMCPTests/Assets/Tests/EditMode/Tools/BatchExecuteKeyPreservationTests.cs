@@ -13,8 +13,7 @@ using UnityEngine.Events;
 namespace MCPForUnityTests.Editor.Tools
 {
     /// <summary>
-    /// Verifies that batch_execute only normalizes top-level parameter keys (snake_case → camelCase)
-    /// and preserves nested value keys (e.g. Unity serialized property paths like m_PersistentCalls).
+    /// Verifies handler-owned parameter contracts, legacy aliases and nested value keys.
     /// </summary>
     public class BatchExecuteKeyPreservationTests
     {
@@ -345,6 +344,80 @@ namespace MCPForUnityTests.Editor.Tools
             var normalized = (JObject)method.Invoke(null, new object[] { source, tool });
             Assert.IsTrue(JToken.DeepEquals(source, normalized), normalized.ToString());
             Assert.AreNotSame(source, normalized);
+        }
+
+        [TestCase("manage_ugui")]
+        [TestCase("manage_terrain")]
+        public void ExactHandlerKeys_AndNestedPayloadsRemainUnchanged(string tool)
+        {
+            var source = JObject.Parse(
+                "{\"expected_revision\":null,\"expected_data_guid\":\"proof\",\"allow_boundary\":false,\"screen_position\":[1,2],\"device_profiles\":[{\"safe_area\":[0,0,1,2]}]}"
+            );
+            var method = typeof(BatchExecute).GetMethod(
+                "NormalizeParameterKeys",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic
+            );
+            var normalized = (JObject)method.Invoke(null, new object[] { source, tool });
+            Assert.IsTrue(JToken.DeepEquals(source, normalized), normalized.ToString());
+            Assert.AreNotSame(source["device_profiles"], normalized["device_profiles"]);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void TerrainLegacySearchAlias_RetainsConflictDetection(bool conflict)
+        {
+            var source = new JObject
+            {
+                ["search_method"] = "by_id",
+                ["searchMethod"] = conflict ? "by_name" : "by_id",
+                ["allow_boundary"] = false,
+            };
+            var method = typeof(BatchExecute).GetMethod(
+                "NormalizeParameterKeys",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic
+            );
+            if (conflict)
+            {
+                var error = Assert.Throws<System.Reflection.TargetInvocationException>(() => method.Invoke(null, new object[] { source, "manage_terrain" }));
+                Assert.IsInstanceOf<System.ArgumentException>(error.InnerException);
+            }
+            else
+            {
+                var normalized = (JObject)method.Invoke(null, new object[] { source, "manage_terrain" });
+                Assert.AreEqual("by_id", normalized.Value<string>("searchMethod"));
+                Assert.IsNull(normalized["search_method"]);
+                Assert.IsFalse(normalized.Value<bool>("allow_boundary"));
+            }
+            Assert.AreEqual("by_id", source.Value<string>("search_method"));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void UguiEqualAndConflictingAliases_HaveDirectBatchParity(bool conflict)
+        {
+            using var consent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute");
+            using var availability = new MCPForUnityTests.Editor.Services.ScopedRegistryAvailabilityTestState(new[] { "manage_ugui" });
+            var request = new JObject
+            {
+                ["action"] = "ping",
+                ["include_inactive"] = false,
+                ["includeInactive"] = conflict,
+            };
+            var original = request.DeepClone();
+            var direct = JObject.FromObject(ManageUGUI.HandleCommand((JObject)request.DeepClone()));
+            var envelope = JObject.FromObject(
+                BatchExecute
+                    .HandleCommand(new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "manage_ugui", ["params"] = request }) })
+                    .GetAwaiter()
+                    .GetResult()
+            );
+            Assert.AreEqual(!conflict, direct.Value<bool>("success"), direct.ToString());
+            Assert.AreEqual(direct.Value<bool>("success"), envelope.Value<bool>("success"), envelope.ToString());
+            if (conflict)
+                StringAssert.Contains("Conflicting aliases", direct.Value<string>("error"));
+            else
+                Assert.AreEqual("pong", envelope.SelectToken("data.results[0].result.message").Value<string>());
+            Assert.IsTrue(JToken.DeepEquals(original, request));
         }
 
         [TestCase("false")]

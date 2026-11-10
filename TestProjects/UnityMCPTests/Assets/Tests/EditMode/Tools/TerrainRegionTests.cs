@@ -219,6 +219,112 @@ namespace MCPForUnityTests.Editor.Tools
 
         private static JArray Grid(float value) => new JArray(new JArray(value, value), new JArray(value, value));
 
+        private JObject BatchCall(string action, JObject args)
+        {
+            var request = (JObject)args.DeepClone();
+            request["action"] = action;
+            request["target"] = terrain.gameObject.GetInstanceIDCompat().ToString();
+            request["searchMethod"] = "by_id";
+            var envelope = JObject.FromObject(
+                MCPForUnity
+                    .Editor.Tools.BatchExecute.HandleCommand(
+                        new JObject { ["commands"] = new JArray(new JObject { ["tool"] = "manage_terrain", ["params"] = request }) }
+                    )
+                    .GetAwaiter()
+                    .GetResult()
+            );
+            var result = envelope.SelectToken("data.results[0].result") as JObject;
+            Assert.IsNotNull(result, envelope.ToString());
+            return result;
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void GuardedHeightPatch_HasDirectBatchParity(bool batch)
+        {
+            using var consent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute");
+            using var availability = new MCPForUnityTests.Editor.Services.ScopedRegistryAvailabilityTestState(new[] { "manage_terrain" });
+            MCPForUnity.Editor.Tools.CommandRegistry.Initialize();
+            var patch = Guard("get_region", Region("heights"));
+            patch["values"] = Grid(.4f);
+            var original = patch.DeepClone();
+            var result = batch ? BatchCall("set_region", patch) : Call("set_region", patch);
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(.4f, data.GetHeights(2, 2, 1, 1)[0, 0], .00002f);
+            Assert.AreEqual(.1f, data.GetHeights(1, 1, 1, 1)[0, 0], .00002f);
+            Assert.IsTrue(JToken.DeepEquals(original, patch));
+        }
+
+        [TestCase("invalid_revision", "invalid_terrain_request")]
+        [TestCase("stale_revision", "stale_terrain_revision")]
+        [TestCase("wrong_guid", "terrain_identity_mismatch")]
+        public void GuardRefusals_HaveDirectBatchParityWithoutWrites(string scenario, string code)
+        {
+            using var consent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute");
+            using var availability = new MCPForUnityTests.Editor.Services.ScopedRegistryAvailabilityTestState(new[] { "manage_terrain" });
+            MCPForUnity.Editor.Tools.CommandRegistry.Initialize();
+            var patch = Guard("get_region", Region("heights"));
+            patch["values"] = Grid(.5f);
+            if (scenario == "invalid_revision")
+                patch["expected_revision"] = "invalid";
+            else if (scenario == "wrong_guid")
+                patch["expected_data_guid"] = new string('0', 32);
+            else
+                data.SetHeights(
+                    2,
+                    2,
+                    new[,]
+                    {
+                        { .8f },
+                    }
+                );
+            var before = data.GetHeights(0, 0, 33, 33);
+            int dirtyCount = EditorUtility.GetDirtyCount(data);
+            var direct = Call("set_region", patch);
+            var batched = BatchCall("set_region", patch);
+            Assert.IsFalse(direct.Value<bool>("success"), direct.ToString());
+            Assert.AreEqual(code, direct.Value<string>("code"));
+            Assert.IsTrue(JToken.DeepEquals(direct, batched), batched.ToString());
+            CollectionAssert.AreEqual(before, data.GetHeights(0, 0, 33, 33));
+            Assert.AreEqual(dirtyCount, EditorUtility.GetDirtyCount(data));
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void AcknowledgementFlags_HaveDirectBatchParity(bool shared, bool batch)
+        {
+            using var consent = new MCPForUnityTests.Editor.Services.ScopedConsentTestState("batch_execute");
+            using var availability = new MCPForUnityTests.Editor.Services.ScopedRegistryAvailabilityTestState(new[] { "manage_terrain" });
+            MCPForUnity.Editor.Tools.CommandRegistry.Initialize();
+            if (shared)
+                CreateTerrain(data, new Vector3(0, 0, 64));
+            var patch = Guard("get_region", shared ? Region("heights") : Region("heights", 32, 2, 1, 1));
+            patch["values"] = shared ? Grid(.3f) : new JArray { new JArray(.3f) };
+            var values = (JArray)patch["values"];
+            Assert.AreEqual(patch["region"].Value<int>("height"), values.Count, "Fixture rows must match the selected region.");
+            foreach (var row in values)
+            {
+                Assert.IsInstanceOf<JArray>(row, "Each fixture row must remain a nested array.");
+                Assert.AreEqual(patch["region"].Value<int>("width"), ((JArray)row).Count, "Fixture columns must match the selected region.");
+            }
+            string flag = shared ? "allow_shared_data" : "allow_boundary";
+            patch[flag] = false;
+            var before = data.GetHeights(0, 0, 33, 33);
+            var direct = Call("set_region", patch);
+            var batched = BatchCall("set_region", patch);
+            Assert.AreEqual(shared ? "terrain_shared_data_ack_required" : "terrain_boundary_ack_required", direct.Value<string>("code"));
+            Assert.IsTrue(JToken.DeepEquals(direct, batched), batched.ToString());
+            CollectionAssert.AreEqual(before, data.GetHeights(0, 0, 33, 33));
+            var adjacent = neighborData.GetHeights(0, 0, 33, 33);
+            patch[flag] = true;
+            var accepted = batch ? BatchCall("set_region", patch) : Call("set_region", patch);
+            Assert.IsTrue(accepted.Value<bool>("success"), accepted.ToString());
+            Assert.AreEqual(.3f, data.GetHeights(shared ? 2 : 32, 2, 1, 1)[0, 0], .00002f);
+            CollectionAssert.AreEqual(adjacent, neighborData.GetHeights(0, 0, 33, 33));
+        }
+
         private static void AssertSameNativeAsset(UnityEngine.Object expected, UnityEngine.Object actual, string context)
         {
             Assert.IsTrue(expected != null && actual != null, context + ": both native assets must exist.");

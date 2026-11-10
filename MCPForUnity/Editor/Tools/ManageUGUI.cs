@@ -39,12 +39,27 @@ namespace MCPForUnity.Editor.Tools
             "sprite type fillMethod fillOrigin fillAmount fillClockwise preserveAspect fillCenter color raycastTarget"
         );
 
+        internal static JObject NormalizeParameterAliases(JObject source)
+        {
+            // Keep exact diagnostic keys while retaining legacy alias conflict refusal.
+            var aliases = new Dictionary<string, JToken>(StringComparer.Ordinal);
+            foreach (var property in source.Properties())
+            {
+                string alias = StringCaseUtility.ToCamelCase(property.Name);
+                if (aliases.TryGetValue(alias, out JToken value) && !JToken.DeepEquals(value, property.Value))
+                    throw new ArgumentException($"Conflicting aliases for '{alias}'. Provide one value.");
+                aliases[alias] = property.Value;
+            }
+            return (JObject)source.DeepClone();
+        }
+
         public static object HandleCommand(JObject @params)
         {
             if (@params == null)
                 return new ErrorResponse("Parameters are required.");
             try
             {
+                @params = NormalizeParameterAliases(@params);
                 var p = new ToolParams(@params);
                 string action = p.Get("action")?.ToLowerInvariant();
                 if (action == "create_control")

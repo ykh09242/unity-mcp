@@ -578,10 +578,20 @@ namespace MCPForUnity.Editor.Tools
             if (MCPServiceLocator.ToolDiscovery.GetToolMetadata(toolName ?? "")?.IsBuiltIn != true)
                 return (JObject)source.DeepClone();
 
-            // Script handlers own exact snake_case read-window, change-set and byte-proof keys.
+            // These handlers own exact keys, including snake_case diagnostics and proof keys.
             // Preserve the direct-call contract instead of applying legacy camelCase conversion.
             if (toolName == "manage_script")
                 return (JObject)source.DeepClone();
+
+            if (toolName == "manage_ugui")
+                return ManageUGUI.NormalizeParameterAliases(source);
+
+            if (toolName == "manage_terrain")
+            {
+                var parameters = (JObject)source.DeepClone();
+                GameObjects.ManageGameObject.ResolveParameterAlias(parameters, "searchMethod", "search_method");
+                return parameters;
+            }
 
             if (toolName == "manage_gameobject" || toolName?.StartsWith("gameobject_", StringComparison.Ordinal) == true)
                 return GameObjects.ManageGameObject.NormalizeParameterAliases(source);
