@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -50,8 +51,7 @@ namespace MCPForUnityTests.EditMode.Tools
                 foreach (string id in ownedReceipts)
                     Send("restore", new JObject { ["receipt_id"] = id });
             Time.timeScale = timeScale;
-            Time.fixedDeltaTime = fixedDelta;
-            Time.maximumDeltaTime = maximumDelta;
+            SetTimesteps(fixedDelta, maximumDelta);
             AudioListener.volume = volume;
             AudioListener.pause = paused;
             Physics3D.gravity = gravity;
@@ -87,6 +87,174 @@ namespace MCPForUnityTests.EditMode.Tools
             Assert.AreEqual(timeScale, Time.timeScale);
             Assert.AreEqual(gravity, Physics3D.gravity);
             Assert.AreEqual(volume, AudioListener.volume);
+        }
+
+        [TestCase(0.02f, 0.333f, 0.5f, 1f, TestName = "TimestepsIncreaseAcrossCurrentCeilingAndRestore")]
+        [TestCase(0.5f, 1f, 0.02f, 0.333f, TestName = "TimestepsDecreaseAcrossCurrentFloorAndRestore")]
+        public void TimestepsCrossBoundaryAndRestore(float beforeFixed, float beforeMaximum, float desiredFixed, float desiredMaximum)
+        {
+            try
+            {
+                SetTimesteps(beforeFixed, beforeMaximum);
+                float nativeBeforeFixed = Time.fixedDeltaTime;
+                float nativeBeforeMaximum = Time.maximumDeltaTime;
+                string name = Capture(new JObject { ["time.fixedDeltaTime"] = desiredFixed, ["time.maximumDeltaTime"] = desiredMaximum });
+                JObject applied = Apply(name);
+                Assert.IsTrue((bool)applied["success"], applied.ToString());
+                Assert.That(Time.fixedDeltaTime, Is.EqualTo(desiredFixed).Within(0.0000001f));
+                Assert.That(Time.maximumDeltaTime, Is.EqualTo(desiredMaximum).Within(0.0000001f));
+                Assert.AreEqual(Time.fixedDeltaTime, (float)Outcome(applied, "time.fixedDeltaTime")["observed"]);
+                Assert.AreEqual(Time.maximumDeltaTime, (float)Outcome(applied, "time.maximumDeltaTime")["observed"]);
+                JObject restored = Send("restore", new JObject { ["receipt_id"] = applied["data"]["receipt_id"] });
+                Assert.IsTrue((bool)restored["success"], restored.ToString());
+                Assert.AreEqual("restored", (string)restored["data"]["state"]);
+                Assert.That(Time.fixedDeltaTime, Is.EqualTo(nativeBeforeFixed).Within(0.0000001f));
+                Assert.That(Time.maximumDeltaTime, Is.EqualTo(nativeBeforeMaximum).Within(0.0000001f));
+            }
+            finally
+            {
+                SetTimesteps(fixedDelta, maximumDelta);
+            }
+        }
+
+        [TestCase("time.fixedDeltaTime", 0.5f, TestName = "PartialFixedTimestepAboveCurrentMaximumRefusesBeforeWrites")]
+        [TestCase("time.maximumDeltaTime", 0.01f, TestName = "PartialMaximumTimestepBelowCurrentFixedRefusesBeforeWrites")]
+        public void PartialInvalidTimestepRefusesBeforeWrites(string key, float value)
+        {
+            try
+            {
+                SetTimesteps(0.02f, 0.333f);
+                float nativeBeforeFixed = Time.fixedDeltaTime;
+                float nativeBeforeMaximum = Time.maximumDeltaTime;
+                string name = Capture(new JObject());
+                Type store = typeof(MCPForUnity.Editor.Tools.ManagePackages).Assembly.GetType(
+                    "MCPForUnity.Editor.Tools.SimulationProfiles.SimulationProfileStore"
+                );
+                var profiles = (JObject)store.GetProperty("Profiles", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+                var profile = (JObject)profiles[name];
+                // Partial records are accepted by the persisted profile schema; retain a valid revision.
+                profile["settings"] = new JObject { [key] = value, ["time.timeScale"] = 0.25f };
+                profile["revision"] = (string)
+                    store
+                        .GetMethod("Hash", BindingFlags.NonPublic | BindingFlags.Static)
+                        .Invoke(
+                            null,
+                            new object[]
+                            {
+                                new JObject { ["name"] = name, ["settings"] = profile["settings"].DeepClone() },
+                            }
+                        );
+                JObject validated = Send("validate", new JObject { ["name"] = name });
+                int writes = 0;
+                Fault(_ => writes++);
+                JObject result = Send(
+                    "apply",
+                    new JObject
+                    {
+                        ["name"] = name,
+                        ["profile_revision"] = validated["data"]["profile_revision"],
+                        ["current_revision"] = validated["data"]["current_revision"],
+                    }
+                );
+                string receipt = (string)result["data"]?["receipt_id"];
+                if (receipt != null)
+                    ownedReceipts.Add(receipt);
+                Assert.IsFalse((bool)result["success"], result.ToString());
+                Assert.AreEqual(0, writes, "An invalid effective timestep pair must be rejected before any setting write.");
+                Assert.IsFalse((bool)validated["data"]["applicable"], validated.ToString());
+                Assert.AreEqual(nativeBeforeFixed, Time.fixedDeltaTime);
+                Assert.AreEqual(nativeBeforeMaximum, Time.maximumDeltaTime);
+                Assert.AreEqual(timeScale, Time.timeScale);
+            }
+            finally
+            {
+                Fault(null);
+                SetTimesteps(fixedDelta, maximumDelta);
+                Time.timeScale = timeScale;
+            }
+        }
+
+        [Test]
+        public void TimestepReadbackRetainsExactObservationAndPreservesNearbyExternalChange()
+        {
+            try
+            {
+                SetTimesteps(0.5f, 1f);
+                string name = Capture(new JObject { ["time.fixedDeltaTime"] = 0.02f, ["time.maximumDeltaTime"] = 0.333f });
+                JObject applied = Apply(name);
+                Assert.IsTrue((bool)applied["success"], applied.ToString());
+                float observed = Time.fixedDeltaTime;
+                Assert.AreEqual(observed, (float)Outcome(applied, "time.fixedDeltaTime")["observed"]);
+                Time.fixedDeltaTime = observed + 0.00000005f;
+                float external = Time.fixedDeltaTime;
+                Assert.AreNotEqual(observed, external, "The external writer must make an actual native change.");
+                Assert.That(Math.Abs(external - observed), Is.LessThan(0.0000001f), "Drift is deliberately inside setter readback tolerance.");
+                JObject restored = Send("restore", new JObject { ["receipt_id"] = applied["data"]["receipt_id"] });
+                Assert.IsTrue((bool)restored["success"], restored.ToString());
+                Assert.AreEqual(external, Time.fixedDeltaTime, "Readback tolerance must never weaken the exact ownership comparison.");
+                Assert.AreEqual("external_change_preserved", (string)Outcome(restored, "time.fixedDeltaTime")["status"]);
+            }
+            finally
+            {
+                SetTimesteps(fixedDelta, maximumDelta);
+            }
+        }
+
+        [Test]
+        public void OutOfRangeTimestepContextFinalizesReceiptRestoresOtherDomainAndRetries()
+        {
+            try
+            {
+                SetTimesteps(0.02f, 0.333f);
+                float nativeBeforeFixed = Time.fixedDeltaTime;
+                float nativeBeforeMaximum = Time.maximumDeltaTime;
+                string name = Capture(
+                    new JObject
+                    {
+                        ["time.fixedDeltaTime"] = 0.125f,
+                        ["time.maximumDeltaTime"] = 0.5f,
+                        ["audio.volume"] = volume == 0.4f ? 0.6f : 0.4f,
+                    }
+                );
+                JObject applied = Apply(name);
+                Assert.IsTrue((bool)applied["success"], applied.ToString());
+                float appliedFixed = Time.fixedDeltaTime;
+                float appliedMaximum = Time.maximumDeltaTime;
+                Time.maximumDeltaTime = 20f;
+                Assert.Greater(Time.maximumDeltaTime, 10f, "Exercise a native value outside the tool's supported bound.");
+                JObject restored = Send("restore", new JObject { ["receipt_id"] = applied["data"]["receipt_id"] });
+                Assert.IsFalse((bool)restored["success"], restored.ToString());
+                Assert.AreEqual("partial_restore", (string)restored["data"]["state"]);
+                Assert.IsTrue((bool)restored["data"]["receipt_persisted"]);
+                Assert.AreEqual(volume, AudioListener.volume, "Unavailable timestep planning must not block independent confirmed settings.");
+                Assert.AreEqual(appliedFixed, Time.fixedDeltaTime);
+                Assert.AreEqual(20f, Time.maximumDeltaTime);
+                Assert.AreEqual("applied", (string)Outcome(restored, "time.fixedDeltaTime")["status"]);
+                Assert.IsNotNull(Outcome(restored, "time.fixedDeltaTime")["restore_error"]);
+                JObject retained = Send("receipt", new JObject { ["receipt_id"] = applied["data"]["receipt_id"] });
+                Assert.AreEqual("partial_restore", (string)retained["data"]["state"]);
+                Time.maximumDeltaTime = appliedMaximum;
+                JObject retried = Send("restore", new JObject { ["receipt_id"] = applied["data"]["receipt_id"] });
+                Assert.IsTrue((bool)retried["success"], retried.ToString());
+                Assert.That(Time.fixedDeltaTime, Is.EqualTo(nativeBeforeFixed).Within(0.0000001f));
+                Assert.That(Time.maximumDeltaTime, Is.EqualTo(nativeBeforeMaximum).Within(0.0000001f));
+            }
+            finally
+            {
+                SetTimesteps(fixedDelta, maximumDelta);
+                AudioListener.volume = volume;
+            }
+        }
+
+        private static JObject Outcome(JObject response, string key) =>
+            ((JArray)response["data"]["outcomes"]).OfType<JObject>().Single(row => (string)row["key"] == key);
+
+        private static void SetTimesteps(float fixedValue, float maximumValue)
+        {
+            if (fixedValue > Time.maximumDeltaTime)
+                Time.maximumDeltaTime = maximumValue;
+            Time.fixedDeltaTime = fixedValue;
+            Time.maximumDeltaTime = maximumValue;
         }
 
         [Test]

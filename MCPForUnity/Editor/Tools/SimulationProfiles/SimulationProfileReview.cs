@@ -58,7 +58,14 @@ namespace MCPForUnity.Editor.Tools.SimulationProfiles
             try
             {
                 if (Applicable)
-                    SimulationSettings.CheckRelations(Desired);
+                {
+                    // The other timestep is a validation dependency, never an implicit write target.
+                    SimulationSettings.IncludeTimestepContext(Desired, Current);
+                    foreach (JProperty value in Current.Properties())
+                        if (Owners[value.Name] == null)
+                            Owners[value.Name] = SimulationSettings.Get(value.Name).OwnerIdentity();
+                    SimulationSettings.CheckRelations(Desired, Current);
+                }
             }
             catch (ArgumentException ex)
             {

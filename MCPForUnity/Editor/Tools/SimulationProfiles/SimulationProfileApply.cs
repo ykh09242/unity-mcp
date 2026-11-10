@@ -26,7 +26,7 @@ namespace MCPForUnity.Editor.Tools.SimulationProfiles
                 throw new InvalidOperationException("Simulation receipt capacity reached. Delete a completed owned profile/receipt group explicitly.");
             string id = Guid.NewGuid().ToString("N");
             var outcomes = new JArray();
-            foreach (string key in SimulationSettings.OrderedKeys(review.Desired))
+            foreach (string key in SimulationSettings.OrderedKeys(review.Desired, review.Current))
             {
                 SimulationSetting setting = SimulationSettings.Get(key);
                 outcomes.Add(
@@ -67,12 +67,13 @@ namespace MCPForUnity.Editor.Tools.SimulationProfiles
                     BeforeWrite?.Invoke(key);
                     if (setting.OwnerIdentity() != (string)row["owner"] || !setting.Equal(setting.Read(), row["before"]))
                         throw new InvalidOperationException("External setting/owner drift before write; preserved without applying this setting.");
+                    SimulationSettings.CheckTimestepWrite(key, row["desired"]);
                     row["status"] = "in_flight";
                     SimulationProfileStore.Save();
                     setting.Write(row["desired"]);
                     JToken observed = setting.Read();
                     row["observed"] = observed;
-                    if (!setting.Equal(observed, row["desired"]))
+                    if (!SimulationSettings.MatchesWriteReadback(setting, observed, row["desired"]))
                         throw new InvalidOperationException("Native readback differs from the requested value; this setting's ownership is uncertain.");
                     row["status"] = "applied";
                     SimulationProfileStore.Save();
@@ -132,9 +133,30 @@ namespace MCPForUnity.Editor.Tools.SimulationProfiles
                         || status == "external_change_preserved"
                         || status == "domain_or_owner_unavailable_preserved";
                 });
-            foreach (JObject row in outcomes.OfType<JObject>().Where(r => (string)r["status"] == "applied"))
+            var restoreValues = new JObject(
+                outcomes.OfType<JObject>().Where(r => (string)r["status"] == "applied").Select(r => new JProperty((string)r["key"], r["before"].DeepClone()))
+            );
+            var restoreCurrent = new JObject();
+            try
             {
-                string key = (string)row["key"];
+                SimulationSettings.IncludeTimestepContext(restoreValues, restoreCurrent);
+            }
+            catch (Exception ex)
+            {
+                // A borrowed timestep outside our supported range must not strand the receipt
+                // in restoring or prevent unrelated confirmed settings from being restored.
+                foreach (string key in new[] { "time.fixedDeltaTime", "time.maximumDeltaTime" })
+                {
+                    if (!restoreValues.Remove(key))
+                        continue;
+                    JObject row = outcomes.OfType<JObject>().Single(r => (string)r["key"] == key);
+                    row["restore_error"] = Detail(ex);
+                }
+                failed = true;
+            }
+            foreach (string key in SimulationSettings.OrderedKeys(restoreValues, restoreCurrent))
+            {
+                JObject row = outcomes.OfType<JObject>().Single(r => (string)r["key"] == key);
                 try
                 {
                     SimulationSetting setting = SimulationSettings.Get(key);
@@ -160,11 +182,12 @@ namespace MCPForUnity.Editor.Tools.SimulationProfiles
                         }
                         else
                         {
+                            SimulationSettings.CheckTimestepWrite(key, row["before"]);
                             row["status"] = "restore_in_flight";
                             SimulationProfileStore.Save();
                             setting.Write(row["before"]);
                             row["restored_observed"] = setting.Read();
-                            if (!setting.Equal(row["restored_observed"], row["before"]))
+                            if (!SimulationSettings.MatchesWriteReadback(setting, row["restored_observed"], row["before"]))
                                 throw new InvalidOperationException("Restoration readback differed; ownership is uncertain.");
                             row["status"] = "restored";
                         }

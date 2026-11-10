@@ -112,13 +112,11 @@ namespace MCPForUnity.Editor.Tools.SimulationProfiles
             return normalized;
         }
 
-        internal static void CheckRelations(JObject settings)
+        internal static void CheckRelations(JObject settings, JObject current = null)
         {
-            if (
-                settings["time.fixedDeltaTime"] != null
-                && settings["time.maximumDeltaTime"] != null
-                && (float)settings["time.fixedDeltaTime"] > (float)settings["time.maximumDeltaTime"]
-            )
+            JToken fixedDelta = settings["time.fixedDeltaTime"] ?? current?["time.fixedDeltaTime"];
+            JToken maximumDelta = settings["time.maximumDeltaTime"] ?? current?["time.maximumDeltaTime"];
+            if (fixedDelta != null && maximumDelta != null && (float)fixedDelta > (float)maximumDelta)
                 throw new ArgumentException("time.maximumDeltaTime must be at least time.fixedDeltaTime.");
             if (
                 settings["input.system.defaultDeadzoneMin"] != null
@@ -136,7 +134,51 @@ namespace MCPForUnity.Editor.Tools.SimulationProfiles
             return current;
         }
 
-        internal static IEnumerable<string> OrderedKeys(JObject desired) => All().Select(s => s.Key).Where(key => desired[key] != null);
+        internal static void IncludeTimestepContext(JObject desired, JObject current)
+        {
+            if (desired["time.fixedDeltaTime"] == null && desired["time.maximumDeltaTime"] == null)
+                return;
+            foreach (string key in new[] { "time.fixedDeltaTime", "time.maximumDeltaTime" })
+                if (current[key] == null)
+                    current[key] = Get(key).Read();
+        }
+
+        internal static void CheckTimestepWrite(string key, JToken value)
+        {
+            if (key != "time.fixedDeltaTime" && key != "time.maximumDeltaTime")
+                return;
+            var desired = new JObject { [key] = value.DeepClone() };
+            var current = new JObject();
+            IncludeTimestepContext(desired, current);
+            CheckRelations(desired, current);
+        }
+
+        internal static bool MatchesWriteReadback(SimulationSetting setting, JToken observed, JToken requested)
+        {
+            if (setting.Equal(observed, requested))
+                return true;
+            if (setting.Key != "time.fixedDeltaTime" && setting.Key != "time.maximumDeltaTime")
+                return false;
+            // Native timestep conversion can round by nanoseconds. This 0.1 microsecond bound
+            // applies only to setter acceptance; ownership/drift always compares exact observations.
+            return Math.Abs(observed.Value<double>() - requested.Value<double>()) <= 0.0000001;
+        }
+
+        internal static IEnumerable<string> OrderedKeys(JObject desired, JObject current)
+        {
+            var keys = All().Select(s => s.Key).Where(key => desired[key] != null).ToList();
+            // Unity constrains this pair continuously; crossing the old ceiling requires raising it first.
+            if (
+                desired["time.fixedDeltaTime"] != null
+                && desired["time.maximumDeltaTime"] != null
+                && (float)desired["time.fixedDeltaTime"] > (float)current["time.maximumDeltaTime"]
+            )
+            {
+                keys.Remove("time.maximumDeltaTime");
+                keys.Insert(keys.IndexOf("time.fixedDeltaTime"), "time.maximumDeltaTime");
+            }
+            return keys;
+        }
 
         internal static void StableMode()
         {
