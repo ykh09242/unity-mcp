@@ -9,8 +9,15 @@ import time
 import uuid
 
 from services.reference_graph.queries import GraphQueries
+from services.reference_graph import reclamation
 from services.reference_graph.response_budget import PageBudget, bounded_rows
-from services.reference_graph.store import Edge, Observation, RevisionConflict, _json
+from services.reference_graph.store import (
+    Edge,
+    Observation,
+    RevisionConflict,
+    _json,
+    check_graph_work,
+)
 
 
 def initialize_bindings(connection) -> None:
@@ -23,6 +30,19 @@ def initialize_bindings(connection) -> None:
             "INSERT OR IGNORE INTO graph_runtime_bindings SELECT session,json_extract(payload,'$.handle'),COALESCE(json_extract(payload,'$.scheme'),''),COALESCE(json_extract(payload,'$.key'),''),COALESCE(json_extract(payload,'$.owner_path'),''),COALESCE(json_extract(payload,'$.target_path'),'') FROM graph_runtime_events WHERE json_extract(payload,'$.kind')='acquire' AND COALESCE(json_extract(payload,'$.handle'),'')<>''"
         )
         connection.execute("UPDATE graph_runtime_schema SET version=2")
+
+
+def initialize_retirement(connection) -> None:
+    """Add indexed provider reclamation without copying or rewriting saved events."""
+    reclamation.initialize(connection)
+    if connection.execute("SELECT version FROM graph_runtime_schema").fetchone()[0] < 3:
+        for statement in (
+            "CREATE INDEX IF NOT EXISTS edges_provider ON edges(provider,id)",
+            "CREATE INDEX IF NOT EXISTS observations_provider ON observations(provider,owner)",
+            "CREATE INDEX IF NOT EXISTS evidence_context_provider ON evidence_context(provider,owner)",
+        ):
+            connection.execute(statement)
+        connection.execute("UPDATE graph_runtime_schema SET version=3")
 
 
 def blocked_bindings(connection, identity, handles, admission, catalog):
@@ -64,7 +84,7 @@ class RuntimeObservations:
                 "CREATE TABLE IF NOT EXISTS graph_runtime_schema(version INTEGER NOT NULL)"
             )
             row = connection.execute("SELECT version FROM graph_runtime_schema").fetchone()
-            if row is not None and row[0] not in (1, 2):
+            if row is not None and row[0] not in (1, 2, 3):
                 raise ValueError("Unsupported runtime observation schema")
             if row is None:
                 for sql in (
@@ -75,16 +95,17 @@ class RuntimeObservations:
                     connection.execute(sql)
                 connection.execute("INSERT INTO graph_runtime_schema VALUES (1)")
             initialize_bindings(connection)
+            initialize_retirement(connection)
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS graph_runtime_blocked_handles(session TEXT NOT NULL,handle TEXT NOT NULL,PRIMARY KEY(session,handle))"
             )
 
     @staticmethod
-    def _session(connection, identity):
+    def _session(connection, identity, *, missing_ok=False):
         row = connection.execute(
             "SELECT * FROM graph_runtime_sessions WHERE id=?", (identity,)
         ).fetchone()
-        if row is None:
+        if row is None and not missing_ok:
             raise ValueError("Unknown runtime capture in this scope")
         return row
 
@@ -98,10 +119,10 @@ class RuntimeObservations:
             connection.execute("INSERT INTO sources VALUES (?,1,1,'{}')", ("runtime:" + identity,))
         return self.status(identity)
 
-    def native(self, identity):
+    def native(self, identity, *, missing_ok=False):
         with self.store._connect() as connection:
-            row = self._session(connection, identity)
-            return {"token": row["token"], "offset": row["offset"]}
+            row = self._session(connection, identity, missing_ok=missing_ok)
+            return {"token": row["token"], "offset": row["offset"]} if row is not None else None
 
     def sessions(self, *, after="", limit=100):
         GraphQueries._page_size(limit)
@@ -411,26 +432,15 @@ class RuntimeObservations:
         }
 
     def release(self, identity):
+        # Retirement is constant-sized. Source joins hide retained evidence and
+        # invalidate history before maintenance deletes any physical backing.
+        check_graph_work()
         with self.store._connect(write=True) as connection:
-            self._session(connection, identity)
-            provider = "runtime:" + identity
-            connection.execute(
-                "DELETE FROM graph_excluded_nodes WHERE id IN (SELECT owner FROM observations WHERE provider=?)",
-                (provider,),
-            )
-            connection.execute(
-                "DELETE FROM nodes WHERE id IN (SELECT owner FROM observations WHERE provider=?)",
-                (provider,),
-            )
-            for table in ("edges", "observations", "evidence_context", "sources"):
-                connection.execute(f"DELETE FROM {table} WHERE provider=?", (provider,))
-            for table in (
-                "graph_runtime_events",
-                "graph_runtime_handles",
-                "graph_runtime_blocked_handles",
-                "graph_runtime_bindings",
-            ):
-                connection.execute(f"DELETE FROM {table} WHERE session=?", (identity,))
+            if self._session(connection, identity, missing_ok=True) is None:
+                return True
+            connection.execute("DELETE FROM sources WHERE provider=?", ("runtime:" + identity,))
             connection.execute("DELETE FROM graph_runtime_sessions WHERE id=?", (identity,))
+            reclamation.enqueue(connection, "runtime", identity)
             self.store._bump(connection)
+            check_graph_work()
         return True

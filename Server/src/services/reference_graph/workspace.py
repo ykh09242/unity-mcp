@@ -12,7 +12,7 @@ import time
 import threading
 
 from services.reference_graph.analysis import Analysis, Catalog, CatalogLookups
-from services.reference_graph import catalog_delta, document_delta, external_changes
+from services.reference_graph import catalog_delta, document_delta, external_changes, reclamation
 from services.reference_graph.external import _excluded, _pattern
 from services.reference_graph.ignore import GitIgnoreRules
 from services.reference_graph.response_budget import PageBudget, bounded_rows
@@ -158,14 +158,18 @@ class GraphWorkspace:
             if connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_runtime_schema'"
             ).fetchone():
-                from services.reference_graph.runtime import initialize_bindings
+                from services.reference_graph.runtime import (
+                    initialize_bindings,
+                    initialize_retirement,
+                )
 
                 previous_runtime = connection.execute(
                     "SELECT version FROM graph_runtime_schema"
                 ).fetchone()[0]
-                if previous_runtime not in (1, 2):
+                if previous_runtime not in (1, 2, 3):
                     raise ValueError("Unsupported runtime observation schema")
                 initialize_bindings(connection)
+                initialize_retirement(connection)
                 if previous_runtime < 2:
                     connection.execute("UPDATE graph_admission SET ready=0 WHERE id=1")
                     self.store._bump(connection)
@@ -495,12 +499,20 @@ class GraphWorkspace:
             )
         )
         paths = {
-            row[0]: row[1] for row in connection.execute("SELECT id,path FROM graph_excluded_nodes")
+            row[0]: row[1]
+            for row in connection.execute(
+                "SELECT id,path FROM graph_excluded_nodes x WHERE id NOT LIKE 'runtime:%' OR "
+                + reclamation.owner_in_use("x.id")
+            )
         }
         paths.update(
             {
                 row[0]: row[1]
-                for row in connection.execute("SELECT id,path FROM nodes WHERE path<>''")
+                for row in connection.execute(
+                    "SELECT id,path FROM nodes n WHERE path<>'' AND (kind<>'runtime_observation' OR "
+                    + reclamation.owner_in_use("n.id")
+                    + ")"
+                )
             }
         )
         paths.update(
@@ -526,7 +538,7 @@ class GraphWorkspace:
         )
         connection.executemany("INSERT INTO graph_excluded_nodes VALUES (?,?)", excluded)
         connection.execute(
-            "INSERT OR IGNORE INTO graph_excluded_nodes SELECT e.owner,x.path FROM edges e JOIN graph_excluded_nodes x ON x.id=e.target WHERE e.provider LIKE 'runtime:%'"
+            "INSERT OR IGNORE INTO graph_excluded_nodes SELECT e.owner,x.path FROM edges e JOIN sources s USING(provider) JOIN graph_excluded_nodes x ON x.id=e.target WHERE e.provider LIKE 'runtime:%' AND s.enabled=1"
         )
         connection.execute("DELETE FROM nodes WHERE id IN (SELECT id FROM graph_excluded_nodes)")
         connection.execute(
@@ -546,7 +558,9 @@ class GraphWorkspace:
         catalog = Catalog(self._catalog_rows(connection))
         blocked_handles = {
             (row["session"], row["handle"])
-            for row in connection.execute("SELECT * FROM graph_runtime_bindings")
+            for row in connection.execute(
+                "SELECT * FROM graph_runtime_bindings WHERE EXISTS (SELECT 1 FROM graph_runtime_sessions s WHERE s.id=graph_runtime_bindings.session)"
+            )
             if not runtime_admitted(dict(row), admitted, catalog)
         }
         connection.execute(
@@ -554,7 +568,7 @@ class GraphWorkspace:
         )
         try:
             cursor = connection.execute(
-                "SELECT e.owner,e.provider,e.payload,c.published,x.id AS excluded_target FROM edges e LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider LEFT JOIN graph_excluded_nodes x ON x.id=e.target WHERE e.provider LIKE 'runtime:%'"
+                "SELECT e.owner,e.provider,e.payload,c.published,x.id AS excluded_target FROM edges e JOIN sources s USING(provider) LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider LEFT JOIN graph_excluded_nodes x ON x.id=e.target WHERE e.provider LIKE 'runtime:%' AND s.enabled=1"
             )
             while batch := cursor.fetchmany(256):
                 excluded = []
@@ -577,7 +591,8 @@ class GraphWorkspace:
                 connection.executemany(
                     "INSERT OR IGNORE INTO runtime_admission_stage VALUES (?,?)", excluded
                 )
-            old = "SELECT x.id FROM graph_excluded_nodes x JOIN observations o ON o.owner=x.id WHERE o.provider LIKE 'runtime:%'"
+            active = "SELECT o.owner FROM observations o JOIN sources s USING(provider) WHERE o.provider LIKE 'runtime:%' AND s.enabled=1"
+            old = "SELECT x.id FROM graph_excluded_nodes x WHERE x.id IN (" + active + ")"
             changed = (
                 connection.execute(
                     "SELECT 1 FROM (SELECT id FROM runtime_admission_stage EXCEPT "
@@ -590,9 +605,7 @@ class GraphWorkspace:
                     + " EXCEPT SELECT id FROM runtime_admission_stage) LIMIT 1"
                 ).fetchone()
             )
-            connection.execute(
-                "DELETE FROM graph_excluded_nodes WHERE id IN (SELECT owner FROM observations WHERE provider LIKE 'runtime:%')"
-            )
+            connection.execute("DELETE FROM graph_excluded_nodes WHERE id IN (" + active + ")")
             connection.execute(
                 "INSERT INTO graph_excluded_nodes SELECT * FROM runtime_admission_stage"
             )
@@ -600,7 +613,7 @@ class GraphWorkspace:
                 "DELETE FROM nodes WHERE id IN (SELECT id FROM runtime_admission_stage)"
             )
             connection.execute(
-                "INSERT OR IGNORE INTO nodes SELECT o.owner,COALESCE(json_extract(c.published,'$.path'),''),'runtime_observation',1 FROM observations o LEFT JOIN evidence_context c USING(owner,provider) WHERE o.provider LIKE 'runtime:%' AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=o.owner)"
+                "INSERT OR IGNORE INTO nodes SELECT o.owner,COALESCE(json_extract(c.published,'$.path'),''),'runtime_observation',1 FROM observations o JOIN sources s USING(provider) LEFT JOIN evidence_context c USING(owner,provider) WHERE o.provider LIKE 'runtime:%' AND s.enabled=1 AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=o.owner)"
             )
             if changed:
                 connection.execute(

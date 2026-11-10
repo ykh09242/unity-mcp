@@ -10,6 +10,25 @@ SNAPSHOT_TABLES = (
     ("graph_snapshot_versions", "backing"),
     ("graph_snapshot_contents", "backing"),
 )
+RUNTIME_TABLES = (
+    ("graph_runtime_events", "session"),
+    ("graph_runtime_handles", "session"),
+    ("graph_runtime_blocked_handles", "session"),
+    ("graph_runtime_bindings", "session"),
+)
+RUNTIME_EVIDENCE = (("edges", "provider"), ("evidence_context", "provider"))
+
+
+def owner_in_use(owner):
+    """Shared owner metadata survives while any enabled evidence uses it."""
+    return (
+        "(EXISTS (SELECT 1 FROM observations live JOIN sources s USING(provider) "
+        f"WHERE live.owner={owner} AND s.enabled=1) OR "
+        "EXISTS (SELECT 1 FROM edges live JOIN sources s USING(provider) "
+        f"WHERE live.owner={owner} AND s.enabled=1) OR "
+        "EXISTS (SELECT 1 FROM edges live JOIN sources s USING(provider) "
+        f"WHERE live.target={owner} AND s.enabled=1))"
+    )
 
 
 def initialize(connection):
@@ -44,6 +63,42 @@ def delete_rows(connection, tables, identity, budget):
     return removed, remaining
 
 
+def runtime(connection, identity, budget):
+    removed, remaining = delete_rows(connection, RUNTIME_TABLES, identity, budget)
+    if remaining or removed == budget:
+        return removed, True
+    provider = "runtime:" + identity
+    changed, remaining = delete_rows(connection, RUNTIME_EVIDENCE, provider, budget - removed)
+    removed += changed
+    if remaining or removed == budget:
+        return removed, True
+    # Keep the observation until its owner metadata is reclaimed. Each candidate
+    # is indexed and bounded, even when shared owners cannot be removed. A small
+    # budget may stop between metadata deletions and resume the same owner later.
+    owners = list(
+        connection.execute(
+            "SELECT owner FROM observations WHERE provider=? ORDER BY owner LIMIT ?",
+            (provider, budget - removed),
+        )
+    )
+    for row in owners:
+        owner = row[0]
+        shared = connection.execute("SELECT " + owner_in_use("?1"), (owner,)).fetchone()[0]
+        if not shared:
+            for table in ("graph_excluded_nodes", "nodes"):
+                if removed == budget:
+                    return removed, True
+                removed += connection.execute(f"DELETE FROM {table} WHERE id=?", (owner,)).rowcount
+        if removed == budget:
+            return removed, True
+        removed += connection.execute(
+            "DELETE FROM observations WHERE provider=? AND owner=?", (provider, owner)
+        ).rowcount
+    return removed, connection.execute(
+        "SELECT 1 FROM observations WHERE provider=? LIMIT 1", (provider,)
+    ).fetchone() is not None
+
+
 def reclaim(connection, budget):
     removed = 0
     # Queue entries are already eligible. Bound empty-job processing too, and
@@ -54,12 +109,15 @@ def reclaim(connection, budget):
         )
     )
     for kind, identity in rows:
-        changed, remaining = delete_rows(
-            connection,
-            QUERY_TABLES if kind == "query" else SNAPSHOT_TABLES,
-            identity,
-            budget - removed,
-        )
+        if kind == "runtime":
+            changed, remaining = runtime(connection, identity, budget - removed)
+        else:
+            changed, remaining = delete_rows(
+                connection,
+                QUERY_TABLES if kind == "query" else SNAPSHOT_TABLES,
+                identity,
+                budget - removed,
+            )
         removed += changed
         if remaining:
             break

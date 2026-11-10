@@ -62,8 +62,15 @@ completed traversal is removed over multiple calls. Repeat while the response's
 `more` value is true. MCP callers may choose `before` (Unix time) and a `limit` of
 1–1000 per batch. These are work-per-call bounds, not total workload limits.
 
-Unfinished queries, active worker staging, snapshots, mutation receipts, runtime
-captures, graph evidence, rules, grants, policies and declarations are preserved.
+Cleanup also drains durable reclamation queued by explicit query, snapshot and
+runtime-capture release, and by snapshot deduplication. Retirement and shared
+snapshot alias changes happen before physical deletion; the queue resumes after
+reopening. Its evidence deletions share the per-call row budget and are included
+in `query_scratch_rows_removed` for response compatibility.
+
+Unfinished queries, active worker staging, retained snapshots, mutation receipts,
+unreleased runtime captures, live graph evidence, rules, grants, policies and
+declarations are preserved.
 Memory caches are cleared only while their reconciler is idle. SQLite pages become
 reusable; cleanup does not run a blocking VACUUM or promise an immediate smaller
 file. Historical snapshots/captures/receipts retain their explicit release actions.

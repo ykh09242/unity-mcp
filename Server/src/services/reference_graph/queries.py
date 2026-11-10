@@ -18,6 +18,7 @@ from services.reference_graph.store import (
     _hash,
     _json,
     edge_candidates,
+    visible_node,
 )
 from services.reference_graph import path_proof, reclamation, snapshot_storage
 from services.reference_graph.response_budget import (
@@ -29,11 +30,12 @@ from services.reference_graph.response_budget import (
 )
 
 
-_SELECT = """SELECT e.*,o.state,n.present,n.path AS target_path,src.path AS source_path,
+_SELECT = f"""SELECT e.*,o.state,n.present,n.path AS target_path,src.path AS source_path,
  c.published AS provenance FROM edges e JOIN sources s ON s.provider=e.provider
  LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider
  LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider
- LEFT JOIN nodes n ON n.id=e.target LEFT JOIN nodes src ON src.id=e.owner
+ LEFT JOIN nodes n ON n.id=e.target AND {visible_node("n")}
+ LEFT JOIN nodes src ON src.id=e.owner AND {visible_node("src")}
  WHERE s.enabled=1 AND (SELECT ready FROM graph_admission WHERE id=1)=1
  AND NOT EXISTS (SELECT 1 FROM graph_excluded_nodes x WHERE x.id=e.owner OR x.id=e.target)
  AND """

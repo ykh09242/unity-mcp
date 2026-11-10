@@ -54,6 +54,15 @@ def guard_graph_work(check: Callable[[], None]):
         _graph_work_check.reset(token)
 
 
+def visible_node(alias: str) -> str:
+    """Retired runtime metadata is private even while its rows await cleanup."""
+    return (
+        f"({alias}.kind<>'runtime_observation' OR EXISTS "
+        "(SELECT 1 FROM observations live JOIN sources s USING(provider) "
+        f"WHERE live.owner={alias}.id AND s.enabled=1))"
+    )
+
+
 def edge_candidates(connection, condition: str, parameters: tuple, limit: int, *, admission=None):
     """Limit indexed candidates before filtering, retaining rejected anchors for progress."""
     admission = admission or "(SELECT ready FROM graph_admission WHERE id=1)=1"
@@ -84,7 +93,8 @@ def edge_candidates(connection, condition: str, parameters: tuple, limit: int, *
         "FROM candidates e LEFT JOIN sources s ON s.provider=e.provider "
         "LEFT JOIN observations o ON o.owner=e.owner AND o.provider=e.provider "
         "LEFT JOIN evidence_context c ON c.owner=e.owner AND c.provider=e.provider "
-        "LEFT JOIN nodes n ON n.id=e.target LEFT JOIN nodes src ON src.id=e.owner) "
+        f"LEFT JOIN nodes n ON n.id=e.target AND {visible_node('n')} "
+        f"LEFT JOIN nodes src ON src.id=e.owner AND {visible_node('src')}) "
         f"SELECT cursor_row,id,admitted,{evidence} FROM selected ORDER BY id",
         (*parameters, limit),
     )

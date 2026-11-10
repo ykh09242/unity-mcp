@@ -12,6 +12,7 @@ import pytest
 from core.config import config
 from services.reference_graph.service import ReferenceGraphService
 from services.reference_graph.queries import GraphQueries
+from services.reference_graph.operations import cleanup
 from services.tools.manage_reference_graph import manage_reference_graph
 
 from services.reference_graph.runtime import RuntimeObservations
@@ -167,6 +168,9 @@ def test_runtime_release_removes_only_its_owner_exclusions_after_reopen(capture,
             == "Assets/Scripts/Loader.cs"
         )
     assert runtime.release(identity)
+    for _ in range(20):
+        if not cleanup(workspace, before=0, limit=2)["more"]:
+            break
     reopened = GraphWorkspace(GraphStore.open(tmp_path, workspace.store.scope))
     with reopened.store._connect() as db:
         excluded = {row[0] for row in db.execute("SELECT id FROM graph_excluded_nodes")}

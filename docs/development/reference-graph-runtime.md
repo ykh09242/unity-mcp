@@ -86,6 +86,21 @@ collection exclusions apply at ingestion and again when delivering historical
 events, handles and graph evidence. Removing a capture also invalidates graph
 snapshots that require its source. Authored declarations are preserved.
 
+Release atomically retires the capture and its source before returning
+`released: true`; repeating release is idempotent. Queries and capture enumeration
+immediately stop exposing it. SQLite event, handle and evidence rows are then
+reclaimed by the existing bounded `cleanup` operation, including after reopening
+the database. Repeat cleanup while `more` is true. No per-capture cleanup task is
+created. Cancellation before retirement rolls back the transaction; cancellation
+after commit can leave retirement complete, so retry release to confirm it.
+Owner exclusions remain until their observation is reclaimed, and shared owner
+metadata needed by other enabled evidence is preserved.
+
+Runtime schema version 3 adds provider indexes to existing evidence tables for
+bounded reclamation. This one-time index build can scale with existing history;
+it does not rewrite event payloads. The bounded release guarantee applies after
+schema initialization.
+
 Independent consumers have independent files and can stop separately. Domain
 reload, Editor quit and Play Mode transitions close subscriptions and writers.
 Captures overlapping in time share a runtime context; after all
