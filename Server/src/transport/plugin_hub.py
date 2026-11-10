@@ -1829,7 +1829,10 @@ class PluginHub(WebSocketEndpoint):
                     _progress=_progress,
                 )
         except TimeoutError:
-            return budget.timeout_response(command_type)
+            result = budget.timeout_response(command_type)
+            if not budget.execution_evidence().dispatched:
+                result["data"]["dispatch"] = "not_dispatched"
+            return result
 
     @classmethod
     async def _admit_command_response(
@@ -2097,10 +2100,15 @@ class PluginHub(WebSocketEndpoint):
                 )
             return MCPResponse(success=False, error="auth_required").model_dump()
         except TimeoutError:
-            return budget.timeout_response(command_type)
+            result = budget.timeout_response(command_type)
+            if not budget.execution_evidence().dispatched:
+                result["data"]["dispatch"] = "not_dispatched"
+            return result
         finally:
-            if resume is not None and (
-                asyncio.current_task().cancelling() or budget.remaining() <= 0
+            if (
+                resume is not None
+                and resume.dispatched
+                and (asyncio.current_task().cancelling() or budget.remaining() <= 0)
             ):
                 resume.cancel()
                 if original_session is not None:
@@ -2592,6 +2600,11 @@ class PluginHub(WebSocketEndpoint):
                     return True
 
                 def dispatch_write() -> None:
+                    # Serialization and synchronous admission can outlast the
+                    # event loop's pending timeout callback. Fence the actual
+                    # write before publishing any dispatch evidence.
+                    if budget.remaining() <= 0:
+                        raise TimeoutError
                     if _resume is not None:
                         _resume.dispatch()
                     receipt = execution_owner.get()
@@ -2642,6 +2655,12 @@ class PluginHub(WebSocketEndpoint):
                 return result
             except NativeNotStarted:
                 raise
+            except TimeoutError:
+                canceled = budget.dispatched
+                result = budget.timeout_response(command_type)
+                if not budget.dispatched:
+                    result["data"]["dispatch"] = "not_dispatched"
+                return result
             except CommandNotDispatchedError:
                 # Final target fences run before socket I/O. Preserve the
                 # refusal without uncertainty or a cancellation for unsent work.
@@ -2721,7 +2740,7 @@ class PluginHub(WebSocketEndpoint):
                     cause=cause,
                 )
         except asyncio.CancelledError:
-            canceled = True
+            canceled = budget.dispatched
             raise
         finally:
             # Progress ends at response/cancellation, never actual worker cleanup.
