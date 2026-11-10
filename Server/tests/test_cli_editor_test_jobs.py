@@ -270,7 +270,11 @@ def test_wait_transport_error_is_one_json_document(editor_module, monkeypatch, c
     monkeypatch.setattr(
         connection,
         "send_command",
-        AsyncMock(side_effect=connection.UnityConnectionError("connection timed out")),
+        AsyncMock(
+            side_effect=connection.UnityConnectionError(
+                "HTTP error from server: 500 - synthetic-private-credential"
+            )
+        ),
     )
     # When the real CLI starts or observes a job.
     result = CliRunner().invoke(editor_module.editor, command + ["--wait", "5"])
@@ -279,6 +283,11 @@ def test_wait_transport_error_is_one_json_document(editor_module, monkeypatch, c
     payload = json.loads(result.stdout)
     assert payload["success"] is False
     assert payload["code"] == "test_job_transport_error"
+    assert "synthetic-private-credential" not in result.output
+    assert payload["error"] == connection.PUBLIC_CONNECTION_ERROR
+    assert "outcome is unknown" in payload["hint"]
+    if command[0] == "poll-test":
+        assert payload["data"]["job_id"] == "job-1"
     assert result.stderr == ""
 
 

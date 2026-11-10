@@ -20,6 +20,7 @@ from cli.utils.connection import (
     handle_unity_errors,
     UnityConnectionError,
     UnityCommandError,
+    PUBLIC_CONNECTION_ERROR,
 )
 from cli.utils.suggestions import suggest_matches, format_suggestions
 from cli.utils.parsers import parse_json_dict_or_exit
@@ -498,7 +499,7 @@ def _run_test_job_command(
             {
                 "success": False,
                 "code": "test_job_transport_error",
-                "error": str(error),
+                "error": PUBLIC_CONNECTION_ERROR if config.format == "json" else str(error),
                 "data": {"job_id": params["job_id"]} if "job_id" in params else None,
                 "hint": "The job outcome is unknown; check existing test jobs before starting another run.",
             }
