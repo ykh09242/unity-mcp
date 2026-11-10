@@ -10,9 +10,21 @@ permissions:
 
 jobs:
   canary:
-    name: Pinned launcher archive (Python 3.14)
-    runs-on: ubuntu-26.04
+    name: Pinned launcher archive (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-26.04
+            python-version: '3.11'
+          - os: windows-latest
+            python-version: '3.11'
+          - os: macos-26-intel
+            python-version: '3.11'
+          - os: ubuntu-26.04
+            python-version: '3.14'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,46 +61,47 @@ jobs:
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: '0.13.7'
-          python-version: '3.14'
+          python-version: ${{ matrix.python-version }}
           enable-cache: false
 
       - name: Resolve and install the pinned archive without a lock or shared cache
         env:
           SERVER_SOURCE: ${{ steps.source.outputs.server_source }}
-        shell: bash
+          PYTHON_VERSION: ${{ matrix.python-version }}
+        shell: pwsh
         run: |
-          set -euo pipefail
-          environment="$RUNNER_TEMP/distribution-canary"
-          uv venv --no-config --python 3.14 "$environment"
-          python="$environment/bin/python"
+          $ErrorActionPreference = 'Stop'
+          $environment = Join-Path $env:RUNNER_TEMP 'distribution-canary'
+          uv venv --no-config --python $env:PYTHON_VERSION $environment
+          if ($LASTEXITCODE -ne 0) { throw 'Canary environment creation failed' }
+          $python = if ($IsWindows) { Join-Path $environment 'Scripts/python.exe' } else { Join-Path $environment 'bin/python' }
           uv --version > .tmp/distribution-canary/toolchain.txt
-          "$python" --version >> .tmp/distribution-canary/toolchain.txt
-          uv pip install --no-config --no-cache --python "$python" \
-            "ykh09242-unity-mcp-server @ $SERVER_SOURCE" \
-            2>&1 | tee .tmp/distribution-canary/install.log
-          uv pip freeze --no-config --python "$python" > .tmp/distribution-canary/resolved.txt
-          printf 'CANARY_PYTHON=%s\n' "$python" >> "$GITHUB_ENV"
+          & $python --version >> .tmp/distribution-canary/toolchain.txt
+          uv pip install --no-config --no-cache --python $python "ykh09242-unity-mcp-server @ $env:SERVER_SOURCE" 2>&1 | Tee-Object -FilePath .tmp/distribution-canary/install.log
+          if ($LASTEXITCODE -ne 0) { throw 'Unlocked canary installation failed' }
+          uv pip freeze --no-config --python $python > .tmp/distribution-canary/resolved.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Canary resolution evidence failed' }
+          "CANARY_PYTHON=$python" >> $env:GITHUB_ENV
 
       - name: Exercise installed registration, MCP, HTTP and CLI behavior
         env:
           SERVER_COMMIT: ${{ steps.source.outputs.server_commit }}
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          "$CANARY_PYTHON" -I -W error tools/check_server_archive.py \
-            --forbid-source "$GITHUB_WORKSPACE" --candidate-sha "$SERVER_COMMIT" \
-            > .tmp/distribution-canary/behavior.json
-          "$CANARY_PYTHON" -I -W error tools/check_server_startup.py \
-            > .tmp/distribution-canary/registration.jsonl
-          cat .tmp/distribution-canary/behavior.json
-          cat .tmp/distribution-canary/registration.jsonl
-          printf '\nInstalled registration, stdio/authenticated HTTP MCP and HTTP/CLI probes passed. Resolved versions are retained in the artifact.\n' >> "$GITHUB_STEP_SUMMARY"
+          $ErrorActionPreference = 'Stop'
+          & $env:CANARY_PYTHON -I -W error tools/check_server_archive.py --forbid-source $env:GITHUB_WORKSPACE --candidate-sha $env:SERVER_COMMIT > .tmp/distribution-canary/behavior.json
+          if ($LASTEXITCODE -ne 0) { throw 'Installed canary behavior failed' }
+          & $env:CANARY_PYTHON -I -W error tools/check_server_startup.py > .tmp/distribution-canary/registration.jsonl
+          if ($LASTEXITCODE -ne 0) { throw 'Installed canary registration failed' }
+          Get-Content .tmp/distribution-canary/behavior.json
+          Get-Content .tmp/distribution-canary/registration.jsonl
+          "Installed registration, stdio/authenticated HTTP MCP and HTTP/CLI probes passed. Resolved versions are retained in the artifact." >> $env:GITHUB_STEP_SUMMARY
 
       - name: Retain source, resolution and probe evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: distribution-canary-${{ github.run_id }}
+          name: distribution-canary-${{ matrix.os }}-python-${{ matrix.python-version }}-${{ github.run_id }}
           path: .tmp/distribution-canary/
           include-hidden-files: true
           if-no-files-found: warn

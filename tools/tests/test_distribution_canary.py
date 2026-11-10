@@ -58,3 +58,35 @@ def test_canary_rejects_mutable_committed_source_before_install(history, tmp_pat
     assert result.returncode != 0
     assert not (tmp_path / "output").exists()
     assert not (repo / ".tmp/distribution-canary/source.json").exists()
+
+
+def test_canary_schedules_supported_platform_floor_and_separate_evidence():
+    # Given the shipped archive's scheduled validation configuration.
+    config = yaml.safe_load(
+        (ROOT / ".github/workflows/distribution-canary.yml").read_text(encoding="utf-8")
+    )
+    job = config["jobs"]["canary"]
+
+    # When GitHub expands the matrix, every supported platform must check Python 3.11.
+    rows = job["strategy"]["matrix"]["include"]
+    observed = {(row["os"], row["python-version"]) for row in rows}
+    assert {
+        ("ubuntu-26.04", "3.11"),
+        ("windows-latest", "3.11"),
+        ("macos-26-intel", "3.11"),
+        ("ubuntu-26.04", "3.14"),
+    } <= observed
+    assert job["runs-on"] == "${{ matrix.os }}"
+    setup = next(step for step in job["steps"] if step.get("name") == "Install uv")
+    assert setup["with"]["python-version"] == "${{ matrix.python-version }}"
+    upload = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    # Then every row retains distinct evidence instead of colliding in one artifact.
+    names = {
+        upload["with"]["name"]
+        .replace("${{ matrix.os }}", os_name)
+        .replace("${{ matrix.python-version }}", version)
+        for os_name, version in observed
+    }
+    assert len(names) == len(observed)

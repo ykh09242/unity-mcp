@@ -101,8 +101,9 @@ application modules; both probes explicitly use `-W error`, since isolated mode 
 archive job uses the same optional beartype setting as the locked suites. These small probes
 complement the complete locked test suites without repeating them.
 
-[`distribution-canary.yml`](../../.github/workflows/distribution-canary.yml) runs one Linux
-Python 3.14 probe each Monday at 04:23 UTC and supports manual dispatch. It selects the
+[`distribution-canary.yml`](../../.github/workflows/distribution-canary.yml) runs Python
+3.11 probes on Linux, Windows and Intel macOS, plus a Linux Python 3.14 probe, each Monday
+at 04:23 UTC and supports manual dispatch. Each row selects the
 immutable `mcpServerSource` from the checked commit's `MCPForUnity/package.json`, using the
 shared source-pin validator to require consistent launcher metadata. Scheduled runs use
 the default branch; manual runs use the selected workflow branch. The selected launcher
@@ -111,7 +112,7 @@ commit and server archive commit appear separately in the run summary and retain
 The canary creates an empty environment and installs that archive with fresh, unlocked
 dependency resolution and no shared uv cache. It reuses the installed-archive HTTP/CLI,
 stdio/authenticated HTTP MCP exchanges and startup-registration probes, including
-warnings-as-errors and source-import rejection. The artifact retains source identity,
+warnings-as-errors and source-import rejection. Each OS/Python artifact retains source identity,
 install output, toolchain versions, every
 resolved distribution version, and successful probe reports for 30 days. Installation or
 probe failures fail the job; this read-only check publishes no package and does not run
