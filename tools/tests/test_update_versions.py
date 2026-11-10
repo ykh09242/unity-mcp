@@ -7,9 +7,11 @@ surfaces here rather than in a release run.
 """
 
 import json
+import os
 import re
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -89,17 +91,19 @@ def test_update_uv_lock_preserves_crlf_line_endings(tmp_path, monkeypatch):
     assert b'name = "ykh09242-unity-mcp-server"\r\nversion = "10.2.0"' in raw
 
 
-def test_update_uv_lock_missing_entry_is_reported_not_raised(tmp_path, monkeypatch):
+def test_update_uv_lock_missing_entry_is_a_refusal(tmp_path, monkeypatch):
     path = tmp_path / "uv.lock"
     path.write_bytes(b'version = 1\n\n[[package]]\nname = "click"\nversion = "8.3.1"\n')
     monkeypatch.setattr(update_versions, "UV_LOCK", path)
-    assert update_versions.update_uv_lock("10.2.0") is False
+    with pytest.raises(ValueError):
+        update_versions.update_uv_lock("10.2.0")
     assert b'version = "8.3.1"' in path.read_bytes()
 
 
-def test_update_uv_lock_missing_file_is_reported_not_raised(tmp_path, monkeypatch):
+def test_update_uv_lock_missing_file_is_a_refusal(tmp_path, monkeypatch):
     monkeypatch.setattr(update_versions, "UV_LOCK", tmp_path / "absent.lock")
-    assert update_versions.update_uv_lock("10.2.0") is False
+    with pytest.raises(FileNotFoundError):
+        update_versions.update_uv_lock("10.2.0")
 
 
 def test_update_uv_lock_matches_the_checked_in_lock_format(tmp_path, monkeypatch):
@@ -261,3 +265,297 @@ def test_server_version_requires_an_explicit_value(
     # Then: argument validation fails without writing either component.
     assert result.value.code == 2
     assert all(path.read_bytes() == content for path, content in before.items())
+
+
+def checkout_bytes(repo: Path) -> dict[Path, bytes]:
+    return {path.relative_to(repo): path.read_bytes() for path in repo.rglob("*") if path.is_file()}
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("version", ["not-a-version", '1.2.3"', "1.2.3\n", "1.2.3\nkey = 1", " "])
+def test_invalid_server_version_refuses_without_writes(
+    version_checkout, monkeypatch, version, dry_run
+):
+    # Given an isolated checkout and an invalid Python distribution version.
+    before = checkout_bytes(version_checkout)
+    argv = ["update_versions.py", "--component", "server", "--version", version]
+    monkeypatch.setattr(sys, "argv", argv + (["--dry-run"] if dry_run else []))
+    # When the real CLI entrypoint validates the request.
+    result = update_versions.main()
+    # Then the refusal is nonzero and the complete file tree is unchanged.
+    assert result != 0
+    assert checkout_bytes(version_checkout) == before
+
+
+@pytest.mark.parametrize("version", ["1.2.3rc1", "1.2.3a2", "1.2.3.dev4", "1.2.3-beta.1"])
+def test_server_prerelease_updates_both_parseable_targets(version_checkout, monkeypatch, version):
+    # Given an isolated checkout and a valid Python prerelease.
+    monkeypatch.setattr(
+        sys, "argv", ["update_versions.py", "--component", "server", "--version", version]
+    )
+    # When both server metadata files are published.
+    result = update_versions.main()
+    # Then both parsed metadata values agree with the requested version.
+    assert result == 0
+    project = tomllib.loads(
+        (version_checkout / "Server/pyproject.toml").read_text(encoding="utf-8")
+    )
+    lock = tomllib.loads((version_checkout / "Server/uv.lock").read_text(encoding="utf-8"))
+    assert project["project"]["version"] == version
+    assert [
+        entry["version"]
+        for entry in lock["package"]
+        if entry["name"] == "ykh09242-unity-mcp-server"
+    ] == [version]
+
+
+@pytest.mark.parametrize("component", ["server", "all"])
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    "damage",
+    ["missing_entry", "missing_version", "malformed", "duplicate", "absent_lock", "absent_project"],
+)
+def test_preflight_refuses_incomplete_server_metadata(
+    version_checkout, monkeypatch, component, dry_run, damage
+):
+    # Given a selected metadata target that cannot safely participate in a version bump.
+    lock = version_checkout / "Server/uv.lock"
+    if damage == "absent_project":
+        (version_checkout / "Server/pyproject.toml").unlink()
+    elif damage == "absent_lock":
+        lock.unlink()
+    else:
+        damaged = {
+            "missing_entry": SAMPLE_LOCK.replace("ykh09242-unity-mcp-server", "other-project"),
+            "missing_version": SAMPLE_LOCK.replace('version = "10.1.0"\n', ""),
+            "malformed": SAMPLE_LOCK + 'invalid = "unterminated\n',
+            "duplicate": SAMPLE_LOCK
+            + '\n[[package]]\nname = "ykh09242-unity-mcp-server"\nversion = "10.1.0"\n',
+        }[damage]
+        lock.write_bytes(damaged.encode("utf-8"))
+    before = checkout_bytes(version_checkout)
+    argv = ["update_versions.py", "--component", component, "--version", "4.5.6"]
+    monkeypatch.setattr(sys, "argv", argv + (["--dry-run"] if dry_run else []))
+    # When preflight evaluates every selected target, including dry runs.
+    result = update_versions.main()
+    # Then no file was added, deleted or changed before refusing.
+    assert result != 0
+    assert checkout_bytes(version_checkout) == before
+
+
+@pytest.mark.parametrize("component", ["unity", "server", "all"])
+def test_later_publication_failure_restores_all_files(version_checkout, monkeypatch, component):
+    # Given a real filesystem whose second selected replacement fails once.
+    before = checkout_bytes(version_checkout)
+    replace = os.replace
+    replacements = 0
+
+    def fail_second(source, target):
+        nonlocal replacements
+        replacements += 1
+        if replacements == 2:
+            raise OSError("injected second publication failure")
+        return replace(source, target)
+
+    monkeypatch.setattr(os, "replace", fail_second)
+    monkeypatch.setattr(
+        sys, "argv", ["update_versions.py", "--component", component, "--version", "4.5.6"]
+    )
+    # When publication fails after the first target has changed.
+    result = update_versions.main()
+    # Then the operation fails and every original byte is restored with no staging files.
+    assert result != 0
+    assert replacements >= 2
+    assert checkout_bytes(version_checkout) == before
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_already_current_server_is_a_successful_noop(version_checkout, monkeypatch, dry_run):
+    # Given both server metadata targets already carry the requested version.
+    before = checkout_bytes(version_checkout)
+    argv = ["update_versions.py", "--component", "server", "--version", "10.1.0"]
+    monkeypatch.setattr(sys, "argv", argv + (["--dry-run"] if dry_run else []))
+    # When the complete selected metadata is checked.
+    result = update_versions.main()
+    # Then a genuine no-op succeeds without creating any transaction files.
+    assert result == 0
+    assert checkout_bytes(version_checkout) == before
+
+
+@pytest.mark.parametrize(
+    "target", ["MCPForUnity/package.json", "manifest.json", "Server/README.md"]
+)
+def test_all_preflight_requires_every_selected_target(version_checkout, monkeypatch, target):
+    # Given a missing Unity or documentation target in a legacy synchronized update.
+    (version_checkout / target).unlink()
+    before = checkout_bytes(version_checkout)
+    monkeypatch.setattr(
+        sys, "argv", ["update_versions.py", "--component", "all", "--version", "4.5.6"]
+    )
+    # When every selected target is preflighted.
+    result = update_versions.main()
+    # Then no earlier metadata can be published and the missing target stays missing.
+    assert result != 0
+    assert checkout_bytes(version_checkout) == before
+
+
+def test_uncertain_replacement_outcome_is_rolled_back(version_checkout, monkeypatch):
+    # Given a replacement that succeeds on disk before reporting an I/O error.
+    before = checkout_bytes(version_checkout)
+    replace = os.replace
+    attempts = 0
+
+    def replace_then_fail(source, target):
+        nonlocal attempts
+        attempts += 1
+        replace(source, target)
+        if attempts == 2:
+            raise OSError("injected uncertain replacement outcome")
+
+    monkeypatch.setattr(os, "replace", replace_then_fail)
+    monkeypatch.setattr(
+        sys, "argv", ["update_versions.py", "--component", "server", "--version", "4.5.6"]
+    )
+    # When publication reports failure after changing both targets.
+    result = update_versions.main()
+    # Then both targets are restored, including the uncertain second outcome.
+    assert result != 0
+    assert checkout_bytes(version_checkout) == before
+
+
+def test_failed_rollback_keeps_original_bytes_for_recovery(version_checkout, monkeypatch, capsys):
+    # Given a later publication failure followed by a persistent restoration failure.
+    before = checkout_bytes(version_checkout)
+    replace = os.replace
+    attempts = 0
+
+    def fail_publication_and_restore(source, target):
+        nonlocal attempts
+        attempts += 1
+        if attempts >= 2:
+            raise OSError("injected publication and rollback failures")
+        return replace(source, target)
+
+    monkeypatch.setattr(os, "replace", fail_publication_and_restore)
+    monkeypatch.setattr(
+        sys, "argv", ["update_versions.py", "--component", "server", "--version", "4.5.6"]
+    )
+    # When automatic restoration cannot complete.
+    result = update_versions.main()
+    # Then failure exposes a complete original-byte mapping for manual recovery.
+    assert result != 0
+    stages = list(version_checkout.glob(".version-update-*"))
+    assert len(stages) == 1
+    stage = stages[0]
+    assert str(stage) in capsys.readouterr().err
+    targets = json.loads((stage / "targets.json").read_text(encoding="utf-8"))
+    assert targets == [
+        str(version_checkout / path) for path in ("Server/pyproject.toml", "Server/uv.lock")
+    ]
+    for index, target in enumerate(targets):
+        assert (stage / f"{index}.before").read_bytes() == before[
+            Path(target).relative_to(version_checkout)
+        ]
+    actual = checkout_bytes(version_checkout)
+    changed = {path for path, data in before.items() if actual[path] != data}
+    assert changed == {Path("Server/pyproject.toml")}
+    assert all(path in before or path.parts[0] == stage.name for path in actual)
+
+
+@pytest.mark.parametrize("updater", ["update_pyproject_toml", "update_uv_lock"])
+def test_direct_server_updater_refuses_unsafe_version(version_checkout, updater):
+    # Given the same unsafe version submitted directly to either public helper.
+    before = checkout_bytes(version_checkout)
+    # When a caller bypasses CLI argument processing.
+    with pytest.raises(ValueError):
+        getattr(update_versions, updater)('1.2.3"\n')
+    # Then helper refusal remains distinct from an already-current False result.
+    assert checkout_bytes(version_checkout) == before
+
+
+def test_concurrent_edit_to_already_current_target_refuses_publication(
+    version_checkout, monkeypatch
+):
+    # Given an already-current project plus an outdated lock, edited during preparation.
+    project = version_checkout / "Server/pyproject.toml"
+    project.write_bytes(b'[project]\nversion = "4.5.6"\n')
+    prepare_lock = update_versions._prepare_lock
+    concurrent = b'[project]\nversion = "5.6.7"\n'
+
+    def prepare_then_edit(version):
+        change = prepare_lock(version)
+        project.write_bytes(concurrent)
+        return change
+
+    before = checkout_bytes(version_checkout)
+    before[Path("Server/pyproject.toml")] = concurrent
+    monkeypatch.setattr(update_versions, "_prepare_lock", prepare_then_edit)
+    monkeypatch.setattr(
+        sys, "argv", ["update_versions.py", "--component", "server", "--version", "4.5.6"]
+    )
+    # When publication sees a concurrent edit to the selected no-op input.
+    result = update_versions.main()
+    # Then it refuses, preserves that edit and never updates the lock.
+    assert result != 0
+    assert checkout_bytes(version_checkout) == before
+
+
+@pytest.mark.parametrize("entrypoint", ["helper", "server", "all"])
+@pytest.mark.parametrize(
+    "project_text",
+    [
+        '[project]\ndescription = """\nversion = "example"\n"""\nversion = "10.1.0"\n',
+        '[project]\nversion = "1.2.3\\"old"\ndescription = "Keep this exactly"\n',
+        "[project]\ndescription = '''\n[project]\nversion = \"fake\"\n'''\nversion = \"10.1.0\"\n",
+    ],
+)
+def test_project_version_rewrite_preserves_other_toml_values(
+    version_checkout, monkeypatch, entrypoint, project_text
+):
+    # Given valid TOML with version-like string content or an escaped old version.
+    project = version_checkout / "Server/pyproject.toml"
+    project.write_bytes(project_text.encode("utf-8"))
+    expected = tomllib.loads(project_text)
+    expected["project"]["version"] = "4.5.6"
+    # When the public helper or CLI prepares and publishes a version bump.
+    if entrypoint == "helper":
+        assert update_versions.update_pyproject_toml("4.5.6") is True
+    else:
+        monkeypatch.setattr(
+            sys, "argv", ["update_versions.py", "--component", entrypoint, "--version", "4.5.6"]
+        )
+        assert update_versions.main() == 0
+    # Then parsed semantics change only the project version; all other text survives.
+    assert tomllib.loads(project.read_text(encoding="utf-8")) == expected
+    expected_text = project_text.replace('version = "10.1.0"', 'version = "4.5.6"').replace(
+        'version = "1.2.3\\"old"', 'version = "4.5.6"'
+    )
+    assert project.read_bytes() == expected_text.encode("utf-8")
+    if entrypoint != "helper":
+        lock = tomllib.loads((version_checkout / "Server/uv.lock").read_text(encoding="utf-8"))
+        assert [
+            entry["version"]
+            for entry in lock["package"]
+            if entry["name"] == "ykh09242-unity-mcp-server"
+        ] == ["4.5.6"]
+
+
+def test_lock_rewrite_refuses_a_match_inside_multiline_text(version_checkout, monkeypatch):
+    # Given a regex-shaped block inside string data and an unsupported real version spelling.
+    lock = version_checkout / "Server/uv.lock"
+    decoy = (
+        "description = '''\n[[package]]\n"
+        'name = "ykh09242-unity-mcp-server"\nversion = "10.1.0"\n\'\'\'\n'
+    )
+    lock.write_bytes(
+        (decoy + SAMPLE_LOCK.replace('version = "10.1.0"', "version = '10.1.0'")).encode("utf-8")
+    )
+    before = checkout_bytes(version_checkout)
+    monkeypatch.setattr(
+        sys, "argv", ["update_versions.py", "--component", "server", "--version", "4.5.6"]
+    )
+    # When preparing the lock would change description data instead of its package entry.
+    result = update_versions.main()
+    # Then semantic validation refuses before either selected target can change.
+    assert result != 0
+    assert checkout_bytes(version_checkout) == before
