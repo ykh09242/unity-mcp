@@ -34,6 +34,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             Undo.RecordObject(go.transform, "Set Camera Target");
             go.transform.LookAt(target.transform);
+            CameraHelpers.RecordPrefabInstanceChanges(go.transform);
             CameraHelpers.MarkDirty(go);
 
             return new
@@ -71,6 +72,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             if (props["orthographicSize"] != null)
                 cam.orthographicSize = orthographicSize;
 
+            CameraHelpers.RecordPrefabInstanceChanges(cam);
             CameraHelpers.MarkDirty(go);
             return new
             {
@@ -95,6 +97,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
 
             Undo.RecordObject(cam, "Set Camera Depth");
             cam.depth = depth;
+            CameraHelpers.RecordPrefabInstanceChanges(cam);
             CameraHelpers.MarkDirty(go);
 
             return new
@@ -145,6 +148,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
             foreach (var set in setters)
                 set();
 
+            CameraHelpers.RecordPrefabInstanceChanges(cmCamera);
             CameraHelpers.MarkDirty(cmCamera.gameObject);
 
             return new
@@ -236,6 +240,7 @@ namespace MCPForUnity.Editor.Tools.Cameras
                     return new ErrorResponse("Could not find writable Priority on CinemachineCamera.");
                 Undo.RecordObject(cmCamera, "Set Cinemachine Priority");
                 property.SetValue(cmCamera, priority);
+                CameraHelpers.RecordPrefabInstanceChanges(cmCamera);
             }
             return null;
         }

@@ -289,15 +289,18 @@ namespace MCPForUnity.Editor.Tools.Cameras
             };
         }
 
+        internal static void RecordPrefabInstanceChanges(UnityEngine.Object target)
+        {
+            if (target != null && PrefabUtility.IsPartOfPrefabInstance(target))
+                PrefabUtility.RecordPrefabInstancePropertyModifications(target);
+        }
+
         internal static void MarkDirty(GameObject go)
         {
             if (go == null)
                 return;
             EditorUtility.SetDirty(go);
-            var prefabStage = UnityEditor.SceneManagement.PrefabStageUtility.GetCurrentPrefabStage();
-            if (prefabStage != null)
-                UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(prefabStage.scene);
-            else
+            if (go.scene.IsValid() && go.scene.isLoaded)
                 UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(go.scene);
         }
     }

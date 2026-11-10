@@ -95,6 +95,199 @@ namespace MCPForUnityTests.Editor.Tools
             );
         }
 
+        private Component CreatePrefabCamera(bool cinemachine)
+        {
+            if (cinemachine && !CameraHelpers.HasCinemachine)
+                Assert.Ignore("Cinemachine is not installed.");
+            if (cinemachine)
+            {
+                var component = _cameraGo.AddComponent(CameraHelpers.CinemachineCameraType);
+                if (component is Behaviour behaviour)
+                    behaviour.enabled = false;
+            }
+            _assetRoot = "Assets/__McpCameraContract_" + Guid.NewGuid().ToString("N");
+            _assetRootGuid = AssetDatabase.CreateFolder("Assets", _assetRoot.Substring("Assets/".Length));
+            Assert.IsNotEmpty(_assetRootGuid);
+            // Camera Transform changes must be ordinary overrides, not default root overrides.
+            var prefabSource = new GameObject("CameraPrefabRoot");
+            _cameraGo.transform.SetParent(prefabSource.transform, false);
+            var prefab = PrefabUtility.SaveAsPrefabAsset(prefabSource, _assetRoot + "/Camera.prefab");
+            Assert.IsNotNull(prefab);
+            Object.DestroyImmediate(prefabSource);
+            var prefabInstance = (GameObject)PrefabUtility.InstantiatePrefab(prefab, _ownedScene);
+            prefabInstance.transform.SetParent(_rig.transform, false);
+            _cameraGo = prefabInstance.transform.GetChild(0).gameObject;
+            _camera = _cameraGo.GetComponent<Camera>();
+            return cinemachine ? _cameraGo.GetComponent(CameraHelpers.CinemachineCameraType) : _camera;
+        }
+
+        private JObject PrefabRequest(JObject properties) =>
+            new JObject
+            {
+                ["target"] = _cameraGo.GetInstanceIDCompat(),
+                ["searchMethod"] = "by_id",
+                ["properties"] = properties,
+            };
+
+        private void ReopenPrefabScene()
+        {
+            string rigName = _rig.name;
+            Assert.IsTrue(EditorSceneManager.SaveScene(_ownedScene, _assetRoot + "/" + _ownedScene.name + ".unity"));
+            _ownedScene = _sceneFixture.ReopenSavedScene();
+            _rig = _ownedScene.GetRootGameObjects().Single(go => go.name == rigName);
+            _cameraGo = _rig.GetComponentInChildren<Camera>(true).gameObject;
+            _camera = _cameraGo.GetComponent<Camera>();
+        }
+
+        [Test]
+        public void BasicCameraConfigurationDoesNotDirtyUnrelatedPrefabStage()
+        {
+            CreatePrefabCamera(false);
+            Assert.IsTrue(EditorSceneManager.SaveScene(_ownedScene, _assetRoot + "/" + _ownedScene.name + ".unity"));
+            var request = PrefabRequest(new JObject { ["fieldOfView"] = 37 });
+            var stage = PrefabStageUtility.OpenPrefab(_assetRoot + "/Camera.prefab");
+            Assert.IsNotNull(stage);
+            try
+            {
+                Assert.IsFalse(stage.scene.isDirty);
+                Assert.IsFalse(_ownedScene.isDirty);
+                var response = JObject.FromObject(CameraConfigure.SetBasicCameraLens(request));
+                Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+                Assert.IsTrue(_ownedScene.isDirty);
+                Assert.IsFalse(stage.scene.isDirty, "The actual camera scene owns this mutation.");
+            }
+            finally
+            {
+                // Only this fixture's stage may be cleared or closed, including on RED.
+                if (PrefabStageUtility.GetCurrentPrefabStage() == stage)
+                {
+                    stage.ClearDirtiness();
+                    StageUtility.GoToMainStage();
+                }
+            }
+        }
+
+        [TestCase("lens")]
+        [TestCase("target")]
+        [TestCase("priority")]
+        public void BasicPrefabConfigurationSurvivesUndoRedoAndSceneReopen(string setting)
+        {
+            CreatePrefabCamera(false);
+            float originalFov = _camera.fieldOfView;
+            float originalDepth = _camera.depth;
+            Quaternion originalRotation = _cameraGo.transform.localRotation;
+            _rig.transform.position = new Vector3(5, 2, 8);
+            // The rig is also a persistent scene target, distinct from the camera's position.
+            _cameraGo.transform.localPosition = new Vector3(-5, -2, -8);
+            var request = PrefabRequest(
+                new JObject
+                {
+                    ["fieldOfView"] = 37,
+                    ["priority"] = 17,
+                    ["lookAt"] = _rig.GetInstanceIDCompat(),
+                }
+            );
+            Undo.IncrementCurrentGroup();
+            object result = setting switch
+            {
+                "lens" => CameraConfigure.SetBasicCameraLens(request),
+                "priority" => CameraConfigure.SetBasicCameraPriority(request),
+                _ => CameraConfigure.SetBasicCameraTarget(request),
+            };
+            Assert.IsTrue(JObject.FromObject(result).Value<bool>("success"));
+            var changedObject = setting == "target" ? (Object)_cameraGo.transform : _camera;
+            var prefabRoot = PrefabUtility.GetOutermostPrefabInstanceRoot(_cameraGo);
+            Assert.IsTrue(PrefabUtility.HasPrefabInstanceAnyOverrides(prefabRoot, false));
+            Assert.IsTrue(
+                PrefabUtility
+                    .GetPropertyModifications(prefabRoot)
+                    .Any(mod =>
+                        mod.target == PrefabUtility.GetCorrespondingObjectFromSource(changedObject)
+                        && (
+                            setting == "lens" ? mod.propertyPath == "field of view"
+                            : setting == "priority" ? mod.propertyPath == "m_Depth"
+                            : mod.propertyPath.StartsWith("m_LocalRotation.")
+                        )
+                    )
+            );
+            Quaternion expectedRotation = _cameraGo.transform.localRotation;
+            Undo.FlushUndoRecordObjects();
+            Undo.IncrementCurrentGroup();
+            Undo.PerformUndo();
+            Assert.AreEqual(originalFov, _camera.fieldOfView);
+            Assert.AreEqual(originalDepth, _camera.depth);
+            Assert.Less(Quaternion.Angle(originalRotation, _cameraGo.transform.localRotation), 0.01f);
+            Undo.PerformRedo();
+            ReopenPrefabScene();
+            Assert.AreEqual(setting == "lens" ? 37 : originalFov, _camera.fieldOfView);
+            Assert.AreEqual(setting == "priority" ? 17 : originalDepth, _camera.depth);
+            Assert.Less(Quaternion.Angle(expectedRotation, _cameraGo.transform.localRotation), 0.01f);
+            var sourceCamera = PrefabUtility.GetCorrespondingObjectFromSource(_camera);
+            Assert.AreEqual(originalFov, sourceCamera.fieldOfView);
+            Assert.AreEqual(originalDepth, sourceCamera.depth);
+            Assert.Less(Quaternion.Angle(originalRotation, sourceCamera.transform.localRotation), 0.01f);
+        }
+
+        [Test]
+        public void CinemachinePrefabTargetSurvivesUndoRedoAndSceneReopen()
+        {
+            var component = CreatePrefabCamera(true);
+            var follow = component.GetType().GetProperty("Follow");
+            var lookAt = component.GetType().GetProperty("LookAt");
+            Assert.IsNotNull(follow);
+            Assert.IsNotNull(lookAt);
+            Undo.IncrementCurrentGroup();
+            var response = JObject.FromObject(
+                CameraConfigure.SetCinemachineTarget(
+                    PrefabRequest(new JObject { ["follow"] = _rig.GetInstanceIDCompat(), ["lookAt"] = _rig.GetInstanceIDCompat() })
+                )
+            );
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(
+                PrefabUtility
+                    .GetPropertyModifications(PrefabUtility.GetOutermostPrefabInstanceRoot(_cameraGo))
+                    .Any(mod => mod.target == PrefabUtility.GetCorrespondingObjectFromSource(component) && mod.objectReference == _rig.transform)
+            );
+            Undo.FlushUndoRecordObjects();
+            Undo.IncrementCurrentGroup();
+            Undo.PerformUndo();
+            Assert.IsNull(follow.GetValue(component));
+            Assert.IsNull(lookAt.GetValue(component));
+            Undo.PerformRedo();
+            ReopenPrefabScene();
+            component = _cameraGo.GetComponent(CameraHelpers.CinemachineCameraType);
+            Assert.AreSame(_rig.transform, follow.GetValue(component));
+            Assert.AreSame(_rig.transform, lookAt.GetValue(component));
+            Assert.IsNull(follow.GetValue(PrefabUtility.GetCorrespondingObjectFromSource(component)));
+            Assert.IsNull(lookAt.GetValue(PrefabUtility.GetCorrespondingObjectFromSource(component)));
+        }
+
+        [Test]
+        public void CinemachinePrefabPrioritySurvivesUndoRedoAndSceneReopen()
+        {
+            var component = CreatePrefabCamera(true);
+            var originalPriority = CameraHelpers.ReadCinemachinePriority(component);
+            Undo.IncrementCurrentGroup();
+            Assert.IsNull(CameraConfigure.SetPriority(component, 29));
+            Assert.IsTrue(
+                PrefabUtility
+                    .GetPropertyModifications(PrefabUtility.GetOutermostPrefabInstanceRoot(_cameraGo))
+                    .Any(mod =>
+                        mod.target == PrefabUtility.GetCorrespondingObjectFromSource(component)
+                        && mod.propertyPath.IndexOf("Priority", StringComparison.OrdinalIgnoreCase) >= 0
+                    )
+            );
+            Undo.FlushUndoRecordObjects();
+            Undo.IncrementCurrentGroup();
+            Undo.PerformUndo();
+            Assert.AreEqual(originalPriority, CameraHelpers.ReadCinemachinePriority(component));
+            Undo.PerformRedo();
+            ReopenPrefabScene();
+            component = _cameraGo.GetComponent(CameraHelpers.CinemachineCameraType);
+            Assert.AreEqual(29, CameraHelpers.ReadCinemachinePriority(component));
+            Assert.AreEqual(originalPriority, CameraHelpers.ReadCinemachinePriority(PrefabUtility.GetCorrespondingObjectFromSource(component)));
+        }
+
         [TestCase("fieldOfView", "true")]
         [TestCase("nearClipPlane", "true")]
         [TestCase("farClipPlane", "true")]
@@ -454,7 +647,7 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsNotNull(typeof(CameraConfigure).GetMethod("PrepareComponentProperties", BindingFlags.NonPublic | BindingFlags.Static));
             float original = _camera.fieldOfView;
             int dirty = EditorUtility.GetDirtyCount(_camera);
-            LogAssert.Expect(LogType.Error, new Regex("Error converting token to System.Boolean", RegexOptions.Singleline));
+            LogAssert.Expect(LogType.Error, new Regex("\\[PropertyConversion\\] Property value conversion failed\\.", RegexOptions.Singleline));
             var error = PrepareCameraProperties(new JObject { ["fieldOfView"] = 45, ["enabled"] = "not-a-boolean" }, out _);
             Assert.IsNotNull(error);
             StringAssert.Contains("enabled", JObject.FromObject(error).ToString());
