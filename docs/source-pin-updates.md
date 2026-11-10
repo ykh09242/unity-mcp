@@ -67,6 +67,32 @@ failure. Neither helper converts unavailable history into a passing freshness re
 `check_source_pin_drift.py` remains offline and read-only; local authoring and release
 checks continue to require their selected commits to be available locally.
 
+## Bridge evidence for the selected component pair
+
+The E2E Bridge Smoke workflow keeps ordinary PR coverage on the candidate checkout's
+server and Unity package. A PR changing `MCPForUnity/package.json`, `manifest.json`
+or `release-source-inputs.json` also selects one immutable-server leg. Its bounded
+matrix has at most two legs and runs them sequentially. This adds selected-pair
+coverage during a pin refresh without requiring a refresh for each server commit.
+
+For release preparation, dispatch E2E Bridge Smoke on the committed package candidate
+with `pair_mode: selected` (the manual default), or choose `both` to retain candidate
+server coverage too. The selected leg installs the exact validated archive from
+`mcpServerSource` without editable checkout overrides. Both the harness and its smoke
+child use installed server modules in this mode. Before Editor execution, the workflow
+checks distribution archive provenance and the resolved bridge module location to
+reject a mismatched archive, editable install or checkout import shadow. The Unity
+package and smoke assertions still come from the package candidate checkout.
+
+The plan artifact identifies the package commit, selected server commit, intended
+tested server commit and mode even when licensed execution is disabled. Per-mode
+`e2e-bridge-report-*` artifacts and the summary record the actual harness outcome,
+with installed distribution version and module location for the selected leg.
+Candidate coverage does not validate the installed component pair. Planned or skipped
+legs are not passing live evidence; the existing license policy and missing-secret
+gate still skip Editor execution. A successful harness records bridge smoke and its
+existing test-leg policy, not an additional full MCP server startup or release gate.
+
 ## Skill provenance in CI
 
 The source-pin workflow also runs `python tools/check_skill_pin.py --verify-git` on

@@ -30,9 +30,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-# Make the server's ``src`` importable whether run from repo root or Server/.
+# Default to checkout source; selected-pair CI explicitly uses installed modules.
 _SRC = Path(__file__).resolve().parents[2] / "src"
-if _SRC.is_dir() and str(_SRC) not in sys.path:
+if (
+    os.environ.get("UNITY_MCP_BRIDGE_SERVER_MODE") != "installed"
+    and _SRC.is_dir()
+    and str(_SRC) not in sys.path
+):
     sys.path.insert(0, str(_SRC))
 
 from transport.legacy.unity_connection import send_command_with_retry  # noqa: E402

@@ -8,8 +8,17 @@ name: E2E Bridge Smoke (deterministic, no LLM)
 
 on:
   workflow_dispatch:
+    inputs:
+      pair_mode:
+        description: Candidate server, package-selected immutable server, or both
+        type: choice
+        options: [candidate, selected, both]
+        default: selected
   pull_request:
     paths:
+      - "MCPForUnity/package.json"
+      - "manifest.json"
+      - "release-source-inputs.json"
       - "MCPForUnity/Editor/**"
       - "MCPForUnity/Runtime/**"
       - "Server/src/**"
@@ -17,6 +26,10 @@ on:
       - "Server/uv.lock"
       - "Server/tests/e2e/**"
       - "tools/local_harness.py"
+      - "tools/bridge_pair_evidence.py"
+      - "tools/check_source_pin_drift.py"
+      - "tools/check_release_evidence.py"
+      - "tools/tests/test_bridge_pair_evidence.py"
       - "tools/ci_unity_license.py"
       - "tools/unity_ci_packages.py"
       - "tools/unity_ci_package_cache.py"
@@ -39,6 +52,38 @@ env:
   UNITY_IMAGE: unityci/editor:ubuntu-2021.3.45f2-linux-il2cpp-3@sha256:903ced48a1d4f415b597280b76c4f01f1bd38f66c654805fb3ffd16874d7d2ee
 
 jobs:
+  pairs:
+    name: Identify bridge component pairs
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.pairs.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Plan bounded bridge coverage
+        id: pairs
+        env:
+          PAIR_SELECTION: ${{ inputs.pair_mode || 'auto' }}
+          BASELINE_REVISION: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--selection "$PAIR_SELECTION")
+          if [[ -n "$BASELINE_REVISION" ]]; then
+            args+=(--baseline "$BASELINE_REVISION")
+          fi
+          python3 tools/bridge_pair_evidence.py plan "${args[@]}" \
+            --report reports/bridge-pair-plan.json --summary "$GITHUB_STEP_SUMMARY"
+      - name: Preserve bridge pair plan
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-bridge-pair-plan
+          path: reports/bridge-pair-plan.json
+          retention-days: 14
+
   license:
     # Hoisted out of the smoke job so the gate is a JOB-level condition. A step-level `if:`
     # produces step-conclusion `skipped`, which contributes nothing to the job conclusion,
@@ -96,9 +141,13 @@ jobs:
 
   e2e-bridge:
     runs-on: ubuntu-26.04
-    needs: license
+    needs: [license, pairs]
     if: needs.license.outputs.unity_ok == 'true'
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.pairs.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -128,12 +177,22 @@ jobs:
           echo "UNITY_PROJECT_ROOT=$GITHUB_WORKSPACE/$PREPARED_PROJECT" >> "$GITHUB_ENV"
 
       - name: Install MCP server
+        env:
+          PAIR_MODE: ${{ matrix.mode }}
+          SERVER_SOURCE: ${{ matrix.server_source }}
         run: |
           set -eux
           uv venv
           echo "VIRTUAL_ENV=$GITHUB_WORKSPACE/.venv" >> "$GITHUB_ENV"
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
-          uv pip install -e Server
+          if [ "$PAIR_MODE" = selected ]; then
+            uv pip install "$SERVER_SOURCE"
+            echo "UNITY_MCP_BRIDGE_SERVER_MODE=installed" >> "$GITHUB_ENV"
+            UNITY_MCP_BRIDGE_SERVER_MODE=installed .venv/bin/python tools/bridge_pair_evidence.py verify-installed \
+              --mode selected --report reports/bridge-installation.json
+          else
+            uv pip install -e Server
+          fi
 
       # Activate with the same pinned GameCI implementation that runs our tests.
       # Personal account credentials do not require a professional serial key.
@@ -176,6 +235,7 @@ jobs:
           rm -f "$GITHUB_WORKSPACE/.unity-mcp"/unity-mcp-status-*.json || true
 
       - name: Run headless bridge harness (boot + wait + smoke/editmode/playmode)
+        id: harness
         shell: bash
         env:
           UNITY_IMAGE: ${{ env.UNITY_IMAGE }}
@@ -190,6 +250,16 @@ jobs:
             --project-path "$UNITY_PROJECT_ROOT" \
             --reports reports
 
+      - name: Record bridge pair outcome
+        if: always()
+        env:
+          PAIR_MODE: ${{ matrix.mode }}
+          BRIDGE_OUTCOME: ${{ steps.harness.outcome }}
+        run: |
+          python3 tools/bridge_pair_evidence.py report --mode "$PAIR_MODE" \
+            --outcome "${BRIDGE_OUTCOME:-skipped}" --installation reports/bridge-installation.json \
+            --report reports/bridge-pair.json --summary "$GITHUB_STEP_SUMMARY"
+
       - name: Return Unity license seat
         if: always() && steps.prepare_license.outcome == 'success'
         env:
@@ -202,9 +272,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-bridge-report
+          name: e2e-bridge-report-${{ matrix.mode }}
           # The harness snapshots redacted Editor logs before removing its container.
           path: |
             reports/junit-*.xml
             reports/unity-editor-*.log
+            reports/bridge-pair.json
+            reports/bridge-installation.json
           if-no-files-found: ignore

@@ -16,7 +16,9 @@ importable + unit-testable without Unity. The reused server modules
 (``transport.legacy.unity_connection`` / ``transport.legacy.port_discovery``)
 are imported INSIDE the live functions (after prepending ``Server/src`` to
 ``sys.path``, mirroring ``Server/tests/e2e/bridge_smoke.py``), so importing this
-module never requires ``Server/src`` on ``sys.path``.
+module never requires ``Server/src`` on ``sys.path``. CI can explicitly set
+``UNITY_MCP_BRIDGE_SERVER_MODE=installed`` to use the installed immutable server
+without inserting the checkout source path in either process.
 
 Exit-code contract:
     0  All blocking legs passed. PlayMode non-blocking failures still 0
@@ -1267,7 +1269,9 @@ def make_launcher(args: argparse.Namespace):
 # Live functions (Unity-touching; guarded under main()).
 # ===========================================================================
 def _ensure_src_on_path() -> None:
-    """Prepend <repo>/Server/src to sys.path (mirrors bridge_smoke.py)."""
+    """Use the checkout unless CI explicitly selects the installed archive server."""
+    if os.environ.get("UNITY_MCP_BRIDGE_SERVER_MODE") == "installed":
+        return
     src = str(SERVER_SRC)
     if SERVER_SRC.is_dir() and src not in sys.path:
         sys.path.insert(0, src)
