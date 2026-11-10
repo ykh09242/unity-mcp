@@ -242,6 +242,23 @@ def test_raw_custom_payload_without_status_is_not_failure(command_response):
     assert json.loads(result.stdout) == response
 
 
+@pytest.mark.parametrize("output_format", ["text", "json", "table"])
+def test_raw_message_only_success_remains_visible(command_response, output_format):
+    response, requests = command_response
+    response.clear()
+    response.update({"success": True, "message": "Game paused."})
+
+    result = CliRunner().invoke(
+        cli, ["--format", output_format, "raw", "manage_editor", '{"action":"pause"}']
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.count("Game paused.") == 1
+    if output_format == "json":
+        assert json.loads(result.stdout) == {"success": True, "message": "Game paused."}
+    assert requests == [{"type": "manage_editor", "params": {"action": "pause"}}]
+
+
 @pytest.mark.parametrize(
     ("rows", "expected"),
     [

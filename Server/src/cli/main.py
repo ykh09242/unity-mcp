@@ -312,7 +312,7 @@ def raw_command(ctx: Context, command_type: str, params: tuple):
 
     try:
         result = run_command(command_type, params_dict, config)
-        click.echo(format_output(result, config.format))
+        click.echo(format_output(result, config.format, show_success_message=True))
     except UnityConnectionError as e:
         print_connection_error(e, config.format)
         sys.exit(1)
