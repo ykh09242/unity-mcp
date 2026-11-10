@@ -122,7 +122,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         "physics",
         "Physics Queries",
         "raycast raycast_all linecast shapecast overlap",
-        "dimension origin direction max_distance layer_mask query_trigger_interaction shape position size start end point1 point2 height capsule_direction angle",
+        "dimension origin direction max_distance max_results layer_mask query_trigger_interaction shape position size start end point1 point2 height capsule_direction angle",
         effects=READ_ONLY_EFFECTS,
     ),
     _feature(
@@ -463,7 +463,15 @@ CAPABILITY_DESCRIPTIONS = {
     "manage_physics_settings": "Inspect or change 2D/3D physics settings and layer collision rules.",
     "manage_physics_materials": "Create, configure and assign physics materials.",
     "manage_physics_joints": "Add, configure or remove 2D/3D joints.",
-    "query_physics": "Run ray, shape and overlap queries in 2D or 3D.",
+    "query_physics": (
+        "Run ray, shape and overlap queries in 2D or 3D. "
+        "overlap/raycast_all use bounded native buffers: max_results is an integer 1-1000 (default 200). "
+        "buffer_saturated means completeness is unknown, including exact capacity. "
+        "Ray results are distance-sorted within the returned subset; saturated queries do not guarantee globally nearest hits. "
+        "Overlap ordering is unspecified. Limits bound materialization, not native traversal time."
+        " In 2D, Collide requires Physics2D.queriesHitTriggers=true; otherwise returns "
+        "unsupported_2d_trigger_override without querying or changing settings."
+    ),
     "apply_physics_force": "Apply forces, torque or explosions to rigidbodies.",
     "manage_rigidbody": "Inspect or configure a Rigidbody or Rigidbody2D.",
     "diagnose_physics": "Validate physics setup or inspect a pair of colliders and passive contacts.",

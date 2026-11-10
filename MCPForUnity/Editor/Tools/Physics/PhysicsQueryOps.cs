@@ -10,6 +10,9 @@ namespace MCPForUnity.Editor.Tools.Physics
 {
     internal static class PhysicsQueryOps
     {
+        private const int DefaultMaxResults = 200;
+        private const int MaxQueryResults = 1000;
+
         public static object Raycast(JObject @params)
         {
             var p = new ToolParams(@params);
@@ -26,7 +29,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             float maxDistance = p.GetFloat("max_distance") ?? Mathf.Infinity;
 
             if (dimension == "2d")
-                return Raycast2D(originArr, dirArr, maxDistance, p);
+                return ValidateTriggerOverride2D(p) ?? Raycast2D(originArr, dirArr, maxDistance, p);
 
             if (dimension != "3d")
                 return new ErrorResponse($"Invalid dimension: '{dimension}'. Use '3d' or '2d'.");
@@ -142,6 +145,8 @@ namespace MCPForUnity.Editor.Tools.Physics
         public static object Overlap(JObject @params)
         {
             var p = new ToolParams(@params);
+            if (!TryResolveMaxResults(p, out int maxResults))
+                return new ErrorResponse("'max_results' must be an integer from 1 to 1000.");
             string dimension = (p.Get("dimension") ?? "3d").ToLowerInvariant();
             string shape = p.Get("shape");
             if (string.IsNullOrEmpty(shape))
@@ -158,22 +163,25 @@ namespace MCPForUnity.Editor.Tools.Physics
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
             if (dimension == "2d")
-                return Overlap2D(shape, posArr, sizeToken, layerMask);
+                return ValidateTriggerOverride2D(p) ?? Overlap2D(shape, posArr, sizeToken, layerMask, p, maxResults);
 
             if (dimension != "3d")
                 return new ErrorResponse($"Invalid dimension: '{dimension}'. Use '3d' or '2d'.");
 
-            return Overlap3D(shape, posArr, sizeToken, layerMask);
+            return Overlap3D(shape, posArr, sizeToken, layerMask, p, maxResults);
         }
 
-        private static object Overlap3D(string shape, JArray posArr, JToken sizeToken, int layerMask)
+        private static object Overlap3D(string shape, JArray posArr, JToken sizeToken, int layerMask, ToolParams p, int maxResults)
         {
+            if (!TryResolveOverlapTrigger(p, out QueryTriggerInteraction triggerInteraction))
+                return new ErrorResponse("Invalid query_trigger_interaction. Valid: UseGlobal, Ignore, Collide.");
             if (posArr.Count < 3)
                 return new ErrorResponse("3D overlap 'position' requires [x, y, z].");
 
             var position = new Vector3(posArr[0].ReadScalar<float>(), posArr[1].ReadScalar<float>(), posArr[2].ReadScalar<float>());
 
-            Collider[] results;
+            var results = new Collider[maxResults];
+            int count;
 
             switch (shape.ToLowerInvariant())
             {
@@ -181,7 +189,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     float radius = sizeToken.ReadScalar<float>();
                     UnityEngine.Physics.SyncTransforms();
-                    results = UnityEngine.Physics.OverlapSphere(position, radius, layerMask);
+                    count = UnityEngine.Physics.OverlapSphereNonAlloc(position, radius, results, layerMask, triggerInteraction);
                     break;
                 }
                 case "box":
@@ -192,7 +200,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     else
                         return new ErrorResponse("3D box overlap 'size' requires [halfX, halfY, halfZ].");
                     UnityEngine.Physics.SyncTransforms();
-                    results = UnityEngine.Physics.OverlapBox(position, halfExtents, Quaternion.identity, layerMask);
+                    count = UnityEngine.Physics.OverlapBoxNonAlloc(position, halfExtents, results, Quaternion.identity, layerMask, triggerInteraction);
                     break;
                 }
                 case "capsule":
@@ -223,7 +231,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         }
 
                         UnityEngine.Physics.SyncTransforms();
-                        results = UnityEngine.Physics.OverlapCapsule(point0, point1, radius, layerMask);
+                        count = UnityEngine.Physics.OverlapCapsuleNonAlloc(point0, point1, radius, results, layerMask, triggerInteraction);
                     }
                     else
                     {
@@ -235,17 +243,21 @@ namespace MCPForUnity.Editor.Tools.Physics
                     return new ErrorResponse($"Unknown 3D shape: '{shape}'. Valid: sphere, box, capsule.");
             }
 
-            return FormatOverlapResults(results, "3D");
+            return FormatOverlapResults(results, count, "3D");
         }
 
-        private static object Overlap2D(string shape, JArray posArr, JToken sizeToken, int layerMask)
+        private static object Overlap2D(string shape, JArray posArr, JToken sizeToken, int layerMask, ToolParams p, int maxResults)
         {
+            if (!TryResolveOverlapTrigger(p, out QueryTriggerInteraction triggerInteraction))
+                return new ErrorResponse("Invalid query_trigger_interaction. Valid: UseGlobal, Ignore, Collide.");
             if (posArr.Count < 2)
                 return new ErrorResponse("2D overlap 'position' requires [x, y].");
 
             var position = new Vector2(posArr[0].ReadScalar<float>(), posArr[1].ReadScalar<float>());
 
-            Collider2D[] results;
+            var results = new Collider2D[maxResults];
+            int count;
+            var filter = CreateTriggerFilter2D(triggerInteraction, layerMask);
 
             switch (shape.ToLowerInvariant())
             {
@@ -253,7 +265,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 {
                     float radius = sizeToken.ReadScalar<float>();
                     Physics2D.SyncTransforms();
-                    results = Physics2D.OverlapCircleAll(position, radius, layerMask);
+                    count = Physics2D.OverlapCircle(position, radius, filter, results);
                     break;
                 }
                 case "box":
@@ -264,7 +276,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                     else
                         return new ErrorResponse("2D box overlap 'size' requires [width, height].");
                     Physics2D.SyncTransforms();
-                    results = Physics2D.OverlapBoxAll(position, size, 0f, layerMask);
+                    count = Physics2D.OverlapBox(position, size, 0f, filter, results);
                     break;
                 }
                 case "capsule":
@@ -278,7 +290,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                         if (dirStr != null && dirStr.ToLowerInvariant() == "horizontal")
                             dir = CapsuleDirection2D.Horizontal;
                         Physics2D.SyncTransforms();
-                        results = Physics2D.OverlapCapsuleAll(position, new Vector2(sizeX, sizeY), dir, 0f, layerMask);
+                        count = Physics2D.OverlapCapsule(position, new Vector2(sizeX, sizeY), dir, 0f, filter, results);
                     }
                     else
                     {
@@ -290,14 +302,15 @@ namespace MCPForUnity.Editor.Tools.Physics
                     return new ErrorResponse($"Unknown 2D shape: '{shape}'. Valid: circle, box, capsule.");
             }
 
-            return FormatOverlapResults2D(results, "2D");
+            return FormatOverlapResults2D(results, count, "2D");
         }
 
-        private static object FormatOverlapResults(Collider[] results, string dimension)
+        private static object FormatOverlapResults(Collider[] results, int count, string dimension)
         {
-            var colliders = new List<object>();
-            foreach (var col in results)
+            var colliders = new List<object>(count);
+            for (int i = 0; i < count; i++)
             {
+                var col = results[i];
                 var go = col.gameObject;
                 colliders.Add(
                     new
@@ -313,15 +326,23 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Overlap query found {colliders.Count} collider(s) ({dimension}).",
-                data = new { colliders },
+                data = new
+                {
+                    colliders,
+                    max_results = results.Length,
+                    returned_count = count,
+                    buffer_saturated = count == results.Length,
+                    ordering = "unspecified",
+                },
             };
         }
 
-        private static object FormatOverlapResults2D(Collider2D[] results, string dimension)
+        private static object FormatOverlapResults2D(Collider2D[] results, int count, string dimension)
         {
-            var colliders = new List<object>();
-            foreach (var col in results)
+            var colliders = new List<object>(count);
+            for (int i = 0; i < count; i++)
             {
+                var col = results[i];
                 var go = col.gameObject;
                 colliders.Add(
                     new
@@ -337,7 +358,14 @@ namespace MCPForUnity.Editor.Tools.Physics
             {
                 success = true,
                 message = $"Overlap query found {colliders.Count} collider(s) ({dimension}).",
-                data = new { colliders },
+                data = new
+                {
+                    colliders,
+                    max_results = results.Length,
+                    returned_count = count,
+                    buffer_saturated = count == results.Length,
+                    ordering = "unspecified",
+                },
             };
         }
 
@@ -360,7 +388,7 @@ namespace MCPForUnity.Editor.Tools.Physics
             float maxDistance = p.GetFloat("max_distance") ?? Mathf.Infinity;
 
             if (dimension == "2d")
-                return Shapecast2D(shape, originArr, dirArr, maxDistance, p);
+                return ValidateTriggerOverride2D(p) ?? Shapecast2D(shape, originArr, dirArr, maxDistance, p);
 
             if (dimension != "3d")
                 return new ErrorResponse($"Invalid dimension: '{dimension}'. Use '3d' or '2d'.");
@@ -602,6 +630,8 @@ namespace MCPForUnity.Editor.Tools.Physics
         public static object RaycastAll(JObject @params)
         {
             var p = new ToolParams(@params);
+            if (!TryResolveMaxResults(p, out int maxResults))
+                return new ErrorResponse("'max_results' must be an integer from 1 to 1000.");
             string dimension = (p.Get("dimension") ?? "3d").ToLowerInvariant();
 
             var originArr = p.GetRaw("origin") as JArray;
@@ -615,15 +645,15 @@ namespace MCPForUnity.Editor.Tools.Physics
             float maxDistance = p.GetFloat("max_distance") ?? Mathf.Infinity;
 
             if (dimension == "2d")
-                return RaycastAll2D(originArr, dirArr, maxDistance, p);
+                return ValidateTriggerOverride2D(p) ?? RaycastAll2D(originArr, dirArr, maxDistance, p, maxResults);
 
             if (dimension != "3d")
                 return new ErrorResponse($"Invalid dimension: '{dimension}'. Use '3d' or '2d'.");
 
-            return RaycastAll3D(originArr, dirArr, maxDistance, p);
+            return RaycastAll3D(originArr, dirArr, maxDistance, p, maxResults);
         }
 
-        private static object RaycastAll3D(JArray originArr, JArray dirArr, float maxDistance, ToolParams p)
+        private static object RaycastAll3D(JArray originArr, JArray dirArr, float maxDistance, ToolParams p, int maxResults)
         {
             if (originArr.Count < 3)
                 return new ErrorResponse("3D RaycastAll 'origin' requires [x, y, z].");
@@ -645,12 +675,14 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             UnityEngine.Physics.SyncTransforms();
 
-            RaycastHit[] hits = UnityEngine.Physics.RaycastAll(origin, direction, maxDistance, layerMask, triggerInteraction);
-            System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+            var hits = new RaycastHit[maxResults];
+            int count = UnityEngine.Physics.RaycastNonAlloc(origin, direction, hits, maxDistance, layerMask, triggerInteraction);
+            Array.Sort(hits, 0, count, Comparer<RaycastHit>.Create((a, b) => a.distance.CompareTo(b.distance)));
 
-            var hitsArray = new List<object>();
-            foreach (var h in hits)
+            var hitsArray = new List<object>(count);
+            for (int i = 0; i < count; i++)
             {
+                var h = hits[i];
                 var collider = h.collider;
                 var hitGameObject = collider.gameObject;
                 hitsArray.Add(
@@ -669,12 +701,21 @@ namespace MCPForUnity.Editor.Tools.Physics
             return new
             {
                 success = true,
-                message = $"RaycastAll found {hits.Length} hit(s).",
-                data = new { hit_count = hits.Length, hits = hitsArray },
+                message = $"RaycastAll returned {count} hit(s).",
+                data = new
+                {
+                    hit_count = count,
+                    hits = hitsArray,
+                    max_results = maxResults,
+                    returned_count = count,
+                    buffer_saturated = count == maxResults,
+                    ordering = "distance_ascending",
+                    nearest_hits_guaranteed = count < maxResults,
+                },
             };
         }
 
-        private static object RaycastAll2D(JArray originArr, JArray dirArr, float maxDistance, ToolParams p)
+        private static object RaycastAll2D(JArray originArr, JArray dirArr, float maxDistance, ToolParams p, int maxResults)
         {
             if (originArr.Count < 2)
                 return new ErrorResponse("2D RaycastAll 'origin' requires [x, y].");
@@ -686,25 +727,17 @@ namespace MCPForUnity.Editor.Tools.Physics
 
             int layerMask = ResolveLayerMask(p.Get("layer_mask"));
 
-            var triggerFilter = ResolveTriggerFilter2D(p, layerMask);
+            var triggerFilter = ResolveTriggerFilter2D(p, layerMask) ?? CreateTriggerFilter2D(QueryTriggerInteraction.UseGlobal, layerMask);
             Physics2D.SyncTransforms();
 
-            IReadOnlyList<RaycastHit2D> hits;
-            if (triggerFilter.HasValue)
-            {
-                var filteredHits = new List<RaycastHit2D>();
-                Physics2D.Raycast(origin, direction, triggerFilter.Value, filteredHits, maxDistance);
-                filteredHits.Sort((a, b) => a.distance.CompareTo(b.distance));
-                hits = filteredHits;
-            }
-            else
-            {
-                hits = Physics2D.RaycastAll(origin, direction, maxDistance, layerMask);
-            }
+            var hits = new RaycastHit2D[maxResults];
+            int count = Physics2D.Raycast(origin, direction, triggerFilter, hits, maxDistance);
+            Array.Sort(hits, 0, count, Comparer<RaycastHit2D>.Create((a, b) => a.distance.CompareTo(b.distance)));
 
-            var hitsArray = new List<object>();
-            foreach (var h in hits)
+            var hitsArray = new List<object>(count);
+            for (int i = 0; i < count; i++)
             {
+                var h = hits[i];
                 var collider = h.collider;
                 var hitGameObject = collider.gameObject;
                 hitsArray.Add(
@@ -723,8 +756,17 @@ namespace MCPForUnity.Editor.Tools.Physics
             return new
             {
                 success = true,
-                message = $"RaycastAll found {hits.Count} hit(s).",
-                data = new { hit_count = hits.Count, hits = hitsArray },
+                message = $"RaycastAll returned {count} hit(s).",
+                data = new
+                {
+                    hit_count = count,
+                    hits = hitsArray,
+                    max_results = maxResults,
+                    returned_count = count,
+                    buffer_saturated = count == maxResults,
+                    ordering = "distance_ascending",
+                    nearest_hits_guaranteed = count < maxResults,
+                },
             };
         }
 
@@ -742,7 +784,7 @@ namespace MCPForUnity.Editor.Tools.Physics
                 return new ErrorResponse("'end' parameter is required (array of floats).");
 
             if (dimension == "2d")
-                return Linecast2D(startArr, endArr, p);
+                return ValidateTriggerOverride2D(p) ?? Linecast2D(startArr, endArr, p);
 
             if (dimension != "3d")
                 return new ErrorResponse($"Invalid dimension: '{dimension}'. Use '3d' or '2d'.");
@@ -863,7 +905,55 @@ namespace MCPForUnity.Editor.Tools.Physics
             )
                 return null;
 
-            var filter = new ContactFilter2D { useTriggers = interaction == QueryTriggerInteraction.Collide };
+            return CreateTriggerFilter2D(interaction, layerMask);
+        }
+
+        private static object ValidateTriggerOverride2D(ToolParams p)
+        {
+            if (
+                Physics2D.queriesHitTriggers
+                || !Enum.TryParse(p.Get("query_trigger_interaction"), true, out QueryTriggerInteraction interaction)
+                || interaction != QueryTriggerInteraction.Collide
+            )
+                return null;
+
+            // Unity also applies the global trigger switch to queries with a local ContactFilter2D.
+            return new
+            {
+                success = false,
+                code = "unsupported_2d_trigger_override",
+                error = "2D query_trigger_interaction='Collide' requires Physics2D.queriesHitTriggers=true. Unity's local ContactFilter2D cannot include triggers while that global setting is disabled; the query was not run.",
+                data = new
+                {
+                    dimension = "2d",
+                    query_trigger_interaction = "Collide",
+                    queriesHitTriggers = false,
+                },
+            };
+        }
+
+        private static bool TryResolveOverlapTrigger(ToolParams p, out QueryTriggerInteraction interaction)
+        {
+            string value = p.Get("query_trigger_interaction");
+            interaction = QueryTriggerInteraction.UseGlobal;
+            return string.IsNullOrEmpty(value) || (Enum.TryParse(value, true, out interaction) && Enum.IsDefined(typeof(QueryTriggerInteraction), interaction));
+        }
+
+        private static bool TryResolveMaxResults(ToolParams p, out int maxResults)
+        {
+            JToken value = p.GetRaw("max_results");
+            maxResults = DefaultMaxResults;
+            if (value == null || value.Type == JTokenType.Null)
+                return true;
+            return value.Type == JTokenType.Integer && int.TryParse(value.ToString(), out maxResults) && maxResults >= 1 && maxResults <= MaxQueryResults;
+        }
+
+        private static ContactFilter2D CreateTriggerFilter2D(QueryTriggerInteraction interaction, int layerMask)
+        {
+            var filter = new ContactFilter2D
+            {
+                useTriggers = interaction == QueryTriggerInteraction.UseGlobal ? Physics2D.queriesHitTriggers : interaction == QueryTriggerInteraction.Collide,
+            };
             filter.SetLayerMask(layerMask);
             return filter;
         }

@@ -108,10 +108,12 @@ def test_overlap_forwards(mock_unity):
             shape="sphere",
             position=[0, 0, 0],
             size=10.0,
+            query_trigger_interaction="Ignore",
         )
     )
     assert mock_unity["params"]["shape"] == "sphere"
     assert mock_unity["params"]["size"] == 10.0
+    assert mock_unity["params"]["query_trigger_interaction"] == "Ignore"
 
 
 def test_validate_forwards(mock_unity):

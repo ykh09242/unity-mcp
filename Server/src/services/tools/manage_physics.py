@@ -48,6 +48,12 @@ ALL_ACTIONS: list[str] = list(get_args(PhysicsAction))
         "MATERIALS: create_physics_material, configure_physics_material, assign_physics_material\n"
         "JOINTS: add_joint, configure_joint, remove_joint\n"
         "QUERIES: raycast, raycast_all, linecast, shapecast, overlap\n"
+        "MULTI-HIT QUERIES: max_results (integer 1-1000, default 200) bounds native result buffers. "
+        "buffer_saturated means completeness is unknown, including exact capacity. "
+        "Ray hits are distance-sorted within the returned subset; saturated queries do not guarantee globally nearest hits. "
+        "Overlap ordering is unspecified. This bounds allocation/materialization, not native traversal time.\n"
+        "2D TRIGGERS: Collide requires Physics2D.queriesHitTriggers=true. Otherwise returns "
+        "unsupported_2d_trigger_override without querying or changing settings.\n"
         "FORCES: apply_force\n"
         "RIGIDBODY: get_rigidbody, configure_rigidbody\n"
         "VALIDATION: validate\n"
@@ -107,9 +113,24 @@ async def manage_physics(
     origin: Annotated[Optional[list[float]], "Ray origin [x,y,z] or [x,y]."] = None,
     direction: Annotated[Optional[list[float]], "Ray direction [x,y,z] or [x,y]."] = None,
     max_distance: Annotated[Optional[float], "Max raycast distance."] = None,
+    max_results: Annotated[
+        int | None,
+        Field(
+            strict=True,
+            ge=1,
+            le=1000,
+            description=(
+                "overlap/raycast_all: native result capacity, integer 1-1000 (default 200). "
+                "Response adds max_results, returned_count, buffer_saturated, ordering; raycast_all also adds nearest_hits_guaranteed. "
+                "A full buffer may omit results even when returned hits are distance-sorted."
+            ),
+        ),
+    ] = None,
     layer_mask: Annotated[Optional[str], "Layer mask for queries (name or int)."] = None,
     query_trigger_interaction: Annotated[
-        Optional[str], "Trigger interaction: UseGlobal, Ignore, Collide."
+        Optional[str],
+        "Trigger interaction: UseGlobal, Ignore, Collide. In 2D, Collide requires Physics2D.queriesHitTriggers=true; "
+        "otherwise fails with unsupported_2d_trigger_override without running the query.",
     ] = None,
     shape: Annotated[
         Optional[str], "Overlap shape: sphere, box, capsule (3D); circle, box, capsule (2D)."
@@ -182,6 +203,9 @@ async def manage_physics(
     """Manage 3D and 2D physics: settings, collision matrix, materials, joints, queries, validation, simulation."""
 
     action_lower = action.lower()
+    if action_lower in {"overlap", "raycast_all"} and max_results is not None:
+        if type(max_results) is not int or not 1 <= max_results <= 1000:
+            return {"success": False, "message": "max_results must be an integer from 1 to 1000."}
     if action_lower == "diagnose_pair":
         if (
             not isinstance(target, str)
@@ -267,6 +291,7 @@ async def manage_physics(
         "origin": origin,
         "direction": direction,
         "max_distance": max_distance,
+        "max_results": max_results,
         "layer_mask": layer_mask,
         "query_trigger_interaction": query_trigger_interaction,
         "shape": shape,

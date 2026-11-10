@@ -383,8 +383,14 @@ def remove_joint(target, joint_type, component_index):
     "--size", required=True, help="Size: float for sphere/circle radius, or 'x,y,z' for box."
 )
 @click.option("--dimension", "-d", default="3d", help="3d or 2d.")
+@click.option(
+    "--max-results",
+    type=click.IntRange(1, 1000),
+    default=None,
+    help="Native result capacity (default 200); a full buffer may omit results.",
+)
 @handle_unity_errors
-def overlap(shape, position, size, dimension):
+def overlap(shape, position, size, dimension, max_results):
     """Perform a physics overlap query."""
     config = get_config()
     pos_parts = _parse_query_vector(position, "position", dimension)
@@ -396,6 +402,8 @@ def overlap(shape, position, size, dimension):
         "size": parsed_size,
         "dimension": dimension,
     }
+    if max_results is not None:
+        params["max_results"] = max_results
     result = run_command("manage_physics", params, config)
     click.echo(format_output(result, config.format))
 
@@ -405,9 +413,15 @@ def overlap(shape, position, size, dimension):
 @click.option("--direction", "-d", required=True, help="Direction as 'x,y,z'.")
 @click.option("--max-distance", type=float, default=None, help="Max distance.")
 @click.option("--dimension", default="3d", help="3d or 2d.")
+@click.option(
+    "--max-results",
+    type=click.IntRange(1, 1000),
+    default=None,
+    help="Native result capacity (default 200); a full buffer may omit nearer hits.",
+)
 @handle_unity_errors
-def raycast_all(origin, direction, max_distance, dimension):
-    """Perform a multi-hit raycast returning all hits."""
+def raycast_all(origin, direction, max_distance, dimension, max_results):
+    """Perform a bounded multi-hit raycast, sorted within the returned subset."""
     config = get_config()
     params = {
         "action": "raycast_all",
@@ -417,6 +431,8 @@ def raycast_all(origin, direction, max_distance, dimension):
     }
     if max_distance is not None:
         params["max_distance"] = max_distance
+    if max_results is not None:
+        params["max_results"] = max_results
     result = run_command("manage_physics", params, config)
     click.echo(format_output(result, config.format))
 

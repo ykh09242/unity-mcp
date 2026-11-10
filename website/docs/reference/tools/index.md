@@ -123,7 +123,7 @@ Compatibility: full combined schemas for existing clients; prefer focused tools
 - **[`manage_physics_materials`](./physics/manage_physics_materials.md)** — Create, configure and assign physics materials.
 - **[`manage_physics_settings`](./physics/manage_physics_settings.md)** — Inspect or change 2D/3D physics settings and layer collision rules.
 - **[`manage_rigidbody`](./physics/manage_rigidbody.md)** — Inspect or configure a Rigidbody or Rigidbody2D.
-- **[`query_physics`](./physics/query_physics.md)** — Run ray, shape and overlap queries in 2D or 3D.
+- **[`query_physics`](./physics/query_physics.md)** — Run ray, shape and overlap queries in 2D or 3D. overlap/raycast_all use bounded native buffers: max_results is an integer 1-1000 (default 200). buffer_saturated means completeness is unknown, including exact capacity.
 - **[`simulate_physics`](./physics/simulate_physics.md)** — Advance physics by a bounded number of explicit simulation steps.
 
 ## `prefabs` &nbsp; (5 tools)

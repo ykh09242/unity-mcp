@@ -35,10 +35,50 @@ A new `manage_physics` MCP tool that gives AI assistants full control over Unity
 | Action | Description |
 |--------|-------------|
 | `raycast` | Single-hit raycast from origin along direction |
-| `raycast_all` | Multi-hit raycast returning all intersections |
+| `raycast_all` | Bounded multi-hit raycast; returned hits are sorted by distance |
 | `linecast` | Check if anything intersects the line between two points |
 | `shapecast` | Cast a shape (sphere, box, capsule) along a direction |
-| `overlap` | Find all colliders within a shape (sphere, box, capsule) at a position |
+| `overlap` | Bounded collider query within a shape (sphere, box, capsule) at a position |
+
+Both dimensions support `query_trigger_interaction` on overlap queries: `Ignore`,
+`Collide`, or `UseGlobal` (default). 3D explicit modes override the corresponding global
+trigger setting for that query without changing project settings. The 2D implementation
+uses a local `ContactFilter2D`, including when the layer mask is zero. `Ignore` excludes
+triggers and `UseGlobal` follows the current global setting.
+
+For every 2D query action, explicit `Collide` requires
+`Physics2D.queriesHitTriggers=true`: Unity's local filter cannot include triggers when
+the global setting is disabled. If it is disabled, the tool returns
+`success=false`, `code=unsupported_2d_trigger_override` and an explanatory `error`
+before executing the query. This also applies to a zero layer mask. The tool never
+changes the global setting. With the global setting enabled, `Collide` includes triggers
+and `Ignore` can exclude them per query.
+
+`raycast_all` and `overlap` accept `max_results`, a strict integer from 1 through 1000
+(default 200). CLI commands expose the same limit as `--max-results`. The receiver
+validates the limit before issuing the native query and supplies an array of exactly
+that capacity to Unity. It does not collect an unbounded result set and then slice it.
+Single-hit `raycast`, `linecast`, and `shapecast` retain their existing behavior.
+
+Multi-hit responses retain `hits`/`hit_count` or `colliders` and add:
+
+| Field | Meaning |
+| --- | --- |
+| `max_results` | Effective native buffer capacity |
+| `returned_count` | Number of entries returned, at most the capacity |
+| `buffer_saturated` | The native query filled its buffer; completeness is unknown |
+| `ordering` | `distance_ascending` for returned ray hits; `unspecified` for overlaps |
+| `nearest_hits_guaranteed` | Ray queries only: false when the buffer is saturated |
+
+An exact-capacity result is also saturated: it cannot establish whether more results
+exist. No total-hit count or definite truncation count is claimed. Sorting a saturated
+ray buffer orders its returned subset; it does not establish that these are the globally
+nearest hits. Unsaturated results are complete for the submitted query. Equal-distance
+ray ties and overlap identities have no stable ordering guarantee across calls.
+
+The limit bounds result storage, sorting, and serialization. It does not guarantee a
+bound on native physics traversal time or provide cancellation inside synchronous Unity
+queries. Use an appropriate layer mask, distance, and query volume to narrow native work.
 
 ### Forces
 | Action | Description |

@@ -12093,6 +12093,19 @@
                 ],
                 "default": null
               },
+              "max_results": {
+                "anyOf": [
+                  {
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "motor": {
                 "anyOf": [
                   {
@@ -22587,6 +22600,19 @@
                 "anyOf": [
                   {
                     "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "max_results": {
+                "anyOf": [
+                  {
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": "integer"
                   },
                   {
                     "type": "null"
@@ -37639,6 +37665,19 @@
                 ],
                 "default": null
               },
+              "max_results": {
+                "anyOf": [
+                  {
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "motor": {
                 "anyOf": [
                   {
@@ -48133,6 +48172,19 @@
                 "anyOf": [
                   {
                     "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "max_results": {
+                "anyOf": [
+                  {
+                    "maximum": 1000,
+                    "minimum": 1,
+                    "type": "integer"
                   },
                   {
                     "type": "null"

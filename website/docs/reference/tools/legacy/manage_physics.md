@@ -21,6 +21,8 @@ COLLISION MATRIX: get_collision_matrix, set_collision_matrix
 MATERIALS: create_physics_material, configure_physics_material, assign_physics_material
 JOINTS: add_joint, configure_joint, remove_joint
 QUERIES: raycast, raycast_all, linecast, shapecast, overlap
+MULTI-HIT QUERIES: max_results (integer 1-1000, default 200) bounds native result buffers. buffer_saturated means completeness is unknown, including exact capacity. Ray hits are distance-sorted within the returned subset; saturated queries do not guarantee globally nearest hits. Overlap ordering is unspecified. This bounds allocation/materialization, not native traversal time.
+2D TRIGGERS: Collide requires Physics2D.queriesHitTriggers=true. Otherwise returns unsupported_2d_trigger_override without querying or changing settings.
 FORCES: apply_force
 RIGIDBODY: get_rigidbody, configure_rigidbody
 VALIDATION: validate
@@ -59,8 +61,9 @@ SIMULATION: simulate_step
 | `origin` | `list[float] \| None` | — | Ray origin [x,y,z] or [x,y]. |
 | `direction` | `list[float] \| None` | — | Ray direction [x,y,z] or [x,y]. |
 | `max_distance` | `float \| None` | — | Max raycast distance. |
+| `max_results` | `int \| None` | — | overlap/raycast_all: native result capacity, integer 1-1000 (default 200). Response adds max_results, returned_count, buffer_saturated, ordering; raycast_all also adds nearest_hits_guaranteed. A full buffer may omit results even when returned hits are distance-sorted. |
 | `layer_mask` | `str \| None` | — | Layer mask for queries (name or int). |
-| `query_trigger_interaction` | `str \| None` | — | Trigger interaction: UseGlobal, Ignore, Collide. |
+| `query_trigger_interaction` | `str \| None` | — | Trigger interaction: UseGlobal, Ignore, Collide. In 2D, Collide requires Physics2D.queriesHitTriggers=true; otherwise fails with unsupported_2d_trigger_override without running the query. |
 | `shape` | `str \| None` | — | Overlap shape: sphere, box, capsule (3D); circle, box, capsule (2D). |
 | `position` | `list[float] \| None` | — | Overlap position [x,y,z] or [x,y]. |
 | `size` | `Any \| None` | — | Overlap size: float (radius) or [x,y,z] (half-extents). |

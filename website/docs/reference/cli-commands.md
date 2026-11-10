@@ -2552,6 +2552,7 @@ Perform a physics overlap query.
 | --position / -p | text | required | nargs=1 | — | — | Position as 'x,y,z' or 'x,y'. |
 | --size | text | required | nargs=1 | — | — | Size: float for sphere/circle radius, or 'x,y,z' for box. |
 | --dimension / -d | text | optional | nargs=1 | "3d" | — | 3d or 2d. |
+| --max-results | integer range: [1..1000] | optional | nargs=1 | — | — | Native result capacity (default 200); a full buffer may omit results. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp physics ping`
@@ -2576,7 +2577,7 @@ Perform a physics raycast.
 
 ## `unity-mcp physics raycast-all`
 
-Perform a multi-hit raycast returning all hits.
+Perform a bounded multi-hit raycast, sorted within the returned subset.
 
 | Argument / option | Type | Required | Arity / flags | Default | Environment | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -2584,6 +2585,7 @@ Perform a multi-hit raycast returning all hits.
 | --direction / -d | text | required | nargs=1 | — | — | Direction as 'x,y,z'. |
 | --max-distance | float | optional | nargs=1 | — | — | Max distance. |
 | --dimension | text | optional | nargs=1 | "3d" | — | 3d or 2d. |
+| --max-results | integer range: [1..1000] | optional | nargs=1 | — | — | Native result capacity (default 200); a full buffer may omit nearer hits. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp physics remove-joint`
