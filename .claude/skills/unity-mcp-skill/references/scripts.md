@@ -35,6 +35,14 @@ Preparation is not automatic permission or proof of local-host provenance. Use a
 
 Hosted mode reports native application unavailable. If provenance, write permission or exact-byte preservation cannot be established, use the original direct Unity edit request without `options.preview`, within the same authorization. Never silently fall back to writing a similarly named local file. Older packages that reject preview need an upgrade or a supported direct edit, not a batch workaround.
 
+## Native Patch Failures And Repeated Inserts
+
+Native file tools are separate from Unity MCP. A multi-file `apply_patch` or shell write can save earlier files before failing on a later file. A tool-level permission retry can then apply the same insertion again. An error does not establish rollback, and a single visible call does not prove a single write.
+
+For native writes, prefer one independently verifiable file per operation and a writer that checks the expected original bytes/hash at the write boundary. Retain the exact original and candidate bytes. If the current bytes already equal the candidate, the write is complete; if they differ from both, reread and prepare again. Avoid multi-file insert-only patches when the writer can retry without those preconditions. Check the actual diff after each operation, including failed operations, before import/compilation or further edits.
+
+After a failure or uncertain result, inspect every touched file and classify it as unchanged, fully applied or conflicting/partly applied. Rebuild only the remaining authorized edits from current contents; do not resubmit the original batch or switch tools and assume nothing was saved. Correct only the duplicate introduced by the observed edit. Do not globally collapse repeated statements: repeated property assignments and calls can have intentional side effects.
+
 ## Direct Text Edits And Concurrency
 
 Get a fresh SHA for the intended script:
