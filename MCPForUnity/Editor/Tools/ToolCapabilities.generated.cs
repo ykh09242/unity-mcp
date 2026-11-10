@@ -101,7 +101,7 @@ namespace MCPForUnity.Editor.Tools.Capabilities
     }
 
     [McpForUnityTool("query_physics", AutoRegister = false, Group = "physics",
-        DisplayName = "Physics Queries", Description = "Run ray, shape and overlap queries in 2D or 3D. Read-only inspection; results can change with Unity state.")]
+        DisplayName = "Physics Queries", Description = "Run ray, shape and overlap queries in 2D or 3D. overlap/raycast_all use bounded native buffers: max_results is an integer 1-1000 (default 200). buffer_saturated means completeness is unknown, including exact capacity. Ray results are distance-sorted within the returned subset; saturated queries do not guarantee globally nearest hits. Overlap ordering is unspecified. Limits bound materialization, not native traversal time. In 2D, Collide requires Physics2D.queriesHitTriggers=true; otherwise returns unsupported_2d_trigger_override without querying or changing settings. Read-only inspection; results can change with Unity state.")]
     public static class QueryPhysics
     {
         private static readonly string[] Actions = { "raycast", "raycast_all", "linecast", "shapecast", "overlap" };
