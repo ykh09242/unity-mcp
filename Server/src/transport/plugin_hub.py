@@ -2161,12 +2161,20 @@ class PluginHub(WebSocketEndpoint):
         while budget.remaining() > 0 and not resume.cancelled.is_set():
             if cls._registry is not registry or cls._shutdown_requested:
                 return None
-            try:
-                session_id = await cls._resolve_session_id(
-                    original.project_hash, user_id=original.user_id, retry_on_reload=False
-                )
-            except NoUnitySessionError:
-                await asyncio.sleep(min(0.1, budget.remaining()))
+            if config.http_remote_hosted and original.user_id is None:
+                return None
+            changed = registry.change_event
+            session_id = await registry.get_session_id_by_hash(
+                original.project_hash, original.user_id if config.http_remote_hosted else None
+            )
+            if session_id is None:
+                # The cancellation signal is thread-owned. Check that signal on
+                # bounded ticks, but only a registry change warrants another lookup.
+                while budget.remaining() > 0 and not resume.cancelled.is_set():
+                    if cls._registry is not registry or cls._shutdown_requested:
+                        return None
+                    if await registry.wait_for_change(changed, min(0.1, budget.remaining())):
+                        break
                 continue
             lock = cls._lock
             if lock is None:
@@ -2174,6 +2182,14 @@ class PluginHub(WebSocketEndpoint):
             async with lock:
                 session = await registry.get_session(session_id)
                 socket = cls._connections.get(session_id)
+                if (
+                    cls._registry is not registry
+                    or cls._lock is not lock
+                    or cls._shutdown_requested
+                    or resume.cancelled.is_set()
+                    or budget.remaining() <= 0
+                ):
+                    return None
                 if session is not None and socket is not None:
                     if (
                         session.user_id != original.user_id
