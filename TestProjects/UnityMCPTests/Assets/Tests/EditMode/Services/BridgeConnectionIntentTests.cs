@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using MCPForUnity.Editor.Services.Transport;
+using MCPForUnity.Editor.Services.Transport.Transports;
 using NUnit.Framework;
 using UnityEditor;
 
@@ -172,6 +175,93 @@ namespace MCPForUnityTests.Editor.Services
             Assert.IsFalse(_manager.HasConnectionIntent(TransportMode.Http));
             Assert.AreEqual(1, _http.StopCalls);
             Assert.AreEqual(1, _http.StartCalls);
+        }
+
+        [Test]
+        public async Task BoundedStop_PreservesUnsettledBridgeStatusUntilActualSettlement()
+        {
+            const string budgetKey = "UNITY_MCP_WEBSOCKET_CONTROL_TIMEOUT_SECONDS";
+            string previousBudget = Environment.GetEnvironmentVariable(budgetKey);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var lifecycle = new CancellationTokenSource();
+            using var connection = CancellationTokenSource.CreateLinkedTokenSource(lifecycle.Token);
+            var work = new ConnectionCommandWork(connection.Token);
+            var endpoint = new Uri("ws://127.0.0.1:1/hub/plugin");
+            var options = new WebSocketTransportClient.OwnedConnectionOptions(endpoint, "owned-synthetic-token", "owned", "owned", "/owned", "6000.0");
+            using var client = new WebSocketTransportClient(null, options);
+            void Set(object target, string field, object value) =>
+                target.GetType().GetField(field, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(target, value);
+            try
+            {
+                Environment.SetEnvironmentVariable(budgetKey, "0.05");
+                int mutations = 0;
+                Assert.IsNull(
+                    work.TryStart(
+                        "owned-held-command",
+                        async _ =>
+                        {
+                            Interlocked.Increment(ref mutations);
+                            await release.Task;
+                        }
+                    )
+                );
+                Assert.IsTrue(await _manager.StartAsync(TransportMode.Http));
+                Set(client, "_lifecycleCts", lifecycle);
+                Set(client, "_connectionCts", connection);
+                Set(client, "_commandWork", work);
+                Set(client, "_isConnected", true);
+                Set(client, "_state", TransportState.Connected("websocket", sessionId: "owned-stopping"));
+                Set(_manager, "_httpClient", client);
+                var bridge = new BridgeControlService();
+                Task stop = bridge.StopAsync();
+                Assert.AreSame(stop, await Task.WhenAny(stop, Task.Delay(3000)), "Bridge Stop must return within the observation budget.");
+                await stop;
+                Assert.IsFalse(_manager.HasConnectionIntent(TransportMode.Http));
+                Assert.IsFalse(bridge.IsRunning);
+                StringAssert.Contains("execution_unsettled", _manager.GetState(TransportMode.Http).Error);
+                StringAssert.Contains("execution_unsettled", (await bridge.VerifyAsync()).Message);
+                StringAssert.Contains("execution_unsettled", bridge.Verify(0).Message);
+                Assert.IsFalse(work.DrainAsync().IsCompleted);
+
+                Assert.IsFalse(await _manager.StartAsync(TransportMode.Http), "Unfinished command ownership must still refuse a replacement connection.");
+                Assert.IsFalse(_manager.HasConnectionIntent(TransportMode.Http));
+                Assert.IsNotNull(
+                    work.TryStart(
+                        "owned-late-command",
+                        _ =>
+                        {
+                            Interlocked.Increment(ref mutations);
+                            return Task.CompletedTask;
+                        }
+                    )
+                );
+                Assert.AreEqual(1, mutations);
+                StringAssert.Contains("execution_unsettled", (await bridge.VerifyAsync()).Message);
+
+                release.TrySetResult(true);
+                Task settlement = (Task)
+                    typeof(WebSocketTransportClient).GetField("_stopSettlement", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(client);
+                Assert.AreSame(settlement, await Task.WhenAny(settlement, Task.Delay(3000)));
+                await settlement;
+                Assert.IsNull(_manager.GetState(TransportMode.Http).Error, "Status reads must observe actual settlement without another Stop or Start.");
+                StringAssert.DoesNotContain("execution_unsettled", (await bridge.VerifyAsync()).Message);
+                Assert.IsFalse(_manager.HasConnectionIntent(TransportMode.Http));
+                Assert.IsFalse(bridge.IsRunning);
+                Assert.AreEqual(1, mutations);
+            }
+            finally
+            {
+                release.TrySetResult(true);
+                try
+                {
+                    await client.StopAsync();
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable(budgetKey, previousBudget);
+                    Set(_manager, "_httpClient", _http);
+                }
+            }
         }
 
         [Test]

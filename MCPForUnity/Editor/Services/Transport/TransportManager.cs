@@ -203,7 +203,7 @@ namespace MCPForUnity.Editor.Services.Transport
                 finally
                 {
                     if (IsCurrent(clientMode, generation))
-                        UpdateState(clientMode, TransportState.Disconnected(client.TransportName));
+                        UpdateState(clientMode, StoppedState(client));
                 }
             }
 
@@ -260,10 +260,32 @@ namespace MCPForUnity.Editor.Services.Transport
         {
             return mode switch
             {
-                TransportMode.Http => _httpConnectionIntent ? _httpClient?.State ?? _httpState : _httpState,
+                TransportMode.Http => ReconciledHttpState(),
                 TransportMode.Stdio => _disposed ? _stdioState : ReconciledStdioState(),
                 _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported transport mode"),
             };
+        }
+
+        private static bool HasUnsettledExecution(TransportState state) => state?.Error?.StartsWith("execution_unsettled:", StringComparison.Ordinal) == true;
+
+        private static TransportState StoppedState(IMcpTransportClient client) =>
+            TransportState.Disconnected(client.TransportName, HasUnsettledExecution(client.State) ? HttpEndpointUtility.RedactUrls(client.State.Error) : null);
+
+        private TransportState ReconciledHttpState()
+        {
+            if (_disposed)
+                return _httpState;
+            TransportState live = _httpClient?.State;
+            if (_httpConnectionIntent)
+                return live ?? _httpState;
+            // Ending connection intent must not hide work retained by bounded Stop.
+            // Observe only settlement here: a stale connected client cannot revive intent,
+            // and ordinary failed-start diagnostics remain cached through cleanup.
+            if (HasUnsettledExecution(live))
+                _httpState = TransportState.Disconnected(_httpClient.TransportName, HttpEndpointUtility.RedactUrls(live.Error));
+            else if (HasUnsettledExecution(_httpState))
+                _httpState = TransportState.Disconnected(_httpClient?.TransportName ?? "http");
+            return _httpState;
         }
 
         /// <summary>
