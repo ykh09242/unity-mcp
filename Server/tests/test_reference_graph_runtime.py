@@ -147,6 +147,35 @@ def test_runtime_policy_is_rechecked_for_historical_delivery(capture):
         runtime.handles(identity)
 
 
+def test_runtime_release_removes_only_its_owner_exclusions_after_reopen(capture, tmp_path):
+    workspace, runtime, identity = capture
+    other = runtime.begin()["id"]
+    for capture_id in (identity, other):
+        runtime.ingest(capture_id, 0, page([event()]))
+    workspace.store.put_declaration(
+        "manual", "owner", Edge("target", "declared"), expected_version=0
+    )
+    workspace.set_policy({"exclude": ["Assets/Scripts/**"]}, expected_version=0)
+    with workspace.store._connect(write=True) as db:
+        db.execute(
+            "INSERT INTO graph_excluded_nodes VALUES ('asset:excluded','Assets/Scripts/Data.asset')"
+        )
+        assert (
+            db.execute(
+                "SELECT path FROM graph_excluded_nodes WHERE id=?", (f"runtime:{identity}:1",)
+            ).fetchone()[0]
+            == "Assets/Scripts/Loader.cs"
+        )
+    assert runtime.release(identity)
+    reopened = GraphWorkspace(GraphStore.open(tmp_path, workspace.store.scope))
+    with reopened.store._connect() as db:
+        excluded = {row[0] for row in db.execute("SELECT id FROM graph_excluded_nodes")}
+    assert f"runtime:{identity}:1" not in excluded
+    assert f"runtime:{other}:1" in excluded
+    assert "asset:excluded" in excluded
+    assert reopened.store.declarations()[0]["version"] == 1
+
+
 def test_changed_runtime_session_cannot_be_silently_joined(capture):
     _, runtime, identity = capture
     runtime.ingest(identity, 0, page([event()]))

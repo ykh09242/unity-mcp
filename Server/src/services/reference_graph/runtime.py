@@ -415,6 +415,10 @@ class RuntimeObservations:
             self._session(connection, identity)
             provider = "runtime:" + identity
             connection.execute(
+                "DELETE FROM graph_excluded_nodes WHERE id IN (SELECT owner FROM observations WHERE provider=?)",
+                (provider,),
+            )
+            connection.execute(
                 "DELETE FROM nodes WHERE id IN (SELECT owner FROM observations WHERE provider=?)",
                 (provider,),
             )
