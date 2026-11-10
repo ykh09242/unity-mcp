@@ -143,8 +143,10 @@ Do not launch Unity or install optional Unity packages just to validate formatti
 ## CI checks
 
 `changed-formatting.yml` checks supported Python and C# files on PRs to main/beta and
-pushes to beta. It compares the exact PR base/head commits or the complete push
-before/after range, checks out that head, and fails if the range cannot be verified.
+pushes to beta. For PRs it resolves the unique merge base of the exact base/head
+commits and checks changes from that ancestor to the head. Pushes retain the complete
+before/after comparison. It checks out the exact head and fails if the range cannot
+be verified or the PR has no unique merge base. Base-only edits do not expand PR scope.
 Deleted files are omitted; added and renamed destinations use the same authored scope
 and generated/vendor/link exclusions as the local runner. Checks never write sources.
 
@@ -160,4 +162,8 @@ checked out:
 ```sh
 python tools/check_changed_formatting.py --base BASE_SHA --head HEAD_SHA --list
 python tools/check_changed_formatting.py --base BASE_SHA --head HEAD_SHA
+
+# For a PR, compare its head with the unique merge base of the two explicit commits.
+python tools/check_changed_formatting.py --base BASE_SHA --head HEAD_SHA --merge-base --list
+python tools/check_changed_formatting.py --base BASE_SHA --head HEAD_SHA --merge-base
 ```

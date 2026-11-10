@@ -20,7 +20,7 @@ CSHARP_CONFIG = frozenset({".editorconfig", ".config/dotnet-tools.json"})
 RUNNER_INPUTS = frozenset({"tools/format_scripts.py", "tools/check_changed_formatting.py"})
 
 
-def select_files(root: Path, base: str, head: str) -> tuple[Path, ...]:
+def select_files(root: Path, base: str, head: str, *, merge_base: bool = False) -> tuple[Path, ...]:
     """Require exact commits and expand changed formatter settings to their language scope."""
     if any(not SHA.fullmatch(ref) or ref == "0" * 40 for ref in (base, head)):
         raise ValueError("Formatting requires explicit nonzero base and head commit SHAs.")
@@ -29,6 +29,19 @@ def select_files(root: Path, base: str, head: str) -> tuple[Path, ...]:
     ).stdout.strip()
     if actual.casefold() != head.casefold():
         raise ValueError("Formatting checkout does not match the requested head commit.")
+    if merge_base:
+        ancestors = subprocess.run(
+            ["git", "merge-base", "--all", base, head],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        if len(ancestors) != 1 or not SHA.fullmatch(ancestors[0]):
+            raise ValueError(
+                "PR formatting requires a unique merge base for the requested commits."
+            )
+        base = ancestors[0]
     changed = format_scripts.git_paths(
         root, ["diff", "--name-only", "-z", "--no-renames", base, head, "--"]
     )
@@ -52,10 +65,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", required=True)
+    parser.add_argument(
+        "--merge-base",
+        action="store_true",
+        help="Select PR changes since the unique common ancestor; pushes use the exact range.",
+    )
     parser.add_argument("--list", action="store_true", help="Print the selection without checking.")
     args = parser.parse_args(argv)
     try:
-        files = select_files(ROOT, args.base, args.head)
+        files = select_files(ROOT, args.base, args.head, merge_base=args.merge_base)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"Formatting selection failed: {error}", file=sys.stderr)
         return 2

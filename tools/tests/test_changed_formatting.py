@@ -96,6 +96,68 @@ def test_complete_range_includes_added_renamed_destinations_but_not_deleted_or_m
     ]
 
 
+def test_pr_range_excludes_base_only_edits_without_changing_push_selection(repository):
+    root, ancestor = repository
+    write(root, "tools/unchanged.py", "base_only = 2\n")
+    base = commit(root)
+    git(root, "checkout", "--detach", ancestor)
+    write(root, "tools/changed.py", "branch_change = 2\n")
+    head = commit(root)
+
+    assert gate.select_files(root, base, head, merge_base=True) == (root / "tools/changed.py",)
+    assert set(gate.select_files(root, base, head)) == {
+        root / "tools/changed.py",
+        root / "tools/unchanged.py",
+    }
+
+
+def test_pr_base_only_formatter_change_does_not_expand_branch_selection(repository):
+    root, ancestor = repository
+    settings = root / ".editorconfig"
+    write(root, ".editorconfig", settings.read_text(encoding="utf-8") + "\n# Base-only edit\n")
+    base = commit(root)
+    git(root, "checkout", "--detach", ancestor)
+    write(root, "tools/changed.py", "branch_change = 2\n")
+    head = commit(root)
+
+    assert gate.select_files(root, base, head, merge_base=True) == (root / "tools/changed.py",)
+    assert root / "MCPForUnity/Editor/Tool.cs" in gate.select_files(root, base, head)
+
+
+def test_pr_range_rejects_disconnected_history(repository):
+    root, base = repository
+    tree = git(root, "rev-parse", f"{base}^{{tree}}")
+    head = git(root, "commit-tree", tree, "-m", "disconnected fixture")
+    git(root, "checkout", "--detach", head)
+    with pytest.raises(subprocess.CalledProcessError):
+        gate.select_files(root, base, head, merge_base=True)
+
+
+def test_pr_range_rejects_multiple_best_common_ancestors(repository):
+    root, ancestor = repository
+    tree = git(root, "rev-parse", f"{ancestor}^{{tree}}")
+    left = git(root, "commit-tree", tree, "-p", ancestor, "-m", "left fixture")
+    right = git(root, "commit-tree", tree, "-p", ancestor, "-m", "right fixture")
+    base = git(root, "commit-tree", tree, "-p", left, "-p", right, "-m", "left merge")
+    head = git(root, "commit-tree", tree, "-p", right, "-p", left, "-m", "right merge")
+    git(root, "checkout", "--detach", head)
+    with pytest.raises(ValueError, match="unique merge base"):
+        gate.select_files(root, base, head, merge_base=True)
+
+
+def test_cli_pr_mode_uses_merge_base(repository, monkeypatch, capsys):
+    root, ancestor = repository
+    write(root, "tools/unchanged.py", "base_only = 2\n")
+    base = commit(root)
+    git(root, "checkout", "--detach", ancestor)
+    write(root, "tools/changed.py", "branch_change = 2\n")
+    head = commit(root)
+    monkeypatch.setattr(gate, "ROOT", root)
+
+    assert gate.main(["--base", base, "--head", head, "--merge-base", "--list"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["tools/changed.py"]
+
+
 @pytest.mark.parametrize(
     "config,suffixes",
     [
@@ -224,6 +286,9 @@ def test_workflow_selects_configs_and_passes_explicit_pr_or_beta_range():
     assert step["env"] == {
         "BASE_SHA": "${{ github.event.pull_request.base.sha || github.event.before }}",
         "HEAD_SHA": "${{ github.event.pull_request.head.sha || github.sha }}",
+        "USE_MERGE_BASE": "${{ github.event_name == 'pull_request' }}",
     }
     assert '--base "$BASE_SHA" --head "$HEAD_SHA"' in step["run"]
+    assert 'if [[ "$USE_MERGE_BASE" == "true" ]]' in step["run"]
+    assert "args+=(--merge-base)" in step["run"]
     assert "--write" not in step["run"]
