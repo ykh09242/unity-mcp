@@ -88,6 +88,123 @@ namespace MCPForUnityTests.Editor.Services
         }
 
         [UnityTest]
+        public IEnumerator RepeatedRegistered_PendingPredecessorDoesNotSkipReplacementOrEscapeStop() => VerifyRepeatedRegistration(false);
+
+        [UnityTest]
+        public IEnumerator RepeatedRegistered_PendingRefreshRemainsOwnedUntilSettlement() => VerifyRepeatedRegistration(true);
+
+        private static IEnumerator VerifyRepeatedRegistration(bool refresh)
+        {
+            const string budgetKey = "UNITY_MCP_WEBSOCKET_CONTROL_TIMEOUT_SECONDS";
+            string previousBudget = Environment.GetEnvironmentVariable(budgetKey);
+            Environment.SetEnvironmentVariable(budgetKey, "0.05");
+            using var lifecycle = new CancellationTokenSource();
+            using var connection = CancellationTokenSource.CreateLinkedTokenSource(lifecycle.Token);
+            var endpoint = new Uri("ws://127.0.0.1:1/hub/plugin");
+            var options = new WebSocketTransportClient.OwnedConnectionOptions(endpoint, "owned-synthetic-token", "owned", "owned", "/owned", "6000.0");
+            using var client = new WebSocketTransportClient(new OwnedDiscovery(), options);
+            var firstSend = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseFirst = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var replacementSent = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Set(client, "_endpointUri", endpoint);
+            Set(client, "_lifecycleCts", lifecycle);
+            Set(client, "_connectionCts", connection);
+            // Initialise the dispatcher on the Editor thread before queuing either capture.
+            MCPForUnity.Editor.Services.Transport.TransportCommandDispatcher.RunOnMainThreadAsync(() => true, CancellationToken.None).GetAwaiter().GetResult();
+            var registered = typeof(WebSocketTransportClient).GetMethod("HandleRegisteredAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+            var parser = typeof(WebSocketTransportClient).GetMethod("HandleMessageAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+            ToolSettingsRegistration Coordinator() =>
+                (ToolSettingsRegistration)
+                    typeof(WebSocketTransportClient).GetField("_toolSettingsRegistration", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(client);
+            Task Acknowledge(JObject frame, string session)
+            {
+                var receipt = new JObject
+                {
+                    ["type"] = "tool_settings_result",
+                    ["session_id"] = session,
+                    ["settings_epoch"] = frame["settings_epoch"],
+                    ["desired_revision"] = frame["desired_revision"],
+                    ["catalog_revision"] = 12,
+                    ["enabled_tool_count"] = 1,
+                    ["status"] = "applied",
+                };
+                return (Task)parser.Invoke(client, new object[] { receipt.ToString(), connection.Token });
+            }
+            Task HoldSend(JObject frame, CancellationToken token)
+            {
+                firstSend.TrySetResult(true);
+                return releaseFirst.Task; // Model an admitted send that outlives cancellation.
+            }
+            void Register(string session, Func<JObject, CancellationToken, Task> send)
+            {
+                Task.Run(() =>
+                        (Task)
+                            registered.Invoke(
+                                client,
+                                new object[]
+                                {
+                                    new JObject { ["session_id"] = session, ["capabilities"] = new JArray(ToolSettingsState.Capability) },
+                                    connection.Token,
+                                }
+                            )
+                    )
+                    .GetAwaiter()
+                    .GetResult();
+                Set(Coordinator(), "_send", send);
+            }
+            try
+            {
+                if (refresh)
+                {
+                    Register("owned-predecessor", (frame, _) => Acknowledge(frame, "owned-predecessor"));
+                    Task initial = (Task)
+                        typeof(WebSocketTransportClient).GetField("_registrationTask", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(client);
+                    yield return WaitForTask(initial);
+                    Assert.AreEqual("applied", client.Status.Stage);
+                    Set(Coordinator(), "_send", (Func<JObject, CancellationToken, Task>)HoldSend);
+                    Assert.IsFalse(Coordinator().RequestAsync().IsCompleted);
+                }
+                else
+                    Register("owned-predecessor", HoldSend);
+                yield return WaitForTask(firstSend.Task);
+                Register(
+                    "owned-replacement",
+                    (frame, _) =>
+                    {
+                        Task parsed = Acknowledge(frame, "owned-replacement");
+                        replacementSent.TrySetResult(true);
+                        return parsed;
+                    }
+                );
+                yield return WaitForTask(replacementSent.Task);
+                Assert.AreEqual("applied", client.Status.Stage);
+                Assert.AreEqual("owned-replacement", client.Status.SessionId);
+                Assert.AreEqual(12, client.Status.ServerCatalogRevision);
+                Assert.IsFalse(releaseFirst.Task.IsCompleted, "Replacement registration must not wait for its canceled predecessor.");
+
+                Task stop = client.StopAsync();
+                yield return WaitForTask(stop);
+                Assert.IsFalse(stop.IsFaulted);
+                StringAssert.Contains("execution_unsettled", client.State.Error, "Stop must retain the predecessor's actual send lifetime.");
+                Assert.DoesNotThrow(() =>
+                {
+                    _ = connection.Token;
+                });
+                releaseFirst.TrySetResult(true);
+                Task settled = (Task)
+                    typeof(WebSocketTransportClient).GetField("_stopSettlement", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(client);
+                yield return WaitForTask(settled);
+                Assert.IsNull(client.State.Error);
+            }
+            finally
+            {
+                releaseFirst.TrySetResult(true);
+                client.ForceStop();
+                Environment.SetEnvironmentVariable(budgetKey, previousBudget);
+            }
+        }
+
+        [UnityTest]
         public IEnumerator RegisteredCapture_SeparatesConnectionIdentityFromLinkedWorkCancellation()
         {
             using var owner = new CancellationTokenSource();

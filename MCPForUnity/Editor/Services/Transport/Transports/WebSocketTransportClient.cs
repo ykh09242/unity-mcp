@@ -58,6 +58,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private Task _receiveTask;
         private Task _keepAliveTask;
         private Task _registrationTask;
+        private long _registrationGeneration;
         private ToolSettingsRegistration _toolSettingsRegistration;
         private ToolSettingsState _toolSettingsState;
         private bool _toolSettingsNegotiated;
@@ -1046,12 +1047,14 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             await CancelOwnedAsync(loops.Cts).ConfigureAwait(false);
             lock (_ownershipLock)
             {
-                // Registration may have adopted its publisher after the initial capture.
+                // Registration may have replaced a coordinator or publisher after capture.
                 // Cancellation is now settled, so no later adoption can start a send.
                 if (loops.Cts != null && ReferenceEquals(_connectionCts, loops.Cts))
                 {
                     loops.Publisher ??= _statePublisher;
                     loops.PublisherCompletion = _statePublisherCompletion;
+                    loops.Registration = _registrationTask;
+                    loops.ToolSettings = _toolSettingsRegistration;
                 }
             }
             loops.Publisher?.Dispose();
@@ -1343,11 +1346,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     _sessionId = newSessionId;
                     _heartbeatNegotiated = HasCapability(payload, HeartbeatCapability);
                     _toolSettingsNegotiated = HasCapability(payload, ToolSettingsState.Capability);
-                    _toolSettingsRegistration?.Dispose();
-                    // A linked work token propagates cancellation; the connection token remains the ownership identity.
+                    ToolSettingsRegistration predecessor = _toolSettingsRegistration;
+                    predecessor?.Dispose();
+                    Task predecessorCompletion = predecessor?.Completion ?? Task.CompletedTask;
+                    long generation = ++_registrationGeneration;
+                    // State ownership is per registration, while callbacks retain connection
+                    // identity separately from the coordinator's linked work cancellation.
                     _toolSettingsRegistration = new ToolSettingsRegistration(
                         _toolSettingsState,
-                        _connectionCts,
+                        new object(),
                         newSessionId,
                         _toolSettingsNegotiated,
                         workToken => CaptureToolSettingsForOwnerOnMainThreadAsync(token, workToken),
@@ -1371,57 +1378,68 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         details: HttpEndpointUtility.GetDisplayUrl(_endpointUri.AbsoluteUri)
                     );
                     _registrationAck?.TrySetResult(true);
+                    // Every registered frame owns a request. Retain both the previous
+                    // registration and any later refresh until their actual work settles.
+                    Task previousRegistration = _registrationTask?.IsCompletedSuccessfully == false ? _registrationTask : Task.CompletedTask;
+                    _registrationTask = Task.WhenAll(
+                        previousRegistration,
+                        predecessorCompletion,
+                        CompleteRegistrationAsync(payload, token, generation, _toolSettingsRegistration)
+                    );
                 }
                 // Validate again when the deferred main-thread write actually executes.
                 if (_ownedConnection == null)
                     EditorApplication.delayCall += () => PersistSessionIdIfCurrent(newSessionId, token);
                 McpLog.Info($"[WebSocket] Registered with session ID: {newSessionId}", false);
-
-                lock (_ownershipLock)
-                {
-                    if (!IsCurrentConnectionToken(token))
-                        return Task.CompletedTask;
-                    if (_registrationTask == null || _registrationTask.IsCompleted)
-                        _registrationTask = CompleteRegistrationAsync(payload, token);
-                }
             }
             return Task.CompletedTask;
         }
 
-        private async Task CompleteRegistrationAsync(JObject payload, CancellationToken token)
+        private bool IsCurrentRegistration(CancellationToken token, long generation) =>
+            IsCurrentConnectionToken(token) && generation == _registrationGeneration;
+
+        private async Task CompleteRegistrationAsync(JObject payload, CancellationToken token, long generation, ToolSettingsRegistration registration)
         {
             try
             {
-                await SendRegisterToolsAsync(token).ConfigureAwait(false);
+                if (_toolDiscoveryService != null)
+                    await registration.RequestAsync().ConfigureAwait(false);
                 if (HasCapability(payload, EditorStatePublisher.Capability))
                 {
                     await TransportCommandDispatcher
                         .RunOnMainThreadAsync(
                             () =>
-                                EditorStatePublisher.Start(
-                                    (state, sendToken) => SendStateAsync(state, token, sendToken),
-                                    token,
-                                    publisher =>
-                                    {
-                                        EditorStatePublisher previous;
-                                        lock (_ownershipLock)
+                            {
+                                lock (_ownershipLock)
+                                {
+                                    if (!IsCurrentRegistration(token, generation))
+                                        return null;
+                                    return EditorStatePublisher.Start(
+                                        (state, sendToken) => SendStateAsync(state, token, sendToken),
+                                        token,
+                                        publisher =>
                                         {
-                                            if (IsCurrentConnectionToken(token))
+                                            EditorStatePublisher previous;
+                                            lock (_ownershipLock)
                                             {
-                                                previous = _statePublisher;
-                                                _statePublisher = publisher;
-                                                // Repeated registration may replace a sender before its
-                                                // canceled send settles. Retain every connection-owned send.
-                                                _statePublisherCompletion = _statePublisherCompletion.IsCompletedSuccessfully
-                                                    ? publisher.Completion
-                                                    : Task.WhenAll(_statePublisherCompletion, publisher.Completion);
+                                                if (IsCurrentRegistration(token, generation))
+                                                {
+                                                    previous = _statePublisher;
+                                                    _statePublisher = publisher;
+                                                    // Repeated registration may replace a sender before its
+                                                    // canceled send settles. Retain every connection-owned send.
+                                                    _statePublisherCompletion = _statePublisherCompletion.IsCompletedSuccessfully
+                                                        ? publisher.Completion
+                                                        : Task.WhenAll(_statePublisherCompletion, publisher.Completion);
+                                                }
+                                                else
+                                                    previous = publisher;
                                             }
-                                            else
-                                                previous = publisher;
+                                            previous?.Dispose();
                                         }
-                                        previous?.Dispose();
-                                    }
-                                ),
+                                    );
+                                }
+                            },
                             token
                         )
                         .ConfigureAwait(false);
@@ -1430,7 +1448,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                await HandleSocketClosureAsync(ex.Message, token).ConfigureAwait(false);
+                Task closure;
+                lock (_ownershipLock)
+                    closure = IsCurrentRegistration(token, generation) ? HandleSocketClosureAsync(ex.Message, token) : Task.CompletedTask;
+                await closure.ConfigureAwait(false);
             }
         }
 
