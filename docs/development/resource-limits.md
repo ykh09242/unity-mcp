@@ -18,6 +18,31 @@ the machine's RAM, GPU memory or disk.
 | Legacy and Blender | Legacy framed results allow 128 MiB including framing/envelope overhead. Blender socket responses allow 64 MiB and preserve an explicit wait up to 24 hours. Connect probes stay short. |
 | Native local TCP connections | Up to 64 authenticated clients, 16 simultaneous authentications and 128 commands. A new client does not evict an existing authenticated connection. |
 
+MCP stdin keeps its 64 MiB raw line ceiling, excluding the line ending. Before
+SDK JSON materialization, a structural scan allows at most 72 container levels
+and 1,000,128 nodes, including object keys. These are envelope limits, separate
+from native command and result quotas. Decoder admission allows 512 MiB of
+estimated work per envelope and 1 GiB across active or queued stdin decodes in
+one server process. The estimate includes retained Python text, UTF-8 conversion
+(one byte per ASCII character or up to four otherwise), decoded strings (four
+bytes per character), 512 bytes per scanned node, and 4 KiB of overhead. A
+potentially widening escaped string adds temporary work of twelve times the
+longest such string's source length. An ordinary 64 MiB ASCII string envelope
+fits; dense, widened, or escaped inputs can reach the work estimate earlier.
+
+Stdin scans and SDK validation share the existing two response-work slots per
+event loop. Waiting input is charged before worker admission. Cancellation
+discards work that has not started; running workers retain their reservation
+until actual completion, including repeated cancellation. Successfully decoded
+messages stay charged while waiting for the SDK's zero-buffer input handoff.
+Malformed, structurally excessive, or capacity-rejected lines produce bounded
+exception items through the SDK's existing input-error path, without raw input
+or validation tracebacks; the next valid line can still be processed. No input
+is silently truncated. These reservations end at SDK handoff: independently
+spawned SDK handlers can continue retaining their envelopes and are outside
+this decoder budget. The aggregate estimate is neither a handler-memory limit
+nor a process RSS guarantee.
+
 Local REST command routes scan JSON depth and node count before decoding.
 The parser budgets raw bytes, Unicode text, decoded strings and an estimated
 512 bytes per JSON node for containers and validation copies. An escaped string

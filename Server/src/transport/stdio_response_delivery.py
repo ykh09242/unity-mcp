@@ -10,6 +10,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from collections.abc import Callable
 from typing import Any, BinaryIO, Final
+from traceback import clear_frames
 
 import anyio
 from mcp.server import stdio as sdk_stdio
@@ -18,6 +19,7 @@ from mcp.types import ErrorData, JSONRPCError, JSONRPCResponse, jsonrpc_message_
 
 from models.response_limits import ResponseOwner
 from transport.response_delivery import MAX_MCP_RESPONSE_BYTES
+from transport.stdio_input_decode import stdio_input_admission
 from transport.stdio_input_read import StdioInputRead
 from transport.stdio_output_write import StdioOutputWrite
 
@@ -454,13 +456,30 @@ async def _owned_stdio_server(
                 async with read_writer:
                     async for line in stdin:
                         try:
-                            message = jsonrpc_message_adapter.validate_json(line, by_name=False)
-                        except Exception as exc:
-                            await read_writer.send(exc)
-                            line = None
-                            continue
-                        await read_writer.send(SessionMessage(message))
-                        line = message = None
+                            async with stdio_input_admission.parse(
+                                line, jsonrpc_message_adapter.validate_json
+                            ) as message:
+                                line = None
+                                await read_writer.send(
+                                    message
+                                    if isinstance(message, Exception)
+                                    else SessionMessage(message)
+                                )
+                        except BaseException as error:
+                            # SDK/AnyIO send frames retain their item arguments.
+                            # Keep the failure type while dropping those frames;
+                            # cancellation may have handed the message off already,
+                            # so mutating the envelope itself would be unsafe.
+                            clear_frames(error.__traceback__)
+                            if error.__context__ is not None:
+                                # AnyIO waits inside an except WouldBlock block;
+                                # that earlier send_nowait frame owns the item too.
+                                clear_frames(error.__context__.__traceback__)
+                            error.__context__ = None
+                            error.__traceback__ = None
+                            raise
+                        finally:
+                            line = message = None
             except anyio.ClosedResourceError:
                 await anyio.lowlevel.checkpoint()
 
