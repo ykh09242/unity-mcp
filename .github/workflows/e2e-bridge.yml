@@ -13,6 +13,8 @@ on:
       - "MCPForUnity/Editor/**"
       - "MCPForUnity/Runtime/**"
       - "Server/src/**"
+      - "Server/pyproject.toml"
+      - "Server/uv.lock"
       - "Server/tests/e2e/**"
       - "tools/local_harness.py"
       - "tools/ci_unity_license.py"
