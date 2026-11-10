@@ -176,6 +176,7 @@ namespace MCPForUnityTests.Editor.Tools
             var saveField = typeof(ManageScene).GetField("SaveCreatedScene", flags);
             var originalSave = saveField.GetValue(null);
             string path = assetRoot + "/Failed.unity";
+            bool saveAttempted = false;
             try
             {
                 saveField.SetValue(
@@ -183,6 +184,7 @@ namespace MCPForUnityTests.Editor.Tools
                     new Func<Scene, string, bool>(
                         (scene, destination) =>
                         {
+                            saveAttempted = true;
                             if (throws)
                                 throw new InvalidOperationException("injected save failure");
                             return false;
@@ -193,6 +195,7 @@ namespace MCPForUnityTests.Editor.Tools
                 object[] arguments = template ? new object[] { SystemPath(path), path, "3d_basic" } : new object[] { SystemPath(path), path };
                 JObject response = JObject.FromObject(method.Invoke(null, arguments));
                 Assert.IsFalse(response.Value<bool>("success"), response.ToString());
+                Assert.IsTrue(saveAttempted, "The fixture must reach its injected save failure rather than fail earlier: " + response);
                 CollectionAssert.AreEqual(before, LoadedScenes());
                 Assert.AreEqual(active, SceneManager.GetActiveScene());
                 Assert.IsFalse(File.Exists(SystemPath(path)));

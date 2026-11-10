@@ -546,7 +546,7 @@ namespace MCPForUnity.Editor.Tools
                 if (result is ErrorResponse)
                     return result;
                 folders.Complete();
-                return new SuccessResponse($"Scene '{Path.GetFileName(relativePath)}' created successfully at '{relativePath}'.", new { path = relativePath });
+                return result;
             }
             catch (Exception e)
             {
@@ -563,7 +563,7 @@ namespace MCPForUnity.Editor.Tools
             try
             {
                 scene = EditorSceneManager.NewScene(setup, NewSceneMode.Additive);
-                if (!SceneManager.SetActiveScene(scene))
+                if (SceneManager.GetActiveScene() != scene && !SceneManager.SetActiveScene(scene))
                     throw new InvalidOperationException("Could not activate the new scene.");
                 if (template == "3d_basic")
                 {
@@ -585,17 +585,55 @@ namespace MCPForUnity.Editor.Tools
                         throw new InvalidOperationException($"Failed to save new scene to '{relativePath}'.");
                 }
                 saved = true;
+                var preservedScenes = new List<object>();
                 foreach (var previous in previousScenes)
-                    if (previous.IsValid() && !EditorSceneManager.CloseScene(previous, true))
-                        throw new InvalidOperationException($"Saved the new scene, but could not close previous scene '{previous.name}'.");
+                {
+                    if (!previous.IsValid() || !previous.isLoaded)
+                        continue;
+                    // Creation, save, and earlier close callbacks can edit another loaded scene.
+                    // Check at each close boundary instead of trusting the admission-time snapshot.
+                    string reason = null;
+                    if (previous.isDirty)
+                        reason = "unsaved_changes";
+                    else
+                    {
+                        try
+                        {
+                            if (!EditorSceneManager.CloseScene(previous, true))
+                                reason = "close_failed";
+                        }
+                        catch (Exception close)
+                        {
+                            reason = $"close_failed: {close.Message}";
+                        }
+                    }
+                    if (reason != null)
+                        preservedScenes.Add(
+                            new
+                            {
+                                sceneName = previous.name,
+                                scenePath = previous.path,
+                                reason,
+                            }
+                        );
+                }
+                bool replacementComplete = preservedScenes.Count == 0;
                 return new SuccessResponse(
-                    $"Created scene from template '{template}'.",
+                    replacementComplete
+                        ? template == null
+                            ? $"Scene '{Path.GetFileName(relativePath)}' created successfully at '{relativePath}'."
+                            : $"Created scene from template '{template}'."
+                        : "Created the new scene; previous scenes remain loaded because they have unsaved changes or could not be closed.",
                     new
                     {
+                        path = scene.path,
                         sceneName = scene.name,
                         scenePath = scene.path,
                         template,
                         rootObjectCount = scene.rootCount,
+                        saved = !string.IsNullOrEmpty(scene.path),
+                        replacementComplete,
+                        preservedScenes,
                     }
                 );
             }

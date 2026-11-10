@@ -34,15 +34,21 @@ namespace MCPForUnity.Tests.EditMode.Tools
         [Test]
         public void Load_MissingPackageScene_ReportsThePackagePath_NotAnAssetsRewrite()
         {
-            var p = new JObject { ["action"] = "load", ["path"] = "Packages/com.example.doesnotexist/Samples/Demo.unity" };
-
-            var r = ManageScene.HandleCommand(p) as JObject ?? JObject.FromObject(ManageScene.HandleCommand(p));
+            var package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(ManageScene).Assembly);
+            if (package == null)
+                Assert.Ignore("The missing-package-asset fixture requires a registered package installation.");
+            string path = package.assetPath + "/MissingScene_" + Guid.NewGuid().ToString("N") + "/Demo.unity";
+            var originalActive = SceneManager.GetActiveScene();
+            var originalScenes = EditorSceneManager.GetSceneManagerSetup();
+            var r = JObject.FromObject(ManageScene.HandleCommand(new JObject { ["action"] = "load", ["path"] = path }));
 
             Assert.IsFalse(r.Value<bool>("success"), r.ToString());
 
             string message = r.Value<string>("message") ?? r.ToString();
-            StringAssert.Contains("Packages/com.example.doesnotexist/Samples/Demo.unity", message);
+            StringAssert.Contains(path, message);
             StringAssert.DoesNotContain("Assets/Packages", message);
+            Assert.AreEqual(originalActive, SceneManager.GetActiveScene());
+            CollectionAssert.AreEqual(originalScenes, EditorSceneManager.GetSceneManagerSetup());
         }
 
         [Test]
@@ -164,6 +170,98 @@ namespace MCPForUnity.Tests.EditMode.Tools
             }
         }
 
+        [TestCase(null, "created")]
+        [TestCase(null, "saved")]
+        [TestCase("empty", "created")]
+        [TestCase("default", "saved")]
+        public void Create_PreservesPreviousSceneDirtiedByCreationCallbacks(string template, string callback)
+        {
+            using (var fixture = new SceneReplacementFixture(false, false))
+            {
+                bool invoked = false;
+                void DirtyPrevious()
+                {
+                    fixture.AddCallbackEdit();
+                    invoked = true;
+                }
+                void Created(Scene scene, NewSceneSetup setup, NewSceneMode mode) => DirtyPrevious();
+                void Saved(Scene scene) => DirtyPrevious();
+                if (callback == "created")
+                    EditorSceneManager.newSceneCreated += Created;
+                else
+                    EditorSceneManager.sceneSaved += Saved;
+                try
+                {
+                    var command = new JObject
+                    {
+                        ["action"] = "create",
+                        ["name"] = "Replacement",
+                        ["path"] = fixture.Folder,
+                    };
+                    if (template != null)
+                        command["template"] = template;
+                    var response = JObject.FromObject(ManageScene.HandleCommand(command));
+                    Assert.IsTrue(invoked);
+                    fixture.AssertCallbackEditPreserved();
+                    AssertPartialReplacementReceipt(response, fixture);
+                }
+                finally
+                {
+                    EditorSceneManager.newSceneCreated -= Created;
+                    EditorSceneManager.sceneSaved -= Saved;
+                }
+            }
+        }
+
+        [Test]
+        public void Create_RechecksEachPreviousSceneAfterEarlierSceneClosedCallback()
+        {
+            using (var fixture = new SceneReplacementFixture(false, false))
+            {
+                bool invoked = false;
+                void Closed(Scene scene)
+                {
+                    if (scene.handle != fixture.CleanSceneHandle)
+                        return;
+                    fixture.AddCallbackEdit();
+                    invoked = true;
+                }
+                EditorSceneManager.sceneClosed += Closed;
+                try
+                {
+                    var response = JObject.FromObject(
+                        ManageScene.HandleCommand(
+                            new JObject
+                            {
+                                ["action"] = "create",
+                                ["name"] = "Replacement",
+                                ["path"] = fixture.Folder,
+                            }
+                        )
+                    );
+                    Assert.IsTrue(invoked, "The first clean scene must close before the later scene is checked.");
+                    fixture.AssertCallbackEditPreserved();
+                    AssertPartialReplacementReceipt(response, fixture);
+                }
+                finally
+                {
+                    EditorSceneManager.sceneClosed -= Closed;
+                }
+            }
+        }
+
+        private static void AssertPartialReplacementReceipt(JObject response, SceneReplacementFixture fixture)
+        {
+            Assert.IsTrue(response.Value<bool>("success"), response.ToString());
+            Assert.IsTrue(response["data"].Value<bool>("saved"), response.ToString());
+            Assert.IsFalse(response["data"].Value<bool>("replacementComplete"), response.ToString());
+            Assert.AreEqual(fixture.Folder + "/Replacement.unity", response["data"].Value<string>("scenePath"));
+            Assert.AreEqual(fixture.Folder + "/Replacement.unity", response["data"].Value<string>("path"));
+            Assert.IsNotEmpty((JArray)response["data"]["preservedScenes"]);
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<SceneAsset>(fixture.Folder + "/Replacement.unity"));
+            Assert.AreEqual(fixture.Folder + "/Replacement.unity", SceneManager.GetActiveScene().path);
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void LoadAdditive_AllowsUnsavedInactiveScene(bool byBuildIndex)
@@ -193,10 +291,12 @@ namespace MCPForUnity.Tests.EditMode.Tools
             private readonly EditorBuildSettingsScene[] _originalBuildScenes;
             private readonly Scene _dirtyScene;
             private readonly GameObject _unsavedObject;
+            private GameObject _callbackEdit;
             public string Folder { get; }
             public string TargetPath => Folder + "/Target.unity";
+            public int CleanSceneHandle { get; }
 
-            public SceneReplacementFixture(bool dirtyIsActive)
+            public SceneReplacementFixture(bool dirtyIsActive, bool initiallyDirty = true)
             {
                 for (int i = 0; i < SceneManager.sceneCount; i++)
                     if (SceneManager.GetSceneAt(i).isDirty)
@@ -208,6 +308,7 @@ namespace MCPForUnity.Tests.EditMode.Tools
                 {
                     AssetDatabase.CreateFolder("Assets", Folder.Substring("Assets/".Length));
                     var clean = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                    CleanSceneHandle = clean.handle;
                     Assert.IsTrue(EditorSceneManager.SaveScene(clean, Folder + "/Clean.unity"));
                     var target = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
                     Assert.IsTrue(EditorSceneManager.SaveScene(target, TargetPath));
@@ -216,6 +317,8 @@ namespace MCPForUnity.Tests.EditMode.Tools
                     SceneManager.SetActiveScene(_dirtyScene);
                     _unsavedObject = new GameObject("UnsavedObject");
                     EditorSceneManager.MarkSceneDirty(_dirtyScene);
+                    if (!initiallyDirty)
+                        Assert.IsTrue(EditorSceneManager.SaveScene(_dirtyScene, Folder + "/Previous.unity"));
                     SceneManager.SetActiveScene(dirtyIsActive ? _dirtyScene : clean);
                     Assert.IsFalse(clean.isDirty, "The inactive-scene regression requires a clean active scene.");
                 }
@@ -231,6 +334,23 @@ namespace MCPForUnity.Tests.EditMode.Tools
                 Assert.IsTrue(_dirtyScene.IsValid() && _dirtyScene.isLoaded && _dirtyScene.isDirty);
                 Assert.IsTrue(_unsavedObject != null, "The unsaved object must survive the command.");
                 Assert.AreEqual(_dirtyScene, _unsavedObject.scene);
+            }
+
+            public void AddCallbackEdit()
+            {
+                _callbackEdit = new GameObject("CallbackEdit");
+                SceneManager.MoveGameObjectToScene(_callbackEdit, _dirtyScene);
+                EditorSceneManager.MarkSceneDirty(_dirtyScene);
+            }
+
+            public void AssertCallbackEditPreserved()
+            {
+                AssertUnsavedScenePreserved();
+                Assert.IsTrue(_callbackEdit != null, "Callback changes must remain loaded and unsaved.");
+                Assert.AreEqual(_dirtyScene, _callbackEdit.scene);
+                Assert.IsFalse(
+                    File.ReadAllText(Path.Combine(Application.dataPath, Folder.Substring("Assets/".Length), "Previous.unity")).Contains("CallbackEdit")
+                );
             }
 
             public void Dispose()
