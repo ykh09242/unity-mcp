@@ -10,6 +10,75 @@ from services.reference_graph.store import GraphScope, GraphStore
 from services.reference_graph.workspace import GraphWorkspace
 
 
+class CountedResourceKeys(list):
+    """Measure index shifts and ordering reads independently of elapsed time."""
+
+    def __init__(self, values):
+        super().__init__(values)
+        self.shifts = 0
+        self.visits = 0
+
+    def pop(self, index=-1):
+        self.shifts += len(self) - (index % len(self)) - 1
+        return super().pop(index)
+
+    def insert(self, index, value):
+        self.shifts += len(self) - index
+        return super().insert(index, value)
+
+    def __iter__(self):
+        for value in super().__iter__():
+            self.visits += 1
+            yield value
+
+    def __getitem__(self, index):
+        self.visits += 1
+        return super().__getitem__(index)
+
+
+@pytest.mark.parametrize("size", [10000, 100000])
+@pytest.mark.parametrize("membership_changes", [False, True])
+def test_resources_delta_work_tracks_membership_and_batches_ordering(size, membership_changes):
+    # Given an ordered Resources catalog and a batch of one hundred asset deltas.
+    assets = [
+        {
+            "guid": str(index),
+            "path": f"Assets/{index}.prefab",
+            "keys": [{"scheme": "resources", "value": f"item/{index:06d}"}],
+        }
+        for index in range(size)
+    ]
+    catalog = Catalog(assets)
+    keys = CountedResourceKeys(catalog.resource_keys)
+    catalog.resource_keys = keys
+    changes = [
+        {
+            **asset,
+            "path": "Assets/Renamed/" + asset["guid"],
+            "dependency_hash": "updated",
+            "keys": [{"scheme": "resources", "value": f"renamed/{index:06d}"}]
+            if membership_changes
+            else asset["keys"],
+        }
+        for index, asset in enumerate(assets[:100])
+    ]
+    # When one metadata or actual membership batch is applied.
+    catalog.update(iter(changes))
+    print(
+        f"Resources size={size}, membership_changes={membership_changes}: "
+        f"shifts={keys.shifts}, ordering_visits={keys.visits}"
+    )
+    # Then metadata never rewrites ordering, and membership merges scan it once.
+    assert keys.shifts == 0
+    assert keys.visits <= (size + 200 if membership_changes else 0)
+    fresh = Catalog([*changes, *assets[100:]])
+    assert catalog.resource_keys == fresh.resource_keys
+    assert catalog.resolve("resources", "", "all") == fresh.resolve("resources", "", "all")
+    for index in (0, 99, 100, size - 1):
+        for key in (f"item/{index:06d}", f"renamed/{index:06d}"):
+            assert catalog.resolve("resources", key) == fresh.resolve("resources", key)
+
+
 @pytest.mark.parametrize("consumer", ["runtime", "analysis"])
 def test_warm_catalog_decodes_and_indexes_only_changed_assets(tmp_path, monkeypatch, consumer):
     workspace = GraphWorkspace(GraphStore.open(tmp_path, GraphScope("user", "editor", "project")))
@@ -162,6 +231,64 @@ def test_incremental_catalog_preserves_shared_keys_exclusion_and_provider_status
     catalog.update([{"guid": "e", "path": "Assets/NewE"}])
     assert catalog.resolve("addressables", "label")[1] == "key_not_found"
     assert catalog.resolve("path", "Assets/E")[1] == "key_not_found"
+
+
+def test_interrupted_membership_batch_keeps_applied_prefix_resolvable():
+    # Given a valid delta followed by a failing producer.
+    catalog = Catalog(
+        [{"guid": "a", "path": "Assets/A", "keys": [{"scheme": "resources", "value": "old"}]}]
+    )
+
+    def changes():
+        yield {"guid": "a", "path": "Assets/A", "keys": [{"scheme": "resources", "value": "new"}]}
+        raise RuntimeError("delta producer interrupted")
+
+    # When the producer stops after the first applied membership change.
+    with pytest.raises(RuntimeError, match="delta producer interrupted"):
+        catalog.update(changes())
+    # Then exact and streamed prefix resolution still describe the applied prefix.
+    assert catalog.resolve("resources", "old")[1] == "key_not_found"
+    assert catalog.resolve("resources", "new")[0] == {"asset:a"}
+    assert catalog.resolve("resources", "", "all")[0] == {"asset:a"}
+    assert list(catalog.iter_resolved_detail("resources", "", "all")) == [("asset:a", None, "")]
+
+
+def test_batched_membership_swaps_preserve_collisions_and_admission_counts():
+    def asset(guid, key, **metadata):
+        return {
+            "guid": guid,
+            "path": "Assets/" + guid,
+            "keys": [{"scheme": "resources", "value": key}],
+            **metadata,
+        }
+
+    # Given shared, excluded and unavailable memberships.
+    catalog = Catalog(
+        [asset("a", "X"), asset("b", "X"), asset("c", "X", _excluded=True), asset("d", "Y")]
+    )
+    keys = CountedResourceKeys(catalog.resource_keys)
+    catalog.resource_keys = keys
+    final = [
+        asset("a", "X", _excluded=True),
+        asset("b", "Y"),
+        asset("c", "X"),
+        asset("d", "X", addressables="failed"),
+    ]
+    # When the same batch swaps keys, re-adds removals and changes admission.
+    catalog.update(final, removed=["a", "c"])
+    # Then the final bucket set needs no ordering work and matches a fresh catalog.
+    assert keys.shifts == keys.visits == 0
+    fresh = Catalog(final)
+    for key in ("", "X", "Y", "missing"):
+        for mode in ("single", "all"):
+            assert catalog.resolve("resources", key, mode) == fresh.resolve("resources", key, mode)
+    assert list(catalog.iter_resolved_detail("resources", "", "all")) == list(
+        fresh.iter_resolved_detail("resources", "", "all")
+    )
+    assert catalog.resolve("addressables", "missing")[1] == "provider_unavailable"
+    catalog.update([], removed=["c", "d"])
+    assert catalog.resolve("resources", "X")[1] == "excluded"
+    assert catalog.resolve("addressables", "missing")[1] == "key_not_found"
 
 
 def test_warm_catalog_retires_displaced_guid_and_rebuilds_after_policy_reset(tmp_path):

@@ -8,11 +8,12 @@ composition through wrappers without rereading their source at every call site.
 
 from __future__ import annotations
 
-from bisect import bisect_left, insort
+from bisect import bisect_left
 from collections import Counter, OrderedDict, defaultdict, deque
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import closing
 from dataclasses import dataclass, field, replace
+from heapq import merge
 import re
 import threading
 
@@ -1087,33 +1088,36 @@ class Catalog:
         self.resource_keys = []
         self._changed_resources = set()
         for asset in assets:
-            self._add(asset, incremental=False)
+            self._add(asset)
         self.resource_keys = sorted(value for scheme, value in self.keys if scheme == "resources")
         self._resource_targets = {
             key: tuple(sorted(self.keys[("resources", key)])) for key in self.resource_keys
         }
+        self._changed_resources.clear()
 
     @property
     def addressables_unavailable(self):
         return bool(self._unavailable)
 
-    def _add(self, asset: dict, *, incremental: bool):
+    def _add(self, asset: dict):
         guid = asset["guid"].lower()
         keys = self.asset_keys(asset)
         excluded = bool(asset.get("_excluded"))
         self._members[guid] = (keys, excluded)
+        if not excluded:
+            self.guids.add(guid)
+        if self.unavailable(asset):
+            self._unavailable.add(guid)
+        self._add_keys(guid, keys, excluded)
+
+    def _add_keys(self, guid: str, keys: Iterable[tuple[str, str]], excluded: bool) -> None:
         if excluded:
             self._blocked_counts.update(keys)
             self.blocked.update(keys)
             return
-        self.guids.add(guid)
-        if self.unavailable(asset):
-            self._unavailable.add(guid)
         for key in keys:
-            if incremental and key[0] == "resources" and key not in self.keys:
-                insort(self.resource_keys, key[1])
             self.keys[key].add("asset:" + guid)
-            if incremental and key[0] == "resources":
+            if key[0] == "resources":
                 self._changed_resources.add(key[1])
 
     def _remove(self, guid: str):
@@ -1124,6 +1128,9 @@ class Catalog:
         keys, excluded = previous
         self.guids.discard(guid)
         self._unavailable.discard(guid)
+        self._remove_keys(guid, keys, excluded)
+
+    def _remove_keys(self, guid: str, keys: Iterable[tuple[str, str]], excluded: bool) -> None:
         for key in keys:
             if excluded:
                 self._blocked_counts[key] -= 1
@@ -1136,26 +1143,61 @@ class Catalog:
                     self._changed_resources.add(key[1])
                 if not self.keys[key]:
                     del self.keys[key]
-                    if key[0] == "resources":
-                        self.resource_keys.pop(bisect_left(self.resource_keys, key[1]))
 
     def update(self, assets: Iterable[dict], *, removed: Iterable[str] = ()):
         # Runtime readers share the key catalog. Resolve sees either side of a
         # delta, never partially removed/reinserted memberships.
         with self._lock:
-            for guid in removed:
-                self._remove(guid)
-            for asset in assets:
-                self._remove(asset["guid"])
-                self._add(asset, incremental=True)
-            # Sort each changed bucket once, outside the per-call fanout walk.
-            for key in self._changed_resources:
-                targets = self.keys.get(("resources", key))
-                if targets:
-                    self._resource_targets[key] = tuple(sorted(targets))
-                else:
-                    self._resource_targets.pop(key, None)
-            self._changed_resources.clear()
+            try:
+                for guid in removed:
+                    self._remove(guid)
+                for asset in assets:
+                    guid = asset["guid"].lower()
+                    keys, excluded = self.asset_keys(asset), bool(asset.get("_excluded"))
+                    previous, was_excluded = self._members.get(guid, (set(), excluded))
+                    self._remove_keys(
+                        guid,
+                        previous - keys if was_excluded == excluded else previous,
+                        was_excluded,
+                    )
+                    self._add_keys(
+                        guid, keys - previous if was_excluded == excluded else keys, excluded
+                    )
+                    self._members[guid] = (keys, excluded)
+                    if excluded:
+                        self.guids.discard(guid)
+                    else:
+                        self.guids.add(guid)
+                    if self.unavailable(asset):
+                        self._unavailable.add(guid)
+                    else:
+                        self._unavailable.discard(guid)
+            finally:
+                # Preserve the applied prefix even if an input producer fails.
+                self._refresh_resources()
+
+    def _refresh_resources(self) -> None:
+        # Ordering changes only when a key bucket appears/disappears, once
+        # per delta batch. Metadata and collision-only changes do no list work.
+        added, deleted = set(), set()
+        for key in self._changed_resources:
+            if ("resources", key) in self.keys:
+                if key not in self._resource_targets:
+                    added.add(key)
+            elif key in self._resource_targets:
+                deleted.add(key)
+        if added or deleted:
+            self.resource_keys = list(
+                merge((key for key in self.resource_keys if key not in deleted), sorted(added))
+            )
+        # Sort each changed bucket once, outside the per-call fanout walk.
+        for key in self._changed_resources:
+            targets = self.keys.get(("resources", key))
+            if targets:
+                self._resource_targets[key] = tuple(sorted(targets))
+            else:
+                self._resource_targets.pop(key, None)
+        self._changed_resources.clear()
 
     def _resource_descendants(self, key, lookups, visit):
         prefix = key.rstrip("/") + "/" if key else ""
