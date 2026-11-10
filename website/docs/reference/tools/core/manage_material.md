@@ -26,12 +26,13 @@ Manages Unity materials (properties, colors, shaders, render state). Read-only a
 | `shader` | `str \| None` | — | Shader name (default: Standard) |
 | `properties` | `dict[str, Any] \| str \| None` | — | Initial properties to set as {name: value} dict. |
 | `value` | `list[Any] \| dict[str, Any] \| float \| int \| str \| bool \| None` | — | Value to set: scalar, color/vector array or object, texture path or {"find": "Assets/...", "method": "by_path"} instruction. JSON-encoded strings remain supported. The native shader-property type validates the value shape. |
-| `color` | `list[float] \| dict[str, float] \| str \| None` | — | Color as [r, g, b] or [r, g, b, a] array, {r, g, b, a} object, or JSON string. |
+| `color` | `list[float] \| dict[str, float] \| str \| None` | — | Color as [r, g, b] or [r, g, b, a] array, {r, g, b, a} object, JSON string or hex. Numeric components use color_range; hex colors always use byte components. |
 | `target` | `str \| None` | — | Target GameObject (name, path, or find instruction) |
 | `search_method` | `Literal['by_id', 'by_name', 'by_path', 'by_tag', 'by_layer', 'by_component'] \| None` | — | Search method for target |
 | `slot` | `int \| None` | — | Material slot index (0-based) |
 | `mode` | `Literal['shared', 'instance', 'property_block', 'create_unique'] \| None` | — | Assignment/modification mode; behavior when omitted is action-specific on the Unity side. |
 | `render_state` | `dict[str, Any] \| str \| None` | — | Render-state patch object or JSON object string: render_queue (-1 or 0..5000), keywords ({declared_name: bool}), shader_passes ({LightMode: bool}), texture_transforms ({exact_texture_property: {scale: [x,y], offset: [x,y]}}). render_mode is opaque/cutout/fade/transparent for Built-in Standard shaders only; it resets the queue and cannot coexist with render_queue or owned alpha keywords. Maps are limited to 128 entries. No automatic blending changes for raw edits. |
+| `color_range` | `Literal['float', 'byte']` | — | Numeric color range: float (default) preserves HDR values and defaults alpha to 1; byte explicitly converts 0-255 components and defaults alpha to 255. Use byte for legacy 0-255 inputs; range is never inferred for material colors. |
 | `unity_instance` | `str \| int \| None` | — | Target Unity instance for this call: Name@hash or hash prefix; an integer selects only that exact port over stdio and is rejected over HTTP. Read mcpforunity://instances for available targets. Omit to use the legacy active selection or the sole available instance. |
 
 ## Returns

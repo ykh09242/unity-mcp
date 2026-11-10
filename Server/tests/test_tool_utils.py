@@ -117,6 +117,22 @@ def test_explicit_alpha_keeps_existing_range_inference(components, expected):
         assert normalize_color(value) == (expected, None)
 
 
+@pytest.mark.parametrize("value", _color_forms([2, 1, 0, 1]) + _color_forms([2, 1, 0]))
+def test_explicit_float_colors_preserve_hdr_and_opaque_alpha(value):
+    assert normalize_color(value, input_range="float") == ([2.0, 1.0, 0.0, 1.0], None)
+
+
+@pytest.mark.parametrize("value", _color_forms([1, 0, 0, 1]))
+def test_explicit_byte_colors_do_not_infer_normalized_range(value):
+    assert normalize_color(value, input_range="byte") == ([1 / 255, 0, 0, 1 / 255], None)
+
+
+@pytest.mark.parametrize("value", [[256, 0, 0], [-1, 0, 0], [1, 0, 0, 256]])
+def test_explicit_byte_colors_reject_out_of_range(value):
+    color, error = normalize_color(value, input_range="byte")
+    assert color is None and error
+
+
 @pytest.mark.parametrize(
     "value, expected",
     [
@@ -185,7 +201,9 @@ def fake_tool_transport(monkeypatch):
 def test_material_tool_sends_opaque_byte_rgb(value, fake_tool_transport):
     module = importlib.import_module("services.tools.manage_material")
     result = asyncio.run(
-        module.manage_material(SimpleNamespace(), action="set_material_color", color=value)
+        module.manage_material(
+            SimpleNamespace(), action="set_material_color", color=value, color_range="byte"
+        )
     )
     assert result["success"] is True
     assert fake_tool_transport == [
@@ -249,8 +267,8 @@ def test_tool_overflow_returns_error_before_transport(
     [
         ([1, 0.5, 0], [1.0, 0.5, 0.0, 1.0]),
         ("[0, 0, 0]", [0.0, 0.0, 0.0, 1.0]),
-        ({"r": 255, "g": 0, "b": 0, "a": 0}, [1.0, 0.0, 0.0, 0.0]),
-        ("[255, 0, 0, 1]", [1.0, 0.0, 0.0, 1 / 255]),
+        ({"r": 255, "g": 0, "b": 0, "a": 0}, [255.0, 0.0, 0.0, 0.0]),
+        ("[255, 0, 0, 1]", [255.0, 0.0, 0.0, 1.0]),
         (None, None),
     ],
 )

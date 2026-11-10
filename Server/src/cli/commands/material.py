@@ -11,6 +11,15 @@ from cli.utils.output import format_output, print_error, print_success
 from cli.utils.connection import run_command, handle_unity_errors
 from cli.utils.parsers import parse_value_safe, parse_json_dict_or_exit
 from cli.utils.constants import SEARCH_METHOD_CHOICE_RENDERER
+from services.tools.utils import normalize_color
+
+
+def _material_color(r, g, b, a, color_range):
+    components = [r, g, b] if a is None else [r, g, b, a]
+    color, error = normalize_color(components, input_range=color_range)
+    if error:
+        raise click.BadParameter(error, param_hint="color")
+    return color
 
 
 @click.group()
@@ -85,10 +94,19 @@ def create(path: str, shader: str, properties: Optional[str]):
 @click.argument("r", type=float)
 @click.argument("g", type=float)
 @click.argument("b", type=float)
-@click.argument("a", type=float, default=1.0)
+@click.argument("a", type=float, required=False)
+@click.option(
+    "--color-range",
+    type=click.Choice(["float", "byte"]),
+    default="float",
+    show_default=True,
+    help="Float preserves HDR values; byte converts 0-255. Omitted alpha is opaque.",
+)
 @click.option("--property", "-p", default="_Color", help="Color property name (default: _Color).")
 @handle_unity_errors
-def set_color(path: str, r: float, g: float, b: float, a: float, property: str):
+def set_color(
+    path: str, r: float, g: float, b: float, a: Optional[float], property: str, color_range: str
+):
     """Set a material's color.
 
     \b
@@ -103,7 +121,7 @@ def set_color(path: str, r: float, g: float, b: float, a: float, property: str):
         "action": "set_material_color",
         "materialPath": path,
         "property": property,
-        "color": [r, g, b, a],
+        "color": _material_color(r, g, b, a, color_range),
     }
 
     result = run_command("manage_material", params, config)
@@ -195,7 +213,14 @@ def assign(material_path: str, target: str, search_method: Optional[str], slot: 
 @click.argument("r", type=float)
 @click.argument("g", type=float)
 @click.argument("b", type=float)
-@click.argument("a", type=float, default=1.0)
+@click.argument("a", type=float, required=False)
+@click.option(
+    "--color-range",
+    type=click.Choice(["float", "byte"]),
+    default="float",
+    show_default=True,
+    help="Float preserves HDR values; byte converts 0-255. Omitted alpha is opaque.",
+)
 @click.option(
     "--slot", type=click.IntRange(min=0), default=0, help="Material slot index (default: 0)."
 )
@@ -218,10 +243,11 @@ def set_renderer_color(
     r: float,
     g: float,
     b: float,
-    a: float,
+    a: Optional[float],
     search_method: Optional[str],
     mode: str,
     slot: int,
+    color_range: str,
 ):
     """Set a renderer's material color directly.
 
@@ -236,7 +262,7 @@ def set_renderer_color(
         "action": "set_renderer_color",
         "target": target,
         "slot": slot,
-        "color": [r, g, b, a],
+        "color": _material_color(r, g, b, a, color_range),
         "mode": mode,
     }
 

@@ -61,7 +61,8 @@ async def manage_material(
     # set_material_color / set_renderer_color
     color: Annotated[
         list[float] | dict[str, float] | str,
-        "Color as [r, g, b] or [r, g, b, a] array, {r, g, b, a} object, or JSON string.",
+        "Color as [r, g, b] or [r, g, b, a] array, {r, g, b, a} object, JSON string or hex. "
+        "Numeric components use color_range; hex colors always use byte components.",
     ]
     | None = None,
     # assign_material_to_renderer / set_renderer_color
@@ -87,6 +88,12 @@ async def manage_material(
         "Maps are limited to 128 entries. No automatic blending changes for raw edits.",
     ]
     | None = None,
+    color_range: Annotated[
+        Literal["float", "byte"],
+        "Numeric color range: float (default) preserves HDR values and defaults alpha to 1; "
+        "byte explicitly converts 0-255 components and defaults alpha to 255. "
+        "Use byte for legacy 0-255 inputs; range is never inferred for material colors.",
+    ] = "float",
 ) -> dict[str, Any]:
     """Inspect or edit materials; render-state addressing is asset OR renderer target/slot.
 
@@ -101,7 +108,7 @@ async def manage_material(
     URP/HDRP/custom presets are unsupported. Presets reset queue to the mode default.
     """
     # --- Normalize color with validation ---
-    color, color_error = normalize_color(color, output_range="float")
+    color, color_error = normalize_color(color, output_range="float", input_range=color_range)
     if color_error:
         return {"success": False, "message": color_error}
 

@@ -11026,6 +11026,14 @@
                 ],
                 "default": null
               },
+              "color_range": {
+                "default": "float",
+                "enum": [
+                  "float",
+                  "byte"
+                ],
+                "type": "string"
+              },
               "material_path": {
                 "anyOf": [
                   {
@@ -36597,6 +36605,14 @@
                   }
                 ],
                 "default": null
+              },
+              "color_range": {
+                "default": "float",
+                "enum": [
+                  "float",
+                  "byte"
+                ],
+                "type": "string"
               },
               "material_path": {
                 "anyOf": [

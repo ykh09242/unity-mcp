@@ -24,6 +24,76 @@ def _run(code, tmp_path):
     return result.stdout
 
 
+def test_material_color_range_matches_sdk_and_cli(tmp_path):
+    _run(
+        r"""
+        import copy
+        import json
+        import anyio
+        import httpx
+        from fastmcp import FastMCP, Client
+        from services.tools import register_all_tools
+        from transport.plugin_hub import PluginHub
+        from core.config import config
+        from click.testing import CliRunner
+        from cli.main import cli
+        from cli.utils import connection
+
+        config.transport_mode = 'http'
+        config.http_remote_hosted = False
+        sent = []
+        async def controlled_send(instance, command, params, **kwargs):
+            sent.append(copy.deepcopy(params))
+            return {'success': True}
+        PluginHub.send_command_for_instance = staticmethod(controlled_send)
+        server = FastMCP('material-color-range')
+        register_all_tools(server)
+        cases = [
+            ([2, 1, 0, 1], None, [2, 1, 0, 1]),
+            ([2, 1, 0], None, [2, 1, 0, 1]),
+            ([0.5, 0.25, 0, 0.75], 'float', [0.5, 0.25, 0, 0.75]),
+            ([255, 128, 0], 'byte', [1, 128/255, 0, 1]),
+            ([255, 128, 0, 64], 'byte', [1, 128/255, 0, 64/255]),
+            ([1, 0, 0, 1], 'byte', [1/255, 0, 0, 1/255]),
+        ]
+        async def exercise_sdk():
+            async with Client(server) as client:
+                for action in ('set_material_color', 'set_renderer_color'):
+                    for components, selected_range, expected in cases:
+                        forms = [components, dict(zip('rgba', components)), json.dumps(components)]
+                        for color in forms:
+                            args = {'action': action, 'color': color}
+                            if selected_range is not None:
+                                args['color_range'] = selected_range
+                            await client.call_tool('manage_material', args)
+                            assert sent[-1]['color'] == expected, (args, sent[-1])
+        anyio.run(exercise_sdk)
+
+        client_type = httpx.AsyncClient
+        def respond(request):
+            sent.append(json.loads(request.content)['params'])
+            return httpx.Response(200, json={'success': True})
+        connection.httpx.AsyncClient = lambda **kwargs: client_type(transport=httpx.MockTransport(respond))
+        connection._auth_headers = lambda config: {}
+        runner = CliRunner()
+        for command, target in [('set-color', 'Assets/Fixture.mat'), ('set-renderer-color', 'Fixture')]:
+            for components, selected_range, expected in cases:
+                args = ['--format', 'json', '--instance', 'Project@fixture', 'material', command, target,
+                        *map(str, components)]
+                if selected_range is not None:
+                    args.extend(['--color-range', selected_range])
+                result = runner.invoke(cli, args)
+                assert result.exit_code == 0, (args, result.output, result.exception)
+                assert sent[-1]['color'] == expected, (args, sent[-1])
+            for components, selected_range in [(['NaN', '0', '0'], 'float'), (['256', '0', '0'], 'byte')]:
+                before = len(sent)
+                result = runner.invoke(cli, ['material', command, target, *components, '--color-range', selected_range])
+                assert result.exit_code == 2 and len(sent) == before, result.output
+        """,
+        tmp_path,
+    )
+
+
 def test_material_cli_public_values_and_single_json(tmp_path):
     output = _run(
         r"""

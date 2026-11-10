@@ -279,7 +279,7 @@ def normalize_string_list(
 
 
 def normalize_color(
-    value: Any, output_range: str = "float"
+    value: Any, output_range: str = "float", *, input_range: str = "auto"
 ) -> tuple[list[float] | None, str | None]:
     """
     Normalize a color parameter to [r, g, b, a] format.
@@ -294,30 +294,49 @@ def normalize_color(
     Args:
         value: The color value to normalize
         output_range: "float" for 0.0-1.0 range, "int" for 0-255 range
+        input_range: "auto" preserves legacy range inference; "float" preserves HDR
+            components and "byte" explicitly converts components in 0-255. Hex is always byte.
 
     Returns:
         Tuple of (parsed_color, error_message). If error_message is set, parsed_color is None.
     """
+    if input_range not in {"auto", "float", "byte"}:
+        return None, "color input range must be auto, float or byte"
     if value is None:
         return None, None
 
     def _to_output_range(components: list[float], from_hex: bool = False) -> list:
         """Convert color components to the requested output range."""
+        if input_range == "byte" and not from_hex:
+            if any(not 0 <= component <= 255 for component in components):
+                raise ValueError("Byte color components must be in 0-255")
+            from_hex = True
         if output_range == "int":
             if from_hex:
                 # Already 0-255 from hex parsing
                 return [int(c) for c in components]
             # Check if input is normalized (0-1) or already 0-255
-            if all(0 <= c <= 1 for c in components):
+            if input_range == "float" or all(0 <= c <= 1 for c in components):
                 return [int(round(c * 255)) for c in components]
             return [int(c) for c in components]
         else:  # float
             if from_hex:
                 # Convert 0-255 to 0-1
                 return [c / 255.0 for c in components]
-            if any(c > 1 for c in components):
+            if input_range == "auto" and any(c > 1 for c in components):
                 return [c / 255.0 for c in components]
             return [coerce_float(c) for c in components]
+
+    def _default_alpha(components: list[float]) -> float:
+        if input_range == "float":
+            return 1.0
+        if input_range == "byte":
+            return 255.0
+        if output_range == "int" and all(0 <= c <= 1 for c in components):
+            return 1.0
+        if output_range == "float" and not any(c > 1 for c in components):
+            return 1.0
+        return 255.0
 
     # Handle dict with r/g/b keys
     if isinstance(value, dict):
@@ -331,12 +350,7 @@ def normalize_color(
                 if "a" in value:
                     color.append(coerce_float(value["a"]))
                 else:
-                    if output_range == "int" and all(0 <= c <= 1 for c in color):
-                        color.append(1.0)
-                    elif output_range == "float" and not any(c > 1 for c in color):
-                        color.append(1.0)
-                    else:
-                        color.append(255)
+                    color.append(_default_alpha(color))
                 return _to_output_range(color), None
             except (ValueError, TypeError, KeyError, OverflowError):
                 return None, f"color dict values must be numbers, got {value}"
@@ -348,12 +362,7 @@ def normalize_color(
             try:
                 color = [coerce_float(c) for c in value]
                 if len(color) == 3:
-                    if output_range == "int" and all(0 <= c <= 1 for c in color):
-                        color.append(1.0)
-                    elif output_range == "float" and not any(c > 1 for c in color):
-                        color.append(1.0)
-                    else:
-                        color.append(255)
+                    color.append(_default_alpha(color))
                 return _to_output_range(color), None
             except (ValueError, TypeError, OverflowError):
                 return None, f"color values must be numbers, got {value}"
@@ -390,19 +399,14 @@ def normalize_color(
 
         # Handle parsed dict
         if isinstance(parsed, dict):
-            return normalize_color(parsed, output_range)
+            return normalize_color(parsed, output_range, input_range=input_range)
 
         # Handle parsed list
         if isinstance(parsed, (list, tuple)) and len(parsed) in (3, 4):
             try:
                 color = [coerce_float(c) for c in parsed]
                 if len(color) == 3:
-                    if output_range == "int" and all(0 <= c <= 1 for c in color):
-                        color.append(1.0)
-                    elif output_range == "float" and not any(c > 1 for c in color):
-                        color.append(1.0)
-                    else:
-                        color.append(255)
+                    color.append(_default_alpha(color))
                 return _to_output_range(color), None
             except (ValueError, TypeError, OverflowError):
                 return None, f"color values must be numbers, got {parsed}"
@@ -416,12 +420,7 @@ def normalize_color(
             try:
                 color = [coerce_float(p) for p in parts]
                 if len(color) == 3:
-                    if output_range == "int" and all(0 <= c <= 1 for c in color):
-                        color.append(1.0)
-                    elif output_range == "float" and not any(c > 1 for c in color):
-                        color.append(1.0)
-                    else:
-                        color.append(255)
+                    color.append(_default_alpha(color))
                 return _to_output_range(color), None
             except (ValueError, TypeError, OverflowError):
                 pass  # Fall through to error message

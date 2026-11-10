@@ -2133,7 +2133,7 @@ Set parameters on a Volume effect.
 | --- | --- | --- | --- | --- | --- | --- |
 | --target / -t | text | required | nargs=1 | — | — | Volume name or instance ID. |
 | --effect / -e | text | required | nargs=1 | — | — | Effect type (e.g., Bloom). |
-| --param / -p | tuple: text, text | optional | nargs=2, repeatable | — | — | Parameter key-value pair. |
+| --param / -p | tuple: text, text | optional | nargs=2, repeatable | — | — | Parameter key-value pair; accepts JSON values or literal enum/path/hex strings. |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
 ## `unity-mcp graphics volume-set-properties`
@@ -2261,7 +2261,8 @@ Set a material's color. Examples: unity-mcp material set-color "Assets/Materials
 | r | float | required | nargs=1 | — | — |  |
 | g | float | required | nargs=1 | — | — |  |
 | b | float | required | nargs=1 | — | — |  |
-| a | float | optional | nargs=1 | 1.0 | — |  |
+| a | float | optional | nargs=1 | — | — |  |
+| --color-range | choice: float, byte | optional | nargs=1 | "float" | — | Float preserves HDR values; byte converts 0-255. Omitted alpha is opaque. |
 | --property / -p | text | optional | nargs=1 | "_Color" | — | Color property name (default: _Color). |
 | --help | boolean | optional | nargs=1, flag | — | — | Show this message and exit. |
 
@@ -2286,7 +2287,8 @@ Set a renderer's material color directly. Examples: unity-mcp material set-rende
 | r | float | required | nargs=1 | — | — |  |
 | g | float | required | nargs=1 | — | — |  |
 | b | float | required | nargs=1 | — | — |  |
-| a | float | optional | nargs=1 | 1.0 | — |  |
+| a | float | optional | nargs=1 | — | — |  |
+| --color-range | choice: float, byte | optional | nargs=1 | "float" | — | Float preserves HDR values; byte converts 0-255. Omitted alpha is opaque. |
 | --slot | integer range: [0..None] | optional | nargs=1 | 0 | — | Material slot index (default: 0). |
 | --search-method | choice: by_id, by_name, by_path, by_tag, by_layer, by_component | optional | nargs=1 | — | — | How to find the target GameObject. |
 | --mode / -m | choice: shared, instance, property_block, create_unique | optional | nargs=1 | "property_block" | — | Modification mode (default: property_block — use create_unique for persistent per-object material). |
