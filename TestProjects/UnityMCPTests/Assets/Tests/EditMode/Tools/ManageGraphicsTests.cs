@@ -329,10 +329,70 @@ namespace MCPForUnityTests.Editor.Tools
                     }
                 )
             );
-            Assert.IsTrue(result.Value<bool>("success"));
+            Assert.IsFalse(result.Value<bool>("success"));
+            Assert.AreEqual("all_failed", result["data"].Value<string>("outcome"));
             var failed = result["data"]["failed"] as JArray;
             Assert.IsNotNull(failed);
             Assert.That(failed.Select(t => t.ToString()), Contains.Item("nonExistent"));
+        }
+
+        [TestCase(false, false, "no_changes")]
+        [TestCase(false, true, "all_failed")]
+        [TestCase(true, false, "applied")]
+        [TestCase(true, true, "partial")]
+        public void VolumeSetEffect_ReportsAppliedWorkAndPreservesRejectedProfile(bool valid, bool invalid, string outcome)
+        {
+            RequireVolumeSystem();
+            const string name = "GfxTest_ParameterOutcome";
+            string profilePath = $"{TempRoot}/ParameterOutcome.asset";
+            var created = ToJObject(
+                ManageGraphics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "volume_create",
+                        ["name"] = name,
+                        ["profile_path"] = profilePath,
+                    }
+                )
+            );
+            Assert.IsTrue(created.Value<bool>("success"), created.ToString());
+            var added = ToJObject(
+                ManageGraphics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "volume_add_effect",
+                        ["target"] = name,
+                        ["effect"] = "Bloom",
+                    }
+                )
+            );
+            Assert.IsTrue(added.Value<bool>("success"), added.ToString());
+            var profile = AssetDatabase.LoadMainAssetAtPath(profilePath);
+            int dirtyBefore = EditorUtility.GetDirtyCount(profile);
+            var parameters = new JObject();
+            if (valid)
+                parameters["intensity"] = 4;
+            if (invalid)
+                parameters["nonExistent"] = 42;
+
+            var result = ToJObject(
+                ManageGraphics.HandleCommand(
+                    new JObject
+                    {
+                        ["action"] = "volume_set_effect",
+                        ["target"] = name,
+                        ["effect"] = "Bloom",
+                        ["parameters"] = parameters,
+                    }
+                )
+            );
+
+            Assert.AreEqual(valid || !invalid, result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual(outcome, result["data"].Value<string>("outcome"));
+            Assert.AreEqual(valid ? 1 : 0, ((JArray)result["data"]["set"]).Count);
+            Assert.AreEqual(invalid ? 1 : 0, ((JArray)result["data"]["failed"]).Count);
+            if (!valid)
+                Assert.AreEqual(dirtyBefore, EditorUtility.GetDirtyCount(profile));
         }
 
         [Test]

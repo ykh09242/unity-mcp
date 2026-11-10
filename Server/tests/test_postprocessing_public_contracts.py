@@ -66,7 +66,7 @@ cases = [
     (['volume-set-effect', '--target', 'Fixture', '--effect', 'Bloom', '--param', 'intensity', '0',
       '--param', 'unknown', '1'],
      {'action': 'volume_set_effect', 'target': 'Fixture', 'effect': 'Bloom',
-      'parameters': {'intensity': '0', 'unknown': '1'}}),
+      'parameters': {'intensity': 0, 'unknown': 1}}),
     (['volume-remove-effect', '--target', 'Fixture', '--effect', 'Bloom'],
      {'action': 'volume_remove_effect', 'target': 'Fixture', 'effect': 'Bloom'}),
     (['volume-info', '--target', 'Fixture'], {'action': 'volume_get_info', 'target': 'Fixture'}),

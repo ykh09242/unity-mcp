@@ -332,7 +332,7 @@ namespace MCPForUnity.Editor.Tools.Graphics
                     failedParams.Add(prop.Name);
             }
 
-            if (profile is UnityEngine.Object profileObj)
+            if (setParams.Count > 0 && profile is UnityEngine.Object profileObj)
                 EditorUtility.SetDirty(profileObj);
 
             var msg = $"Set {setParams.Count} parameter(s) on '{effectName}'";
@@ -341,13 +341,14 @@ namespace MCPForUnity.Editor.Tools.Graphics
 
             return new
             {
-                success = true,
+                success = setParams.Count > 0 || failedParams.Count == 0,
                 message = msg,
                 data = new
                 {
                     effect = effectName,
                     set = setParams,
                     failed = failedParams,
+                    outcome = failedParams.Count > 0 ? (setParams.Count > 0 ? "partial" : "all_failed") : (setParams.Count > 0 ? "applied" : "no_changes"),
                 },
             };
         }

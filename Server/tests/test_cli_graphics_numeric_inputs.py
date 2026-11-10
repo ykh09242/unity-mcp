@@ -169,3 +169,63 @@ def test_valid_csv_preserves_native_error_and_falsey_data(dispatch, command, arg
         "error": "Controlled rejection",
         "data": {"zero": 0, "enabled": False, "reference": None},
     }
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("[1,0,0,1]", [1, 0, 0, 1]),
+        ('{"x":2,"y":0}', {"x": 2, "y": 0}),
+        ("null", None),
+        ("false", False),
+        ("0", 0),
+        ("1e-2", 0.01),
+        ("ACES", "ACES"),
+        ("Assets/Textures/Lut.png", "Assets/Textures/Lut.png"),
+        ("#ff0000", "#ff0000"),
+    ],
+)
+def test_volume_parameter_preserves_json_types_and_literal_strings(dispatch, value, expected):
+    cli, state = dispatch
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "graphics",
+            "volume-set-effect",
+            "--target",
+            "Volume",
+            "--effect",
+            "Bloom",
+            "--param",
+            "value",
+            value,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert state["encoded"][0]["params"]["parameters"] == {"value": expected}
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "1e1000", "[0,NaN]", "[1,]", '{"x":'])
+def test_volume_parameter_rejects_nonfinite_or_malformed_json_before_dispatch(dispatch, value):
+    cli, state = dispatch
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--format",
+            "json",
+            "graphics",
+            "volume-set-effect",
+            "--target",
+            "Volume",
+            "--effect",
+            "Bloom",
+            "--param",
+            "value",
+            value,
+        ],
+    )
+    assert result.exit_code == 2, result.output
+    assert "--param" in result.stderr
+    assert state["attempts"] == []

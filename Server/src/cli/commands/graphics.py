@@ -4,6 +4,7 @@ import struct
 import click
 from cli.utils.connection import handle_unity_errors, run_command, get_config
 from cli.utils.output import format_output
+from cli.utils.parsers import load_finite_json, NonFiniteJsonError
 
 
 @click.group("graphics")
@@ -20,6 +21,18 @@ def _coerce_cli_value(val: str):
         return float(val) if "." in val else int(val)
     except ValueError:
         return val
+
+
+def _volume_parameter_value(value: str):
+    """Accept structured finite JSON and unquoted enum, path and hex strings."""
+    try:
+        return load_finite_json(value)
+    except NonFiniteJsonError:
+        raise click.BadParameter("JSON numbers must be finite.", param_hint="--param") from None
+    except (ValueError, RecursionError):
+        if value.lstrip().startswith(("[", "{", '"')):
+            raise click.BadParameter("Malformed JSON value.", param_hint="--param") from None
+        return value
 
 
 def _parse_color_csv(value: str, parameter: str) -> list[float]:
@@ -95,12 +108,18 @@ def volume_add_effect(target, effect):
 @graphics.command("volume-set-effect")
 @click.option("--target", "-t", required=True, help="Volume name or instance ID.")
 @click.option("--effect", "-e", required=True, help="Effect type (e.g., Bloom).")
-@click.option("--param", "-p", multiple=True, type=(str, str), help="Parameter key-value pair.")
+@click.option(
+    "--param",
+    "-p",
+    multiple=True,
+    type=(str, str),
+    help="Parameter key-value pair; accepts JSON values or literal enum/path/hex strings.",
+)
 @handle_unity_errors
 def volume_set_effect(target, effect, param):
     """Set parameters on a Volume effect."""
     config = get_config()
-    parameters = {k: v for k, v in param}
+    parameters = {k: _volume_parameter_value(v) for k, v in param}
     params = {
         "action": "volume_set_effect",
         "target": target,
